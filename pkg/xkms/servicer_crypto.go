@@ -700,25 +700,23 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 	// PKCS#1 v1.5 encryption authenticates nothing and its conformance check
 	// is the Bleichenbacher/Marvin decryption oracle (RFC 8017 section
 	// 7.2.2) -- the same reasoning servicer_wrapkey.go gates
-	// types.WrapRSAPKCS1v15 on. This RPC has no wrap/unwrap algorithm
-	// parameter to dispatch resolveWrapMechanism on, so the process-wide
-	// policy accessor is read directly: one operator setting,
-	// crypto.allow_legacy_key_wrap, governs every PKCS#1 v1.5 construction
-	// this service performs. EncryptAsym (RSA-OAEP) is the unconditionally
-	// available replacement and requires no configuration change.
+	// types.WrapRSAPKCS1v15 on, and the same reasoning Decrypt's asymmetric
+	// fallback (asymDecrypterOpts) gates its own PKCS#1 v1.5 default on. This
+	// RPC has no wrap/unwrap algorithm parameter to dispatch
+	// resolveWrapMechanism on, so the process-wide policy accessor is read
+	// directly: one operator setting, crypto.allow_legacy_key_wrap, governs
+	// every PKCS#1 v1.5 construction this service performs. EncryptAsym
+	// (RSA-OAEP) is the unconditionally available replacement and requires no
+	// configuration change.
 	//
 	// Checked after asymEncrypterKey resolves an RSA key, not before: a
 	// caller whose key cannot even reach this construction (not RSA, no
 	// crypto.Signer) should see that error, not a policy refusal for a
 	// construction that was never going to run anyway.
 	if !types.AllowLegacyKeyWrap() {
-		reason, _ := types.LegacyKeyWrapReason(types.WrapRSAPKCS1v15)
-		return nil, &ErrValidation{
-			Sentinel: ErrLegacyWrapDisabled,
-			Detail: "Encrypt's asymmetric fallback (PKCS#1 v1.5) is refused: " + reason +
-				". Use EncryptAsym (RSA-OAEP) instead, or set crypto.allow_legacy_key_wrap=true to re-admit it" +
-				" (ignored in FIPS mode, where the validated module's approved mechanism set applies)",
-		}
+		return nil, legacyRSAPKCS1v15Refusal(
+			"Encrypt's asymmetric fallback",
+			"Use EncryptAsym (RSA-OAEP) instead")
 	}
 
 	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, req.Plaintext) //nolint:staticcheck // SA1019: CKM_RSA_PKCS is PKCS#1 v1.5 by definition; gated on crypto.allow_legacy_key_wrap
@@ -753,6 +751,27 @@ func asymEncrypterKey(ctx context.Context, b Backend, attrs *types.KeyAttributes
 	}
 
 	return rsaPub, nil
+}
+
+// legacyRSAPKCS1v15Refusal builds the policy refusal every RSA PKCS#1 v1.5
+// construction in this service reports when crypto.allow_legacy_key_wrap is
+// unset. Encrypt's asymmetric fallback and Decrypt's asymmetric fallback
+// (asymDecrypterOpts) both call it, so the sentinel, the reason and the
+// setting name cannot drift apart between the two halves of the operation --
+// they previously had: Encrypt refused PKCS#1 v1.5 by default while Decrypt
+// performed it unconditionally, which is the gap go-xkms#1283 closes.
+//
+// what names the construction being refused ("Encrypt's asymmetric
+// fallback", "Decrypt's asymmetric fallback"); alternative names the
+// unconditionally available replacement and how to reach it.
+func legacyRSAPKCS1v15Refusal(what, alternative string) error {
+	reason, _ := types.LegacyKeyWrapReason(types.WrapRSAPKCS1v15)
+	return &ErrValidation{
+		Sentinel: ErrLegacyWrapDisabled,
+		Detail: what + " (PKCS#1 v1.5) is refused: " + reason +
+			". " + alternative + ", or set crypto.allow_legacy_key_wrap=true to re-admit it" +
+			" (ignored in FIPS mode, where the validated module's approved mechanism set applies)",
+	}
 }
 
 // Decrypt decrypts ciphertext using the specified key.
@@ -824,14 +843,57 @@ func (s *XKMSService) Decrypt(ctx context.Context, req *transport.DecryptRequest
 
 	plaintext, err := decrypter.Decrypt(rand.Reader, req.Ciphertext, opts)
 	if err != nil {
-		return nil, wrapOperationError(ErrDecryptionFailed, "", err)
+		return nil, wrapAsymDecryptError(attrs, err)
 	}
 
 	return &transport.DecryptResponse{Plaintext: plaintext}, nil
 }
 
+// wrapAsymDecryptError classifies a crypto.Decrypter failure from Decrypt's
+// asymmetric fallback. A backend capability refusal (isBackendCapabilityRefusal
+// -- a TPM2 raw-decrypt refusal on a sign-only key, for instance) keeps its
+// own diagnostic text under ErrOperationNotSupported exactly as
+// wrapOperationError reports it elsewhere in this file: that text names a
+// static capability boundary, not a property of the ciphertext, so revealing
+// it teaches a caller nothing about the plaintext.
+//
+// Every other failure is reported as the one uniform ErrDecryptionFailed,
+// discarding the underlying cause entirely. RFC 8017 section 7.2.2 (PKCS#1
+// v1.5) and section 7.1.2 (OAEP, Manger's attack) both require that an
+// implementation not reveal which check inside the decryption step failed,
+// because a distinguishable failure is the conformance oracle the
+// Bleichenbacher/Marvin and Manger attacks need. Decrypt is reachable over
+// every transport with a caller-designated key and a caller-supplied
+// ciphertext, exactly like C_UnwrapKey, so it withholds the same detail
+// servicer_wrapkey.go's ErrUnwrapCiphertextRejected already withholds for
+// unwrap: a PKCS#11 token's or a cloud KMS's own diagnostic text about why a
+// ciphertext was refused never reaches the caller.
+func wrapAsymDecryptError(attrs *types.KeyAttributes, err error) error {
+	if isBackendCapabilityRefusal(err) {
+		return &ErrOperationWrap{Sentinel: ErrOperationNotSupported, Err: err}
+	}
+	return &ErrKeyOperation{Operation: "decrypt", KeyID: attrs.CN, Err: ErrDecryptionFailed}
+}
+
 // asymDecrypterOpts builds the crypto.DecrypterOpts for an asymmetric decrypt.
-// It returns nil for PKCS#1 v1.5, which is the default when no padding is named.
+// It returns nil for PKCS#1 v1.5, which is the default when no padding is
+// named -- and, like every PKCS#1 v1.5 construction in this service, that
+// default is refused unless crypto.allow_legacy_key_wrap is set
+// (types.AllowLegacyKeyWrap). PKCS#1 v1.5 decryption's own conformance check
+// is the Bleichenbacher/Marvin decryption oracle (RFC 8017 section 7.2.2),
+// the same construction Encrypt's asymmetric fallback gates and
+// servicer_wrapkey.go's resolveWrapMechanism gates for types.WrapRSAPKCS1v15;
+// this was the one PKCS#1 v1.5 construction in the service that ran
+// unconditionally (go-xkms#1283).
+//
+// The unnamed-padding default is otherwise unchanged and deliberate: Encrypt's
+// asymmetric fallback has exactly one construction (PKCS#1 v1.5, no padding
+// parameter of its own), so a Decrypt that defaulted an unnamed padding to
+// OAEP could never read back what Encrypt produced. An unnamed padding still
+// means PKCS#1 v1.5 -- it is simply refused, like every other PKCS#1 v1.5
+// construction, until the operator opts in. A caller who wants OAEP names it
+// explicitly (Padding: "oaep"), which EncryptAsym requires unconditionally on
+// its side of the same round trip.
 //
 // The OAEP digest is resolved through ResolveOAEPHash, the same gate
 // EncryptAsym uses, so the two halves of the operation agree on both the
@@ -855,6 +917,11 @@ func (s *XKMSService) Decrypt(ctx context.Context, req *transport.DecryptRequest
 func asymDecrypterOpts(req *transport.DecryptRequest) (crypto.DecrypterOpts, error) {
 	switch strings.ToLower(req.Padding) {
 	case "", "pkcs1v15":
+		if !types.AllowLegacyKeyWrap() {
+			return nil, legacyRSAPKCS1v15Refusal(
+				"Decrypt's asymmetric fallback",
+				`Set padding="oaep" instead`)
+		}
 		return nil, nil
 	case "oaep":
 		h, err := ResolveOAEPHash(req.Hash)

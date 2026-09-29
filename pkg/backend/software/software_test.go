@@ -1215,11 +1215,9 @@ func TestUnwrapKey_UnsupportedAlgorithm(t *testing.T) {
 	wrapped.Algorithm = backend.WrappingAlgorithm("UNSUPPORTED")
 
 	swBe := be.(*SoftwareBackend)
-	swBe.importMu.Lock()
-	if tokenData, ok := swBe.importTokens[string(wrapped.ImportToken)]; ok {
+	if tokenData, peekErr := swBe.importTokens.Peek(string(wrapped.ImportToken)); peekErr == nil {
 		tokenData.algorithm = wrapped.Algorithm
 	}
-	swBe.importMu.Unlock()
 
 	_, err = be.(backend.ImportExportBackend).UnwrapKey(context.Background(), wrapped, params)
 	if err == nil {

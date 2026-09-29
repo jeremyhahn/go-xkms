@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/importtoken"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // TestGetImportParameters tests generating import parameters
@@ -924,20 +924,25 @@ func TestUnwrapKey_ExpiredToken(t *testing.T) {
 	// Cast to access internal structure
 	swBe := be.(*SoftwareBackend)
 
-	// Manually create an expired token
+	// Manually create an expired token: swap in a Store with a TTL so
+	// short the entry is already past expiry by the time UnwrapKey looks
+	// it up, exercising the real sweep-on-Take path rather than an
+	// expiresAt this test fabricates by hand.
 	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	tokenUUID := "expired-token-uuid"
-	swBe.importMu.Lock()
-	der, _ := x509.MarshalPKCS8PrivateKey(rsaKey)
-	sealed, _ := secure.NewSecret(der)
-	swBe.importTokens[tokenUUID] = &importTokenData{
-		privateKey: sealed,
-		publicKey:  &rsaKey.PublicKey,
-		algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
-		expiresAt:  time.Now().Add(-1 * time.Hour), // Already expired
-		keySpec:    "RSA_2048",
+	swBe.importTokens = importtoken.New[*importTokenData](time.Nanosecond, importtoken.DefaultMaxTokens, (*importTokenData).destroy)
+	wrappingKey, err := importtoken.NewSealedRSAKey(rsaKey)
+	if err != nil {
+		t.Fatalf("NewSealedRSAKey failed: %v", err)
 	}
-	swBe.importMu.Unlock()
+	if _, err := swBe.importTokens.Put(tokenUUID, &importTokenData{
+		wrappingKey: wrappingKey,
+		algorithm:   backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
+		keySpec:     "RSA_2048",
+	}); err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+	time.Sleep(time.Millisecond)
 
 	// Try to unwrap with expired token
 	wrapped := &backend.WrappedKeyMaterial{
@@ -952,7 +957,7 @@ func TestUnwrapKey_ExpiredToken(t *testing.T) {
 		Algorithm:         backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	_, err := be.(backend.ImportExportBackend).UnwrapKey(context.Background(), wrapped, params)
+	_, err = be.(backend.ImportExportBackend).UnwrapKey(context.Background(), wrapped, params)
 	if err == nil {
 		t.Error("expected error for expired token")
 	}
@@ -1013,20 +1018,24 @@ func TestImportKey_ExpiredToken(t *testing.T) {
 	// Cast to access internal structure
 	swBe := be.(*SoftwareBackend)
 
-	// Manually create an expired token
+	// Manually create an expired token, the same way TestUnwrapKey_ExpiredToken
+	// does: swap in a Store with a TTL so short the entry is already past
+	// expiry by the time ImportKey looks it up.
 	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	tokenUUID := "expired-import-token"
-	swBe.importMu.Lock()
-	der, _ := x509.MarshalPKCS8PrivateKey(rsaKey)
-	sealed, _ := secure.NewSecret(der)
-	swBe.importTokens[tokenUUID] = &importTokenData{
-		privateKey: sealed,
-		publicKey:  &rsaKey.PublicKey,
-		algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
-		expiresAt:  time.Now().Add(-1 * time.Hour), // Already expired
-		keySpec:    "AES_256",
+	swBe.importTokens = importtoken.New[*importTokenData](time.Nanosecond, importtoken.DefaultMaxTokens, (*importTokenData).destroy)
+	wrappingKey, wrapErr := importtoken.NewSealedRSAKey(rsaKey)
+	if wrapErr != nil {
+		t.Fatalf("NewSealedRSAKey failed: %v", wrapErr)
 	}
-	swBe.importMu.Unlock()
+	if _, putErr := swBe.importTokens.Put(tokenUUID, &importTokenData{
+		wrappingKey: wrappingKey,
+		algorithm:   backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
+		keySpec:     "AES_256",
+	}); putErr != nil {
+		t.Fatalf("Put failed: %v", putErr)
+	}
+	time.Sleep(time.Millisecond)
 
 	attrs := createAESAttrs("test", 256, types.SymmetricAES256GCM)
 	wrapped := &backend.WrappedKeyMaterial{

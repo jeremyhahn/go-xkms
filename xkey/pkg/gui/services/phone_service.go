@@ -90,6 +90,24 @@ var (
 	// disk as plaintext, so there is no fallback: pairing and connecting both
 	// refuse rather than writing or reading it unsealed.
 	ErrPhoneBarrierRequired = errors.New("phone_service: sealing/unsealing the local Noise private key requires an unsealed barrier")
+
+	// ErrPhoneInvalidDeviceName indicates the phone-confirmed pairing name
+	// failed validation: empty, too long, or containing a non-printable
+	// character. The name is untrusted input from the peer, and it becomes
+	// the persisted record's lookup key, so it is validated before it is
+	// ever stored or used (#1307). See pairing.ValidateDeviceName.
+	ErrPhoneInvalidDeviceName = errors.New("phone_service: invalid device name")
+
+	// ErrPhoneDeviceNameCollision indicates the phone-confirmed pairing name
+	// is already used by a different paired device -- one pinned to a
+	// different Noise static key, not the device being (re-)paired. See
+	// pairing.ConflictingPairedDevice.
+	ErrPhoneDeviceNameCollision = errors.New("phone_service: device name is already used by a different paired device")
+
+	// ErrPhoneDeviceNameAmbiguous indicates more than one paired device
+	// record has the requested name, so a lookup by name cannot choose
+	// between them. See pairing.FindPairedDeviceByName.
+	ErrPhoneDeviceNameAmbiguous = errors.New("phone_service: more than one paired device has this name")
 )
 
 // devicesConfigFileName is the config file shared with the CLI.
@@ -324,6 +342,57 @@ type PhoneService struct {
 	// retainedKeys holds static keys a teardown could not prove unreferenced.
 	// They are never destroyed; see closeActiveConnectionLocked.
 	retainedKeys []*pairing.StaticKey
+
+	// policy is the enterprise policy section gating the attested-application
+	// allow-list (#1305), but ONLY ever a genuinely VERIFIED section -- never
+	// a startup placeholder. See SetPolicy, applyVerifiedEnterprisePolicy in
+	// pkg/gui/enterprise_policy.go, and ResolvedApplicationPolicy for how it
+	// combines with devices.yaml's own allow-list and enterpriseSealed below.
+	//
+	// This is deliberately NOT the same pattern AppService, PINService,
+	// TrustService, AuditService, SealService and APIExplorerService use for
+	// their own PolicySection-gated features, where the GUI installs
+	// config.DefaultPolicy() at startup as a stand-in until SO login verifies
+	// the real section. That stand-in is safe for THEIR gates because
+	// DefaultPolicy() is the secure state for a UserCan*/*Enabled switch. It
+	// is NOT safe here: DefaultPolicy() leaves LockPairingApplicationPolicy
+	// unset, so installing it here would make ResolvedApplicationPolicy read
+	// "not locked" and fall back to devices.yaml -- letting anyone who can
+	// edit devices.yaml pair or re-attest under a deployment that intends to
+	// lock the allow-list, simply by not waiting for (or never triggering)
+	// an SO login. So policy stays nil until SetPolicy is called with an
+	// ACTUALLY verified section, and enterpriseSealed is what lets
+	// ResolvedApplicationPolicy tell "nil because personal mode" apart from
+	// "nil because sealed and not yet verified".
+	policy atomic.Pointer[config.PolicySection]
+
+	// enterpriseSealed records whether this machine's config directory is an
+	// enterprise (HMAC-sealed) deployment at all, set once at GUI startup
+	// (config.IsEnterpriseMode) via SetEnterpriseSealed and immutable
+	// afterward -- whether the section has been verified in THIS run does
+	// not change whether one exists to verify. See ResolvedApplicationPolicy.
+	enterpriseSealed atomic.Bool
+}
+
+// SetPolicy installs the VERIFIED enterprise policy section that gates the
+// attested-application allow-list ResolvedApplicationPolicy resolves against
+// (#1305). Call it ONLY with a section that has actually verified under the
+// SO PIN -- applyVerifiedEnterprisePolicy in pkg/gui/enterprise_policy.go is
+// the one caller, reached from AuthService.LoginSO once verification
+// succeeds. Never call it with config.DefaultPolicy() or any other
+// unverified placeholder; see the policy field's own comment for why that
+// would defeat the lock. A personal-mode deployment (no enterprise plane at
+// all) simply never calls this, and policy stays nil.
+func (s *PhoneService) SetPolicy(pol *config.PolicySection) {
+	s.policy.Store(pol)
+}
+
+// SetEnterpriseSealed records whether this machine's config directory is a
+// sealed (enterprise) deployment, resolved once at GUI startup
+// (config.IsEnterpriseMode) and passed here before any pairing or
+// re-attestation is attempted. See ResolvedApplicationPolicy.
+func (s *PhoneService) SetEnterpriseSealed(sealed bool) {
+	s.enterpriseSealed.Store(sealed)
 }
 
 // connNotice is a connection-status transition decided under connMu and
@@ -732,7 +801,14 @@ func (s *PhoneService) pairOverTransport(
 		return nil, phone.ErrPairingRejected
 	}
 
+	// phoneName is untrusted input the phone chose (and just confirmed over
+	// the encrypted channel), and it becomes this record's lookup key below,
+	// so it is validated before anything else uses it (#1307).
 	phoneName := pairingResult.DeviceName
+	if err := pairing.ValidateDeviceName(phoneName); err != nil {
+		s.log.Error("pairing refused: invalid device name", "error", err)
+		return nil, errors.Join(ErrPhoneInvalidDeviceName, err)
+	}
 	remotePublicKey := session.RemoteStaticPublicKey()
 
 	// The record is loaded BEFORE the attestation because the user plane of
@@ -795,16 +871,31 @@ func (s *PhoneService) pairOverTransport(
 		s.emitAttestationEvent(phoneName, true, "pairing attestation verified: "+attestResult.SecurityLevel)
 	}
 
-	// Replace existing device with same address, or append.
-	replaced := false
-	for i := range cfg.Devices {
-		if cfg.Devices[i].Address == address {
-			cfg.Devices[i] = cfgDevice
-			replaced = true
-			break
+	// Refuse a name that already belongs to a different, still-paired device
+	// (#1307). Re-pairing the SAME device -- matched below by address or by
+	// its pinned key -- is allowed; persisting a second device under a name
+	// already in use is not, because it would make every later name lookup
+	// ambiguous between them.
+	if conflict := pairing.ConflictingPairedDevice(cfg.Devices, phoneName, address, cfgDevice.NoisePublicKey); conflict != nil {
+		s.log.Error("pairing refused: device name already used by a different paired device",
+			"device", phoneName, "conflicting_address", conflict.Address)
+		return nil, &DetailError{
+			Err:    ErrPhoneDeviceNameCollision,
+			Detail: fmt.Sprintf(": %q is already paired at address %s", phoneName, conflict.Address),
 		}
 	}
-	if !replaced {
+
+	// Replace every existing record that identifies the SAME device --
+	// matched by address or by its pinned Noise key, which survives
+	// Android's RPA address rotation -- with the fresh record, rather than
+	// only by address: a phone reconnecting under a rotated address used to
+	// be appended as a second entry instead of replacing its stale one. The
+	// name collision above is refused outright, so this only ever needs to
+	// consider records that are provably the same device.
+	sameDevice := pairing.SamePairedDeviceIndices(cfg.Devices, address, cfgDevice.NoisePublicKey)
+	if len(sameDevice) > 0 {
+		cfg.Devices = pairing.ReplacePairedDevices(cfg.Devices, sameDevice, cfgDevice)
+	} else {
 		cfg.Devices = append(cfg.Devices, cfgDevice)
 	}
 	if cfg.DefaultDevice == "" {
@@ -909,17 +1000,26 @@ func (s *PhoneService) Unpair(name string) error {
 		return ErrPhoneDeviceNotFound
 	}
 
+	// Looked up through pairing.FindPairedDeviceByName rather than taking the
+	// first name match (#1307): if the devices file ever holds two records
+	// with the same name, guessing which one to delete is exactly the wrong
+	// failure mode for an unpair.
+	device, err := pairing.FindPairedDeviceByName(cfg.Devices, name)
+	if err != nil {
+		s.log.Error("unpair refused: ambiguous device name", "device", name, "error", err)
+		return errors.Join(ErrPhoneDeviceNameAmbiguous, err)
+	}
+	if device == nil {
+		return ErrPhoneDeviceNotFound
+	}
+
 	idx := -1
 	for i := range cfg.Devices {
-		if cfg.Devices[i].Name == name {
+		if &cfg.Devices[i] == device {
 			idx = i
 			break
 		}
 	}
-	if idx == -1 {
-		return ErrPhoneDeviceNotFound
-	}
-
 	cfg.Devices = append(cfg.Devices[:idx], cfg.Devices[idx+1:]...)
 	if cfg.DefaultDevice == name {
 		if len(cfg.Devices) > 0 {
@@ -1058,12 +1158,14 @@ func (s *PhoneService) Connect(name string) error {
 		return ErrPhoneDeviceNotFound
 	}
 
-	var device *phoneConfigDevice
-	for i := range cfg.Devices {
-		if cfg.Devices[i].Name == name {
-			device = &cfg.Devices[i]
-			break
-		}
+	// Looked up through pairing.FindPairedDeviceByName rather than taking the
+	// first name match (#1307): this lookup decides which pinned Noise key
+	// the connection trusts, so an ambiguous name must refuse rather than
+	// silently connect against whichever record happens to be listed first.
+	device, err := pairing.FindPairedDeviceByName(cfg.Devices, name)
+	if err != nil {
+		s.log.Error("connect refused: ambiguous device name", "device", name, "error", err)
+		return errors.Join(ErrPhoneDeviceNameAmbiguous, err)
 	}
 	if device == nil {
 		return ErrPhoneDeviceNotFound
@@ -2159,20 +2261,55 @@ func (s *PhoneService) awaitNoticesDelivered() bool {
 var noticeDeliveryTimeout = 30 * time.Second
 
 // loadAttestationTrust builds what every attestation this service performs is
-// judged against: the trust store's Android hardware roots and devices.yaml's
-// attested-application allow-list (#1305), through the same
-// attestation.LoadTrust the CLI calls.
+// judged against: the trust store's Android hardware roots and the
+// attested-application allow-list, resolved across devices.yaml and, while
+// this service's verified enterprise policy locks it, the SO's allow-list
+// instead (#1305) -- through the same attestation.LoadTrust the CLI calls.
 //
 // A missing devices.yaml allow-lists nothing, so LoadTrust refuses with
-// pairing.ErrApplicationPolicyUnconfigured. One that exists but cannot be read
-// refuses outright: it may well be the file that lists the allowed builds, and
-// guessing that it does not is how an unreadable policy becomes no policy.
+// pairing.ErrApplicationPolicyUnconfigured, unless an enterprise policy is
+// locked and configured. One that exists but cannot be read refuses outright:
+// it may well be the file that lists the allowed builds, and guessing that it
+// does not is how an unreadable policy becomes no policy. A sealed enterprise
+// deployment whose policy has not yet verified in this run refuses with
+// xkeyAttestation.ErrApplicationPolicyUnverifiable -- see
+// ResolvedApplicationPolicy.
 func (s *PhoneService) loadAttestationTrust() (*xkeyAttestation.Trust, error) {
 	cfg, err := s.loadConfig()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, &SentinelCauseError{Sentinel: ErrPhoneAttestFailed, Cause: err}
 	}
-	return xkeyAttestation.LoadTrust(s.trustStore, cfg.applicationPolicy())
+	apps, err := s.ResolvedApplicationPolicy(cfg.applicationPolicy())
+	if err != nil {
+		return nil, err
+	}
+	return xkeyAttestation.LoadTrust(s.trustStore, apps)
+}
+
+// ResolvedApplicationPolicy returns the attested-application allow-list a
+// pairing or re-attestation would judge against right now: userPolicy as
+// devices.yaml states it, overridden outright by this service's verified
+// enterprise policy while LockPairingApplicationPolicy is set (#1305).
+//
+// A sealed (enterprise) deployment whose policy has not yet verified in this
+// run -- no SO has logged in since the GUI started -- refuses with
+// xkeyAttestation.ErrApplicationPolicyUnverifiable rather than falling back
+// to devices.yaml: which allow-list a locked deployment intends is unknown
+// until the section verifies, so a device must not be pairable or
+// re-attestable under an unverified guess at it. Only a genuinely personal
+// (unsealed) deployment falls through to devices.yaml.
+//
+// It is loadAttestationTrust's resolution exposed on its own so a caller —
+// chiefly a test pinning applyCapabilityPolicy's wiring — can observe which
+// plane governs without opening a trust store.
+func (s *PhoneService) ResolvedApplicationPolicy(userPolicy pairing.ApplicationPolicy) (pairing.ApplicationPolicy, error) {
+	if verified := s.policy.Load(); verified != nil {
+		return xkeyAttestation.ResolveApplicationPolicy(userPolicy, verified), nil
+	}
+	if s.enterpriseSealed.Load() {
+		return pairing.ApplicationPolicy{}, xkeyAttestation.ErrApplicationPolicyUnverifiable
+	}
+	return userPolicy, nil
 }
 
 // loadConfig loads the phone config from the shared YAML file.

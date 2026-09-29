@@ -30,7 +30,6 @@ import (
 func MountChi(r chi.Router, h *Handler) {
 	r.Post("/registration/begin", h.BeginRegistration)
 	r.Post("/registration/finish", h.FinishRegistration)
-	r.Get("/registration/status", h.RegistrationStatus)
 	r.Post("/login/begin", h.BeginLogin)
 	r.Post("/login/finish", h.FinishLogin)
 }
@@ -55,7 +54,6 @@ type MuxRoute interface {
 func MountMux(r MuxRouter, h *Handler) {
 	r.HandleFunc("/registration/begin", h.BeginRegistration).Methods("POST")
 	r.HandleFunc("/registration/finish", h.FinishRegistration).Methods("POST")
-	r.HandleFunc("/registration/status", h.RegistrationStatus).Methods("GET")
 	r.HandleFunc("/login/begin", h.BeginLogin).Methods("POST")
 	r.HandleFunc("/login/finish", h.FinishLogin).Methods("POST")
 }
@@ -73,7 +71,6 @@ func MountMux(r MuxRouter, h *Handler) {
 func MountStdlib(mux *http.ServeMux, prefix string, h *Handler) {
 	mux.HandleFunc(prefix+"/registration/begin", h.BeginRegistration)
 	mux.HandleFunc(prefix+"/registration/finish", h.FinishRegistration)
-	mux.HandleFunc(prefix+"/registration/status", h.RegistrationStatus)
 	mux.HandleFunc(prefix+"/login/begin", h.BeginLogin)
 	mux.HandleFunc(prefix+"/login/finish", h.FinishLogin)
 }
@@ -98,7 +95,6 @@ func (h *Handler) Routes() []RouteEntry {
 	return []RouteEntry{
 		{Method: "POST", Path: "/registration/begin", Handler: h.BeginRegistration},
 		{Method: "POST", Path: "/registration/finish", Handler: h.FinishRegistration},
-		{Method: "GET", Path: "/registration/status", Handler: h.RegistrationStatus},
 		{Method: "POST", Path: "/login/begin", Handler: h.BeginLogin},
 		{Method: "POST", Path: "/login/finish", Handler: h.FinishLogin},
 	}
@@ -120,8 +116,6 @@ func (h *Handler) HandlerFunc() http.HandlerFunc {
 			h.BeginRegistration(w, r)
 		case "/registration/finish":
 			h.FinishRegistration(w, r)
-		case "/registration/status":
-			h.RegistrationStatus(w, r)
 		case "/login/begin":
 			h.BeginLogin(w, r)
 		case "/login/finish":

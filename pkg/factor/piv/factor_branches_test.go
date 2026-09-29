@@ -213,10 +213,11 @@ func TestPIVFactor_Verify_RejectsMalformedPEM(t *testing.T) {
 		t.Fatalf("Challenge: %v", err)
 	}
 
+	ch.MethodData[methodDataEnrolledCert] = "not a PEM block"
+
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	err = f.Verify(context.Background(), ch, &qrdbsdk.AuthFactorResponse{
-		Value:    []byte("ignored"),
-		Metadata: map[string]string{"public_key_pem": "not a PEM block"},
+		Value: []byte("ignored"),
 	})
 	if !errors.As(err, &failed) {
 		t.Fatalf("expected VerificationFailedError, got %v", err)
@@ -246,10 +247,11 @@ func TestPIVFactor_Verify_RejectsNonECDSAPublicKey(t *testing.T) {
 		t.Fatalf("Challenge: %v", err)
 	}
 
+	ch.MethodData[methodDataEnrolledCert] = string(rsaPubPEM)
+
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	err = f.Verify(context.Background(), ch, &qrdbsdk.AuthFactorResponse{
-		Value:    []byte("ignored"),
-		Metadata: map[string]string{"public_key_pem": string(rsaPubPEM)},
+		Value: []byte("ignored"),
 	})
 	if !errors.As(err, &failed) {
 		t.Fatalf("expected VerificationFailedError, got %v", err)
@@ -360,8 +362,7 @@ func TestVerifyECDSA_RejectsWrongNonceSignature(t *testing.T) {
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	err = f.Verify(context.Background(), ch, &qrdbsdk.AuthFactorResponse{
-		Value:    sig,
-		Metadata: map[string]string{"public_key_pem": string(enrollment.PublicKey)},
+		Value: sig,
 	})
 	if !errors.As(err, &failed) {
 		t.Fatalf("expected VerificationFailedError, got %v", err)

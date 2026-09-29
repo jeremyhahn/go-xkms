@@ -15,19 +15,26 @@ package pairing
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // errTestCredentialNotFound is returned by the in-memory sync accessor
@@ -47,13 +54,19 @@ func certFingerprintForTest(cert *x509.Certificate) string {
 }
 
 // memoryTrustStore is a minimal in-memory sync.TrustStoreAccessor used to
-// exercise the bridge's remote.sync* handlers end to end.
+// exercise the bridge's remote.sync* handlers end to end. It records the
+// purpose each certificate was imported under so tests can prove what a
+// paired device's certificates are filed as.
 type memoryTrustStore struct {
-	certs map[string]*x509.Certificate
+	certs    map[string]*x509.Certificate
+	purposes map[string]truststore.CertPurpose
 }
 
 func newMemoryTrustStore() *memoryTrustStore {
-	return &memoryTrustStore{certs: make(map[string]*x509.Certificate)}
+	return &memoryTrustStore{
+		certs:    make(map[string]*x509.Certificate),
+		purposes: make(map[string]truststore.CertPurpose),
+	}
 }
 
 func (m *memoryTrustStore) Certificates() ([]*x509.Certificate, error) {
@@ -73,21 +86,26 @@ func (m *memoryTrustStore) Contains(fingerprint string) (bool, error) {
 	return ok, nil
 }
 
-func (m *memoryTrustStore) AddPEM(pemData []byte) (int, error) {
+func (m *memoryTrustStore) ImportPEM(pemData []byte, opts *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
 	block, _ := pem.Decode(pemData)
 	if block == nil {
-		return 0, errors.New("test: invalid PEM")
+		return truststore.ImportResult{}, errors.New("test: invalid PEM")
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return 0, err
+		return truststore.ImportResult{}, err
 	}
 	fp := certFingerprintForTest(cert)
 	if _, exists := m.certs[fp]; exists {
-		return 0, nil
+		return truststore.ImportResult{Skipped: 1}, nil
+	}
+	purpose := truststore.ClassifyCertificate(cert)
+	if opts != nil && opts.Purpose != "" {
+		purpose = opts.Purpose
 	}
 	m.certs[fp] = cert
-	return 1, nil
+	m.purposes[fp] = purpose
+	return truststore.ImportResult{Added: 1}, nil
 }
 
 // memoryOATHAccessor is a minimal in-memory sync.OATHAccessor.
@@ -264,6 +282,141 @@ func TestBridge_HandleSyncTrustStore_Success(t *testing.T) {
 	result2 := decodeResult[RemoteSyncTrustStoreResult](t, resp2)
 	assert.Equal(t, 0, result2.Added)
 	assert.Equal(t, 1, result2.Skipped)
+}
+
+// newForgedGoogleAttestationRoot mints the #1304 attack certificate: a
+// self-signed CA whose DN claims to be a Google hardware attestation root.
+func newForgedGoogleAttestationRoot(t *testing.T) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1304),
+		Subject: pkix.Name{
+			CommonName:   "Google Hardware Attestation Root",
+			Organization: []string{"Google LLC"},
+		},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return cert
+}
+
+// TestBridge_HandleSyncTrustStore_ForgedAnchorIsQuarantined is the #1304
+// attack through the phone-facing method: a paired phone pushes a
+// self-signed "Google ... Attestation" CA over remote.syncTrustStore. The
+// laptop records it under the synced quarantine, never as an Android
+// hardware anchor or a user CA.
+func TestBridge_HandleSyncTrustStore_ForgedAnchorIsQuarantined(t *testing.T) {
+	svc, ts, _, _ := newTestSyncService(t)
+	b, err := NewBridge(&mockTransportClient{}, &BridgeConfig{Logger: testLogger(), SyncService: svc})
+	require.NoError(t, err)
+
+	forged := newForgedGoogleAttestationRoot(t)
+	fp := certFingerprintForTest(forged)
+	resp := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteSyncTrustStore, RemoteSyncTrustStoreParams{
+		Certificates: []SyncCertificate{{PEM: pemEncodeCertForTest(forged), Fingerprint: fp}},
+	}))
+
+	result := decodeResult[RemoteSyncTrustStoreResult](t, resp)
+	require.Equal(t, 1, result.Added)
+	assert.Equal(t, truststore.PurposeSynced, ts.purposes[fp])
+}
+
+// TestBridge_HandleSyncTrustStore_AuditsTheWrite verifies a phone's trust
+// store write is audited against the device the bridge serves, with what the
+// device sent and what the merge did.
+func TestBridge_HandleSyncTrustStore_AuditsTheWrite(t *testing.T) {
+	svc, _, _, _ := newTestSyncService(t)
+	auditLog := &mockAuditLogger{}
+	b, err := NewBridge(&mockTransportClient{}, &BridgeConfig{
+		Logger:      testLogger(),
+		SyncService: svc,
+		AuditLogger: auditLog,
+		DeviceID:    "AA:BB:CC:DD:EE:01",
+		DeviceName:  "Pixel",
+	})
+	require.NoError(t, err)
+
+	cert := newTestPIVCertificate(t, "phone-cert")
+	resp := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteSyncTrustStore, RemoteSyncTrustStoreParams{
+		Certificates: []SyncCertificate{{PEM: pemEncodeCertForTest(cert), Fingerprint: certFingerprintForTest(cert)}},
+	}))
+	decodeResult[RemoteSyncTrustStoreResult](t, resp)
+
+	require.Len(t, auditLog.entries, 1)
+	entry := auditLog.entries[0]
+	assert.Equal(t, audit.OpSyncApplied, entry.Operation)
+	assert.Equal(t, "AA:BB:CC:DD:EE:01", entry.DeviceID)
+	assert.Equal(t, "Pixel", entry.DeviceName)
+	assert.True(t, entry.Success)
+	assert.Empty(t, entry.Error)
+	assert.Equal(t, xkeysync.DataTypeTrustStore, entry.Details["dataType"])
+	assert.Equal(t, 1, entry.Details["received"])
+	assert.Equal(t, 1, entry.Details["added"])
+	assert.Equal(t, 0, entry.Details["skipped"])
+}
+
+// TestBridge_HandleSyncTrustStore_AuditFailureFailsTheCall pins that a sync
+// write that cannot be audited is reported as a failed sync, without the
+// local audit error text reaching the phone.
+func TestBridge_HandleSyncTrustStore_AuditFailureFailsTheCall(t *testing.T) {
+	svc, _, _, _ := newTestSyncService(t)
+	auditLog := &mockAuditLogger{logErr: errors.New("audit sink unavailable")}
+	b, err := NewBridge(&mockTransportClient{}, &BridgeConfig{
+		Logger:      testLogger(),
+		SyncService: svc,
+		AuditLogger: auditLog,
+	})
+	require.NoError(t, err)
+
+	cert := newTestPIVCertificate(t, "phone-cert")
+	req := newRemoteRequest(MethodRemoteSyncTrustStore, RemoteSyncTrustStoreParams{
+		Certificates: []SyncCertificate{{PEM: pemEncodeCertForTest(cert), Fingerprint: certFingerprintForTest(cert)}},
+	})
+	resp := b.HandleRequest(context.Background(), req)
+
+	assertErrorResponse(t, resp, req.ID, ErrorCodeSyncFailed)
+	assert.NotContains(t, resp.Error.Message, "audit sink unavailable")
+}
+
+// TestBridge_HandleSyncOATH_AuditsAFailedApply verifies a sync write that
+// fails is on record too, as a failure carrying the cause.
+func TestBridge_HandleSyncOATH_AuditsAFailedApply(t *testing.T) {
+	// A service with no OATH accessor refuses every OATH delta.
+	svc, err := xkeysync.NewService(&xkeysync.Config{DeviceName: "test-laptop"},
+		xkeysync.WithTrustStore(newMemoryTrustStore()))
+	require.NoError(t, err)
+
+	auditLog := &mockAuditLogger{}
+	b, err := NewBridge(&mockTransportClient{}, &BridgeConfig{
+		Logger:      testLogger(),
+		SyncService: svc,
+		AuditLogger: auditLog,
+		DeviceID:    "AA:BB:CC:DD:EE:01",
+	})
+	require.NoError(t, err)
+
+	req := newRemoteRequest(MethodRemoteSyncOATH, RemoteSyncOATHParams{
+		Credentials: []SyncOATHCredential{{ID: "cred-1", Name: "example"}},
+	})
+	resp := b.HandleRequest(context.Background(), req)
+	assertErrorResponse(t, resp, req.ID, ErrorCodeSyncFailed)
+
+	require.Len(t, auditLog.entries, 1)
+	entry := auditLog.entries[0]
+	assert.Equal(t, audit.OpSyncApplied, entry.Operation)
+	assert.Equal(t, "AA:BB:CC:DD:EE:01", entry.DeviceID)
+	assert.False(t, entry.Success)
+	assert.Contains(t, entry.Error, xkeysync.ErrOATHSyncFailed.Error())
+	assert.Equal(t, xkeysync.DataTypeOATH, entry.Details["dataType"])
 }
 
 func TestBridge_HandleSyncTrustStore_InvalidParams(t *testing.T) {

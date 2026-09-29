@@ -17,6 +17,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -167,6 +168,55 @@ func TestServer_RecordActivity(t *testing.T) {
 	}
 }
 
+func TestServer_GRPCServerOptions_Plaintext(t *testing.T) {
+	server := testServer(t)
+
+	opts := server.grpcServerOptions(nil)
+
+	// MaxRecvMsgSize, MaxSendMsgSize, ConnectionTimeout, MaxConcurrentStreams,
+	// KeepaliveEnforcementPolicy, the tracking interceptor, and the stats
+	// handler -- no grpc.Creds without a TLS config (go-xkms#1263).
+	const wantPlaintext = 7
+	if len(opts) != wantPlaintext {
+		t.Errorf("expected %d server options without TLS, got %d", wantPlaintext, len(opts))
+	}
+}
+
+func TestServer_GRPCServerOptions_TLSAddsCredentials(t *testing.T) {
+	server := testServer(t)
+
+	plaintext := server.grpcServerOptions(nil)
+	withTLS := server.grpcServerOptions(&tls.Config{MinVersion: tls.VersionTLS13})
+
+	if len(withTLS) != len(plaintext)+1 {
+		t.Errorf("expected TLS config to add exactly one option (grpc.Creds), got %d vs %d", len(withTLS), len(plaintext))
+	}
+}
+
+func TestServer_GRPCServerOptions_HonorsCustomHardeningConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ListenAddress = "localhost:0"
+	cfg.MaxRecvMsgSize = 1024
+	cfg.MaxSendMsgSize = 1024
+	cfg.ConnectionTimeout = 5 * time.Second
+	cfg.MaxConcurrentStreams = 10
+	enrollment, _ := testEnrollmentService(t)
+	server, err := NewServer(cfg, enrollment, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	// A server built from these hardening options must still start and
+	// stop cleanly (mirrors pkg/api/unix's TestGRPCServer_MessageSizeLimits
+	// / TestGRPCServer_ConcurrentStreamLimit seam).
+	if err := server.Start(); err != nil {
+		t.Fatalf("start failed with custom hardening config: %v", err)
+	}
+	if err := server.Stop(); err != nil {
+		t.Fatalf("stop failed with custom hardening config: %v", err)
+	}
+}
+
 func TestServer_BuildTLSConfig_NoCerts(t *testing.T) {
 	server := testServer(t)
 
@@ -195,8 +245,8 @@ func TestServer_BuildTLSConfig_InvalidCerts(t *testing.T) {
 
 // TestServer_BuildTLSConfig_MTLSInstallsRevocationCheck proves the fix for
 // the first security bug: an mTLS server (ClientCAs configured) must wire
-// VerifyPeerCertificate so every connection is checked against the
-// enrollment store and the CA's revocation state, not just chain validity.
+// VerifyConnection so every connection is checked against the enrollment
+// store and the CA's revocation state, not just chain validity.
 func TestServer_BuildTLSConfig_MTLSInstallsRevocationCheck(t *testing.T) {
 	certFile, keyFile, caFile := writeTestServerTLSFiles(t)
 
@@ -215,14 +265,41 @@ func TestServer_BuildTLSConfig_MTLSInstallsRevocationCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildTLSConfig: %v", err)
 	}
-	if tlsConfig.VerifyPeerCertificate == nil {
-		t.Fatal("mTLS config does not install a peer certificate verifier")
+	if tlsConfig.VerifyConnection == nil {
+		t.Fatal("mTLS config does not install a connection verifier")
 	}
 }
 
-// TestServer_VerifyPeerCertificate_EnrolledAgentAccepted proves an agent
+// TestServer_BuildTLSConfig_SessionTicketsDisabled proves the fix for
+// go-xkms#1285: the server never issues session tickets, so a TLS
+// connection can never resume and skip the full handshake - and the
+// VerifyConnection check installed above - that a fresh connection runs.
+func TestServer_BuildTLSConfig_SessionTicketsDisabled(t *testing.T) {
+	certFile, keyFile, caFile := writeTestServerTLSFiles(t)
+
+	cfg := DefaultConfig()
+	cfg.TLSCertFile = certFile
+	cfg.TLSKeyFile = keyFile
+	cfg.TLSCAFile = caFile
+
+	enrollment, _ := testEnrollmentService(t)
+	server, err := NewServer(cfg, enrollment, testLogger())
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	tlsConfig, err := server.buildTLSConfig()
+	if err != nil {
+		t.Fatalf("buildTLSConfig: %v", err)
+	}
+	if !tlsConfig.SessionTicketsDisabled {
+		t.Fatal("server TLS config must disable session tickets (go-xkms#1285)")
+	}
+}
+
+// TestServer_VerifyConnection_EnrolledAgentAccepted proves an agent
 // whose certificate is enrolled and not revoked connects successfully.
-func TestServer_VerifyPeerCertificate_EnrolledAgentAccepted(t *testing.T) {
+func TestServer_VerifyConnection_EnrolledAgentAccepted(t *testing.T) {
 	server, _ := testServerWithStore(t)
 
 	csrPEM := testCSR(t)
@@ -236,15 +313,16 @@ func TestServer_VerifyPeerCertificate_EnrolledAgentAccepted(t *testing.T) {
 	}
 
 	leaf := parseTestCertPEM(t, certPEM)
-	if err := server.verifyPeerCertificate(nil, [][]*x509.Certificate{{leaf}}); err != nil {
+	cs := tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{leaf}}}
+	if err := server.verifyConnection(cs); err != nil {
 		t.Errorf("expected an enrolled agent's certificate to be accepted, got %v", err)
 	}
 }
 
-// TestServer_VerifyPeerCertificate_RevokedCertificateRejected proves the
+// TestServer_VerifyConnection_RevokedCertificateRejected proves the
 // fix for the first security bug: a certificate the CA reports as revoked
 // is refused even though it still chains to the trusted CA.
-func TestServer_VerifyPeerCertificate_RevokedCertificateRejected(t *testing.T) {
+func TestServer_VerifyConnection_RevokedCertificateRejected(t *testing.T) {
 	server, _ := testServerWithStore(t)
 	ca := server.enrollment.ca.(*mockCAService)
 
@@ -260,17 +338,18 @@ func TestServer_VerifyPeerCertificate_RevokedCertificateRejected(t *testing.T) {
 	ca.isRevokedFunc = func(string) (bool, error) { return true, nil }
 
 	leaf := parseTestCertPEM(t, certPEM)
-	err = server.verifyPeerCertificate(nil, [][]*x509.Certificate{{leaf}})
+	cs := tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{leaf}}}
+	err = server.verifyConnection(cs)
 	if !errors.Is(err, ErrCertificateRevoked) {
 		t.Errorf("expected ErrCertificateRevoked, got %v", err)
 	}
 }
 
-// TestServer_VerifyPeerCertificate_UnenrolledCertificateRejected proves the
+// TestServer_VerifyConnection_UnenrolledCertificateRejected proves the
 // fix for the second security bug's connection-time half: a certificate
 // with no matching record in the enrollment store - whether it was never
 // enrolled or was removed - is refused regardless of revocation status.
-func TestServer_VerifyPeerCertificate_UnenrolledCertificateRejected(t *testing.T) {
+func TestServer_VerifyConnection_UnenrolledCertificateRejected(t *testing.T) {
 	server, _ := testServerWithStore(t)
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -293,21 +372,23 @@ func TestServer_VerifyPeerCertificate_UnenrolledCertificateRejected(t *testing.T
 		t.Fatalf("parse certificate: %v", err)
 	}
 
-	err = server.verifyPeerCertificate(nil, [][]*x509.Certificate{{leaf}})
+	cs := tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{leaf}}}
+	err = server.verifyConnection(cs)
 	if !errors.Is(err, ErrAgentNotFound) {
 		t.Errorf("expected ErrAgentNotFound, got %v", err)
 	}
 }
 
-// TestServer_VerifyPeerCertificate_EmptyChain proves the handshake is
+// TestServer_VerifyConnection_EmptyChain proves the handshake is
 // refused, rather than panicking, when no verified chain is available.
-func TestServer_VerifyPeerCertificate_EmptyChain(t *testing.T) {
+func TestServer_VerifyConnection_EmptyChain(t *testing.T) {
 	server, _ := testServerWithStore(t)
 
-	if err := server.verifyPeerCertificate(nil, nil); !errors.Is(err, ErrCertificateInvalid) {
+	if err := server.verifyConnection(tls.ConnectionState{}); !errors.Is(err, ErrCertificateInvalid) {
 		t.Errorf("expected ErrCertificateInvalid, got %v", err)
 	}
-	if err := server.verifyPeerCertificate(nil, [][]*x509.Certificate{{}}); !errors.Is(err, ErrCertificateInvalid) {
+	cs := tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{}}}
+	if err := server.verifyConnection(cs); !errors.Is(err, ErrCertificateInvalid) {
 		t.Errorf("expected ErrCertificateInvalid, got %v", err)
 	}
 }

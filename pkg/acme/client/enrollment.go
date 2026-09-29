@@ -36,6 +36,7 @@ import (
 	"golang.org/x/crypto/acme"
 
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
@@ -475,8 +476,20 @@ func (c *Client) startEnrollServer(config *EnrollmentConfig, idevidCSR *IDevIDCS
 			return
 		}
 
+		// Limit the size of the request body to prevent abuse. This must run
+		// before any read of r.Body: reading first and wrapping afterward
+		// never applies the limit, since the unbounded read has already
+		// buffered the whole body in memory (mirrors enroll01.activateCredentialHandlerWithShutdown).
+		r.Body = http.MaxBytesReader(w, r.Body, acmeserver.MaxRequestBodySize)
+		defer func() { _ = r.Body.Close() }()
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "failed to read body", http.StatusBadRequest)
 			return
 		}
@@ -751,8 +764,20 @@ func (c *Client) startEndorseServer(config *EnrollmentConfig, req ekRequest, tok
 			return
 		}
 
+		// Limit the size of the request body to prevent abuse. This must run
+		// before any read of r.Body: reading first and wrapping afterward
+		// never applies the limit, since the unbounded read has already
+		// buffered the whole body in memory (mirrors enroll01.activateCredentialHandlerWithShutdown).
+		r.Body = http.MaxBytesReader(w, r.Body, acmeserver.MaxRequestBodySize)
+		defer func() { _ = r.Body.Close() }()
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "failed to read body", http.StatusBadRequest)
 			return
 		}

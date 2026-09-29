@@ -60,7 +60,6 @@ export interface FakeAuthMocks {
   webAuthnFinishLogin: ReturnType<typeof vi.fn>;
   webAuthnRegisterBegin: ReturnType<typeof vi.fn>;
   webAuthnRegisterFinish: ReturnType<typeof vi.fn>;
-  webAuthnRegistrationStatus: ReturnType<typeof vi.fn>;
   loginCert: ReturnType<typeof vi.fn>;
 }
 
@@ -82,7 +81,6 @@ export function makeFakeClient(): { client: AuthClientHost; mocks: FakeAuthMocks
     webAuthnFinishLogin: vi.fn(),
     webAuthnRegisterBegin: vi.fn(),
     webAuthnRegisterFinish: vi.fn(),
-    webAuthnRegistrationStatus: vi.fn(async () => ({ registered: false })),
     loginCert: vi.fn(async () => tokenPair('cert-access', 'cert-refresh')),
   };
   const client = { auth: mocks as unknown as AuthApi };

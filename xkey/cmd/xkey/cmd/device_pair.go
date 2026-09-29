@@ -74,17 +74,22 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(devicePairCmd)
 
-	// Pairing flags. --device and --force are per-invocation choices with no
-	// config-file meaning and are read directly off the flag; --timeout is
-	// shared with `device scan` and resolves through resolveDeviceScanTimeout
-	// (device.go), so device.scan_timeout applies here too (go-xkms#1071).
-	devicePairCmd.Flags().String("device", "", "Specific device name or address to pair")
-	devicePairCmd.Flags().Duration("timeout", defaultDeviceScanTimeout,
-		"Scan timeout duration (default: device.scan_timeout, 30s)")
-	devicePairCmd.Flags().Bool("force", false, "Force re-pairing even if already paired")
-	addSOPINFlags(devicePairCmd)
-	addDeviceBarrierFlags(devicePairCmd)
+	registerDevicePairFlags(devicePairCmd)
 }
+
+// Device pair command errors (#1307).
+var (
+	// ErrDeviceNameInvalid indicates the advertised device name failed
+	// validation: empty, too long, or containing a non-printable character.
+	// See pairing.ValidateDeviceName.
+	ErrDeviceNameInvalid = errors.New("device pair: invalid device name")
+
+	// ErrDeviceNameCollision indicates the advertised device name is
+	// already used by a different paired device -- one pinned to a
+	// different Noise static key, not the device being (re-)paired. See
+	// pairing.ConflictingPairedDevice.
+	ErrDeviceNameCollision = errors.New("device pair: device name is already used by a different paired device")
+)
 
 // pairingTransport is what runDevicePair needs from a transport: discovery,
 // a connection to the selected device, and the encrypted channel. The BLE
@@ -299,8 +304,14 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 		}
 	}
 
-	// Determine device name for storage and display
+	// Determine device name for storage and display. This is the BLE
+	// advertised local name -- untrusted input from the device being paired
+	// -- and it becomes the record's lookup key below, so it is validated
+	// before anything else uses it (#1307).
 	deviceName := selectedDevice.DisplayName()
+	if err := pairing.ValidateDeviceName(deviceName); err != nil {
+		return &SentinelCauseError{Sentinel: ErrDeviceNameInvalid, Cause: err}
+	}
 
 	fmt.Printf("\nPairing with \"%s\" (%s)...\n", deviceName, selectedDevice.Address)
 
@@ -441,34 +452,13 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 	pairedDevice := newPairedDeviceRecord(
 		deviceName, selectedDevice.Address, remotePublicKey, noiseKeyField, attestResult)
 
-	// Update or add to configuration.
-	// When force re-pairing, remove all old entries for the same device name
-	// since Android RPA rotation means the address changes across reinstalls.
-	switch {
-	case existingDevice != nil:
-		// Update existing device matched by address
-		for i := range cfg.Devices {
-			if cfg.Devices[i].Address == selectedDevice.Address {
-				cfg.Devices[i] = pairedDevice
-				break
-			}
-		}
-	case force:
-		// Force mode: remove stale entries by name, then add fresh entry.
-		// This handles the case where the phone's BLE address changed
-		// (Android RPA rotation or app reinstall) but the name is the same.
-		filtered := make([]PairedDevice, 0, len(cfg.Devices))
-		for _, d := range cfg.Devices {
-			if d.Name != deviceName {
-				filtered = append(filtered, d)
-			}
-		}
-		filtered = append(filtered, pairedDevice)
-		cfg.Devices = filtered
-	default:
-		// Add new device
-		cfg.Devices = append(cfg.Devices, pairedDevice)
+	// Update or add to configuration; see resolvePairedDevices for the
+	// name-collision refusal and identity-based replacement (#1307).
+	updatedDevices, err := resolvePairedDevices(cfg.Devices, pairedDevice)
+	if err != nil {
+		return err
 	}
+	cfg.Devices = updatedDevices
 
 	// Set as default if first device
 	if cfg.DefaultDevice == "" {
@@ -540,9 +530,73 @@ func performPairingAttestation(
 	return verified.Result, nil
 }
 
+// resolveEnterpriseApplicationPolicy resolves the enterprise plane of the
+// attested-application allow-list (#1305) for loadPairingAttestationTrust,
+// which is called both from a command's own RunE and from deep re-attestation
+// call graphs that thread no *cobra.Command through (see
+// resolveSOPINFromEnv). Only XKEY_SO_PIN can supply the SO PIN here, never
+// --so-pin-stdin, since an unattended reconnect has no operator to answer a
+// stdin prompt. unified is the CLI's own loaded config (GetConfig()) rather
+// than read again here, so a test can supply a fixture the same way
+// resolvePairingPolicy's own unified parameter does.
+//
+// Unlike resolvePairingPolicy's own resolution -- used for the
+// unattestable-pairing WIDEN decision, whose safe fallback is simply the
+// ordinary strict pairing path, still fully functional -- an unverified
+// sealed section has NO safe fallback here: which allow-list a locked
+// deployment intends is unknown until the section verifies, and there is no
+// "ordinary strict path" to degrade to when the question is which
+// application to trust at all. So a genuinely SEALED config directory that
+// does not verify -- no XKEY_SO_PIN, or a PIN that does not match --
+// REFUSES outright with attestation.ErrApplicationPolicyUnverifiable, never
+// silently falling back to devices.yaml. A user (or attacker) able to write
+// devices.yaml but not produce the SO PIN must never be able to bypass a
+// deployment that locks the allow-list merely by leaving the PIN unsupplied.
+//
+// Only a genuinely UNSEALED (personal-mode) config directory falls through
+// to the user's own devices.yaml -- there, the policy section IS the user's
+// own file, so there is nothing to verify and nothing to bypass.
+func resolveEnterpriseApplicationPolicy(unified *xkeyconfig.Config) (*xkeyconfig.PolicySection, error) {
+	configDir := xkeyconfig.ConfigDir()
+	sealed := xkeyconfig.IsEnterpriseMode(configDir)
+
+	if !sealed {
+		// Personal mode: no enterprise plane exists to verify in the first
+		// place. unified may even be nil here -- loadPairingAttestationTrust
+		// runs from contexts that never went through RootCmd's initConfig (a
+		// direct unit test of the trust loader, chiefly) -- and an absent
+		// config in an unsealed directory is still no plane to refuse
+		// against; devices.yaml governs.
+		return nil, nil
+	}
+
+	// Sealed from here on: every exit below either verifies or refuses, and
+	// none of them falls back to devices.yaml.
+	if unified == nil {
+		return nil, &SentinelCauseError{
+			Sentinel: attestation.ErrApplicationPolicyUnverifiable, Cause: xkeyconfig.ErrConfigInvalid}
+	}
+
+	soPIN, err := resolveSOPINFromEnv()
+	if err != nil {
+		return nil, err
+	}
+
+	policy, err := xkeyconfig.LoadVerifiedPolicy(unified, configDir, soPIN)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: attestation.ErrApplicationPolicyUnverifiable, Cause: err}
+	}
+	return &policy.Policy, nil
+}
+
 // loadPairingAttestationTrust builds this machine's Android hardware
-// attestation trust material: the trust store's roots and devices.yaml's
-// attested-application allow-list (#1305).
+// attestation trust material: the trust store's roots and the
+// attested-application allow-list, resolved across the user's devices.yaml
+// and, in a sealed (enterprise) deployment, the SO's allow-list instead once
+// XKEY_SO_PIN verifies it (#1305). A sealed deployment whose section does NOT
+// verify refuses outright -- see resolveEnterpriseApplicationPolicy -- so
+// pairing and re-attestation never run on an application allow-list this
+// machine could not confirm the SO's intent for.
 //
 // It is the CLI's half of a decision whose other half is shared: WHICH store
 // and file to read is per-surface, what to do with them is not. A missing
@@ -555,6 +609,12 @@ func loadPairingAttestationTrust() (_ *attestation.Trust, err error) {
 		return nil, &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
+	enterprise, err := resolveEnterpriseApplicationPolicy(GetConfig())
+	if err != nil {
+		return nil, err
+	}
+	apps := attestation.ResolveApplicationPolicy(devices.applicationPolicy(), enterprise)
+
 	store, err := openTrustStore()
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: attestation.ErrDeviceAttestVerifyFailed, Cause: err}
@@ -565,7 +625,7 @@ func loadPairingAttestationTrust() (_ *attestation.Trust, err error) {
 		}
 	}()
 
-	return attestation.LoadTrust(store, devices.applicationPolicy())
+	return attestation.LoadTrust(store, apps)
 }
 
 // newPairedDeviceRecord builds the persisted record for a freshly paired
@@ -590,6 +650,40 @@ func newPairedDeviceRecord(
 		recordDeviceAttestation(&device, attest)
 	}
 	return device
+}
+
+// resolvePairedDevices returns devices with pairedDevice inserted (#1307).
+//
+// It refuses a name collision with a different, still-paired device
+// (ErrDeviceNameCollision): re-pairing the SAME device is allowed, but
+// persisting a second device under a name already in use would make every
+// later name lookup ambiguous between them. Otherwise every existing record
+// that identifies the SAME device -- matched by address or by its pinned
+// Noise key, which survives Android's RPA address rotation across
+// reinstalls -- is replaced by pairedDevice, unconditionally rather than
+// only under --force: a same-address or same-key match already confirmed
+// itself as this device by completing the handshake, so there is nothing
+// left for --force to gate. A device matching neither is appended.
+//
+// This replaces `--force` deleting every record sharing the advertised
+// name, which could remove an unrelated device's pairing merely because an
+// operator reused its display name; that collision is refused outright
+// above; see pairing.ConflictingPairedDevice, pairing.SamePairedDeviceIndices
+// and pairing.ReplacePairedDevices, which do the matching this sequences.
+func resolvePairedDevices(devices []PairedDevice, pairedDevice PairedDevice) ([]PairedDevice, error) {
+	if conflict := pairing.ConflictingPairedDevice(devices, pairedDevice.Name, pairedDevice.Address, pairedDevice.NoisePublicKey); conflict != nil {
+		return nil, &DetailError{
+			Err: ErrDeviceNameCollision,
+			Detail: fmt.Sprintf(": %q is already paired at address %s; choose a different name or unpair it first",
+				pairedDevice.Name, conflict.Address),
+		}
+	}
+
+	sameDevice := pairing.SamePairedDeviceIndices(devices, pairedDevice.Address, pairedDevice.NoisePublicKey)
+	if len(sameDevice) > 0 {
+		return pairing.ReplacePairedDevices(devices, sameDevice, pairedDevice), nil
+	}
+	return append(devices, pairedDevice), nil
 }
 
 // ErrPairingPolicyRefused indicates the config directory is sealed, an SO

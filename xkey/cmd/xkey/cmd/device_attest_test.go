@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +41,8 @@ func TestSelectDevice_SpecificName(t *testing.T) {
 		DefaultDevice: "Phone A",
 	}
 
-	device := selectDevice(cfg, "Phone B")
+	device, err := selectDevice(cfg, "Phone B")
+	require.NoError(t, err)
 	require.NotNil(t, device)
 	assert.Equal(t, "Phone B", device.Name)
 	assert.Equal(t, "AA:BB:CC:DD:EE:FF", device.Address)
@@ -54,7 +56,8 @@ func TestSelectDevice_SpecificNameNotFound(t *testing.T) {
 		DefaultDevice: "Phone A",
 	}
 
-	device := selectDevice(cfg, "NonExistent")
+	device, err := selectDevice(cfg, "NonExistent")
+	require.NoError(t, err)
 	assert.Nil(t, device)
 }
 
@@ -67,7 +70,8 @@ func TestSelectDevice_DefaultDevice(t *testing.T) {
 		DefaultDevice: "Phone B",
 	}
 
-	device := selectDevice(cfg, "")
+	device, err := selectDevice(cfg, "")
+	require.NoError(t, err)
 	require.NotNil(t, device)
 	assert.Equal(t, "Phone B", device.Name)
 	assert.Equal(t, "AA:BB:CC:DD:EE:FF", device.Address)
@@ -82,7 +86,8 @@ func TestSelectDevice_FirstDeviceFallback(t *testing.T) {
 		DefaultDevice: "",
 	}
 
-	device := selectDevice(cfg, "")
+	device, err := selectDevice(cfg, "")
+	require.NoError(t, err)
 	require.NotNil(t, device)
 	assert.Equal(t, "Phone A", device.Name)
 	assert.Equal(t, "11:22:33:44:55:66", device.Address)
@@ -94,7 +99,8 @@ func TestSelectDevice_EmptyConfig(t *testing.T) {
 		DefaultDevice: "",
 	}
 
-	device := selectDevice(cfg, "")
+	device, err := selectDevice(cfg, "")
+	require.NoError(t, err)
 	assert.Nil(t, device)
 }
 
@@ -110,8 +116,77 @@ func TestSelectDevice_DefaultNotInDevices(t *testing.T) {
 	// selectDevice should then fall through to the first-device fallback (len > 0).
 	// However, the implementation returns nil from findDeviceByName and does not
 	// fall through -- it returns nil. This is the actual behavior.
-	device := selectDevice(cfg, "")
+	device, err := selectDevice(cfg, "")
+	require.NoError(t, err)
 	assert.Nil(t, device)
+}
+
+// TestSelectDevice_AmbiguousName pins #1315: two paired records sharing the
+// requested name must refuse the lookup with ErrDeviceNameAmbiguous rather
+// than silently resolving to the first match in the file.
+func TestSelectDevice_AmbiguousName(t *testing.T) {
+	cfg := &DevicesConfig{
+		Devices: []PairedDevice{
+			{Name: "Shared", Address: "11:22:33:44:55:66"},
+			{Name: "Shared", Address: "AA:BB:CC:DD:EE:FF"},
+		},
+	}
+
+	device, err := selectDevice(cfg, "Shared")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDeviceNameAmbiguous)
+	assert.Nil(t, device)
+}
+
+// TestSelectDevice_AmbiguousDefaultDevice covers the DefaultDevice fallback
+// path, not just an explicit --device name.
+func TestSelectDevice_AmbiguousDefaultDevice(t *testing.T) {
+	cfg := &DevicesConfig{
+		Devices: []PairedDevice{
+			{Name: "Shared", Address: "11:22:33:44:55:66"},
+			{Name: "Shared", Address: "AA:BB:CC:DD:EE:FF"},
+		},
+		DefaultDevice: "Shared",
+	}
+
+	device, err := selectDevice(cfg, "")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDeviceNameAmbiguous)
+	assert.Nil(t, device)
+}
+
+// deviceAttestCommand returns a bare command carrying the same flags the
+// real deviceAttestCmd registers in init(), so runDeviceAttest can be driven
+// directly without touching the package-level singleton another test may
+// have flags set on.
+func deviceAttestCommand(t *testing.T) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "attest"}
+	cmd.Flags().String("device", "", "")
+	cmd.Flags().Bool("no-verify", false, "")
+	cmd.Flags().Duration("timeout", 60*time.Second, "")
+	return cmd
+}
+
+// TestRunDeviceAttest_RefusesAmbiguousDeviceName pins #1315: two paired
+// records sharing a name must refuse `device attest` instead of silently
+// attesting whichever record's key happens to be first in the file.
+func TestRunDeviceAttest_RefusesAmbiguousDeviceName(t *testing.T) {
+	isolateDeviceBarrierHome(t)
+	require.NoError(t, saveDevicesConfig(&DevicesConfig{
+		Devices: []PairedDevice{
+			{Name: "A", Address: "11:22:33:44:55:66"},
+			{Name: "A", Address: "AA:BB:CC:DD:EE:FF"},
+		},
+	}))
+
+	cmd := deviceAttestCommand(t)
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "device", "A"))
+
+	err := runDeviceAttest(cmd, []string{"my-signing-key"})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDeviceNameAmbiguous)
 }
 
 func TestNonceMatches_Matching(t *testing.T) {

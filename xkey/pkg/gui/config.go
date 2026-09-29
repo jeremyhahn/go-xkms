@@ -20,6 +20,8 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/viper"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 // Theme constants.
@@ -161,8 +163,10 @@ type GUIConfig struct {
 	// Empty means auto-select the best available.
 	SealerBackend string `mapstructure:"sealer_backend" json:"sealer_backend,omitempty"`
 
-	// APIExplorerSandboxPolicy is the iframe sandbox directives for the API Explorer preview.
-	// Default: "allow-same-origin allow-scripts allow-forms allow-popups"
+	// APIExplorerSandboxPolicy is the iframe sandbox directives for the API
+	// Explorer preview. Default: config.SafeDefaultAPIExplorerSandboxPolicy.
+	// Never combines allow-scripts with allow-same-origin -- see
+	// config.ValidateAPIExplorerSandboxPolicy and Validate below (go-xkms#1274).
 	APIExplorerSandboxPolicy string `mapstructure:"api_explorer_sandbox_policy" json:"api_explorer_sandbox_policy"`
 
 	// BrowserExtensionEnabled enables browser extension autofill integration.
@@ -215,7 +219,7 @@ func DefaultGUIConfig() *GUIConfig {
 		AppAutoLockMinutes:        15,
 		AppLockOnScreenLock:       true,
 		SetupComplete:             false,
-		APIExplorerSandboxPolicy:  "allow-same-origin allow-scripts allow-forms allow-popups",
+		APIExplorerSandboxPolicy:  config.SafeDefaultAPIExplorerSandboxPolicy,
 		BrowserExtensionEnabled:   true,
 		DeveloperTools:            true,
 		FIDO2RequireUserPresence:  true,
@@ -244,6 +248,17 @@ func (c *GUIConfig) Validate() error {
 	}
 	if c.AppAutoLockMinutes < 0 {
 		c.AppAutoLockMinutes = 0
+	}
+	// A dangerous or forbidden sandbox policy is never applied, but this
+	// field's default was "allow-same-origin allow-scripts allow-forms
+	// allow-popups" before go-xkms#1274, so every installation that has not
+	// touched Settings since already has the dangerous value persisted on
+	// disk. Rejecting the whole config load/save here would lock every
+	// existing user out at next launch; the field is normalized to the safe
+	// default instead. The frontend validator (sandboxPolicy.ts) is the
+	// layer that explains a rejection when the user is the one setting it.
+	if err := config.ValidateAPIExplorerSandboxPolicy(c.APIExplorerSandboxPolicy); err != nil {
+		c.APIExplorerSandboxPolicy = config.SafeDefaultAPIExplorerSandboxPolicy
 	}
 	return nil
 }

@@ -771,6 +771,36 @@ func TestDeriveKeyECDH_MatchesPeerComputedSecret(t *testing.T) {
 	}
 }
 
+// TestDeriveKeyECDH_DestroyDerivedObjectFailureSurfaces proves that a
+// C_DestroyObject failure on the derived shared-secret object is reported
+// rather than swallowed (go-xkms#1347). The test hook destroys the object
+// itself immediately after the secret has been extracted, so the production
+// defer's own DestroyObject call is guaranteed to fail with
+// CKR_OBJECT_HANDLE_INVALID -- deterministically, with no timing dependency.
+func TestDeriveKeyECDH_DestroyDerivedObjectFailureSurfaces(t *testing.T) {
+	b := newProvisionedBackend(t, "ecdh-destroy-fail")
+	attrs := provisionDerivableECKey(t, b, "ecdh-destroy-fail-key", elliptic.P256())
+
+	peerPrivate, err := ecdh.P256().GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	peerPoint := peerPrivate.PublicKey().Bytes()
+
+	testHookDeriveECDHKeyDerived = func(session pkcs11.SessionHandle, handle pkcs11.ObjectHandle) {
+		require.NoError(t, b.p11ctx.DestroyObject(session, handle),
+			"the test hook's own destroy must succeed so the production defer's destroy is what fails")
+	}
+	t.Cleanup(func() { testHookDeriveECDHKeyDerived = nil })
+
+	session := openWritableSession(t, b)
+	privHandle, err := b.findPrivateKeyHandle(session, attrs)
+	require.NoError(t, err)
+
+	secret, err := b.deriveECDH(session, privHandle, peerPoint, elliptic.P256())
+	require.Error(t, err, "a destroy failure on the derived object must not be discarded")
+	assert.ErrorIs(t, err, ErrDerivedSecretNotDestroyed)
+	assert.NotEmpty(t, secret, "the secret was already extracted successfully before the destroy failure")
+}
+
 // TestDeriveKeyECDH_AcceptsRawPointAndSPKI proves the two accepted peer key
 // encodings name the same key. A caller that sends a bare uncompressed point
 // must get the identical derived key as one that sends SubjectPublicKeyInfo.

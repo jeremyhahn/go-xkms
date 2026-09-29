@@ -43,7 +43,6 @@ const fakeClient: AuthClientHost = {
     webAuthnFinishLogin,
     webAuthnRegisterBegin: vi.fn(),
     webAuthnRegisterFinish: vi.fn(),
-    webAuthnRegistrationStatus: vi.fn(),
     loginCert: vi.fn(),
   },
   capabilities: { get: capabilitiesGet },
@@ -110,7 +109,6 @@ describe("LoginView", () => {
     webAuthnBeginLogin.mockResolvedValue({
       options: { publicKey: { challenge: "Y2hhbGxlbmdl" } },
       sessionId: "sess-1",
-      userId: "user-1",
     });
     getAssertion.mockResolvedValue({
       id: "cred-1",

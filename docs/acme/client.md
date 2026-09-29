@@ -16,7 +16,7 @@ The ACME client package provides a complete implementation for interacting with 
 | **Challenge Resolver** | Pluggable solvers with preference ordering |
 | **ARI Support** | RFC 9773 Renewal Information for smart renewal |
 | **Pre-Authorization** | Batch authorization before order creation |
-| **Auto-Renewal** | Configurable automatic certificate renewal |
+| **Auto-Renewal** | Automatic certificate renewal via `pkg/acme/client/service.RenewalOrchestrator` |
 | **Retry Logic** | Configurable retries with exponential backoff |
 | **OCSP Stapling** | Fetch and validate OCSP responses for stapling |
 | **Chain Selection** | Select preferred certificate chains |
@@ -131,34 +131,6 @@ type Config struct {
 
     // MaxRetryDelay for exponential backoff (default: 30s)
     MaxRetryDelay time.Duration
-}
-```
-
-### Renewal Configuration
-
-```go
-type RenewalConfig struct {
-    // Enabled indicates whether auto-renewal is enabled
-    Enabled bool
-
-    // CheckInterval for renewal checks (default: 24h)
-    CheckInterval time.Duration
-
-    // RenewalThreshold as fraction of validity (default: 0.33)
-    // 0.33 means renew when 1/3 of validity remains
-    RenewalThreshold float64
-
-    // MaxRetries for renewal attempts (default: 5)
-    MaxRetries int
-
-    // RetryInterval between attempts (default: 1h)
-    RetryInterval time.Duration
-
-    // NotifyOnSuccess logs successful renewals
-    NotifyOnSuccess bool
-
-    // NotifyOnFailure logs failed renewals
-    NotifyOnFailure bool
 }
 ```
 

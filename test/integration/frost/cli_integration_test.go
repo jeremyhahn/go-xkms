@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +29,7 @@ func TestCLI_FrostCommand(t *testing.T) {
 	assert.Contains(t, output, "FROST", "Should show FROST description")
 	assert.Contains(t, output, "threshold signing", "Should explain threshold signing")
 	assert.Contains(t, output, "keygen", "Should list keygen subcommand")
+	assert.Contains(t, output, "recipient", "Should list recipient subcommand")
 	assert.Contains(t, output, "list", "Should list list subcommand")
 	assert.Contains(t, output, "round1", "Should list round1 subcommand")
 	assert.Contains(t, output, "round2", "Should list round2 subcommand")
@@ -167,8 +169,9 @@ func TestCLI_FrostSigningWorkflow(t *testing.T) {
 	keyID := "cli-signing-key"
 	message := "Hello, FROST CLI!"
 
-	// Step 1: Dealer generates all key packages
-	output, err := runCLI(
+	// Step 1: Each participant creates a recipient key; the dealer generates
+	// all key packages, each encrypted to its participant's recipient key
+	output, err := runCLI(append([]string{
 		"--transport", "embedded",
 		"--key-dir", dealerDir,
 		"frost", "keygen",
@@ -177,7 +180,7 @@ func TestCLI_FrostSigningWorkflow(t *testing.T) {
 		"--total", "2",
 		"--participants", "alice,bob",
 		"--export-dir", exportDir,
-	)
+	}, recipientFlags(t, participant1Dir, participant2Dir)...)...)
 	require.NoError(t, err, "keygen should succeed: %s", output)
 	t.Log("Dealer generated and exported key packages")
 
@@ -188,6 +191,21 @@ func TestCLI_FrostSigningWorkflow(t *testing.T) {
 	require.NoError(t, err, "Package 1 should exist")
 	_, err = os.Stat(package2)
 	require.NoError(t, err, "Package 2 should exist")
+
+	// The exported package carries no plaintext share
+	package1Data, err := os.ReadFile(package1)
+	require.NoError(t, err)
+	assert.NotContains(t, string(package1Data), "secret_share", "export must not hold a plaintext share")
+
+	// A participant cannot import another participant's package
+	output, err = runCLI(
+		"--transport", "embedded",
+		"--key-dir", participant2Dir,
+		"frost", "import",
+		"--package", package1,
+	)
+	require.Error(t, err, "bob must not be able to import alice's package")
+	assert.Contains(t, output, "different recipient key")
 
 	// Step 2: Each participant imports their package
 	output, err = runCLI(
@@ -312,7 +330,7 @@ func TestCLI_FrostSigningWithFile(t *testing.T) {
 	require.NoError(t, err)
 
 	// Step 1: Dealer generates and exports all packages
-	_, err = runCLI(
+	_, err = runCLI(append([]string{
 		"--transport", "embedded",
 		"--key-dir", dealerDir,
 		"frost", "keygen",
@@ -321,7 +339,7 @@ func TestCLI_FrostSigningWithFile(t *testing.T) {
 		"--total", "2",
 		"--participants", "signer1,signer2",
 		"--export-dir", exportDir,
-	)
+	}, recipientFlags(t, participant1Dir, participant2Dir)...)...)
 	require.NoError(t, err)
 
 	// Step 2: Participants import their packages
@@ -432,7 +450,7 @@ func TestCLI_FrostSigningWithHex(t *testing.T) {
 	messageHex := hex.EncodeToString(messageBytes)
 
 	// Step 1: Dealer generates and exports all packages (secp256k1 for blockchain)
-	_, err := runCLI(
+	_, err := runCLI(append([]string{
 		"--transport", "embedded",
 		"--key-dir", dealerDir,
 		"frost", "keygen",
@@ -442,7 +460,7 @@ func TestCLI_FrostSigningWithHex(t *testing.T) {
 		"--total", "2",
 		"--participants", "wallet1,wallet2",
 		"--export-dir", exportDir,
-	)
+	}, recipientFlags(t, participant1Dir, participant2Dir)...)...)
 	require.NoError(t, err)
 
 	// Step 2: Participants import their packages
@@ -583,6 +601,26 @@ func TestCLI_FrostAllAlgorithms(t *testing.T) {
 			t.Logf("%s key generation via CLI successful", algo)
 		})
 	}
+}
+
+// recipientFlags creates a recipient key in each participant key directory
+// with `frost recipient` and returns the dealer keygen --recipient flags
+// naming them, participant i+1 for participantDirs[i].
+func recipientFlags(t *testing.T, participantDirs ...string) []string {
+	t.Helper()
+	var flags []string
+	for i, dir := range participantDirs {
+		pemPath := filepath.Join(dir, "recipient.pem")
+		output, err := runCLI(
+			"--transport", "embedded",
+			"--key-dir", dir,
+			"frost", "recipient",
+			"--public-key-file", pemPath,
+		)
+		require.NoError(t, err, "frost recipient should succeed: %s", output)
+		flags = append(flags, "--recipient", fmt.Sprintf("%d=%s", i+1, pemPath))
+	}
+	return flags
 }
 
 // runCLI executes the xkms CLI with given arguments

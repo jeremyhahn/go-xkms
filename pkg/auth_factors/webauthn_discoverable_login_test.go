@@ -18,6 +18,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/descope/virtualwebauthn"
@@ -55,6 +57,156 @@ func newEC2Credential(t *testing.T) virtualwebauthn.Credential {
 	return virtualwebauthn.Credential{}
 }
 
+// factorFixture is a WebAuthnFactorVerifier over real in-memory xkms
+// webauthn stores holding one account with an enrolled passkey, plus the
+// qrdb-side factor record that names it.
+type factorFixture struct {
+	v          *WebAuthnFactorVerifier
+	users      *xkmswebauthn.MemoryUserStore
+	rp         virtualwebauthn.RelyingParty
+	credential virtualwebauthn.Credential
+	user       xkmswebauthn.User
+	factor     *qrdbsdk.AuthFactor
+}
+
+// newFactorFixture enrols email's passkey directly against the RP service,
+// the same way BeginRegistration/FinishRegistration do outside the qrdb
+// ceremony (registration is not part of the factor seam).
+func newFactorFixture(t *testing.T, email string) *factorFixture {
+	t.Helper()
+	ctx := context.Background()
+
+	allowPublicRegistration := true
+	cfg := &xkmswebauthn.Config{
+		RPID:                    "localhost",
+		RPDisplayName:           "test",
+		RPOrigins:               []string{"https://localhost"},
+		ResidentKeyRequirement:  "preferred",
+		AllowPublicRegistration: &allowPublicRegistration,
+	}
+	users := xkmswebauthn.NewMemoryUserStore()
+	svc, err := xkmswebauthn.NewService(xkmswebauthn.ServiceParams{
+		Config:          cfg,
+		UserStore:       users,
+		SessionStore:    xkmswebauthn.NewMemorySessionStore(),
+		CredentialStore: xkmswebauthn.NewMemoryCredentialStore(),
+	})
+	if err != nil {
+		t.Fatalf("webauthn service: %v", err)
+	}
+	v, err := NewWebAuthnFactorVerifier(svc)
+	if err != nil {
+		t.Fatalf("verifier: %v", err)
+	}
+
+	f := &factorFixture{
+		v:          v,
+		users:      users,
+		rp:         virtualwebauthn.RelyingParty{Name: cfg.RPDisplayName, ID: cfg.RPID, Origin: cfg.RPOrigins[0]},
+		credential: newEC2Credential(t),
+	}
+
+	regOptions, regSessionID, err := svc.BeginRegistration(ctx, email, "Passkey User")
+	if err != nil {
+		t.Fatalf("BeginRegistration: %v", err)
+	}
+	regOptionsJSON, err := json.Marshal(regOptions.Response)
+	if err != nil {
+		t.Fatalf("marshal registration options: %v", err)
+	}
+	parsedRegOptions, err := virtualwebauthn.ParseAttestationOptions(string(regOptionsJSON))
+	if err != nil {
+		t.Fatalf("parse attestation options: %v", err)
+	}
+	attestationResponse := virtualwebauthn.CreateAttestationResponse(f.rp, virtualwebauthn.NewAuthenticator(), f.credential, *parsedRegOptions)
+	var ccr protocol.CredentialCreationResponse
+	if uErr := json.Unmarshal([]byte(attestationResponse), &ccr); uErr != nil {
+		t.Fatalf("unmarshal attestation response: %v", uErr)
+	}
+	parsedAttResponse, err := ccr.Parse()
+	if err != nil {
+		t.Fatalf("parse attestation response: %v", err)
+	}
+	if _, f.user, err = svc.FinishRegistration(ctx, regSessionID, parsedAttResponse); err != nil {
+		t.Fatalf("FinishRegistration: %v", err)
+	}
+
+	credentials, err := svc.GetCredentials(ctx, f.user.WebAuthnID())
+	if err != nil {
+		t.Fatalf("GetCredentials: %v", err)
+	}
+	if len(credentials) != 1 {
+		t.Fatalf("expected 1 enrolled credential, got %d", len(credentials))
+	}
+
+	// The qrdb-side factor that would have been persisted by FactorClient.
+	// Enroll: its UserID round-trips through xkmswebauthn.HandleFromUserID
+	// to the same handle the WebAuthn user was registered with, exactly as
+	// production factor resolution does.
+	qrdbUserID, err := xkmswebauthn.UserIDFromHandle(f.user.WebAuthnID())
+	if err != nil {
+		t.Fatalf("UserIDFromHandle: %v", err)
+	}
+	f.factor = &qrdbsdk.AuthFactor{
+		ID:         "f-passkey",
+		UserID:     qrdbUserID,
+		Type:       qrdbsdk.AuthFactorFIDO2,
+		Credential: credentials[0].ID,
+	}
+	return f
+}
+
+// setStanding rewrites the enrolled account's lifecycle and auth-method
+// policy in the memory store.
+func (f *factorFixture) setStanding(t *testing.T, state qrdbsdk.Lifecycle, methods []string) {
+	t.Helper()
+	du, ok := f.user.(*xkmswebauthn.DefaultUser)
+	if !ok {
+		t.Fatalf("memory store user is %T, want *DefaultUser", f.user)
+	}
+	du.SetLifecycle(state)
+	du.SetAuthMethods(methods)
+}
+
+// discoverableLogin drives BeginChallenge with an empty hint (the
+// discoverable/usernameless ceremony) followed by Verify, returning Verify's
+// result.
+func (f *factorFixture) discoverableLogin(t *testing.T) error {
+	t.Helper()
+	_, meta, _, err := f.v.BeginChallenge(context.Background(), "system", qrdbtransport.FactorTypeFIDO2, "")
+	if err != nil {
+		t.Fatalf("BeginChallenge: %v", err)
+	}
+	sessionID := meta["session_id"]
+	if sessionID == "" {
+		t.Fatal("BeginChallenge did not return a session_id")
+	}
+	parsedLoginOptions, err := virtualwebauthn.ParseAssertionOptions(meta["options"])
+	if err != nil {
+		t.Fatalf("parse assertion options: %v", err)
+	}
+
+	// The authenticator reports the user handle in the assertion, as a real
+	// passkey does for a client-side discoverable credential.
+	discoverableAuth := virtualwebauthn.NewAuthenticatorWithOptions(virtualwebauthn.AuthenticatorOptions{
+		UserHandle: f.user.WebAuthnID(),
+	})
+	discoverableAuth.AddCredential(f.credential)
+	assertionResponse := virtualwebauthn.CreateAssertionResponse(f.rp, discoverableAuth, f.credential, *parsedLoginOptions)
+
+	// Verify resolves the factor to a non-empty user handle (factor.UserID
+	// != 0) and drives FinishLogin with it, exactly as production does once
+	// qrdb has matched the credential id to an enrolled factor.
+	return f.v.Verify(context.Background(), f.factor, qrdbtransport.VerifyChallenge{
+		Type: qrdbtransport.FactorTypeFIDO2,
+		MethodMetadata: map[string]string{
+			"session_id":    sessionID,
+			"assertion":     assertionResponse,
+			"credential_id": string(f.factor.Credential),
+		},
+	})
+}
+
 // TestWebAuthnFactorVerifier_DiscoverableLogin_BeginToVerify_Succeeds is the
 // full-seam regression for go-xkms#558. It drives the exact production pair
 // the issue traced: WebAuthnFactorVerifier.BeginChallenge (an empty hint, the
@@ -70,131 +222,78 @@ func newEC2Credential(t *testing.T) virtualwebauthn.Credential {
 // real xkms webauthn.Service stores and a real virtualwebauthn assertion
 // through both adapter methods, entirely in memory.
 func TestWebAuthnFactorVerifier_DiscoverableLogin_BeginToVerify_Succeeds(t *testing.T) {
-	ctx := context.Background()
+	f := newFactorFixture(t, "passkey@example.com")
+	if err := f.discoverableLogin(t); err != nil {
+		t.Fatalf("Verify (discoverable login, begin-to-finish): %v", err)
+	}
+}
 
-	allowPublicRegistration := true
-	cfg := &xkmswebauthn.Config{
-		RPID:                    "localhost",
-		RPDisplayName:           "test",
-		RPOrigins:               []string{"https://localhost"},
-		ResidentKeyRequirement:  "preferred",
-		AllowPublicRegistration: &allowPublicRegistration,
+// TestWebAuthnFactorVerifier_RefusesAccountNotInGoodStanding is go-xkms#1298
+// on the qrdb factor seam: a valid passkey must not satisfy the FIDO2 factor
+// of an account that is not active, or whose auth-method policy withdraws
+// WebAuthn.
+func TestWebAuthnFactorVerifier_RefusesAccountNotInGoodStanding(t *testing.T) {
+	cases := map[string]struct {
+		state   qrdbsdk.Lifecycle
+		methods []string
+	}{
+		"suspended":          {state: qrdbsdk.LifecycleSuspended},
+		"disabled":           {state: qrdbsdk.LifecycleDisabled},
+		"locked":             {state: qrdbsdk.LifecycleLocked},
+		"webauthn withdrawn": {state: qrdbsdk.LifecycleActive, methods: []string{"mtls"}},
 	}
-	users := xkmswebauthn.NewMemoryUserStore()
-	creds := xkmswebauthn.NewMemoryCredentialStore()
-	sessions := xkmswebauthn.NewMemorySessionStore()
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFactorFixture(t, "passkey@example.com")
+			f.setStanding(t, tc.state, tc.methods)
 
-	svc, err := xkmswebauthn.NewService(xkmswebauthn.ServiceParams{
-		Config:          cfg,
-		UserStore:       users,
-		SessionStore:    sessions,
-		CredentialStore: creds,
-	})
-	if err != nil {
-		t.Fatalf("webauthn service: %v", err)
+			err := f.discoverableLogin(t)
+			var verifyErr *SignatureVerifyError
+			if !errors.As(err, &verifyErr) {
+				t.Fatalf("Verify = %v, want *SignatureVerifyError", err)
+			}
+			if !strings.Contains(err.Error(), "verification failed") {
+				t.Errorf("Verify error %q does not report a verification failure", err)
+			}
+		})
 	}
-	v, err := NewWebAuthnFactorVerifier(svc)
-	if err != nil {
-		t.Fatalf("verifier: %v", err)
-	}
+}
 
-	rp := virtualwebauthn.RelyingParty{
-		Name:   cfg.RPDisplayName,
-		ID:     cfg.RPID,
-		Origin: cfg.RPOrigins[0],
-	}
-	authenticator := virtualwebauthn.NewAuthenticator()
-	credential := newEC2Credential(t)
+// TestWebAuthnFactorVerifier_BeginChallenge_HintForAccountNotInGoodStanding
+// proves a hint naming an account that may not log in opens the same
+// ceremony an unknown hint does — discoverable, no credentials advertised —
+// while an active account's hint scopes the ceremony to its passkey.
+func TestWebAuthnFactorVerifier_BeginChallenge_HintForAccountNotInGoodStanding(t *testing.T) {
+	const email = "passkey@example.com"
+	f := newFactorFixture(t, email)
 
-	// === Enroll the user's credential directly against the RP service, the
-	// same way BeginRegistration/FinishRegistration do outside the qrdb
-	// ceremony (registration is not part of this seam). ===
-	regOptions, regSessionID, err := svc.BeginRegistration(ctx, "passkey@example.com", "Passkey User")
-	if err != nil {
-		t.Fatalf("BeginRegistration: %v", err)
-	}
-	regOptionsJSON, err := json.Marshal(regOptions.Response)
-	if err != nil {
-		t.Fatalf("marshal registration options: %v", err)
-	}
-	parsedRegOptions, err := virtualwebauthn.ParseAttestationOptions(string(regOptionsJSON))
-	if err != nil {
-		t.Fatalf("parse attestation options: %v", err)
-	}
-	attestationResponse := virtualwebauthn.CreateAttestationResponse(rp, authenticator, credential, *parsedRegOptions)
-	var ccr protocol.CredentialCreationResponse
-	if uErr := json.Unmarshal([]byte(attestationResponse), &ccr); uErr != nil {
-		t.Fatalf("unmarshal attestation response: %v", uErr)
-	}
-	parsedAttResponse, err := ccr.Parse()
-	if err != nil {
-		t.Fatalf("parse attestation response: %v", err)
-	}
-	_, user, err := svc.FinishRegistration(ctx, regSessionID, parsedAttResponse)
-	if err != nil {
-		t.Fatalf("FinishRegistration: %v", err)
-	}
-	authenticator.AddCredential(credential)
-
-	credentials, err := svc.GetCredentials(ctx, user.WebAuthnID())
-	if err != nil {
-		t.Fatalf("GetCredentials: %v", err)
-	}
-	if len(credentials) != 1 {
-		t.Fatalf("expected 1 enrolled credential, got %d", len(credentials))
+	allowed := func(hint string) []protocol.CredentialDescriptor {
+		t.Helper()
+		_, meta, _, err := f.v.BeginChallenge(context.Background(), "system", qrdbtransport.FactorTypeFIDO2, hint)
+		if err != nil {
+			t.Fatalf("BeginChallenge(%q): %v", hint, err)
+		}
+		var options protocol.CredentialAssertion
+		if err := json.Unmarshal([]byte(meta["options"]), &options); err != nil {
+			t.Fatalf("decode options: %v", err)
+		}
+		return options.Response.AllowedCredentials
 	}
 
-	// The qrdb-side factor that would have been persisted by FactorClient.
-	// Enroll: its UserID round-trips through xkmswebauthn.HandleFromUserID
-	// to the same handle the WebAuthn user was registered with, exactly as
-	// production factor resolution does.
-	qrdbUserID, err := xkmswebauthn.UserIDFromHandle(user.WebAuthnID())
-	if err != nil {
-		t.Fatalf("UserIDFromHandle: %v", err)
+	if got := allowed(email); len(got) != 1 {
+		t.Fatalf("active account hint advertised %d credentials, want 1", len(got))
 	}
-	factor := &qrdbsdk.AuthFactor{
-		ID:         "f-passkey",
-		UserID:     qrdbUserID,
-		Type:       qrdbsdk.AuthFactorFIDO2,
-		Credential: credentials[0].ID,
+	if got := allowed("nobody@example.com"); len(got) != 0 {
+		t.Fatalf("unknown hint advertised %d credentials, want 0", len(got))
 	}
 
-	// === BeginChallenge with an empty hint: the discoverable/usernameless
-	// ceremony a caller drives when it has no username to key a lookup on. ===
-	_, meta, _, err := v.BeginChallenge(ctx, "system", qrdbtransport.FactorTypeFIDO2, "")
-	if err != nil {
-		t.Fatalf("BeginChallenge: %v", err)
-	}
-	sessionID := meta["session_id"]
-	if sessionID == "" {
-		t.Fatal("BeginChallenge did not return a session_id")
+	f.setStanding(t, qrdbsdk.LifecycleSuspended, nil)
+	if got := allowed(email); len(got) != 0 {
+		t.Fatalf("suspended account hint advertised %d credentials, want the unknown hint's 0", len(got))
 	}
 
-	parsedLoginOptions, err := virtualwebauthn.ParseAssertionOptions(meta["options"])
-	if err != nil {
-		t.Fatalf("parse assertion options: %v", err)
-	}
-
-	// The authenticator reports the user handle in the assertion, as a real
-	// passkey does for a client-side discoverable credential.
-	discoverableAuth := virtualwebauthn.NewAuthenticatorWithOptions(virtualwebauthn.AuthenticatorOptions{
-		UserHandle: user.WebAuthnID(),
-	})
-	discoverableAuth.AddCredential(credential)
-	assertionResponse := virtualwebauthn.CreateAssertionResponse(rp, discoverableAuth, credential, *parsedLoginOptions)
-
-	// === Verify: resolves the factor to a non-empty user handle (factor.
-	// UserID != 0) and drives FinishLogin with it, exactly as production
-	// does once qrdb has matched the credential id to an enrolled factor. ===
-	challenge := qrdbtransport.VerifyChallenge{
-		Type: qrdbtransport.FactorTypeFIDO2,
-		MethodMetadata: map[string]string{
-			"session_id":    sessionID,
-			"assertion":     assertionResponse,
-			"credential_id": string(credentials[0].ID),
-		},
-	}
-	if vErr := v.Verify(ctx, factor, challenge); vErr != nil {
-		t.Fatalf("Verify (discoverable login, begin-to-finish): %v", vErr)
+	f.setStanding(t, qrdbsdk.LifecycleActive, []string{"piv"})
+	if got := allowed(email); len(got) != 0 {
+		t.Fatalf("webauthn-withdrawn account hint advertised %d credentials, want 0", len(got))
 	}
 }

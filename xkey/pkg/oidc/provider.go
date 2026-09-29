@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/urlsafety"
 )
 
 const (
@@ -333,6 +335,31 @@ func (p *Provider) Discover(ctx context.Context) error {
 		return ErrMissingJWKSURI
 	}
 
+	// The discovery document is remote, attacker-influenceable content: a
+	// compromised or spoofed IdP could point authorization_endpoint at a
+	// URL that ends up opened in the user's browser (go-xkms#1275), or
+	// point token_endpoint/jwks_uri/etc. at a plaintext or attacker-owned
+	// host. Every endpoint the document supplies must be https, with an
+	// exception for the loopback interface that development IdPs commonly
+	// run on.
+	for _, endpoint := range []struct {
+		name  string
+		value string
+	}{
+		{"authorization_endpoint", metadata.AuthorizationEndpoint},
+		{"token_endpoint", metadata.TokenEndpoint},
+		{"jwks_uri", metadata.JwksURI},
+		{"userinfo_endpoint", metadata.UserinfoEndpoint},
+		{"registration_endpoint", metadata.RegistrationEndpoint},
+		{"revocation_endpoint", metadata.RevocationEndpoint},
+		{"introspection_endpoint", metadata.IntrospectionEndpoint},
+		{"end_session_endpoint", metadata.EndSessionEndpoint},
+	} {
+		if err := validateDiscoveredEndpoint(endpoint.name, endpoint.value); err != nil {
+			return err
+		}
+	}
+
 	// Update provider with discovered endpoints
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -357,6 +384,31 @@ func (p *Provider) Discover(ctx context.Context) error {
 	p.DPoPSigningAlgValuesSupported = metadata.DPoPSigningAlgValuesSupported
 
 	return nil
+}
+
+// validateDiscoveredEndpoint enforces that a discovery-supplied endpoint
+// URL uses https, with an exception for the loopback interface (127.0.0.1,
+// ::1, localhost) commonly used by development identity providers. An
+// empty value is not an error here: FetchJWKS, Discover's own required-
+// endpoint checks above, and the OIDC client already reject an empty
+// endpoint where one is actually required.
+func validateDiscoveredEndpoint(name, endpoint string) error {
+	if endpoint == "" {
+		return nil
+	}
+
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return &DetailError{Err: ErrInsecureEndpoint, Detail: fmt.Sprintf(": %s: %v", name, err)}
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme == "http" && urlsafety.IsLoopbackHost(u.Host) {
+		return nil
+	}
+
+	return &DetailError{Err: ErrInsecureEndpoint, Detail: fmt.Sprintf(": %s has scheme %q", name, u.Scheme)}
 }
 
 // FetchJWKS fetches the JSON Web Key Set from the provider.

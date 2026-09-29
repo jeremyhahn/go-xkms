@@ -163,6 +163,7 @@ Available purposes:
   user-ca           User-created CA certificates
   bootstrap-ca      CA certificates from bootstrap enrollment
   idevid-issuer     CA certificates that issue IDevID certificates
+  synced            Received from a paired device by sync; anchors nothing
 
 Examples:
   # Add a CA certificate
@@ -262,6 +263,7 @@ Available purposes:
   user-ca           User-created CA certificates
   bootstrap-ca      CA certificates from bootstrap enrollment
   idevid-issuer     CA certificates that issue IDevID certificates
+  synced            Received from a paired device by sync; anchors nothing
 
 Examples:
   # Classify a certificate as a TPM manufacturer CA
@@ -326,7 +328,7 @@ func init() {
 
 	// Add command flags
 	trustAddCmd.Flags().String("purpose", "",
-		"certificate purpose (general, tpm-manufacturer, android-hardware, user-ca, bootstrap-ca, idevid-issuer)")
+		"certificate purpose (general, tpm-manufacturer, android-hardware, user-ca, bootstrap-ca, idevid-issuer, synced)")
 	trustAddCmd.Flags().String("source", "",
 		"source of the certificate (e.g., manual, url:..., file:...)")
 
@@ -785,10 +787,14 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) (err error) {
 		}
 	}()
 
+	// The bundle is filed under bootstrap-ca, never auto-classified: the
+	// server chose it, and auto-classification would let it pick an
+	// attestation purpose (#1312).
+	//
 	// Report skips for the same reason `trust add` does: re-running a
 	// bootstrap against an already-trusted CA is the common case, and
 	// "imported: 0" on its own reads as a failure.
-	result, err := store.ImportPEM(resp.PEM, nil)
+	result, err := store.ImportPEM(resp.PEM, truststore.BootstrapImportOptions(bootstrapServer(autoCfg)))
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: err}
 	}
@@ -798,6 +804,16 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) (err error) {
 		_, _ = fmt.Fprintf(out, "Certificates skipped (already present): %d\n", result.Skipped)
 	}
 	return nil
+}
+
+// bootstrapServer names the server a bootstrap fetch reached, for the source
+// recorded on the imported certificates. Only the Noise mode can succeed
+// without a ServerURL, dialing its configured address instead.
+func bootstrapServer(cfg *bootstrap.Config) string {
+	if cfg.ServerURL == "" && cfg.Noise != nil {
+		return cfg.Noise.ServerAddr
+	}
+	return cfg.ServerURL
 }
 
 // buildBootstrapConfig constructs a bootstrap.Config from viper configuration

@@ -26,6 +26,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/stats"
 )
@@ -129,18 +130,7 @@ func (s *Server) Start() error {
 		return &AgentError{Operation: "start_server", Err: err}
 	}
 
-	var grpcOpts []grpc.ServerOption
-	if tlsConfig != nil {
-		grpcOpts = append(grpcOpts, grpc.Creds(credentials.NewTLS(tlsConfig)))
-	}
-
-	// Track agents per RPC (interceptor) and release them when their
-	// connection closes (stats handler).
-	grpcOpts = append(grpcOpts,
-		grpc.UnaryInterceptor(s.trackingUnaryInterceptor),
-		grpc.StatsHandler(connTracker{server: s}))
-
-	grpcServer := grpc.NewServer(grpcOpts...)
+	grpcServer := grpc.NewServer(s.grpcServerOptions(tlsConfig)...)
 
 	s.mu.Lock()
 	s.listener = listener
@@ -368,6 +358,48 @@ func (t connTracker) HandleConn(ctx context.Context, cs stats.ConnStats) {
 	t.server.connectionClosed(tag)
 }
 
+// grpcServerOptions builds the gRPC server options this listener starts
+// with. It bounds four previously-unbounded resources on a listener that
+// accepts connections directly from the network (go-xkms#1263): message
+// size (MaxRecvMsgSize/MaxSendMsgSize), the number of concurrent streams a
+// single connection may open (MaxConcurrentStreams), how long a connection
+// may take to complete its handshake (ConnectionTimeout), and how
+// frequently a peer may send keepalive pings without an active RPC before
+// the server tears the connection down as abusive
+// (KeepaliveEnforcementPolicy). Values mirror the same option set
+// pkg/api/unix/grpc_server.go applies to the Unix-socket listener. s.config
+// is expected to already carry defaulted values -- Config.Validate() (or
+// DefaultConfig()) is the single owner of that defaulting, the same
+// contract every other Config field in this package already follows -- so
+// the two listeners share one hardening posture even though xkey cannot
+// import pkg/* directly (see xkey/CLAUDE.md) and therefore cannot share the
+// option-building code itself.
+func (s *Server) grpcServerOptions(tlsConfig *tls.Config) []grpc.ServerOption {
+	opts := []grpc.ServerOption{
+		grpc.MaxRecvMsgSize(s.config.MaxRecvMsgSize),
+		grpc.MaxSendMsgSize(s.config.MaxSendMsgSize),
+		grpc.ConnectionTimeout(s.config.ConnectionTimeout),
+		grpc.MaxConcurrentStreams(s.config.MaxConcurrentStreams),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime: keepaliveMinPingInterval,
+			// Agent connections are long-lived with bursty RPC traffic
+			// (see agentIdleTimeout); a legitimate agent may hold the
+			// connection open with only keepalive pings between bursts,
+			// so pings without an active stream are permitted as long as
+			// they respect MinTime.
+			PermitWithoutStream: true,
+		}),
+		// Track agents per RPC (interceptor) and release them when their
+		// connection closes (stats handler).
+		grpc.UnaryInterceptor(s.trackingUnaryInterceptor),
+		grpc.StatsHandler(connTracker{server: s}),
+	}
+	if tlsConfig != nil {
+		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsConfig)))
+	}
+	return opts
+}
+
 // buildTLSConfig creates a TLS configuration for the server. Returns nil
 // if no TLS files are configured (plaintext mode).
 func (s *Server) buildTLSConfig() (*tls.Config, error) {
@@ -383,6 +415,17 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS13,
+		// Session tickets are disabled as defence in depth: this server's
+		// agent connections are long-lived and reconnect with their own
+		// backoff (Client.monitorConnection), so there is no latency-
+		// sensitive case here that needs 0-RTT resumption, and disabling
+		// tickets means no connection can ever reach the wire without
+		// running the full handshake - and therefore verifyConnection -
+		// below. VerifyConnection alone (see verifyConnection) is already
+		// resumption-safe, but the two together mean a future change that
+		// re-enables tickets elsewhere in this config cannot silently
+		// reopen the gap fixed here (go-xkms#1285).
+		SessionTicketsDisabled: true,
 	}
 
 	// If a CA file is configured, require and verify client certificates (mTLS).
@@ -397,25 +440,36 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 		}
 		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
 		tlsConfig.ClientCAs = caCertPool
-		tlsConfig.VerifyPeerCertificate = s.verifyPeerCertificate
+		tlsConfig.VerifyConnection = s.verifyConnection
 	}
 
 	return tlsConfig, nil
 }
 
-// verifyPeerCertificate runs after Go's TLS stack has already verified the
-// connecting agent's certificate chains to a trusted CA (tls.Config.ClientCAs).
-// It adds the two checks chain validation alone cannot make: that the
-// certificate has not been revoked, and that it belongs to an agent still
-// present in the enrollment store (a removed agent has no record there,
-// regardless of what its certificate says). Both checks are delegated to
+// verifyConnection is installed as tls.Config.VerifyConnection, not
+// VerifyPeerCertificate: Go calls VerifyConnection on every handshake,
+// including one that resumes a prior session from a ticket, whereas
+// VerifyPeerCertificate is skipped whenever a session resumes because no
+// certificate message is exchanged on that path. A revoked or removed
+// agent holding a still-valid ticket would otherwise keep access for the
+// life of the ticket (go-xkms#1285). Go's TLS stack restores the original
+// handshake's verified chain into ConnectionState.VerifiedChains on a
+// resumed connection as well as a full one, so this runs the same checks
+// either way.
+//
+// By the time this runs, Go has already verified the connecting agent's
+// certificate chain to a trusted CA (tls.Config.ClientCAs). It adds the two
+// checks chain validation alone cannot make: that the certificate has not
+// been revoked, and that it belongs to an agent still present in the
+// enrollment store (a removed agent has no record there, regardless of what
+// its certificate says). Both checks are delegated to
 // EnrollmentService.VerifyAgentCertificate, which fails closed.
-func (s *Server) verifyPeerCertificate(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
-	if len(verifiedChains) == 0 || len(verifiedChains[0]) == 0 {
+func (s *Server) verifyConnection(cs tls.ConnectionState) error {
+	if len(cs.VerifiedChains) == 0 || len(cs.VerifiedChains[0]) == 0 {
 		return ErrCertificateInvalid
 	}
 
-	leaf := verifiedChains[0][0]
+	leaf := cs.VerifiedChains[0][0]
 	if err := s.enrollment.VerifyAgentCertificate(leaf); err != nil {
 		s.logger.Warn("rejected agent connection",
 			"subject", leaf.Subject.String(),

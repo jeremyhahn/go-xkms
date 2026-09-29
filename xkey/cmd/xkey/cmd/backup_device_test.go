@@ -312,6 +312,29 @@ func TestBackupToDevice_UnknownDevice(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDeviceNotFound)
 }
 
+// TestBackupToDevice_AmbiguousDeviceName pins #1315: two paired records
+// sharing a name must refuse `backup to-device` instead of silently sending
+// the backup to whichever record happens to be first in the file.
+func TestBackupToDevice_AmbiguousDeviceName(t *testing.T) {
+	isolatedBackupHome(t)
+	require.NoError(t, saveDevicesConfig(&DevicesConfig{
+		Devices: []PairedDevice{
+			{Name: "Test Phone", Address: "11:22:33:44:55:66"},
+			{Name: "Test Phone", Address: "AA:BB:CC:DD:EE:FF"},
+		},
+	}))
+
+	transport := &fakeDeviceTransport{}
+	useFakeTransport(t, transport)
+
+	_, err := runDeviceCmd(t, backupToDeviceCmd, runBackupToDevice, map[string]string{
+		"device": "Test Phone",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDeviceNameAmbiguous)
+	assert.Empty(t, transport.requests)
+}
+
 func TestBackupToDevice_PhoneRejectsBackup(t *testing.T) {
 	home := isolatedBackupHome(t)
 	seedBackupStores(t, home)

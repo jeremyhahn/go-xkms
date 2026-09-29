@@ -504,6 +504,53 @@ func TestTransport_HTTPErrors(t *testing.T) {
 	}
 }
 
+// flakyErrorBody is an http.Response.Body double that yields some bytes and
+// then fails, so handleHTTPError's read of the error body can be driven into
+// its error path deterministically.
+type flakyErrorBody struct {
+	remaining []byte
+	err       error
+}
+
+func (f *flakyErrorBody) Read(p []byte) (int, error) {
+	if len(f.remaining) == 0 {
+		return 0, f.err
+	}
+	n := copy(p, f.remaining)
+	f.remaining = f.remaining[n:]
+	return n, nil
+}
+
+func (f *flakyErrorBody) Close() error { return nil }
+
+// flakyBodyReadError is returned by flakyErrorBody once its buffered bytes
+// are exhausted.
+type flakyBodyReadError struct{}
+
+func (flakyBodyReadError) Error() string { return "flaky error body: connection reset" }
+
+// TestHandleHTTPError_BodyReadErrorSurfaces proves that a failure reading the
+// HTTP error response body is reported in the resulting error rather than
+// silently discarded (go-xkms#1347).
+func TestHandleHTTPError_BodyReadErrorSurfaces(t *testing.T) {
+	tr := &Transport{}
+	resp := &http.Response{
+		StatusCode: http.StatusInternalServerError,
+		Body:       &flakyErrorBody{remaining: []byte("partial body"), err: flakyBodyReadError{}},
+	}
+
+	err := tr.handleHTTPError("mcp.test", resp)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), (flakyBodyReadError{}).Error()) {
+		t.Errorf("expected the body read error to be included in %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "partial body") {
+		t.Errorf("expected the bytes read before the failure to still be included in %q", err.Error())
+	}
+}
+
 // TestTransport_JSONRPCErrors tests JSON-RPC error handling.
 func TestTransport_JSONRPCErrors(t *testing.T) {
 	testCases := []struct {

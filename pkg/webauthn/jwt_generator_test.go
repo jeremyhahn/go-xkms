@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -93,6 +94,14 @@ func (u *mockWebAuthnUser) Email() string {
 
 func (u *mockWebAuthnUser) DisplayName() string {
 	return u.displayName
+}
+
+func (u *mockWebAuthnUser) Lifecycle() qrdbsdk.Lifecycle {
+	return qrdbsdk.LifecycleActive
+}
+
+func (u *mockWebAuthnUser) AuthMethods() []string {
+	return nil
 }
 
 func TestNewDefaultJWTGenerator(t *testing.T) {

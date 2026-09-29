@@ -28,6 +28,26 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
+// TestLoadPairingAttestationTrust_SealedUnverifiedRefusesDespiteDevicesYAML
+// is the end-to-end proof of the fix for the bypass a locked enterprise
+// allow-list exists to prevent (#1305): devices.yaml carries a perfectly
+// valid, configured allow-list, but this machine's config directory is
+// sealed and XKEY_SO_PIN is not set, so loadPairingAttestationTrust must
+// refuse outright -- never silently fall back to reading it.
+func TestLoadPairingAttestationTrust_SealedUnverifiedRefusesDespiteDevicesYAML(t *testing.T) {
+	isolatePairingTrust(t)
+	require.NoError(t, saveDevicesConfig(&DevicesConfig{
+		AttestationPolicy: &AttestationPolicy{ApplicationPolicy: attesttest.Applications()},
+	}))
+	sealPolicyFixtureNoCommand(t, applicationLockedConfig(), testSOPIN)
+	// XKEY_SO_PIN intentionally left unset: this deployment is sealed but
+	// nothing here proves it to loadPairingAttestationTrust.
+
+	trust, err := loadPairingAttestationTrust()
+	require.ErrorIs(t, err, attestation.ErrApplicationPolicyUnverifiable)
+	require.Nil(t, trust)
+}
+
 // isolatePairingTrust points the trust store and devices.yaml at a fresh
 // temporary home, and returns the devices.yaml path.
 func isolatePairingTrust(t *testing.T) string {

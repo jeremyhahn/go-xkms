@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -34,7 +35,37 @@ import (
 const (
 	wellKnownChallenge  = "/.well-known/acme-challenge/"
 	acmeChallengePrefix = "_acme-challenge."
+
+	// maxHTTP01TokenLength bounds the RFC 8555 Section 8.3 challenge token
+	// length. The bundled ACME server encodes a 16-byte (128-bit) random
+	// value to a 22-character base64url token; this cap leaves generous
+	// headroom for other ACME servers while still rejecting pathological
+	// input before it reaches the filesystem.
+	maxHTTP01TokenLength = 256
 )
+
+// http01TokenPattern matches RFC 8555 Section 8.3 challenge tokens:
+// unpadded base64url characters only.
+var http01TokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// validateHTTP01Token rejects challenge tokens that do not conform to RFC
+// 8555 Section 8.3 before they are joined into a filesystem path. The token
+// is supplied by the ACME server and is otherwise unvalidated input; without
+// this check a malicious or compromised server could smuggle path traversal
+// sequences (e.g. "../../etc/passwd") into WriteHTTP01TokenFile or
+// CleanupHTTP01TokenFile.
+func validateHTTP01Token(token string) error {
+	if token == "" {
+		return ErrInvalidHTTP01Token{Token: token, Reason: "token is empty"}
+	}
+	if len(token) > maxHTTP01TokenLength {
+		return ErrInvalidHTTP01Token{Token: token, Reason: fmt.Sprintf("token exceeds maximum length of %d characters", maxHTTP01TokenLength)}
+	}
+	if !http01TokenPattern.MatchString(token) {
+		return ErrInvalidHTTP01Token{Token: token, Reason: "token contains characters outside the base64url alphabet"}
+	}
+	return nil
+}
 
 // ChallengeServer manages an HTTP server for responding to ACME HTTP-01 challenges.
 type ChallengeServer struct {
@@ -181,6 +212,10 @@ func SetupHTTP01Challenge(config *Config, logger *slog.Logger, token, keyAuth st
 // WriteHTTP01TokenFile writes the key authorization to a webroot directory
 // for HTTP-01 challenge validation when using an existing web server.
 func WriteHTTP01TokenFile(webroot, token, keyAuth string, logger *slog.Logger) error {
+	if err := validateHTTP01Token(token); err != nil {
+		return err
+	}
+
 	challengeDir := filepath.Join(webroot, ".well-known", "acme-challenge")
 	if err := os.MkdirAll(challengeDir, 0750); err != nil { // #nosec G301 - directory needs group read for web server
 		return caerrors.StorageFailureError("failed to create challenge directory: %v", err)
@@ -201,6 +236,11 @@ func WriteHTTP01TokenFile(webroot, token, keyAuth string, logger *slog.Logger) e
 // CleanupHTTP01TokenFile removes the challenge token file from webroot.
 func CleanupHTTP01TokenFile(webroot, token string, logger *slog.Logger) {
 	if webroot == "" {
+		return
+	}
+
+	if err := validateHTTP01Token(token); err != nil {
+		logger.Warn("refusing to clean up invalid http-01 challenge token", slog.String("error", err.Error()))
 		return
 	}
 

@@ -98,7 +98,19 @@ func newDeviceKey(point []byte, slot uint8, cn string) (*DeviceKey, error) {
 // else, so a record written here says what the device said about its root of
 // trust rather than what the backend would like to be true about it.
 func (b *Backend) keyAttributes() *types.KeyAttributes {
-	level, _ := b.AttestLevel()
+	// Not fatal, and deliberately so -- see the identical fail-safe-to-
+	// unattested comment where AttestLevel is first read in NewBackend. A
+	// device on a firmware crypto tier newer than this host's
+	// classification table still gets a valid key record; the level has
+	// already degraded to Unattested, which is the safe direction, and this
+	// only says so out loud.
+	level, err := b.AttestLevel()
+	if err != nil {
+		b.logger.Warn("device reports a crypto tier this host cannot classify",
+			"crypto_tier", uint8(b.caps.CryptoTier),
+			"error", err,
+		)
+	}
 	return &types.KeyAttributes{
 		CN:            b.config.KeyCN,
 		KeyAlgorithm:  x509.ECDSA,

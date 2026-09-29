@@ -1894,9 +1894,21 @@ func NewApp(cfg *GUIConfig) *App {
 		}
 	}
 
-	// Create audit service now (rather than inline in the App struct
-	// literal below) so the enterprise policy applied next can reach it.
+	// Create audit and phone services now (rather than inline in the App
+	// struct literal below) so the enterprise policy applied next can reach
+	// them.
 	auditSvc := services.NewAuditService(auditStore)
+	phoneSvc := services.NewPhoneService()
+
+	// PhoneService learns ONLY whether this deployment is sealed at all,
+	// here at startup; it never receives the startup DefaultPolicy()
+	// placeholder applyCapabilityPolicy installs on the other services below
+	// (#1305) -- see phone_service.go's policy field comment for why that
+	// placeholder is unsafe for the attested-application allow-list
+	// specifically. Set unconditionally, before any pairing or
+	// re-attestation can run, so a sealed deployment refuses until the SO
+	// verifies it via applyVerifiedEnterprisePolicy (enterprise_policy.go).
+	phoneSvc.SetEnterpriseSealed(config.IsEnterpriseMode(cfgDir))
 
 	// Apply the enterprise policy sections the GUI may honour before the SO
 	// has logged in; see startupEnterprisePolicy. The verified sections
@@ -1915,7 +1927,7 @@ func NewApp(cfg *GUIConfig) *App {
 		configDirPath:            cfgDir,
 		shutdownDone:             make(chan struct{}),
 		appService:               appSvc,
-		phoneService:             services.NewPhoneService(),
+		phoneService:             phoneSvc,
 		sshService:               services.NewSSHService(nil),
 		sshProfileService:        services.NewSSHProfileService(nil),
 		sshConnectService:        services.NewSSHConnectService(),
@@ -2678,7 +2690,8 @@ func (a *App) Run() error {
 	// Only set asset server if frontend assets are provided.
 	if Assets != nil {
 		appOpts.AssetServer = &assetserver.Options{
-			Assets: Assets,
+			Assets:     Assets,
+			Middleware: cspAssetServerMiddleware,
 		}
 	}
 

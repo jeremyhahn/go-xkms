@@ -10,6 +10,7 @@ package frost
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -94,6 +95,57 @@ func TestGenerateNonces_Success(t *testing.T) {
 	assert.Equal(t, uint32(1), noncePackage.Commitments.ParticipantID)
 	assert.NotEmpty(t, noncePackage.Commitments.HidingCommitment)
 	assert.NotEmpty(t, noncePackage.Commitments.BindingCommitment)
+}
+
+// TestFrostBackend_NoServerSideSessionState is a regression guard for #1261:
+// FrostBackend must not carry a "sessions" map (or similar) that stores a
+// SigningSession per GenerateNonces call. That state was write-only - Round
+// 2 (SignRound) takes its nonces from the caller by design, see
+// docs/frost/security.md - so the map only grew, held secret nonce material
+// past its use, and was never swept or bounded.
+func TestFrostBackend_NoServerSideSessionState(t *testing.T) {
+	typ := reflect.TypeOf(FrostBackend{})
+	for i := 0; i < typ.NumField(); i++ {
+		name := typ.Field(i).Name
+		assert.NotEqual(t, "sessions", name, "FrostBackend must not reintroduce an unbounded per-request session map")
+		assert.NotContains(t, name, "session", "FrostBackend must not reintroduce per-request session state; nonces travel with the caller")
+	}
+}
+
+// TestGenerateNonces_UnboundedCallsDoNotAccumulateState calls GenerateNonces
+// far more times than any reasonable in-memory map cap would allow and
+// confirms the backend holds none of them: the very first NoncePackage
+// remains usable for SignRound afterward, because nothing ever tracked,
+// expired, or evicted it server-side.
+func TestGenerateNonces_UnboundedCallsDoNotAccumulateState(t *testing.T) {
+	backends := createMultiParticipantBackends(t)
+	defer func() {
+		for _, b := range backends {
+			b.Close()
+		}
+	}()
+
+	keyID := "test-signing-key"
+
+	first, err := backends[0].GenerateNonces(keyID)
+	require.NoError(t, err)
+
+	for i := 0; i < 500; i++ {
+		_, err := backends[0].GenerateNonces(keyID)
+		require.NoError(t, err)
+	}
+
+	nonce2, err := backends[1].GenerateNonces(keyID)
+	require.NoError(t, err)
+
+	commitments := []*Commitment{
+		{ParticipantID: first.ParticipantID, Commitments: first.Commitments},
+		{ParticipantID: nonce2.ParticipantID, Commitments: nonce2.Commitments},
+	}
+
+	share, err := backends[0].SignRound(keyID, []byte("test message"), first, commitments)
+	require.NoError(t, err)
+	assert.NotEmpty(t, share.Share)
 }
 
 func TestGenerateNonces_BackendClosed(t *testing.T) {
@@ -445,10 +497,4 @@ func TestSignatureShare_Fields(t *testing.T) {
 	assert.Equal(t, uint32(3), share.ParticipantID)
 	assert.Equal(t, "test-session", share.SessionID)
 	assert.Equal(t, []byte{1, 2, 3, 4, 5}, share.Share)
-}
-
-func TestDefaultSessionTimeout(t *testing.T) {
-	// Verify the default timeout constant is reasonable
-	assert.Greater(t, DefaultSessionTimeout.Minutes(), float64(0))
-	assert.LessOrEqual(t, DefaultSessionTimeout.Minutes(), float64(60))
 }

@@ -50,9 +50,6 @@ const (
 	// headerSessionID is the header key for passing session IDs between begin/finish calls.
 	headerSessionID = "X-Session-Id"
 
-	// headerUserID is the header key for passing user IDs.
-	headerUserID = "X-User-Id"
-
 	// headerAuthorization is the standard Authorization header.
 	headerAuthorization = "Authorization"
 
@@ -75,7 +72,7 @@ const (
 	pathLoginFinish = "/api/v1/webauthn/login/finish"
 
 	// pathHealthCheck is used to verify server availability.
-	pathHealthCheck = "/api/v1/webauthn/registration/status"
+	pathHealthCheck = "/health"
 
 	// maxResponseBodySize is the maximum response body size we read (1MB).
 	maxResponseBodySize = 1 << 20
@@ -85,7 +82,7 @@ const (
 // speaks the pkg/webauthn/http RP routes (registration/begin,
 // registration/finish, login/begin, login/finish) exactly as a browser's
 // fetch() calls would, including the AuthToken-as-bearer-header and
-// X-Session-Id/X-User-Id correlation headers those routes expect.
+// X-Session-Id correlation header those routes expect.
 type HTTPRelyingParty struct {
 	httpClient *http.Client
 	serverURL  string
@@ -266,7 +263,6 @@ func (rp *HTTPRelyingParty) BeginAuthentication(ctx context.Context, req *Authen
 	return &BeginResult{
 		OptionsJSON: respBody,
 		SessionID:   sessionID,
-		UserID:      resp.Header.Get(headerUserID),
 	}, nil
 }
 
@@ -279,10 +275,6 @@ func (rp *HTTPRelyingParty) FinishAuthentication(ctx context.Context, begin *Beg
 	}
 	httpReq.Header.Set(headerContentType, contentTypeJSON)
 	httpReq.Header.Set(headerSessionID, begin.SessionID)
-
-	if begin.UserID != "" {
-		httpReq.Header.Set(headerUserID, begin.UserID)
-	}
 
 	if req.AuthToken != "" {
 		httpReq.Header.Set(headerAuthorization, "Bearer "+req.AuthToken)
@@ -315,7 +307,7 @@ func (rp *HTTPRelyingParty) FinishAuthentication(ctx context.Context, begin *Beg
 }
 
 // Available checks if the server is reachable by issuing a lightweight GET
-// to the registration status endpoint.
+// to the server's health endpoint.
 func (rp *HTTPRelyingParty) Available(ctx context.Context) bool {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		rp.serverURL+pathHealthCheck, nil)

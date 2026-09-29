@@ -15,6 +15,7 @@ package staticpw
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -355,8 +356,13 @@ func (s *DAOStore) CreateFolder(path string) error {
 
 	ctx := context.Background()
 
-	// Check if marker already exists.
-	existing, _ := s.findFolderMarker(ctx, path)
+	// Check if marker already exists. Only ErrPasswordNotFound means the
+	// folder is free; any other lookup failure (e.g. a DAO/storage error)
+	// must abort instead of being silently treated as "no such folder".
+	existing, err := s.findFolderMarker(ctx, path)
+	if err != nil && !errors.Is(err, ErrPasswordNotFound) {
+		return err
+	}
 	if existing != nil {
 		return nil // Idempotent.
 	}

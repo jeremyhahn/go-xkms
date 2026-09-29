@@ -16,6 +16,8 @@ package truststore
 import (
 	"crypto/x509"
 	"errors"
+	"net/url"
+	"strings"
 )
 
 // ImportResult reports the outcome of importing a PEM bundle.
@@ -71,6 +73,39 @@ func importPEM(store certificateImporter, pemData []byte, opts *AddCertificateOp
 	return result, nil
 }
 
+// bootstrapSourcePrefix labels the source of every certificate fetched from
+// a server, matching the provenance the platform CA bundle fetcher reports.
+const bootstrapSourcePrefix = "platform:"
+
+// BootstrapImportOptions returns the metadata a CA bundle fetched from server
+// over the network is filed under: PurposeBootstrapCA, with the server's host
+// recorded as its source.
+//
+// Every network bootstrap path files through it ("xkey trust fetch", "xkey
+// trust bootstrap", and the GUI's trust-strap import) so a fetched bundle
+// lands in the same place whichever surface fetched it. It is never
+// auto-classified: the server chose the bundle, and auto-classification would
+// let it file a certificate as an attestation anchor (#1312).
+//
+// server is a URL ("https://kms.example.com:8443") or, for Noise, a bare
+// host:port; the source records the URL's host, or server itself when it has
+// no URL host.
+func BootstrapImportOptions(server string) *AddCertificateOptions {
+	return &AddCertificateOptions{
+		Purpose: PurposeBootstrapCA,
+		Source:  bootstrapSourcePrefix + bootstrapHost(server),
+	}
+}
+
+// bootstrapHost extracts the host[:port] a bootstrap server string names.
+func bootstrapHost(server string) string {
+	server = strings.TrimSpace(server)
+	if parsed, err := url.Parse(server); err == nil && parsed.Host != "" {
+		return parsed.Host
+	}
+	return server
+}
+
 // purposeLister is the purpose-scoped read path every store implementation
 // provides.
 type purposeLister interface {
@@ -83,7 +118,8 @@ type purposeLister interface {
 // The attestation purposes (tpm-manufacturer, android-hardware,
 // idevid-issuer) are deliberately absent. They anchor device attestation
 // chains, and a TLS session to a server is not one; promoting them to TLS
-// roots would widen what a TPM vendor root can authenticate.
+// roots would widen what a TPM vendor root can authenticate. PurposeSynced is
+// absent too: a certificate a paired device pushed is never an anchor.
 var tlsAnchorPurposes = []CertPurpose{PurposeUserCA, PurposeBootstrapCA, PurposeGeneral}
 
 // tlsRoots collects the store's TLS-eligible anchors.

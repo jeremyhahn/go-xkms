@@ -144,6 +144,47 @@ func TestValidate_InvalidPIVBackend(t *testing.T) {
 	assert.Contains(t, err.Error(), "piv.backend")
 }
 
+func TestValidate_EmptyPolicySandboxPolicyAllowed(t *testing.T) {
+	cfg := DefaultConfig()
+	require.Empty(t, cfg.Policy.APIExplorerSandboxPolicy, "DefaultPolicy leaves this field unset")
+
+	assert.NoError(t, cfg.Validate())
+}
+
+// TestValidate_PolicySandboxPolicyDangerousComboRejected locks in that the
+// enterprise policy plane -- opt-in and security-authoritative, unlike the
+// far more widely persisted gui.GUIConfig field of the same name -- fails
+// the config outright rather than silently normalizing a dangerous value
+// (go-xkms#1274).
+func TestValidate_PolicySandboxPolicyDangerousComboRejected(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Policy.APIExplorerSandboxPolicy = "allow-same-origin allow-scripts"
+
+	err := cfg.Validate()
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConfigInvalid))
+	assert.Contains(t, err.Error(), "policy.api_explorer_sandbox_policy")
+}
+
+func TestValidate_PolicySandboxPolicyForbiddenDirectiveRejected(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Policy.APIExplorerSandboxPolicy = "allow-forms allow-modals"
+
+	err := cfg.Validate()
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConfigInvalid))
+	assert.Contains(t, err.Error(), "policy.api_explorer_sandbox_policy")
+}
+
+func TestValidate_PolicySandboxPolicySafeValueAccepted(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Policy.APIExplorerSandboxPolicy = SafeDefaultAPIExplorerSandboxPolicy
+
+	assert.NoError(t, cfg.Validate())
+}
+
 func TestValidate_EmptyPIVBackend(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.PIV.Backend = ""

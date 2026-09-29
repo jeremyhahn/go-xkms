@@ -726,7 +726,13 @@ func TestDecrypt_OAEPRejectsTheNoneSentinel(t *testing.T) {
 // including the padding names and the label, which the round-trip tests above
 // cannot separate from a decryption failure.
 func TestAsymDecrypterOpts_MatchesTheEncryptGate(t *testing.T) {
-	// PKCS#1 v1.5 is the default and carries no options.
+	if !allowLegacyWrap(t) {
+		return
+	}
+
+	// PKCS#1 v1.5 is the default and carries no options once the operator has
+	// opted into crypto.allow_legacy_key_wrap; see
+	// TestAsymDecrypterOpts_PKCS1v15RefusedByDefault for the unset case.
 	for _, padding := range []string{"", "pkcs1v15", "PKCS1v15"} {
 		opts, err := asymDecrypterOpts(&transport.DecryptRequest{Padding: padding})
 		require.NoError(t, err, "padding %q", padding)
@@ -734,7 +740,7 @@ func TestAsymDecrypterOpts_MatchesTheEncryptGate(t *testing.T) {
 	}
 
 	// An unnamed OAEP digest resolves to the same digest EncryptAsym uses when
-	// none is named.
+	// none is named. OAEP carries no legacy gate at all.
 	opts, err := asymDecrypterOpts(&transport.DecryptRequest{Padding: "oaep", Label: []byte("l")})
 	require.NoError(t, err)
 	oaep, ok := opts.(*rsa.OAEPOptions)
@@ -751,6 +757,31 @@ func TestAsymDecrypterOpts_MatchesTheEncryptGate(t *testing.T) {
 	_, err = asymDecrypterOpts(&transport.DecryptRequest{Padding: "oaep2"})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrInvalidSignatureScheme), "want ErrInvalidSignatureScheme, got %v", err)
+}
+
+// TestAsymDecrypterOpts_PKCS1v15RefusedByDefault is the failure test for the
+// crypto audit's PKCS#1 v1.5 Decrypt finding (go-xkms#1283): asymDecrypterOpts
+// must refuse PKCS#1 v1.5 -- named explicitly or left unnamed, since an
+// unnamed padding still means PKCS#1 v1.5 -- unless the operator has opted
+// into crypto.allow_legacy_key_wrap. This mirrors
+// TestEncrypt_RSA_PKCS1v15_Refused_Default for Decrypt's own asymmetric
+// fallback, which ran unconditionally before this fix.
+func TestAsymDecrypterOpts_PKCS1v15RefusedByDefault(t *testing.T) {
+	previous := types.AllowLegacyKeyWrap()
+	types.SetAllowLegacyKeyWrap(false)
+	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
+	for _, padding := range []string{"", "pkcs1v15", "PKCS1v15"} {
+		_, err := asymDecrypterOpts(&transport.DecryptRequest{Padding: padding})
+		require.Error(t, err, "padding %q", padding)
+		assert.True(t, errors.Is(err, ErrLegacyWrapDisabled),
+			"padding %q: want ErrLegacyWrapDisabled, got %v", padding, err)
+	}
+
+	// OAEP is unaffected by the gate.
+	opts, err := asymDecrypterOpts(&transport.DecryptRequest{Padding: "oaep"})
+	require.NoError(t, err)
+	assert.NotNil(t, opts)
 }
 
 // --- ECDH with CKD_NULL (the raw shared secret) ---
@@ -1474,6 +1505,41 @@ func TestEncrypt_RSA_PKCS1v15_RoundTrip(t *testing.T) {
 	assert.Equal(t, plaintext, decResp.Plaintext)
 }
 
+// TestDecrypt_RSA_PKCS1v15_Refused_Default is the RPC-level failure test for
+// the crypto audit's PKCS#1 v1.5 Decrypt finding (go-xkms#1283): Decrypt's
+// asymmetric fallback must refuse to run PKCS#1 v1.5 unless the operator has
+// opted into crypto.allow_legacy_key_wrap, mirroring
+// TestEncrypt_RSA_PKCS1v15_Refused_Default. Before this fix Decrypt performed
+// PKCS#1 v1.5 unconditionally, which was the one construction of its kind in
+// the service not gated by this policy.
+func TestDecrypt_RSA_PKCS1v15_Refused_Default(t *testing.T) {
+	previous := types.AllowLegacyKeyWrap()
+	types.SetAllowLegacyKeyWrap(false)
+	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
+	software, _ := setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	pub := newOAEPTestKey(t, software, "decrypt-rsa-pkcs1v15-refused")
+
+	// A well-formed PKCS#1 v1.5 ciphertext, so the refusal below is
+	// unambiguously the policy gate and not a decryption failure.
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, []byte("must not be PKCS#1 v1.5 decrypted")) //nolint:staticcheck // SA1019: building a genuine v1.5 ciphertext for the refusal test
+	require.NoError(t, err)
+
+	for _, padding := range []string{"", "pkcs1v15"} {
+		_, err = svc.Decrypt(context.Background(), &transport.DecryptRequest{
+			Backend:    "software",
+			KeyID:      "decrypt-rsa-pkcs1v15-refused",
+			Ciphertext: ciphertext,
+			Padding:    padding,
+		})
+		require.Error(t, err, "padding %q", padding)
+		assert.True(t, errors.Is(err, ErrLegacyWrapDisabled), "padding %q: got %v", padding, err)
+	}
+}
+
 // TestEncrypt_RSA_PlaintextTooLarge proves the asymmetric Encrypt fallback
 // rejects plaintext that does not fit PKCS#1 v1.5 padding for the key size,
 // rather than silently truncating it. A 2048-bit (256-byte) RSA key can
@@ -1684,6 +1750,10 @@ func TestGenerateKey_Ed25519_Success(t *testing.T) {
 // --- EncryptAsym RSA Decrypt error path ---
 
 func TestDecryptAsym_RSA_OAEPMismatch(t *testing.T) {
+	if !allowLegacyWrap(t) {
+		return
+	}
+
 	software, _ := setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
@@ -1967,6 +2037,10 @@ func (b *decrypterOverrideBackend) Decrypter(context.Context, *types.KeyAttribut
 // reproduces TPM2_RSA_Decrypt's refusal on a sign-only key, discovered inside
 // the decrypt call itself rather than while resolving the decrypter.
 func TestDecrypt_ClassifiesTPM2CapabilityRefusalDuringDecryptAsNotSupported(t *testing.T) {
+	if !allowLegacyWrap(t) {
+		return
+	}
+
 	software, _ := setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
@@ -1999,7 +2073,18 @@ func TestDecrypt_ClassifiesTPM2CapabilityRefusalDuringDecryptAsNotSupported(t *t
 // mutation guard for the decrypt path: an unrelated fault must keep its
 // original ErrDecryptionFailed classification rather than becoming
 // ErrOperationNotSupported.
+//
+// It also pins go-xkms#1283's uniform-error requirement: the injected
+// backend error text ("hsm session lost") must never reach the caller. RFC
+// 8017 sections 7.1.2 and 7.2.2 both require that a distinguishing failure
+// reason not be observable, because that is the Bleichenbacher/Marvin/Manger
+// oracle's confirmation bit, and a PKCS#11 token or cloud KMS is free to
+// return whatever diagnostic text it likes for a rejected ciphertext.
 func TestDecrypt_UnrelatedDecryptionFailureIsNotClassifiedAsNotSupported(t *testing.T) {
+	if !allowLegacyWrap(t) {
+		return
+	}
+
 	software, _ := setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
@@ -2027,6 +2112,8 @@ func TestDecrypt_UnrelatedDecryptionFailureIsNotClassifiedAsNotSupported(t *test
 	assert.False(t, errors.Is(err, ErrOperationNotSupported),
 		"an unrelated fault must not be classified as a capability refusal, got: %v", err)
 	assert.True(t, errors.Is(err, ErrDecryptionFailed))
+	assert.NotContains(t, err.Error(), "hsm session lost",
+		"the backend's own diagnostic text must never reach the caller, got: %v", err)
 }
 
 // encryptRefusalEncrypter wraps a working types.SymmetricEncrypter and makes

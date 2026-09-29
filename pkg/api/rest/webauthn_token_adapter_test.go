@@ -64,6 +64,26 @@ func TestWebAuthnTokenAdapter_IdentityCarriesEmail(t *testing.T) {
 	assert.Equal(t, id.Subject, authenticated.Subject)
 }
 
+// TestWebAuthnTokenAdapter_IdentityDeclaresUserHandleSubjectKind proves a
+// WebAuthn-minted identity declares its Subject as a WebAuthn user handle
+// (go-xkms#1297 review), on the identity itself and in the sub_kind claim
+// both halves of the minted pair carry, so QRDBUserResolver -- which reads
+// the claim straight off the refresh token via identityFromClaims, not
+// through JWTAuthenticator's own narrower claim-to-metadata mapping -- never
+// has to guess the encoding at refresh time.
+func TestWebAuthnTokenAdapter_IdentityDeclaresUserHandleSubjectKind(t *testing.T) {
+	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "tenant-a")
+	user := webauthn.NewDefaultUser([]byte("user-1"), "alice@example.com", "Alice")
+
+	id := adapter.identityFor(user)
+	assert.Equal(t, auth.SubjectKindUserHandle, id.Metadata[auth.SubjectKindMetadataKey])
+
+	access, refresh, err := adapter.GenerateTokenPair(context.Background(), user)
+	require.NoError(t, err)
+	assert.Equal(t, auth.SubjectKindUserHandle, accessClaims(t, access)["sub_kind"])
+	assert.Equal(t, auth.SubjectKindUserHandle, accessClaims(t, refresh)["sub_kind"])
+}
+
 // TestWebAuthnTokenAdapter_IdentityOmitsEmptyEmail proves a user without an
 // email yields no key at all, on the identity and in the minted token.
 func TestWebAuthnTokenAdapter_IdentityOmitsEmptyEmail(t *testing.T) {

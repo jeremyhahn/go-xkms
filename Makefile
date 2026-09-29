@@ -2851,7 +2851,7 @@ integration-test-cli:
 .PHONY: integration-test-cli-local
 ## integration-test-cli-local: Run CLI integration tests locally (runs in devcontainer)
 integration-test-cli-local:
-	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)frost' ./test/integration/api/... -timeout 15m,integration-test-cli-local)
+	$(call run_in_devcontainer,XKMS_FROST_PASSPHRASE=frost-integration-passphrase $(GO) test -v -tags='integration$(comma)frost' ./test/integration/api/... -timeout 15m,integration-test-cli-local)
 
 .PHONY: integration-test-signing
 ## integration-test-signing: Run signing package integration tests (runs in devcontainer)
@@ -3654,21 +3654,10 @@ fmt-check:
 	@echo "$(GREEN)✓ Code is properly formatted$(RESET)"
 
 .PHONY: check-insecure-tls
-## check-insecure-tls: Enforce InsecureSkipVerify allowlist (fails on unapproved use)
+## check-insecure-tls: Enforce insecure-TLS/transport allowlist (fails on unapproved use)
 check-insecure-tls:
-	@echo "$(CYAN)$(BOLD)→ Checking InsecureSkipVerify allowlist...$(RESET)"
-	@violations=$$(grep -rPn 'InsecureSkipVerify[[:space:]]*:[[:space:]]*true' --include="*.go" . \
-		| grep -Pv '^[^:]+:[0-9]+:[[:space:]]*//' \
-		| grep -v 'pkg/crypto/spki/spki.go' \
-		| grep -v 'pkg/trust/fetcher/spki.go' \
-		| grep -v 'pkg/trust/bootstrap/tofu_tls.go' \
-		|| true); \
-	if [ -n "$$violations" ]; then \
-		echo "$(RED)$(BOLD)✗ FORBIDDEN InsecureSkipVerify outside allowlist:$(RESET)"; \
-		printf '%s\n' "$$violations"; \
-		exit 1; \
-	fi
-	@echo "$(GREEN)✓ InsecureSkipVerify allowlist check passed$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Checking insecure TLS/transport allowlist...$(RESET)"
+	@bash scripts/check-insecure-tls.sh
 
 .PHONY: check-public-literals
 ## check-public-literals: Public-release readiness gate -- no lab/fleet/owner literals (go-xkms#1030)

@@ -133,6 +133,7 @@ GOLANGCI_LINT := $(shell command -v golangci-lint 2>/dev/null || echo "$(HOME)/g
 # resolution bugs in .bin/ shims (affects Node 24.13+).
 VITE := node $(FRONTEND_DIR)/node_modules/vite/bin/vite.js
 SVELTE_CHECK := node $(FRONTEND_DIR)/node_modules/svelte-check/bin/svelte-check
+VITEST := node $(FRONTEND_DIR)/node_modules/vitest/vitest.mjs
 
 # Test configuration
 TEST_FLAGS := -v -race
@@ -296,6 +297,20 @@ frontend-check: frontend-install
 	@echo "$(CYAN)Running svelte-check...$(RESET)"
 	@cd $(FRONTEND_DIR) && $(SVELTE_CHECK) --tsconfig ./tsconfig.json
 	@echo "$(GREEN)Frontend type checks passed$(RESET)"
+
+.PHONY: frontend-test
+## frontend-test: Run frontend unit tests (vitest)
+frontend-test: frontend-install
+	@echo "$(CYAN)Running frontend unit tests...$(RESET)"
+	@cd $(FRONTEND_DIR) && $(VITEST) run
+	@echo "$(GREEN)Frontend unit tests passed$(RESET)"
+
+.PHONY: frontend-test-coverage
+## frontend-test-coverage: Run frontend unit tests with coverage (vitest)
+frontend-test-coverage: frontend-install
+	@echo "$(CYAN)Running frontend unit tests with coverage...$(RESET)"
+	@cd $(FRONTEND_DIR) && $(VITEST) run --coverage
+	@echo "$(GREEN)Frontend unit test coverage report generated$(RESET)"
 
 # ==============================================================================
 # Extension Targets

@@ -1,6 +1,6 @@
 # OIDC — Architecture
 
-Status: current. Last verified: 2026-09-28.
+Status: current. Last verified: 2026-09-29.
 
 ## Scope
 
@@ -92,7 +92,7 @@ several stored sessions to update. `openOIDCTokenStore` keeps this
 single-active-session behavior deliberately — extending the CLI to concurrent
 multi-provider sessions is a product decision independent of go-xkms#4 and
 is not made here. `oidcCLITokenStore` is therefore a single Put/Get/Delete
-key, not the issuer-keyed `pkg/oidc.BackendTokenStore`/`FileTokenStore` the
+key, not the issuer-keyed `pkg/oidc.BackendTokenStore`/`MemoryTokenStore` the
 GUI uses; reusing those would have required inventing a synthetic per-CLI
 issuer key with no real meaning.
 
@@ -126,11 +126,25 @@ from the pre-#4 fixed `~/.xkey/tokens.json`: the token store now lives
 alongside every other barrier-aware CLI store instead of at its own special
 top-level path.
 
-The AWS DPoP session store (`--session-store`, default
-`~/.xkey/aws-session.json`, `oidc_aws.go`) is a **separate** store holding
-the AWS-specific DPoP signing key and refresh token; it is out of scope for
-go-xkms#4 and is unaffected by this change — it remains the historical
-plaintext file.
+The AWS DPoP session store (`oidc_aws.go`, `oidc_aws_session_store.go`) is a
+**separate** store holding the AWS-specific DPoP signing key and refresh
+token; it was out of scope for go-xkms#4 and unaffected by that change, but
+go-xkms#1325 closes the gap by moving it behind the identical decision:
+
+| Condition | Location |
+|---|---|
+| No `--session-store` override, barrier initialized | `<xkey data dir>` via the barrier-backed `xkms.StorageBackend`, key `oidc/aws-session.json` |
+| No `--session-store` override, no barrier | `<xkey data dir>/oidc/aws-session.json`, plain file |
+| `--session-store <path>` explicitly set (directly on `xkey oidc aws`, or saved on an AWS provider via `xkey oidc providers add --session-store`) | `<path>` exactly, plain file — bypasses barrier auto-detection entirely |
+
+`--session-store`'s flag default (`~/.xkey/aws-session.json`) is no longer
+where the session itself is written when left at that default; the flag's
+value is still used, always, to derive the default log-file and PID-file
+directories for `--background`/`--auto-refresh` (`getAWSDefaultLogFile`,
+`getAWSPIDFile`) — those are not secrets, so they keep the historical
+`~/.xkey/logs`/`~/.xkey/pids` layout regardless of where the session data
+lives, exactly like `--token-store`'s default does for the RP token store's
+own log/PID paths above.
 
 ## The auto-refresh loop and the background worker
 
@@ -165,7 +179,8 @@ argument.
   into the binary is not a secret, so it gave `tokens.json` no real
   confidentiality — and was replaced by an in-memory-only store rather than
   fixed by inventing a better independent key (see
-  [engineering.md](engineering.md#gui-token-store-go-xkms1203)). The CLI's
+  [engineering.md](engineering.md#gui-token-store-go-xkms1203)); go-xkms#1325
+  later deleted `FileTokenStore` itself once nothing called it. The CLI's
   other secret stores (`xkey oath`, `xkey fido2 --storage barrier`) never had
   this second scheme; reusing `resolveSecretStoreBackend` here keeps exactly
   one CLI mechanism that decides "is the barrier initialized," rather than a

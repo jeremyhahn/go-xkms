@@ -188,7 +188,10 @@ func enrollPhone(ctx context.Context, opts *enrollPhoneOptions, logger *slog.Log
 		return ErrDeviceNotPaired
 	}
 
-	device := selectDevice(cfg, opts.DeviceFilter)
+	device, err := selectDevice(cfg, opts.DeviceFilter)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		return ErrDeviceNotFound
 	}

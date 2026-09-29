@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — API
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -8,9 +8,11 @@ Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 ## Route group
 
 WebAuthn routes live in `GroupWebAuthn` (`pkg/api/rest/routes.go`), registered
-under `/api/v1/webauthn` when `hasWebAuthn` is true. The group's own comment
-states the contract: these routes **sit behind the login rate limiter and are
-unauthenticated — WebAuthn is the auth mechanism.**
+under `/api/v1/webauthn` when `hasWebAuthn` is true. All of them sit behind the
+login rate limiter. The ceremonies are **unauthenticated — WebAuthn is the auth
+mechanism** — with one exception: adding a passkey to an account that already
+has one is `RouteAuthSession` and requires a session authenticated as that
+account (go-xkms#1294).
 
 ## Capability matrix
 
@@ -18,7 +20,7 @@ unauthenticated — WebAuthn is the auth mechanism.**
 |---|---|---|---|---|---|---|
 | Begin registration | `POST /api/v1/webauthn/registration/begin` | `BeginRegistration` | same as REST | **Excluded (#193)** | `BeginRegistration` | public |
 | Finish registration | `POST /api/v1/webauthn/registration/finish` | `FinishRegistration` | same as REST | **Excluded (#193)** | `FinishRegistration` | public |
-| Registration status | `GET /api/v1/webauthn/registration/status` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | `Service.IsRegistered` (in-process) | public |
+| Add a passkey to the session's account (begin) | `POST /api/v1/webauthn/credentials/begin`; finish with `registration/finish` | — | same as REST | **Excluded (#193)** | `Service.BeginAddCredential` (in-process) | session |
 | Begin login | `POST /api/v1/webauthn/login/begin` | `BeginAuthentication` | same as REST | **Excluded (#193)** | `BeginAuthentication` | public |
 | Finish login | `POST /api/v1/webauthn/login/finish` | `FinishAuthentication` | same as REST | **Excluded (#193)** | `FinishAuthentication` | public |
 | SDK begin registration | `POST /api/v1/webauthn/sdk/registration/begin` | — | same as REST | — | — | public |
@@ -39,8 +41,34 @@ transports (REST, gRPC).
 `pkg/api/transport/mcp.ErrIdentityCeremonyExcluded`, and the MCP server's
 capability surface (`pkg/api/mcp.ModuleMethods`) never lists a tool for
 them, so a client can discover the exclusion without calling and failing.
-Registration status remains real, unconverted debt (docs/13) — it is not
-part of this exclusion.
+The unauthenticated `GET /api/v1/webauthn/registration/status` probe was
+deleted (go-xkms#1296): it told anyone whether an email had a passkey, and
+nothing used it. A signed-in client learns about its own account from
+`GET /api/v1/auth/me`.
+
+Adding a passkey is REST-only for now. The SDK transports (gRPC, Unix, the
+`/sdk/...` routes) carry only the first-passkey ceremony, and refuse an
+account that already has a passkey like the browser route does.
+
+## Registration and enumeration rules
+
+| Rule | Where it is enforced |
+|---|---|
+| The public begin (`registration/begin`, `/sdk/registration/begin`, gRPC `BeginRegistration`) enrols only an account's **first** passkey. An account with one or more credentials is refused with `ErrRegistrationRefused`. | `Service.BeginRegistration` (`pkg/webauthn/service.go`) |
+| A further passkey is added only through `POST /api/v1/webauthn/credentials/begin`, served to an authenticated session. The account is the session's own: the handle in the token subject and the `email` claim must name the same existing account. The request body is ignored. | `Handler.BeginAddCredential` (`pkg/webauthn/http/handler.go`), `SessionAccountFromIdentity` (`pkg/webauthn/session_account.go`), `Service.BeginAddCredential` |
+| With public registration off, an unknown email is refused with the same `ErrRegistrationRefused`: same status, code, message and headers as an account that already has a passkey. | `Service.BeginRegistration` |
+| An account with **zero** credentials, provisioned by an administrator, still enrols its first passkey through the public begin, in both modes. That answers 200, so a closed deployment still tells a caller that a provisioned but unenrolled account exists. Whether first-passkey onboarding needs its own proof awaits a ruling (go-xkms#1294 part B). | `Service.BeginRegistration` |
+| Login begin never reveals whether an account exists. An unknown email or user ID, or an account without credentials, gets well-formed decoy options: a real go-webauthn ceremony whose `allowCredentials` are derived with HKDF-SHA256 from a per-process key and the email (or handle). Repeated probes for one email see the same descriptors. A finish against a decoy session fails as `verification_failed`, like a wrong assertion. | `Service.BeginLoginForEmail` / `BeginLoginForHandle`, `pkg/webauthn/decoy.go` |
+| Only an account in good standing authenticates: lifecycle `active`, and an auth-method policy that is empty or names `webauthn`. Login begin answers any other account with the decoy an unknown one gets; finish (browser, SDK, gRPC, discoverable, and the qrdb FIDO2 factor) refuses a valid assertion as `verification_failed`; registration begin and add-passkey refuse it with `ErrRegistrationRefused`. The response never names the account's state; the server log does. | `CheckAccountStanding` (`pkg/webauthn/account_standing.go`), `Service.beginLoginOrDecoy` / `finishLoginUser` / `beginRegistrationFor` |
+| No user identifier before a successful login. The `X-User-Id` header is gone from login begin and is no longer read on login finish; the user ID comes back in the finish response. | `pkg/webauthn/http/handler.go` |
+| A credential ID belongs to exactly one account. Creating one that is already registered, to any account, fails with `ErrCredentialAlreadyExists`. | `CredentialStore.Save` (every store) |
+
+The decoy key is drawn at startup and kept only in memory; the WebAuthn
+configuration has no server secret. So decoys change on restart and differ
+between cluster nodes, while a real account's descriptors do not. Telling them
+apart that way means probing the same email across a restart or across nodes.
+The decoy path also skips the credential lookup a real account needs, so its
+latency differs slightly.
 
 The `/sdk/...` variants are the programmatic ceremony for non-browser clients
 (`pkg/webauthn/client`, the xkey virtual authenticator). They exist only on the
@@ -57,11 +85,12 @@ HTTP-shaped transports because that is what those clients speak.
 | `display_name` | human-readable name; defaults to the email |
 
 `POST /api/v1/webauthn/sdk/authentication/begin` decodes
-`transport.BeginAuthenticationRequest` (`email`), and
-`POST /api/v1/webauthn/sdk/authentication/finish` decodes
+`transport.BeginAuthenticationRequest` (`email`), which names the account by
+the same login key; an unknown email gets decoy options, like the browser
+route. `POST /api/v1/webauthn/sdk/authentication/finish` decodes
 `transport.FinishAuthenticationRequest` (`session_id`, `email`,
-`assertion_json`); both name the account by the same login key, which the
-server resolves with `GetUserByEmail`.
+`assertion_json`). The session begun for the email decides the account, so
+finish does not resolve `email` again.
 
 The gRPC and Unix `BeginRegistrationRequest`, `BeginAuthenticationRequest`
 and `FinishAuthenticationRequest` carry the same field as `email` (the field
@@ -138,11 +167,15 @@ is minted onto both halves of a token pair, so it survives a refresh.
 |---|---|---|
 | ceremony options issued | 200 | `OK` |
 | registration or login succeeded | 200 with token(s) | `OK` |
-| unknown or expired session | 401 | `Unauthenticated` |
-| origin or RP id mismatch | 401 | `Unauthenticated` |
-| invalid attestation or assertion | 401 | `Unauthenticated` |
+| login finish: missing or already-consumed session | 400, code `invalid_session` | `InvalidArgument` |
+| login finish: expired session | 400, code `session_expired` | `InvalidArgument` |
+| login finish failed for any other reason: wrong assertion, unknown or refused account, account not in standing, unknown credential, or a malformed assertion | 401, code `verification_failed`, text "verification failed" | `Unauthenticated`, text "verification failed" |
+| registration: invalid attestation, or origin/RP id mismatch | 401 | `Unauthenticated` |
 | non-increasing signature counter | 401 | `Unauthenticated` |
-| public registration disabled | 403 | `PermissionDenied` |
+| registration refused: the account already has a passkey, or (public registration off) no such account | 403, code `registration_refused` | `PermissionDenied` |
+| add-passkey without a session | 401 | — |
+| add-passkey with a session that names no WebAuthn account | 403, code `session_account_mismatch` | — |
+| credential ID already registered | 409, code `credential_exists` (`/sdk/registration/finish`: 400) | `InvalidArgument` |
 | session store full (too many unfinished ceremonies) | 503, code `session_limit` | `ResourceExhausted` |
 | request body over 1 MiB | 413 | — (the gRPC message limit applies) |
 | rate limited | 429 | `ResourceExhausted` |
@@ -166,6 +199,20 @@ proxy listed in `server.trusted_proxies`; see
 wire they are indistinguishable, so a caller cannot use failure shapes to
 enumerate users or probe which authenticator a user holds. The detail stays in
 the server log.
+
+**All three login-finish transports classify the same way.** The browser
+route (`Handler.handleLoginFinishError`, `pkg/webauthn/http/handler.go`),
+gRPC (`loginFinishStatusError`, `pkg/api/grpc/service_fido2.go`) and the SDK
+REST route (`Server.writeLoginFinishError`, `pkg/api/rest/handlers_fido2.go`)
+all call `webauthn.ClassifyLoginFinish` — the one place that decides whether
+an error is a missing/expired session or the uniform failure — so a decoy
+finish and a wrong-assertion finish against a real account produce
+byte-identical responses on every transport, not only the browser route
+(go-xkms#1310). Before that fix, gRPC and the SDK REST route each echoed the
+raw error text (`status.Error(codes.InvalidArgument, err.Error())` and an
+equivalent REST 400), which let a caller distinguish "no such account" from
+"wrong assertion" on either transport even though the browser route already
+hid it.
 
 ## Pagination
 

@@ -18,6 +18,8 @@ package server
 import (
 	"net"
 	"runtime"
+
+	"github.com/jeremyhahn/go-xkms/pkg/peercred"
 )
 
 // checkPeerCredentialSupport refuses construction on every platform other
@@ -38,7 +40,10 @@ import (
 // not ship: a caller refused here can escalate the gap; a caller admitted on
 // a credential nobody verified could not be told apart from a bug.
 func checkPeerCredentialSupport() error {
-	return ErrPeerCredentialsUnsupported{GOOS: runtime.GOOS}
+	if err := peercred.CheckSupport(); err != nil {
+		return ErrPeerCredentialsUnsupported{GOOS: runtime.GOOS}
+	}
+	return nil
 }
 
 // peerCredentialsFromConn is unreachable: NewUnixPeerCredentials refuses

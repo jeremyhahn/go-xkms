@@ -55,7 +55,12 @@ func pkixPublicKeyDER(t *testing.T) []byte {
 // factors that silently ignore operator configuration.
 func TestNewDefaultRegistry_ConfigReachesTheFactorInstances(t *testing.T) {
 	const (
-		wantMechanism = "CKM_RSA_PKCS_PSS"
+		// wantMechanism must stay in the ECDSA family: pkixPublicKeyDER below
+		// enrolls a P-256 key, and the factor now refuses an enrollment whose
+		// mechanism names a different key algorithm (#1289). It only needs to
+		// differ from the factor's own default (CKM_ECDSA_SHA256) to prove
+		// this value, and not the default, reached the enrollment.
+		wantMechanism = "CKM_ECDSA_SHA384"
 		wantRPID      = "ca.example.com"
 		wantTTL       = 120
 	)

@@ -29,6 +29,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
@@ -48,6 +49,14 @@ var (
 
 	// ErrTPM2InitFailed indicates TPM2 initialization failed.
 	ErrTPM2InitFailed = errors.New("device: TPM2 initialization failed")
+
+	// ErrDevicePinInvalid indicates the paired device record has no usable
+	// pinned Noise static key -- empty or the wrong length -- so the
+	// peripheral would otherwise be built with nothing to pin, silently
+	// accepting a handshake from any phone rather than only the paired one.
+	// Re-pairing the device is the only recovery: there is no partial key to
+	// repair.
+	ErrDevicePinInvalid = errors.New("device: paired device has no valid pinned key; re-pair the device")
 )
 
 // Default TPM2 device path.
@@ -116,15 +125,7 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(deviceListenCmd)
 
-	// Listen command flags
-	deviceListenCmd.Flags().String("device", "", "Specific paired device to accept connections from")
-	deviceListenCmd.Flags().String("name", "", "Advertised device name (default: hostname)")
-	deviceListenCmd.Flags().Duration("timeout", 0, "Listen timeout (0 for indefinite)")
-	deviceListenCmd.Flags().String("attestation-mode", "auto", "Attestation mode: auto, tpm2, software")
-	deviceListenCmd.Flags().String("tpm-device", "", "TPM2 device path (default: /dev/tpmrm0)")
-	deviceListenCmd.Flags().Bool("tpm-enrollment", false, "Serve TCG-CSR-IDEVID device enrollment from this host's TPM")
-	deviceListenCmd.Flags().String("tpm-pcr-bank", "", "PCR bank for the platform policy digest (default: SHA-256); set only if this TPM's SHA-256 bank is not allocated")
-	addDeviceBarrierFlags(deviceListenCmd)
+	registerDeviceListenFlags(deviceListenCmd)
 }
 
 // runDeviceListen executes the phone listen command.
@@ -167,16 +168,26 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 		return ErrDeviceNotPaired
 	}
 
-	// Find the target device
+	// Find the target device. findDeviceByName refuses an ambiguous name
+	// (more than one record) instead of resolving it by taking the first
+	// match -- the phone's advertised name is untrusted input, and a lookup
+	// by name is how this command picks which pinned key to trust for the
+	// whole listening session (#1307).
 	var targetDevice *PairedDevice
 	switch {
 	case deviceFilter != "":
-		targetDevice = findDeviceByName(cfg, deviceFilter)
+		targetDevice, err = findDeviceByName(cfg, deviceFilter)
+		if err != nil {
+			return err
+		}
 		if targetDevice == nil {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceFilter)}
 		}
 	case cfg.DefaultDevice != "":
-		targetDevice = findDeviceByName(cfg, cfg.DefaultDevice)
+		targetDevice, err = findDeviceByName(cfg, cfg.DefaultDevice)
+		if err != nil {
+			return err
+		}
 		if targetDevice == nil {
 			return ErrDeviceNoDefaultDevice
 		}
@@ -191,6 +202,17 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 	expectedRemoteStatic, err := base64.StdEncoding.DecodeString(targetDevice.NoisePublicKey)
 	if err != nil {
 		return &WrappedError{Msg: "failed to decode phone public key", Err: err}
+	}
+	// Refused here, before any of the TPM/bridge setup below runs, and again
+	// by NewBLEPeripheral itself: an empty or wrong-length key is a corrupt
+	// paired-device record, and building the peripheral with it would pin
+	// nothing (phone.NewNoiseSession treats a zero-length PeerStaticKey as
+	// "no key to pin," not as an error), silently accepting a handshake from
+	// any phone rather than the one that was paired. The same rule
+	// PhoneKeyBackend applies to an unset ExpectedRemoteStatic (phone.go),
+	// applied here to a stored one that decoded to nothing usable.
+	if len(expectedRemoteStatic) != pairing.NoiseKeySize {
+		return &DetailError{Err: ErrDevicePinInvalid, Detail: fmt.Sprintf(": %s", targetDevice.Name)}
 	}
 
 	// Unseal our local static key (#42). barrier is nil here only because
@@ -274,7 +296,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 
 	// Wire the xkmsd bridge so the phone's full remote.* method set is served,
 	// not just ping and attestation.
-	bridgeClient, bridge, collaborators, err := connectListenBridge(cmd, logger, enroller, enrollerErr)
+	bridgeClient, bridge, collaborators, err := connectListenBridge(cmd, logger, targetDevice, enroller, enrollerErr)
 	if err != nil {
 		return err
 	}
@@ -563,8 +585,9 @@ func listenPIVStorageProvider(cmd *cobra.Command, logger *slog.Logger) pairing.P
 // a second, differently-wired implementation that only forwards ping,
 // attestation, and TPM enrollment. cmd is whichever cobra.Command the caller
 // is running under; its --barrier-password/--barrier-password-file flags
-// (registered by addDeviceBarrierFlags on "xkey device listen", and directly
-// on fido2Cmd) are read the same way regardless of which command owns them.
+// (registered by registerDeviceListenFlags on "xkey device listen", and
+// directly on fido2Cmd) are read the same way regardless of which command
+// owns them.
 //
 // The OATH store and sync service are opened through the exact constructors
 // "xkey oath" (openOATHStore, oath.go) and "xkey device sync"
@@ -577,6 +600,14 @@ func listenPIVStorageProvider(cmd *cobra.Command, logger *slog.Logger) pairing.P
 // this reason (go-xkms#690), and a host with, say, no OATH store yet should
 // still pair, sync its trust store, and serve PIV and every other method.
 //
+// device is the paired phone the bridge serves. Every audited bridge call —
+// crypto requests, policy denials, and each remote.sync* write the phone
+// makes into this host's stores — is recorded against it: DeviceID is its
+// BLE address and DeviceName its paired name, the same identity pkg/phone
+// records connection events under. The audit sink is the slog-backed
+// audit.Logger the headless "xkey extension serve" daemon uses (fido2.go),
+// since neither command owns a persistent audit store.
+//
 // The returned collaborators must be closed at shutdown by the caller
 // (listenBridgeCollaborators.Close); connectListenBridge and
 // connectXKMSdBridge both do this via defer, matching every other resource
@@ -585,6 +616,7 @@ func buildListenBridgeConfig(
 	cmd *cobra.Command,
 	logger *slog.Logger,
 	xkmsdCfg *XKMSdBridgeConfig,
+	device *PairedDevice,
 	enroller pairing.TPMEnroller,
 	enrollerErr error,
 ) (*pairing.BridgeConfig, *listenBridgeCollaborators) {
@@ -615,6 +647,9 @@ func buildListenBridgeConfig(
 		OATHStore:       collaborators.oathStore,
 		PIVStorage:      listenPIVStorageProvider(cmd, logger),
 		SyncService:     syncService,
+		AuditLogger:     audit.NewSlogLogger(logger),
+		DeviceID:        device.Address,
+		DeviceName:      device.Name,
 	}
 
 	return bridgeCfg, collaborators
@@ -628,6 +663,7 @@ func buildListenBridgeConfig(
 func connectListenBridge(
 	cmd *cobra.Command,
 	logger *slog.Logger,
+	device *PairedDevice,
 	enroller pairing.TPMEnroller,
 	enrollerErr error,
 ) (transport.Client, *pairing.Bridge, *listenBridgeCollaborators, error) {
@@ -641,7 +677,7 @@ func connectListenBridge(
 		return nil, nil, nil, err
 	}
 
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, logger, cfg, enroller, enrollerErr)
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, logger, cfg, device, enroller, enrollerErr)
 
 	bridge, err := pairing.NewBridge(client, bridgeCfg)
 	if err != nil {

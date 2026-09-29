@@ -192,7 +192,7 @@ func NewBackend(ctx context.Context, config *Config) (*Backend, error) {
 	if config.Insecure {
 		opts = append(opts,
 			option.WithoutAuthentication(),
-			option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
+			option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials()))) // insecure-ok: explicit Config.Insecure, gated to a custom Endpoint (local emulator only) by Validate(). Allowlisted in Makefile check-insecure-tls.
 	}
 
 	// Create KMS client

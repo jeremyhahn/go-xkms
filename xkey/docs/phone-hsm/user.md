@@ -54,7 +54,26 @@ Until at least one application is listed, every pairing and every
 re-attestation is refused with *no application is allow-listed for device
 attestation*. `allow_unpinned_signatures: true` accepts a listed package with
 no digests — for development builds only, since anyone can build an app
-claiming that package name.
+claiming that package name. The package name alone is not proof of anything;
+list a signing digest as soon as you have one from your release keystore, or
+pairing stays refused on purpose.
+
+An enterprise deployment can lock this list too, the same way it can lock
+`allow_unattestable_devices`: while the `policy:` section's
+`lock_pairing_application_policy` is set, its own `pairing_allowed_applications`
+governs and your `devices.yaml` entries are ignored, not merged with them.
+You will see this as a pairing or re-attestation that refuses (or accepts) a
+build regardless of what you wrote in `attestation_policy`; ask your
+administrator which builds the fleet allows.
+
+On a sealed (enterprise) machine, pairing and re-attestation refuse outright
+— never falling back to your own `attestation_policy` — until that section
+has actually been verified: on the CLI that means an operator with the SO PIN
+has set `XKEY_SO_PIN` for the command; on the desktop GUI it means an SO has
+logged in since the app started. This is deliberate: your machine being
+sealed at all could mean the fleet locked this exact list, and using your own
+`devices.yaml` before that is confirmed would be exactly the loophole locking
+it exists to close.
 
 `--force` re-pairs over an existing pairing. It throws the old binding away —
 use it when you mean to, not to make an error go away.

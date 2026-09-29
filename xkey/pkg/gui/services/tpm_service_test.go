@@ -2676,6 +2676,9 @@ func (m *mockTrustStore) AddCertificate(_ *x509.Certificate) error {
 func (m *mockTrustStore) AddPEM(_ []byte) (int, error) {
 	panic("mockTrustStore: AddPEM not expected")
 }
+func (m *mockTrustStore) ImportPEM(_ []byte, _ *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
+	panic("mockTrustStore: ImportPEM not expected")
+}
 func (m *mockTrustStore) RemoveCertificate(_ string) error {
 	panic("mockTrustStore: RemoveCertificate not expected")
 }

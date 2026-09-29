@@ -204,7 +204,11 @@ func TestLaunch_BearerTokenEnforced(t *testing.T) {
 	cfg := minimalLoopbackConfig(t)
 	cfg.Auth.Enabled = true
 	cfg.Auth.Type = "jwt"
-	cfg.Auth.JWT = &config.JWTConfig{PublicKeyFile: generateJWTPublicKeyFile(t)}
+	cfg.Auth.JWT = &config.JWTConfig{
+		PublicKeyFile: generateJWTPublicKeyFile(t),
+		Issuer:        "test-issuer",
+		Audience:      []string{"test-audience"},
+	}
 
 	inst, err := Launch(context.Background(), Options{Config: cfg})
 	if err != nil {

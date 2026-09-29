@@ -91,15 +91,34 @@ func TestFindDeviceByName(t *testing.T) {
 	}
 
 	t.Run("found", func(t *testing.T) {
-		device := findDeviceByName(cfg, "Device 2")
+		device, err := findDeviceByName(cfg, "Device 2")
+		require.NoError(t, err)
 		require.NotNil(t, device)
 		assert.Equal(t, "AA:BB:CC:DD:EE:FF", device.Address)
 	})
 
 	t.Run("not_found", func(t *testing.T) {
-		device := findDeviceByName(cfg, "NonExistent")
+		device, err := findDeviceByName(cfg, "NonExistent")
+		require.NoError(t, err)
 		assert.Nil(t, device)
 	})
+}
+
+// TestFindDeviceByName_Ambiguous pins #1315: two paired records sharing a
+// name must refuse the lookup with ErrDeviceNameAmbiguous rather than
+// silently returning whichever record happens to be first in the file.
+func TestFindDeviceByName_Ambiguous(t *testing.T) {
+	cfg := &DevicesConfig{
+		Devices: []PairedDevice{
+			{Name: "Shared", Address: "11:22:33:44:55:66"},
+			{Name: "Shared", Address: "AA:BB:CC:DD:EE:FF"},
+		},
+	}
+
+	device, err := findDeviceByName(cfg, "Shared")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDeviceNameAmbiguous)
+	assert.Nil(t, device)
 }
 
 func TestFindDeviceByAddress(t *testing.T) {

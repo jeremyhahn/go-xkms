@@ -853,9 +853,12 @@ together skips discovery for that provider from then on, on both `login` and
 
 ### AWS Session Store
 
-Default: `~/.config/xkey/aws-session.json`
-
-Stores DPoP key and refresh token for AWS credential refresh.
+Stores the DPoP private key and refresh token for AWS credential refresh.
+Barrier-encrypted when `xkey barrier init` has been run, an unencrypted file
+under the xkey data directory with one warning otherwise, or an exact plain
+file when `--session-store` is explicitly set (directly, or saved on the
+provider). See [architecture.md](architecture.md#where-the-store-lives) and
+[cli.md](cli.md#xkey-oidc-aws) for the full decision.
 
 ---
 

@@ -169,13 +169,16 @@ func executeTrustFetch(cmd *cobra.Command, target string) (err error) {
 		timeout = xkms.TrustFetcherDefaultTimeout
 	}
 
-	purpose := truststore.PurposeBootstrapCA
+	addOpts := truststore.BootstrapImportOptions(target)
 	if purposeStr != "" {
 		parsed, parseErr := truststore.ParsePurpose(purposeStr)
 		if parseErr != nil {
 			return &SentinelCauseError{Sentinel: ErrTrustFetchInvalidArgs, Cause: parseErr}
 		}
-		purpose = parsed
+		addOpts.Purpose = parsed
+	}
+	if sourceStr != "" {
+		addOpts.Source = sourceStr
 	}
 
 	opts := xkms.TrustFetcherOptions{
@@ -202,15 +205,6 @@ func executeTrustFetch(cmd *cobra.Command, target string) (err error) {
 			err = errors.Join(err, closeErr)
 		}
 	}()
-
-	source := sourceStr
-	if source == "" {
-		source = bundle.Source
-	}
-	addOpts := &truststore.AddCertificateOptions{
-		Purpose: purpose,
-		Source:  source,
-	}
 
 	added := 0
 	skipped := 0

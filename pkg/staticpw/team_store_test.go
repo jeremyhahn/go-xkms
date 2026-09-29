@@ -537,3 +537,26 @@ func TestTeamStore_NilKVStore(t *testing.T) {
 	_, err := NewDAOTeamStore(nil)
 	assert.ErrorAs(t, err, &ErrNilKVStore{})
 }
+
+// TestTeamStore_Create_DuplicateLookupFailureSurfaces proves that a
+// findByName failure other than ErrTeamNotFound aborts Create instead of
+// being silently treated as "no such team" (go-xkms#1347). Closing the
+// underlying storage out from under the store forces the duplicate-name
+// lookup to fail with a real, non-not-found error.
+func TestTeamStore_Create_DuplicateLookupFailureSurfaces(t *testing.T) {
+	backend := storage.NewMemory()
+	kvStore, err := kvadapter.New(backend)
+	require.NoError(t, err)
+
+	store, err := NewDAOTeamStore(kvStore)
+	require.NoError(t, err)
+
+	require.NoError(t, backend.Close())
+
+	err = store.Create(context.Background(), &TeamEntity{Name: "engineering", OwnerID: "alice"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, storage.ErrClosed,
+		"the duplicate-name lookup failure must reach the caller instead of being discarded")
+	assert.NotErrorIs(t, err, ErrTeamExists,
+		"a lookup failure must never be reported as a duplicate-name conflict")
+}

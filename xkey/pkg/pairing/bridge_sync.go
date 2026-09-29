@@ -16,8 +16,10 @@ package pairing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
 )
 
@@ -53,8 +55,8 @@ func (b *Bridge) handleSyncTrustStore(_ context.Context, params json.RawMessage)
 	}
 
 	applied, err := b.syncService.ApplyTrustStoreDelta(wireToTrustStoreDelta(p.Certificates))
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
+	if reportErr := b.auditSyncApplied(xkeysync.DataTypeTrustStore, len(p.Certificates), applied, err); reportErr != nil {
+		return nil, reportErr
 	}
 
 	local, err := b.syncService.ComputeLocalTrustStoreDelta()
@@ -89,8 +91,8 @@ func (b *Bridge) handleSyncOATH(_ context.Context, params json.RawMessage) (inte
 	}
 
 	applied, err := b.syncService.ApplyOATHDelta(wireToOATHDelta(p.Credentials))
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
+	if reportErr := b.auditSyncApplied(xkeysync.DataTypeOATH, len(p.Credentials), applied, err); reportErr != nil {
+		return nil, reportErr
 	}
 
 	local, err := b.syncService.ComputeLocalOATHDelta()
@@ -126,8 +128,8 @@ func (b *Bridge) handleSyncPasswords(_ context.Context, params json.RawMessage) 
 	}
 
 	applied, err := b.syncService.ApplyPasswordDelta(wireToPasswordDelta(p.Passwords))
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
+	if reportErr := b.auditSyncApplied(xkeysync.DataTypePasswords, len(p.Passwords), applied, err); reportErr != nil {
+		return nil, reportErr
 	}
 
 	local, err := b.syncService.ComputeLocalPasswordDelta()
@@ -414,4 +416,45 @@ func parseSyncTimestamp(value string) time.Time {
 		return time.Time{}
 	}
 	return parsed
+}
+
+// auditSyncApplied records one remote.sync* write from the paired device in
+// the audit log and returns the error the handler must report, if any.
+//
+// It runs after the apply, whether or not the apply succeeded, so a refused or
+// failed write is on record as well as a successful one. The entry names the
+// device the bridge serves (BridgeConfig.DeviceID/DeviceName), how many items
+// the device sent, and what the merge did with them. A failed audit write
+// fails the call, as it does for every other audited bridge operation: a
+// peer's write to local data must not go unrecorded.
+func (b *Bridge) auditSyncApplied(dataType string, received int, applied *xkeysync.SyncItemResult, applyErr error) error {
+	var auditErr error
+	if b.auditLogger != nil {
+		entry := audit.Entry{
+			Timestamp:  time.Now(),
+			Operation:  audit.OpSyncApplied,
+			DeviceID:   b.config.DeviceID,
+			DeviceName: b.config.DeviceName,
+			Success:    applyErr == nil,
+			Details: map[string]any{
+				"dataType": dataType,
+				"received": received,
+			},
+		}
+		if applied != nil {
+			entry.Details["added"] = applied.Added
+			entry.Details["updated"] = applied.Updated
+			entry.Details["skipped"] = applied.Skipped
+			entry.Details["itemErrors"] = len(applied.Errors)
+		}
+		if applyErr != nil {
+			entry.Error = applyErr.Error()
+		}
+		auditErr = b.auditLogger.Log(entry)
+	}
+
+	if applyErr != nil || auditErr != nil {
+		return &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: errors.Join(applyErr, auditErr)}
+	}
+	return nil
 }

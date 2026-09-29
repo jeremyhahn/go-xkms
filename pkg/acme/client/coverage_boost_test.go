@@ -35,40 +35,63 @@ func TestCoverageBoost_WithAuthClient(t *testing.T) {
 }
 
 // startHTTPServerWithActiveConn starts an HTTP server on a random port and
-// establishes an active connection that keeps the server busy, so that
-// Shutdown with an expired context will return an error. Returns the server
-// and a cleanup function.
+// drives one connection into the handler, then blocks the handler there
+// until the returned cleanup runs. net/http only marks a connection
+// http.StateActive once its handler has been dispatched; a partial request
+// with no trailing "\r\n\r\n" never reaches that point; readRequest just
+// blocks with the connection still in http.StateNew, which Shutdown treats
+// as idle and closes immediately, so Shutdown with an expired context
+// returns nil instead of an error. Sending a complete request and waiting
+// for the handler to signal that it is running proves the connection is
+// active before Shutdown is invoked, so Shutdown must poll until the
+// context deadline and return an error. Returns the server and a cleanup
+// function that releases the handler and waits for the server goroutine to
+// exit.
 func startHTTPServerWithActiveConn(t *testing.T) (*http.Server, func()) {
 	t.Helper()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
+	inFlight := make(chan struct{})
+	release := make(chan struct{})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		close(inFlight)
+		<-release
+	})
+
 	srv := &http.Server{
 		Addr:    listener.Addr().String(),
-		Handler: http.NewServeMux(),
+		Handler: mux,
 	}
 
+	serveDone := make(chan struct{})
 	go func() {
+		defer close(serveDone)
 		_ = srv.Serve(listener)
 	}()
 
-	// Wait briefly for the server to start
-	time.Sleep(20 * time.Millisecond)
-
-	// Establish an active connection with a partial HTTP request
-	// to keep it alive during Shutdown
 	conn, err := net.Dial("tcp", listener.Addr().String())
 	require.NoError(t, err)
 
-	_, err = conn.Write([]byte("GET / HTTP/1.1\r\nHost: localhost\r\n"))
+	_, err = conn.Write([]byte("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"))
 	require.NoError(t, err)
 
-	time.Sleep(10 * time.Millisecond)
+	// Block until the handler is actually running, which guarantees the
+	// connection is in http.StateActive before Shutdown is called.
+	select {
+	case <-inFlight:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for handler to receive request")
+	}
 
 	cleanup := func() {
+		close(release)
 		_ = conn.Close()
 		_ = srv.Close()
+		<-serveDone
 	}
 
 	return srv, cleanup

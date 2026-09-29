@@ -22,10 +22,8 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -112,23 +110,8 @@ func init() {
 	deviceCmd.AddCommand(deviceShareCmd)
 	deviceCmd.AddCommand(deviceImportCmd)
 
-	// Share command flags
-	deviceShareCmd.Flags().String("device", "", "Paired device name to share with")
-	deviceShareCmd.Flags().String("label", "", "Label for the shared key on the phone")
-	deviceShareCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-
-	// Import command flags
-	deviceImportCmd.Flags().String("backend", "software", "Target backend for imported key")
-	deviceImportCmd.Flags().String("device", "", "Paired device name to import from")
-	deviceImportCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("device.share.device", deviceShareCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.share.label", deviceShareCmd.Flags().Lookup("label"))
-	_ = viper.BindPFlag("device.share.timeout", deviceShareCmd.Flags().Lookup("timeout"))
-	_ = viper.BindPFlag("device.import.backend", deviceImportCmd.Flags().Lookup("backend"))
-	_ = viper.BindPFlag("device.import.device", deviceImportCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.import.timeout", deviceImportCmd.Flags().Lookup("timeout"))
+	registerDeviceShareFlags(deviceShareCmd)
+	registerDeviceImportFlags(deviceImportCmd)
 }
 
 // runDeviceShare shares a key with a paired phone device.
@@ -154,7 +137,10 @@ func runDeviceShare(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
@@ -395,7 +381,10 @@ func runDeviceImport(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}

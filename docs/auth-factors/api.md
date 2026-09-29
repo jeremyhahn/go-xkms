@@ -1,6 +1,6 @@
 # Auth Factors — API
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -24,6 +24,37 @@ What *is* on the wire is (a) the hardware operations each factor wraps, and
 | Register into an existing registry | `registry.Register(f)` for each of `DefaultFactors(cfg)` | the registry type is **go-qrdb's** |
 
 SDK access is `Security().Auth().FIDO2()` and `Security().Auth().PIV()`.
+
+## Factor challenge and response payloads
+
+go-qrdb's auth-factor service issues a factor's challenge, returns its
+`MethodData` to the client, keeps the challenge server-side, and passes that
+stored challenge to the factor's `Verify` with the client's response. The
+enrolled verification key travels in `MethodData`, so the factor never has to
+take one from the response.
+
+| Factor | Challenge `MethodData` | Response |
+|---|---|---|
+| `piv` | `enrolled_cert_pem` (enrolled certificate, PEM), `slot`, `algorithm` | `Value`: DER ECDSA signature over SHA-256(nonce) |
+| `pkcs11` | `enrolled_public_key_der` (enrolled PKIX key, standard base64), `mechanism`, `algorithm`, `key_id` | `Value`: DER ECDSA or PKCS#1 v1.5 RSA signature over SHA-256(nonce) |
+| `fido2` | `enrolled_cose_public_key` (enrolled COSE key, standard base64), `rp_id`, `credential_id`, `challenge_base64` | `Value`: assertion signature; `Metadata`: `authenticator_data`, `client_data` (base64) |
+| `mtls` | `enrolled_cert_pem`, `cert_spki_thumbprint`, `cert_cn` | `Value`: ECDSA or RSA signature over SHA-256(nonce), or Ed25519 over the nonce |
+
+A response carries **no public key**. Verification uses only the key in the
+stored challenge. Key material placed in a response's metadata
+(`public_key_pem`, `public_key_der`, `cose_public_key`) is ignored, and a
+challenge without the enrolled key is refused.
+### PIV factor signature verification
+
+The `piv` factor's `Verify` (`pkg/factor/piv/factor.go`) accepts every
+algorithm its `Enroll` can produce — `rsa2048`, `rsa4096`, `ecdsap256`,
+`ecdsap384`, `ed25519` — dispatching by the enrolled key's type:
+
+| Algorithm | Signature format |
+|---|---|
+| ECDSA (P-256, P-384) | ASN.1 DER `(r, s)` over SHA-256(nonce) |
+| RSA (2048 bits or larger) | PKCS#1 v1.5 over SHA-256(nonce); moduli under 2048 bits are refused |
+| Ed25519 | raw signature over the raw nonce — Ed25519 hashes its own input and does not accept a pre-hashed digest for standard (non-Ed25519ph) signing |
 
 ## The authentication surface that consumes them
 

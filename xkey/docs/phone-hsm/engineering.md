@@ -67,8 +67,19 @@ TPM. `remote.syncStatus` is the one exception: with no `SyncService` it
 reports an empty status (nothing has been synced yet) rather than an error,
 since that is a legitimate status, not a missing feature.
 
+**Sync writes are quarantined and audited (#1304).** `remote.syncTrustStore`
+stores every certificate the phone sends under `truststore.PurposeSynced`,
+which anchors neither TLS nor attestation; the phone cannot plant a trust
+anchor. Each `remote.syncTrustStore`/`syncOATH`/`syncPasswords` write is
+recorded as `audit.OpSyncApplied` against `BridgeConfig.DeviceID`/`DeviceName`
+(`Bridge.auditSyncApplied`, `xkey/pkg/pairing/bridge_sync.go`), success or
+failure, with the item counts; a failed audit write fails the call as
+`ErrSyncFailed`.
+
 `cmd/xkey/cmd/device_listen.go`'s `buildListenBridgeConfig` is the one place
-that wires all three: it opens the OATH store through `openOATHStore` and the
+that wires all three, plus the audit identity — `AuditLogger` is
+`audit.NewSlogLogger`, `DeviceID`/`DeviceName` the paired device's BLE address
+and name: it opens the OATH store through `openOATHStore` and the
 sync service through `openSyncService` — the exact constructors `xkey oath`
 and `xkey device sync` themselves call — and builds the PIV storage provider
 from the same `createPIVStorage` construction `xkey piv` uses, so a
@@ -411,15 +422,117 @@ defect and the shape of the fix is what the current design is for.
      allow_unpinned_signatures: false
    ```
 
-   **There is no built-in default.** No official xkey-android package and
-   signing digest are defined in this repository, so an empty allow-list
-   refuses every device: `attestation.LoadTrust` returns
-   `pairing.ErrApplicationPolicyUnconfigured` before any phone is asked for
-   evidence. A `devices.yaml` that exists but cannot be parsed refuses too,
-   rather than reading as "no policy".
+   **There is no built-in default.** The official package name,
+   `com.automatethethings.xkey`, is documented above and pinned as
+   `attesttest.AppPackage` for tests, but no release signing digest is
+   defined in this repository — the release keystore lives outside version
+   control — so an empty allow-list refuses every device:
+   `attestation.LoadTrust` returns `pairing.ErrApplicationPolicyUnconfigured`
+   before any phone is asked for evidence, and the error text names exactly
+   what to configure (`allowed_applications`: `package_name` and
+   `signing_digests`). A `devices.yaml` that exists but cannot be parsed
+   refuses too, rather than reading as "no policy". A debug build's package
+   name carries a `.debug` suffix and is a **different** package that is not
+   allow-listed by adding the release name — an operator who wants to pair a
+   debug build lists it explicitly.
 
    A device that fails any of those is **unattestable**, which is a policy
    question with the policy answer above — not a silent admission.
+
+   **The enterprise/SO plane can lock the allow-list too (#1305).** The same
+   mechanism that locks `allow_unattestable_devices` extends to the
+   application allow-list, because an enterprise that wants to control which
+   xkey-android build may hold a device key cannot be overridden by a user
+   editing `devices.yaml`:
+
+   | Plane | Where | Key |
+   |---|---|---|
+   | User | `devices.yaml` | `attestation_policy.allowed_applications`, `attestation_policy.allow_unpinned_signatures` |
+   | Enterprise / SO | the `policy:` section | `pairing_allowed_applications`, `pairing_allow_unpinned_signatures`, gated by `lock_pairing_application_policy` |
+
+   ```yaml
+   policy:
+     lock_pairing_application_policy: true
+     pairing_allowed_applications:
+       - package_name: com.automatethethings.xkey
+         signing_digests:
+           - <hex SHA-256 of the release signing certificate>
+   ```
+
+   `attestation.ResolveApplicationPolicy` (`xkey/pkg/attestation/policy.go`) is
+   the one function both `loadPairingAttestationTrust` (CLI) and
+   `PhoneService.loadAttestationTrust` (GUI) call to combine the two planes,
+   but it is deliberately a PURE function: it takes an already-resolved
+   `*config.PolicySection` (nil, or genuinely verified) and never resolves
+   verification itself. While `lock_pairing_application_policy` is set on a
+   verified section, the enterprise allow-list is used **outright** — never
+   merged with `devices.yaml`'s entries, since merging would let a user widen
+   a locked deployment by appending an entry the SO never approved. While it
+   is unset on a verified section, the user's own `devices.yaml` governs,
+   same as an unset `lock_pairing_attestation_policy` leaves
+   `allow_unattestable_devices` to the user.
+
+   **A sealed section that has not verified must refuse outright, and must
+   NEVER fall back to `devices.yaml`.** This is deliberately a STRICTER rule
+   than `AllowUnattestablePairing`'s own resolution, and the asymmetry is the
+   point. An unverified enterprise plane there degrades safely to the
+   ordinary strict pairing path — attestation is still required, only the
+   *unattestable-device* escape hatch is refused — so nothing is lost by
+   treating "unverified" as "no". Here there is no such safe default to
+   degrade to: SOME allow-list must be consulted for the check to mean
+   anything, and if the deployment's real intent is unknown, using the one
+   supplied by `devices.yaml` — a file anyone with a shell on the machine can
+   edit, without ever producing the SO PIN — is exactly the bypass locking the
+   allow-list exists to prevent. So each surface's own wrapper around
+   `ResolveApplicationPolicy` refuses with
+   `attestation.ErrApplicationPolicyUnverifiable` the moment it detects a
+   sealed config directory whose section it could not verify, and calls
+   `ResolveApplicationPolicy` at all ONLY once it has either confirmed there
+   is no sealed plane (personal mode) or has a genuinely verified section in
+   hand:
+
+   - **CLI.** `resolveEnterpriseApplicationPolicy` (`cmd/xkey/cmd/device_pair.go`)
+     checks `config.IsEnterpriseMode` first. Unsealed: `devices.yaml` governs,
+     no PIN needed, nothing to verify. Sealed: it reads `XKEY_SO_PIN` alone —
+     never `--so-pin-stdin`, which only a live operator can answer, since a
+     re-attestation runs unattended on a reconnect with no SO at the keyboard
+     (`device attest-device`, the reconnect proof in `device_session.go`, and
+     the backend's `NewLiveAttestor` all reach `loadPairingAttestationTrust`
+     with no `*cobra.Command` in hand) — and calls
+     `config.LoadVerifiedPolicy` with it. No PIN, a wrong PIN, or no loaded
+     config at all while sealed: `LoadVerifiedPolicy` fails (or the missing-
+     config case is treated the same way), and the wrapper returns
+     `ErrApplicationPolicyUnverifiable` wrapping the underlying cause —
+     `loadPairingAttestationTrust` propagates it and refuses the whole trust
+     load, so pairing and re-attestation both stop before a phone is ever
+     asked for evidence.
+
+     There is **no cryptographic mechanism to verify the sealed section
+     without the SO PIN**: `ComputePolicyHMAC`/`VerifyPolicyHMAC`
+     (`pkg/config/policy_integrity.go`) derive the HMAC key from the SO PIN
+     via Argon2id every time, by design (#118), and the on-disk record's
+     `TPMNVIndex` field is unused reserved space, not an active alternate
+     path. `XKEY_SO_PIN` in the environment is therefore the CLI's only way to
+     satisfy an unattended re-attestation against a locked deployment; an
+     operator who wants that must provision it the same way any other
+     service secret reaches an unattended process.
+
+   - **GUI.** `PhoneService` tracks two things, not one cached section:
+     `SetEnterpriseSealed(bool)`, set once at startup from
+     `config.IsEnterpriseMode` before any pairing or re-attestation can run,
+     and `SetPolicy(*config.PolicySection)`, called ONLY by
+     `applyVerifiedEnterprisePolicy` once SO login has actually verified the
+     section — never with `config.DefaultPolicy()` as a startup placeholder,
+     unlike `AppService`, `PINService`, `TrustService`, `AuditService`,
+     `SealService` and `APIExplorerService`'s own `SetPolicy`, which the GUI
+     DOES install with that placeholder for their own lower-stakes UX
+     switches. `ResolvedApplicationPolicy` reads both: a verified `policy`
+     resolves through `ResolveApplicationPolicy` as above; no verified policy
+     but `enterpriseSealed` true refuses with
+     `ErrApplicationPolicyUnverifiable`; neither set (personal mode) falls
+     through to `devices.yaml`. So before an SO has ever logged in on a
+     sealed deployment, phone pairing and re-attestation are refused
+     outright, not merely left ungated.
 
    **Two pairing surfaces, one gate (#115, #131).** The desktop GUI pairs
    phones too, through `PhoneService.Pair` in `xkey/pkg/gui/services`, and

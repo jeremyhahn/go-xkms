@@ -569,7 +569,9 @@ func TestClose(t *testing.T) {
 	if err := storage.SaveKey(context.Background(), config.KeyStorage, "test-key", []byte("test data")); err != nil {
 		t.Fatalf("storage.SaveKey() error = %v", err)
 	}
-	b.importTokens["import-token-test-key"] = []byte("wrapping key material")
+	if _, err := b.importTokens.Put("test-handle", newTestImportEntry(t, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)); err != nil {
+		t.Fatalf("importTokens.Put() error = %v", err)
+	}
 
 	err = b.Close()
 	if err != nil {
@@ -586,8 +588,8 @@ func TestClose(t *testing.T) {
 		t.Error("Close() must not remove metadata from Config.KeyStorage")
 	}
 
-	// Verify the transient import-token map was cleared.
-	if len(b.importTokens) != 0 {
+	// Verify the transient import-token store was cleared.
+	if b.importTokens.Len() != 0 {
 		t.Error("Close() should clear importTokens")
 	}
 

@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,6 +41,12 @@ type authenticator struct {
 	priv    *ecdsa.PrivateKey
 	rpID    string
 	rpIDHsh []byte
+
+	// flags is the authenticatorData flags byte; ceremonyType is the
+	// clientDataJSON "type". Tests alter them to model a misbehaving or
+	// hostile client.
+	flags        byte
+	ceremonyType string
 }
 
 func newAuthenticator(t *testing.T, rpID string) *authenticator {
@@ -49,7 +56,13 @@ func newAuthenticator(t *testing.T, rpID string) *authenticator {
 		t.Fatalf("generate key: %v", err)
 	}
 	h := sha256.Sum256([]byte(rpID))
-	return &authenticator{priv: priv, rpID: rpID, rpIDHsh: h[:]}
+	return &authenticator{
+		priv:         priv,
+		rpID:         rpID,
+		rpIDHsh:      h[:],
+		flags:        0x05, // UP + UV
+		ceremonyType: "webauthn.get",
+	}
 }
 
 // coseKey returns the credential public key in COSE_Key (ES256) form.
@@ -82,7 +95,7 @@ func (a *authenticator) coseKey(t *testing.T) []byte {
 func (a *authenticator) authData() []byte {
 	out := make([]byte, 0, 37)
 	out = append(out, a.rpIDHsh...)
-	out = append(out, 0x05) // UP + UV
+	out = append(out, a.flags)
 	count := make([]byte, 4)
 	binary.BigEndian.PutUint32(count, 1)
 	out = append(out, count...)
@@ -96,7 +109,7 @@ func (a *authenticator) clientDataJSON(challenge []byte) []byte {
 		Challenge string `json:"challenge"`
 		Origin    string `json:"origin"`
 	}{
-		Type:      "webauthn.get",
+		Type:      a.ceremonyType,
 		Challenge: base64.RawURLEncoding.EncodeToString(challenge),
 		Origin:    "https://" + a.rpID,
 	}
@@ -165,15 +178,36 @@ func enroll(t *testing.T, f *Factor, a *authenticator) *qrdbsdk.AuthFactorEnroll
 	return enrollment
 }
 
-func responseFor(a *authenticator, t *testing.T, enrollment *qrdbsdk.AuthFactorEnrollment, challenge *qrdbsdk.AuthFactorChallenge) *qrdbsdk.AuthFactorResponse {
-	authData, clientData, sig := a.assert(t, challenge.Nonce)
+// responseFor produces the wire response for an assertion over nonce: the
+// signature plus authenticatorData and clientDataJSON. It carries no key.
+func responseFor(a *authenticator, t *testing.T, nonce []byte) *qrdbsdk.AuthFactorResponse {
+	authData, clientData, sig := a.assert(t, nonce)
 	return &qrdbsdk.AuthFactorResponse{
 		Value: sig,
 		Metadata: map[string]string{
 			"authenticator_data": base64.StdEncoding.EncodeToString(authData),
 			"client_data":        base64.StdEncoding.EncodeToString(clientData),
-			"cose_public_key":    base64.StdEncoding.EncodeToString(enrollment.PublicKey),
 		},
+	}
+}
+
+// issue enrolls a's credential with f and issues a challenge for it.
+func issue(t *testing.T, f *Factor, a *authenticator) (*qrdbsdk.AuthFactorEnrollment, *qrdbsdk.AuthFactorChallenge) {
+	t.Helper()
+	enrollment := enroll(t, f, a)
+	challenge, err := f.Challenge(context.Background(), enrollment)
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	return enrollment, challenge
+}
+
+// requireVerificationFailed asserts err is the factor's verification refusal.
+func requireVerificationFailed(t *testing.T, err error) {
+	t.Helper()
+	var failed *qrdbsdk.AuthFactorVerificationFailedError
+	if !errors.As(err, &failed) {
+		t.Fatalf("Verify err = %v, want VerificationFailedError", err)
 	}
 }
 
@@ -205,9 +239,6 @@ func TestFIDO2Factor_RoundTrip(t *testing.T) {
 	if enrollment.Metadata["rp_id"] != "example.com" {
 		t.Fatalf("rp_id = %q, want example.com", enrollment.Metadata["rp_id"])
 	}
-	if enrollment.Metadata["public_key_hash"] == "" {
-		t.Fatal("public_key_hash missing")
-	}
 	if len(enrollment.PublicKey) == 0 {
 		t.Fatal("PublicKey is empty")
 	}
@@ -220,7 +251,14 @@ func TestFIDO2Factor_RoundTrip(t *testing.T) {
 		t.Fatalf("nonce length = %d, want %d", len(challenge.Nonce), challengeLength)
 	}
 
-	if err := f.Verify(ctx, challenge, responseFor(a, t, enrollment, challenge)); err != nil {
+	if got := challenge.MethodData[methodDataEnrolledKey]; got != base64.StdEncoding.EncodeToString(enrollment.PublicKey) {
+		t.Fatalf("challenge MethodData[%q] = %v, want the enrolled COSE key", methodDataEnrolledKey, got)
+	}
+	if got := challenge.MethodData[methodDataRPID]; got != "example.com" {
+		t.Fatalf("challenge MethodData[%q] = %v, want example.com", methodDataRPID, got)
+	}
+
+	if err := f.Verify(ctx, challenge, responseFor(a, t, challenge.Nonce)); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
 }
@@ -275,9 +313,8 @@ func TestFIDO2Factor_Verify_RejectsExpiredChallenge(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{RPID: "example.com"})
 	a := newAuthenticator(t, "example.com")
-	enrollment := enroll(t, f, a)
-	challenge, _ := f.Challenge(ctx, enrollment)
-	resp := responseFor(a, t, enrollment, challenge)
+	_, challenge := issue(t, f, a)
+	resp := responseFor(a, t, challenge.Nonce)
 	challenge.ExpiresAt = challenge.ExpiresAt.Add(-time.Hour)
 
 	var expired *qrdbsdk.AuthFactorChallengeExpiredError
@@ -290,23 +327,18 @@ func TestFIDO2Factor_Verify_RejectsTamperedSignature(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{RPID: "example.com"})
 	a := newAuthenticator(t, "example.com")
-	enrollment := enroll(t, f, a)
-	challenge, _ := f.Challenge(ctx, enrollment)
-	resp := responseFor(a, t, enrollment, challenge)
+	_, challenge := issue(t, f, a)
+	resp := responseFor(a, t, challenge.Nonce)
 	resp.Value[len(resp.Value)-1] ^= 0xFF
 
-	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	if err := f.Verify(ctx, challenge, resp); !errors.As(err, &failed) {
-		t.Fatalf("Verify(tampered sig) err = %v, want VerificationFailedError", err)
-	}
+	requireVerificationFailed(t, f.Verify(ctx, challenge, resp))
 }
 
 func TestFIDO2Factor_Verify_RejectsWrongChallengeBinding(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{RPID: "example.com"})
 	a := newAuthenticator(t, "example.com")
-	enrollment := enroll(t, f, a)
-	challenge, _ := f.Challenge(ctx, enrollment)
+	_, challenge := issue(t, f, a)
 
 	// Build an assertion bound to a DIFFERENT challenge nonce; signature is
 	// valid but does not bind the issued challenge.
@@ -314,58 +346,158 @@ func TestFIDO2Factor_Verify_RejectsWrongChallengeBinding(t *testing.T) {
 	if _, err := rand.Read(otherNonce); err != nil {
 		t.Fatalf("rand: %v", err)
 	}
-	authData, clientData, sig := a.assert(t, otherNonce)
-	resp := &qrdbsdk.AuthFactorResponse{
-		Value: sig,
-		Metadata: map[string]string{
-			"authenticator_data": base64.StdEncoding.EncodeToString(authData),
-			"client_data":        base64.StdEncoding.EncodeToString(clientData),
-			"cose_public_key":    base64.StdEncoding.EncodeToString(enrollment.PublicKey),
-		},
-	}
+	requireVerificationFailed(t, f.Verify(ctx, challenge, responseFor(a, t, otherNonce)))
+}
 
-	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	if err := f.Verify(ctx, challenge, resp); !errors.As(err, &failed) {
-		t.Fatalf("Verify(wrong challenge) err = %v, want VerificationFailedError", err)
+// TestFIDO2Factor_Verify_RejectsAttackerKeyInResponse is the #1282
+// regression: an assertion from a credential the attacker controls, carrying
+// that credential's COSE key in the response metadata, must not verify
+// against the enrollment.
+func TestFIDO2Factor_Verify_RejectsAttackerKeyInResponse(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{RPID: "example.com"})
+	victim := newAuthenticator(t, "example.com")
+	attacker := newAuthenticator(t, "example.com")
+	_, challenge := issue(t, f, victim)
+
+	resp := responseFor(attacker, t, challenge.Nonce)
+	resp.Metadata["cose_public_key"] = base64.StdEncoding.EncodeToString(attacker.coseKey(t))
+
+	requireVerificationFailed(t, f.Verify(ctx, challenge, resp))
+}
+
+// TestFIDO2Factor_Verify_RejectsChallengeWithoutEnrolledKey proves Verify has
+// no second source for the key: with the enrolled key absent from, or unusable
+// in, the challenge it refuses — even when the response carries the genuine
+// key.
+func TestFIDO2Factor_Verify_RejectsChallengeWithoutEnrolledKey(t *testing.T) {
+	cases := []struct {
+		name     string
+		enrolled any
+	}{
+		{"absent", nil},
+		{"not a string", []byte("cose")},
+		{"empty", ""},
+		{"not base64", "%%%"},
+		{"not COSE", base64.StdEncoding.EncodeToString([]byte("not-cose"))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := New(Config{RPID: "example.com"})
+			a := newAuthenticator(t, "example.com")
+			enrollment, challenge := issue(t, f, a)
+			delete(challenge.MethodData, methodDataEnrolledKey)
+			if tc.enrolled != nil {
+				challenge.MethodData[methodDataEnrolledKey] = tc.enrolled
+			}
+
+			resp := responseFor(a, t, challenge.Nonce)
+			resp.Metadata["cose_public_key"] = base64.StdEncoding.EncodeToString(enrollment.PublicKey)
+
+			requireVerificationFailed(t, f.Verify(context.Background(), challenge, resp))
+		})
 	}
 }
 
-func TestFIDO2Factor_Verify_RejectsWrongKey(t *testing.T) {
-	ctx := context.Background()
+func TestFIDO2Factor_Verify_RejectsChallengeWithoutRPID(t *testing.T) {
 	f := New(Config{RPID: "example.com"})
 	a := newAuthenticator(t, "example.com")
-	other := newAuthenticator(t, "example.com")
-	enrollment := enroll(t, f, a)
-	challenge, _ := f.Challenge(ctx, enrollment)
+	_, challenge := issue(t, f, a)
+	delete(challenge.MethodData, methodDataRPID)
 
-	// Assertion signed by a different key than the enrolled one.
-	authData, clientData, sig := other.assert(t, challenge.Nonce)
-	resp := &qrdbsdk.AuthFactorResponse{
-		Value: sig,
-		Metadata: map[string]string{
-			"authenticator_data": base64.StdEncoding.EncodeToString(authData),
-			"client_data":        base64.StdEncoding.EncodeToString(clientData),
-			"cose_public_key":    base64.StdEncoding.EncodeToString(enrollment.PublicKey),
-		},
-	}
+	requireVerificationFailed(t, f.Verify(context.Background(), challenge, responseFor(a, t, challenge.Nonce)))
+}
 
-	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	if err := f.Verify(ctx, challenge, resp); !errors.As(err, &failed) {
-		t.Fatalf("Verify(wrong key) err = %v, want VerificationFailedError", err)
+// TestFIDO2Factor_Verify_RejectsWrongRPIDHash covers an assertion the enrolled
+// credential genuinely signed, but for a different relying party.
+func TestFIDO2Factor_Verify_RejectsWrongRPIDHash(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	_, challenge := issue(t, f, a)
+
+	other := sha256.Sum256([]byte("evil.example.net"))
+	a.rpIDHsh = other[:]
+
+	err := f.Verify(context.Background(), challenge, responseFor(a, t, challenge.Nonce))
+	requireVerificationFailed(t, err)
+	if !strings.Contains(err.Error(), "rpIdHash") {
+		t.Errorf("error %q does not name the rpIdHash mismatch", err)
 	}
+}
+
+func TestFIDO2Factor_Verify_RejectsMissingUserPresence(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	_, challenge := issue(t, f, a)
+	a.flags = 0x04 // UV without UP
+
+	err := f.Verify(context.Background(), challenge, responseFor(a, t, challenge.Nonce))
+	requireVerificationFailed(t, err)
+	if !strings.Contains(err.Error(), "user-present") {
+		t.Errorf("error %q does not name the missing user-present flag", err)
+	}
+}
+
+// TestFIDO2Factor_Verify_AcceptsUserPresenceWithoutVerification pins that UP
+// alone suffices: no enrollment records a user-verification requirement.
+func TestFIDO2Factor_Verify_AcceptsUserPresenceWithoutVerification(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	_, challenge := issue(t, f, a)
+	a.flags = 0x01 // UP only
+
+	if err := f.Verify(context.Background(), challenge, responseFor(a, t, challenge.Nonce)); err != nil {
+		t.Fatalf("Verify(UP only): %v", err)
+	}
+}
+
+func TestFIDO2Factor_Verify_RejectsMalformedAuthenticatorData(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	_, challenge := issue(t, f, a)
+	resp := responseFor(a, t, challenge.Nonce)
+	resp.Metadata["authenticator_data"] = base64.StdEncoding.EncodeToString([]byte("short"))
+
+	requireVerificationFailed(t, f.Verify(context.Background(), challenge, resp))
+}
+
+// TestFIDO2Factor_Verify_RejectsRegistrationCeremony covers a clientDataJSON
+// whose type is not "webauthn.get", so a registration signature cannot stand
+// in for an assertion.
+func TestFIDO2Factor_Verify_RejectsRegistrationCeremony(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	_, challenge := issue(t, f, a)
+	a.ceremonyType = "webauthn.create"
+
+	err := f.Verify(context.Background(), challenge, responseFor(a, t, challenge.Nonce))
+	requireVerificationFailed(t, err)
+	if !strings.Contains(err.Error(), "webauthn.get") {
+		t.Errorf("error %q does not name the expected ceremony type", err)
+	}
+}
+
+func TestFIDO2Factor_Verify_RejectsMalformedClientData(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	_, challenge := issue(t, f, a)
+	resp := responseFor(a, t, challenge.Nonce)
+	resp.Metadata["client_data"] = base64.StdEncoding.EncodeToString([]byte("not json"))
+
+	requireVerificationFailed(t, f.Verify(context.Background(), challenge, resp))
 }
 
 func TestFIDO2Factor_Verify_RejectsMissingMetadata(t *testing.T) {
-	ctx := context.Background()
 	f := New(Config{RPID: "example.com"})
 	a := newAuthenticator(t, "example.com")
-	enrollment := enroll(t, f, a)
-	challenge, _ := f.Challenge(ctx, enrollment)
+	_, challenge := issue(t, f, a)
 
-	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Metadata: map[string]string{}}); !errors.As(err, &failed) {
-		t.Fatalf("Verify(no metadata) err = %v, want VerificationFailedError", err)
-	}
+	requireVerificationFailed(t, f.Verify(context.Background(), challenge, &qrdbsdk.AuthFactorResponse{Metadata: map[string]string{}}))
+
+	// authenticator_data present, client_data absent.
+	resp := responseFor(a, t, challenge.Nonce)
+	delete(resp.Metadata, "client_data")
+	requireVerificationFailed(t, f.Verify(context.Background(), challenge, resp))
 }
 
 func TestFIDO2Factor_Verify_RejectsNilArgs(t *testing.T) {

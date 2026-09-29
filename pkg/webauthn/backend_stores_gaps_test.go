@@ -63,6 +63,13 @@ func (f *faultyStore) Put(ctx context.Context, key string, value []byte) error {
 	return f.Backend.Put(ctx, key, value)
 }
 
+func (f *faultyStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if err, ok := f.putErr[key]; ok {
+		return false, err
+	}
+	return f.Backend.PutIfAbsent(ctx, key, value)
+}
+
 func (f *faultyStore) Delete(ctx context.Context, key string) error {
 	if err, ok := f.deleteErr[key]; ok {
 		return err
@@ -275,13 +282,13 @@ func (b *listErrBackend) List(ctx context.Context, prefix string) ([]string, err
 	return nil, b.err
 }
 
-func TestBackendCredentialStore_Update_ExistsError(t *testing.T) {
+func TestBackendCredentialStore_Update_GetError(t *testing.T) {
 	ctx := context.Background()
 	cred := &Credential{ID: []byte{6}, UserID: []byte{7}}
 	fs := newFaultyStore()
-	fs.existsErr[backendCredKey(cred.ID)] = errStoreFault
+	fs.getErr[backendCredKey(cred.ID)] = errStoreFault
 	if err := NewBackendCredentialStore(fs).Update(ctx, cred); !errors.Is(err, errStoreFault) {
-		t.Fatalf("Update(exists fault) = %v, want wrapped errStoreFault", err)
+		t.Fatalf("Update(get fault) = %v, want wrapped errStoreFault", err)
 	}
 }
 

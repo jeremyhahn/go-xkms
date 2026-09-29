@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	oidcaws "github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/handlers"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/urlsafety"
 	"github.com/pkg/browser"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -178,6 +179,23 @@ type refreshProcess struct {
 // BrowserOpenFunc allows tests to replace the browser open call.
 type BrowserOpenFunc func(url string) error
 
+// validatedBrowserOpen wraps open so that every URL it is handed passes
+// urlsafety.ValidateLaunchURL first. The authorization URL it launches is
+// built around an authorization_endpoint that provider discovery already
+// requires to be https-or-loopback (see the oidc package), but this is the
+// point where it actually reaches a subprocess -- including for providers
+// configured with SkipDiscovery, which bypass that check -- so it gets its
+// own guard rather than trusting the caller (go-xkms#1275).
+func validatedBrowserOpen(open BrowserOpenFunc) BrowserOpenFunc {
+	return func(rawURL string) error {
+		validated, err := urlsafety.ValidateLaunchURL(rawURL)
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrOIDCInvalidLaunchURL, Cause: err}
+		}
+		return open(validated.String())
+	}
+}
+
 // OIDCService manages OIDC authentication for the xKey GUI. It is bound
 // to the Wails runtime so every exported method is callable from the frontend.
 type OIDCService struct {
@@ -213,7 +231,7 @@ func NewOIDCService(log *slog.Logger) *OIDCService {
 		log:          log.With("service", "oidc"),
 		providers:    make(map[string]*OIDCProviderEntry),
 		refreshProcs: make(map[string]*refreshProcess),
-		browserOpen:  browser.OpenURL,
+		browserOpen:  validatedBrowserOpen(browser.OpenURL),
 		callback:     oidc.Callback{Host: defaults.CallbackHost, Port: defaults.CallbackPort},
 	}
 }

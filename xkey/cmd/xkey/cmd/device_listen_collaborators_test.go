@@ -70,6 +70,26 @@ func isolatedListenHome(t *testing.T) string {
 	return dir
 }
 
+// testListenDevice is the paired phone the listen-bridge tests build a
+// bridge for.
+var testListenDevice = &PairedDevice{Name: "Pixel", Address: "AA:BB:CC:DD:EE:01"}
+
+// TestBuildListenBridgeConfig_AuditsAgainstThePairedDevice guards #1304's
+// audit half: the bridge serving a paired phone carries an audit logger and
+// the phone's identity, so every remote.sync* write the phone makes into this
+// host's stores is on record against that phone.
+func TestBuildListenBridgeConfig_AuditsAgainstThePairedDevice(t *testing.T) {
+	isolatedListenHome(t)
+
+	bridgeCfg, collaborators := buildListenBridgeConfig(&cobra.Command{}, newTestLogger(),
+		loadXKMSdBridgeConfig(), testListenDevice, nil, nil)
+	defer collaborators.Close()
+
+	assert.NotNil(t, bridgeCfg.AuditLogger, "bridge calls from the phone must be audited")
+	assert.Equal(t, testListenDevice.Address, bridgeCfg.DeviceID)
+	assert.Equal(t, testListenDevice.Name, bridgeCfg.DeviceName)
+}
+
 // TestBuildListenBridgeConfig_CollaboratorsAreWired is the regression guard
 // for the gap this follow-up closes: a BridgeConfig built for "xkey device
 // listen" used to leave OATHStore, PIVStorage and SyncService nil, so a real
@@ -80,7 +100,7 @@ func TestBuildListenBridgeConfig_CollaboratorsAreWired(t *testing.T) {
 	cmd := &cobra.Command{}
 	xkmsdCfg := loadXKMSdBridgeConfig()
 
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, nil, nil)
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil)
 	defer collaborators.Close()
 
 	assert.NotNil(t, bridgeCfg.OATHStore, "OATHStore must be wired from openOATHStore")
@@ -101,7 +121,7 @@ func TestBuildListenBridgeConfig_OATHRequestReachesRealStore(t *testing.T) {
 	cmd := &cobra.Command{}
 	xkmsdCfg := loadXKMSdBridgeConfig()
 
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, nil, nil)
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil)
 
 	bridge, err := pairing.NewBridge(&baseSDKClient{}, bridgeCfg)
 	require.NoError(t, err)
@@ -147,7 +167,7 @@ func TestBuildListenBridgeConfig_SyncTrustStoreRequestReachesRealStore(t *testin
 	cmd := &cobra.Command{}
 	xkmsdCfg := loadXKMSdBridgeConfig()
 
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, nil, nil)
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil)
 
 	bridge, err := pairing.NewBridge(&baseSDKClient{}, bridgeCfg)
 	require.NoError(t, err)
@@ -180,4 +200,14 @@ func TestBuildListenBridgeConfig_SyncTrustStoreRequestReachesRealStore(t *testin
 	require.NoError(t, err)
 	require.Len(t, certs, 1)
 	assert.Equal(t, "phone-sent-cert", certs[0].Subject.CommonName)
+
+	// The phone's certificate is a self-signed CA, which the operator's own
+	// import would file as a user CA and so a TLS anchor. Arriving over sync
+	// it is quarantined instead (#1304).
+	meta, err := trustStore.Metadata(truststore.Fingerprint(certs[0]))
+	require.NoError(t, err)
+	assert.Equal(t, truststore.PurposeSynced, meta.Purpose)
+	roots, err := trustStore.TLSRoots()
+	require.NoError(t, err)
+	assert.Empty(t, roots)
 }

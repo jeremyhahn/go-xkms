@@ -15,7 +15,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -32,7 +31,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/handlers"
-	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
 
@@ -57,6 +55,16 @@ var (
 	ErrAWSCredentialsWriteFailed = errors.New("aws: failed to write credentials")
 	ErrAWSSessionLoadFailed      = errors.New("aws: failed to load session")
 	ErrAWSNoRefreshToken         = errors.New("aws: no refresh token in session")
+
+	// ErrAWSDPoPKeySerializationFailed indicates the DPoP private key could
+	// not be serialized to PEM for storage. This is a hard failure rather
+	// than a silently empty DPoPKeyPEM: a stored session with no key can
+	// never be used to refresh credentials.
+	ErrAWSDPoPKeySerializationFailed = errors.New("aws: failed to serialize DPoP key")
+
+	// ErrAWSExpirationParseFailed indicates the AWS token response's
+	// credential expiration could not be parsed.
+	ErrAWSExpirationParseFailed = errors.New("aws: failed to parse credential expiration")
 )
 
 // AWSStoredSession represents a stored AWS session with DPoP key.
@@ -138,7 +146,7 @@ func runOIDCAWS(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return runAWSLogin(cmd.OutOrStdout(), region, profile, crossDevice, noBrowser, output, credentialsFile, execCmd, autoRefresh, sessionStore, background, logFile, "", callback)
+	return runAWSLogin(cmd, cmd.OutOrStdout(), region, profile, crossDevice, noBrowser, output, credentialsFile, execCmd, autoRefresh, sessionStore, cmd.Flags().Changed("session-store"), background, logFile, "", callback)
 }
 
 // writeAWSLoginSummary prints the outcome of a successful AWS login. The
@@ -161,9 +169,22 @@ func writeAWSLoginSummary(out io.Writer, region, profile, accessKeyID string, ex
 // the shared aws.Login; this function is a thin caller that adds the CLI's
 // presentation, output-mode dispatch, session persistence and background
 // refresh.
-func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser bool, output, credentialsFile, execCmd string, autoRefresh int, sessionStore string, background bool, logFile, providerName string, callback oidc.Callback) error {
+//
+// sessionStore always names a concrete path used to derive the default
+// log/PID/status file locations (never a secret). Whether the AWS session
+// itself (the refresh token and DPoP private key) is written to exactly that
+// path, or instead follows the barrier-or-fallback decision rooted at the
+// shared xkey data directory, is governed by sessionStoreExplicit: true when
+// the operator actually asked for sessionStore (an --session-store flag set
+// on the command, or a provider's saved AWSSessionStore configuration),
+// false when it is only the flag's or provider's unconfigured default.
+func runAWSLogin(cmd *cobra.Command, out io.Writer, region, profile string, crossDevice, noBrowser bool, output, credentialsFile, execCmd string, autoRefresh int, sessionStore string, sessionStoreExplicit bool, background bool, logFile, providerName string, callback oidc.Callback) error {
 	if region == "" {
 		return ErrAWSMissingRegion
+	}
+	sessionStoreOverride := ""
+	if sessionStoreExplicit {
+		sessionStoreOverride = sessionStore
 	}
 	if profile == "" {
 		profile = handlers.DefaultAWSProfile
@@ -185,7 +206,7 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 			return
 		}
 		_, _ = fmt.Fprintln(out, "Opening browser for AWS authentication...")
-		if err := browser.OpenURL(authURL); err != nil {
+		if err := openLaunchURL(authURL); err != nil {
 			_, _ = fmt.Fprintf(out, "Failed to open browser: %v\n", err)
 			_, _ = fmt.Fprintln(out, "Please open the following URL manually:")
 			_, _ = fmt.Fprintln(out)
@@ -228,12 +249,18 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 
 	// Print success message
 	creds := tokenResp.GetCredentials()
-	expiration, _ := tokenResp.GetExpirationTime()
+	expiration, err := tokenResp.GetExpirationTime()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrAWSExpirationParseFailed, Cause: err}
+	}
 	writeAWSLoginSummary(out, region, profile, creds.AccessKeyID, expiration)
 
 	// Store session for refresh (if refresh token available)
 	if tokenResp.RefreshToken != "" && sessionStore != "" {
-		dpopKeyPEM, _ := dpopKey.SerializePrivateKey()
+		dpopKeyPEM, err := dpopKey.SerializePrivateKey()
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrAWSDPoPKeySerializationFailed, Cause: err}
+		}
 		session := AWSStoredSession{
 			Region:       region,
 			Profile:      profile,
@@ -242,8 +269,8 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 			RefreshToken: tokenResp.RefreshToken,
 			DPoPKeyPEM:   dpopKeyPEM,
 		}
-		if err := storeAWSSession(sessionStore, session); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to store session: %v\n", err)
+		if err := storeAWSSession(cmd, sessionStoreOverride, session); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to store session: %v\n", err)
 		}
 	}
 
@@ -263,7 +290,7 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 
 		if background {
 			// Start background process
-			return startAWSBackgroundRefresh(out, region, profile, credentialsFile, output, execCmd, sessionStore, logFile, autoRefresh, providerName)
+			return startAWSBackgroundRefresh(cmd, out, region, profile, credentialsFile, output, execCmd, sessionStore, sessionStoreOverride, logFile, autoRefresh, providerName)
 		}
 
 		_, _ = fmt.Fprintf(out, "\nAuto-refresh enabled: refreshing every %d seconds\n", autoRefresh)
@@ -374,43 +401,16 @@ func runAWSAutoRefreshWithWriter(client *aws.Client, refreshToken, region, profi
 				continue
 			}
 
-			expiration, _ := tokenResp.GetExpirationTime()
+			expiration, err := tokenResp.GetExpirationTime()
+			if err != nil {
+				log("  Error determining expiration: %v\n", err)
+				updateStatus("error", fmt.Sprintf("expiration parse failed: %v", err))
+				continue
+			}
 			log("  Credentials refreshed. Expires: %s\n", expiration.Format(time.RFC3339))
 			updateStatus("success", "")
 		}
 	}
-}
-
-// storeAWSSession stores an AWS session for later refresh.
-func storeAWSSession(storePath string, session AWSStoredSession) error {
-	path := expandPath(storePath)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(session, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(path, data, 0600)
-}
-
-// loadAWSSession loads an AWS session from storage.
-func loadAWSSession(storePath string) (*AWSStoredSession, error) {
-	path := expandPath(storePath)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var session AWSStoredSession
-	if err := json.Unmarshal(data, &session); err != nil {
-		return nil, err
-	}
-
-	return &session, nil
 }
 
 // getAWSDefaultLogFile returns the default log file path for AWS refresh.
@@ -433,7 +433,19 @@ func getAWSPIDFile(sessionStore, region, providerName string) string {
 }
 
 // startAWSBackgroundRefresh starts a background refresh process for AWS.
-func startAWSBackgroundRefresh(out io.Writer, region, profile, credentialsFile, output, execCmd, sessionStore, logFile string, autoRefresh int, providerName string) error {
+//
+// parentCmd is the invoking command, read only for its --barrier-password-file
+// flag value (forwarded to the detached worker below) and passed to
+// loadAWSSession to unseal a barrier-backed session store; it is never the
+// same value as the local cmd variable below, which is the *exec.Cmd for the
+// detached worker process itself.
+//
+// sessionStoreOverride, when non-empty, is forwarded to the worker's
+// --session-store flag so it resolves the same plain-file session the
+// operator explicitly asked for; when empty, the worker independently makes
+// the same barrier-or-fallback decision the parent just made, rooted at the
+// same shared xkey data directory.
+func startAWSBackgroundRefresh(parentCmd *cobra.Command, out io.Writer, region, profile, credentialsFile, output, execCmd, sessionStore, sessionStoreOverride, logFile string, autoRefresh int, providerName string) error {
 	// Ensure log directory exists
 	logDir := filepath.Dir(logFile)
 	if err := os.MkdirAll(logDir, 0700); err != nil {
@@ -459,7 +471,7 @@ func startAWSBackgroundRefresh(out io.Writer, region, profile, credentialsFile, 
 	}
 
 	// Load session to get refresh token and DPoP key
-	session, err := loadAWSSession(sessionStore)
+	session, err := loadAWSSession(parentCmd, sessionStoreOverride)
 	if err != nil {
 		return &DetailError{Err: &WrappedError{Msg: "failed to load session", Err: err}, Detail: " (run login without --background first)"}
 	}
@@ -488,14 +500,29 @@ func startAWSBackgroundRefresh(out io.Writer, region, profile, credentialsFile, 
 		"--credentials-file", credentialsFile,
 		"--output", output,
 		"--auto-refresh", fmt.Sprintf("%d", autoRefresh),
-		"--session-store", sessionStore,
 		"--log-file", logFile,
+	}
+	// The session store path is only forwarded when the operator explicitly
+	// asked for it: otherwise the worker makes its own barrier-or-fallback
+	// decision, exactly matching what the parent just did, rather than being
+	// forced onto sessionStore's flag-default value regardless of that
+	// decision.
+	if sessionStoreOverride != "" {
+		args = append(args, "--session-store", sessionStoreOverride)
 	}
 	if providerName != "" {
 		args = append(args, "--provider-name", providerName)
 	}
 	if execCmd != "" {
 		args = append(args, "--exec", execCmd)
+	}
+	// --barrier-password VALUE is never forwarded on argv (visible in `ps`
+	// to any local user); --barrier-password-file is, matching
+	// startBackgroundRefresh's identical forwarding for the OIDC RP token
+	// store (oidc.go). XKEY_BARRIER_PASSWORD reaches the child through
+	// ordinary environment inheritance below.
+	if barrierPasswordFile, _ := parentCmd.Flags().GetString("barrier-password-file"); barrierPasswordFile != "" {
+		args = append(args, "--barrier-password-file", barrierPasswordFile)
 	}
 
 	cmd := exec.Command(executable, args...)
@@ -557,8 +584,18 @@ func runAWSBackgroundWorker(cmd *cobra.Command, args []string) (err error) {
 	logFile, _ := cmd.Flags().GetString("log-file")
 	providerName, _ := cmd.Flags().GetString("provider-name")
 
+	// This worker's own argv makes the same explicit/auto-detect decision
+	// startAWSBackgroundRefresh made in the parent process: --session-store
+	// is only present on argv when the parent forwarded an explicit
+	// override, so Changed here reflects the same choice, not merely
+	// whether the flag has a default value.
+	sessionStoreOverride := ""
+	if cmd.Flags().Changed("session-store") {
+		sessionStoreOverride = sessionStore
+	}
+
 	// Load stored session
-	session, err := loadAWSSession(sessionStore)
+	session, err := loadAWSSession(cmd, sessionStoreOverride)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrAWSSessionLoadFailed, Cause: err}
 	}
@@ -666,6 +703,11 @@ func init() {
 	_ = oidcAWSCmd.Flags().MarkHidden("provider-name")
 
 	registerOIDCCallbackFlags(oidcAWSCmd.Flags())
+
+	// Barrier-aware session store (go-xkms#1325): --barrier-password-stdin
+	// and --barrier-password-file, shared with `xkey oath`, `xkey oidc`, and
+	// every other command that may open a barrier-backed store.
+	addBarrierPasswordFlags(oidcAWSCmd)
 
 	// Mark region as required
 	_ = oidcAWSCmd.MarkFlagRequired("region")

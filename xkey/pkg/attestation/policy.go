@@ -10,8 +10,31 @@
 package attestation
 
 import (
+	"errors"
+
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
+
+// ErrApplicationPolicyUnverifiable indicates this machine's config directory
+// is sealed (an enterprise deployment) but its policy section could not be
+// verified for resolving the attested-application allow-list (#1305).
+//
+// Which allow-list a sealed deployment intends -- the user's own
+// devices.yaml, or one the SO locked -- is unknown until the section
+// verifies, so ResolveApplicationPolicy's caller must refuse pairing and
+// re-attestation outright on this error rather than falling back to
+// devices.yaml: a user (or attacker) able to write devices.yaml but unable
+// to produce the SO PIN must never be able to bypass a locked enterprise
+// allow-list merely by leaving the PIN unsupplied. This is the reason
+// ResolveApplicationPolicy itself takes only an already-resolved
+// *config.PolicySection rather than resolving verification on its own --
+// producing this refusal is each surface's own job, before it ever calls
+// ResolveApplicationPolicy, exactly as loadPairingAttestationTrust (CLI) and
+// PhoneService.ResolvedApplicationPolicy (GUI) do.
+var ErrApplicationPolicyUnverifiable = errors.New(
+	"attestation: sealed enterprise policy exists but could not be verified for the application allow-list - " +
+		"supply the SO PIN")
 
 // AllowUnattestablePairing resolves what a pairing does when the phone's
 // attestation cannot be verified, across the two planes the owner ruling of
@@ -60,4 +83,45 @@ func AllowUnattestablePairing(userAllows bool, policy *config.VerifiedPolicy) bo
 		return policy.Policy.PairingAllowUnattestableDevices
 	}
 	return userAllows
+}
+
+// ResolveApplicationPolicy resolves the attested-application allow-list a
+// pairing or a re-attestation judges the attestationApplicationId against
+// (#1305), across the same two planes AllowUnattestablePairing resolves:
+//
+//   - the USER's setting, devices.yaml `attestation_policy.allowed_applications`
+//     (plus allow_unpinned_signatures), which the caller has already read
+//     from its own record of that file as a pairing.ApplicationPolicy;
+//   - the ENTERPRISE/SO setting, PolicySection's PairingAllowedApplications
+//     and PairingAllowUnpinnedSignatures, reaching this function only once it
+//     has been authenticated (a *config.PolicySection the caller obtained
+//     through config.LoadVerifiedPolicy, or through the verified-policy cache
+//     every other PolicySection-gated GUI service reads at runtime --
+//     AppService, PINService, TrustService, AuditService, SealService and
+//     APIExplorerService's own SetPolicy/Load -- which is why this takes the
+//     bare section rather than a config.VerifiedPolicy: by the time a caller
+//     has one to pass, it already went through that authentication once).
+//
+// LockPairingApplicationPolicy is what "enterprise config may lock the
+// allow-list" means concretely: unset, the user's devices.yaml allow-list is
+// used; set, the enterprise allow-list is used OUTRIGHT and the user's own
+// devices.yaml entries are ignored -- not merged with them, because merging
+// would let devices.yaml WIDEN a locked deployment by appending an entry the
+// SO never approved.
+//
+// A nil enterprise section means only the user plane is consulted; there is
+// nothing enterprise to lock with. Passing nil is safe ONLY when the caller
+// has confirmed there is no sealed plane to verify in the first place
+// (config.IsEnterpriseMode false) or that it verified successfully -- never
+// as a stand-in for "sealed, but not yet verified". A sealed deployment
+// whose section could not be verified must never reach this function at all;
+// the caller refuses with ErrApplicationPolicyUnverifiable instead.
+func ResolveApplicationPolicy(userPolicy pairing.ApplicationPolicy, enterprise *config.PolicySection) pairing.ApplicationPolicy {
+	if enterprise != nil && enterprise.LockPairingApplicationPolicy {
+		return pairing.ApplicationPolicy{
+			AllowedApplications:     enterprise.PairingAllowedApplications,
+			AllowUnpinnedSignatures: enterprise.PairingAllowUnpinnedSignatures,
+		}
+	}
+	return userPolicy
 }

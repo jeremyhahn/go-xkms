@@ -209,9 +209,11 @@ vault write auth/kubernetes/role/xkms-app \
 
 ```go
 config := &vault.Config{
-    Address:       "https://vault.example.com:8200",
-    TransitPath:   "transit",
-    TLSSkipVerify: false,
+    Address:     "https://vault.example.com:8200",
+    TransitPath: "transit",
+    TLSCAFile:   "/etc/xkms/vault-ca.pem",
+    TLSCertFile: "/etc/xkms/vault-client.pem",
+    TLSKeyFile:  "/etc/xkms/vault-client-key.pem",
 }
 
 backend, err := vault.NewBackend(config)
@@ -235,8 +237,21 @@ type Config struct {
     // Vault namespace (Enterprise feature)
     Namespace string
 
-    // Skip TLS certificate verification (dev only)
-    TLSSkipVerify bool
+    // Path to a PEM-encoded CA certificate (or bundle) used to verify the
+    // Vault server's certificate. Takes precedence over TLSCAPath.
+    TLSCAFile string
+
+    // Path to a directory of PEM-encoded CA certificates used to verify
+    // the Vault server's certificate.
+    TLSCAPath string
+
+    // Path to a client certificate for mTLS to Vault. Must be set together
+    // with TLSKeyFile.
+    TLSCertFile string
+
+    // Path to the private key for TLSCertFile. Must be set together with
+    // TLSCertFile.
+    TLSKeyFile string
 
     // Key metadata storage
     KeyStorage storage.KeyStorage
@@ -272,11 +287,20 @@ type Config struct {
 - Requires Vault Enterprise
 - Provides logical isolation between teams
 
-**TLSSkipVerify** (optional, default: false)
-- Skip TLS certificate verification
-- **Only use for development/testing**
-- Security risk in production
-- Enable proper TLS certificates instead
+**TLSCAFile** (optional)
+- Path to a PEM-encoded CA certificate (or bundle) used to verify the Vault server's certificate
+- Takes precedence over `TLSCAPath` when both are set
+- Required for a Vault server whose certificate does not chain to a system-trusted root
+
+**TLSCAPath** (optional)
+- Path to a directory of PEM-encoded CA certificates used to verify the Vault server's certificate
+- Alternative to `TLSCAFile` for multiple trusted CAs
+
+**TLSCertFile** / **TLSKeyFile** (optional, must be set together)
+- Client certificate and private key for mTLS authentication to Vault
+- Both required for [TLS Client Certificate Authentication](#tls-client-certificate-authentication)
+
+There is no option to disable TLS certificate verification. A Vault server presenting a certificate this client cannot verify must be given a CA via `TLSCAFile`/`TLSCAPath`, not bypassed (go-xkms#1284).
 
 **KeyStorage** (required)
 - Storage backend for key metadata
@@ -768,21 +792,26 @@ config := &vault.Config{
 
 ### TLS Configuration
 
-**Production Setup**:
+TLS certificate verification is always enabled; there is no option to
+disable it. Point the client at the CA that issued the Vault server's
+certificate instead:
+
 ```go
 config := &vault.Config{
-    Address:       "https://vault.example.com:8200",
-    Token:         os.Getenv("VAULT_TOKEN"),
-    TLSSkipVerify: false, // Always verify in production
+    Address:     "https://vault.example.com:8200",
+    Token:       os.Getenv("VAULT_TOKEN"),
+    TLSCAFile:   "/etc/xkms/vault-ca.pem", // verify against a private CA
 }
 ```
 
-**Development Only**:
+For local development against a Vault dev server without TLS, use `http://`
+in `Address` instead -- there is no in-band way to skip verification of an
+`https://` connection.
+
 ```go
 config := &vault.Config{
-    Address:       "http://localhost:8200",
-    Token:         "root",
-    TLSSkipVerify: true, // Only for dev
+    Address: "http://localhost:8200",
+    Token:   "root",
 }
 ```
 
@@ -915,12 +944,11 @@ docker-compose down -v
 ```go
 func getTestBackend(t *testing.T) backend.Backend {
     config := &vault.Config{
-        Address:       "http://localhost:8200",
-        Token:         "root",
-        TransitPath:   "transit",
-        TLSSkipVerify: true,
-        KeyStorage:    storage.NewMemoryKeyStorage(),
-        CertStorage:   storage.NewMemoryCertStorage(),
+        Address:     "http://localhost:8200",
+        Token:       "root",
+        TransitPath: "transit",
+        KeyStorage:  storage.NewMemoryKeyStorage(),
+        CertStorage: storage.NewMemoryCertStorage(),
     }
 
     b, err := vault.NewBackend(config)

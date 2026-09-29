@@ -57,14 +57,11 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(devicePairCmd)
 
-	// Register flags even in stub mode for help text. None of these reach
-	// runDevicePairStub, which always returns ErrDeviceBLEUnavailable before
-	// reading any of them, so no viper binding or config precedence applies
-	// here (go-xkms#1071).
-	devicePairCmd.Flags().String("device", "", "Specific device name or address to pair")
-	devicePairCmd.Flags().Duration("timeout", defaultDeviceScanTimeout,
-		"Scan timeout duration (default: device.scan_timeout, 30s)")
-	devicePairCmd.Flags().Bool("force", false, "Force re-pairing even if already paired")
+	// Flags are registered even in stub mode for help text and flag-set
+	// parity with the ble build. None of these reach runDevicePairStub, which
+	// always returns ErrDeviceBLEUnavailable before reading any of them, so
+	// no viper binding or config precedence applies here (go-xkms#1071).
+	registerDevicePairFlags(devicePairCmd)
 }
 
 // runDevicePairStub returns an error indicating BLE support is not available.

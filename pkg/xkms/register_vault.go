@@ -39,7 +39,14 @@ func init() {
 //   - "token" (string): Vault authentication token (required)
 //   - "transit_path" (string): Transit secrets engine path (default: "transit")
 //   - "namespace" (string): Vault namespace (optional, Enterprise feature)
-//   - "tls_skip_verify" (bool): Disable TLS verification (not for production)
+//   - "tls_ca_file" (string): Path to a PEM-encoded CA certificate (or bundle)
+//     used to verify the Vault server's certificate
+//   - "tls_ca_path" (string): Path to a directory of PEM-encoded CA
+//     certificates used to verify the Vault server's certificate
+//   - "tls_cert_file" (string): Path to a client certificate for mTLS to
+//     Vault (requires "tls_key_file")
+//   - "tls_key_file" (string): Path to the private key for "tls_cert_file"
+//     (requires "tls_cert_file")
 func newVaultKeyProvider(config map[string]interface{}) (types.KeyProvider, error) {
 	vaultConfig := &vault.Config{
 		KeyStorage: storage.New(),
@@ -57,8 +64,17 @@ func newVaultKeyProvider(config map[string]interface{}) (types.KeyProvider, erro
 	if namespace, ok := config["namespace"].(string); ok {
 		vaultConfig.Namespace = namespace
 	}
-	if skipVerify, ok := config["tls_skip_verify"].(bool); ok {
-		vaultConfig.TLSSkipVerify = skipVerify
+	if caFile, ok := config["tls_ca_file"].(string); ok {
+		vaultConfig.TLSCAFile = caFile
+	}
+	if caPath, ok := config["tls_ca_path"].(string); ok {
+		vaultConfig.TLSCAPath = caPath
+	}
+	if certFile, ok := config["tls_cert_file"].(string); ok {
+		vaultConfig.TLSCertFile = certFile
+	}
+	if keyFile, ok := config["tls_key_file"].(string); ok {
+		vaultConfig.TLSKeyFile = keyFile
 	}
 
 	return vault.NewBackend(vaultConfig)

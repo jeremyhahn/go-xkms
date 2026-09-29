@@ -17,6 +17,7 @@ package pkcs11
 
 import (
 	"encoding/asn1"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -206,7 +207,7 @@ func (m *PIVSlotModel) Refresh() error {
 func (m *PIVSlotModel) enumeratePrivateKeys() (map[pivcert.PIVSlot]keyInfo, error) {
 	result := make(map[pivcert.PIVSlot]keyInfo)
 
-	err := m.pool.WithSession(func(session p11.SessionHandle) error {
+	err := m.pool.WithSession(func(session p11.SessionHandle) (err error) {
 		template := []*p11.Attribute{
 			p11.NewAttribute(p11.CKA_CLASS, p11.CKO_PRIVATE_KEY),
 		}
@@ -214,7 +215,13 @@ func (m *PIVSlotModel) enumeratePrivateKeys() (map[pivcert.PIVSlot]keyInfo, erro
 		if err := m.pool.Ctx().FindObjectsInit(session, template); err != nil {
 			return &errs.Wrapped{Msg: "FindObjectsInit(CKO_PRIVATE_KEY)", Err: err}
 		}
-		defer m.pool.Ctx().FindObjectsFinal(session)
+		// Deferred so the search is always closed out, on every return path,
+		// not only on success -- a search left open on the session would
+		// make the next FindObjectsInit on it fail. A failure to close it is
+		// joined into the returned error rather than swallowed.
+		defer func() {
+			err = joinFindObjectsFinalErr(err, m.pool.Ctx().FindObjectsFinal(session))
+		}()
 
 		for {
 			handles, _, findErr := m.pool.Ctx().FindObjects(session, 100)
@@ -232,6 +239,10 @@ func (m *PIVSlotModel) enumeratePrivateKeys() (map[pivcert.PIVSlot]keyInfo, erro
 			}
 		}
 
+		if testHookBeforeFindObjectsFinal != nil {
+			testHookBeforeFindObjectsFinal(m.pool.Ctx(), session)
+		}
+
 		return nil
 	})
 
@@ -243,7 +254,7 @@ func (m *PIVSlotModel) enumeratePrivateKeys() (map[pivcert.PIVSlot]keyInfo, erro
 func (m *PIVSlotModel) enumerateCertificates() (map[pivcert.PIVSlot]struct{}, error) {
 	result := make(map[pivcert.PIVSlot]struct{})
 
-	err := m.pool.WithSession(func(session p11.SessionHandle) error {
+	err := m.pool.WithSession(func(session p11.SessionHandle) (err error) {
 		template := []*p11.Attribute{
 			p11.NewAttribute(p11.CKA_CLASS, p11.CKO_CERTIFICATE),
 		}
@@ -251,7 +262,10 @@ func (m *PIVSlotModel) enumerateCertificates() (map[pivcert.PIVSlot]struct{}, er
 		if err := m.pool.Ctx().FindObjectsInit(session, template); err != nil {
 			return &errs.Wrapped{Msg: "FindObjectsInit(CKO_CERTIFICATE)", Err: err}
 		}
-		defer m.pool.Ctx().FindObjectsFinal(session)
+		// See the identical comment in enumeratePrivateKeys.
+		defer func() {
+			err = joinFindObjectsFinalErr(err, m.pool.Ctx().FindObjectsFinal(session))
+		}()
 
 		for {
 			handles, _, findErr := m.pool.Ctx().FindObjects(session, 100)
@@ -278,11 +292,43 @@ func (m *PIVSlotModel) enumerateCertificates() (map[pivcert.PIVSlot]struct{}, er
 			}
 		}
 
+		if testHookBeforeFindObjectsFinal != nil {
+			testHookBeforeFindObjectsFinal(m.pool.Ctx(), session)
+		}
+
 		return nil
 	})
 
 	return result, err
 }
+
+// ErrFindObjectsFinalFailed is returned, joined with the underlying
+// C_FindObjectsFinal failure, when a token search started by FindObjectsInit
+// could not be closed out.
+var ErrFindObjectsFinalFailed = errors.New("pkcs11: FindObjectsFinal failed")
+
+// joinFindObjectsFinalErr folds a C_FindObjectsFinal failure into err rather
+// than discarding it. finalErr is almost always nil, in which case err (which
+// may itself be nil) passes through unchanged.
+func joinFindObjectsFinalErr(err, finalErr error) error {
+	if finalErr == nil {
+		return err
+	}
+	if err != nil {
+		return &errs.Joined{Lead: err, Detail: ErrFindObjectsFinalFailed.Error(), Cause: finalErr}
+	}
+	return &errs.Joined{Lead: ErrFindObjectsFinalFailed, Cause: finalErr}
+}
+
+// testHookBeforeFindObjectsFinal runs after a search has been fully drained
+// (every batch of handles consumed) but before the caller returns and its own
+// FindObjectsFinal defer fires. It is nil in every build; only this
+// package's own tests set it, to finalize the search themselves so the
+// deferred FindObjectsFinal that follows is guaranteed to fail, and prove
+// that failure is reported rather than swallowed. The window cannot be
+// reached from outside the package or hit by timing -- it opens and closes
+// inside one call.
+var testHookBeforeFindObjectsFinal func(ctx *p11.Ctx, session p11.SessionHandle)
 
 // readKeySlotInfo reads CKA_ID and CKA_KEY_TYPE from a private key handle.
 // It returns the PIV slot, key info, and whether the mapping succeeded.
