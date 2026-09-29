@@ -758,38 +758,38 @@ service KeystoreService {
   // StorageType "remote". Values are opaque module-serialised records.
 
   rpc PKCS11StatePut(PKCS11StatePutRequest) returns (PKCS11StatePutResponse) {
-    option (qrdb.v1.permission) = "keys:write";
+    option (qrdb.v1.permission) = "keys:create";
   }
   rpc PKCS11StatePutIfAbsent(PKCS11StatePutIfAbsentRequest) returns (PKCS11StatePutIfAbsentResponse) {
-    option (qrdb.v1.permission) = "keys:write";
+    option (qrdb.v1.permission) = "keys:create";
   }
   rpc PKCS11StateCAS(PKCS11StateCASRequest) returns (PKCS11StateCASResponse) {
-    option (qrdb.v1.permission) = "keys:write";
+    option (qrdb.v1.permission) = "keys:update";
   }
   rpc PKCS11StateCAD(PKCS11StateCADRequest) returns (PKCS11StateCADResponse) {
-    option (qrdb.v1.permission) = "keys:write";
+    option (qrdb.v1.permission) = "keys:delete";
   }
   rpc PKCS11StateGet(PKCS11StateGetRequest) returns (PKCS11StateGetResponse) {
-    option (qrdb.v1.permission) = "keys:read";
+    option (qrdb.v1.permission) = "keys:get";
   }
   rpc PKCS11StateDelete(PKCS11StateDeleteRequest) returns (PKCS11StateDeleteResponse) {
-    option (qrdb.v1.permission) = "keys:write";
+    option (qrdb.v1.permission) = "keys:delete";
   }
   rpc PKCS11StateList(PKCS11StateListRequest) returns (PKCS11StateListResponse) {
-    option (qrdb.v1.permission) = "keys:read";
+    option (qrdb.v1.permission) = "keys:list";
   }
 
   // ==================== Platform Sealed Store Operations ====================
   // The machine-local sealed credential store: secrets sealed to the host's
-  // hardware sealer (TPM 2.0 when available). Gated by the same keys:*
-  // permissions as the PKCS#11 state above, since both persist
+  // hardware sealer (TPM 2.0 when available). Gated by the same per-verb
+  // keys:* permissions as the PKCS#11 state above, since both persist
   // key-protection material.
 
   rpc SealStorePut(SealStorePutRequest) returns (SealStorePutResponse) {
-    option (qrdb.v1.permission) = "keys:write";
+    option (qrdb.v1.permission) = "keys:create";
   }
   rpc SealStoreGet(SealStoreGetRequest) returns (SealStoreGetResponse) {
-    option (qrdb.v1.permission) = "keys:read";
+    option (qrdb.v1.permission) = "keys:get";
   }
   rpc SealStoreDelete(SealStoreDeleteRequest) returns (SealStoreDeleteResponse) {
     option (qrdb.v1.permission) = "keys:delete";
@@ -798,10 +798,10 @@ service KeystoreService {
     option (qrdb.v1.permission) = "keys:list";
   }
   rpc SealStoreReseal(SealStoreResealRequest) returns (SealStoreResealResponse) {
-    option (qrdb.v1.permission) = "keys:write";
+    option (qrdb.v1.permission) = "keys:update";
   }
   rpc SealStoreStatus(SealStoreStatusRequest) returns (SealStoreStatusResponse) {
-    option (qrdb.v1.permission) = "keys:read";
+    option (qrdb.v1.permission) = "keys:get";
   }
 
   // User management. xkms presents its own user model; the backing store is
@@ -819,10 +819,10 @@ service KeystoreService {
     option (qrdb.v1.permission) = "users:delete";
   }
   rpc EnableUser(EnableUserRequest) returns (UserResponse) {
-    option (qrdb.v1.permission) = "users:update";
+    option (qrdb.v1.permission) = "users:enable";
   }
   rpc DisableUser(DisableUserRequest) returns (UserResponse) {
-    option (qrdb.v1.permission) = "users:update";
+    option (qrdb.v1.permission) = "users:disable";
   }
   rpc BindUserCert(BindUserCertRequest) returns (UserResponse) {
     option (qrdb.v1.permission) = "users:update";

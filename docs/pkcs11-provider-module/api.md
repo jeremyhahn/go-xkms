@@ -43,7 +43,10 @@ the verb spelled `put`, `put-if-absent`, `compare-and-swap`,
 `compare-and-delete`, `get`, `delete` and `list`; the body is the transport
 DTO as JSON. Every verb gates on the keys resource: the guarded delete needs
 `delete`, the swap `update`, the two puts `create`, and get/list `get`/`list`.
-Over gRPC and Unix every state RPC carries `keys:write` or `keys:read`.
+gRPC and Unix carry the identical per-verb actions (go-xkms#1249): before
+that fix every gRPC state RPC collapsed to a coarser `keys:write` or
+`keys:read`, one of two cross-transport permission mismatches
+`pkg/api/authz_consistency_test` found for this family.
 
 Types: `pkg/api/transport/types_pkcs11state.go`.
 

@@ -37,9 +37,13 @@ import (
 // does not declare it. The set is closed: a REST route that starts asking for
 // a pair gRPC and MCP do not know is a new permission name nobody granted or
 // scoped, and fails TestRESTPermissionsAreCrossTransportVocabulary.
-var restOnlyPermissions = map[string]struct{}{
-	"keys:update": {}, // PKCS#11 remote-state compare-and-swap
-}
+//
+// Empty since go-xkms#1249: keys:update (PKCS#11 compare-and-swap and
+// platform-sealed-store reseal-in-place) used to be REST-only because gRPC
+// and MCP collapsed both operations into the coarser keys:write. All three
+// transports now gate them on keys:update, so it is no longer REST-only —
+// grpcAndMCPPermissionPairs below finds it too.
+var restOnlyPermissions = map[string]struct{}{}
 
 // restPermissionPairs returns every resource:action pair the REST route table
 // gates on, sorted and de-duplicated.

@@ -53,7 +53,7 @@ func (s *Service) PKCS11StatePut(ctx context.Context, req *pb.PKCS11StatePutRequ
 	if req == nil || req.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "token is required")
 	}
-	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionWrite, req.Token); err != nil {
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionCreate, req.Token); err != nil {
 		return nil, err
 	}
 	if err := s.pkcs11StateServiceReady(); err != nil {
@@ -71,7 +71,7 @@ func (s *Service) PKCS11StatePutIfAbsent(ctx context.Context, req *pb.PKCS11Stat
 	if req == nil || req.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "token is required")
 	}
-	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionWrite, req.Token); err != nil {
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionCreate, req.Token); err != nil {
 		return nil, err
 	}
 	if err := s.pkcs11StateServiceReady(); err != nil {
@@ -90,7 +90,7 @@ func (s *Service) PKCS11StateCAS(ctx context.Context, req *pb.PKCS11StateCASRequ
 	if req == nil || req.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "token is required")
 	}
-	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionWrite, req.Token); err != nil {
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionUpdate, req.Token); err != nil {
 		return nil, err
 	}
 	if err := s.pkcs11StateServiceReady(); err != nil {
@@ -110,7 +110,7 @@ func (s *Service) PKCS11StateCAD(ctx context.Context, req *pb.PKCS11StateCADRequ
 	if req == nil || req.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "token is required")
 	}
-	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionWrite, req.Token); err != nil {
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionDelete, req.Token); err != nil {
 		return nil, err
 	}
 	if err := s.pkcs11StateServiceReady(); err != nil {
@@ -129,7 +129,7 @@ func (s *Service) PKCS11StateGet(ctx context.Context, req *pb.PKCS11StateGetRequ
 	if req == nil || req.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "token is required")
 	}
-	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionRead, req.Token); err != nil {
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionGet, req.Token); err != nil {
 		return nil, err
 	}
 	if err := s.pkcs11StateServiceReady(); err != nil {
@@ -148,7 +148,7 @@ func (s *Service) PKCS11StateDelete(ctx context.Context, req *pb.PKCS11StateDele
 	if req == nil || req.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "token is required")
 	}
-	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionWrite, req.Token); err != nil {
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionDelete, req.Token); err != nil {
 		return nil, err
 	}
 	if err := s.pkcs11StateServiceReady(); err != nil {
@@ -166,7 +166,7 @@ func (s *Service) PKCS11StateList(ctx context.Context, req *pb.PKCS11StateListRe
 	if req == nil || req.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "token is required")
 	}
-	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionRead, req.Token); err != nil {
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionList, req.Token); err != nil {
 		return nil, err
 	}
 	if err := s.pkcs11StateServiceReady(); err != nil {

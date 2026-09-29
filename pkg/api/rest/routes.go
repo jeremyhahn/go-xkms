@@ -336,9 +336,12 @@ func Routes() []RouteSpec {
 	permIf("PUT", "/tenants/{tenantID}/quotas", auth.ResourceTenants, auth.ActionSetQuotas, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantQuotasHandler })
 
 	// --- Passwords. The passwords:* pairs of pkg/api/grpc/service_password.go
-	// and the MCP password.* methods. POST /passwords/access-mode has no
-	// counterpart on any other transport, so it has no canonical pair to
-	// adopt and stays session-authenticated until one is defined. ---
+	// and the MCP password.* methods; qrdb's coarse read/write model for this
+	// family (pkg/auth/permissions.go), not per-verb CRUD. POST
+	// /passwords/access-mode gates on passwords:write, matching gRPC's
+	// PasswordStoreSetAccessMode and MCP's password.setAccessMode
+	// (go-xkms#1249: it used to be the one route on this family left
+	// session-authenticated with no RBAC permission of its own). ---
 	hasPasswords := func(s *Server) bool { return s.passwordHandlers != nil }
 	permIf("POST", "/passwords/", auth.ResourcePasswords, auth.ActionWrite, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.AddPasswordHandler })
 	permIf("GET", "/passwords/", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.ListPasswordsHandler })
@@ -348,7 +351,7 @@ func Routes() []RouteSpec {
 	permIf("POST", "/passwords/unlock", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.UnlockHandler })
 	permIf("POST", "/passwords/lock", auth.ResourcePasswords, auth.ActionLock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.LockHandler })
 	permIf("GET", "/passwords/status", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.StatusHandler })
-	session("POST", "/passwords/access-mode", hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.SetAccessModeHandler })
+	permIf("POST", "/passwords/access-mode", auth.ResourcePasswords, auth.ActionWrite, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.SetAccessModeHandler })
 	permIf("POST", "/passwords/generate", auth.ResourcePasswords, auth.ActionGenerate, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.GeneratePasswordHandler })
 
 	// --- PKCS#11 remote state. Records are a token's key/object state, so
@@ -366,15 +369,19 @@ func Routes() []RouteSpec {
 	// --- Platform store (sealed secrets). Placeholder must be {name}: the
 	// handlers read chi.URLParam(r, "name"). Secrets sealed here are
 	// key-protection material (the same trust class as pkcs11state above),
-	// so the routes carry the identical keys:* permission pairs rather than
-	// a bare authenticated-session gate. ---
+	// so the routes carry the same per-verb keys:* permissions as
+	// /api/v1/pkcs11state/* rather than a bare authenticated-session gate:
+	// put stores a new value under a name (create, matching
+	// PKCS11StatePut), reseal re-wraps an existing value in place without
+	// changing it (update), and status reports store-wide state the same
+	// way get reports one secret's. ---
 	hasPlatform := func(s *Server) bool { return s.platformHandlers != nil }
-	permIf("PUT", "/platform/secrets/{name}", auth.ResourceKeys, auth.ActionWrite, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.PutSecretHandler })
-	permIf("GET", "/platform/secrets/{name}", auth.ResourceKeys, auth.ActionRead, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.GetSecretHandler })
+	permIf("PUT", "/platform/secrets/{name}", auth.ResourceKeys, auth.ActionCreate, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.PutSecretHandler })
+	permIf("GET", "/platform/secrets/{name}", auth.ResourceKeys, auth.ActionGet, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.GetSecretHandler })
 	permIf("DELETE", "/platform/secrets/{name}", auth.ResourceKeys, auth.ActionDelete, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.DeleteSecretHandler })
 	permIf("GET", "/platform/secrets", auth.ResourceKeys, auth.ActionList, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.ListSecretsHandler })
-	permIf("POST", "/platform/secrets/{name}/reseal", auth.ResourceKeys, auth.ActionWrite, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.ResealSecretHandler })
-	permIf("GET", "/platform/status", auth.ResourceKeys, auth.ActionRead, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.StatusHandler })
+	permIf("POST", "/platform/secrets/{name}/reseal", auth.ResourceKeys, auth.ActionUpdate, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.ResealSecretHandler })
+	permIf("GET", "/platform/status", auth.ResourceKeys, auth.ActionGet, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.StatusHandler })
 
 	// --- Policies ---
 	// The {name} placeholder must match the "name" key policy_handlers.go's
@@ -503,7 +510,8 @@ func Routes() []RouteSpec {
 	user("GET", "/", auth.ResourceUsers, auth.ActionList, func(s *Server) http.HandlerFunc { return s.handleListUsers })
 	user("GET", "/{username}", auth.ResourceUsers, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handleGetUser })
 	user("GET", "/{username}/credentials", auth.ResourceUsers, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handleListUserCredentials })
-	user("PUT", "/{username}", auth.ResourceUsers, auth.ActionUpdate, func(s *Server) http.HandlerFunc { return s.handleUpdateUser })
+	user("POST", "/{username}/enable", auth.ResourceUsers, auth.ActionEnable, func(s *Server) http.HandlerFunc { return s.handleEnableUser })
+	user("POST", "/{username}/disable", auth.ResourceUsers, auth.ActionDisable, func(s *Server) http.HandlerFunc { return s.handleDisableUser })
 	user("POST", "/{username}/cert-bindings", auth.ResourceUsers, auth.ActionUpdate, func(s *Server) http.HandlerFunc { return s.handleBindUserCert })
 	user("DELETE", "/{username}", auth.ResourceUsers, auth.ActionDelete, func(s *Server) http.HandlerFunc { return s.handleDeleteUser })
 

@@ -168,6 +168,10 @@ const (
 	// acme_accounts:disable).
 	ActionDisable = "disable"
 
+	// ActionEnable (re)activates a principal or registration (users:enable).
+	// Mirrors go-qrdb permission.UsersEnable verbatim.
+	ActionEnable = "enable"
+
 	// Admin service actions. ActionPeers mirrors go-qrdb's AdminPeers
 	// permission (pkg/permission/constants.go) exactly: the REST cluster
 	// routes (admin:status, admin:peers) drive the same AdminService the

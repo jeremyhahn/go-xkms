@@ -377,11 +377,11 @@ func (s *Service) PasswordGenerate(ctx context.Context, req *pb.PasswordGenerate
 
 // PasswordStoreSetAccessMode selects the access-control strategy for the
 // password store addressed by the request context. Gated the same as its
-// PasswordAdd/PasswordUpdate siblings (passwords:write): the unified gRPC
-// server denies any RPC without a (qrdb.v1.permission) option by default, so
-// -- like the rest of this family -- it cannot rely on a permission-free
-// tier the way pkg/api/rest/routes.go's session helper does for the REST
-// equivalent (POST /api/v1/passwords/access-mode).
+// PasswordAdd/PasswordUpdate siblings (passwords:write), matching MCP's
+// password.setAccessMode and, since go-xkms#1249, REST's
+// POST /api/v1/passwords/access-mode -- REST used to leave this one route
+// session-authenticated with no RBAC permission of its own, the last
+// exception pkg/api/authz_consistency_test allowlisted for that issue.
 func (s *Service) PasswordStoreSetAccessMode(ctx context.Context, req *pb.PasswordStoreSetAccessModeRequest) (*pb.PasswordStoreSetAccessModeResponse, error) {
 	if req == nil || req.Mode == "" {
 		return nil, status.Error(codes.InvalidArgument, "mode is required")
