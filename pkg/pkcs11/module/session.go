@@ -702,31 +702,51 @@ type SessionManager struct {
 
 	// failedUserPIN and failedSOPIN count consecutive failed authentication
 	// attempts. Without a lockout an attacker with session access can brute
-	// force a short PIN online at full speed. Counters are atomic so a failed
-	// attempt can be recorded from a read-locked validation path.
+	// force a short PIN online at full speed.
+	//
+	// When ledger is nil they are the budget itself. When a ledger is installed
+	// they are only a cache of the last value the ledger reported, read by
+	// PINAttemptStatus to publish the CKF_*_PIN_* token flags: they never decide
+	// whether an attempt may run, because another process sharing the token can
+	// move the durable counter at any time (#1144).
 	failedUserPIN atomic.Uint32
 	failedSOPIN   atomic.Uint32
 
-	// incrementAttempt and resetAttempt, when set, reconcile a failed-attempt
-	// counter with durable storage so the lockout reaches the token before the
-	// next call can be made. A lockout a restart clears is not a lockout: the
-	// atomics above are an optimistic in-memory cache, but the authoritative
-	// counter lives in the store.
-	//
-	// incrementAttempt atomically bumps the durable counter and returns
-	// (authoritative value, persisted). persisted is false when no durable
-	// backend is configured, so the caller advances its own atomic instead — and
-	// so that several remote-mode clients sharing one token accumulate failures
-	// against one true counter rather than each losing the others' increments.
-	// resetAttempt clears the durable counter after a success or PIN change.
-	//
-	// A shared token's local atomic can trail the durable counter between a
-	// concurrent client's increment and this client's next reconcile, so the
-	// cheap pre-check in preparePINVerificationLocked may admit one extra
-	// derivation per lagging client; the increment on that attempt still reads
-	// the durable value and locks, so the budget is never actually exceeded.
-	incrementAttempt func(userType UserType) (uint32, bool)
-	resetAttempt     func(userType UserType)
+	// ledger, when set, is the authoritative failed-attempt budget shared by
+	// every process that opens this token. It is installed once, during
+	// Initialize, before any session exists to authenticate, and is read
+	// without m.mu thereafter.
+	ledger AttemptLedger
+}
+
+// AttemptLedger is the authoritative failed-attempt budget for one token's PINs.
+//
+// Every PIN verification spends an attempt BEFORE the Argon2id derivation runs
+// and settles it afterwards: a wrong PIN leaves the attempt spent, a correct one
+// gives it back. Spending first is what makes the budget hold across processes.
+// A counter that is only read after a failure lets N processes each take the
+// full budget, and lets a process whose copy is stale verify a PIN — and then
+// clear the lock — after the shared counter already reads LOCKED.
+//
+// Each method must be atomic against every other process sharing the token. An
+// error means the outcome is unknown; the caller fails closed and never grants.
+type AttemptLedger interface {
+	// Spend charges one attempt for userType if fewer than limit are already
+	// charged, and returns the counter's value afterwards. admitted is false,
+	// and nothing is charged, when the budget is already exhausted.
+	Spend(userType UserType, limit uint32) (count uint32, admitted bool, err error)
+
+	// Refund settles an admitted attempt whose PIN was correct. spent is the
+	// count Spend returned for it. When the counter still holds spent, nothing
+	// else touched it since, and it is reset to zero: a success ends the run of
+	// consecutive failures before it. Otherwise another attempt was charged
+	// concurrently, and only this attempt's own charge is returned, so a
+	// correct PIN never erases failures, or a lock, it did not precede. It
+	// returns the counter's value afterwards.
+	Refund(userType UserType, spent uint32) (count uint32, err error)
+
+	// Reset clears the counter for userType after an authorized PIN change.
+	Reset(userType UserType) error
 }
 
 // Login state constants for the session manager.
@@ -1136,18 +1156,45 @@ func (m *SessionManager) Login(handle SessionHandle, userType UserType, pin []by
 	return nil
 }
 
-// finishPINVerification runs the Argon2id derivation and records the outcome.
-// It must be called WITHOUT m.mu held: that is the entire point of the split.
+// finishPINVerification spends an attempt, runs the Argon2id derivation, and
+// settles the attempt. It must be called WITHOUT m.mu held: that is the entire
+// point of the split, and the ledger may be a network round trip away.
 //
-// The attempt counters are atomics and saveAttempts writes through the storage
-// callback, neither of which needs the session lock.
+// The attempt is spent before the derivation, never after it (#1144). The
+// ledger's answer to the spend is the only thing that admits a derivation, so a
+// process whose cached counter is stale cannot verify a PIN, let alone clear a
+// lock, once the token's shared counter is exhausted. A ledger that cannot
+// answer fails the call closed with CKR_DEVICE_ERROR: an unknown budget is not
+// a budget that may be assumed to have room.
 func (m *SessionManager) finishPINVerification(plan *pinVerificationPlan, pin []byte) error {
-	if !verifyPin(plan.verifier, string(pin)) {
-		return m.recordFailedAttempt(plan.userType, plan.attempts)
+	spent, admitted, err := m.spendAttempt(plan.userType)
+	if err != nil {
+		return &PKCS11Error{Code: CKR_DEVICE_ERROR, Message: "spend PIN attempt", Cause: err}
 	}
-	if plan.attempts != nil {
-		plan.attempts.Store(0)
-		m.reconcileReset(plan.userType)
+	if !admitted {
+		return NewPKCS11Error(CKR_PIN_LOCKED)
+	}
+
+	// An empty PIN supplied against a token that does have a verifier is a
+	// genuine wrong guess, so it is charged as one; it simply needs no
+	// derivation to be known wrong. This is not the NULL pPin case: C_Login
+	// rejects that at the ABI boundary with CKR_ARGUMENTS_BAD, because v3.2
+	// §5.6.8 gives NULL a meaning only for a token with a protected
+	// authentication path, which this token does not advertise.
+	//
+	// A wrong PIN leaves its attempt spent. Nothing further is written.
+	if len(pin) == 0 || !verifyPin(plan.verifier, string(pin)) {
+		if spent >= MaxPINAttempts {
+			return NewPKCS11Error(CKR_PIN_LOCKED)
+		}
+		return NewPKCS11Error(CKR_PIN_INCORRECT)
+	}
+
+	// The PIN is correct, but the grant still depends on the refund landing.
+	// An attempt that stays charged is harmless; a login granted on a ledger
+	// whose state is unknown is not.
+	if err := m.refundAttempt(plan.userType, spent); err != nil {
+		return &PKCS11Error{Code: CKR_DEVICE_ERROR, Message: "refund PIN attempt", Cause: err}
 	}
 	return nil
 }
@@ -1171,13 +1218,8 @@ type pinVerificationPlan struct {
 	// run after the lock is released without racing a concurrent C_SetPIN.
 	verifier []byte
 
-	// attempts is the failed-attempt counter for this user type. It is an
-	// atomic, so it is safe to touch from either side of the lock.
-	attempts *atomic.Uint32
-
-	// userType names the counter attempts refers to, so the durable-storage
-	// reconcile (increment on failure, reset on success) can address the right
-	// per-token counter key.
+	// userType names the PIN being verified, and so the failed-attempt counter
+	// the verification is charged to.
 	userType UserType
 }
 
@@ -1193,12 +1235,10 @@ type pinVerificationPlan struct {
 // C_OpenSession, C_CloseSession and C_Login on the token for the duration --
 // and an attacker needs no valid PIN to trigger it, since a wrong guess costs
 // exactly the same derivation.
+//
+// No lockout decision is made here. The budget is decided by the spend in
+// finishPINVerification, against the ledger rather than this process's cache.
 func (m *SessionManager) preparePINVerificationLocked(userType UserType, pin []byte) (*pinVerificationPlan, error) {
-	attempts := m.attemptCounter(userType)
-	if attempts != nil && attempts.Load() >= MaxPINAttempts {
-		return nil, NewPKCS11Error(CKR_PIN_LOCKED)
-	}
-
 	var storedPINHash []byte
 	switch userType {
 	case CKU_SO:
@@ -1222,22 +1262,13 @@ func (m *SessionManager) preparePINVerificationLocked(userType UserType, pin []b
 		return nil, NewPKCS11Error(CKR_USER_PIN_NOT_INITIALIZED)
 	}
 
-	// An empty PIN supplied against a token that does have a verifier is a
-	// genuine wrong guess, so it is counted as one. This is not the NULL pPin
-	// case: C_Login rejects that at the ABI boundary with CKR_ARGUMENTS_BAD,
-	// because v3.2 §5.6.8 gives NULL a meaning only for a token with a protected
-	// authentication path, which this token does not advertise.
-	if len(pin) == 0 {
-		return nil, m.recordFailedAttempt(userType, attempts)
-	}
-
 	// The verifier is copied out. It carries its own salt, so it cannot be
 	// checked by re-hashing and comparing bytes -- the derivation has to run,
 	// and it runs against this copy after the lock is released.
 	verifier := make([]byte, len(storedPINHash))
 	copy(verifier, storedPINHash)
 
-	return &pinVerificationPlan{verifier: verifier, attempts: attempts, userType: userType}, nil
+	return &pinVerificationPlan{verifier: verifier, userType: userType}, nil
 }
 
 // attemptCounter returns the failed-attempt counter for a user type, or nil for
@@ -1253,45 +1284,98 @@ func (m *SessionManager) attemptCounter(userType UserType) *atomic.Uint32 {
 	}
 }
 
-// recordFailedAttempt increments the failure counter and reports whether the
-// PIN has now locked. The increment is reconciled with durable storage before
-// returning, so the attempt is spent even if the process does not survive to
-// answer — and, for a shared remote token, so a concurrent client's failures are
-// counted against the same budget rather than lost.
-func (m *SessionManager) recordFailedAttempt(userType UserType, attempts *atomic.Uint32) error {
-	if attempts == nil {
-		return NewPKCS11Error(CKR_PIN_INCORRECT)
+// spendAttempt charges one attempt for userType against the ledger, or against
+// the in-memory counter when no ledger is installed. See AttemptLedger.Spend.
+func (m *SessionManager) spendAttempt(userType UserType) (count uint32, admitted bool, err error) {
+	counter := m.attemptCounter(userType)
+	if counter == nil {
+		return 0, false, NewPKCS11Error(CKR_USER_TYPE_INVALID)
 	}
-
-	// The durable counter is authoritative: its post-increment value, not the
-	// local guess, decides the lockout. When there is no durable backend (or the
-	// reconcile fails) the local atomic is advanced instead, preserving the
-	// in-memory-only behavior a store-less module has always had.
-	var count uint32
-	if m.incrementAttempt != nil {
-		if authoritative, persisted := m.incrementAttempt(userType); persisted {
-			attempts.Store(authoritative)
-			count = authoritative
-		} else {
-			count = attempts.Add(1)
+	if m.ledger == nil {
+		for {
+			current := counter.Load()
+			if current >= MaxPINAttempts {
+				return current, false, nil
+			}
+			if counter.CompareAndSwap(current, current+1) {
+				return current + 1, true, nil
+			}
 		}
-	} else {
-		count = attempts.Add(1)
 	}
 
-	if count >= MaxPINAttempts {
-		return NewPKCS11Error(CKR_PIN_LOCKED)
+	count, admitted, err = m.ledger.Spend(userType, MaxPINAttempts)
+	if err != nil {
+		return 0, false, err
 	}
-	return NewPKCS11Error(CKR_PIN_INCORRECT)
+	counter.Store(count)
+	return count, admitted, nil
+}
+
+// refundAttempt settles an admitted attempt whose PIN was correct. See
+// AttemptLedger.Refund.
+func (m *SessionManager) refundAttempt(userType UserType, spent uint32) error {
+	counter := m.attemptCounter(userType)
+	if counter == nil {
+		return NewPKCS11Error(CKR_USER_TYPE_INVALID)
+	}
+	if m.ledger == nil {
+		for {
+			current := counter.Load()
+			if counter.CompareAndSwap(current, refundedCount(current, spent)) {
+				return nil
+			}
+		}
+	}
+
+	count, err := m.ledger.Refund(userType, spent)
+	if err != nil {
+		return err
+	}
+	counter.Store(count)
+	return nil
+}
+
+// refundedCount is the value a failed-attempt counter holding current takes
+// when the attempt that charged it to spent turns out to have been correct.
+//
+//   - current == spent: nothing touched the counter since the spend, so every
+//     charge on it preceded this success, and a success ends the run of
+//     consecutive failures. It resets to zero.
+//   - current > spent: attempts were charged after this one. Only this
+//     attempt's own charge is returned; theirs, and any lock they reached,
+//     stand.
+//   - current < spent: the counter was reset or refunded underneath this
+//     attempt, so its charge can no longer be told apart from anyone else's.
+//     Nothing is returned. Leaving a charge in place costs at most one attempt
+//     until the next success; returning someone else's would erase a wrong
+//     guess.
+func refundedCount(current, spent uint32) uint32 {
+	switch {
+	case current == spent:
+		return 0
+	case current > spent:
+		return current - 1
+	default:
+		return current
+	}
 }
 
 // ResetPINAttempts clears the failed-attempt counter for a user type. It is
-// called when a PIN is set or reset by an authorized party.
-func (m *SessionManager) ResetPINAttempts(userType UserType) {
-	if attempts := m.attemptCounter(userType); attempts != nil {
-		attempts.Store(0)
-		m.reconcileReset(userType)
+// called when a PIN is set or reset by an authorized party. An error means the
+// ledger could not be cleared, so the token may still read as locked to every
+// process that shares it, and the calling function must not report success.
+func (m *SessionManager) ResetPINAttempts(userType UserType) error {
+	counter := m.attemptCounter(userType)
+	if counter == nil {
+		return NewPKCS11Error(CKR_USER_TYPE_INVALID)
 	}
+	if m.ledger != nil {
+		if err := m.ledger.Reset(userType); err != nil {
+			return &PKCS11Error{Code: CKR_DEVICE_ERROR, Message: "reset PIN attempts", Cause: err}
+		}
+	}
+	counter.Store(0)
+	return nil
 }
 
 // VerifyPINForChange checks an old PIN offered to C_SetPIN against the same
@@ -1305,7 +1389,7 @@ func (m *SessionManager) ResetPINAttempts(userType UserType) {
 // CKR_PIN_LOCKED among C_SetPIN's own return values, so the spec expects this
 // path to be able to lock.
 //
-// A successful check clears the counter, exactly as a successful login does.
+// A successful check refunds its attempt, exactly as a successful login does.
 //
 // The result is translated into C_SetPIN's own vocabulary. validatePINLocked
 // answers in C_Login's, and the two return tables differ:
@@ -1336,16 +1420,13 @@ func (m *SessionManager) VerifyPINForChange(userType UserType, oldPin []byte) er
 	return err
 }
 
-// SetAttemptPersistence installs the callbacks that reconcile the failed-attempt
-// counters with durable storage: increment on a failure, reset on a success or
-// PIN change. increment returns the authoritative post-increment value and
-// whether it was persisted; reset best-effort clears the durable counter. Both
-// are addressed by user type so they reach the right per-token counter key.
-func (m *SessionManager) SetAttemptPersistence(increment func(userType UserType) (uint32, bool), reset func(userType UserType)) {
+// SetAttemptLedger installs the authoritative failed-attempt ledger shared by
+// every process that opens this token. It must be called before any session
+// authenticates; the ledger is read without m.mu afterwards.
+func (m *SessionManager) SetAttemptLedger(ledger AttemptLedger) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.incrementAttempt = increment
-	m.resetAttempt = reset
+	m.ledger = ledger
 }
 
 // PINAttempts returns the current failed-attempt counters, for persistence.
@@ -1353,28 +1434,21 @@ func (m *SessionManager) PINAttempts() (user, so uint32) {
 	return m.failedUserPIN.Load(), m.failedSOPIN.Load()
 }
 
-// RestorePINAttempts reinstates counters loaded from durable storage, so a
-// token that was locked before a restart is still locked after it.
+// RestorePINAttempts seeds the counters with values loaded from durable storage,
+// so the token flags a fresh process publishes reflect the token's lock state.
+// With a ledger installed they are a cache; see PINAttemptStatus.
 func (m *SessionManager) RestorePINAttempts(user, so uint32) {
 	m.failedUserPIN.Store(user)
 	m.failedSOPIN.Store(so)
 }
 
-// reconcileReset invokes the reset callback, if one is installed.
-//
-// The callback is read without taking m.mu: recordFailedAttempt and the success
-// path run on the authentication path, which already holds the lock for reading,
-// and taking it again here would deadlock. Installation happens once during
-// Initialize, before any session exists to authenticate.
-func (m *SessionManager) reconcileReset(userType UserType) {
-	if m.resetAttempt != nil {
-		m.resetAttempt(userType)
-	}
-}
-
 // PINAttemptStatus reports the failed-attempt count and lock state for a user
 // type, so the token can publish the CKF_*_PIN_COUNT_LOW, CKF_*_PIN_FINAL_TRY
 // and CKF_*_PIN_LOCKED flags in CK_TOKEN_INFO.
+//
+// With a ledger installed this is the last value the ledger reported to this
+// process, which another process sharing the token may since have moved. It is
+// advisory: authentication never consults it.
 func (m *SessionManager) PINAttemptStatus(userType UserType) (failed uint32, locked bool) {
 	attempts := m.attemptCounter(userType)
 	if attempts == nil {
