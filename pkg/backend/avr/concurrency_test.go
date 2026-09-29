@@ -127,9 +127,12 @@ func TestConcurrentCallsDoNotConsumeEachOthersReplies(t *testing.T) {
 // delayed past RequestTimeout; this asserts every one still succeeds.
 func TestRequestTimeoutExcludesQueueing(t *testing.T) {
 	const (
-		perCall        = 15 * time.Millisecond
-		callers        = 6
-		requestTimeout = 25 * time.Millisecond
+		// perCall is well under requestTimeout so a slow CI host
+		// (-race on a loaded runner) can't push one exchange past it, while
+		// the queue behind 15 other callers is still longer than it.
+		perCall        = 20 * time.Millisecond
+		callers        = 16
+		requestTimeout = 250 * time.Millisecond
 	)
 	// The queue a caller can be made to wait behind is longer than
 	// requestTimeout, but no single exchange is: that gap is exactly what a
