@@ -1162,6 +1162,116 @@ func TestErrorHandlingUnaryInterceptor(t *testing.T) {
 		if st.Code() != codes.Internal {
 			t.Errorf("Expected Internal code, got %v", st.Code())
 		}
+		if st.Message() != scrubbedErrorMessage {
+			t.Errorf("Expected scrubbed message %q, got %q", scrubbedErrorMessage, st.Message())
+		}
+	})
+
+	// go-xkms#1258: a handler that builds its own status.Errorf(codes.Internal,
+	// "...: %v", err) -- mapBarrierError, mapPINError, and every other
+	// handler this package's codes.Internal call sites belong to -- must not
+	// reach the client with err's text. The interceptor scrubs it centrally,
+	// so no individual call site needs to change.
+	t.Run("scrubs internal status error text and logs the cause", func(t *testing.T) {
+		ctx := context.Background()
+		info := &grpc.UnaryServerInfo{
+			FullMethod: "/xkmsv1.XKMSService/BarrierInitialize",
+		}
+
+		leaked := status.Errorf(codes.Internal, "seal strategy: open /var/lib/xkms/barrier.db: permission denied")
+		handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+			return nil, leaked
+		}
+
+		var buf bytes.Buffer
+		server := newErrorHandlingTestServer()
+		server.logger = capturingLogger(&buf)
+
+		_, err := server.errorHandlingUnaryInterceptor(ctx, nil, info, handler)
+		if err == nil {
+			t.Fatal("Expected error")
+		}
+
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Fatal("Expected gRPC status error")
+		}
+		if st.Code() != codes.Internal {
+			t.Errorf("Expected Internal code, got %v", st.Code())
+		}
+		if st.Message() != scrubbedErrorMessage {
+			t.Errorf("Expected client message %q, got %q", scrubbedErrorMessage, st.Message())
+		}
+		if strings.Contains(st.Message(), "barrier.db") {
+			t.Errorf("Expected the storage path withheld from the client, got: %s", st.Message())
+		}
+
+		logged := buf.String()
+		if !strings.Contains(logged, "barrier.db") || !strings.Contains(logged, "permission denied") {
+			t.Errorf("Expected the withheld detail logged server-side, got: %s", logged)
+		}
+		if !strings.Contains(logged, info.FullMethod) {
+			t.Errorf("Expected the method name logged, got: %s", logged)
+		}
+	})
+
+	t.Run("scrubs Unknown status error text and preserves the code", func(t *testing.T) {
+		ctx := context.Background()
+		info := &grpc.UnaryServerInfo{
+			FullMethod: "/test.Service/Method",
+		}
+
+		leaked := status.Errorf(codes.Unknown, "unexpected panic value: %v", "boom")
+		handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+			return nil, leaked
+		}
+
+		var buf bytes.Buffer
+		server := newErrorHandlingTestServer()
+		server.logger = capturingLogger(&buf)
+
+		_, err := server.errorHandlingUnaryInterceptor(ctx, nil, info, handler)
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Fatal("Expected gRPC status error")
+		}
+		if st.Code() != codes.Unknown {
+			t.Errorf("Expected Unknown code preserved, got %v", st.Code())
+		}
+		if st.Message() != scrubbedErrorMessage {
+			t.Errorf("Expected client message %q, got %q", scrubbedErrorMessage, st.Message())
+		}
+		if !strings.Contains(buf.String(), "boom") {
+			t.Errorf("Expected the withheld detail logged server-side, got: %s", buf.String())
+		}
+	})
+
+	t.Run("keeps InvalidArgument status error message", func(t *testing.T) {
+		ctx := context.Background()
+		info := &grpc.UnaryServerInfo{
+			FullMethod: "/test.Service/Method",
+		}
+
+		expectedErr := status.Error(codes.InvalidArgument, "missing key_id")
+		handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+			return nil, expectedErr
+		}
+
+		server := newErrorHandlingTestServer()
+		_, err := server.errorHandlingUnaryInterceptor(ctx, nil, info, handler)
+		if err != expectedErr {
+			t.Errorf("Expected error %v, got %v", expectedErr, err)
+		}
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Fatal("Expected gRPC status error")
+		}
+		if st.Code() != codes.InvalidArgument {
+			t.Errorf("Expected InvalidArgument code, got %v", st.Code())
+		}
+		if st.Message() != "missing key_id" {
+			t.Errorf("Expected original message preserved, got %q", st.Message())
+		}
 	})
 
 	t.Run("passes through success", func(t *testing.T) {
@@ -1228,6 +1338,65 @@ func TestErrorHandlingStreamInterceptor(t *testing.T) {
 		}
 		if st.Code() != codes.Internal {
 			t.Errorf("Expected Internal code, got %v", st.Code())
+		}
+		if st.Message() != scrubbedErrorMessage {
+			t.Errorf("Expected scrubbed message %q, got %q", scrubbedErrorMessage, st.Message())
+		}
+	})
+
+	t.Run("scrubs internal status error text and logs the cause", func(t *testing.T) {
+		ctx := context.Background()
+		stream := &mockServerStream{ctx: ctx}
+		info := &grpc.StreamServerInfo{
+			FullMethod: "/xkmsv1.XKMSService/StreamAudit",
+		}
+
+		leaked := status.Errorf(codes.Internal, "audit sink: dial tcp 10.0.0.7:9200: connection refused")
+		handler := func(srv interface{}, ss grpc.ServerStream) error {
+			return leaked
+		}
+
+		var buf bytes.Buffer
+		server := newErrorHandlingTestServer()
+		server.logger = capturingLogger(&buf)
+
+		err := server.errorHandlingStreamInterceptor(nil, stream, info, handler)
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Fatal("Expected gRPC status error")
+		}
+		if st.Code() != codes.Internal {
+			t.Errorf("Expected Internal code, got %v", st.Code())
+		}
+		if st.Message() != scrubbedErrorMessage {
+			t.Errorf("Expected client message %q, got %q", scrubbedErrorMessage, st.Message())
+		}
+
+		logged := buf.String()
+		if !strings.Contains(logged, "connection refused") {
+			t.Errorf("Expected the withheld detail logged server-side, got: %s", logged)
+		}
+		if !strings.Contains(logged, info.FullMethod) {
+			t.Errorf("Expected the method name logged, got: %s", logged)
+		}
+	})
+
+	t.Run("keeps InvalidArgument status error message", func(t *testing.T) {
+		ctx := context.Background()
+		stream := &mockServerStream{ctx: ctx}
+		info := &grpc.StreamServerInfo{
+			FullMethod: "/test.Service/Method",
+		}
+
+		expectedErr := status.Error(codes.InvalidArgument, "missing key_id")
+		handler := func(srv interface{}, ss grpc.ServerStream) error {
+			return expectedErr
+		}
+
+		server := newErrorHandlingTestServer()
+		err := server.errorHandlingStreamInterceptor(nil, stream, info, handler)
+		if err != expectedErr {
+			t.Errorf("Expected error %v, got %v", expectedErr, err)
 		}
 	})
 

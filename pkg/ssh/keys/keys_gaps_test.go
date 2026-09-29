@@ -22,6 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // failingRandReader is an io.Reader that always fails. It is swapped into
@@ -76,7 +77,7 @@ func TestGenerate_AllAlgorithms(t *testing.T) {
 		bits int
 	}{
 		{AlgorithmEd25519, 0},
-		{AlgorithmRSA, minRSABits},
+		{AlgorithmRSA, types.RSAKeySize2048},
 		{AlgorithmECDSAP256, 0},
 		{AlgorithmECDSAP384, 0},
 		{AlgorithmECDSAP521, 0},
@@ -107,6 +108,20 @@ func TestGenerate_AllAlgorithms(t *testing.T) {
 // TestGenerate_RSATooSmall covers the InvalidKeySizeError branch.
 func TestGenerate_RSATooSmall(t *testing.T) {
 	_, err := Generate(GenerateOptions{Algorithm: AlgorithmRSA, RSABits: 1024})
+	var iks *InvalidKeySizeError
+	if !errors.As(err, &iks) {
+		t.Fatalf("expected InvalidKeySizeError, got %v", err)
+	}
+}
+
+// TestGenerate_RSATooLarge proves Generate refuses an oversized modulus
+// before it ever reaches rsa.GenerateKey, which cannot be cancelled and
+// whose cost grows with the cube of the modulus size (go-xkms#1260). 65536
+// is the size the original report used to pin a CPU core for minutes to
+// hours; if this refusal regressed, this test would hang rather than fail
+// fast.
+func TestGenerate_RSATooLarge(t *testing.T) {
+	_, err := Generate(GenerateOptions{Algorithm: AlgorithmRSA, RSABits: 65536})
 	var iks *InvalidKeySizeError
 	if !errors.As(err, &iks) {
 		t.Fatalf("expected InvalidKeySizeError, got %v", err)

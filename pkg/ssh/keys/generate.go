@@ -29,6 +29,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -40,17 +41,16 @@ type GenerateOptions struct {
 	Algorithm Algorithm
 
 	// RSABits is the modulus size for AlgorithmRSA. Ignored for other
-	// algorithms. Defaults to 4096 when zero. Minimum enforced: 2048.
+	// algorithms. Defaults to 4096 when zero. Enforced range:
+	// [types.RSAKeySize2048, types.RSAKeySize4096] -- the ceiling exists
+	// because rsa.GenerateKey cannot be cancelled and its cost grows with
+	// the cube of the modulus size (go-xkms#1260).
 	RSABits int
 
 	// Comment is written into the OpenSSH PEM block (appears in
 	// authorized_keys / fingerprint output). Safe to leave empty.
 	Comment string
 }
-
-// minRSABits is the smallest RSA modulus the package accepts. 2048 is
-// the floor required by current NIST guidance.
-const minRSABits = 2048
 
 // Generate creates a new SSH key of the specified algorithm. The
 // private key material is sealed into a *secure.Secret in OpenSSH PEM
@@ -60,7 +60,7 @@ const minRSABits = 2048
 //
 // Returns:
 //   - *UnsupportedAlgorithmError if opts.Algorithm is unrecognized.
-//   - *InvalidKeySizeError if RSABits is below the minimum.
+//   - *InvalidKeySizeError if RSABits is outside the supported range.
 //   - *KeyMaterialError if the underlying crypto library fails.
 func Generate(opts GenerateOptions) (*Key, error) {
 	if opts.Algorithm == "" {
@@ -94,7 +94,12 @@ func generatePrivateKey(opts GenerateOptions) (crypto.PrivateKey, error) {
 		if bits == 0 {
 			bits = 4096
 		}
-		if bits < minRSABits {
+		// types.ValidateRSAKeySize enforces both the NIST-required floor and
+		// the go-xkms#1260 ceiling: rsa.GenerateKey cannot be cancelled and
+		// its cost grows with the cube of the modulus size, so an unbounded
+		// caller-chosen bits would let one request pin a CPU core for
+		// minutes to hours.
+		if err := types.ValidateRSAKeySize(bits); err != nil {
 			return nil, &InvalidKeySizeError{Algorithm: "rsa", Size: bits}
 		}
 		priv, err := rsa.GenerateKey(rand.Reader, bits)
@@ -182,7 +187,7 @@ func keyFromCryptoPrivate(priv crypto.PrivateKey, algo Algorithm, comment string
 // Returns:
 //   - *NilInputError if p is nil or backendID is empty.
 //   - *UnsupportedAlgorithmError if opts.Algorithm is empty or unrecognized.
-//   - *InvalidKeySizeError if RSABits is non-zero and below the minimum.
+//   - *InvalidKeySizeError if RSABits is non-zero and outside the supported range.
 //   - *KeyMaterialError if the backend or public-key derivation fails.
 func GenerateOnBackend(ctx context.Context, p BackendProvider, backendID string, opts GenerateOptions, sc scope.Scope, owner, name string) (*Key, error) {
 	if p == nil {
@@ -197,8 +202,14 @@ func GenerateOnBackend(ctx context.Context, p BackendProvider, backendID string,
 	if !opts.Algorithm.supported() {
 		return nil, &UnsupportedAlgorithmError{Algorithm: string(opts.Algorithm)}
 	}
-	if opts.Algorithm == AlgorithmRSA && opts.RSABits != 0 && opts.RSABits < minRSABits {
-		return nil, &InvalidKeySizeError{Algorithm: "rsa", Size: opts.RSABits}
+	// Refused here, before the backend is ever asked to generate a key, for
+	// the same go-xkms#1260 reason Generate refuses it: an unbounded
+	// caller-chosen size can pin a CPU core for minutes to hours, and a
+	// backend is not guaranteed to enforce the ceiling itself.
+	if opts.Algorithm == AlgorithmRSA && opts.RSABits != 0 {
+		if err := types.ValidateRSAKeySize(opts.RSABits); err != nil {
+			return nil, &InvalidKeySizeError{Algorithm: "rsa", Size: opts.RSABits}
+		}
 	}
 
 	keyID, err := backendKeyID(sc, owner, name)

@@ -102,14 +102,16 @@ func (ro *RenewalOrchestrator) Start(ctx context.Context) error {
 }
 
 // Stop gracefully shuts down the renewal orchestrator and waits for the
-// monitoring goroutine to complete.
+// monitoring goroutine to complete. Stop is safe to call concurrently or
+// more than once: only the caller that wins the running-flag CAS closes
+// stopChan, so a second Stop (concurrent or subsequent) is a no-op rather
+// than a double-close of the channel.
 func (ro *RenewalOrchestrator) Stop() error {
-	if !ro.running.Load() {
+	if !ro.running.CompareAndSwap(true, false) {
 		return nil
 	}
 	close(ro.stopChan)
 	ro.wg.Wait()
-	ro.running.Store(false)
 	return nil
 }
 

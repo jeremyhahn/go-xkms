@@ -31,6 +31,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nssdb"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/urlsafety"
 )
 
 // trustHashFilePrefix is the file-name prefix used to persist the trust
@@ -177,6 +178,15 @@ func (s *SecureBrowserService) LaunchBrowserWithOptions(
 	if url == "" {
 		return nil, ErrSecureBrowserEmptyURL
 	}
+
+	// Only http and https may be launched into the browser binary below
+	// (go-xkms#1275); the normalized form is what actually gets passed as
+	// an argument.
+	validated, err := urlsafety.ValidateLaunchURL(url)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrSecureBrowserInvalidURL, Cause: err}
+	}
+	url = validated.String()
 
 	family := classifyBrowser(browserPath)
 	if family == "" {
@@ -633,7 +643,10 @@ func (s *SecureBrowserService) buildLaunchArgs(
 			// operator points systemd-resolved (or local dnsmasq) at the
 			// platform CP's DNS service. We don't paper over that here.
 		}
-		args = append(args, url)
+		// "--" marks the end of Chromium's own switches, so url can never
+		// be parsed as one even though LaunchBrowserWithOptions has
+		// already ruled out a leading '-' (defense in depth).
+		args = append(args, "--", url)
 
 	case nativemsg.BrowserFirefox:
 		args = []string{browserPath}
@@ -648,7 +661,10 @@ func (s *SecureBrowserService) buildLaunchArgs(
 			}
 			args = append(args, "--profile", profileDir)
 		}
-		args = append(args, url)
+		// "--" marks the end of Firefox's own switches, so url can never
+		// be parsed as one even though LaunchBrowserWithOptions has
+		// already ruled out a leading '-' (defense in depth).
+		args = append(args, "--", url)
 
 	default:
 		err = ErrSecureBrowserUnknownFamily

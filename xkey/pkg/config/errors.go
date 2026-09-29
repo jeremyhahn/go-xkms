@@ -67,6 +67,18 @@ var (
 	// configuration or combines fields inconsistently (e.g. a partial
 	// explicit-credential set). See DetailError for the specific field.
 	ErrBarrierCloudKMSConfigInvalid = errors.New("config: cloud KMS barrier strategy configuration is invalid")
+
+	// ErrSandboxPolicyCombo is returned by ValidateAPIExplorerSandboxPolicy
+	// when the policy combines allow-scripts with allow-same-origin, which
+	// lets a previewed API Explorer response escape its sandbox (go-xkms#1274).
+	ErrSandboxPolicyCombo = errors.New("config: sandbox policy combines allow-scripts and allow-same-origin")
+
+	// ErrSandboxPolicyForbiddenDirective is returned by
+	// ValidateAPIExplorerSandboxPolicy when the policy contains a directive
+	// that is never permitted for the API Explorer preview regardless of
+	// context (allow-top-navigation*, allow-popups-to-escape-sandbox,
+	// allow-modals).
+	ErrSandboxPolicyForbiddenDirective = errors.New("config: sandbox policy contains a forbidden directive")
 )
 
 // DetailError appends detail text directly after a wrapped error while

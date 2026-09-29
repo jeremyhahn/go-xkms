@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — CLI
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 Binary: `xkey`. Groups: `fido2` (the daemon, token lifecycle, and per-RP
 policy) and `uhid` (device setup). Sources: `xkey/cmd/xkey/cmd/fido2.go`,
@@ -121,6 +121,12 @@ waits for a touch, which `xkey touch` can supply.
 | `--notify-command` | `""` — custom command, overrides built-in notifications |
 | `--socket` | `$XDG_RUNTIME_DIR/xkey/xkey.sock` |
 | `--interactive` | `false` |
+
+`--notify-command` is split into argv and run exactly as given — never
+through a shell. Request data (operation, RP ID, RP name, user name) reaches
+it only via the `XKEY_OPERATION`/`XKEY_RP_ID`/`XKEY_RP_NAME`/`XKEY_USER_NAME`
+environment variables, since RP name and user name come from the calling web
+page: `--notify-command 'sh -c "notify-send xkey \"$XKEY_RP_ID\""'`.
 
 **`--notify none` with `--require-touch true` is the configuration that looks
 broken**: the authenticator waits for a touch nobody was prompted for, and the

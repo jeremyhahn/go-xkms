@@ -17,6 +17,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -164,6 +165,55 @@ func TestServer_RecordActivity(t *testing.T) {
 	}
 	if !agents[0].LastActivity.Equal(first) {
 		t.Error("an earlier snapshot must not observe later activity")
+	}
+}
+
+func TestServer_GRPCServerOptions_Plaintext(t *testing.T) {
+	server := testServer(t)
+
+	opts := server.grpcServerOptions(nil)
+
+	// MaxRecvMsgSize, MaxSendMsgSize, ConnectionTimeout, MaxConcurrentStreams,
+	// KeepaliveEnforcementPolicy, the tracking interceptor, and the stats
+	// handler -- no grpc.Creds without a TLS config (go-xkms#1263).
+	const wantPlaintext = 7
+	if len(opts) != wantPlaintext {
+		t.Errorf("expected %d server options without TLS, got %d", wantPlaintext, len(opts))
+	}
+}
+
+func TestServer_GRPCServerOptions_TLSAddsCredentials(t *testing.T) {
+	server := testServer(t)
+
+	plaintext := server.grpcServerOptions(nil)
+	withTLS := server.grpcServerOptions(&tls.Config{MinVersion: tls.VersionTLS13})
+
+	if len(withTLS) != len(plaintext)+1 {
+		t.Errorf("expected TLS config to add exactly one option (grpc.Creds), got %d vs %d", len(withTLS), len(plaintext))
+	}
+}
+
+func TestServer_GRPCServerOptions_HonorsCustomHardeningConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ListenAddress = "localhost:0"
+	cfg.MaxRecvMsgSize = 1024
+	cfg.MaxSendMsgSize = 1024
+	cfg.ConnectionTimeout = 5 * time.Second
+	cfg.MaxConcurrentStreams = 10
+	enrollment, _ := testEnrollmentService(t)
+	server, err := NewServer(cfg, enrollment, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	// A server built from these hardening options must still start and
+	// stop cleanly (mirrors pkg/api/unix's TestGRPCServer_MessageSizeLimits
+	// / TestGRPCServer_ConcurrentStreamLimit seam).
+	if err := server.Start(); err != nil {
+		t.Fatalf("start failed with custom hardening config: %v", err)
+	}
+	if err := server.Stop(); err != nil {
+		t.Fatalf("stop failed with custom hardening config: %v", err)
 	}
 }
 

@@ -16,9 +16,11 @@ package grpc
 import (
 	"bytes"
 	"context"
+	"math"
 	"testing"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -372,6 +374,49 @@ func TestService_DeriveKey_Errors(t *testing.T) {
 			if st.Code() != codes.InvalidArgument {
 				t.Errorf("Expected InvalidArgument, got %v", st.Code())
 			}
+		}
+	})
+
+	t.Run("key_length exceeds maximum", func(t *testing.T) {
+		_, err := service.DeriveKey(context.Background(), &pb.DeriveKeyRequest{
+			Algorithm:        "HKDF",
+			InputKeyMaterial: []byte("test-ikm-32-bytes-long-enough!!"),
+			KeyLength:        int32(types.MaxDerivedKeyLength) + 1,
+		})
+		if err == nil {
+			t.Fatal("Expected error for an oversized key_length")
+		}
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Fatalf("Expected a gRPC status error, got %v", err)
+		}
+		if st.Code() != codes.InvalidArgument {
+			t.Errorf("Expected InvalidArgument, got %v", st.Code())
+		}
+	})
+
+	// The proto field is int32, so this is the largest key_length the wire
+	// can carry -- still nine orders of magnitude past MaxDerivedKeyLength,
+	// and the go-xkms#1259 report's own 100_000_000_000 does not fit an
+	// int32 at all, which is itself informative: the internal service type
+	// (a Go int) had no such ceiling before this fix, so a caller reaching
+	// DeriveKey through a wider transport (REST's JSON, or the SDK used
+	// in-process) was not bounded by the gRPC field width either.
+	t.Run("key_length at the wire's own limit", func(t *testing.T) {
+		_, err := service.DeriveKey(context.Background(), &pb.DeriveKeyRequest{
+			Algorithm:        "HKDF",
+			InputKeyMaterial: []byte("test-ikm-32-bytes-long-enough!!"),
+			KeyLength:        math.MaxInt32,
+		})
+		if err == nil {
+			t.Fatal("Expected error for an oversized key_length")
+		}
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Fatalf("Expected a gRPC status error, got %v", err)
+		}
+		if st.Code() != codes.InvalidArgument {
+			t.Errorf("Expected InvalidArgument, got %v", st.Code())
 		}
 	})
 

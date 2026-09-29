@@ -255,17 +255,21 @@ When running in daemon mode, xkey sends desktop notifications when touch is requ
 
 ### Custom Notification Command
 
-Use `--notify-command` with template variables:
+`--notify-command` is split into argv on whitespace (quote with `'` or `"`
+to include a space in one argument) and run exactly as given — never through
+a shell, and never modified. Request data reaches the command only through
+environment variables, since RP name and user name come from the calling
+web page and are never safe to splice into a command string:
 
 | Variable | Description |
 |----------|-------------|
-| `%o` | Operation (`register` or `authenticate`) |
-| `%r` | Relying Party ID |
-| `%n` | Relying Party Name |
-| `%u` | User Name |
+| `XKEY_OPERATION` | Operation (`register` or `authenticate`) |
+| `XKEY_RP_ID` | Relying Party ID |
+| `XKEY_RP_NAME` | Relying Party Name |
+| `XKEY_USER_NAME` | User Name |
 
 ```bash
-sudo xkey fido2 --notify-command 'notify-send -u critical "xkey" "Touch for %n (%o)"'
+sudo xkey fido2 --notify-command 'sh -c "notify-send -u critical xkey \"Touch for \$XKEY_RP_NAME (\$XKEY_OPERATION)\""'
 ```
 
 ## Key Backends

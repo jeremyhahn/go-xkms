@@ -228,6 +228,12 @@ var (
 	// ErrOIDCDiscoveryFailed indicates OIDC provider discovery failed.
 	ErrOIDCDiscoveryFailed = errors.New("oidc_service: discovery failed")
 
+	// ErrOIDCInvalidLaunchURL indicates an authorization URL failed launch
+	// validation (disallowed scheme, missing host, a leading '-', or a
+	// control character) before it was handed to the browser opener. See
+	// pkg/urlsafety.ValidateLaunchURL.
+	ErrOIDCInvalidLaunchURL = errors.New("oidc_service: authorization URL failed launch validation")
+
 	// ErrOIDCLoginFailed indicates the login operation failed.
 	ErrOIDCLoginFailed = errors.New("oidc_service: login failed")
 

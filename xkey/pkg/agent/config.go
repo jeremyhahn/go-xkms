@@ -37,6 +37,30 @@ const (
 	EnrollNoiseDirect EnrollmentMethod = "noise_direct"
 )
 
+const (
+	// defaultMaxRecvMsgSize is the default maximum gRPC message size the
+	// agent server accepts from a connected agent.
+	defaultMaxRecvMsgSize = 4 * 1024 * 1024 // 4MB
+
+	// defaultMaxSendMsgSize is the default maximum gRPC message size the
+	// agent server sends to a connected agent.
+	defaultMaxSendMsgSize = 4 * 1024 * 1024 // 4MB
+
+	// defaultConnectionTimeout is the default bound on how long a
+	// connection may take to complete its handshake.
+	defaultConnectionTimeout = 120 * time.Second
+
+	// defaultMaxConcurrentStreams is the default cap on the number of
+	// concurrent RPCs a single connection may have in flight.
+	defaultMaxConcurrentStreams = 100
+
+	// keepaliveMinPingInterval is the minimum interval a peer may send
+	// keepalive pings without an active RPC before the server treats the
+	// pings as abusive and tears the connection down. It bounds a ping
+	// flood from an mTLS-authenticated but misbehaving agent.
+	keepaliveMinPingInterval = 30 * time.Second
+)
+
 // validEnrollmentMethods is used for O(1) validation of enrollment methods.
 var validEnrollmentMethods = map[EnrollmentMethod]struct{}{
 	EnrollOneTimeCode:   {},
@@ -86,6 +110,24 @@ type Config struct {
 
 	// OneTimeCodeValidity is the default validity duration for one-time codes.
 	OneTimeCodeValidity time.Duration `yaml:"one_time_code_validity" json:"one_time_code_validity" mapstructure:"one_time_code_validity"`
+
+	// MaxRecvMsgSize is the maximum gRPC message size the server accepts
+	// from a connected agent (default: 4MB). It bounds memory a single
+	// message from an mTLS-authenticated agent can force the server to
+	// allocate.
+	MaxRecvMsgSize int `yaml:"max_recv_msg_size" json:"max_recv_msg_size" mapstructure:"max_recv_msg_size"`
+
+	// MaxSendMsgSize is the maximum gRPC message size the server sends to
+	// a connected agent (default: 4MB).
+	MaxSendMsgSize int `yaml:"max_send_msg_size" json:"max_send_msg_size" mapstructure:"max_send_msg_size"`
+
+	// ConnectionTimeout bounds how long a connection may take to complete
+	// its handshake before the server drops it (default: 120s).
+	ConnectionTimeout time.Duration `yaml:"connection_timeout" json:"connection_timeout" mapstructure:"connection_timeout"`
+
+	// MaxConcurrentStreams caps the number of concurrent RPCs a single
+	// connection may have in flight (default: 100).
+	MaxConcurrentStreams uint32 `yaml:"max_concurrent_streams" json:"max_concurrent_streams" mapstructure:"max_concurrent_streams"`
 }
 
 // DefaultConfig returns a Config with sensible defaults. The listen address
@@ -97,10 +139,14 @@ func DefaultConfig() *Config {
 		EnrollmentMethods: []EnrollmentMethod{
 			EnrollOneTimeCode,
 		},
-		CertValidityDays:    365,
-		MaxAgents:           0,
-		OneTimeCodeLength:   8,
-		OneTimeCodeValidity: 15 * time.Minute,
+		CertValidityDays:     365,
+		MaxAgents:            0,
+		OneTimeCodeLength:    8,
+		OneTimeCodeValidity:  15 * time.Minute,
+		MaxRecvMsgSize:       defaultMaxRecvMsgSize,
+		MaxSendMsgSize:       defaultMaxSendMsgSize,
+		ConnectionTimeout:    defaultConnectionTimeout,
+		MaxConcurrentStreams: defaultMaxConcurrentStreams,
 	}
 }
 
@@ -126,6 +172,18 @@ func (c *Config) Validate() error {
 	}
 	if c.OneTimeCodeValidity <= 0 {
 		c.OneTimeCodeValidity = 15 * time.Minute
+	}
+	if c.MaxRecvMsgSize <= 0 {
+		c.MaxRecvMsgSize = defaultMaxRecvMsgSize
+	}
+	if c.MaxSendMsgSize <= 0 {
+		c.MaxSendMsgSize = defaultMaxSendMsgSize
+	}
+	if c.ConnectionTimeout <= 0 {
+		c.ConnectionTimeout = defaultConnectionTimeout
+	}
+	if c.MaxConcurrentStreams == 0 {
+		c.MaxConcurrentStreams = defaultMaxConcurrentStreams
 	}
 	return nil
 }

@@ -129,6 +129,16 @@ type NativeVirtualDevice struct {
 	closed        atomic.Bool
 	ownsAuth      bool // true when this device created the authenticator
 	mu            sync.Mutex
+
+	// done is closed exactly once, by Close, and never otherwise. Read
+	// selects on done alongside respChan so a blocked Read wakes up as soon
+	// as Close runs. respChan itself is never closed: the CTAPHID keepalive
+	// goroutine (xkey/pkg/authenticator/hid_adapter.go's sendKeepalives) can
+	// still be calling handleResponse when Close runs, and closing a channel
+	// a concurrent goroutine might still send on is a send-after-close panic
+	// waiting to happen. Leaving respChan open and gating Read on done avoids
+	// that race entirely.
+	done chan struct{}
 }
 
 // NewNativeVirtualDevice creates a new native virtual FIDO2 device.
@@ -215,6 +225,7 @@ func NewNativeVirtualDevice(config *NativeVirtualDeviceConfig) (*NativeVirtualDe
 		serialNumber:  config.SerialNumber,
 		respChan:      make(chan []byte, nativeDeviceRespChanSize),
 		ownsAuth:      ownsAuth,
+		done:          make(chan struct{}),
 	}
 
 	// Create HID handler
@@ -280,14 +291,17 @@ func (d *NativeVirtualDevice) Read(data []byte) (int, error) {
 		return 0, ErrNativeDeviceClosed
 	}
 
-	// Wait for response from the device
-	response, ok := <-d.respChan
-	if !ok || response == nil {
+	// Wait for a response from the device, or for Close to wake us up.
+	select {
+	case response, ok := <-d.respChan:
+		if !ok || response == nil {
+			return 0, ErrNativeDeviceClosed
+		}
+		n := copy(data, response)
+		return n, nil
+	case <-d.done:
 		return 0, ErrNativeDeviceClosed
 	}
-
-	n := copy(data, response)
-	return n, nil
 }
 
 // Close closes the virtual device and releases resources.
@@ -297,6 +311,10 @@ func (d *NativeVirtualDevice) Close() error {
 	if d.closed.Swap(true) {
 		return nil // Already closed
 	}
+
+	// Wake up anything blocked in Read. respChan is deliberately never
+	// closed; see the done field comment.
+	close(d.done)
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -316,9 +334,6 @@ func (d *NativeVirtualDevice) Close() error {
 			closeErr = errors.Join(closeErr, err)
 		}
 	}
-
-	// Close the response channel
-	close(d.respChan)
 
 	return closeErr
 }

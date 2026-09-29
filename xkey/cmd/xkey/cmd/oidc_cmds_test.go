@@ -670,8 +670,10 @@ func TestRunOIDCToken_TruncatesSecretsByDefault(t *testing.T) {
 	assert.Contains(t, out, "Name:          Alice")
 	assert.Contains(t, out, "Scopes:        openid email")
 	assert.Contains(t, out, "(in ")
-	assert.Contains(t, out, "... (truncated)")
+	assert.Contains(t, out, "(120 chars)")
+	assert.Contains(t, out, "AAAAAAAA…", "expected an 8-character prefix of the access token")
 	assert.NotContains(t, out, access, "the full access token must not leak without --show-full")
+	assert.NotContains(t, out, strings.Repeat("A", 9), "no more than an 8-character prefix of the access token may print")
 	assert.NotContains(t, out, "Refresh Token:",
 		"the refresh token is the most sensitive value and stays hidden by default")
 }

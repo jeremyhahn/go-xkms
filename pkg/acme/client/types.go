@@ -133,45 +133,6 @@ func encodePrivateKeyPEM(key crypto.PrivateKey) ([]byte, error) {
 	return pem.EncodeToMemory(pemBlock), nil
 }
 
-// RenewalStatus represents the status of a certificate renewal
-type RenewalStatus struct {
-	// CertificateSubject is the subject DN of the certificate
-	CertificateSubject string
-
-	// NotBefore is the certificate's validity start time
-	NotBefore string
-
-	// NotAfter is the certificate's validity end time
-	NotAfter string
-
-	// DaysRemaining is the number of days until expiration
-	DaysRemaining int
-
-	// ShouldRenew indicates whether the certificate should be renewed
-	ShouldRenew bool
-
-	// RenewalAttempted indicates whether renewal was attempted
-	RenewalAttempted bool
-
-	// RenewalSuccessful indicates whether renewal was successful
-	RenewalSuccessful bool
-
-	// Error contains any error that occurred during renewal
-	Error error
-}
-
-// CertificateInfo contains information about a certificate and its renewal request
-type CertificateInfo struct {
-	// Certificate is the x509 certificate
-	Certificate *x509.Certificate
-
-	// Request is the original certificate request used to obtain the certificate
-	Request *CertificateRequest
-
-	// Identifier is a unique identifier for the certificate
-	Identifier string
-}
-
 // AuthorizationType represents an ACME authorization type
 type AuthorizationType string
 

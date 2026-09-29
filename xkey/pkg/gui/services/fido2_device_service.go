@@ -96,6 +96,16 @@ type FIDO2DeviceService struct {
 	lastError      atomic.Value // stores string
 	stopCh         chan struct{}
 	bridgeWg       sync.WaitGroup
+
+	// lifecycleMu serializes Start and Stop so that at most one lifecycle
+	// transition runs at a time. Wails dispatches bound method calls on
+	// separate goroutines, so a toggle in the UI can race app shutdown (or
+	// itself): without this, two callers could both observe the running
+	// gate favorably and interleave, double-closing stopCh or tearing down
+	// a device that a concurrent Start had already replaced (#1256). It
+	// also guards direct reads of device/uhidDev outside the bridge loop,
+	// which cleanup() clears without any synchronization of its own.
+	lifecycleMu sync.Mutex
 }
 
 // NewFIDO2DeviceService creates a new FIDO2DeviceService.
@@ -242,12 +252,22 @@ func (s *FIDO2DeviceService) presenceHandler() *authenticator.SocketHandler {
 // starts the bridge loop that routes HID packets between the host and the
 // authenticator. The storage parameter provides credential persistence and
 // the notifier dispatches user presence notifications.
+//
+// Start holds lifecycleMu for its entire duration, the same as Stop, and
+// reserves the running state with a compare-and-swap before doing any work
+// so that two concurrent Start calls cannot both pass the "already running"
+// check and race to install a device and uhidDev. Every failure path below
+// puts the reservation back before returning.
 func (s *FIDO2DeviceService) Start(storage authenticator.StatefulCredentialStorage, notifier notify.Notifier) error {
-	if s.running.Load() {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
+	if !s.running.CompareAndSwap(false, true) {
 		return ErrFIDO2DeviceAlreadyRunning
 	}
 
 	if storage == nil {
+		s.running.Store(false)
 		s.lastError.Store(ErrFIDO2StorageRequired.Error())
 		return ErrFIDO2StorageRequired
 	}
@@ -291,6 +311,7 @@ func (s *FIDO2DeviceService) Start(storage authenticator.StatefulCredentialStora
 	// Create the native virtual device.
 	device, err := virtualdevice.NewNativeVirtualDevice(deviceCfg)
 	if err != nil {
+		s.running.Store(false)
 		reason := fmt.Sprintf("failed to create virtual device: %v", err)
 		s.lastError.Store(reason)
 		return &MessageError{Msg: fmt.Sprintf("fido2_device_service: %s", reason)}
@@ -314,6 +335,7 @@ func (s *FIDO2DeviceService) Start(storage authenticator.StatefulCredentialStora
 	// Open the UHID kernel interface.
 	uhidDev, err := uhid.Open()
 	if err != nil {
+		s.running.Store(false)
 		closeErr := s.device.Close()
 		s.device = nil
 		if closeErr != nil {
@@ -336,13 +358,13 @@ func (s *FIDO2DeviceService) Start(storage authenticator.StatefulCredentialStora
 	createCfg.Uniq = "XKEY001"
 	if err := s.uhidDev.Create(createCfg); err != nil {
 		s.cleanup()
+		s.running.Store(false)
 		reason := fmt.Sprintf("failed to create UHID device: %v", err)
 		s.lastError.Store(reason)
 		return &MessageError{Msg: fmt.Sprintf("fido2_device_service: %s", reason)}
 	}
 
 	s.stopCh = make(chan struct{})
-	s.running.Store(true)
 	s.lastError.Store("")
 
 	go s.bridgeLoop()
@@ -367,12 +389,21 @@ func (s *FIDO2DeviceService) Start(storage authenticator.StatefulCredentialStora
 // the native virtual device. The virtual device is closed first to unblock
 // the response-reader goroutine (which blocks on device.Read -> respChan),
 // then we wait for both bridge goroutines to exit.
+//
+// Stop holds lifecycleMu for its entire duration, the same as Start. Wails
+// dispatches bound method calls on separate goroutines, so two concurrent
+// Stop calls -- or a toggle racing app shutdown -- must not both observe
+// the running gate favorably: exactly one caller closes stopCh and closes
+// the device; every other caller sees the gate already flipped and returns
+// ErrFIDO2DeviceNotRunning without touching any shared state.
 func (s *FIDO2DeviceService) Stop() error {
-	if !s.running.Load() {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
+	if !s.running.CompareAndSwap(true, false) {
 		return ErrFIDO2DeviceNotRunning
 	}
 
-	s.running.Store(false)
 	close(s.stopCh)
 
 	// Close the virtual device BEFORE waiting for goroutines. Goroutine 2
@@ -380,13 +411,16 @@ func (s *FIDO2DeviceService) Stop() error {
 	// closes respChan, unblocking the read and allowing the goroutine to exit.
 	// Without this, bridgeWg.Wait() deadlocks against cleanup(). The close
 	// error, if any, is reported once the rest of teardown has run rather
-	// than dropped.
+	// than dropped. The field is cleared immediately after closing so
+	// cleanup(), which nil-checks before it closes, never closes the same
+	// device a second time.
 	var deviceCloseErr error
 	if s.device != nil {
 		deviceCloseErr = s.device.Close()
 		if deviceCloseErr != nil {
 			s.log.Warn("failed to close virtual FIDO2 device", "error", deviceCloseErr)
 		}
+		s.device = nil
 	}
 
 	s.bridgeWg.Wait()
@@ -429,6 +463,9 @@ func (s *FIDO2DeviceService) IsRunning() bool {
 // has a PIN configured. Returns false if the device is not running or the
 // authenticator is unavailable.
 func (s *FIDO2DeviceService) IsAuthenticatorPINSet() bool {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
 	if !s.running.Load() || s.device == nil {
 		return false
 	}
@@ -598,7 +635,13 @@ func (s *FIDO2DeviceService) bridgeLoop() {
 	}()
 }
 
-// cleanup releases the UHID device and native virtual device resources.
+// cleanup releases the UHID device and native virtual device resources. It
+// is only ever called by Start (on a setup failure) or Stop, both of which
+// hold lifecycleMu for their entire duration, so cleanup never races a
+// concurrent reader or writer of these fields. Stop clears s.device itself
+// before calling cleanup, once the close has already unblocked the bridge
+// goroutines, so cleanup's nil check skips it there and each device is
+// closed exactly once.
 func (s *FIDO2DeviceService) cleanup() {
 	if s.uhidDev != nil {
 		if err := s.uhidDev.Close(); err != nil {

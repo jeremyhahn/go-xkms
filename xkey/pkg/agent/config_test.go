@@ -43,6 +43,18 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.MaxAgents != 0 {
 		t.Errorf("expected max agents 0 (unlimited), got %d", cfg.MaxAgents)
 	}
+	if cfg.MaxRecvMsgSize != defaultMaxRecvMsgSize {
+		t.Errorf("expected max recv msg size %d, got %d", defaultMaxRecvMsgSize, cfg.MaxRecvMsgSize)
+	}
+	if cfg.MaxSendMsgSize != defaultMaxSendMsgSize {
+		t.Errorf("expected max send msg size %d, got %d", defaultMaxSendMsgSize, cfg.MaxSendMsgSize)
+	}
+	if cfg.ConnectionTimeout != defaultConnectionTimeout {
+		t.Errorf("expected connection timeout %v, got %v", defaultConnectionTimeout, cfg.ConnectionTimeout)
+	}
+	if cfg.MaxConcurrentStreams != defaultMaxConcurrentStreams {
+		t.Errorf("expected max concurrent streams %d, got %d", defaultMaxConcurrentStreams, cfg.MaxConcurrentStreams)
+	}
 }
 
 func TestConfig_Validate_Valid(t *testing.T) {
@@ -93,6 +105,48 @@ func TestConfig_Validate_FixesDefaults(t *testing.T) {
 	}
 	if cfg.OneTimeCodeValidity != 15*time.Minute {
 		t.Errorf("expected code validity to be fixed to 15m, got %v", cfg.OneTimeCodeValidity)
+	}
+}
+
+func TestConfig_Validate_FixesGRPCHardeningDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxRecvMsgSize = 0
+	cfg.MaxSendMsgSize = -1
+	cfg.ConnectionTimeout = 0
+	cfg.MaxConcurrentStreams = 0
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate should fix gRPC hardening defaults: %v", err)
+	}
+	if cfg.MaxRecvMsgSize != defaultMaxRecvMsgSize {
+		t.Errorf("expected max recv msg size fixed to %d, got %d", defaultMaxRecvMsgSize, cfg.MaxRecvMsgSize)
+	}
+	if cfg.MaxSendMsgSize != defaultMaxSendMsgSize {
+		t.Errorf("expected max send msg size fixed to %d, got %d", defaultMaxSendMsgSize, cfg.MaxSendMsgSize)
+	}
+	if cfg.ConnectionTimeout != defaultConnectionTimeout {
+		t.Errorf("expected connection timeout fixed to %v, got %v", defaultConnectionTimeout, cfg.ConnectionTimeout)
+	}
+	if cfg.MaxConcurrentStreams != defaultMaxConcurrentStreams {
+		t.Errorf("expected max concurrent streams fixed to %d, got %d", defaultMaxConcurrentStreams, cfg.MaxConcurrentStreams)
+	}
+}
+
+func TestConfig_Validate_PreservesCustomGRPCHardening(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxRecvMsgSize = 8 * 1024 * 1024
+	cfg.MaxSendMsgSize = 8 * 1024 * 1024
+	cfg.ConnectionTimeout = 60 * time.Second
+	cfg.MaxConcurrentStreams = 200
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate should accept custom gRPC hardening values: %v", err)
+	}
+	if cfg.MaxRecvMsgSize != 8*1024*1024 {
+		t.Errorf("expected custom max recv msg size preserved, got %d", cfg.MaxRecvMsgSize)
+	}
+	if cfg.MaxConcurrentStreams != 200 {
+		t.Errorf("expected custom max concurrent streams preserved, got %d", cfg.MaxConcurrentStreams)
 	}
 }
 
