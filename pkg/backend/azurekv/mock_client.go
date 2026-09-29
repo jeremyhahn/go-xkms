@@ -45,6 +45,19 @@ type MockKeyVaultClient struct {
 	signErr    error
 	decryptErr error
 	rotateErr  error
+
+	// createCalls counts CreateKey invocations per key name, so tests can
+	// assert a KEK is created exactly once and reused on later calls
+	// (go-xkms#1342).
+	createCalls map[string]int
+
+	// lastImportName and lastImportParams record the most recent ImportKey
+	// call's arguments, so tests can assert exactly what was sent to Azure
+	// Key Vault -- in particular, that key_hsm (T) carries the wrapped blob
+	// and HSM is true, and that no plaintext key component (N, D, X, Y,
+	// ...) is ever set (go-xkms#1342).
+	lastImportName   string
+	lastImportParams azkeys.ImportKeyParameters
 }
 
 // mockKey represents a stored key with its properties.
@@ -70,8 +83,27 @@ type keyVersion struct {
 // NewMockKeyVaultClient creates a new mock Azure Key Vault client for testing.
 func NewMockKeyVaultClient() *MockKeyVaultClient {
 	return &MockKeyVaultClient{
-		keys: make(map[string]*mockKey),
+		keys:        make(map[string]*mockKey),
+		createCalls: make(map[string]int),
 	}
+}
+
+// CreateKeyCallCount reports how many times CreateKey has been called for
+// name, letting tests assert a key (such as the BYOK key-encryption key) is
+// created exactly once and reused on subsequent calls.
+func (m *MockKeyVaultClient) CreateKeyCallCount(name string) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.createCalls[name]
+}
+
+// LastImportKey returns the key name and JSON Web Key from the most recent
+// ImportKey call, letting tests assert exactly what was sent to Azure Key
+// Vault without reaching into the mock's internal placeholder key state.
+func (m *MockKeyVaultClient) LastImportKey() (string, azkeys.ImportKeyParameters) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastImportName, m.lastImportParams
 }
 
 // SetCreateError sets an error to be returned by CreateKey operations.
@@ -112,6 +144,8 @@ func (m *MockKeyVaultClient) CreateKey(ctx context.Context, name string, params 
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	m.createCalls[name]++
 
 	// Check if key already exists
 	if _, exists := m.keys[name]; exists {
@@ -787,6 +821,9 @@ func (m *MockKeyVaultClient) ImportKey(ctx context.Context, name string, params 
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	m.lastImportName = name
+	m.lastImportParams = params
 
 	// Check if key already exists
 	if _, exists := m.keys[name]; exists {

@@ -17,7 +17,6 @@ package azurekv
 
 import (
 	"context"
-	"crypto/rsa"
 	"crypto/x509"
 	"errors"
 	"testing"
@@ -31,21 +30,24 @@ import (
 // go-xkms#1261: this backend's importTokens map previously grew without
 // bound -- one entry per CN GetImportParameters was ever called for, never
 // swept for expiry, never capped, and (unlike the other backends fixed
-// alongside it) never even cleared on Close.
+// alongside it) never even cleared on Close. go-xkms#1342 replaced the
+// entry's contents (a sealed local wrapping keypair) with a kekBinding (the
+// vault KEK's kid and the wrapping algorithm), but the Store's bounding and
+// sweeping behavior -- exercised here -- did not change.
 
 // TestGetImportParameters_CapEnforced verifies the hard cap holds: once
 // the import-token store is full, GetImportParameters reports a typed
 // *importtoken.LimitExceededError instead of growing past the limit.
 func TestGetImportParameters_CapEnforced(t *testing.T) {
 	b, _ := testBackend(t)
-	b.importTokens = importtoken.New[*importtoken.Entry](time.Hour, 2, (*importtoken.Entry).Destroy)
+	b.importTokens = importtoken.New[*kekBinding](time.Hour, 2, nil)
 
 	for i := 0; i < 2; i++ {
 		attrs := &types.KeyAttributes{
 			CN:           "cap-" + string(rune('a'+i)),
 			KeyAlgorithm: x509.RSA,
 		}
-		if _, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256); err != nil {
+		if _, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256); err != nil {
 			t.Fatalf("GetImportParameters() call %d unexpected error = %v", i, err)
 		}
 	}
@@ -53,7 +55,7 @@ func TestGetImportParameters_CapEnforced(t *testing.T) {
 	_, err := b.GetImportParameters(context.Background(), &types.KeyAttributes{
 		CN:           "cap-overflow",
 		KeyAlgorithm: x509.RSA,
-	}, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	}, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 	if err == nil {
 		t.Fatal("GetImportParameters() expected an error once the store is at capacity")
 	}
@@ -74,10 +76,10 @@ func TestGetImportParameters_CapEnforced(t *testing.T) {
 // second Put runs the sweep.
 func TestGetImportParameters_ExpiredTokenSwept(t *testing.T) {
 	b, _ := testBackend(t)
-	b.importTokens = importtoken.New[*importtoken.Entry](time.Nanosecond, importtoken.DefaultMaxTokens, (*importtoken.Entry).Destroy)
+	b.importTokens = importtoken.New[*kekBinding](time.Nanosecond, importtoken.DefaultMaxTokens, nil)
 
 	attrs := &types.KeyAttributes{CN: "expiring", KeyAlgorithm: x509.RSA}
-	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 	if err != nil {
 		t.Fatalf("GetImportParameters() unexpected error = %v", err)
 	}
@@ -86,26 +88,5 @@ func TestGetImportParameters_ExpiredTokenSwept(t *testing.T) {
 
 	if _, err := b.importTokens.Peek(string(params.ImportToken)); err == nil {
 		t.Error("expired import token should have been swept")
-	}
-}
-
-// TestImportTokens_EvictionDestroysWrappingKey verifies eviction destroys
-// the sealed wrapping key: the Store's destroy callback
-// ((*importtoken.Entry).Destroy) is wired in for production use, so a
-// deleted entry's enclave can no longer be opened.
-func TestImportTokens_EvictionDestroysWrappingKey(t *testing.T) {
-	b, _ := testBackend(t)
-
-	entry := newTestImportEntry(t, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
-	if _, err := b.importTokens.Put("evict-me", entry); err != nil {
-		t.Fatalf("Put() unexpected error = %v", err)
-	}
-
-	b.importTokens.Delete("evict-me")
-
-	err := entry.Key.Use(func(*rsa.PrivateKey) error { return nil })
-	var unavailable *importtoken.UnavailableError
-	if !errors.As(err, &unavailable) {
-		t.Fatalf("Use() after Delete: expected *importtoken.UnavailableError, got %T: %v", err, err)
 	}
 }
