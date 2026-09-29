@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -43,6 +44,9 @@ func newTestServerForPKCS11(t *testing.T, pkcs11Cfg *config.PKCS11Config) *Serve
 		backends:     make(map[string]xkms.Backend),
 		keyProviders: make(map[string]types.KeyProvider),
 		logger:       slog.Default(),
+		// The one shared datastore every createStorage call is a view over
+		// (go-xkms#1345); Server.New would have opened it.
+		qrdbStorage: storage.NewMemory(),
 	}
 }
 
