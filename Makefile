@@ -3752,6 +3752,16 @@ LINT_TAGS_xkey := ble,pkcs11,usb,codec_json,tpm_simulator,tpm2,awskms,azurekv,gc
 LINT_TAGS_root_backends := $(LINT_TAGS_root),pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault
 LINT_TAGS_root_raft := $(LINT_TAGS_root),raft
 
+vet_empty :=
+vet_space := $(vet_empty) $(vet_empty)
+vet_comma := ,
+# BUILD_TAGS (codecs plus the go-objstore backends: awss3, minio, gcpstorage,
+# azureblob, glacier, azurearchive) as a comma list. go vet takes one -tags
+# flag and keeps only the last one, so the root passes below pass a single
+# -tags that is the lint tag set unioned with these; appending a second -tags
+# to $(GOVET) used to silently drop BUILD_TAGS (#1348).
+VET_BUILD_TAGS := $(subst $(vet_space),$(vet_comma),$(strip $(BUILD_TAGS)))
+
 .PHONY: vet
 ## vet: Run go vet across every module (LINT_MODULES), plus the root module's backend and raft tag sets
 vet:
@@ -3759,15 +3769,15 @@ vet:
 	@for m in $(LINT_MODULES); do \
 		case "$$m" in \
 			xkey) tags="$(LINT_TAGS_xkey)" ;; \
-			web/desktop) tags="" ;; \
-			*) tags="$(LINT_TAGS_root)" ;; \
+			web/desktop) tags="$(VET_BUILD_TAGS)" ;; \
+			*) tags="$(LINT_TAGS_root),$(VET_BUILD_TAGS)" ;; \
 		esac; \
 		echo "$(CYAN)  → go vet ($$m)$${tags:+ [tags: $$tags]}$(RESET)"; \
-		( cd "$$m" && $(GOVET) $${tags:+-tags "$$tags"} ./... ) || exit 1; \
+		( cd "$$m" && $(GO) vet $${tags:+-tags "$$tags"} ./... ) || exit 1; \
 	done
-	@for tags in "$(LINT_TAGS_root_backends)" "$(LINT_TAGS_root_raft)"; do \
+	@for tags in "$(LINT_TAGS_root_backends),$(VET_BUILD_TAGS)" "$(LINT_TAGS_root_raft),$(VET_BUILD_TAGS)"; do \
 		echo "$(CYAN)  → go vet (.) [tags: $$tags]$(RESET)"; \
-		CGO_ENABLED=1 $(GOVET) -tags "$$tags" ./... || exit 1; \
+		CGO_ENABLED=1 $(GO) vet -tags "$$tags" ./... || exit 1; \
 	done
 	@echo "$(GREEN)✓ Vet checks passed$(RESET)"
 
