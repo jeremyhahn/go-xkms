@@ -691,12 +691,37 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 	// this same RPC for CKM_RSA_PKCS, and previously had no branch to reach
 	// here at all -- every asymmetric-KEK wrap failed with "backend does not
 	// support symmetric encryption" regardless of the key it was given.
+	//
 	rsaPub, err := asymEncrypterKey(ctx, b, attrs)
 	if err != nil {
 		return nil, err
 	}
 
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, req.Plaintext) //nolint:staticcheck // SA1019: CKM_RSA_PKCS is PKCS#1 v1.5 by definition
+	// PKCS#1 v1.5 encryption authenticates nothing and its conformance check
+	// is the Bleichenbacher/Marvin decryption oracle (RFC 8017 section
+	// 7.2.2) -- the same reasoning servicer_wrapkey.go gates
+	// types.WrapRSAPKCS1v15 on. This RPC has no wrap/unwrap algorithm
+	// parameter to dispatch resolveWrapMechanism on, so the process-wide
+	// policy accessor is read directly: one operator setting,
+	// crypto.allow_legacy_key_wrap, governs every PKCS#1 v1.5 construction
+	// this service performs. EncryptAsym (RSA-OAEP) is the unconditionally
+	// available replacement and requires no configuration change.
+	//
+	// Checked after asymEncrypterKey resolves an RSA key, not before: a
+	// caller whose key cannot even reach this construction (not RSA, no
+	// crypto.Signer) should see that error, not a policy refusal for a
+	// construction that was never going to run anyway.
+	if !types.AllowLegacyKeyWrap() {
+		reason, _ := types.LegacyKeyWrapReason(types.WrapRSAPKCS1v15)
+		return nil, &ErrValidation{
+			Sentinel: ErrLegacyWrapDisabled,
+			Detail: "Encrypt's asymmetric fallback (PKCS#1 v1.5) is refused: " + reason +
+				". Use EncryptAsym (RSA-OAEP) instead, or set crypto.allow_legacy_key_wrap=true to re-admit it" +
+				" (ignored in FIPS mode, where the validated module's approved mechanism set applies)",
+		}
+	}
+
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, req.Plaintext) //nolint:staticcheck // SA1019: CKM_RSA_PKCS is PKCS#1 v1.5 by definition; gated on crypto.allow_legacy_key_wrap
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrEncryptionFailed, Err: err}
 	}

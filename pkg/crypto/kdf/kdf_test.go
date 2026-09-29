@@ -633,7 +633,7 @@ func TestArgon2Adapter_DeriveKey(t *testing.T) {
 			params: &KDFParams{
 				Algorithm: AlgorithmArgon2id,
 				Salt:      testSalt,
-				Memory:    1024, // Less than 8 MiB
+				Memory:    1024, // Less than the 19 MiB OWASP floor
 				Time:      3,
 				Threads:   4,
 				KeyLength: 32,
@@ -721,6 +721,60 @@ func TestArgon2Adapter_DeriveKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestArgon2Adapter_OWASPFloor is the crypto audit's Argon2 floor test: the
+// adapter refuses parameters weaker than OWASP's Argon2id recommendation
+// (m=19 MiB, t=2, p=1) and accepts parameters exactly at that floor.
+func TestArgon2Adapter_OWASPFloor(t *testing.T) {
+	adapter := NewArgon2idAdapter()
+
+	t.Run("below the floor is refused", func(t *testing.T) {
+		// One KiB under the memory floor, otherwise at the OWASP pair
+		// (t=2), isolates the memory check: this must fail on memory, not
+		// smuggle a pass because time also happened to be adequate.
+		_, err := adapter.DeriveKey(testIKM, &KDFParams{
+			Algorithm: AlgorithmArgon2id,
+			Salt:      testSalt,
+			Memory:    MinArgon2Memory - 1,
+			Time:      MinArgon2Time,
+			Threads:   MinArgon2Threads,
+			KeyLength: 32,
+		})
+		if err != ErrInvalidMemory {
+			t.Fatalf("DeriveKey() error = %v, want %v", err, ErrInvalidMemory)
+		}
+
+		// Memory at the floor but time one below it must fail on time.
+		_, err = adapter.DeriveKey(testIKM, &KDFParams{
+			Algorithm: AlgorithmArgon2id,
+			Salt:      testSalt,
+			Memory:    MinArgon2Memory,
+			Time:      MinArgon2Time - 1,
+			Threads:   MinArgon2Threads,
+			KeyLength: 32,
+		})
+		if err != ErrInvalidTime {
+			t.Fatalf("DeriveKey() error = %v, want %v", err, ErrInvalidTime)
+		}
+	})
+
+	t.Run("at the floor is accepted", func(t *testing.T) {
+		key, err := adapter.DeriveKey(testIKM, &KDFParams{
+			Algorithm: AlgorithmArgon2id,
+			Salt:      testSalt,
+			Memory:    MinArgon2Memory,
+			Time:      MinArgon2Time,
+			Threads:   MinArgon2Threads,
+			KeyLength: 32,
+		})
+		if err != nil {
+			t.Fatalf("DeriveKey() unexpected error = %v", err)
+		}
+		if len(key) != 32 {
+			t.Fatalf("key length = %d, want 32", len(key))
+		}
+	})
 }
 
 // TestArgon2Adapter_Deterministic tests that Argon2 produces deterministic results

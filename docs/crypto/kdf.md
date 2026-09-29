@@ -34,6 +34,20 @@ bytes for identical inputs.
 Iteration Mode, PBKDF2, and Argon2. Those are reachable through the `DeriveKey`
 service verb and the password hasher; they are not offered on the ECDH path.
 
+### Argon2 floor
+
+`Argon2Adapter.ValidateParams` (`pkg/crypto/kdf/argon2.go:127-161`) refuses
+any request below `MinArgon2Memory` (19 MiB) or `MinArgon2Time` (2), the
+OWASP Password Storage Cheat Sheet's first Argon2id recommendation
+(m=19456 KiB, t=2, p=1), checked independently. As of the 2026-09-28 crypto
+audit this raised the previous floor of 8 MiB at t=1, which sat below every
+OWASP-listed option. Every built-in caller already ran well above the new
+floor and needed no change: `kdf.DefaultParams` and the password hasher's
+`defaultArgon2*` constants (`pkg/crypto/kdf/hasher.go:42-44`) both use 64
+MiB / t=3 / p=4. The floor governs the API surface — a `DeriveKey` request
+or backend caller supplying its own parameters — not either built-in
+default.
+
 ## Approved hashes
 
 The approved hash set is **per algorithm**, because it is a property of the

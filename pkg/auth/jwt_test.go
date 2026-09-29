@@ -18,6 +18,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -111,6 +113,18 @@ func TestNewJWTAuthenticator(t *testing.T) {
 				HeaderName: "Authorization",
 			},
 			wantErr: false,
+		},
+		{
+			// A raw byte secret is what a caller would (mis)configure to get
+			// HMAC verification. JWTAuthenticator is an asymmetric-key-only
+			// verifier: refusing this at construction time is what makes an
+			// HS*-signed token impossible to ever validate through it.
+			name: "unsupported key type (HMAC secret)",
+			config: &JWTConfig{
+				PublicKey: []byte("some-hmac-secret-bytes"),
+			},
+			wantErr: true,
+			errMsg:  (&UnsupportedVerificationKeyError{KeyType: "[]uint8"}).Error(),
 		},
 	}
 
@@ -641,6 +655,62 @@ func TestJWTAuthenticator_WrongSigningKey(t *testing.T) {
 
 	_, err = auth.AuthenticateHTTP(req)
 	require.Error(t, err)
+}
+
+// TestJWTAuthenticator_RejectsHS256AlgorithmConfusion is the failure test
+// for the crypto audit's JWT algorithm-pinning finding. Without
+// jwt.WithValidMethods pinned to the verification key's type, a token
+// forged with alg: HS256 and "signed" using the server's own public key
+// bytes as the HMAC secret would let the key function's returned value
+// double as a symmetric secret. validateToken must refuse the token before
+// that check ever runs, because JWTAuthenticator's key here is ECDSA and
+// only ES* is valid for it.
+func TestJWTAuthenticator_RejectsHS256AlgorithmConfusion(t *testing.T) {
+	_, publicKey := generateTestKeyPair(t)
+
+	auth, err := NewJWTAuthenticator(&JWTConfig{PublicKey: publicKey})
+	require.NoError(t, err)
+
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(publicKey)
+	require.NoError(t, err)
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": "user123",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	tokenString, err := token.SignedString(pubKeyBytes)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+
+	_, err = auth.AuthenticateHTTP(req)
+	require.Error(t, err)
+}
+
+// TestJWTAuthenticator_AcceptsRS256WithRSAKey is the success counterpart:
+// an RSA-keyed authenticator still accepts a validly RS256-signed token
+// once algorithm pinning is in place (RS256 is in the RSA method set).
+func TestJWTAuthenticator_AcceptsRS256WithRSAKey(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	auth, err := NewJWTAuthenticator(&JWTConfig{PublicKey: &privateKey.PublicKey})
+	require.NoError(t, err)
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"sub": "user123",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	tokenString, err := token.SignedString(privateKey)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+
+	identity, err := auth.AuthenticateHTTP(req)
+	require.NoError(t, err)
+	assert.Equal(t, "user123", identity.Subject)
 }
 
 func TestJWTAuthenticator_MultipleAudienceMatch(t *testing.T) {

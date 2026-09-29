@@ -1582,9 +1582,15 @@ func (p *TestPassword) Clear() {
 	p.value = ""
 }
 
-func TestKeyAttributes_String_WithDebugAndPassword(t *testing.T) {
-	password := &TestPassword{value: "test-password"}
-	sealData := NewSealData([]byte("test-seal-data"))
+// TestKeyAttributes_String_NeverLeaksSecrets_EvenWithDebug is the success
+// test for the crypto audit's KeyAttributes.String finding: Debug used to
+// gate a "Secrets" block that printed Password and SealData verbatim. The
+// method must never render either field, regardless of Debug, because it
+// has no way to know whether its caller is a trusted diagnostic path or an
+// untrusted sink (an error message, a log line, a %v verb).
+func TestKeyAttributes_String_NeverLeaksSecrets_EvenWithDebug(t *testing.T) {
+	password := &TestPassword{value: "super-secret-password"}
+	sealData := NewSealData([]byte("super-secret-seal-data"))
 
 	attrs := &KeyAttributes{
 		CN:           "test-key-debug",
@@ -1603,19 +1609,25 @@ func TestKeyAttributes_String_WithDebugAndPassword(t *testing.T) {
 	str := attrs.String()
 	assert.Contains(t, str, "test-key-debug")
 	assert.Contains(t, str, "Debug: true")
-	assert.Contains(t, str, "Secrets")
-	assert.Contains(t, str, "test-password")
-	assert.Contains(t, str, "test-seal-data")
+	assert.NotContains(t, str, "Secrets")
+	assert.NotContains(t, str, "super-secret-password")
+	assert.NotContains(t, str, "super-secret-seal-data")
 }
 
-func TestKeyAttributes_String_WithDebugNoPassword(t *testing.T) {
+// TestKeyAttributes_String_NoSecretsBlock_WhenDebugFalse is the failure
+// (default-path) counterpart: with Debug false — the new default — the
+// output carries no secrets and no "Secrets" section at all.
+func TestKeyAttributes_String_NoSecretsBlock_WhenDebugFalse(t *testing.T) {
+	password := &TestPassword{value: "another-secret-password"}
+
 	attrs := &KeyAttributes{
 		CN:           "test-key-debug-no-pw",
 		KeyType:      KeyTypeTLS,
 		StoreType:    StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Hash:         crypto.SHA256,
-		Debug:        true,
+		Debug:        false,
+		Password:     password,
 		RSAAttributes: &RSAAttributes{
 			KeySize: 2048,
 		},
@@ -1623,8 +1635,9 @@ func TestKeyAttributes_String_WithDebugNoPassword(t *testing.T) {
 
 	str := attrs.String()
 	assert.Contains(t, str, "test-key-debug-no-pw")
-	assert.Contains(t, str, "Debug: true")
-	assert.Contains(t, str, "Secrets")
+	assert.Contains(t, str, "Debug: false")
+	assert.NotContains(t, str, "Secrets")
+	assert.NotContains(t, str, "another-secret-password")
 }
 
 func TestKeyAttributes_String_WithPasswordError(t *testing.T) {
@@ -1646,8 +1659,8 @@ func TestKeyAttributes_String_WithPasswordError(t *testing.T) {
 	str := attrs.String()
 	assert.Contains(t, str, "test-key-pw-error")
 	assert.Contains(t, str, "Debug: true")
-	// Password error should result in empty string for password
-	assert.Contains(t, str, "Secrets")
+	assert.NotContains(t, str, "Secrets")
+	assert.NotContains(t, str, "test-password")
 }
 
 // =============================================================================

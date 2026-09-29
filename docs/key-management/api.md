@@ -98,6 +98,22 @@ clients; while full it refuses new clients until idle ones are cleaned up.
 | Health | `GET /health`, `/health/live`, `/health/ready`, `/health/startup` | `Health` | same as REST | `xkms.health` | `Health` | public |
 | Capabilities | `GET /api/v1/capabilities` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | — | public |
 
+### Encrypt's RSA fallback is PKCS#1 v1.5, and is refused by default
+
+`Encrypt` dispatches on the named key's type: a symmetric key uses the
+backend's AEAD (`pkg/xkms/servicer_crypto.go:613`); an RSA key falls back to
+raw PKCS#1 v1.5 encryption (`pkg/xkms/servicer_crypto.go:699`), the
+construction `CKM_RSA_PKCS` names. PKCS#1 v1.5 authenticates nothing and its
+conformance check is the Bleichenbacher/Marvin decryption oracle (RFC 8017
+§7.2.2), so as of the 2026-09-28 crypto audit this fallback is refused
+(`pkg/xkms/servicer_crypto.go:689`) unless `crypto.allow_legacy_key_wrap: true`
+is set — the same operator setting that already gated the matching
+`WrapKeyByID` mechanism (`pkg/xkms/servicer_wrapkey.go:105`). A caller that
+needs to encrypt under an RSA key should call `EncryptAsym`
+(`pkg/xkms/servicer_crypto.go:856`, `POST /api/v1/keys/{id}/encrypt-asym`)
+instead: RSA-OAEP is unconditionally available and requires no configuration
+change.
+
 ### MCP names some import/export fields differently from the request struct
 
 The MCP params structs and the `transport.*Request` structs are two views of

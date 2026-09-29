@@ -226,7 +226,11 @@ func TestKeyAttributes_String(t *testing.T) {
 			},
 		},
 		{
-			name: "Debug mode with password",
+			// Debug used to gate a "Secrets" block that printed Password and
+			// SealData verbatim. String() must never render either field,
+			// regardless of Debug: it has no way to know whether its caller
+			// is a trusted diagnostic path or an untrusted sink.
+			name: "Debug mode never leaks password or seal data",
 			attrs: KeyAttributes{
 				CN:                 "debug-key",
 				Debug:              true,
@@ -244,9 +248,9 @@ func TestKeyAttributes_String(t *testing.T) {
 			},
 			check: func(s string) bool {
 				return strings.Contains(s, "Debug: true") &&
-					strings.Contains(s, "Secrets") &&
-					strings.Contains(s, "Password: test-password") &&
-					strings.Contains(s, "SealData: test-seal-data")
+					!strings.Contains(s, "Secrets") &&
+					!strings.Contains(s, "test-password") &&
+					!strings.Contains(s, "test-seal-data")
 			},
 		},
 	}

@@ -88,7 +88,7 @@ var (
 		IdentityProvisioningStrategy: string(EnrollmentStrategyIAK_IDEVID_SINGLE_PASS),
 		EK: &EKConfig{
 			CertHandle: 0x01C00002,
-			Debug:      true,
+			Debug:      false,
 			Handle:     0x81010001,
 			// HierarchyAuth is intentionally left unset: the Endorsement
 			// hierarchy auth comes only from an operator's KeyConfig or the
@@ -106,7 +106,7 @@ var (
 		//   PCR 0: BIOS/UEFI firmware, PCR 7: Secure Boot, PCR 9: cmdline, PCR 10: IMA
 		GoldenPCRs: []uint{},
 		IAK: &IAKConfig{
-			Debug:        true,
+			Debug:        false,
 			Hash:         crypto.SHA256.String(),
 			Handle:       0x81020001,
 			KeyAlgorithm: x509.RSA.String(),
@@ -117,7 +117,7 @@ var (
 		},
 		IDevID: &IDevIDConfig{
 			CertHandle:   0x01C90000,
-			Debug:        true,
+			Debug:        false,
 			Hash:         crypto.SHA256.String(),
 			Handle:       0x81020000,
 			KeyAlgorithm: x509.RSA.String(),
@@ -138,7 +138,7 @@ var (
 		PlatformPCR:     16,
 		PlatformPCRBank: PCRBankSHA256,
 		SSRK: &SRKConfig{
-			Debug:  true,
+			Debug:  false,
 			Handle: 0x81000001,
 			// HierarchyAuth: types.NewLiteralSecretValue([]byte(types.DEFAULT_PASSWORD)),
 			KeyAlgorithm: x509.RSA.String(),

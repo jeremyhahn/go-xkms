@@ -167,20 +167,22 @@ func (sc *SessionCrypto) Encrypt(plaintext []byte) (nonce uint64, ciphertext []b
 // Decrypt decrypts ciphertext using AES-256-GCM with the recv key.
 // Messages with a nonce counter less than or equal to the last
 // successfully-received nonce are rejected with ErrReplayDetected.
+//
+// The GCM tag is authenticated before recvNonce is advanced. An attacker
+// who forges a frame with a high counter but an invalid tag therefore
+// cannot poison the replay window: gcm.Open fails and the frame is
+// rejected as undecryptable without ever touching recvNonce, so every
+// later legitimate frame still decrypts.
 func (sc *SessionCrypto) Decrypt(nonce uint64, ciphertext []byte) ([]byte, error) {
 	if !sc.ready.Load() {
 		return nil, ErrHandshakeRequired
 	}
 
-	// Replay protection: reject nonces that have already been seen.
-	for {
-		last := sc.recvNonce.Load()
-		if nonce <= last {
-			return nil, ErrReplayDetected
-		}
-		if sc.recvNonce.CompareAndSwap(last, nonce) {
-			break
-		}
+	// Cheap pre-check: reject nonces at or below the last accepted value
+	// without doing any cryptographic work. This only reads recvNonce, so
+	// it cannot be used to desynchronize the receiver.
+	if nonce <= sc.recvNonce.Load() {
+		return nil, ErrReplayDetected
 	}
 
 	block, err := aes.NewCipher(sc.recvKey[:])
@@ -197,6 +199,21 @@ func (sc *SessionCrypto) Decrypt(nonce uint64, ciphertext []byte) ([]byte, error
 	if err != nil {
 		return nil, ErrDecryptionFailed
 	}
+
+	// The tag verified: only now advance the replay counter. A concurrent
+	// Decrypt call may have advanced recvNonce past this nonce in the
+	// meantime, in which case the CAS loop reports the frame as a replay
+	// instead of committing it.
+	for {
+		last := sc.recvNonce.Load()
+		if nonce <= last {
+			return nil, ErrReplayDetected
+		}
+		if sc.recvNonce.CompareAndSwap(last, nonce) {
+			break
+		}
+	}
+
 	return plaintext, nil
 }
 
