@@ -107,7 +107,7 @@ func pivLoginTestConfig() *Config {
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
 		TLS:       TLSConfig{Enabled: true, ServerCN: "test-server", ClientAuth: "verify"},
-		Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+		Datastore: DatastoreConfig{Path: "/data"},
 		Default:   "pkcs8",
 		Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 		CA:        &ca.MultiIdentityCAConfig{},

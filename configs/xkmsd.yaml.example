@@ -100,9 +100,10 @@ health:
   enabled: true
   path: "/health"
 
-# Storage configuration
-storage:
-  backend: "file"
+# Datastore configuration: the single global datastore every subsystem
+# stores through.
+datastore:
+  engine: "file"
   path: "/var/lib/xkms"
 
 # Random number generator configuration

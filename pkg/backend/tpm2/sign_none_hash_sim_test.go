@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -41,7 +42,7 @@ func simSigningBackend(t *testing.T) *Backend {
 
 	backend, err := NewBackend(&Config{
 		UseSimulator: true,
-		KeyDir:       t.TempDir(),
+		KeyStorage:   storage.NewMemory(),
 		CN:           "none-hash-test",
 	})
 	if err != nil {

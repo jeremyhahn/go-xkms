@@ -22,6 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	clustercapkg "github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -44,7 +45,7 @@ import (
 func clusterRuntimeTestServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 		Cluster: config.ClusterConfig{
 			RaftEnrollment: config.RaftEnrollmentConfig{
 				CAKeyProtection: "none",
@@ -87,12 +88,12 @@ func TestClusterCAKeyProtection_PassphraseCredentialError(t *testing.T) {
 // configured.
 func TestClusterStrategyDeps_BuildsFromConfig(t *testing.T) {
 	s := clusterRuntimeTestServer(t)
-	s.config.Storage.Path = t.TempDir()
+	s.config.Datastore.Path = t.TempDir()
 
 	deps, err := s.clusterStrategyDeps(nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, deps)
-	assert.Contains(t, deps.NodeLocalDataDir, s.config.Storage.Path)
+	assert.Contains(t, deps.NodeLocalDataDir, s.config.Datastore.Path)
 	assert.True(t, deps.Bootstrapping, "no ACME directory URL configured: this node pre-stages the CA")
 	assert.Nil(t, deps.ReplicatedKeyStorage)
 	assert.Nil(t, deps.ReplicatedCertStorage)
@@ -103,7 +104,7 @@ func TestClusterStrategyDeps_BuildsFromConfig(t *testing.T) {
 // pre-staging node generates the cluster seed.
 func TestClusterStrategyDeps_NotBootstrappingWhenJoining(t *testing.T) {
 	s := clusterRuntimeTestServer(t)
-	s.config.Storage.Path = t.TempDir()
+	s.config.Datastore.Path = t.TempDir()
 	s.config.Cluster.RaftEnrollment.ACME.DirectoryURL = "https://ca.example.com/acme/directory"
 
 	deps, err := s.clusterStrategyDeps(nil, nil)
@@ -118,7 +119,13 @@ func TestClusterStrategyDeps_NotBootstrappingWhenJoining(t *testing.T) {
 // "barrier" strategy (the default) end to end over in-memory storage.
 func TestResolveClusterCARuntimeBackend_BarrierStrategy(t *testing.T) {
 	s := clusterRuntimeTestServer(t)
-	s.config.Storage.Path = t.TempDir()
+	s.config.Datastore.Path = t.TempDir()
+	// clusterRuntimeTestServer bypasses New(), so s.qrdbStorage -- the one
+	// shared datastore every createStorage call now resolves through -- is
+	// never built; give this test a real one to resolve against.
+	var err error
+	s.qrdbStorage, err = storage.NewMemoryBackend()
+	require.NoError(t, err)
 
 	strategy, err := clustercapkg.NewKeyStrategy(clustercapkg.KeyStrategyBarrier)
 	require.NoError(t, err)
@@ -159,7 +166,7 @@ func TestClusterSecretDeliveryService_StrategyDeliversNoMaterial(t *testing.T) {
 // backends.* section configured at all.
 func TestInitializeCA_ClusterKeyStrategyRoutesKeystore(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory", Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()},
 		CA: &ca.MultiIdentityCAConfig{
 			SelectedCA: 0,
 			Identity: []ca.Identity{{
@@ -178,6 +185,11 @@ func TestInitializeCA_ClusterKeyStrategyRoutesKeystore(t *testing.T) {
 	})
 	s.ctx = context.Background()
 	require.Empty(t, s.backends, "the cluster-ACME branch must never consult s.backends")
+	// newMinimalServer bypasses New(), so s.qrdbStorage is never built; give
+	// this test a real one to resolve createStorage against.
+	var err error
+	s.qrdbStorage, err = storage.NewMemoryBackend()
+	require.NoError(t, err)
 
 	strategy, err := clustercapkg.NewKeyStrategy(clustercapkg.KeyStrategyBarrier)
 	require.NoError(t, err)
@@ -187,13 +199,12 @@ func TestInitializeCA_ClusterKeyStrategyRoutesKeystore(t *testing.T) {
 	require.NotNil(t, s.ca)
 }
 
-// TestResolveClusterCARuntimeBackend_StorageCreateFails proves that a
-// storage backend which cannot build the replicated key/cert stores (an
-// unsupported storage.backend) surfaces that error rather than calling into
-// the strategy with a nil/incomplete deps.
+// TestResolveClusterCARuntimeBackend_StorageCreateFails proves that when the
+// one shared datastore was never built (clusterRuntimeTestServer bypasses
+// New(), so s.qrdbStorage is nil), createStorage's refusal surfaces here
+// rather than calling into the strategy with nil/incomplete deps.
 func TestResolveClusterCARuntimeBackend_StorageCreateFails(t *testing.T) {
 	s := clusterRuntimeTestServer(t)
-	s.config.Storage.Backend = "not-a-real-backend"
 
 	strategy, err := clustercapkg.NewKeyStrategy(clustercapkg.KeyStrategyBarrier)
 	require.NoError(t, err)
@@ -210,7 +221,7 @@ func TestResolveClusterCARuntimeBackend_StorageCreateFails(t *testing.T) {
 // harmlessly, for whichever strategy is active.
 func TestClusterStrategyDeps_CarriesHSMBackendWhenRegistered(t *testing.T) {
 	s := clusterRuntimeTestServer(t)
-	s.config.Storage.Path = t.TempDir()
+	s.config.Datastore.Path = t.TempDir()
 	hsm := &minimalBackend{}
 	s.backends = map[string]xkms.Backend{string(xkms.BackendPKCS11): hsm}
 
@@ -224,7 +235,7 @@ func TestClusterStrategyDeps_CarriesHSMBackendWhenRegistered(t *testing.T) {
 // the map lookup.
 func TestClusterStrategyDeps_NoHSMBackendRegistered(t *testing.T) {
 	s := clusterRuntimeTestServer(t)
-	s.config.Storage.Path = t.TempDir()
+	s.config.Datastore.Path = t.TempDir()
 
 	deps, err := s.clusterStrategyDeps(nil, nil)
 	require.NoError(t, err)

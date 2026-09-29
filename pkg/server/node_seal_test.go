@@ -28,6 +28,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -60,11 +61,7 @@ func dirContainsBytes(t *testing.T, dir string, needle []byte) bool {
 func qrdbBarrierConfig(t *testing.T) *config.Config {
 	t.Helper()
 	cfg := createMinimalConfig(t)
-	cfg.Storage = config.StorageConfig{
-		Backend: "qrdb",
-		Path:    t.TempDir(),
-		QRDB:    config.QRDBConfig{Transport: "embedded"},
-	}
+	cfg.Datastore = config.DatastoreConfig{Path: t.TempDir()}
 	return cfg
 }
 
@@ -143,25 +140,28 @@ func TestNodeSealFlip_PassphraseEngagesFlipAndBlocksForOperator(t *testing.T) {
 	}
 }
 
-// TestNodeSealFlip_DisabledForFileStorage verifies the flip never engages for
-// non-qrdb storage (no embedded node to flip to), even with the barrier
-// enabled — the default, unchanged path.
-func TestNodeSealFlip_DisabledForFileStorage(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t) // file storage
+// TestResolveNodeSeal_DisabledForRemoteDatastore verifies the flip never
+// engages for a remote datastore (no local node to flip), even with the
+// barrier enabled and a strategy NodeFlipWired covers. This is checked
+// directly against ResolveNodeSeal, not a full New(): a "remote" datastore
+// dials an external qrdb cluster, which this unit test has none of, and the
+// flip decision itself never needs one -- datastoreModeIsStandalone short-
+// circuits on Datastore.Mode alone.
+func TestResolveNodeSeal_DisabledForRemoteDatastore(t *testing.T) {
+	cfg := createMinimalConfig(t)
+	cfg.Datastore.Mode = "remote"
+	cfg.Datastore.Remote = config.DatastoreRemoteConfig{
+		Address:   "https://qrdb.example.com:63002",
+		Transport: "rest",
+	}
 	cfg.Barrier = config.BarrierConfig{
 		Enabled:  true,
 		Strategy: "passphrase",
 	}
 
-	server, err := New(cfg)
+	res, err := embeddednode.ResolveNodeSeal(cfg, setupLogger(config.LoggingConfig{Level: "error", Format: "json"}))
 	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	assert.False(t, server.nodeSealEnabled, "the flip only applies to embedded qrdb storage")
-	require.NotNil(t, server.Barrier(), "xkms's own barrier backs file-storage deployments")
+	assert.False(t, res.Enabled, "the flip only applies to a standalone-hosted datastore")
 }
 
 // nodeSealSentinel is written to the data plane and then searched for on disk.
@@ -179,7 +179,7 @@ func writeNodeSealSentinel(t *testing.T, cfg *config.Config, sentinel []byte) st
 	// Shutdown flushes the node's PebbleDB (and its encfs-wrapped files) so
 	// the on-disk scan sees the persisted state.
 	require.NoError(t, server.Shutdown())
-	return cfg.Storage.Path
+	return cfg.Datastore.Path
 }
 
 // TestNodeSealFlip_EncryptsDataPlaneAtRest is the control for the at-rest
@@ -213,11 +213,7 @@ func TestResolveNodeSeal_TPM2EmptyStoragePathFailsClosed(t *testing.T) {
 	require.True(t, os.IsNotExist(statErr), "precondition: no stray tpm2-keys dir in the working directory")
 
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "qrdb",
-			Path:    "", // never configured -- must not become cwd-relative
-			QRDB:    config.QRDBConfig{Transport: "embedded"},
-		},
+		Datastore: config.DatastoreConfig{Path: ""}, // never configured -- must not become cwd-relative
 		Barrier: config.BarrierConfig{
 			Enabled:  true,
 			Strategy: "tpm2",
@@ -228,12 +224,11 @@ func TestResolveNodeSeal_TPM2EmptyStoragePathFailsClosed(t *testing.T) {
 	require.Error(t, sealErr)
 	assert.False(t, s.nodeSealEnabled)
 
-	var nodeErr *NodeSealError
-	require.True(t, errors.As(sealErr, &nodeErr), "error must unwrap to *NodeSealError, got %v", sealErr)
+	var nodeErr *embeddednode.NodeSealError
+	require.True(t, errors.As(sealErr, &nodeErr), "error must unwrap to *embeddednode.NodeSealError, got %v", sealErr)
 
-	var cfgErr *ErrConfigRequired
-	require.True(t, errors.As(sealErr, &cfgErr), "error must unwrap to *ErrConfigRequired, got %v", sealErr)
-	assert.Equal(t, "storage.path", cfgErr.Field)
+	var pathErr *embeddednode.ErrDatastorePathRequired
+	require.True(t, errors.As(sealErr, &pathErr), "error must unwrap to *embeddednode.ErrDatastorePathRequired, got %v", sealErr)
 
 	_, statErr = os.Stat(filepath.Join(wd, "tpm2-keys"))
 	assert.True(t, os.IsNotExist(statErr), "resolving the node seal must never create tpm2-keys under the working directory")
@@ -249,11 +244,7 @@ func TestResolveNodeSeal_TPM2EmptyStoragePathFailsClosed(t *testing.T) {
 // closed with a typed error.
 func TestResolveNodeSeal_TPM2NoBackendConfigFailsClosed(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "qrdb",
-			Path:    t.TempDir(),
-			QRDB:    config.QRDBConfig{Transport: "embedded"},
-		},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 		Barrier: config.BarrierConfig{
 			Enabled:  true,
 			Strategy: "tpm2",
@@ -265,6 +256,6 @@ func TestResolveNodeSeal_TPM2NoBackendConfigFailsClosed(t *testing.T) {
 	require.Error(t, sealErr)
 	assert.False(t, s.nodeSealEnabled)
 
-	var nodeErr *NodeSealError
-	require.True(t, errors.As(sealErr, &nodeErr), "error must unwrap to *NodeSealError, got %v", sealErr)
+	var nodeErr *embeddednode.NodeSealError
+	require.True(t, errors.As(sealErr, &nodeErr), "error must unwrap to *embeddednode.NodeSealError, got %v", sealErr)
 }

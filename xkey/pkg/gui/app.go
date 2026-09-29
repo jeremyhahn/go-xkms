@@ -1075,7 +1075,7 @@ func (a *App) initializeDataDir() error {
 
 	// Initialize local key store via embedded SDK.
 	// This provides in-process key management without a remote server connection.
-	a.initLocalKeyStore(dir)
+	a.initLocalKeyStore(barrierBackend)
 
 	// Initialize shared FIDO2 authenticator for autofill CTAP2 authentication.
 	// This authenticator is shared between the USB HID virtual device and the
@@ -1356,15 +1356,31 @@ func (a *App) initializeAuthenticator() {
 // It loads backend-specific settings from the unified config (TPM2 device path,
 // PKCS#11 library path, etc.) so that AutoInitialize can successfully create
 // hardware backends for PIV key generation.
-func (a *App) initLocalKeyStore(dataDir string) {
-	keysDir := filepath.Join(dataDir, "keys")
-
+//
+// Key storage is routed through the SAME barrier-backed datastore every
+// other xkey subsystem uses (barrierService.GetBackend(), under "keys/") --
+// never a private, unencrypted file store under dataDir -- matching the
+// oath/fido2/staticpw/trust/oidc/shares/sealed/ssh pattern elsewhere in this
+// file. When no barrier is active (barrierBackend nil), AutoInitialize's own
+// default applies: in-memory, session-only key storage, never a plaintext
+// file fallback.
+func (a *App) initLocalKeyStore(barrierBackend xkmssdk.StorageBackend) {
 	xkmssdk.Reset()
 
 	backendConfigs := a.buildXKMSBackendConfigs()
 
+	var ds xkmssdk.StorageBackend
+	if barrierBackend != nil {
+		ns, nsErr := xkmssdk.NewStoragePrefixBackend(barrierBackend, "keys/")
+		if nsErr != nil {
+			a.log.Warn("failed to create namespaced key datastore; local key store will be memory-only", "error", nsErr)
+		} else {
+			ds = ns
+		}
+	}
+
 	if err := xkmssdk.AutoInitialize(&xkmssdk.AutoConfig{
-		DataDir:        keysDir,
+		Datastore:      ds,
 		DefaultBackend: "software",
 		BackendConfigs: backendConfigs,
 	}); err != nil {
@@ -1452,7 +1468,7 @@ func (a *App) initLocalKeyStore(dataDir string) {
 		}
 	}
 
-	a.log.Info("local key store initialized", "dir", keysDir)
+	a.log.Info("local key store initialized", "barrier_active", barrierBackend != nil)
 }
 
 // registerPKCS11XKMSBackend dynamically creates and registers a PKCS#11 backend
@@ -1508,9 +1524,18 @@ func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN
 		cfg["so_pin"] = soPin
 	}
 
-	// Set key_dir for PKCS#11 key storage.
-	if a.dataDir != "" {
-		cfg["key_dir"] = filepath.Join(a.dataDir, "keys", "pkcs11")
+	// Route PKCS#11 key storage through the barrier-backed datastore --
+	// the SAME store every other xkey subsystem uses -- never a dataDir
+	// file path. With no barrier active, key_storage is left unset and the
+	// PKCS#11 factory's own default applies (in-memory, session-only),
+	// exactly matching initLocalKeyStore's no-barrier behaviour.
+	if barrierBackend := a.barrierService.GetBackend(); barrierBackend != nil {
+		ns, nsErr := xkmssdk.NewStoragePrefixBackend(barrierBackend, "keys/pkcs11/")
+		if nsErr != nil {
+			a.log.Warn("failed to create namespaced PKCS#11 key datastore", "error", nsErr)
+			return
+		}
+		cfg["key_storage"] = ns
 	}
 
 	kp, err := factory(cfg)
@@ -1529,13 +1554,24 @@ func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN
 		}
 	}
 
-	// Create cert storage at the same location used by AutoInitialize.
-	keysDir := filepath.Join(a.dataDir, "keys")
-	certDir := filepath.Join(keysDir, "certs")
-	certStore, csErr := a.openStore(certDir)
-	if csErr != nil {
-		a.log.Warn("failed to create cert storage for PKCS#11 backend", "error", csErr)
-		return
+	// Create cert storage at the same location used by AutoInitialize: the
+	// barrier-backed datastore when active, otherwise in-memory --
+	// never a dataDir file path.
+	var certStore xkmssdk.StorageBackend
+	if barrierBackend := a.barrierService.GetBackend(); barrierBackend != nil {
+		ns, nsErr := xkmssdk.NewStoragePrefixBackend(barrierBackend, "keys/certs/")
+		if nsErr != nil {
+			a.log.Warn("failed to create cert storage for PKCS#11 backend", "error", nsErr)
+			return
+		}
+		certStore = ns
+	} else {
+		mem, memErr := xkmssdk.NewMemoryBackend()
+		if memErr != nil {
+			a.log.Warn("failed to create cert storage for PKCS#11 backend", "error", memErr)
+			return
+		}
+		certStore = mem
 	}
 
 	ks, ksErr := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{

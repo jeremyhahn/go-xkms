@@ -73,8 +73,8 @@ health:
   path: "/health"
 
 # Storage configuration
-storage:
-  backend: "file"
+datastore:
+  engine: file
   path: "/data/xkms"
 
 # Certificate Authority configuration

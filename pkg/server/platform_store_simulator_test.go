@@ -28,6 +28,7 @@ import (
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sealedstorage "github.com/jeremyhahn/go-xkms/pkg/storage/sealed"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpm2store "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -139,7 +140,7 @@ func tpm2EnrolledServer(t *testing.T, platformPolicy bool, platformPCR uint) *Se
 	t.Helper()
 
 	s := newMinimalServer(t, &config.Config{
-		Storage:     config.StorageConfig{Backend: "memory"},
+		Datastore:   config.DatastoreConfig{Engine: "memory"},
 		Credentials: config.CredentialsConfig{SealStrategy: "tpm2"},
 		Backends: config.BackendsConfig{
 			TPM2: &config.TPM2Config{
@@ -150,6 +151,12 @@ func tpm2EnrolledServer(t *testing.T, platformPolicy bool, platformPCR uint) *Se
 		},
 	})
 	s.nodeSealTPM = enrollPlatformSRKForTest(t, platformPCR)
+	// newMinimalServer bypasses New(), so s.qrdbStorage -- the one shared
+	// datastore createStorage now always resolves through -- is never
+	// built; give this test a real one.
+	var err error
+	s.qrdbStorage, err = storage.NewMemoryBackend()
+	require.NoError(t, err)
 	return s
 }
 

@@ -605,7 +605,7 @@ func TestResolveCredentialStrategy_ConfigUsedWhenFlagEmpty(t *testing.T) {
 
 func TestResolveDataDir_ConfigUsedWhenFlagEmpty(t *testing.T) {
 	flags := &initFlags{}
-	cfg := &config.Config{Storage: config.StorageConfig{Path: "/etc/configured/data"}}
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Path: "/etc/configured/data"}}
 	result := resolveDataDir(flags, cfg)
 	if result != "/etc/configured/data" {
 		t.Errorf("expected the config value when the flag is unset, got %q", result)

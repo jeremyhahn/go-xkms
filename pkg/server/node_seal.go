@@ -13,25 +13,7 @@
 
 package server
 
-// NodeSealError is returned when the node barrier is configured to encrypt the
-// data plane but the required auto-unseal material cannot be resolved.
-type NodeSealError struct {
-	// Reason describes the failure.
-	Reason string
-	// Err is the underlying error, when one exists. Nil for a NodeSealError
-	// raised without an underlying cause.
-	Err error
-}
-
-// Error implements the error interface.
-func (e *NodeSealError) Error() string {
-	return "server: node barrier seal: " + e.Reason
-}
-
-// Unwrap exposes Err so errors.Is/errors.As can reach it.
-func (e *NodeSealError) Unwrap() error {
-	return e.Err
-}
+import "github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 
 // allowNodeLocalPlaintextKeys reports whether a node-local key provider (e.g.
 // the pkcs8 backend) may persist unencrypted PKCS#8 DER. Under the seal model
@@ -67,8 +49,8 @@ func (s *Server) allowNodeLocalPlaintextKeys() bool {
 // runs BEFORE the qrdb node is constructed so its result can be injected as
 // a node option and so a single TPM open is shared with the tpm2 backend.
 //
-// The flip engages for every embedded qrdb-node deployment
-// (Storage.Backend=="qrdb") with the barrier enabled AND a strategy
+// The flip engages for every deployment that hosts the datastore in this
+// process (Datastore.Mode=="standalone") with the barrier enabled AND a strategy
 // BarrierConfig.NodeFlipWired reports true for: "none", "passphrase",
 // "shamir" and "tpm2". go-qrdb's own node-embedded seal subsystem
 // (sdk/go/node's buildNodeSealSubsystem, driven by DaemonConfig.Seal alone)
@@ -95,10 +77,10 @@ func (s *Server) allowNodeLocalPlaintextKeys() bool {
 // backends' credentials are consumed by initializeBackends after this
 // function returns and the credential service does not exist yet at this
 // point (see Server.New's phase ordering) — the same structural cycle
-// documented on NodeFlipWired. Non-qrdb-storage deployments are unaffected
-// either way: the flip only ever applies to Storage.Backend=="qrdb".
+// documented on NodeFlipWired. Remote-datastore deployments are unaffected
+// either way: the flip only ever applies to Datastore.Mode=="standalone".
 func (s *Server) resolveNodeSeal() error {
-	res, err := ResolveNodeSeal(s.config, s.logger)
+	res, err := embeddednode.ResolveNodeSeal(s.config, s.logger)
 	if err != nil {
 		return err
 	}

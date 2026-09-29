@@ -57,7 +57,7 @@ import (
 // process-wide lock) blocked every later simulator-backed test.
 func TestInitializePlatformStore_TPM2WithoutEnrolledPSRKFailsClosed(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage:     config.StorageConfig{Backend: "file", Path: t.TempDir()},
+		Datastore:   config.DatastoreConfig{Engine: "file", Path: t.TempDir()},
 		Credentials: config.CredentialsConfig{SealStrategy: "tpm2"},
 		Backends: config.BackendsConfig{
 			TPM2: &config.TPM2Config{

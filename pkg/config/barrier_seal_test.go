@@ -70,11 +70,11 @@ func TestComplianceGaps_QRDBBarrierNodeFlipWired(t *testing.T) {
 	// Base secure config (TLS/auth/CA present) so only the barrier gap varies.
 	base := func() *Config {
 		return &Config{
-			Storage: StorageConfig{Backend: "qrdb"},
-			Barrier: BarrierConfig{Enabled: true, Strategy: "passphrase"},
-			TLS:     TLSConfig{Enabled: true},
-			Auth:    AuthConfig{Enabled: true, Type: "jwt"},
-			CA:      &ca.MultiIdentityCAConfig{},
+			Datastore: DatastoreConfig{},
+			Barrier:   BarrierConfig{Enabled: true, Strategy: "passphrase"},
+			TLS:       TLSConfig{Enabled: true},
+			Auth:      AuthConfig{Enabled: true, Type: "jwt"},
+			CA:        &ca.MultiIdentityCAConfig{},
 		}
 	}
 
@@ -107,6 +107,6 @@ func TestComplianceGaps_QRDBBarrierNodeFlipWired(t *testing.T) {
 
 	// File storage never hits this gap (no embedded node / different barrier).
 	fileCfg := base()
-	fileCfg.Storage.Backend = "file"
+	fileCfg.Datastore.Engine = "file"
 	assert.False(t, hasNodeFlipGap(fileCfg), "file storage uses xkms's own barrier")
 }

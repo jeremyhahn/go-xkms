@@ -167,13 +167,13 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	acmeserver.TrustedProxies = trustedProxies
 	audit.SetTrustedProxies(trustedProxies)
 
-	// Resolve data directory for ACME state. Defaults to "<storage.path>/acme".
+	// Resolve data directory for ACME state. Defaults to "<datastore.path>/acme".
 	dataDir := acmeCfg.DataDir
 	if dataDir == "" {
-		if cfg.Storage.Path == "" {
+		if cfg.Datastore.Path == "" {
 			dataDir = "acme"
 		} else {
-			dataDir = filepath.Join(cfg.Storage.Path, "acme")
+			dataDir = filepath.Join(cfg.Datastore.Path, "acme")
 		}
 	}
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {

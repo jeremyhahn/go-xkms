@@ -35,8 +35,8 @@ func TestBuildClusterACMEOptions_Defaults(t *testing.T) {
 	dir := t.TempDir()
 	caCfg := ca.DefaultMultiIdentityCAConfigWithIntermediate()
 	s := &Server{config: &config.Config{
-		Storage: config.StorageConfig{Path: dir},
-		CA:      caCfg,
+		Datastore: config.DatastoreConfig{Path: dir},
+		CA:        caCfg,
 		Cluster: config.ClusterConfig{
 			NodeID:      1,
 			RaftAddress: "10.0.0.1:63001",
@@ -91,8 +91,8 @@ func TestBuildClusterACMEOptions_Defaults(t *testing.T) {
 func TestBuildClusterACMEOptions_ExplicitOverrides(t *testing.T) {
 	dir := t.TempDir()
 	s := &Server{config: &config.Config{
-		Server:  config.ServerConfig{Host: "10.0.0.5"},
-		Storage: config.StorageConfig{Path: dir},
+		Server:    config.ServerConfig{Host: "10.0.0.5"},
+		Datastore: config.DatastoreConfig{Path: dir},
 		Cluster: config.ClusterConfig{
 			NodeID:      2,
 			RaftAddress: "10.0.0.2:63001",

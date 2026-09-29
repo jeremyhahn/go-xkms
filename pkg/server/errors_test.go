@@ -204,8 +204,3 @@ func TestErrCABundleGet_ErrorAndUnwrap(t *testing.T) {
 	assert.Contains(t, e.Error(), "timeout")
 	assert.ErrorIs(t, e, inner)
 }
-
-func TestErrUnsupportedStorageBackend_Error(t *testing.T) {
-	e := &ErrUnsupportedStorageBackend{Backend: "redis"}
-	assert.Contains(t, e.Error(), "redis")
-}

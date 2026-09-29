@@ -32,13 +32,7 @@ func newQRDBTestServer(t *testing.T) *Server {
 
 	s := &Server{
 		config: &config.Config{
-			Storage: config.StorageConfig{
-				Backend: "qrdb",
-				Path:    t.TempDir(),
-				QRDB: config.QRDBConfig{
-					Transport: "embedded",
-				},
-			},
+			Datastore: config.DatastoreConfig{Path: t.TempDir()},
 		},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -214,41 +208,16 @@ func TestCreateStorageAt_QRDBDerivesPrefixFromBase(t *testing.T) {
 	assert.NotEqual(t, sVal, pVal)
 }
 
-// TestInitializeQRDBStorage_NonQRDBBackendNoop verifies the initializer is a
-// no-op when the configured storage backend is not qrdb.
-func TestInitializeQRDBStorage_NonQRDBBackendNoop(t *testing.T) {
-	s := &Server{
-		config: &config.Config{
-			Storage: config.StorageConfig{
-				Backend: "file",
-				Path:    t.TempDir(),
-			},
-		},
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-
-	require.NoError(t, s.initializeQRDBStorage())
-	assert.Nil(t, s.qrdbStorage)
-}
-
-// TestInitializeQRDBStorage_UnsupportedTransport verifies an unknown qrdb
-// transport is rejected.
-func TestInitializeQRDBStorage_UnsupportedTransport(t *testing.T) {
-	s := &Server{
-		config: &config.Config{
-			Storage: config.StorageConfig{
-				Backend: "qrdb",
-				Path:    t.TempDir(),
-				QRDB:    config.QRDBConfig{Transport: "carrier-pigeon"},
-			},
-		},
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-
-	err := s.initializeQRDBStorage()
-	require.Error(t, err)
-	assert.Nil(t, s.qrdbStorage)
-}
+// TestInitializeQRDBStorage_NonQRDBBackendNoop and
+// TestInitializeQRDBStorage_UnsupportedTransport used to prove
+// initializeQRDBStorage was a no-op for a non-"qrdb" storage.backend, and
+// rejected an unknown storage.qrdb.transport. Neither branch exists anymore:
+// initializeQRDBStorage always builds the one shared datastore now, in
+// either "standalone" or "remote" mode (go-xkms#1345). The remaining,
+// reachable transport-rejection path is exercised directly by
+// TestDialRemote_UnsupportedTransport (pkg/datastore/datastore_test.go)
+// and end to end by TestInitializeQRDBStorage_InvalidTransport
+// (server_extra_test.go).
 
 // TestCloseQRDBStorage_Idempotent verifies closeQRDBStorage can be called
 // multiple times safely.

@@ -151,13 +151,9 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 			KeyFile:  keyFile,
 			CAFile:   caFile,
 		},
-		Auth: config.AuthConfig{Enabled: false},
-		Storage: config.StorageConfig{
-			Backend: "qrdb",
-			Path:    tempDir,
-			QRDB:    config.QRDBConfig{Transport: "embedded"},
-		},
-		Default: config.DefaultConfig("software"),
+		Auth:      config.AuthConfig{Enabled: false},
+		Datastore: config.DatastoreConfig{Path: tempDir},
+		Default:   config.DefaultConfig("software"),
 		Backends: config.BackendsConfig{
 			Software: &config.SoftwareConfig{
 				Enabled: true,

@@ -59,6 +59,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/kmip" // registers the "kmip" escrow agent factory
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
+	"github.com/jeremyhahn/go-xkms/pkg/factor"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
@@ -258,7 +259,7 @@ type Server struct {
 	barrierRegistry *seal.BarrierRegistry
 
 	// nodeSealEnabled indicates the qrdb node's OWN barrier is used (the flip):
-	// Storage.Backend=="qrdb" && Barrier.Enabled && auto-unseal creds present.
+	// Datastore.Mode=="standalone" && Barrier.Enabled && auto-unseal creds present.
 	// When true, the node encrypts its data-plane KV (encfs), auto-unseals at
 	// construction, and s.barrier/s.barrierRegistry/s.tenantService come from
 	// the node — xkms's own barrier/registry construction is skipped. When
@@ -533,8 +534,8 @@ func WithExtraModules(mods ...qrdbsdk.ServiceModule) Option {
 // New validates cfg before touching the filesystem or any storage backend:
 // cfg.Validate() runs first and its failure is returned wrapped in
 // ErrServiceInit{Service: "configuration"}. Validate also normalizes cfg in
-// place -- defaulting Storage.Backend to "pebble", Storage.QRDB.Transport to
-// "embedded", and Cluster.ShardID to 1 when they are unset -- so every
+// place -- defaulting Datastore.Engine to "pebble", Datastore.Mode to
+// "standalone", and Cluster.ShardID to 1 when they are unset -- so every
 // subsystem New initializes afterward observes the normalized values, not
 // the caller's original zero values. An embedded caller that constructs its
 // own *config.Config (rather than going through config.Load, which already
@@ -616,7 +617,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	// Decide whether the qrdb node's own barrier encrypts the data plane (the
 	// flip), and resolve the auto-unseal material — BEFORE the node is built so
 	// the seal strategy can be injected as a node option and a single TPM open
-	// is shared with the tpm2 backend. A no-op unless Storage.Backend=="qrdb",
+	// is shared with the tpm2 backend. A no-op unless Datastore.Mode=="standalone",
 	// the barrier is enabled, and auto-unseal credentials are available.
 	if err := s.resolveNodeSeal(); err != nil {
 		cancel()
@@ -1560,8 +1561,8 @@ func (s *Server) initializeAuditLogger() error {
 	// all has nowhere durable to write; that is a configuration with no
 	// audit story and the file sink is rooted in the CWD as a last resort.
 	auditPath := "audit-events.ndjson"
-	if s.config.Storage.Path != "" {
-		auditPath = filepath.Join(s.config.Storage.Path, "audit-events.ndjson")
+	if s.config.Datastore.Path != "" {
+		auditPath = filepath.Join(s.config.Datastore.Path, "audit-events.ndjson")
 	}
 	chained, err := audit.NewChainedFileLogger(auditPath)
 	if err != nil {
@@ -1742,10 +1743,10 @@ func (s *Server) initializeBarrierRegistry() error {
 // available. The pool name "default" matches the name RegisterTenantPooled
 // draws from.
 func (s *Server) buildVolumePool() (*seal.VolumePoolSubsystem, error) {
-	if s.config.Storage.Path == "" {
+	if s.config.Datastore.Path == "" {
 		return nil, nil
 	}
-	dataDir := s.config.Storage.Path
+	dataDir := s.config.Datastore.Path
 	poolRoot := filepath.Join(dataDir, "tenant-volumes")
 	pools := []qrdbsdk.DaemonVolumePoolConfig{{
 		Name:  "default",
@@ -1791,20 +1792,20 @@ func (s *Server) initializePINManager() error {
 	}
 
 	// The software PIN store is always file-backed (filestorage.New below),
-	// independent of storage.backend, so it needs storage.path even for a
-	// qrdb backend. config.Validate requires storage.path for every backend
-	// except a remote qrdb transport (rest/grpc), which is the one shape
-	// that can still reach here with it empty; guard rather than let
-	// filestorage.New resolve "" + "/pin" into the filesystem root's own
-	// "/pin" directory (go-xkms#666).
-	if s.config.Storage.Path == "" {
+	// independent of datastore.engine, so it needs datastore.path even for
+	// the "standalone" mode. config.Validate requires datastore.path for
+	// "standalone"; datastore.mode "remote" is the one shape that can still
+	// reach here with it empty; guard rather than let filestorage.New
+	// resolve "" + "/pin" into the filesystem root's own "/pin" directory
+	// (go-xkms#666).
+	if s.config.Datastore.Path == "" {
 		return &ErrConfigRequired{
-			Field:   "storage.path",
+			Field:   "datastore.path",
 			Backend: "pin",
-			Hint:    "the PIN state directory is derived from storage.path and must not resolve to the filesystem root",
+			Hint:    "the PIN state directory is derived from datastore.path and must not resolve to the filesystem root",
 		}
 	}
-	pinDir := filepath.Join(s.config.Storage.Path, "pin")
+	pinDir := filepath.Join(s.config.Datastore.Path, "pin")
 
 	switch strategy {
 	case "software":
@@ -1840,18 +1841,18 @@ func (s *Server) initializePasswordStore() error {
 	}
 	s.passwordStore = store
 
-	// createStorage above is the actual storage seam and already scopes
-	// correctly per backend -- a qrdb backend ignores storage.path entirely
-	// and prefixes a view over the shared qrdb store instead. storage.path is
-	// therefore empty here only for a remote qrdb transport (config.Validate
-	// requires it for every other backend), and there is no on-disk location
-	// to name in that case; report the backend instead of joining an empty
-	// root into a path that would look absolute but mean nothing.
-	if s.config.Storage.Path == "" {
-		s.logger.Info("Password store initialized", "backend", s.config.Storage.Backend)
+	// createStorage above is the actual storage seam: it always prefixes a
+	// view over the single shared datastore, which ignores datastore.path
+	// directly. datastore.path is therefore empty here only for
+	// datastore.mode "remote" (config.Validate requires it for
+	// "standalone"), and there is no on-disk location to name in that case;
+	// report the datastore mode instead of joining an empty root into a path
+	// that would look absolute but mean nothing.
+	if s.config.Datastore.Path == "" {
+		s.logger.Info("Password store initialized", "datastore_mode", s.config.Datastore.Mode)
 		return nil
 	}
-	s.logger.Info("Password store initialized", "path", filepath.Join(s.config.Storage.Path, "passwords"))
+	s.logger.Info("Password store initialized", "path", filepath.Join(s.config.Datastore.Path, "passwords"))
 	return nil
 }
 
@@ -1958,6 +1959,21 @@ func (s *Server) initializeFactorRegistry() error {
 	s.factorRegistry = registry
 	s.logger.Info("Auth-factor registry initialized", "factors", registry.List())
 	return nil
+}
+
+// NewNodeFactorRegistry builds the plain hardware auth-factor registry the
+// embedded qrdb node uses to verify hardware factor challenges (custodian
+// enrollment, Shamir unseal). It carries no PIV/FIDO2 hardware handlers --
+// those belong to the CLI-driven admin-enrollment ceremony
+// (pkg/init.NewAdminFactorRegistry) -- this is the always-available baseline
+// the node itself is constructed with. Kept in pkg/server (rather than
+// pkg/embeddednode) because pkg/factor imports pkg/xkms, and pkg/embeddednode
+// must stay free of that dependency so pkg/datastore (imported by pkg/xkms)
+// can use it without an import cycle; a caller of embeddednode.OpenEmbeddedNode
+// that wants a factor registry (xkmsd init, xkmsd run) builds one explicitly
+// with this function and passes it via EmbeddedNodeOptions.FactorRegistry.
+func NewNodeFactorRegistry() (*qrdbsdk.AuthFactorRegistry, error) {
+	return factor.NewDefaultRegistry(factor.Config{})
 }
 
 // FactorRegistry returns the hardware auth-factor registry.
@@ -2603,13 +2619,16 @@ func (s *Server) Start() error {
 	// Network serving runs exclusively on the unified API server: the
 	// embedded qrdb node's multi-protocol server took xkmsd's
 	// REST/gRPC/MCP ports during node construction (buildXKMSQRDBConfig;
-	// config.Validate guarantees qrdb storage + TLS material) and serves
-	// the xkms capability plane through the registered ServiceModule.
-	// QUIC is HTTP/3 on the REST port, advertised via Alt-Svc. Local IPC
-	// stays in-process: xkmsd's own plaintext Unix socket serves local
-	// clients in every storage mode, and the loopback desktop engine
-	// serves an injected listener.
-	if s.config.NetworkServing() {
+	// config.Validate guarantees datastore.mode "standalone" + TLS
+	// material) and serves the xkms capability plane through the
+	// registered ServiceModule. QUIC is HTTP/3 on the REST port,
+	// advertised via Alt-Svc. Local IPC stays in-process: xkmsd's own
+	// plaintext Unix socket serves local clients in every datastore mode.
+	// The loopback desktop engine is the one NetworkServing() deployment
+	// that does NOT reach this node's own listeners (Config.LoopbackDesktop
+	// -- see buildXKMSQRDBConfig): it forces Protocols.REST on but serves
+	// REST itself on an injected, pre-bound listener instead.
+	if s.config.NetworkServing() && !s.config.LoopbackDesktop {
 		s.logger.Info("unified API server: embedded qrdb node serves the network protocols via the xkms ServiceModule",
 			"rest_port", s.config.Server.RESTPort,
 			"grpc_port", s.config.Server.GRPCPort,

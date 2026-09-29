@@ -32,6 +32,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -103,13 +105,13 @@ func TestInitTPM2Backend_SharedTPM_GenerateAndSign(t *testing.T) {
 func TestInitTPM2Backend_SharedTPM_InvalidKeyStorageConfig(t *testing.T) {
 	shared, err := tpm2backend.NewBackend(&tpm2backend.Config{
 		UseSimulator: true,
-		KeyDir:       t.TempDir(),
+		KeyStorage:   storage.NewMemory(),
 	})
 	require.NoError(t, err, "constructing the shared simulator-backed TPM2 backend")
 	t.Cleanup(func() { _ = shared.Close() })
 
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Path: ""}, // invalid: never configured
+		Datastore: config.DatastoreConfig{Path: ""}, // invalid: never configured
 		Backends: config.BackendsConfig{
 			TPM2: &config.TPM2Config{Enabled: true, UseSimulator: true},
 		},
@@ -124,10 +126,8 @@ func TestInitTPM2Backend_SharedTPM_InvalidKeyStorageConfig(t *testing.T) {
 	var createErr *ErrBackendCreate
 	require.True(t, errors.As(err, &createErr), "error must unwrap to *ErrBackendCreate, got %v", err)
 
-	var cfgErr *ErrConfigRequired
-	require.True(t, errors.As(err, &cfgErr), "error must unwrap to *ErrConfigRequired, got %v", err)
-	assert.Equal(t, "storage.path", cfgErr.Field)
-	assert.Equal(t, "tpm2", cfgErr.Backend)
+	var pathErr *embeddednode.ErrDatastorePathRequired
+	require.True(t, errors.As(err, &pathErr), "error must unwrap to *embeddednode.ErrDatastorePathRequired, got %v", err)
 }
 
 // TestInitializePolicyManager_TPMIsThePCRReader verifies that xkmsd with a

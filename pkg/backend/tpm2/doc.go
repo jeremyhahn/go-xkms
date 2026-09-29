@@ -28,9 +28,13 @@
 //
 // Usage:
 //
+//	keyStorage, err := file.New("/var/lib/xkms/tpm2")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
 //	config := &tpm2.Config{
 //	    Device:       "/dev/tpmrm0",
-//	    KeyDir:       "/var/lib/xkms/tpm2",
+//	    KeyStorage:   keyStorage,
 //	    UseSimulator: false,
 //	}
 //	backend, err := tpm2.NewBackend(config)

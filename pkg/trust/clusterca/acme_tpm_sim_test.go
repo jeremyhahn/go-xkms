@@ -50,7 +50,7 @@ func newSimulatorTPMBackend(t *testing.T) *tpm2backend.Backend {
 
 	backend, err := tpm2backend.NewBackend(&tpm2backend.Config{
 		UseSimulator: true,
-		KeyDir:       t.TempDir(),
+		KeyStorage:   storage.NewMemory(),
 		CN:           "clusterca-acme-sim",
 	})
 	require.NoError(t, err)

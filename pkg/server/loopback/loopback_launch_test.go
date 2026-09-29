@@ -48,10 +48,10 @@ func minimalLoopbackConfig(t *testing.T) *config.Config {
 			Level:  "error",
 			Format: "json",
 		},
-		TLS:     config.TLSConfig{Enabled: false},
-		Auth:    config.AuthConfig{Enabled: false},
-		Storage: config.StorageConfig{Backend: "file", Path: tempDir},
-		Default: config.DefaultConfig("software"),
+		TLS:       config.TLSConfig{Enabled: false},
+		Auth:      config.AuthConfig{Enabled: false},
+		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
+		Default:   config.DefaultConfig("software"),
 		Backends: config.BackendsConfig{
 			Software: &config.SoftwareConfig{
 				Enabled: true,

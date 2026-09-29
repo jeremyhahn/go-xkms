@@ -245,7 +245,7 @@ func (s *Server) sealP256StaticKey(key *bootstrap.P256StaticKey) error {
 // back to an ephemeral-with-warning key rather than writing to an
 // unpredictable location.
 func (s *Server) loadOrPersistNoiseStaticKeyFile() (*noiseproto.StaticKey, error) {
-	dataDir := s.config.Storage.Path
+	dataDir := s.config.Datastore.Path
 	if dataDir == "" {
 		s.logger.Warn("No Noise static key configured and no barrier or data directory available; " +
 			"generating an ephemeral key. This is NOT recommended for production.")
@@ -288,7 +288,7 @@ func (s *Server) loadOrPersistNoiseStaticKeyFile() (*noiseproto.StaticKey, error
 // loadOrPersistP256StaticKeyFile is loadOrPersistNoiseStaticKeyFile's P-256
 // counterpart.
 func (s *Server) loadOrPersistP256StaticKeyFile() (*bootstrap.P256StaticKey, error) {
-	dataDir := s.config.Storage.Path
+	dataDir := s.config.Datastore.Path
 	if dataDir == "" {
 		s.logger.Warn("No P-256 bootstrap static key configured and no barrier or data directory " +
 			"available; generating an ephemeral key. This is NOT recommended for production.")

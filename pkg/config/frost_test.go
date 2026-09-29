@@ -191,7 +191,7 @@ func baseFrostTestConfig() Config {
 		Protocols: ProtocolsConfig{REST: true},
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+		Datastore: DatastoreConfig{Path: "/data"},
 		TLS:       TLSConfig{Enabled: true},
 		Default:   "frost",
 	}

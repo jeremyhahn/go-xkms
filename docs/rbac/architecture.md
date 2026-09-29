@@ -13,9 +13,9 @@ own tenant unless it is a system-tenant identity.
 ## Shape chosen: xkms carries no RBAC engine of its own
 
 Roles, permissions, role grants, and role memberships are **qrdb records**,
-living in the identity plane xkms hosts in-process as its datastore (the
-`"qrdb"` storage backend — see
-[`../storage-engines/architecture.md`](../storage-engines/architecture.md)).
+living in the identity plane every xkms deployment hosts as its one global
+datastore, standalone or remote (see
+[`../datastore/architecture.md`](../datastore/architecture.md)).
 xkms contributes exactly one thing: a single authorization seam
 (`auth.Authorizer`) that every transport calls before it dispatches an
 operation, plus the resource/action vocabulary its own routes, RPCs, and

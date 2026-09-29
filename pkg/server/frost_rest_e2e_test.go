@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -300,8 +301,8 @@ func newFrostServerForTest(t *testing.T, secretBackendName string) *Server {
 	t.Helper()
 
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
-		Default: config.DefaultConfig("frost"),
+		Datastore: config.DatastoreConfig{Engine: "memory"},
+		Default:   config.DefaultConfig("frost"),
 		Backends: config.BackendsConfig{
 			Frost: &config.FrostConfig{
 				Enabled:          true,
@@ -317,6 +318,12 @@ func newFrostServerForTest(t *testing.T, secretBackendName string) *Server {
 	s.keyProviders = map[string]types.KeyProvider{
 		secretBackendName: newTestFrostSecretBackend(),
 	}
+	// newMinimalServer bypasses New(), so s.qrdbStorage -- the one shared
+	// datastore createStorage now always resolves through -- is never
+	// built; give this test a real one.
+	var qerr error
+	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	require.NoError(t, qerr)
 	require.NoError(t, s.initFrostBackend())
 
 	s.backends = map[string]xkms.Backend{}

@@ -159,14 +159,14 @@ func TestEscrowRegistry_NilByDefault(t *testing.T) {
 
 // TestQRDBClient_NilBeforeNodeConstruction proves QRDBClient reports nil
 // before the embedded qrdb node has been constructed, matching CA()/
-// Backend()'s "nil until wired" contract.
+// Backend()'s "nil until wired" contract. Every datastore.mode "standalone"
+// deployment (the default) now always constructs the embedded node by the
+// time New() returns (go-xkms#1345) -- there is no longer a storage engine
+// choice that skips it -- so this is checked directly against a
+// newMinimalServer bypass (New() never called) rather than a full New(cfg),
+// which the old backend-choice fixture used to leave the node unconstructed.
 func TestQRDBClient_NilBeforeNodeConstruction(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	s, err := New(cfg)
-	require.NoError(t, err)
+	s := newMinimalServer(t, createMinimalConfig(t))
 	require.Nil(t, s.QRDBClient())
 }
 

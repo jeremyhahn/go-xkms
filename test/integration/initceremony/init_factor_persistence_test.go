@@ -132,7 +132,7 @@ func freePort(t *testing.T) int {
 // posture, not something init's ceremony will provision. Of the strategies
 // init does accept, "tpm2" is the one that ALSO auto-unseals unattended on
 // every `xkmsd run`, init included (cmd/xkmsd/init_node.go's
-// unsealDurableInitNode and pkg/server/embedded_node.go's ResolveNodeSeal /
+// unsealDurableInitNode and pkg/embeddednode/embedded_node.go's ResolveNodeSeal /
 // OpenEmbeddedNode), so it needs no operator step between the two `xkmsd
 // run` invocations this test drives -- exactly what a restart-driven test
 // needs, and a strictly stronger regression check than "none" would have
@@ -180,8 +180,8 @@ barrier:
   enabled: true
   strategy: "tpm2"
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
   path: %q
 
 rng:
@@ -358,8 +358,8 @@ func waitForPort(port int, timeout time.Duration) bool {
 // initializeCA: trustedCA.Load falls back to trustedCA.Init on a fresh data
 // directory) and issues the server's TLS leaf from that CA
 // (ensureTLSServerCert). That persistent CA's key and certificate live
-// inside the qrdb store this test's `storage: backend: qrdb` config points
-// at, not a PEM file on disk, so there is no ca-bundle file to load, and
+// inside the qrdb store this test's `datastore:` config points at, not a
+// PEM file on disk, so there is no ca-bundle file to load, and
 // init never touches this CA at all (its ceremony CA is fully in-memory and
 // unrelated to `ca:` config) -- confirmed by tracing both paths, not
 // assumed. The two CAs are intentionally distinct: mTLS client identity

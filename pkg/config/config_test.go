@@ -67,8 +67,8 @@ health:
   enabled: true
   path: "/health"
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
   path: "/data/xkms"
 
 default_backend: "pkcs8"
@@ -120,12 +120,12 @@ backends:
 		t.Errorf("Logging.Format = %v, want json", cfg.Logging.Format)
 	}
 
-	// Validate storage
-	if cfg.Storage.Backend != "qrdb" {
-		t.Errorf("Storage.Backend = %v, want qrdb", cfg.Storage.Backend)
+	// Validate datastore
+	if cfg.Datastore.Engine != "pebble" {
+		t.Errorf("Datastore.Engine = %v, want pebble", cfg.Datastore.Engine)
 	}
-	if cfg.Storage.Path != "/data/xkms" {
-		t.Errorf("Storage.Path = %v, want /data/xkms", cfg.Storage.Path)
+	if cfg.Datastore.Path != "/data/xkms" {
+		t.Errorf("Datastore.Path = %v, want /data/xkms", cfg.Datastore.Path)
 	}
 
 	// Validate default backend
@@ -184,7 +184,7 @@ func TestLoad_ValidationFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "invalid_config.yaml")
 
-	// Missing required storage backend
+	// Missing required default_backend (and datastore.path)
 	invalidContent := `
 server:
   host: "localhost"
@@ -207,8 +207,8 @@ tls:
 auth:
   enabled: false
 
-storage:
-  backend: ""
+datastore:
+  engine: ""
   path: ""
 
 default_backend: ""
@@ -246,7 +246,7 @@ func TestValidate_ServerPorts(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
@@ -259,7 +259,7 @@ func TestValidate_ServerPorts(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 0},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
@@ -273,7 +273,7 @@ func TestValidate_ServerPorts(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 65536},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
@@ -287,7 +287,7 @@ func TestValidate_ServerPorts(t *testing.T) {
 				Protocols: ProtocolsConfig{GRPC: true},
 				Server:    ServerConfig{GRPCPort: -1},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
@@ -301,7 +301,7 @@ func TestValidate_ServerPorts(t *testing.T) {
 				Protocols: ProtocolsConfig{QUIC: true},
 				Server:    ServerConfig{QUICPort: 100000},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
@@ -315,7 +315,7 @@ func TestValidate_ServerPorts(t *testing.T) {
 				Protocols: ProtocolsConfig{MCP: true},
 				Server:    ServerConfig{MCPPort: 0},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
@@ -341,12 +341,12 @@ func TestValidate_ServerPorts(t *testing.T) {
 // TestValidate_Protocols tests validation of protocol configuration
 func TestValidate_Protocols(t *testing.T) {
 	baseConfig := Config{
-		Server:   ServerConfig{RESTPort: 8443},
-		Logging:  LoggingConfig{Level: "info", Format: "json"},
-		Storage:  StorageConfig{Backend: "qrdb", Path: "/data"},
-		TLS:      TLSConfig{Enabled: true},
-		Default:  "pkcs8",
-		Backends: BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+		Server:    ServerConfig{RESTPort: 8443},
+		Logging:   LoggingConfig{Level: "info", Format: "json"},
+		Datastore: DatastoreConfig{Path: "/data"},
+		TLS:       TLSConfig{Enabled: true},
+		Default:   "pkcs8",
+		Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 	}
 
 	// No protocols enabled - should fail
@@ -393,7 +393,7 @@ func TestValidate_Logging(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: tt.level, Format: tt.format},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
@@ -456,7 +456,7 @@ func TestValidate_TLS(t *testing.T) {
 			Server:    ServerConfig{RESTPort: 8443},
 			Logging:   LoggingConfig{Level: "info", Format: "json"},
 			TLS:       TLSConfig{Enabled: true, ServerCN: "test-server"},
-			Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+			Datastore: DatastoreConfig{Path: "/data"},
 			Default:   "pkcs8",
 			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			CA:        &ca.MultiIdentityCAConfig{}, // CA present — cert_file/key_file not required
@@ -476,7 +476,7 @@ func TestValidate_TLS(t *testing.T) {
 			Server:    ServerConfig{RESTPort: 8443},
 			Logging:   LoggingConfig{Level: "info", Format: "json"},
 			TLS:       TLSConfig{Enabled: true},
-			Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+			Datastore: DatastoreConfig{Path: "/data"},
 			Default:   "pkcs8",
 			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 		}
@@ -495,7 +495,7 @@ func TestValidate_TLS(t *testing.T) {
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
 				TLS:       tt.tls,
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Datastore: DatastoreConfig{Engine: "pebble", Path: "/data"},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			}
@@ -511,29 +511,79 @@ func TestValidate_TLS(t *testing.T) {
 	}
 }
 
-// TestValidate_Storage tests validation of storage configuration
-func TestValidate_Storage(t *testing.T) {
+// TestValidate_Datastore tests validation of the global datastore
+// configuration: engine, mode, and their interaction with path/remote.
+func TestValidate_Datastore(t *testing.T) {
 	tests := []struct {
 		name      string
-		storage   StorageConfig
+		datastore DatastoreConfig
 		wantError bool
 	}{
 		{
-			name:      "valid storage",
-			storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+			name:      "valid pebble engine",
+			datastore: DatastoreConfig{Engine: "pebble", Path: "/data"},
 			wantError: false,
 		},
 		{
-			// An unspecified backend now defaults to durable PebbleDB rather
+			// An unspecified engine now defaults to durable PebbleDB rather
 			// than erroring (production paths never fall back to non-durable).
-			name:      "missing backend defaults to pebble",
-			storage:   StorageConfig{Backend: "", Path: "/data"},
+			name:      "missing engine defaults to pebble",
+			datastore: DatastoreConfig{Path: "/data"},
 			wantError: false,
 		},
 		{
-			name:      "missing path",
-			storage:   StorageConfig{Backend: "filesystem", Path: ""},
+			name:      "missing path for standalone pebble engine",
+			datastore: DatastoreConfig{Engine: "pebble", Path: ""},
 			wantError: true,
+		},
+		{
+			// go-qrdb roots the standalone node's on-disk state (its
+			// vector-storage subsystem in particular) under one data
+			// directory regardless of the primary KV engine, so "memory"
+			// requires a path exactly like "file"/"pebble" do.
+			name:      "memory engine still requires a path for standalone mode",
+			datastore: DatastoreConfig{Engine: "memory"},
+			wantError: true,
+		},
+		{
+			name:      "memory engine with a path is valid",
+			datastore: DatastoreConfig{Engine: "memory", Path: "/data"},
+			wantError: false,
+		},
+		{
+			name:      "file engine requires a path",
+			datastore: DatastoreConfig{Engine: "file", Path: ""},
+			wantError: true,
+		},
+		{
+			name:      "invalid engine is refused",
+			datastore: DatastoreConfig{Engine: "redis", Path: "/data"},
+			wantError: true,
+		},
+		{
+			name:      "invalid mode is refused",
+			datastore: DatastoreConfig{Mode: "clustered", Path: "/data"},
+			wantError: true,
+		},
+		{
+			name:      "remote mode requires an address",
+			datastore: DatastoreConfig{Mode: "remote"},
+			wantError: true,
+		},
+		{
+			name: "remote mode requires a valid transport",
+			datastore: DatastoreConfig{Mode: "remote", Remote: DatastoreRemoteConfig{
+				Address: "https://qrdb.example.com:63002",
+			}},
+			wantError: true,
+		},
+		{
+			name: "valid remote mode",
+			datastore: DatastoreConfig{Mode: "remote", Remote: DatastoreRemoteConfig{
+				Address:   "https://qrdb.example.com:63002",
+				Transport: "rest",
+			}},
+			wantError: false,
 		},
 	}
 
@@ -543,7 +593,7 @@ func TestValidate_Storage(t *testing.T) {
 				Protocols: ProtocolsConfig{Unix: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   tt.storage,
+				Datastore: tt.datastore,
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			}
@@ -565,7 +615,7 @@ func TestValidate_DefaultBackend(t *testing.T) {
 		Protocols: ProtocolsConfig{REST: true},
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+		Datastore: DatastoreConfig{Engine: "pebble", Path: "/data"},
 		Default:   "",
 		Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 	}
@@ -692,7 +742,7 @@ func TestValidate_Backends(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  tt.backends,
@@ -835,8 +885,8 @@ tls:
 auth:
   enabled: false
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
   path: "/data"
 
 default_backend: "pkcs8"
@@ -1037,7 +1087,7 @@ func TestValidate_SoftwareBackend(t *testing.T) {
 		Protocols: ProtocolsConfig{REST: true},
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+		Datastore: DatastoreConfig{Path: "/data"},
 		TLS:       TLSConfig{Enabled: true},
 		Default:   "software",
 		Backends: BackendsConfig{
@@ -1083,7 +1133,7 @@ func TestValidate_InvalidDefaultBackend(t *testing.T) {
 		Protocols: ProtocolsConfig{REST: true},
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+		Datastore: DatastoreConfig{Engine: "pebble", Path: "/data"},
 		Default:   "nonexistent",
 		Backends:  BackendsConfig{},
 	}
@@ -1124,8 +1174,8 @@ logging:
 tls:
   enabled: true
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
   path: "/data/xkms"
 
 barrier:
@@ -1162,8 +1212,8 @@ logging:
 tls:
   enabled: true
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
   path: "/data/xkms"
 
 default_backend: "pkcs8"
@@ -1196,8 +1246,8 @@ logging:
 tls:
   enabled: true
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
   path: "/data/xkms"
 
 default_backend: "pkcs8"
@@ -1230,8 +1280,8 @@ logging:
 tls:
   enabled: true
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
   path: "/data/xkms"
 
 default_backend: "pkcs8"
@@ -1279,56 +1329,56 @@ func TestCredentialsBarrierStrategySupported(t *testing.T) {
 		{
 			name: "embedded qrdb, barrier enabled, passphrase strategy",
 			cfg: Config{
-				Storage: StorageConfig{Backend: "qrdb", QRDB: QRDBConfig{Transport: "embedded"}},
-				Barrier: BarrierConfig{Enabled: true, Strategy: "passphrase"},
+				Datastore: DatastoreConfig{},
+				Barrier:   BarrierConfig{Enabled: true, Strategy: "passphrase"},
 			},
 			want: true,
 		},
 		{
 			name: "empty transport defaults to embedded",
 			cfg: Config{
-				Storage: StorageConfig{Backend: "qrdb"},
-				Barrier: BarrierConfig{Enabled: true, Strategy: "tpm2"},
+				Datastore: DatastoreConfig{},
+				Barrier:   BarrierConfig{Enabled: true, Strategy: "tpm2"},
 			},
 			want: true,
 		},
 		{
 			name: "backend case-insensitive",
 			cfg: Config{
-				Storage: StorageConfig{Backend: "QRDB"},
-				Barrier: BarrierConfig{Enabled: true, Strategy: "none"},
+				Datastore: DatastoreConfig{},
+				Barrier:   BarrierConfig{Enabled: true, Strategy: "none"},
 			},
 			want: true,
 		},
 		{
-			name: "non-qrdb storage backend",
+			name: "local engine choice does not affect support (standalone mode)",
 			cfg: Config{
-				Storage: StorageConfig{Backend: "file"},
-				Barrier: BarrierConfig{Enabled: true, Strategy: "passphrase"},
+				Datastore: DatastoreConfig{Engine: "file"},
+				Barrier:   BarrierConfig{Enabled: true, Strategy: "passphrase"},
 			},
-			want: false,
+			want: true,
 		},
 		{
 			name: "remote qrdb transport (no node to adopt a barrier from)",
 			cfg: Config{
-				Storage: StorageConfig{Backend: "qrdb", QRDB: QRDBConfig{Transport: "rest"}},
-				Barrier: BarrierConfig{Enabled: true, Strategy: "passphrase"},
+				Datastore: DatastoreConfig{Mode: "remote", Remote: DatastoreRemoteConfig{Transport: "rest"}},
+				Barrier:   BarrierConfig{Enabled: true, Strategy: "passphrase"},
 			},
 			want: false,
 		},
 		{
 			name: "barrier disabled",
 			cfg: Config{
-				Storage: StorageConfig{Backend: "qrdb", QRDB: QRDBConfig{Transport: "embedded"}},
-				Barrier: BarrierConfig{Enabled: false},
+				Datastore: DatastoreConfig{},
+				Barrier:   BarrierConfig{Enabled: false},
 			},
 			want: false,
 		},
 		{
 			name: "strategy not node-flip-wired (pkcs11)",
 			cfg: Config{
-				Storage: StorageConfig{Backend: "qrdb", QRDB: QRDBConfig{Transport: "embedded"}},
-				Barrier: BarrierConfig{Enabled: true, Strategy: "pkcs11"},
+				Datastore: DatastoreConfig{},
+				Barrier:   BarrierConfig{Enabled: true, Strategy: "pkcs11"},
 			},
 			want: false,
 		},
@@ -1361,7 +1411,7 @@ func TestValidate_CredentialsBarrierStrategy(t *testing.T) {
 
 	t.Run("supported configuration passes", func(t *testing.T) {
 		cfg := baseline()
-		cfg.Storage = StorageConfig{Backend: "qrdb", Path: "/data", QRDB: QRDBConfig{Transport: "embedded"}}
+		cfg.Datastore = DatastoreConfig{Path: "/data"}
 		cfg.Barrier = BarrierConfig{Enabled: true, Strategy: "passphrase"}
 		cfg.Credentials = CredentialsConfig{SealStrategy: "barrier"}
 
@@ -1372,7 +1422,9 @@ func TestValidate_CredentialsBarrierStrategy(t *testing.T) {
 
 	t.Run("unsupported configuration is a typed error", func(t *testing.T) {
 		cfg := baseline()
-		cfg.Storage = StorageConfig{Backend: "file", Path: "/data"}
+		cfg.Datastore = DatastoreConfig{Mode: "remote", Remote: DatastoreRemoteConfig{
+			Address: "https://qrdb.example.com:63002", Transport: "rest",
+		}}
 		cfg.Barrier = BarrierConfig{Enabled: true, Strategy: "passphrase"}
 		cfg.Credentials = CredentialsConfig{SealStrategy: "barrier"}
 
@@ -1391,7 +1443,7 @@ func TestValidate_CredentialsBarrierStrategy(t *testing.T) {
 
 	t.Run("non-barrier strategy is unaffected by storage/barrier shape", func(t *testing.T) {
 		cfg := baseline()
-		cfg.Storage = StorageConfig{Backend: "file", Path: "/data"}
+		cfg.Datastore = DatastoreConfig{Engine: "file", Path: "/data"}
 		cfg.Credentials = CredentialsConfig{SealStrategy: "manual"}
 
 		if err := cfg.Validate(); err != nil {
@@ -1414,7 +1466,7 @@ func TestValidate_NoisePort(t *testing.T) {
 				Protocols: ProtocolsConfig{Noise: true},
 				Server:    ServerConfig{NoisePort: 9000},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Datastore: DatastoreConfig{Engine: "pebble", Path: "/data"},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			},
@@ -1426,7 +1478,7 @@ func TestValidate_NoisePort(t *testing.T) {
 				Protocols: ProtocolsConfig{Noise: true},
 				Server:    ServerConfig{NoisePort: 0},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Datastore: DatastoreConfig{Engine: "pebble", Path: "/data"},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			},
@@ -1439,7 +1491,7 @@ func TestValidate_NoisePort(t *testing.T) {
 				Protocols: ProtocolsConfig{Noise: true},
 				Server:    ServerConfig{NoisePort: 70000},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Datastore: DatastoreConfig{Engine: "pebble", Path: "/data"},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			},
@@ -1472,7 +1524,7 @@ func TestValidate_UnixSocketProtocol(t *testing.T) {
 			Protocols: ProtocolsConfig{REST: true},
 			Server:    ServerConfig{RESTPort: 8443},
 			Logging:   LoggingConfig{Level: "info", Format: "json"},
-			Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+			Datastore: DatastoreConfig{Path: "/data"},
 			TLS:       TLSConfig{Enabled: true},
 			Default:   "pkcs8",
 			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
@@ -1539,7 +1591,7 @@ func TestValidate_RNGMode(t *testing.T) {
 			Protocols: ProtocolsConfig{REST: true},
 			Server:    ServerConfig{RESTPort: 8443},
 			Logging:   LoggingConfig{Level: "info", Format: "json"},
-			Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+			Datastore: DatastoreConfig{Path: "/data"},
 			TLS:       TLSConfig{Enabled: true},
 			Default:   "pkcs8",
 			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
@@ -1646,7 +1698,7 @@ func TestValidate_PhoneBackend(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends: BackendsConfig{
@@ -1661,7 +1713,7 @@ func TestValidate_PhoneBackend(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends: BackendsConfig{
@@ -1676,7 +1728,7 @@ func TestValidate_PhoneBackend(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends: BackendsConfig{
@@ -1692,7 +1744,7 @@ func TestValidate_PhoneBackend(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends: BackendsConfig{
@@ -1708,7 +1760,7 @@ func TestValidate_PhoneBackend(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				Datastore: DatastoreConfig{Path: "/data"},
 				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends: BackendsConfig{
@@ -1743,7 +1795,7 @@ func TestValidate_SoftwareBackendEmptyPath(t *testing.T) {
 		Protocols: ProtocolsConfig{REST: true},
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+		Datastore: DatastoreConfig{Path: "/data"},
 		TLS:       TLSConfig{Enabled: true},
 		Default:   "software",
 		Backends: BackendsConfig{
@@ -1805,7 +1857,7 @@ func TestValidate_UnixProtocolCaseSensitivity(t *testing.T) {
 		Protocols: ProtocolsConfig{REST: true},
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+		Datastore: DatastoreConfig{Path: "/data"},
 		TLS:       TLSConfig{Enabled: true},
 		Default:   "pkcs8",
 		Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
@@ -1817,79 +1869,48 @@ func TestValidate_UnixProtocolCaseSensitivity(t *testing.T) {
 	}
 }
 
-// TestStorageConfig_QRDB tests validation of QRDB storage backend configuration.
-func TestStorageConfig_QRDB(t *testing.T) {
+// TestDatastoreConfig_Remote tests validation of the "remote" datastore mode.
+func TestDatastoreConfig_Remote(t *testing.T) {
 	tests := []struct {
 		name      string
-		storage   StorageConfig
+		datastore DatastoreConfig
 		wantError bool
 		errSubstr string
 	}{
 		{
-			name: "valid qrdb config",
-			storage: StorageConfig{
-				Backend: "qrdb",
-				QRDB: QRDBConfig{
-					Address:   "https://localhost:63002",
-					Transport: "rest",
-				},
-			},
+			name:      "valid remote config",
+			datastore: DatastoreConfig{Mode: "remote", Remote: DatastoreRemoteConfig{Address: "https://localhost:63002", Transport: "rest"}},
 			wantError: false,
 		},
 		{
-			name: "qrdb missing address",
-			storage: StorageConfig{
-				Backend: "qrdb",
-				QRDB: QRDBConfig{
-					Transport: "rest",
-				},
-			},
+			name:      "remote missing address",
+			datastore: DatastoreConfig{Mode: "remote", Remote: DatastoreRemoteConfig{Transport: "rest"}},
 			wantError: true,
-			errSubstr: "qrdb storage address is required",
+			errSubstr: "datastore.remote.address is required",
 		},
 		{
-			name: "qrdb does not require path",
-			storage: StorageConfig{
-				Backend: "qrdb",
-				Path:    "",
-				QRDB: QRDBConfig{
-					Address:   "https://node1:63002",
-					Transport: "grpc",
-				},
-			},
+			name:      "remote does not require path",
+			datastore: DatastoreConfig{Mode: "remote", Remote: DatastoreRemoteConfig{Address: "https://node1:63002", Transport: "grpc"}, Path: ""},
 			wantError: false,
 		},
 		{
-			name: "qrdb with tls",
-			storage: StorageConfig{
-				Backend: "qrdb",
-				QRDB: QRDBConfig{
-					Address:   "https://node1:63002",
-					Transport: "rest",
-					TLS: TLSConfig{
-						Enabled:  true,
-						CertFile: "/path/to/cert.pem",
-						KeyFile:  "/path/to/key.pem",
-					},
-				},
-			},
+			name: "remote with tls",
+			datastore: DatastoreConfig{Mode: "remote", Remote: DatastoreRemoteConfig{Address: "https://node1:63002", Transport: "rest", TLS: TLSConfig{
+				Enabled:  true,
+				CertFile: "/path/to/cert.pem",
+				KeyFile:  "/path/to/key.pem",
+			}}},
 			wantError: false,
 		},
 		{
-			name: "file backend still requires path",
-			storage: StorageConfig{
-				Backend: "file",
-				Path:    "",
-			},
+			name:      "standalone file engine still requires path",
+			datastore: DatastoreConfig{Engine: "file", Path: ""},
 			wantError: true,
-			errSubstr: "storage path must be specified",
+			errSubstr: "datastore.path must be specified",
 		},
 		{
-			name: "memory backend requires path",
-			storage: StorageConfig{
-				Backend: "memory",
-				Path:    "/data",
-			},
+			name:      "standalone memory engine works with a path set",
+			datastore: DatastoreConfig{Engine: "memory", Path: "/data"},
 			wantError: false,
 		},
 	}
@@ -1900,7 +1921,7 @@ func TestStorageConfig_QRDB(t *testing.T) {
 				Protocols: ProtocolsConfig{Unix: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   tt.storage,
+				Datastore: tt.datastore,
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			}
@@ -1923,14 +1944,15 @@ func TestStorageConfig_QRDB(t *testing.T) {
 	}
 }
 
-// TestStorageConfig_QRDBDefaults verifies the zero value of QRDBConfig.
-func TestStorageConfig_QRDBDefaults(t *testing.T) {
-	sc := StorageConfig{Backend: "file", Path: "/data"}
-	if sc.QRDB.Address != "" {
-		t.Errorf("QRDBConfig.Address zero value = %q, want empty", sc.QRDB.Address)
+// TestDatastoreRemoteConfig_ZeroValue verifies the zero value of
+// DatastoreRemoteConfig.
+func TestDatastoreRemoteConfig_ZeroValue(t *testing.T) {
+	sc := DatastoreConfig{Engine: "file", Path: "/data"}
+	if sc.Remote.Address != "" {
+		t.Errorf("DatastoreRemoteConfig.Address zero value = %q, want empty", sc.Remote.Address)
 	}
-	if sc.QRDB.Transport != "" {
-		t.Errorf("QRDBConfig.Transport zero value = %q, want empty", sc.QRDB.Transport)
+	if sc.Remote.Transport != "" {
+		t.Errorf("DatastoreRemoteConfig.Transport zero value = %q, want empty", sc.Remote.Transport)
 	}
 }
 
@@ -2063,22 +2085,21 @@ func TestConfig_ComplianceGaps_ClusterCAKeyProtection(t *testing.T) {
 	}
 }
 
-// TestConfig_ComplianceGaps_RBACWithoutIdentityPlane verifies that enabling
-// RBAC against a storage backend that provides no qrdb identity plane is
-// reported as a posture gap.
-//
-// This is a fail-open, not a fail-closed: auth.enable_rbac=true with a non-qrdb
-// backend leaves Server.rbacAuthorizer nil, and every transport (REST, gRPC,
-// QUIC, MCP) then admits every authenticated caller with every permission. The
-// operator asked for role enforcement and silently got none, so the daemon must
-// refuse to start.
-func TestConfig_ComplianceGaps_RBACWithoutIdentityPlane(t *testing.T) {
+// TestConfig_ComplianceGaps_RBACAlwaysHasIdentityPlane verifies that enabling
+// RBAC never reports a posture gap regardless of the configured datastore
+// engine or mode: every deployment is qrdb-backed now (standalone or
+// remote), so the qrdb identity plane RBAC's authorizer needs is always
+// available (see storage_factory.go and qrdb_storage.go). This replaces the
+// old "RBAC enabled without an identity plane" gap, which only existed
+// because a "file"/"memory"/"pebble" storage.backend used to build a private,
+// non-qrdb storage stack (go-xkms#1345).
+func TestConfig_ComplianceGaps_RBACAlwaysHasIdentityPlane(t *testing.T) {
 	// baseline returns a config that is compliant on every other dimension, so
-	// any gap reported is attributable to the RBAC/storage combination alone.
-	// The barrier strategy matters: selecting the qrdb backend also brings the
-	// embedded data plane under the auto-unseal check, and a software strategy
-	// never auto-unseals (there is no config-sourced secret), which would
-	// report its own gap and mask the one under test. A hardware strategy
+	// any gap reported is attributable to the RBAC/datastore combination
+	// alone. The barrier strategy matters: it also brings the embedded data
+	// plane under the auto-unseal check, and a software strategy never
+	// auto-unseals (there is no config-sourced secret), which would report
+	// its own gap and mask the one under test. A hardware strategy
 	// auto-unseals, so it closes that gap without requiring real hardware —
 	// this check is config-only (BarrierConfig.IsHardwareSealStrategy).
 	baseline := func() *Config {
@@ -2095,35 +2116,25 @@ func TestConfig_ComplianceGaps_RBACWithoutIdentityPlane(t *testing.T) {
 	tests := []struct {
 		name       string
 		enableRBAC bool
-		backend    string
-		wantGap    bool
+		engine     string
+		mode       string
 	}{
-		{"rbac on, qrdb backend", true, "qrdb", false},
-		{"rbac on, qrdb backend cased", true, "QRDB", false},
-		{"rbac on, pebble backend", true, "pebble", true},
-		{"rbac on, file backend", true, "file", true},
-		{"rbac on, memory backend", true, "memory", true},
-		{"rbac on, unset backend", true, "", true},
-		{"rbac off, pebble backend", false, "pebble", false},
-		{"rbac off, unset backend", false, "", false},
+		{"rbac on, pebble engine, standalone", true, "pebble", "standalone"},
+		{"rbac on, file engine, standalone", true, "file", "standalone"},
+		{"rbac on, memory engine, standalone", true, "memory", "standalone"},
+		{"rbac on, unset engine", true, "", ""},
+		{"rbac off, pebble engine", false, "pebble", "standalone"},
+		{"rbac off, unset engine", false, "", ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := baseline()
 			c.Auth.EnableRBAC = tt.enableRBAC
-			c.Storage.Backend = tt.backend
+			c.Datastore.Engine = tt.engine
+			c.Datastore.Mode = tt.mode
 
 			gaps := c.ComplianceGaps()
-			if tt.wantGap {
-				if len(gaps) != 1 {
-					t.Fatalf("want exactly the RBAC gap, got %d: %v", len(gaps), gaps)
-				}
-				if !strings.Contains(gaps[0], "enable_rbac") {
-					t.Errorf("gap should name auth.enable_rbac, got %q", gaps[0])
-				}
-				return
-			}
 			if len(gaps) != 0 {
 				t.Errorf("want no gaps, got %v", gaps)
 			}

@@ -35,7 +35,7 @@ const clusterCACacheSubdir = "cluster-ca"
 // non-cluster deployments, joining nodes, or the first node on a subsequent
 // boot after adoption), so it is safe to call unconditionally before Load.
 func (s *Server) adoptStagedClusterCACerts(certStore certstore.CertStore) error {
-	path := clusterca.StagedCACertsPath(filepath.Join(s.config.Storage.Path, clusterCACacheSubdir))
+	path := clusterca.StagedCACertsPath(filepath.Join(s.config.Datastore.Path, clusterCACacheSubdir))
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

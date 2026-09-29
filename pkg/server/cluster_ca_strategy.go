@@ -90,7 +90,7 @@ func (s *Server) clusterStrategyDeps(replicatedKey, replicatedCert storage.Backe
 		return nil, err
 	}
 	deps := &clustercapkg.StrategyDeps{
-		NodeLocalDataDir:      filepath.Join(s.config.Storage.Path, clusterCACacheSubdir),
+		NodeLocalDataDir:      filepath.Join(s.config.Datastore.Path, clusterCACacheSubdir),
 		CAConfig:              s.config.CA,
 		Protection:            protection,
 		ReplicatedKeyStorage:  replicatedKey,
