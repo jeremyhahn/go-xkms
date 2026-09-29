@@ -14,11 +14,15 @@
 package avr
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
+	"log/slog"
 	"testing"
 
 	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -111,4 +115,30 @@ func TestDeviceKeyEqualRefusesAnythingElse(t *testing.T) {
 	assert.False(t, key.Equal(pub))
 	assert.False(t, key.Equal(nil))
 	assert.False(t, key.Equal(&ecdsa.PrivateKey{}))
+}
+
+// TestKeyAttributes_UnknownCryptoTierFailsSafeAndLogs proves that
+// keyAttributes does not silently discard AttestLevel's error for a crypto
+// tier this host cannot classify: the record still comes back stamped
+// Unattested (the safe direction), and the reason is logged rather than lost
+// (go-xkms#1347).
+//
+// hasDeviceKey already refuses to call keyAttributes for an unclassified
+// tier through every current caller (ListKeys), so this drives the method
+// directly to pin the fallback for any future caller that reaches it without
+// that guard.
+func TestKeyAttributes_UnknownCryptoTierFailsSafeAndLogs(t *testing.T) {
+	var buf bytes.Buffer
+	b := &Backend{
+		config: testConfig(),
+		logger: slog.New(slog.NewTextHandler(&buf, nil)),
+		caps:   aggeneric.Caps{CryptoTier: aggeneric.CryptoTier(9)},
+	}
+
+	attrs := b.keyAttributes()
+
+	assert.Equal(t, types.AttestLevelUnattested, attrs.AttestLevel,
+		"an unclassified crypto tier must fail safe to Unattested, never assume a level")
+	assert.Contains(t, buf.String(), "device reports a crypto tier this host cannot classify",
+		"AttestLevel's error must be logged instead of discarded")
 }

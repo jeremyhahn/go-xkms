@@ -999,29 +999,23 @@ func TestParseChallengeAsDynamicPortAssignment_VariousChallenges(t *testing.T) {
 		challengeType string
 		expectedBase  string
 		expectedPort  uint16
-		expectError   bool
 	}{
-		{"standard http-01", "http-01", "http-01", 0, false},
-		{"standard enroll-01", "enroll-01", "enroll-01", 0, false},
-		{"enroll with port", "enroll-01-8080", "enroll-01", 8080, false},
-		{"device-attest with port", "device-attest-01-443", "device-attest-01", 443, false},
-		{"endorse with port", "endorse-01-9000", "endorse-01", 9000, false},
-		{"high port number", "http-01-65535", "http-01", 65535, false},
-		{"port 100", "http-01-100", "http-01", 100, false},
-		{"low port preserved", "http-01-80", "http-01-80", 0, false},
-		{"single part", "http", "http", 0, false},
+		{"standard http-01", "http-01", "http-01", 0},
+		{"standard enroll-01", "enroll-01", "enroll-01", 0},
+		{"enroll with port", "enroll-01-8080", "enroll-01", 8080},
+		{"device-attest with port", "device-attest-01-443", "device-attest-01", 443},
+		{"endorse with port", "endorse-01-9000", "endorse-01", 9000},
+		{"high port number", "http-01-65535", "http-01", 65535},
+		{"port 100", "http-01-100", "http-01", 100},
+		{"low port preserved", "http-01-80", "http-01-80", 0},
+		{"single part", "http", "http", 0},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			baseType, port, err := parseChallengeAsDynamicPortAssignment(tc.challengeType)
-			if tc.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tc.expectedBase, baseType)
-				assert.Equal(t, tc.expectedPort, port)
-			}
+			baseType, port := parseChallengeAsDynamicPortAssignment(tc.challengeType)
+			assert.Equal(t, tc.expectedBase, baseType)
+			assert.Equal(t, tc.expectedPort, port)
 		})
 	}
 }
