@@ -49,6 +49,44 @@ func WrapChallengeVerifier(cb *CircuitBreaker, fn common.ChallengeVerifierFunc) 
 	}
 }
 
+// WrapChallengeVerifierPerTarget returns a common.ChallengeVerifierFunc that
+// runs fn through a circuit breaker scoped to the identifier value
+// (authzValue) fn is asked to verify -- the domain http-01 dials, or the
+// zone dns-01 queries -- rather than through one breaker shared by every
+// call. breakers.TargetBreaker resolves (creating on first use) the breaker
+// for authzValue within cfg's group, bounded by cfg.Capacity/cfg.IdleTTL.
+//
+// This is what closes go-xkms#1189/#1190: WrapChallengeVerifier alone, fed a
+// single shared breaker, lets one account whose target never responds trip
+// that breaker for every other account's http-01 or dns-01 validation. Here
+// a failing target only ever affects its own breaker; every other target's
+// admission is decided independently.
+//
+// As with WrapChallengeVerifier, a verification the client refused without
+// contacting the target (validation.IsTargetRejected) is returned to the
+// caller but not recorded against the target's breaker -- the target is
+// chosen by the ACME client, so counting a refusal would let any account
+// open a breaker (now its own target's, no longer everyone's, but still
+// pointless) by naming an invalid or reserved address.
+//
+// breakers must not be nil; cfg.Group and cfg.NewConfig are required (see
+// TargetConfig).
+func WrapChallengeVerifierPerTarget(
+	breakers *Manager,
+	cfg TargetConfig,
+	fn common.ChallengeVerifierFunc,
+) common.ChallengeVerifierFunc {
+	return func(
+		resolver *net.Resolver,
+		ca common.CertificateAuthority,
+		authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
+		cb := breakers.TargetBreaker(cfg, authzValue)
+		return cb.execute(context.Background(), func() error {
+			return fn(resolver, ca, authzValue, challengePort, challengeToken, expectedKeyAuth)
+		}, validation.IsTargetRejected)
+	}
+}
+
 // WrapLogSubmitter returns a ct.LogSubmitter that runs inner.SubmitPrecert
 // through cb, so a CT log that stops responding trips the breaker instead of
 // blocking every certificate that requires an SCT from it.

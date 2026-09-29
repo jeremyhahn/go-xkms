@@ -68,9 +68,11 @@ func newResilienceTestClient(t *testing.T, tca *TrustedCA) *http.Client {
 // tca.config.ACME.Resilience and a caller-supplied challenge map into the
 // same breaker Manager and wrapping xkmsd's embedded ACME listener uses
 // (#820): GET /health reports a "storage" breaker (created unconditionally,
-// same as cmd/xkmsd/acme.go) and an "http01" breaker (created because the
-// challenge map below has an http-01 entry for WrapChallengeVerifiers to
-// wrap), both closed and the router healthy.
+// same as cmd/xkmsd/acme.go) and an "http01" per-target breaker group
+// (registered because the challenge map below has an http-01 entry for
+// WrapChallengeVerifiers to wrap -- see go-xkms#1189/#1190), the storage
+// breaker closed, the http01 group empty (no target has been validated
+// yet), and the router healthy.
 func TestTrustedCA_Serve_HealthReportsRealBreakers(t *testing.T) {
 	acmePort := getAvailablePort(t)
 
@@ -113,8 +115,9 @@ func TestTrustedCA_Serve_HealthReportsRealBreakers(t *testing.T) {
 	assert.True(t, status.Healthy)
 	require.Contains(t, status.Breakers, "storage", "the storage breaker must always be registered, matching xkmsd's unconditional wiring")
 	assert.Equal(t, "closed", status.Breakers["storage"].State)
-	require.Contains(t, status.Breakers, "http01", "the http-01 challenge verifier supplied via WithChallengeMap must be wrapped and registered")
-	assert.Equal(t, "closed", status.Breakers["http01"].State)
+	require.Contains(t, status.TargetGroups, "http01", "the http-01 challenge verifier supplied via WithChallengeMap must be wrapped and its per-target breaker group registered")
+	assert.Zero(t, status.TargetGroups["http01"].Open, "no target has been validated yet")
+	assert.Zero(t, status.TargetGroups["http01"].Tracked, "no target has been validated yet")
 
 	// Close the client's idle connections before cancelling. http.Server's
 	// Shutdown treats a handshaken connection that has not sent a request

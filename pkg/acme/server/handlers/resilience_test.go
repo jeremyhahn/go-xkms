@@ -248,3 +248,45 @@ func TestHealthHandler_ReportsOpenBreakerAndDegradation(t *testing.T) {
 	require.Contains(t, unhealthy.Breakers, "storage")
 	assert.Equal(t, "open", unhealthy.Breakers["storage"].State)
 }
+
+// TestHealthHandler_ReportsTargetGroupsWithoutAffectingHealthy verifies that
+// HealthHandler reports a bounded per-target breaker group summary in
+// TargetGroups, and that an open target breaker does NOT flip Healthy or
+// the response status the way an open named breaker (e.g. "storage") does
+// -- one account's failing validation target is expected, isolated behavior
+// (go-xkms#1189/#1190), not evidence the server itself is degraded.
+func TestHealthHandler_ReportsTargetGroupsWithoutAffectingHealthy(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	manager := circuitbreaker.NewManager()
+	service.breakers = manager
+
+	cfg := circuitbreaker.TargetConfig{
+		Group: "http01",
+		NewConfig: func(name string) *circuitbreaker.Config {
+			return &circuitbreaker.Config{Name: name, MaxFailures: 1, ResetTimeout: time.Hour}
+		},
+		Capacity: 10,
+	}
+	manager.RegisterTargetGroup(cfg)
+	manager.TargetBreaker(cfg, "bad.example.com").Trip()
+	manager.TargetBreaker(cfg, "good.example.com")
+
+	req := httptest.NewRequest(http.MethodGet, "/acme/health", nil)
+	w := httptest.NewRecorder()
+	service.HealthHandler(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "an open target-group breaker must not make the server report unhealthy")
+
+	var status HealthStatus
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &status))
+	assert.True(t, status.Healthy)
+	require.Contains(t, status.TargetGroups, "http01")
+	group := status.TargetGroups["http01"]
+	assert.Equal(t, 10, group.Capacity)
+	assert.Equal(t, 2, group.Tracked)
+	assert.Equal(t, 1, group.Open)
+	assert.Equal(t, 1, group.Closed)
+	assert.Contains(t, group.TopOpen, "bad.example.com")
+}

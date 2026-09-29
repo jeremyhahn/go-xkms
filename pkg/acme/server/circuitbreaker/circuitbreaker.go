@@ -554,6 +554,15 @@ func (cb *CircuitBreaker) Trip() {
 // Manager manages multiple circuit breakers for different services.
 type Manager struct {
 	breakers sync.Map // map[string]*CircuitBreaker
+
+	// targets holds one bounded targetTable per per-target breaker group
+	// (e.g. "http01", "dns01"; see TargetConfig/TargetBreaker). It is
+	// deliberately separate from breakers: breakers is a small, fixed set of
+	// operator-named dependencies safe to list in full (List/Status), while
+	// a targetTable's keys are attacker-influenced (whatever host or zone a
+	// caller names) and must stay bounded, so it is reported only through
+	// TargetGroupStatuses.
+	targets sync.Map // map[string]*targetTable
 }
 
 // NewManager creates a new circuit breaker manager.
