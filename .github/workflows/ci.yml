@@ -254,6 +254,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          # pr-scope.sh diffs against the merge-base with the PR's base
+          # branch (or the push's previous sha); a shallow clone can leave
+          # that commit unreachable, and the script is written to FAIL OPEN
+          # in that case (docs_only=false) rather than silently misclassify
+          # a real code change as docs-only -- so a shallow clone would not
+          # break correctness, only quietly disable the skip. Full history
+          # keeps the skip working.
           fetch-depth: 0
           persist-credentials: false
       - name: Classify this run (docs-only? which tier?)
@@ -285,8 +292,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          with:
-          persist-credentials: false
           persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -486,8 +491,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          with:
-          persist-credentials: false
           persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -768,8 +771,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          with:
-          persist-credentials: false
           persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -819,8 +820,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          with:
-          with:
           persist-credentials: false
           # changed-go-packages.sh diffs against needs.changes.outputs.merge_base,
           # a commit that has to actually be present in this job's own clone
@@ -894,8 +893,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          with:
-          persist-credentials: false
           persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -1059,8 +1056,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          with:
-          persist-credentials: false
           persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -1158,8 +1153,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          with:
-          persist-credentials: false
           persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -1296,8 +1289,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          with:
-          persist-credentials: false
           persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -1337,8 +1328,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          with:
-          persist-credentials: false
           persist-credentials: false
       # Gates target PRODUCTION Go (the shipped binary). Test files (_test.go)
       # may legitimately reach into pkg/* for fixtures, and docs are excluded.
@@ -1388,8 +1377,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          with:
-          persist-credentials: false
           persist-credentials: false
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
@@ -1562,8 +1549,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          with:
-          persist-credentials: false
           persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -1645,8 +1630,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          with:
-          persist-credentials: false
           persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
