@@ -49,7 +49,7 @@ func shortCoordinateECKey(t *testing.T, curve elliptic.Curve, size int) *ecdsa.P
 		if err != nil {
 			t.Fatalf("ParseRawPrivateKey(%d): %v", i, err)
 		}
-		if len(key.X.Bytes()) < size || len(key.Y.Bytes()) < size { //nolint:staticcheck // the test's subject is the short raw coordinate
+		if len(key.X.Bytes()) < size || len(key.Y.Bytes()) < size {
 			return key
 		}
 	}
@@ -66,8 +66,8 @@ func TestToECDSAPublicKeyAcceptsShortCoordinateMembers(t *testing.T) {
 	for _, tc := range ecJWKCurves {
 		t.Run(tc.name, func(t *testing.T) {
 			key := shortCoordinateECKey(t, tc.curve, tc.size)
-			x := key.X.Bytes() //nolint:staticcheck // the test's subject is the short raw coordinate
-			y := key.Y.Bytes() //nolint:staticcheck // the test's subject is the short raw coordinate
+			x := key.X.Bytes()
+			y := key.Y.Bytes()
 			if len(x) == tc.size && len(y) == tc.size {
 				t.Fatal("fixture is not short: both coordinates are full width")
 			}
@@ -103,8 +103,8 @@ func TestToECDSAPublicKeyRejectsOffCurvePoint(t *testing.T) {
 			}
 			x := make([]byte, tc.size)
 			y := make([]byte, tc.size)
-			key.X.FillBytes(x) //nolint:staticcheck // building a deliberately invalid JWK
-			key.Y.FillBytes(y) //nolint:staticcheck // building a deliberately invalid JWK
+			key.X.FillBytes(x)
+			key.Y.FillBytes(y)
 			y[tc.size-1] ^= 0x01
 
 			jwk := &JWK{

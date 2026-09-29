@@ -92,7 +92,7 @@ func (c *Config) Validate() error {
 
 	// Validate region format (basic check)
 	if !isValidRegion(c.Region) {
-		return &errs.Detail{Err: ErrInvalidRegion, Detail: fmt.Sprintf("%s", c.Region)}
+		return &errs.Detail{Err: ErrInvalidRegion, Detail: c.Region}
 	}
 
 	// If static credentials are provided, both access key and secret must be present
@@ -227,7 +227,7 @@ func isValidRegion(region string) bool {
 			return false
 		}
 		for _, c := range part {
-			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
 				return false
 			}
 		}

@@ -23,7 +23,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,27 +32,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
 )
-
-// mockSigner implements crypto.Signer for testing
-type mockSigner struct {
-	pubKey     crypto.PublicKey
-	signFunc   func(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error)
-	publicFunc func() crypto.PublicKey
-}
-
-func (m *mockSigner) Public() crypto.PublicKey {
-	if m.publicFunc != nil {
-		return m.publicFunc()
-	}
-	return m.pubKey
-}
-
-func (m *mockSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	if m.signFunc != nil {
-		return m.signFunc(rand, digest, opts)
-	}
-	return nil, errors.New("mock sign not implemented")
-}
 
 // TestBackend_Get_SuccessPath tests Get when key is found but returns unsupported error
 func TestBackend_Get_SuccessPath(t *testing.T) {

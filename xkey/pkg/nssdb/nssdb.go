@@ -504,8 +504,8 @@ func (w *Writer) buildCertAttrs(cert *x509.Certificate, label string, serialDER 
 
 // buildTrustAttrs returns the attribute map for a trust object.
 func (w *Writer) buildTrustAttrs(cert *x509.Certificate, serialDER []byte) map[string][]byte {
-	sha1Sum := sha1.Sum(cert.Raw) //nolint:gosec
-	md5Sum := md5.Sum(cert.Raw)   //nolint:gosec
+	sha1Sum := sha1.Sum(cert.Raw) //nolint:gosec // NSS trust object requires the SHA1 fingerprint (CKA_CERT_SHA1_HASH)
+	md5Sum := md5.Sum(cert.Raw)   //nolint:gosec // NSS trust object requires the MD5 fingerprint (CKA_CERT_MD5_HASH)
 
 	return map[string][]byte{
 		"a0":        encodeUint32(ckoNSSTrust),            // CKA_CLASS
@@ -590,7 +590,7 @@ func (w *Writer) ensurePassword() error {
 
 // deriveIntermediateKey computes SHA1(globalSalt + "") for an empty password.
 func deriveIntermediateKey(globalSalt []byte) []byte {
-	h := sha1.New() //nolint:gosec
+	h := sha1.New() //nolint:gosec // NSS key4.db intermediate-key derivation is defined as SHA1(globalSalt + password); algorithm-mandated, not a security choice
 	h.Write(globalSalt)
 	// Empty password: no additional bytes written.
 	return h.Sum(nil)

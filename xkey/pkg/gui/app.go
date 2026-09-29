@@ -2150,8 +2150,8 @@ func NewApp(cfg *GUIConfig) *App {
 		mgr := a.pkcs11Service.GetManager()
 		if mgr != nil {
 			if conn, connErr := mgr.GetConnection(moduleID, slotID); connErr == nil {
-				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPIN) //nolint:staticcheck // SA4023: see below — stub build always errors.
-				if p11Err == nil {                                                              //nolint:staticcheck // SA4023: the !pkcs11 stub build always returns a non-nil error (branch statically dead there); real on-device registration runs in the pkcs11 build.
+				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPIN)
+				if p11Err == nil {
 					if pivErr := xkmssdk.RegisterPIVStore("pkcs11", p11Store); pivErr != nil {
 						a.log.Warn("failed to register PKCS#11 PIV store", "error", pivErr)
 					} else {
