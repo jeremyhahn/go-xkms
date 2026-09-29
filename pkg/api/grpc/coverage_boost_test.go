@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build !frost
-
 package grpc
 
 import (
@@ -115,18 +113,26 @@ func TestSealUnseal_WithBackend(t *testing.T) {
 	assert.Equal(t, plaintext, unsealResp.Plaintext)
 }
 
-func TestSeal_WithoutKeyID_ReturnsError(t *testing.T) {
+func TestSeal_WithoutKeyID_AutoProvisionsSealingKey(t *testing.T) {
 	service := setupExtendedTest(t)
 	defer xkms.Reset()
 
-	// Seal without key ID requires KeyAttributes in options, which is not
-	// provided — verifying the error path through xkms.SealWithBackend.
-	_, err := service.Seal(context.Background(), &pb.SealRequest{
-		Backend: "software", Data: []byte("backend-only seal"),
+	// Seal without a key ID resolves the tenant's default sealing key,
+	// auto-provisioning it on first use (see pkg/xkms/servicer_seal.go's
+	// sealingKey/ensureSealingKey), and the data round-trips through Unseal.
+	plaintext := []byte("backend-only seal")
+	sealResp, err := service.Seal(context.Background(), &pb.SealRequest{
+		Backend: "software", Data: plaintext,
 	})
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	require.NoError(t, err)
+	assert.NotEmpty(t, sealResp.Ciphertext)
+
+	unsealResp, err := service.Unseal(context.Background(), &pb.UnsealRequest{
+		Backend: sealResp.Backend, Ciphertext: sealResp.Ciphertext,
+		Nonce: sealResp.Nonce, Tag: sealResp.Tag,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, unsealResp.Plaintext)
 }
 
 func TestSeal_KeyNotFound(t *testing.T) {
