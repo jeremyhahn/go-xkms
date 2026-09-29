@@ -48,12 +48,12 @@ func TestSealUnseal(t *testing.T) {
 				}
 
 				srkAttrs := &types.KeyAttributes{
-					CN:             "srk-with-policy",
-					KeyAlgorithm:   x509.RSA,
-					KeyType:        types.KeyTypeStorage,
-					Password:       srkAuth,
-					PlatformPolicy: policyOpt,
-					StoreType:      types.StoreTPM2,
+					CN:           "srk-with-policy",
+					KeyAlgorithm: x509.RSA,
+					KeyType:      types.KeyTypeStorage,
+					Password:     srkAuth,
+					TPMPolicy:    platformPolicyName(policyOpt),
+					StoreType:    types.StoreTPM2,
 					TPMAttributes: &types.TPMAttributes{
 						Handle:        keyStoreHandle,
 						HandleType:    tpm2.TPMHTPersistent,
@@ -66,13 +66,13 @@ func TestSealUnseal(t *testing.T) {
 				assert.Nil(t, err)
 
 				keyAttrs := &types.KeyAttributes{
-					CN:             "test",
-					KeyAlgorithm:   x509.RSA,
-					KeyType:        types.KeyTypeCA,
-					Parent:         srkAttrs,
-					Password:       keyAuth,
-					PlatformPolicy: policyOpt,
-					StoreType:      types.StoreTPM2,
+					CN:           "test",
+					KeyAlgorithm: x509.RSA,
+					KeyType:      types.KeyTypeCA,
+					Parent:       srkAttrs,
+					Password:     keyAuth,
+					TPMPolicy:    platformPolicyName(policyOpt),
+					StoreType:    types.StoreTPM2,
 					TPMAttributes: &types.TPMAttributes{
 						Hierarchy: tpm2.TPMRHOwner,
 					}}
@@ -133,12 +133,12 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 		}
 
 		srkAttrs := &types.KeyAttributes{
-			CN:             "srk-with-policy",
-			KeyAlgorithm:   x509.RSA,
-			KeyType:        types.KeyTypeStorage,
-			Password:       srkAuth,
-			PlatformPolicy: true,
-			StoreType:      types.StoreTPM2,
+			CN:           "srk-with-policy",
+			KeyAlgorithm: x509.RSA,
+			KeyType:      types.KeyTypeStorage,
+			Password:     srkAuth,
+			TPMPolicy:    types.TPMPolicyPlatform,
+			StoreType:    types.StoreTPM2,
 			TPMAttributes: &types.TPMAttributes{
 				Handle:        keyStoreHandle,
 				HandleType:    tpm2.TPMHTPersistent,
@@ -151,13 +151,13 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 		assert.Nil(t, err)
 
 		keyAttrs := &types.KeyAttributes{
-			CN:             "test",
-			KeyAlgorithm:   x509.RSA,
-			KeyType:        types.KeyTypeCA,
-			Parent:         srkAttrs,
-			Password:       keyAuth,
-			PlatformPolicy: true,
-			StoreType:      types.StoreTPM2,
+			CN:           "test",
+			KeyAlgorithm: x509.RSA,
+			KeyType:      types.KeyTypeCA,
+			Parent:       srkAttrs,
+			Password:     keyAuth,
+			TPMPolicy:    types.TPMPolicyPlatform,
+			StoreType:    types.StoreTPM2,
 			TPMAttributes: &types.TPMAttributes{
 				Hierarchy: tpm2.TPMRHOwner,
 			}}

@@ -514,7 +514,7 @@ func TestConfig_Validate_PlatformPCRExplicit(t *testing.T) {
 }
 
 func TestConfig_ToTPMConfig(t *testing.T) {
-	config := &Config{Device: "/dev/tpmrm0", KeyDir: "/tmp/tpm-keys", UseSimulator: true, SRKHandle: 0x81000001, EKHandle: 0x81010001, Hash: "SHA-256", PlatformPolicy: true, PlatformPCR: 7, PlatformPCRBank: "SHA256"}
+	config := &Config{Device: "/dev/tpmrm0", KeyDir: "/tmp/tpm-keys", UseSimulator: true, SRKHandle: 0x81000001, EKHandle: 0x81010001, Hash: "SHA-256", PlatformPCR: 7, PlatformPCRBank: "SHA256"}
 	tpmConfig := config.ToTPMConfig()
 	if tpmConfig == nil {
 		t.Fatal("ToTPMConfig returned nil")

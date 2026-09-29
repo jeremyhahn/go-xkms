@@ -30,7 +30,7 @@ func createPSRK(t *testing.T, h *simHarness, soPIN, userPIN []byte) *types.KeyAt
 
 	psrkAttrs, err := PlatformSRKAttributesFromConfig(h.TPM.config)
 	require.NoError(t, err)
-	require.Equal(t, h.TPM.config.PlatformSRK.PlatformPolicy, psrkAttrs.PlatformPolicy,
+	require.Equal(t, h.TPM.config.PlatformSRK.PlatformPolicy, (psrkAttrs.TPMPolicy == types.TPMPolicyPlatform),
 		"the Platform SRK must carry the platform policy exactly when configured to")
 	psrkAttrs.Password = mustPassword(userPIN)
 	psrkAttrs.TPMAttributes.HierarchyAuth = mustPassword(soPIN)
@@ -91,13 +91,13 @@ func TestSessionEncryption_SealUnderPSRKWithPINs(t *testing.T) {
 	psrkAttrs := createPSRK(t, h, []byte("so-pin-2d7c90e1b4"), userPIN)
 
 	keyAttrs := &types.KeyAttributes{
-		CN:             "session-encryption-pin-seal",
-		KeyType:        types.KeyTypeHMAC,
-		Parent:         psrkAttrs,
-		Password:       mustPassword(objectPIN),
-		PlatformPolicy: true,
-		SealData:       types.NewSealData(secret),
-		StoreType:      types.StoreTPM2,
+		CN:        "session-encryption-pin-seal",
+		KeyType:   types.KeyTypeHMAC,
+		Parent:    psrkAttrs,
+		Password:  mustPassword(objectPIN),
+		TPMPolicy: types.TPMPolicyPlatform,
+		SealData:  types.NewSealData(secret),
+		StoreType: types.StoreTPM2,
 	}
 
 	bus := capture(h)
@@ -131,12 +131,12 @@ func TestSessionEncryption_AutoUnsealThroughPCRBranch(t *testing.T) {
 	pcrBranchParent.Password = nil
 
 	keyAttrs := &types.KeyAttributes{
-		CN:             "session-encryption-auto-unseal",
-		KeyType:        types.KeyTypeHMAC,
-		Parent:         &pcrBranchParent,
-		PlatformPolicy: true,
-		SealData:       types.NewSealData(secret),
-		StoreType:      types.StoreTPM2,
+		CN:        "session-encryption-auto-unseal",
+		KeyType:   types.KeyTypeHMAC,
+		Parent:    &pcrBranchParent,
+		TPMPolicy: types.TPMPolicyPlatform,
+		SealData:  types.NewSealData(secret),
+		StoreType: types.StoreTPM2,
 	}
 
 	bus := capture(h)

@@ -235,8 +235,8 @@ func TestCreateKeySessionWithPlatformPolicy(t *testing.T) {
 	tpmImpl := tpm.(*TPM2)
 
 	keyAttrs := &types.KeyAttributes{
-		CN:             "test-key",
-		PlatformPolicy: true,
+		CN:        "test-key",
+		TPMPolicy: types.TPMPolicyPlatform,
 	}
 
 	// This test will fail because PlatformPolicySession requires TPM operations
@@ -260,9 +260,9 @@ func TestCreateKeySessionWithPassword(t *testing.T) {
 	tpmImpl := tpm.(*TPM2)
 
 	keyAttrs := &types.KeyAttributes{
-		CN:             "test-key",
-		PlatformPolicy: false,
-		Password:       mustPassword([]byte("test-password")),
+		CN: "test-key",
+
+		Password: mustPassword([]byte("test-password")),
 	}
 
 	session, closer, err := tpmImpl.CreateKeySession(keyAttrs)
@@ -295,9 +295,9 @@ func TestCreateKeySessionWithNilPassword(t *testing.T) {
 	tpmImpl := tpm.(*TPM2)
 
 	keyAttrs := &types.KeyAttributes{
-		CN:             "test-key",
-		PlatformPolicy: false,
-		Password:       nil,
+		CN: "test-key",
+
+		Password: nil,
 	}
 
 	session, closer, err := tpmImpl.CreateKeySession(keyAttrs)
@@ -333,9 +333,9 @@ func TestCreateKeySessionPasswordError(t *testing.T) {
 	errPassword := &errorPasswordForSession{err: errors.New("password error")}
 
 	keyAttrs := &types.KeyAttributes{
-		CN:             "test-key",
-		PlatformPolicy: false,
-		Password:       errPassword,
+		CN: "test-key",
+
+		Password: errPassword,
 	}
 
 	_, _, err := tpmImpl.CreateKeySession(keyAttrs)
@@ -369,10 +369,10 @@ func TestCreateSessionWithNilParent(t *testing.T) {
 	tpmImpl := tpm.(*TPM2)
 
 	keyAttrs := &types.KeyAttributes{
-		CN:             "test-key",
-		PlatformPolicy: false,
-		Password:       mustPassword([]byte("test-password")),
-		Parent:         nil,
+		CN: "test-key",
+
+		Password: mustPassword([]byte("test-password")),
+		Parent:   nil,
 	}
 
 	// When parent is nil, it should call CreateKeySession
@@ -479,11 +479,11 @@ func TestLoadKeyPairPasswordError(t *testing.T) {
 	errPassword := &errorPasswordForSession{err: errors.New("password error")}
 
 	keyAttrs := &types.KeyAttributes{
-		CN:             "test-key",
-		KeyType:        types.KeyTypeTPM,
-		Parent:         ekAttrs,
-		Password:       errPassword,
-		PlatformPolicy: false,
+		CN:       "test-key",
+		KeyType:  types.KeyTypeTPM,
+		Parent:   ekAttrs,
+		Password: errPassword,
+
 		TPMAttributes: &types.TPMAttributes{
 			Handle: 0x81000003,
 		},
@@ -597,13 +597,13 @@ func TestKeyAttributesPasswordExtraction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			keyAttrs := &types.KeyAttributes{
-				CN:             "test",
-				Password:       tt.password,
-				PlatformPolicy: tt.platformPolicy,
+				CN:        "test",
+				Password:  tt.password,
+				TPMPolicy: platformPolicyName(tt.platformPolicy),
 			}
 
 			var auth []byte
-			if keyAttrs.Password != nil && !keyAttrs.PlatformPolicy {
+			if keyAttrs.Password != nil && (keyAttrs.TPMPolicy != types.TPMPolicyPlatform) {
 				auth = keyAttrs.Password.Bytes()
 			}
 

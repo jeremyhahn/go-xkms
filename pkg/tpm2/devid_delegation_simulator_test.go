@@ -452,12 +452,12 @@ func TestCreateIAK_PlatformPolicyProvisionsThePlatformDelegation(t *testing.T) {
 // refuse a moved platform.
 func TestIDevIDAttributes_ColdCacheKeepsPlatformPolicy(t *testing.T) {
 	h := newDelegationHarness(t, func(c *Config) { c.IDevID.PlatformPolicy = true })
-	require.True(t, h.IDevID.PlatformPolicy, "provisioning recorded platform-policy")
+	require.True(t, (h.IDevID.TPMPolicy == types.TPMPolicyPlatform), "provisioning recorded platform-policy")
 
 	h.TPM.idevidAttrs = nil // the cold cache a restarted process sees
 	cold, err := h.TPM.IDevIDAttributes()
 	require.NoError(t, err)
-	assert.True(t, cold.PlatformPolicy,
+	assert.True(t, (cold.TPMPolicy == types.TPMPolicyPlatform),
 		"a rebuild from configuration must keep platform-policy, or the binding is lost on restart")
 
 	digest := sha256.Sum256([]byte("signing after a restart"))
@@ -477,12 +477,12 @@ func TestIDevIDAttributes_ColdCacheKeepsPlatformPolicy(t *testing.T) {
 // rebuilt key, and that session no longer builds once the platform moves.
 func TestIAKAttributes_ColdCacheKeepsPlatformPolicy(t *testing.T) {
 	h := newDelegationHarness(t, func(c *Config) { c.IAK.PlatformPolicy = true })
-	require.True(t, h.IAK.PlatformPolicy, "provisioning recorded platform-policy")
+	require.True(t, (h.IAK.TPMPolicy == types.TPMPolicyPlatform), "provisioning recorded platform-policy")
 
 	h.TPM.iakAttrs = nil // the cold cache a restarted process sees
 	cold, err := h.TPM.IAKAttributes()
 	require.NoError(t, err)
-	assert.True(t, cold.PlatformPolicy,
+	assert.True(t, (cold.TPMPolicy == types.TPMPolicyPlatform),
 		"a rebuild from configuration must keep platform-policy, or the binding is lost on restart")
 
 	quote := func(auth tpm2.Session) error {

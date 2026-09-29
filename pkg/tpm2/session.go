@@ -630,7 +630,7 @@ func (tpm *TPM2) CreateSession(
 		return tpm.CreateKeySession(keyAttrs)
 	}
 
-	if keyAttrs.Parent.PlatformPolicy {
+	if keyAttrs.Parent.TPMPolicy == types.TPMPolicyPlatform {
 
 		// Determine whether the parent has a meaningful (non-empty) auth value.
 		// A nil Password or a Password with zero-length bytes means "no auth" and
@@ -709,7 +709,7 @@ func (tpm *TPM2) devidKeySession(
 		}
 		keyAuth = keyAttrs.Password.Bytes()
 	}
-	if len(keyAuth) == 0 && keyAttrs.PlatformPolicy {
+	if len(keyAuth) == 0 && keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		return tpm.devidPlatformDelegatedSession(kind, keyAttrs)
 	}
 	return tpm.objectAuthSession(keyAuth, encryptNone)
@@ -832,7 +832,7 @@ func (tpm *TPM2) createKeySession(
 			}
 			return session, closer, err
 		}
-	} else if keyAttrs.PlatformPolicy {
+	} else if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
 
 		// Determine whether the key has a meaningful (non-empty) auth value.
 		// See CreateSession for the full rationale on why empty auth must be

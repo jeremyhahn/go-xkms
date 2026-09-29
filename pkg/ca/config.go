@@ -113,18 +113,15 @@ type Identity struct {
 // =============================================================================
 //
 // These types describe the "keystores:" block that the platform YAML
-// declares per CA identity: per-backend settings (SRK handle, PIN, password,
-// platform policy) for the backends its Keys[*] StoreType names. They are
+// declares per CA identity: per-backend settings (SRK handle, PIN, password)
+// for the backends its Keys[*] StoreType names. A TPM CA key's policy is its
+// own KeyConfig.TPMPolicy. They are
 // optional; a nil CAKeystoresConfig (or nil sub-field) means that backend
 // uses its zero-value settings, not that the backend goes unused.
 
 // CAKeystoreSoftwareConfig carries per-identity configuration for the
 // software (PKCS#8) backend.
 type CAKeystoreSoftwareConfig struct {
-	// PlatformPolicy enables TPM platform policy binding for software keys
-	// that are encrypted-at-rest under a TPM SRK.
-	PlatformPolicy bool `yaml:"platform-policy" json:"platform_policy" mapstructure:"platform-policy"`
-
 	// Password is the passphrase used to protect software CA keys at rest
 	// (encrypted PKCS#8). When non-empty it is applied as the fallback
 	// key-level password for any key in this identity whose KeyConfig.Password
@@ -148,8 +145,6 @@ type CAKeystoreTPM2Config struct {
 	// SRKAuth is a KMS URI resolving to the SRK password (e.g.
 	// "kms://ca/root/tpm2/srk-auth?ensure=true&len=32&enc=base64").
 	SRKAuth string `yaml:"srk-auth,omitempty" json:"srk_auth,omitempty" mapstructure:"srk-auth"`
-	// PlatformPolicy enables PCR-bound platform policy on TPM CA keys.
-	PlatformPolicy bool `yaml:"platform-policy" json:"platform_policy" mapstructure:"platform-policy"`
 }
 
 // CAKeystorePKCS11Config carries per-identity configuration for PKCS#11 backends.

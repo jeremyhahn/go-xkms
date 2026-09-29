@@ -460,7 +460,7 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 			},
 			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
-				assert.True(t, attrs.PlatformPolicy)
+				assert.True(t, (attrs.TPMPolicy == types.TPMPolicyPlatform))
 			},
 		},
 		{
@@ -659,7 +659,7 @@ func TestLDevIDAttributesFromConfigTableDriven(t *testing.T) {
 			},
 			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
-				assert.True(t, attrs.PlatformPolicy)
+				assert.True(t, (attrs.TPMPolicy == types.TPMPolicyPlatform))
 			},
 		},
 	}
@@ -785,7 +785,7 @@ func TestEKAttributesFromConfigTableDriven(t *testing.T) {
 			idevidConfig: nil,
 			expectError:  false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
-				assert.True(t, attrs.PlatformPolicy)
+				assert.True(t, (attrs.TPMPolicy == types.TPMPolicyPlatform))
 			},
 		},
 		{
@@ -873,7 +873,7 @@ func TestSRKAttributesFromConfigTableDriven(t *testing.T) {
 			},
 			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
-				assert.False(t, attrs.PlatformPolicy,
+				assert.False(t, (attrs.TPMPolicy == types.TPMPolicyPlatform),
 					"the shared SRK never carries a platform policy")
 				assert.Empty(t, attrs.TPMAttributes.Template.AuthPolicy.Buffer,
 					"no AuthPolicy may be baked into the shared SRK template")
@@ -992,7 +992,7 @@ func TestIAKAttributesFromConfigTableDriven(t *testing.T) {
 			},
 			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
-				assert.True(t, attrs.PlatformPolicy)
+				assert.True(t, (attrs.TPMPolicy == types.TPMPolicyPlatform))
 			},
 		},
 	}
@@ -1895,7 +1895,7 @@ func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, zeroTemplate, attrs.TPMAttributes.Template,
 			"IAKAttributesFromConfig must not populate TPMAttributes.Template; CreateIAK builds its own template")
-		assert.True(t, attrs.PlatformPolicy,
+		assert.True(t, (attrs.TPMPolicy == types.TPMPolicyPlatform),
 			"PlatformPolicy must still be conveyed by the attribute field")
 	})
 
@@ -1913,7 +1913,7 @@ func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, zeroTemplate, attrs.TPMAttributes.Template,
 			"IDevIDAttributesFromConfig must not populate TPMAttributes.Template; CreateIDevID selects the IDevID templates")
-		assert.True(t, attrs.PlatformPolicy,
+		assert.True(t, (attrs.TPMPolicy == types.TPMPolicyPlatform),
 			"PlatformPolicy must still be conveyed by the attribute field")
 	})
 
@@ -1931,7 +1931,7 @@ func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, zeroTemplate, attrs.TPMAttributes.Template,
 			"LDevIDAttributesFromConfig must not populate TPMAttributes.Template; CreateIDevID selects the LDevID template")
-		assert.True(t, attrs.PlatformPolicy,
+		assert.True(t, (attrs.TPMPolicy == types.TPMPolicyPlatform),
 			"PlatformPolicy must still be conveyed by the attribute field")
 	})
 

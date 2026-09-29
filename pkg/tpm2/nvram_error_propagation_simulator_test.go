@@ -24,10 +24,10 @@ func TestNVWrite_EveryCommandFailurePropagates(t *testing.T) {
 		return h.TPM.transport, func(tr transport.TPM) error {
 			h.TPM.transport = tr
 			keyAttrs := &types.KeyAttributes{
-				Parent:         ekAttrs,
-				Password:       mustPassword([]byte("test")),
-				PlatformPolicy: true,
-				SealData:       types.NewSealData([]byte("secret")),
+				Parent:    ekAttrs,
+				Password:  mustPassword([]byte("test")),
+				TPMPolicy: types.TPMPolicyPlatform,
+				SealData:  types.NewSealData([]byte("secret")),
 				TPMAttributes: &types.TPMAttributes{
 					Handle:    tpm2.TPMHandle(nvramOwnerIndex),
 					HashAlg:   tpm2.TPMAlgSHA256,
@@ -53,10 +53,10 @@ func TestNVRead_EveryCommandFailurePropagates(t *testing.T) {
 		require.NoError(t, err)
 
 		keyAttrs := &types.KeyAttributes{
-			Parent:         ekAttrs,
-			Password:       mustPassword([]byte("test")),
-			PlatformPolicy: true,
-			SealData:       types.NewSealData([]byte("secret")),
+			Parent:    ekAttrs,
+			Password:  mustPassword([]byte("test")),
+			TPMPolicy: types.TPMPolicyPlatform,
+			SealData:  types.NewSealData([]byte("secret")),
 			TPMAttributes: &types.TPMAttributes{
 				Handle:    tpm2.TPMHandle(nvramOwnerIndex),
 				HashAlg:   tpm2.TPMAlgSHA256,
@@ -91,8 +91,8 @@ func TestNVDefineCounter_EveryCommandFailurePropagates(t *testing.T) {
 		return h.TPM.transport, func(tr transport.TPM) error {
 			h.TPM.transport = tr
 			keyAttrs := &types.KeyAttributes{
-				Parent:         ekAttrs,
-				PlatformPolicy: true,
+				Parent:    ekAttrs,
+				TPMPolicy: types.TPMPolicyPlatform,
 				TPMAttributes: &types.TPMAttributes{
 					Handle:    tpm2.TPMHandle(nvramCounterIndex),
 					HashAlg:   tpm2.TPMAlgSHA256,
@@ -119,8 +119,8 @@ func TestNVDefineExtend_EveryCommandFailurePropagates(t *testing.T) {
 		return h.TPM.transport, func(tr transport.TPM) error {
 			h.TPM.transport = tr
 			keyAttrs := &types.KeyAttributes{
-				Parent:         ekAttrs,
-				PlatformPolicy: true,
+				Parent:    ekAttrs,
+				TPMPolicy: types.TPMPolicyPlatform,
 				TPMAttributes: &types.TPMAttributes{
 					Handle:    tpm2.TPMHandle(nvramExtendIndex),
 					HashAlg:   tpm2.TPMAlgSHA256,

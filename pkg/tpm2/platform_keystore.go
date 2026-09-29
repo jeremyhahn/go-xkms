@@ -683,17 +683,17 @@ func PlatformSRKAttributesFromConfig(config *Config) (*types.KeyAttributes, erro
 		if err != nil {
 			return nil, err
 		}
-		attrs.PlatformPolicy = platformPolicy
+		attrs.TPMPolicy = platformPolicyName(platformPolicy)
 		enableDAOnSRK(attrs)
 		return attrs, nil
 	}
 
 	// Minimal SRK attributes from keystore config
 	attrs := &types.KeyAttributes{
-		CN:             "srk",
-		KeyType:        types.KeyTypeStorage,
-		PlatformPolicy: platformPolicy,
-		StoreType:      types.StoreTPM2,
+		CN:        "srk",
+		KeyType:   types.KeyTypeStorage,
+		TPMPolicy: platformPolicyName(platformPolicy),
+		StoreType: types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Handle:     tpm2.TPMHandle(srkHandle),
 			HandleType: tpm2.TPMHTPersistent,

@@ -124,13 +124,13 @@ func createKey(
 	}
 
 	srkAttrs := &types.KeyAttributes{
-		CN:             "srk",
-		KeyAlgorithm:   x509.RSA,
-		KeyType:        types.KeyTypeTPM,
-		Parent:         ekAttrs,
-		Password:       mustPassword([]byte("srk-pass")),
-		PlatformPolicy: platformPolicy,
-		StoreType:      types.StoreTPM2,
+		CN:           "srk",
+		KeyAlgorithm: x509.RSA,
+		KeyType:      types.KeyTypeTPM,
+		Parent:       ekAttrs,
+		Password:     mustPassword([]byte("srk-pass")),
+		TPMPolicy:    platformPolicyName(platformPolicy),
+		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Handle:        keyStoreHandle,
 			HandleType:    tpm2.TPMHTPersistent,
@@ -145,13 +145,13 @@ func createKey(
 	}
 
 	return &types.KeyAttributes{
-		CN:             "key",
-		KeyAlgorithm:   x509.RSA,
-		KeyType:        types.KeyTypeCA,
-		Parent:         srkAttrs,
-		PlatformPolicy: platformPolicy,
-		Password:       mustPassword([]byte("key-pass")),
-		StoreType:      types.StoreTPM2,
+		CN:           "key",
+		KeyAlgorithm: x509.RSA,
+		KeyType:      types.KeyTypeCA,
+		Parent:       srkAttrs,
+		TPMPolicy:    platformPolicyName(platformPolicy),
+		Password:     mustPassword([]byte("key-pass")),
+		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		}}

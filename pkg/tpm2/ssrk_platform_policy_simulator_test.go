@@ -62,7 +62,7 @@ func TestProvisionSSRKHasNoAuthPolicy(t *testing.T) {
 
 	attrs, err := h.TPM.SSRKAttributes()
 	require.NoError(t, err)
-	assert.False(t, attrs.PlatformPolicy,
+	assert.False(t, (attrs.TPMPolicy == types.TPMPolicyPlatform),
 		"the shared SRK's attributes must not claim a platform policy")
 }
 
@@ -174,7 +174,7 @@ func TestLegacySSRKWithPlatformPolicyStillLoadable(t *testing.T) {
 	require.NoError(t, err)
 	legacy.TPMAttributes.Handle = tpm2.TPMHandle(legacyHandle)
 	legacy.TPMAttributes.HierarchyAuth = nil
-	legacy.PlatformPolicy = true
+	legacy.TPMPolicy = types.TPMPolicyPlatform
 	require.NoError(t, h.TPM.CreateSRK(legacy))
 
 	_, pub, err := h.TPM.ReadHandle(tpm2.TPMHandle(legacyHandle))
@@ -188,7 +188,7 @@ func TestLegacySSRKWithPlatformPolicyStillLoadable(t *testing.T) {
 
 	attrs, err := h.TPM.SSRKAttributes()
 	require.NoError(t, err, "a pre-existing policy-bound shared SRK must still be readable")
-	assert.False(t, attrs.PlatformPolicy,
+	assert.False(t, (attrs.TPMPolicy == types.TPMPolicyPlatform),
 		"the read path must not adopt a policy the shared SRK is never created with")
 	assert.Equal(t, tpm2.TPMHandle(legacyHandle), attrs.TPMAttributes.Handle)
 

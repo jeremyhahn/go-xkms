@@ -88,9 +88,6 @@ type CAKeystoresConfig struct {
 }
 
 type CAKeystoreSoftwareConfig struct {
-    // PlatformPolicy enables TPM platform-policy binding for software keys
-    // encrypted at rest under a TPM SRK.
-    PlatformPolicy bool   `yaml:"platform-policy"`
     // Password is the identity-wide fallback passphrase for software CA
     // keys. Applied to any key whose per-key KeyConfig.Password is empty.
     // When non-empty the key is written as encrypted PKCS#8 at rest.
@@ -105,8 +102,6 @@ type CAKeystoreTPM2Config struct {
     // SRKAuth is a KMS URI resolving to the SRK password, e.g.:
     //   kms://ca/root/tpm2/srk-auth?ensure=true&len=32&enc=base64
     SRKAuth string `yaml:"srk-auth,omitempty"`
-    // PlatformPolicy enables PCR-bound platform policy on TPM CA keys.
-    PlatformPolicy bool `yaml:"platform-policy"`
 }
 
 type CAKeystorePKCS11Config struct {
@@ -180,7 +175,6 @@ certificate-authority:
         tpm2:
           srk-handle: 0x81000001
           srk-auth: "${TPM_SRK_AUTH}"
-          platform-policy: true
 
     # Intermediate CA - Multi-algorithm support
     - subject:
@@ -205,7 +199,7 @@ certificate-authority:
           signature-algorithm: ECDSA-SHA256
           hash: SHA-256
           store: tpm2
-          platform-policy: true
+          tpm-policy: platform
 
         # TPM-backed RSA (compatibility)
         - algorithm: RSA
@@ -214,7 +208,7 @@ certificate-authority:
           signature-algorithm: SHA256-RSA
           hash: SHA-256
           store: tpm2
-          platform-policy: true
+          tpm-policy: platform
 
         # Software Ed25519 (performance)
         - algorithm: Ed25519
@@ -248,7 +242,7 @@ certificate-authority:
           slot: 0
           label: "RootCA-HSM"
           pin: "${HSM_PIN}"
-          platform-policy: true
+          tpm-policy: platform
 
     # Intermediate CA - HSM-protected
     - subject:
@@ -372,13 +366,11 @@ hash: SHA-256
 keystores:
   software:
     password: "${KEY_PASSWORD}"
-    platform-policy: true
 ```
 
 | Parameter | Description |
 |-----------|-------------|
 | `password` | Identity-wide fallback passphrase for software keys. Applied to any key in the identity whose per-key `KeyConfig.Password` is empty; the key file is written as encrypted PKCS#8 at rest. Source from a secrets manager or the node's PIN backend — do not embed secrets in YAML. |
-| `platform-policy` | Enables TPM platform-policy binding for software keys encrypted at rest under a TPM SRK. |
 
 ### TPM 2.0
 
@@ -387,14 +379,14 @@ keystores:
   tpm2:
     srk-handle: 0x81000001
     srk-auth: "kms://ca/root/tpm2/srk-auth?ensure=true&len=32&enc=base64"
-    platform-policy: true
 ```
 
 | Parameter | Description |
 |-----------|-------------|
 | `srk-handle` | Persistent TPM handle for the Storage Root Key wrapping CA keys, e.g. `0x81000001`. |
 | `srk-auth` | KMS URI resolving to the SRK password, e.g. `kms://ca/root/tpm2/srk-auth?ensure=true&len=32&enc=base64`. The xkms KMS client resolves this URI at startup. |
-| `platform-policy` | Enables PCR-bound platform policy on TPM CA keys. |
+
+A TPM CA key's policy is set per key, with `tpm-policy` in its key entry (see below). There is no identity-wide policy switch.
 
 ### PKCS#11 (HSM)
 
@@ -425,7 +417,7 @@ keys:
     signature-algorithm: ECDSA-SHA256
     hash: SHA-256
     store: tpm2
-    platform-policy: true
+    tpm-policy: platform
 
   # Secondary key - RSA for compatibility
   - algorithm: RSA

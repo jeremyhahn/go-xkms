@@ -483,13 +483,13 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 	}
 
 	attrs := &types.KeyAttributes{
-		CN:             config.CN,
-		Debug:          config.Debug,
-		KeyAlgorithm:   algorithm,
-		KeyType:        types.KeyTypeEndorsement,
-		Password:       ekPassword,
-		PlatformPolicy: config.PlatformPolicy,
-		StoreType:      types.StoreTPM2,
+		CN:           config.CN,
+		Debug:        config.Debug,
+		KeyAlgorithm: algorithm,
+		KeyType:      types.KeyTypeEndorsement,
+		Password:     ekPassword,
+		TPMPolicy:    platformPolicyName(config.PlatformPolicy),
+		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			CertHandle:    tpm2.TPMHandle(config.CertHandle),
 			Handle:        tpm2.TPMHandle(config.Handle),
@@ -667,7 +667,7 @@ func IAKAttributesFromConfig(
 		KeyAlgorithm:       algorithm,
 		KeyType:            types.KeyTypeAttestation,
 		Password:           password,
-		PlatformPolicy:     config.PlatformPolicy,
+		TPMPolicy:          platformPolicyName(config.PlatformPolicy),
 		SignatureAlgorithm: sigAlgo,
 		StoreType:          types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
@@ -792,7 +792,7 @@ func IDevIDAttributesFromConfig(config IDevIDConfig) (*types.KeyAttributes, erro
 		KeyAlgorithm:       algorithm,
 		KeyType:            types.KeyTypeIDevID,
 		Password:           password,
-		PlatformPolicy:     config.PlatformPolicy,
+		TPMPolicy:          platformPolicyName(config.PlatformPolicy),
 		SignatureAlgorithm: sigAlgo,
 		StoreType:          types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
@@ -878,7 +878,7 @@ func LDevIDAttributesFromConfig(config LDevIDConfig) (*types.KeyAttributes, erro
 		KeyAlgorithm:       algorithm,
 		KeyType:            types.KeyTypeIDevID,
 		Password:           password,
-		PlatformPolicy:     config.PlatformPolicy,
+		TPMPolicy:          platformPolicyName(config.PlatformPolicy),
 		SignatureAlgorithm: sigAlgo,
 		StoreType:          types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
@@ -972,4 +972,14 @@ func ParseCryptoHashAlgID(hash crypto.Hash) (tpm2.TPMAlgID, error) {
 		return 0, ErrInvalidCryptoHashAlgID
 	}
 	return tpmAlgID, nil
+}
+
+// platformPolicyName maps a provisioning configuration's platform-policy
+// switch to the TPM policy reference the key it describes carries: the
+// built-in platform policy, or none.
+func platformPolicyName(enabled bool) string {
+	if enabled {
+		return types.TPMPolicyPlatform
+	}
+	return ""
 }

@@ -1037,6 +1037,12 @@ type PasswordCacheConfig struct {
 
 // KeyAttributes contains all configuration parameters for a cryptographic key,
 // including algorithm selection, store configuration, and optional parent keys.
+// TPMPolicyPlatform is the built-in TPM policy every scope has: the platform
+// PCR (tpm2.DefaultPlatformPCR unless configured) OR the object's auth value.
+// It is the policy a TPM key gets when its caller names none, and it cannot
+// be created, updated or deleted.
+const TPMPolicyPlatform = "platform"
+
 type KeyAttributes struct {
 	// CN is the common name identifier for the key
 	CN string
@@ -1071,11 +1077,16 @@ type KeyAttributes struct {
 	// Password provides authentication for the key
 	Password Password
 
-	// PlatformPolicy indicates if platform-specific policies apply
-	PlatformPolicy bool
+	// TPMPolicy names the TPM policy the key's authPolicy is bound to. It is
+	// empty for no policy (the TCG primaries -- EK, Shared SRK -- carry
+	// none), TPMPolicyPlatform for the built-in platform policy, or the name
+	// of an authorized policy in the key's scope (pkg/tpmpolicy). A TPM
+	// cannot report an object's policy after creation, so this is the
+	// reference xkms records for it.
+	TPMPolicy string
 
 	// PasswordCache contains configuration for platform password caching.
-	// When PlatformPolicy is true and PasswordCache is set with Enabled=true,
+	// When TPMPolicy is TPMPolicyPlatform and PasswordCache is set with Enabled=true,
 	// the unsealed password is cached in memory to avoid repeated TPM operations.
 	PasswordCache *PasswordCacheConfig
 
@@ -1235,7 +1246,7 @@ func (attrs KeyAttributes) String() string {
 	fmt.Fprintf(&sb, "  Debug: %t\n", attrs.Debug)
 	fmt.Fprintf(&sb, "  Hash: %s\n", attrs.Hash.String())
 	fmt.Fprintf(&sb, "  Key Algorithm: %s\n", attrs.KeyAlgorithm)
-	fmt.Fprintf(&sb, "  Platform Policy: %t\n", attrs.PlatformPolicy)
+	fmt.Fprintf(&sb, "  TPM Policy: %s\n", attrs.TPMPolicy)
 	fmt.Fprintf(&sb, "  Signature Algorithm: %s\n", attrs.SignatureAlgorithm.String())
 	fmt.Fprintf(&sb, "  Store: %s\n", attrs.StoreType)
 	fmt.Fprintf(&sb, "  Type: %s\n", attrs.KeyType)
@@ -3555,11 +3566,11 @@ type KeyConfig struct {
 	// field's own memguard enclave rather than kept as a plain Go string. A
 	// nil pointer means unconfigured (an unprotected key); see SecretValue
 	// and NewPasswordFromSecretValue.
-	Password       *SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
-	Secret         string       `yaml:"secret,omitempty" json:"secret,omitempty" mapstructure:"secret"`
-	PlatformPolicy bool         `yaml:"platform-policy,omitempty" json:"platform_policy,omitempty" mapstructure:"platform-policy"`
-	Debug          bool         `yaml:"debug,omitempty" json:"debug,omitempty" mapstructure:"debug"`
-	Default        bool         `yaml:"default,omitempty" json:"default,omitempty" mapstructure:"default"`
+	Password  *SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
+	Secret    string       `yaml:"secret,omitempty" json:"secret,omitempty" mapstructure:"secret"`
+	TPMPolicy string       `yaml:"tpm-policy,omitempty" json:"tpm_policy,omitempty" mapstructure:"tpm-policy"`
+	Debug     bool         `yaml:"debug,omitempty" json:"debug,omitempty" mapstructure:"debug"`
+	Default   bool         `yaml:"default,omitempty" json:"default,omitempty" mapstructure:"default"`
 }
 
 // KeySerializer provides key serialization capabilities
@@ -3602,7 +3613,7 @@ func KeyAttributesFromConfig(config *KeyConfig) (*KeyAttributes, error) {
 		Debug:              config.Debug,
 		Hash:               hash,
 		KeyAlgorithm:       keyAlgo,
-		PlatformPolicy:     config.PlatformPolicy,
+		TPMPolicy:          config.TPMPolicy,
 		SignatureAlgorithm: sigAlgo,
 		StoreType:          storeType,
 		KeyType:            ParseKeyType(string(config.KeyType)),

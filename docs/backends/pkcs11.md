@@ -106,7 +106,6 @@ defer xkms.Close()
 | `LibraryConfig` | `config` | Library configuration file (e.g. `softhsm2.conf`) |
 | `PIN` | `pin` | User PIN. Minimum 4 characters when set |
 | `SOPIN` | `so-pin` | Security Officer PIN, for token initialization only |
-| `PlatformPolicy` | `platform-policy` | Apply platform-specific key policies |
 | `Slot` | `slot` | `*int`; alternative to `TokenLabel`. For YubiKey PIV this is the PIV slot (`0x9a`, `0x9c`, ...) |
 | `TokenLabel` | `label` | **Required**; how the slot is normally resolved |
 | `KeyStorage` | — | `storage.Backend` for key **metadata** only; key material stays on the token. Required |

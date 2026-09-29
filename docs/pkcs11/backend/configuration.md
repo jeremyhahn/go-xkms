@@ -50,7 +50,6 @@ override code).
 | `LibraryConfig` | `config` | no | Vendor config file path (for SoftHSM, the `softhsm2.conf`). |
 | `PIN` | `pin` | for use | User PIN (`CKU_USER`). Minimum 4 characters when set. |
 | `SOPIN` | `so-pin` | PIV / init | Security Officer PIN or YubiKey management key. Minimum 4 characters when set. |
-| `PlatformPolicy` | `platform-policy` | no | Platform policy flag carried on the config. |
 | `Slot` | `slot` | no | `*int`. Standard tokens: physical slot number. YubiKey PIV: the PIV slot (`0x9a`, `0x9c`, `0x9d`, `0x9e`). |
 | `TokenLabel` | `label` | **yes** | Token label; `Validate()` rejects an empty one. Preferred over `Slot` — slot numbers are not stable across reboots. |
 | `KeyStorage` | — | **yes** | `storage.Backend` for key **metadata only**. Key material stays in the HSM. |

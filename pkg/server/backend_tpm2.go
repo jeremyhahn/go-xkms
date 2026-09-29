@@ -101,7 +101,6 @@ func (s *Server) initTPM2Backend() error {
 		SimulatorHost:   s.config.Backends.TPM2.SimulatorHost,
 		SimulatorPort:   s.config.Backends.TPM2.SimulatorPort,
 		SRKHandle:       s.config.Backends.TPM2.SRKHandle,
-		PlatformPolicy:  s.config.Backends.TPM2.PlatformPolicy,
 		PlatformPCR:     s.config.Backends.TPM2.PlatformPCR,
 		PlatformPCRBank: s.config.Backends.TPM2.PlatformPCRBank,
 	}

@@ -181,12 +181,12 @@ func TestKeyAttributes_String(t *testing.T) {
 		{
 			name: "Basic RSA attributes",
 			attrs: KeyAttributes{
-				CN:                 "test-key",
-				Debug:              false,
-				Hash:               crypto.SHA256,
-				KeyAlgorithm:       x509.RSA,
-				KeyType:            KeyTypeSigning,
-				PlatformPolicy:     false,
+				CN:           "test-key",
+				Debug:        false,
+				Hash:         crypto.SHA256,
+				KeyAlgorithm: x509.RSA,
+				KeyType:      KeyTypeSigning,
+
 				SignatureAlgorithm: x509.SHA256WithRSA,
 				StoreType:          StoreSoftware,
 				RSAAttributes: &RSAAttributes{

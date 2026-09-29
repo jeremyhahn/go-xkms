@@ -184,13 +184,13 @@ func TestKeyHierarchyCreation(t *testing.T) {
 
 	// Create SRK under EK
 	srkAttrs := &types.KeyAttributes{
-		CN:             "test-hierarchy-srk",
-		KeyAlgorithm:   x509.RSA,
-		KeyType:        types.KeyTypeStorage,
-		Parent:         ekAttrs,
-		Password:       mustPassword([]byte("srk-test")),
-		PlatformPolicy: true,
-		StoreType:      types.StoreTPM2,
+		CN:           "test-hierarchy-srk",
+		KeyAlgorithm: x509.RSA,
+		KeyType:      types.KeyTypeStorage,
+		Parent:       ekAttrs,
+		Password:     mustPassword([]byte("srk-test")),
+		TPMPolicy:    types.TPMPolicyPlatform,
+		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Handle:        tpm2.TPMHandle(0x81000030),
 			HandleType:    tpm2.TPMHTPersistent,
@@ -204,13 +204,13 @@ func TestKeyHierarchyCreation(t *testing.T) {
 
 	// Create RSA key under SRK
 	rsaAttrs := &types.KeyAttributes{
-		CN:             "test-rsa-key",
-		KeyAlgorithm:   x509.RSA,
-		KeyType:        types.KeyTypeCA,
-		Parent:         srkAttrs,
-		Password:       mustPassword([]byte("rsa-test")),
-		PlatformPolicy: true,
-		StoreType:      types.StoreTPM2,
+		CN:           "test-rsa-key",
+		KeyAlgorithm: x509.RSA,
+		KeyType:      types.KeyTypeCA,
+		Parent:       srkAttrs,
+		Password:     mustPassword([]byte("rsa-test")),
+		TPMPolicy:    types.TPMPolicyPlatform,
+		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},

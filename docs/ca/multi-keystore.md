@@ -70,23 +70,20 @@ type CAKeystoresConfig struct {
 
 ```go
 type CAKeystoreSoftwareConfig struct {
-    PlatformPolicy bool   `yaml:"platform-policy"`
-    Password       string `yaml:"password,omitempty"`
+    Password string `yaml:"password,omitempty"`
 }
 ```
 
 | Field | YAML key | Description |
 |-------|----------|-------------|
-| `PlatformPolicy` | `platform-policy` | Enables TPM platform-policy binding for software keys encrypted at rest under a TPM SRK. |
 | `Password` | `password` | Identity-wide fallback passphrase for software keys (see Password Precedence below). |
 
 ### CAKeystoreTPM2Config
 
 ```go
 type CAKeystoreTPM2Config struct {
-    SRKHandle      uint32 `yaml:"srk-handle"`
-    SRKAuth        string `yaml:"srk-auth,omitempty"`
-    PlatformPolicy bool   `yaml:"platform-policy"`
+    SRKHandle uint32 `yaml:"srk-handle"`
+    SRKAuth   string `yaml:"srk-auth,omitempty"`
 }
 ```
 
@@ -94,7 +91,8 @@ type CAKeystoreTPM2Config struct {
 |-------|----------|-------------|
 | `SRKHandle` | `srk-handle` | Persistent TPM handle for the Storage Root Key wrapping CA keys, e.g. `0x81000001`. |
 | `SRKAuth` | `srk-auth` | KMS URI resolving to the SRK password at startup, e.g. `kms://ca/root/tpm2/srk-auth?ensure=true&len=32&enc=base64`. |
-| `PlatformPolicy` | `platform-policy` | Enables PCR-bound platform policy on TPM CA keys. |
+
+A TPM CA key's policy is set per key, with `tpm-policy` in its key entry (default `platform`).
 
 ### CAKeystorePKCS11Config
 
@@ -212,7 +210,6 @@ certificate-authority:
         tpm2:
           srk-handle: 0x81000001
           srk-auth: "kms://ca/intermediate/tpm2/srk-auth?ensure=true&len=32&enc=base64"
-          platform-policy: true
       keys:
         # Keys[0] — primary signing key (software RSA, cert-bound)
         - algorithm: RSA

@@ -73,7 +73,7 @@ func DebugKeyAttributes(logger *slog.Logger, attrs *types.KeyAttributes) {
 		slog.String("store_type", string(attrs.StoreType)),
 		slog.String("hash", attrs.Hash.String()),
 		slog.String("signature_algorithm", attrs.SignatureAlgorithm.String()),
-		slog.Bool("platform_policy", attrs.PlatformPolicy),
+		slog.String("tpm_policy", attrs.TPMPolicy),
 	)
 }
 

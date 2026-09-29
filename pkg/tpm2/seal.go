@@ -72,7 +72,7 @@ func (tpm *TPM2) sealKeyInternal(
 	// beside it describe the same PCR state.
 	var policyPin *store.PlatformPolicyPin
 
-	if keyAttrs.PlatformPolicy {
+	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		// Attach platform policy digest (PolicyOR of PolicyPCR + PolicyAuthValue)
 		// This MUST match what PlatformPolicySession() produces during unseal.
 		// The SRK uses PlatformPolicyDigest (key.go), and CreateKeySession uses
@@ -405,7 +405,7 @@ func (tpm *TPM2) unsealFromBlobs(
 
 	// Create key session
 	tpm.logger.Info("tpm: unsealFromBlobs - creating key session",
-		slog.Bool("platform_policy", keyAttrs.PlatformPolicy),
+		slog.String("tpm_policy", keyAttrs.TPMPolicy),
 		slog.String("cn", keyAttrs.CN))
 	session2, closer2, err2 := tpm.CreateKeySession(keyAttrs)
 	defer func() {

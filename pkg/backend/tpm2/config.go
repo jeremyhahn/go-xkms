@@ -73,9 +73,6 @@ type Config struct {
 	// Hash specifies the hash algorithm to use (default: "SHA-256")
 	Hash string `yaml:"hash" json:"hash"`
 
-	// PlatformPolicy enables platform PCR policy authorization
-	PlatformPolicy bool `yaml:"platform_policy" json:"platform_policy"`
-
 	// PlatformPCR is the PCR index used for platform policy. Zero means
 	// unset and resolves to pkgtpm2.DefaultPlatformPCR (16), never PCR 0.
 	PlatformPCR uint `yaml:"platform_pcr" json:"platform_pcr"`

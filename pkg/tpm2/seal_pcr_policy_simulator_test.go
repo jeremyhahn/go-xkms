@@ -34,13 +34,13 @@ func sealedKeyAttrs(t *testing.T, h *simHarness, cn string, platformPolicy bool,
 	require.NoError(t, err)
 
 	return &types.KeyAttributes{
-		CN:             cn,
-		KeyAlgorithm:   x509.RSA,
-		KeyType:        types.KeyTypeHMAC,
-		Parent:         srkAttrs,
-		Password:       password,
-		PlatformPolicy: platformPolicy,
-		StoreType:      types.StoreTPM2,
+		CN:           cn,
+		KeyAlgorithm: x509.RSA,
+		KeyType:      types.KeyTypeHMAC,
+		Parent:       srkAttrs,
+		Password:     password,
+		TPMPolicy:    platformPolicyName(platformPolicy),
+		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -103,7 +103,7 @@ func createPlatformPolicySRK(t *testing.T, h *simHarness, pin types.Password) *t
 	t.Helper()
 
 	srkAttrs := platformPolicySRKAttrs(t, h, pin)
-	require.True(t, srkAttrs.PlatformPolicy, "the SRK under test must carry the platform policy")
+	require.True(t, (srkAttrs.TPMPolicy == types.TPMPolicyPlatform), "the SRK under test must carry the platform policy")
 	require.NoError(t, h.TPM.CreateSRK(srkAttrs))
 
 	return srkAttrs
@@ -117,13 +117,13 @@ func sealedKeyAttrsUnder(
 	password types.Password) *types.KeyAttributes {
 
 	return &types.KeyAttributes{
-		CN:             cn,
-		KeyAlgorithm:   x509.RSA,
-		KeyType:        types.KeyTypeHMAC,
-		Parent:         parent,
-		Password:       password,
-		PlatformPolicy: true,
-		StoreType:      types.StoreTPM2,
+		CN:           cn,
+		KeyAlgorithm: x509.RSA,
+		KeyType:      types.KeyTypeHMAC,
+		Parent:       parent,
+		Password:     password,
+		TPMPolicy:    types.TPMPolicyPlatform,
+		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -375,7 +375,7 @@ func platformPolicyChildAttrs(
 		KeyType:            types.KeyTypeSigning,
 		Parent:             srkAttrs,
 		Password:           password,
-		PlatformPolicy:     true,
+		TPMPolicy:          types.TPMPolicyPlatform,
 		SignatureAlgorithm: x509.SHA256WithRSA,
 		StoreType:          types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
@@ -664,7 +664,7 @@ func TestPlatformPolicyChildKeys_RecordPinBesideTheirBlobs(t *testing.T) {
 
 	// A key created without the platform policy has no policy to pin.
 	unbound := platformPolicyChildAttrs(t, h, "unbound-record", x509.RSA, nil)
-	unbound.PlatformPolicy = false
+	unbound.TPMPolicy = ""
 	_, err = h.TPM.CreateRSA(unbound, h.Backend, true)
 	require.NoError(t, err)
 

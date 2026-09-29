@@ -155,7 +155,7 @@ func TestIDevIDAttributesFromConfig_AlwaysCarriesANonNilPassword(t *testing.T) {
 			assert.NotNil(t, attrs.Password,
 				"types.NewPassword never returns nil, so a Password == nil guard is unreachable")
 			assert.Equal(t, tc.password, string(attrs.Password.Bytes()))
-			assert.True(t, attrs.PlatformPolicy)
+			assert.True(t, (attrs.TPMPolicy == types.TPMPolicyPlatform))
 		})
 	}
 }

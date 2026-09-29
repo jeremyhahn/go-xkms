@@ -57,10 +57,6 @@ type Config struct {
 	// SecretValue custody rules as PIN.
 	SOPIN *types.SecretValue `yaml:"so-pin,omitempty" json:"so_pin,omitempty" mapstructure:"so-pin"`
 
-	// PlatformPolicy indicates whether platform-specific policies should be applied.
-	// This may affect key generation, storage, and usage policies.
-	PlatformPolicy bool `yaml:"platform-policy" json:"platform_policy" mapstructure:"platform-policy"`
-
 	// Slot is the slot number where the token is located.
 	// Can be nil if TokenLabel is used instead.
 	//

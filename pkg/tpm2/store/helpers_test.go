@@ -160,7 +160,7 @@ func TestDebugKeyAttributes(t *testing.T) {
 			StoreType:          types.StoreTPM2,
 			Hash:               crypto.SHA256,
 			SignatureAlgorithm: x509.SHA256WithRSAPSS,
-			PlatformPolicy:     true,
+			TPMPolicy:          types.TPMPolicyPlatform,
 			Debug:              true,
 		}
 
@@ -176,8 +176,8 @@ func TestDebugKeyAttributes(t *testing.T) {
 			StoreType:          types.StoreTPM2,
 			Hash:               crypto.SHA256,
 			SignatureAlgorithm: x509.SHA256WithRSAPSS,
-			PlatformPolicy:     false,
-			Debug:              false,
+
+			Debug: false,
 		}
 
 		// Should not panic or log when debug is disabled

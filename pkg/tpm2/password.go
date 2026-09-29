@@ -302,7 +302,7 @@ func (p *PlatformPassword) Create() error {
 	if _, err := p.tpm.SealKey(p.keyAttrs, p.backend, false); err != nil {
 		return err
 	}
-	if p.keyAttrs.PlatformPolicy {
+	if p.keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		p.keyAttrs.Password = p
 	} else {
 		p.keyAttrs.Password = store.NewRequiredPassword()

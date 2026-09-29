@@ -151,9 +151,9 @@ func (s *Server) buildPlatformSealer(strategy string) (types.Sealer, error) {
 // sealer performs implicitly on every boot -- so when it is not yet
 // enrolled, TPM.PlatformSRKAttributes() reports it and this fails closed
 // with a typed error rather than falling back to any other key. The
-// returned sealer additionally binds every seal/unseal to the configured
-// platform PCR (Backends.TPM2.PlatformPCR/PlatformPCRBank) when
-// Backends.TPM2.PlatformPolicy is set, via platformPolicySealer.
+// returned sealer additionally binds every sealed object to the built-in
+// "platform" TPM policy (Backends.TPM2.PlatformPCR/PlatformPCRBank), via
+// platformPolicySealer.
 func (s *Server) buildTPM2PlatformSealer() (types.Sealer, error) {
 	backend, ok := s.nodeSealTPM.(*tpm2backend.Backend)
 	if !ok {
@@ -175,7 +175,6 @@ func (s *Server) buildTPM2PlatformSealer() (types.Sealer, error) {
 				SimulatorHost:   s.config.Backends.TPM2.SimulatorHost,
 				SimulatorPort:   s.config.Backends.TPM2.SimulatorPort,
 				SRKHandle:       s.config.Backends.TPM2.SRKHandle,
-				PlatformPolicy:  s.config.Backends.TPM2.PlatformPolicy,
 				PlatformPCR:     s.config.Backends.TPM2.PlatformPCR,
 				PlatformPCRBank: s.config.Backends.TPM2.PlatformPCRBank,
 			},
@@ -224,29 +223,26 @@ func (s *Server) buildTPM2PlatformSealer() (types.Sealer, error) {
 	// when the object was created without one, hiding a real shape mismatch
 	// instead of surfacing it.
 	return &platformPolicySealer{
-		inner:          backend,
-		cn:             platformStoreSealCN,
-		psrkAttrs:      psrkAttrs,
-		platformPolicy: s.config.Backends.TPM2.PlatformPolicy,
+		inner:     backend,
+		cn:        platformStoreSealCN,
+		psrkAttrs: psrkAttrs,
 	}, nil
 }
 
 // platformPolicySealer wraps a raw TPM2 types.Sealer so every Seal/Unseal
 // call is parented to the enrolled Platform SRK (psrkAttrs; go-xkms never
-// seals under the Shared SRK) and, when platformPolicy is set, binds the
-// sealed object itself to the configured platform PCR
-// (types.KeyAttributes.PlatformPolicy) -- independent of any per-call
-// options. This adapter exists because pkg/storage/sealed.Backend -- the
+// seals under the Shared SRK) and binds the sealed object itself to the
+// built-in "platform" TPM policy (types.TPMPolicyPlatform) -- independent of
+// any per-call options. This adapter exists because pkg/storage/sealed.Backend -- the
 // generic wrapper the platform store's sealed.New composes -- always calls
 // Unseal with nil *types.UnsealOptions, so neither the parent nor the
-// PlatformPolicy flag can be threaded through a caller-supplied
+// policy reference can be threaded through a caller-supplied
 // opts.KeyAttributes on the unseal side; this type supplies both
 // consistently on both the seal and the unseal path instead.
 type platformPolicySealer struct {
-	inner          types.Sealer
-	cn             string
-	psrkAttrs      *types.KeyAttributes
-	platformPolicy bool
+	inner     types.Sealer
+	cn        string
+	psrkAttrs *types.KeyAttributes
 }
 
 // Compile-time interface check.
@@ -265,9 +261,9 @@ func (p *platformPolicySealer) CanSeal() bool {
 // the previous call into the next.
 func (p *platformPolicySealer) keyAttrs() *types.KeyAttributes {
 	return &types.KeyAttributes{
-		CN:             p.cn,
-		Parent:         p.psrkAttrs,
-		PlatformPolicy: p.platformPolicy,
+		CN:        p.cn,
+		Parent:    p.psrkAttrs,
+		TPMPolicy: types.TPMPolicyPlatform,
 	}
 }
 
@@ -282,7 +278,7 @@ func (p *platformPolicySealer) Seal(ctx context.Context, data []byte, _ *types.S
 // sealed.Backend) caller-supplied opts. Authorizing the Platform SRK itself
 // requires a live-PCR PolicyPCR session (no PIN is presented here), so a
 // platform state that no longer matches what the Platform SRK -- or, when
-// platformPolicy is set, the sealed object itself -- was authorized under
+// the sealed object itself -- was authorized under
 // fails TPM2_PolicyPCR, and this call surfaces that as an unseal error.
 func (p *platformPolicySealer) Unseal(ctx context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
 	return p.inner.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: p.keyAttrs()})

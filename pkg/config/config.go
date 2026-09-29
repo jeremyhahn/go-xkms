@@ -1119,11 +1119,12 @@ type TPM2Config struct {
 	// SRKHandle is the persistent Storage Root Key handle (default 0x81000001).
 	SRKHandle uint32 `yaml:"srk_handle,omitempty"`
 
-	// PlatformPolicy binds sealed objects to a PCR policy; PlatformPCR /
-	// PlatformPCRBank select the PCR index and bank. An unset PlatformPCR
-	// resolves to tpm2.DefaultPlatformPCR (16) and an unset bank to sha256,
-	// the same defaults xkey applies -- zero never selects PCR 0.
-	PlatformPolicy  bool   `yaml:"platform_policy,omitempty"`
+	// PlatformPCR / PlatformPCRBank select the PCR index and bank of the
+	// built-in "platform" TPM policy. An unset PlatformPCR resolves to
+	// tpm2.DefaultPlatformPCR (16) and an unset bank to sha256, the same
+	// defaults xkey applies -- zero never selects PCR 0. Which policy a key
+	// or sealed object is bound to is a per-object reference (its TPM
+	// policy name), not a backend setting.
 	PlatformPCR     uint   `yaml:"platform_pcr,omitempty"`
 	PlatformPCRBank string `yaml:"platform_pcr_bank,omitempty"`
 }

@@ -47,10 +47,10 @@ func TestNVWithAuthNoPolicy(t *testing.T) {
 		ekAttrs.TPMAttributes.HierarchyAuth = userPIN
 
 		keyAttrs := &types.KeyAttributes{
-			Parent:         ekAttrs,
-			Password:       mustPassword([]byte("test")),
-			PlatformPolicy: policyOpt,
-			SealData:       types.NewSealData(secret),
+			Parent:    ekAttrs,
+			Password:  mustPassword([]byte("test")),
+			TPMPolicy: platformPolicyName(policyOpt),
+			SealData:  types.NewSealData(secret),
 			TPMAttributes: &types.TPMAttributes{
 				Handle:        tpm2.TPMHandle(nvramOwnerIndex),
 				HashAlg:       tpm2.TPMAlgSHA256,

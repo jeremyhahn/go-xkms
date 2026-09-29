@@ -271,21 +271,20 @@ func TestKeyAttributeValidation(t *testing.T) {
 
 	t.Run("key attributes with platform policy", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
-			CN:             "test",
-			PlatformPolicy: true,
+			CN:        "test",
+			TPMPolicy: types.TPMPolicyPlatform,
 			TPMAttributes: &types.TPMAttributes{
 				Handle: tpm2.TPMHandle(0x81000001),
 			},
 		}
-		assert.True(t, attrs.PlatformPolicy)
+		assert.True(t, (attrs.TPMPolicy == types.TPMPolicyPlatform))
 	})
 
 	t.Run("key attributes without platform policy", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
-			CN:             "test",
-			PlatformPolicy: false,
+			CN: "test",
 		}
-		assert.False(t, attrs.PlatformPolicy)
+		assert.False(t, (attrs.TPMPolicy == types.TPMPolicyPlatform))
 	})
 
 	t.Run("key attributes with password", func(t *testing.T) {

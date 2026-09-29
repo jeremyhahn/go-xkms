@@ -328,7 +328,6 @@ func TestConfig_ToTPMConfig_CompleteConfig(t *testing.T) {
 		SRKHandle:       0x81000002,
 		EKHandle:        0x81010002,
 		Hash:            "SHA-384",
-		PlatformPolicy:  true,
 		PlatformPCR:     7,
 		PlatformPCRBank: "SHA384",
 		CN:              "test-cn",

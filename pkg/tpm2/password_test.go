@@ -451,9 +451,9 @@ func TestPlatformPasswordCreate_WithPlatformPolicy(t *testing.T) {
 	backend := &mockKeyBackendForPassword{}
 
 	keyAttrs := &types.KeyAttributes{
-		CN:             "test-key",
-		Password:       mustPassword([]byte("test-pass")),
-		PlatformPolicy: true,
+		CN:        "test-key",
+		Password:  mustPassword([]byte("test-pass")),
+		TPMPolicy: types.TPMPolicyPlatform,
 	}
 
 	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
@@ -480,9 +480,8 @@ func TestPlatformPasswordCreate_WithoutPlatformPolicy(t *testing.T) {
 	backend := &mockKeyBackendForPassword{}
 
 	keyAttrs := &types.KeyAttributes{
-		CN:             "test-key",
-		Password:       mustPassword([]byte("test-pass")),
-		PlatformPolicy: false,
+		CN:       "test-key",
+		Password: mustPassword([]byte("test-pass")),
 	}
 
 	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)

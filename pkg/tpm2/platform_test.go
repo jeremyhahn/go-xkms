@@ -634,7 +634,7 @@ func TestPlatformKeyStore_Initialize(t *testing.T) {
 
 	// Verify SRK attributes passed to CreateSRK have platform policy set
 	require.NotNil(t, mock.createSRKAttrs)
-	assert.True(t, mock.createSRKAttrs.PlatformPolicy,
+	assert.True(t, (mock.createSRKAttrs.TPMPolicy == types.TPMPolicyPlatform),
 		"SRK should have platform policy enabled")
 }
 
@@ -843,7 +843,7 @@ func TestPlatformKeyStore_InitializeWithoutPlatformPolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, mock.createSRKAttrs)
-	assert.False(t, mock.createSRKAttrs.PlatformPolicy,
+	assert.False(t, (mock.createSRKAttrs.TPMPolicy == types.TPMPolicyPlatform),
 		"SRK should NOT have platform policy when disabled in config")
 }
 
@@ -867,7 +867,7 @@ func TestPlatformKeyStore_InitializeWithDefaults(t *testing.T) {
 
 	// Verify SRK attributes passed to CreateSRK have empty auth
 	require.NotNil(t, mock.createSRKAttrs)
-	assert.False(t, mock.createSRKAttrs.PlatformPolicy,
+	assert.False(t, (mock.createSRKAttrs.TPMPolicy == types.TPMPolicyPlatform),
 		"SRK should NOT have platform policy when disabled")
 }
 
@@ -883,7 +883,7 @@ func TestPlatformKeyStore_InitializeWithDefaultsPlatformPolicy(t *testing.T) {
 
 	assert.True(t, pks.IsInitialized())
 	require.NotNil(t, mock.createSRKAttrs)
-	assert.True(t, mock.createSRKAttrs.PlatformPolicy,
+	assert.True(t, (mock.createSRKAttrs.TPMPolicy == types.TPMPolicyPlatform),
 		"SRK should have platform policy when enabled in config")
 }
 

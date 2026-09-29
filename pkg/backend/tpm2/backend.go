@@ -336,6 +336,7 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 
 	// Set store type
 	attrs.StoreType = types.StoreTPM2
+	applyDefaultTPMPolicy(attrs)
 
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
@@ -370,6 +371,14 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 
 	default:
 		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: attrs.KeyAlgorithm.String()}
+	}
+}
+
+// applyDefaultTPMPolicy binds a key whose caller named no TPM policy to the
+// built-in "platform" policy, the default every TPM key gets.
+func applyDefaultTPMPolicy(attrs *types.KeyAttributes) {
+	if attrs.TPMPolicy == "" {
+		attrs.TPMPolicy = types.TPMPolicyPlatform
 	}
 }
 
@@ -956,6 +965,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	}
 
 	attrs.StoreType = types.StoreTPM2
+	applyDefaultTPMPolicy(attrs)
 
 	return b.tpm.GenerateSymmetricKey(attrs)
 }

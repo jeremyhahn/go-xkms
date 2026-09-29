@@ -143,7 +143,6 @@ func tpm2EnrolledServer(t *testing.T, platformPolicy bool, platformPCR uint) *Se
 		Credentials: config.CredentialsConfig{SealStrategy: "tpm2"},
 		Backends: config.BackendsConfig{
 			TPM2: &config.TPM2Config{
-				PlatformPolicy:  platformPolicy,
 				PlatformPCR:     platformPCR,
 				PlatformPCRBank: "SHA256",
 			},

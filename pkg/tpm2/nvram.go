@@ -41,7 +41,7 @@ func (tpm *TPM2) NVWrite(
 
 	var policyDigest tpm2.TPM2BDigest
 	var policyRead bool
-	if keyAttrs.PlatformPolicy {
+	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		var pdErr error
 		policyDigest, pdErr = tpm.PlatformPolicyDigest()
 		if pdErr != nil {
@@ -257,7 +257,7 @@ func (tpm *TPM2) NVRead(
 	//   TPMA_NV_OWNERREAD, no owner auth
 	//     → Owner-hierarchy with empty auth (backward compat).
 	var authHandle tpm2.AuthHandle
-	if keyAttrs.PlatformPolicy && attrs.PolicyRead {
+	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform && attrs.PolicyRead {
 		// PCR-branch policy session: call PlatformPolicySession(nil) directly
 		// so the session digest matches the PolicyOR(PCR, AuthValue) AuthPolicy
 		// stored in the NV public area.  CreateKeySession is NOT used because
@@ -356,7 +356,7 @@ func (tpm *TPM2) NVDefineCounter(keyAttrs *types.KeyAttributes) error {
 
 	var policyDigest tpm2.TPM2BDigest
 	var policyRead bool
-	if keyAttrs.PlatformPolicy {
+	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		var pdErr error
 		policyDigest, pdErr = tpm.PlatformPolicyDigest()
 		if pdErr != nil {
@@ -438,7 +438,7 @@ func (tpm *TPM2) NVDefineExtend(keyAttrs *types.KeyAttributes) error {
 
 	var policyDigest tpm2.TPM2BDigest
 	var policyRead bool
-	if keyAttrs.PlatformPolicy {
+	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		var pdErr error
 		policyDigest, pdErr = tpm.PlatformPolicyDigest()
 		if pdErr != nil {
@@ -692,7 +692,7 @@ func (tpm *TPM2) NVReadCounter(keyAttrs *types.KeyAttributes) (uint64, error) {
 
 	// Select the authorization path per TCG Part 3 §31.13.
 	var authHandle tpm2.AuthHandle
-	if keyAttrs.PlatformPolicy {
+	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		session, closer, err := tpm.CreateSession(keyAttrs)
 		if err != nil {
 			return 0, err
@@ -786,7 +786,7 @@ func (tpm *TPM2) NVReadExtend(keyAttrs *types.KeyAttributes) ([]byte, error) {
 
 	// Select the authorization path per TCG Part 3 §31.13.
 	var authHandle tpm2.AuthHandle
-	if keyAttrs.PlatformPolicy {
+	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		session, closer, err := tpm.CreateSession(keyAttrs)
 		if err != nil {
 			return nil, err

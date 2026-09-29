@@ -204,10 +204,10 @@ func applyDevIDConfig(
 	attrs.CN = cn
 	attrs.KeyType = keyType
 	attrs.StoreType = types.StoreTPM2
-	// PlatformPolicy selects the key's USER-role session (devidKeySession):
+	// TPMPolicy (platform or none) selects the key's USER-role session (devidKeySession):
 	// with it clear, a key that has no authValue is used with the empty
 	// password regardless of platform state.
-	attrs.PlatformPolicy = platformPolicy
+	attrs.TPMPolicy = platformPolicyName(platformPolicy)
 	attrs.SignatureAlgorithm = sigAlgo
 	if attrs.Password != nil {
 		attrs.Password.Clear()
@@ -439,7 +439,7 @@ func (tpm *TPM2) PlatformSRKAttributes() (*types.KeyAttributes, error) {
 		if err != nil {
 			return nil, err
 		}
-		srkAttrs.PlatformPolicy = configAttrs.PlatformPolicy
+		srkAttrs.TPMPolicy = configAttrs.TPMPolicy
 
 		tpm.platformSRKAttrs = srkAttrs
 	}
@@ -596,7 +596,7 @@ func (tpm *TPM2) CreateEK(
 		userAuth = ekAttrs.Password.Bytes()
 	}
 
-	if ekAttrs.PlatformPolicy {
+	if ekAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		template := ekAttrs.TPMAttributes.Template
 		policyDigest, err := tpm.PlatformPolicyDigest()
 		if err != nil {
@@ -723,7 +723,7 @@ func (tpm *TPM2) CreateSRK(
 		slog.Bool("hierarchy_auth_nil_field", srkAttrs.TPMAttributes.HierarchyAuth == nil),
 		slog.Int("user_auth_len", len(userAuth)),
 		slog.Bool("user_auth_nil_field", srkAttrs.Password == nil),
-		slog.Bool("platform_policy", srkAttrs.PlatformPolicy),
+		slog.String("tpm_policy", srkAttrs.TPMPolicy),
 		slog.String("persistent_handle", fmt.Sprintf("0x%08x", uint32(srkAttrs.TPMAttributes.Handle))),
 		slog.String("handle_type", fmt.Sprintf("0x%02x", uint8(srkAttrs.TPMAttributes.HandleType))),
 		slog.Bool("has_parent", srkAttrs.Parent != nil),
@@ -753,7 +753,7 @@ func (tpm *TPM2) CreateSRK(
 	// provisioning-time concern and is deliberately left alone.
 	var policyPin *store.PlatformPolicyPin
 
-	if srkAttrs.PlatformPolicy {
+	if srkAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		template := srkAttrs.TPMAttributes.Template
 		pin, err := tpm.capturePlatformPolicyPin()
 		if err != nil {
@@ -1019,7 +1019,7 @@ func (tpm *TPM2) CreateIAK(
 	// Platform binding for an IAK is the platform Delegation Policy in its
 	// Policy NV Index (section 7.2.4), never a different key policy: the
 	// key above is Template H-0 either way.
-	if iakAttrs.PlatformPolicy {
+	if iakAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		if err := tpm.provisionDevIDPlatformDelegation(DevIDKeyAttestation, template.NameAlg, hierarchyAuth); err != nil {
 			tpm.logger.Error("failed to provision the IAK platform delegation", slog.String("error", err.Error()))
 			return nil, err
@@ -1575,7 +1575,7 @@ func (tpm *TPM2) CreateIDevID(
 	// Platform binding for an IDevID is the platform Delegation Policy in
 	// its Policy NV Index (section 7.2.4), never a different key policy: the
 	// key above is Template H-0 either way.
-	if idevidAttrs.PlatformPolicy {
+	if idevidAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		if err := tpm.provisionDevIDPlatformDelegation(DevIDKeySigning, idevidTemplate.NameAlg, hierarchyAuth); err != nil {
 			tpm.logger.Error("failed to provision the IDevID platform delegation", slog.String("error", err.Error()))
 			return nil, nil, err

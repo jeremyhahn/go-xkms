@@ -52,7 +52,7 @@ func (tpm *TPM2) CreateSecretKey(
 	// PolicyOR digest once the platform measurements change.
 	var policyPin *store.PlatformPolicyPin
 
-	if keyAttrs.PlatformPolicy {
+	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		pin, err := tpm.capturePlatformPolicyPin()
 		if err != nil {
 			return err

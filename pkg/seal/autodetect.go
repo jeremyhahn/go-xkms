@@ -58,7 +58,6 @@ type TPM2ProbeConfig struct {
 	SimulatorHost   string
 	SimulatorPort   int
 	SRKHandle       uint32
-	PlatformPolicy  bool
 	PlatformPCR     uint
 	PlatformPCRBank string
 }
@@ -127,7 +126,6 @@ var openTPM2Backend = func(cfg *TPM2ProbeConfig) (tpm2Sealer, error) {
 		SimulatorHost:   cfg.SimulatorHost,
 		SimulatorPort:   cfg.SimulatorPort,
 		SRKHandle:       cfg.SRKHandle,
-		PlatformPolicy:  cfg.PlatformPolicy,
 		PlatformPCR:     cfg.PlatformPCR,
 		PlatformPCRBank: cfg.PlatformPCRBank,
 	})

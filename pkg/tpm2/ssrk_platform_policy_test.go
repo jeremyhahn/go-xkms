@@ -160,7 +160,7 @@ func TestDefaultConfigSSRKCarriesNoPlatformPolicy(t *testing.T) {
 
 	attrs, err := SRKAttributesFromConfig(*DefaultConfig.SSRK)
 	require.NoError(t, err)
-	assert.False(t, attrs.PlatformPolicy,
+	assert.False(t, (attrs.TPMPolicy == types.TPMPolicyPlatform),
 		"the shipped default must not ask for a platform policy on the shared SRK")
 	assert.Empty(t, attrs.TPMAttributes.Template.AuthPolicy.Buffer)
 
@@ -224,7 +224,7 @@ func TestBuildSRKAttrsFromConfigTakesPolicyFromPlatformSRK(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			assert.Equal(t, tc.expectPolicy, attrs.PlatformPolicy)
+			assert.Equal(t, tc.expectPolicy, (attrs.TPMPolicy == types.TPMPolicyPlatform))
 			assert.Equal(t, tpm2.TPMHandle(tc.expectedHandle), attrs.TPMAttributes.Handle)
 			assert.False(t, attrs.TPMAttributes.Template.ObjectAttributes.NoDA,
 				"the PIN-verification SRK must remain under dictionary attack protection")
