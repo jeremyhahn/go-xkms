@@ -352,3 +352,13 @@ ID: they are platform keys, invisible to every tenant. There is no migration.
   `frost.NewBackend(...)`-backed fake `xkms.Backend` directly into the
   `HandlerContext`'s registry — proof the handlers work once a backend is
   present, not that `xkmsd` can produce one from configuration.
+- The "FROST not compiled in" side: every transport's `frost` verbs, and
+  `Server.initFrostBackend`, carry a `//go:build !frost` stub
+  (`pkg/api/rest/handlers_frost_stub.go`, `pkg/api/mcp/handlers_frost_stub.go`,
+  `pkg/api/grpc/service_frost_stub.go`, `pkg/server/backend_frost_stub.go`)
+  that refuses cleanly instead of the real implementation. Its matching test
+  (`*_frost_stub_test.go` beside each) only builds without the `frost` tag,
+  so `make test`'s normal lane — which always carries `frost` — never
+  compiles it (go-xkms#1249). `make test-nofrost` runs those four packages
+  under `TEST_TAGS` minus `frost` and is wired into `make test`, so the stub
+  build is exercised in CI on every full-tier run.

@@ -91,14 +91,16 @@ func gcmParams(iv []byte) wrapParams {
 // It is not a convenience: it is the configuration most backends are actually
 // in. types.AEADSafetyTracker is optional, and the HSM, TPM and cloud-KMS
 // providers keep no such tracker at all -- only pkg/keyprovider/symmetric
-// creates one, per backend instance and keyed by key id. Installing this in a
-// symmetric backend makes that backend behave the way those do, which is the
-// only way a test can show that the service layer's own guard is what refuses a
-// repeated (key, IV) pair rather than the provider's bookkeeping.
+// creates one, per backend instance and keyed by key id, and it tracks only
+// the NIST SP 800-38D bytes-encrypted budget (go-xkms#1201 moved nonce-reuse
+// tracking out of this interface entirely, into the shared, unconditional
+// aead.KeyNonceGuard every backend's Encrypt claims through). Installing this
+// in a symmetric backend makes that backend behave the way the trackerless
+// providers do, which is the only way a test can show that the guard inside
+// Encrypt is what refuses a repeated (key, IV) pair rather than this
+// tracker's own bookkeeping.
 type permissiveTracker struct{}
 
-func (permissiveTracker) CheckNonce(string, []byte) error  { return nil }
-func (permissiveTracker) RecordNonce(string, []byte) error { return nil }
 func (permissiveTracker) IncrementBytes(string, int64) error {
 	return nil
 }
@@ -386,172 +388,15 @@ func TestWrapAESGCMClaimsAProviderGeneratedNonce(t *testing.T) {
 	assert.True(t, errors.Is(err, aead.ErrNonceReuse), "got %v", err)
 }
 
-// sealedSymmetricProvider is a types.SymmetricKeyProvider whose keys refuse to
-// release their material, the way every HSM, TPM and cloud-KMS backend does,
-// while still performing AES-GCM.
-//
-// It exists to exercise the one case where the guard cannot key on key
-// material. The encryption itself is crypto/cipher, so the blob such a backend
-// produces is a real AES-GCM blob a test can check against the same oracle.
-type sealedSymmetricProvider struct {
-	types.KeyProvider
-
-	key []byte
-
-	// rawErr is what the key answers Raw with. backend.ErrNotSupported is the
-	// sealed case; anything else is a backend that failed for another reason
-	// and must not be quietly keyed by name.
-	rawErr error
-}
-
-func (p *sealedSymmetricProvider) GetSymmetricKey(_ context.Context, _ *types.KeyAttributes) (types.SymmetricKey, error) {
-	return &sealedSymmetricKey{provider: p}, nil
-}
-
-func (p *sealedSymmetricProvider) GenerateSymmetricKey(_ context.Context, _ *types.KeyAttributes) (types.SymmetricKey, error) {
-	return &sealedSymmetricKey{provider: p}, nil
-}
-
-func (p *sealedSymmetricProvider) SymmetricEncrypter(_ context.Context, _ *types.KeyAttributes) (types.SymmetricEncrypter, error) {
-	return &sealedSymmetricEncrypter{key: p.key}, nil
-}
-
-type sealedSymmetricKey struct {
-	provider *sealedSymmetricProvider
-}
-
-func (k *sealedSymmetricKey) Raw() ([]byte, error) { return nil, k.provider.rawErr }
-func (k *sealedSymmetricKey) Algorithm() string    { return string(types.SymmetricAES256GCM) }
-func (k *sealedSymmetricKey) KeySize() int         { return len(k.provider.key) * 8 }
-
-type sealedSymmetricEncrypter struct {
-	key []byte
-}
-
-func (e *sealedSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
-	block, err := aes.NewCipher(e.key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce := opts.Nonce
-	if len(nonce) == 0 {
-		nonce = make([]byte, gcm.NonceSize())
-		if _, err := rand.Read(nonce); err != nil {
-			return nil, err
-		}
-	}
-	sealed := gcm.Seal(nil, nonce, plaintext, opts.AdditionalData)
-	split := len(sealed) - gcm.Overhead()
-	return &types.EncryptedData{
-		Ciphertext: sealed[:split],
-		Nonce:      nonce,
-		Tag:        sealed[split:],
-	}, nil
-}
-
-func (e *sealedSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
-	block, err := aes.NewCipher(e.key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	sealed := append(append([]byte{}, data.Ciphertext...), data.Tag...)
-	var aad []byte
-	if opts != nil {
-		aad = opts.AdditionalData
-	}
-	return gcm.Open(nil, data.Nonce, sealed, aad)
-}
-
-// newSealedWrappingBackend builds a store whose wrapping key will not release
-// its material.
-func newSealedWrappingBackend(t *testing.T, store, cn string, rawErr error) (*mockKeyStore, *types.KeyAttributes, []byte) {
-	t.Helper()
-
-	key := make([]byte, 32)
-	_, err := rand.Read(key)
-	require.NoError(t, err)
-
-	attrs := &types.KeyAttributes{
-		CN:                 cn,
-		KeyType:            types.KeyTypeSecret,
-		StoreType:          types.ParseStoreType(store),
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	ks := newMockKeyStore(store)
-	ks.backend = &sealedSymmetricProvider{key: key, rawErr: rawErr}
-	ks.keys[attrs.CN] = "placeholder"
-	ks.keyAttrs[attrs.CN] = attrs
-
-	return ks, attrs, key
-}
-
-// TestWrapAESGCMGuardsAKeyWhoseMaterialIsSealed proves a wrapping key an HSM
-// will not release is still guarded, and still wrapped.
-//
-// Such a key has no bytes to key on, so it is identified by the store and name
-// that reach it. That is sound precisely here and nowhere else: material that
-// never leaves the device cannot also be present under a second name, so the
-// alias the material-keyed identity exists to catch cannot arise. Refusing
-// these wraps outright instead would take CKM_AES_GCM wrapping away from every
-// HSM, TPM and cloud-KMS backend.
-func TestWrapAESGCMGuardsAKeyWhoseMaterialIsSealed(t *testing.T) {
-	if fips140.Enforced() {
-		// sealedSymmetricEncrypter (above) builds its AES-GCM AEAD with
-		// cipher.NewGCM directly -- the arbitrary-IV constructor -- rather
-		// than routing through pkg/crypto/aead.NewGCMForFreshEncrypt the
-		// way the real symmetric backend does, so it cannot wrap at all
-		// under GODEBUG=fips140=only. This is a fidelity gap in the mock,
-		// not in wrapAESGCM.
-		requireGCMWrapRefusedForCallerNonce(t)
-		return
-	}
-
-	store, attrs, key := newSealedWrappingBackend(t, "sealed-be", "sealed-kek", backend.ErrNotSupported)
-	iv := uniqueWrapIV(t)
-	target := []byte("sealed-target-32-bytes-of-key!!!")
-	ctx := context.Background()
-
-	blob, err := wrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM), gcmParams(iv), target)
-	require.NoError(t, err, "a sealed wrapping key must still be able to wrap")
-	require.Equal(t, append([]byte{aesGCMWrapModeExplicit}, append(append([]byte{}, iv...), gcmSealOracle(t, key, iv, target, nil)...)...), blob,
-		"the blob must be a real AES-GCM wrap under the caller's IV")
-
-	_, err = wrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM), gcmParams(iv), target)
-	require.Error(t, err, "the pair repeats even when the identity had to come from the key's name")
-	assert.True(t, errors.Is(err, aead.ErrNonceReuse), "got %v", err)
-
-	// A different sealed key under the same IV is a different pair.
-	other, otherAttrs, _ := newSealedWrappingBackend(t, "sealed-be-2", "sealed-kek-2", backend.ErrNotSupported)
-	_, err = wrapKeyMaterial(ctx, other, otherAttrs, string(types.WrapAESGCM), gcmParams(iv), target)
-	require.NoError(t, err, "one IV under two distinct sealed keys is two distinct pairs")
-}
-
-// TestWrapAESGCMRefusesAWrappingKeyThatCannotBeRead is the bad-input half of
-// the identity resolution.
-//
-// A backend that fails to produce the key for any reason other than "this key
-// is sealed" has not told us which key this wrap is under. Choosing an identity
-// anyway would guard the wrap against a name that may not correspond to the
-// bytes the provider is about to encrypt with, so the wrap is refused and the
-// backend's own error is reported.
-func TestWrapAESGCMRefusesAWrappingKeyThatCannotBeRead(t *testing.T) {
-	readErr := errors.New("wrapping key store is offline")
-	store, attrs, _ := newSealedWrappingBackend(t, "unreadable-be", "unreadable-kek", readErr)
-	ctx := context.Background()
-
-	blob, err := wrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM),
-		gcmParams(uniqueWrapIV(t)), []byte("unreadable-target-32-bytes-key!!"))
-	require.Error(t, err, "a wrapping key that cannot be read must not be wrapped under a guessed identity")
-	assert.Nil(t, blob)
-	assert.True(t, errors.Is(err, readErr), "the backend's own failure must be reported: got %v", err)
-	assert.False(t, errors.Is(err, aead.ErrNonceReuse), "this is not a reuse: got %v", err)
-}
+// A wrapping key that cannot release its material -- PKCS#11, whose key
+// never leaves the token -- is no longer guarded generically at the service
+// layer: go-xkms#1201 moved the claim inside each backend's own Encrypt
+// implementation, which is also where the sealed-vs-material identity
+// choice is made (aeadNonceIdentity in pkg/backend/aead_nonce.go). See
+// pkg/backend/pkcs11's TestSymmetricEncrypter_RejectsNonceReuse, which
+// exercises that identity choice against the backend's own PKCS#11 mock
+// rather than a servicer-level test double. TPM2 and Azure Key Vault both
+// have their own key material available in process for this same call (see
+// pkg/tpm2's TestNonceReuse and pkg/backend/azurekv's
+// TestAzureKVBackend_NonceReuse) and so claim by material like every other
+// in-process-material backend.

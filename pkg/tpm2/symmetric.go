@@ -14,6 +14,7 @@
 package tpm2
 
 import (
+	"context"
 	"crypto/aes"
 	"errors"
 	"fmt"
@@ -66,6 +67,30 @@ type tpm2AESEncrypter struct {
 	tpm   *TPM2
 	attrs *types.KeyAttributes
 	mu    sync.Mutex
+}
+
+// claimNonce atomically claims (keyMaterial, nonce) against the shared,
+// optionally-persistent aead.KeyNonceGuard, in one step, replacing the old
+// STEP 3 check / STEP 5 record pair the per-backend AEADSafetyTracker used
+// to perform non-atomically (go-xkms#1201). keyMaterial is the same bytes
+// loadKeyMaterial already unsealed for this encryption, identifying the key
+// by its own material exactly as every other in-process-material backend
+// does, rather than by a name a second TPM object could share.
+//
+// wasCallerSupplied distinguishes a nonce the immediate caller of Encrypt
+// provided (opts.Nonce != nil) from one this encrypter generated itself: a
+// generated nonce still encrypts once the guard's bounded in-memory tracker
+// is full, because it is fresh by construction and cannot itself be a
+// repeat; see backend.ClaimGeneratedAEADNonce.
+func (e *tpm2AESEncrypter) claimNonce(wasCallerSupplied bool, keyMaterial, nonce []byte) error {
+	claim := kbackend.ClaimGeneratedAEADNonce
+	if wasCallerSupplied {
+		claim = kbackend.ClaimAEADNonce
+	}
+	if err := claim(context.Background(), keyMaterial, nil, e.attrs.ID(), nonce); err != nil {
+		return &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
+	}
+	return nil
 }
 
 // GenerateSymmetricKey generates a new AES symmetric key and seals it in the
@@ -366,12 +391,12 @@ func (e *tpm2AESEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions)
 			return nil, &errs.Wrapped{Msg: "tpm2: failed to split random-nonce GCM output", Err: err}
 		}
 
-		// STEP 3: Check nonce uniqueness. Unlike the explicit-nonce path,
-		// the nonce cannot be checked before Seal produces it.
-		if e.tpm.tracker != nil {
-			if err := e.tpm.tracker.CheckNonce(keyID, nonce); err != nil {
-				return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
-			}
+		// STEP 3: Claim nonce uniqueness. Unlike the explicit-nonce path,
+		// the nonce cannot be claimed before Seal produces it. opts.Nonce
+		// is nil on this branch by construction (randomNonce requires it),
+		// so the claim always tolerates a full guard; see claimNonce.
+		if err := e.claimNonce(false, keyMaterial, nonce); err != nil {
+			return nil, err
 		}
 	} else {
 		// STEP 2: Generate or use provided nonce
@@ -387,11 +412,9 @@ func (e *tpm2AESEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions)
 			}
 		}
 
-		// STEP 3: Check nonce uniqueness before encryption
-		if e.tpm.tracker != nil {
-			if err := e.tpm.tracker.CheckNonce(keyID, nonce); err != nil {
-				return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
-			}
+		// STEP 3: Claim (key, nonce) uniqueness before encryption
+		if err := e.claimNonce(opts.Nonce != nil, keyMaterial, nonce); err != nil {
+			return nil, err
 		}
 
 		// STEP 4: Encrypt with authentication
@@ -401,14 +424,6 @@ func (e *tpm2AESEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions)
 		tagSize := gcm.Overhead()
 		tag = sealedWithTag[len(sealedWithTag)-tagSize:]
 		ciphertext = sealedWithTag[:len(sealedWithTag)-tagSize]
-	}
-
-	// STEP 5: Record nonce after successful encryption
-	if e.tpm.tracker != nil {
-		if err := e.tpm.tracker.RecordNonce(keyID, nonce); err != nil {
-			// Log warning but return successful encryption
-			e.tpm.logger.Warn("failed to record nonce", slog.String("error", err.Error()))
-		}
 	}
 
 	nonceMode := types.GCMNonceModeExplicit

@@ -233,7 +233,15 @@ func TestBackend_BytesLimit(t *testing.T) {
 	}
 }
 
-func TestBackend_TrackingDisabled(t *testing.T) {
+// TestBackend_NonceReuseRefusedEvenWithTrackingOptedOut proves nonce-reuse
+// protection is no longer something AEADOptions.NonceTracking can opt a key
+// out of. Before go-xkms#1201, NonceTracking:false skipped the per-backend
+// AEADSafetyTracker's CheckNonce/RecordNonce entirely, so a caller could
+// silently disable the one guarantee AES-GCM depends on. The claim now goes
+// through the shared, unconditional aead.KeyNonceGuard on every Encrypt call
+// regardless of this setting -- NIST SP 800-38D forbids nonce reuse outright,
+// so it is not optional.
+func TestBackend_NonceReuseRefusedEvenWithTrackingOptedOut(t *testing.T) {
 	// Create backend
 	storage := storage.New()
 	config := &Config{
@@ -246,7 +254,7 @@ func TestBackend_TrackingDisabled(t *testing.T) {
 	}
 	defer func() { _ = b.Close() }()
 
-	// Generate a key with tracking disabled
+	// Generate a key with AEADOptions.NonceTracking opted out.
 	attrs := &types.KeyAttributes{
 		CN:                 "test-no-tracking",
 		KeyType:            backend.KEY_TYPE_SECRET,
@@ -270,7 +278,6 @@ func TestBackend_TrackingDisabled(t *testing.T) {
 		t.Fatalf("Failed to get encrypter: %v", err)
 	}
 
-	// Use same nonce multiple times - should succeed when tracking disabled
 	fixedNonce := make([]byte, 12)
 	_, _ = rand.Read(fixedNonce)
 
@@ -285,10 +292,11 @@ func TestBackend_TrackingDisabled(t *testing.T) {
 		return
 	}
 
-	// Second encryption with same nonce - should succeed when tracking disabled
+	// Second encryption with the same nonce must still be refused: the guard
+	// is unconditional, independent of AEADOptions.NonceTracking.
 	_, err = encrypter.Encrypt(plaintext, opts)
-	if err != nil {
-		t.Errorf("Second encryption should succeed when tracking disabled: %v", err)
+	if !errors.Is(err, backend.ErrNonceReused) {
+		t.Errorf("expected ErrNonceReused regardless of NonceTracking, got: %v", err)
 	}
 }
 

@@ -30,8 +30,7 @@ import (
 // (pkg/seal/policy). go-xkms#691 minted the policy:* permission family
 // (pkg/auth.ResourcePolicy): go-qrdb's canonical registry does not declare
 // it upstream, so pkg/apimodule/module_scopes.go declares its tenancy
-// scope, the way it already does for keys:read/write, ssh:use, and
-// bootstrap:read.
+// scope, the way it already does for keys:update and bootstrap:read.
 
 // PolicyCreate creates a new PCR policy, capturing the current PCR values
 // for the specified bank and indices.

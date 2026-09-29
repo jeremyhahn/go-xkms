@@ -1036,9 +1036,11 @@ func TestGetTracker(t *testing.T) {
 		t.Fatal("GetTracker returned nil")
 	}
 
-	err := tracker.CheckNonce("test-key", []byte("test-nonce-12345"))
-	if err != nil {
-		t.Logf("CheckNonce returned: %v (may be expected if tracking enabled)", err)
+	// Nonce-reuse tracking moved to the shared aead.KeyNonceGuard
+	// (go-xkms#1201); the tracker's remaining job is the bytes-encrypted
+	// budget, exercised here as proof GetTracker returns a live tracker.
+	if err := tracker.IncrementBytes("test-key", 16); err != nil {
+		t.Errorf("IncrementBytes returned unexpected error: %v", err)
 	}
 }
 

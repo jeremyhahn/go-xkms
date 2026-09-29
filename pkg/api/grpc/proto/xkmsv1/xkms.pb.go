@@ -22822,7 +22822,7 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x13RESIDENT_KEY_OP_MAC\x10\x02\x12\x1e\n" +
 	"\x1aRESIDENT_KEY_OP_VERIFY_MAC\x10\x03\x12\x18\n" +
 	"\x14RESIDENT_KEY_OP_WRAP\x10\x04\x12\x1a\n" +
-	"\x16RESIDENT_KEY_OP_UNWRAP\x10\x052\xf9\x86\x01\n" +
+	"\x16RESIDENT_KEY_OP_UNWRAP\x10\x052\xfe\x86\x01\n" +
 	"\x0fKeystoreService\x129\n" +
 	"\x06Health\x12\x16.xkms.v1.HealthRequest\x1a\x17.xkms.v1.HealthResponse\x12^\n" +
 	"\fListBackends\x12\x1c.xkms.v1.ListBackendsRequest\x1a\x1d.xkms.v1.ListBackendsResponse\"\x11\xc2\xf3\x18\rbackends:list\x12d\n" +
@@ -22977,27 +22977,20 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\fPolicyDelete\x12\x1c.xkms.v1.PolicyDeleteRequest\x1a\x1d.xkms.v1.PolicyDeleteResponse\"\x11\xc2\xf3\x18\rpolicy:delete\x12^\n" +
 	"\rPolicyRefresh\x12\x1d.xkms.v1.PolicyRefreshRequest\x1a\x1a.xkms.v1.PolicyGetResponse\"\x12\xc2\xf3\x18\x0epolicy:refresh\x12^\n" +
 	"\fPolicyVerify\x12\x1c.xkms.v1.PolicyVerifyRequest\x1a\x1d.xkms.v1.PolicyVerifyResponse\"\x11\xc2\xf3\x18\rpolicy:verify\x12^\n" +
-	"\fPolicyExport\x12\x1c.xkms.v1.PolicyExportRequest\x1a\x1d.xkms.v1.PolicyExportResponse\"\x11\xc2\xf3\x18\rpolicy:export\x12a\n" +
-	"\x0ePKCS11StatePut\x12\x1e.xkms.v1.PKCS11StatePutRequest\x1a\x1f.xkms.v1.PKCS11StatePutResponse\"\x0e\xc2\xf3\x18\n" +
-	"keys:write\x12y\n" +
-	"\x16PKCS11StatePutIfAbsent\x12&.xkms.v1.PKCS11StatePutIfAbsentRequest\x1a'.xkms.v1.PKCS11StatePutIfAbsentResponse\"\x0e\xc2\xf3\x18\n" +
-	"keys:write\x12a\n" +
-	"\x0ePKCS11StateCAS\x12\x1e.xkms.v1.PKCS11StateCASRequest\x1a\x1f.xkms.v1.PKCS11StateCASResponse\"\x0e\xc2\xf3\x18\n" +
-	"keys:write\x12a\n" +
-	"\x0ePKCS11StateCAD\x12\x1e.xkms.v1.PKCS11StateCADRequest\x1a\x1f.xkms.v1.PKCS11StateCADResponse\"\x0e\xc2\xf3\x18\n" +
-	"keys:write\x12`\n" +
-	"\x0ePKCS11StateGet\x12\x1e.xkms.v1.PKCS11StateGetRequest\x1a\x1f.xkms.v1.PKCS11StateGetResponse\"\r\xc2\xf3\x18\tkeys:read\x12j\n" +
-	"\x11PKCS11StateDelete\x12!.xkms.v1.PKCS11StateDeleteRequest\x1a\".xkms.v1.PKCS11StateDeleteResponse\"\x0e\xc2\xf3\x18\n" +
-	"keys:write\x12c\n" +
-	"\x0fPKCS11StateList\x12\x1f.xkms.v1.PKCS11StateListRequest\x1a .xkms.v1.PKCS11StateListResponse\"\r\xc2\xf3\x18\tkeys:read\x12[\n" +
-	"\fSealStorePut\x12\x1c.xkms.v1.SealStorePutRequest\x1a\x1d.xkms.v1.SealStorePutResponse\"\x0e\xc2\xf3\x18\n" +
-	"keys:write\x12Z\n" +
-	"\fSealStoreGet\x12\x1c.xkms.v1.SealStoreGetRequest\x1a\x1d.xkms.v1.SealStoreGetResponse\"\r\xc2\xf3\x18\tkeys:read\x12e\n" +
+	"\fPolicyExport\x12\x1c.xkms.v1.PolicyExportRequest\x1a\x1d.xkms.v1.PolicyExportResponse\"\x11\xc2\xf3\x18\rpolicy:export\x12b\n" +
+	"\x0ePKCS11StatePut\x12\x1e.xkms.v1.PKCS11StatePutRequest\x1a\x1f.xkms.v1.PKCS11StatePutResponse\"\x0f\xc2\xf3\x18\vkeys:create\x12z\n" +
+	"\x16PKCS11StatePutIfAbsent\x12&.xkms.v1.PKCS11StatePutIfAbsentRequest\x1a'.xkms.v1.PKCS11StatePutIfAbsentResponse\"\x0f\xc2\xf3\x18\vkeys:create\x12b\n" +
+	"\x0ePKCS11StateCAS\x12\x1e.xkms.v1.PKCS11StateCASRequest\x1a\x1f.xkms.v1.PKCS11StateCASResponse\"\x0f\xc2\xf3\x18\vkeys:update\x12b\n" +
+	"\x0ePKCS11StateCAD\x12\x1e.xkms.v1.PKCS11StateCADRequest\x1a\x1f.xkms.v1.PKCS11StateCADResponse\"\x0f\xc2\xf3\x18\vkeys:delete\x12_\n" +
+	"\x0ePKCS11StateGet\x12\x1e.xkms.v1.PKCS11StateGetRequest\x1a\x1f.xkms.v1.PKCS11StateGetResponse\"\f\xc2\xf3\x18\bkeys:get\x12k\n" +
+	"\x11PKCS11StateDelete\x12!.xkms.v1.PKCS11StateDeleteRequest\x1a\".xkms.v1.PKCS11StateDeleteResponse\"\x0f\xc2\xf3\x18\vkeys:delete\x12c\n" +
+	"\x0fPKCS11StateList\x12\x1f.xkms.v1.PKCS11StateListRequest\x1a .xkms.v1.PKCS11StateListResponse\"\r\xc2\xf3\x18\tkeys:list\x12\\\n" +
+	"\fSealStorePut\x12\x1c.xkms.v1.SealStorePutRequest\x1a\x1d.xkms.v1.SealStorePutResponse\"\x0f\xc2\xf3\x18\vkeys:create\x12Y\n" +
+	"\fSealStoreGet\x12\x1c.xkms.v1.SealStoreGetRequest\x1a\x1d.xkms.v1.SealStoreGetResponse\"\f\xc2\xf3\x18\bkeys:get\x12e\n" +
 	"\x0fSealStoreDelete\x12\x1f.xkms.v1.SealStoreDeleteRequest\x1a .xkms.v1.SealStoreDeleteResponse\"\x0f\xc2\xf3\x18\vkeys:delete\x12]\n" +
-	"\rSealStoreList\x12\x1d.xkms.v1.SealStoreListRequest\x1a\x1e.xkms.v1.SealStoreListResponse\"\r\xc2\xf3\x18\tkeys:list\x12d\n" +
-	"\x0fSealStoreReseal\x12\x1f.xkms.v1.SealStoreResealRequest\x1a .xkms.v1.SealStoreResealResponse\"\x0e\xc2\xf3\x18\n" +
-	"keys:write\x12c\n" +
-	"\x0fSealStoreStatus\x12\x1f.xkms.v1.SealStoreStatusRequest\x1a .xkms.v1.SealStoreStatusResponse\"\r\xc2\xf3\x18\tkeys:read\x12Q\n" +
+	"\rSealStoreList\x12\x1d.xkms.v1.SealStoreListRequest\x1a\x1e.xkms.v1.SealStoreListResponse\"\r\xc2\xf3\x18\tkeys:list\x12e\n" +
+	"\x0fSealStoreReseal\x12\x1f.xkms.v1.SealStoreResealRequest\x1a .xkms.v1.SealStoreResealResponse\"\x0f\xc2\xf3\x18\vkeys:update\x12b\n" +
+	"\x0fSealStoreStatus\x12\x1f.xkms.v1.SealStoreStatusRequest\x1a .xkms.v1.SealStoreStatusResponse\"\f\xc2\xf3\x18\bkeys:get\x12Q\n" +
 	"\n" +
 	"CreateUser\x12\x1a.xkms.v1.CreateUserRequest\x1a\x15.xkms.v1.UserResponse\"\x10\xc2\xf3\x18\fusers:create\x12R\n" +
 	"\tListUsers\x12\x19.xkms.v1.ListUsersRequest\x1a\x1a.xkms.v1.ListUsersResponse\"\x0e\xc2\xf3\x18\n" +
@@ -23007,8 +23000,8 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\n" +
 	"DeleteUser\x12\x1a.xkms.v1.DeleteUserRequest\x1a\x1b.xkms.v1.DeleteUserResponse\"\x10\xc2\xf3\x18\fusers:delete\x12Q\n" +
 	"\n" +
-	"EnableUser\x12\x1a.xkms.v1.EnableUserRequest\x1a\x15.xkms.v1.UserResponse\"\x10\xc2\xf3\x18\fusers:update\x12S\n" +
-	"\vDisableUser\x12\x1b.xkms.v1.DisableUserRequest\x1a\x15.xkms.v1.UserResponse\"\x10\xc2\xf3\x18\fusers:update\x12U\n" +
+	"EnableUser\x12\x1a.xkms.v1.EnableUserRequest\x1a\x15.xkms.v1.UserResponse\"\x10\xc2\xf3\x18\fusers:enable\x12T\n" +
+	"\vDisableUser\x12\x1b.xkms.v1.DisableUserRequest\x1a\x15.xkms.v1.UserResponse\"\x11\xc2\xf3\x18\rusers:disable\x12U\n" +
 	"\fBindUserCert\x12\x1c.xkms.v1.BindUserCertRequest\x1a\x15.xkms.v1.UserResponse\"\x10\xc2\xf3\x18\fusers:update\x12p\n" +
 	"\x13ListUserCredentials\x12#.xkms.v1.ListUserCredentialsRequest\x1a$.xkms.v1.ListUserCredentialsResponse\"\x0e\xc2\xf3\x18\n" +
 	"users:read\x12Z\n" +

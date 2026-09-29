@@ -88,9 +88,22 @@ func applyExtensionPolicy(autofill *services.AutoFillService, pol *config.Policy
 // applyCapabilityPolicy installs pol on every service whose operations are
 // gated directly by a PolicySection "UserCan*" deny switch or *Enabled kill
 // switch: Settings (theme, developer tools, auto-unseal), own-PIN change,
-// the trust store, the audit log viewer, sealed data management, and the
-// API explorer. Each service's SetPolicy stores the pointer and checks it
-// at the point of the gated operation; see PolicyDeniedError.
+// the trust store, the audit log viewer, sealed data management, and the API
+// explorer. Each service's SetPolicy stores the pointer and checks it at the
+// point of the gated operation; see PolicyDeniedError.
+//
+// PhoneService is deliberately NOT among them, even though it also has a
+// SetPolicy. Every service here is safe to install pol at STARTUP as
+// config.DefaultPolicy() -- a permissive placeholder -- and replace once SO
+// login verifies the real section, because DefaultPolicy() is each one's own
+// secure default. PhoneService's attested-application allow-list (#1305) has
+// no such safe placeholder: installing DefaultPolicy() would read as
+// "enterprise plane present but not locked" and silently fall back to
+// devices.yaml before the SO has ever logged in. It is instead wired
+// directly by applyVerifiedEnterprisePolicy below (SetPolicy, ONLY with a
+// genuinely verified section) and by the GUI's startup path
+// (PhoneService.SetEnterpriseSealed); see phone_service.go's policy field
+// comment for the reasoning in full.
 func applyCapabilityPolicy(
 	appSvc *services.AppService,
 	pinSvc *services.PINService,
@@ -212,5 +225,13 @@ func (a *App) applyVerifiedEnterprisePolicy(pol *config.PolicySection) error {
 		applyExtensionPolicy(a.autofillService, pol)
 	}
 	applyCapabilityPolicy(a.appService, a.pinService, a.trustService, a.auditService, a.sealService, a.apiExplorerService, pol)
+
+	// PhoneService's attested-application allow-list is wired directly here,
+	// not through applyCapabilityPolicy: this call site is reached ONLY once
+	// pol has verified under the SO PIN, which is the one condition under
+	// which SetPolicy may be called at all (#1305).
+	if a.phoneService != nil {
+		a.phoneService.SetPolicy(pol)
+	}
 	return nil
 }

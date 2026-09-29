@@ -1931,6 +1931,69 @@ func TestBuildAttestationExtensionWithOptions_NilOptions(t *testing.T) {
 	}
 }
 
+// TestBuildAttestationExtensionWithOptions_ApplicationIDRoundTrip verifies
+// that an attestationApplicationId is encoded where the Keystore daemon puts
+// it -- tag 709 in softwareEnforced -- and parses back byte for byte, so a
+// consumer can build fixtures for its application allow-list (go-xkms#1305).
+func TestBuildAttestationExtensionWithOptions_ApplicationIDRoundTrip(t *testing.T) {
+	digest := bytes.Repeat([]byte{0xab}, 32)
+	appID := &AttestationApplicationID{
+		Packages:         []AttestationPackageInfo{{Name: "com.example.app", Version: 42}},
+		SignatureDigests: [][]byte{digest},
+	}
+
+	extBytes, err := BuildAttestationExtensionWithOptions(
+		3, SecurityLevelTrustedEnvironment, 4, SecurityLevelTrustedEnvironment,
+		[]byte("app-id-round-trip"), []byte("unique-id"),
+		&AttestationExtensionOptions{ApplicationID: appID},
+	)
+	if err != nil {
+		t.Fatalf("build extension: %v", err)
+	}
+
+	desc, err := ParseKeyAttestation(makeCertWithExtension(t, extBytes))
+	if err != nil {
+		t.Fatalf("parse extension: %v", err)
+	}
+
+	got := desc.SoftwareEnforced.AttestationApplicationID
+	if got == nil {
+		t.Fatal("softwareEnforced attestationApplicationId absent after round trip")
+	}
+	if len(got.Packages) != 1 || got.Packages[0].Name != "com.example.app" || got.Packages[0].Version != 42 {
+		t.Errorf("packages = %+v, want [{com.example.app 42}]", got.Packages)
+	}
+	if len(got.SignatureDigests) != 1 || !bytes.Equal(got.SignatureDigests[0], digest) {
+		t.Errorf("signature digests = %x, want [%x]", got.SignatureDigests, digest)
+	}
+	if desc.TeeEnforced.AttestationApplicationID != nil {
+		t.Error("teeEnforced carries an attestationApplicationId; the Keystore daemon never puts it there")
+	}
+}
+
+// TestBuildAttestationExtensionWithOptions_NoApplicationID verifies that
+// omitting ApplicationID encodes no tag 709 at all, so a fixture can present
+// evidence that names no application.
+func TestBuildAttestationExtensionWithOptions_NoApplicationID(t *testing.T) {
+	extBytes, err := BuildAttestationExtensionWithOptions(
+		3, SecurityLevelTrustedEnvironment, 4, SecurityLevelTrustedEnvironment,
+		[]byte("no-app-id"), []byte("unique-id"),
+		&AttestationExtensionOptions{HasOrigin: true, Origin: OriginGenerated},
+	)
+	if err != nil {
+		t.Fatalf("build extension: %v", err)
+	}
+
+	desc, err := ParseKeyAttestation(makeCertWithExtension(t, extBytes))
+	if err != nil {
+		t.Fatalf("parse extension: %v", err)
+	}
+	if desc.SoftwareEnforced.AttestationApplicationID != nil {
+		t.Errorf("softwareEnforced attestationApplicationId = %+v, want none",
+			desc.SoftwareEnforced.AttestationApplicationID)
+	}
+}
+
 // makeCertWithExtension wraps extBytes in a self-signed certificate carrying
 // the Android key-attestation extension, for tests that only need to parse
 // the extension back out.

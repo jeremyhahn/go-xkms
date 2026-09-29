@@ -3175,15 +3175,21 @@ func (t *Transport) DisableUser(ctx context.Context, username string) error {
 	return t.setUserEnabled(ctx, username, false)
 }
 
-// setUserEnabled toggles the enabled state of an xkms user.
+// setUserEnabled toggles the enabled state of an xkms user via its own
+// per-direction route (POST .../enable or .../disable), gated on qrdb's own
+// users:enable/users:disable rather than the coarser users:update
+// (go-xkms#1249).
 func (t *Transport) setUserEnabled(ctx context.Context, username string, enabled bool) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
 
-	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(username))
-	body := map[string]bool{"enabled": enabled}
-	if _, err := t.DoRawRequest(ctx, http.MethodPut, path, body); err != nil {
+	verb := "disable"
+	if enabled {
+		verb = "enable"
+	}
+	path := fmt.Sprintf("/api/v1/users/%s/%s", url.PathEscape(username), verb)
+	if _, err := t.DoRawRequest(ctx, http.MethodPost, path, nil); err != nil {
 		return err
 	}
 

@@ -380,54 +380,11 @@ func TestBackend_GenerateSymmetricKey_InvalidAttributes(t *testing.T) {
 	}
 }
 
-// TestPKCS11Backend_NonceReuse tests AEAD nonce reuse detection using tracker directly.
-// Note: PKCS11 backend generates client-side nonces, so nonce tracking is applicable.
-func TestPKCS11Backend_NonceReuse(t *testing.T) {
-	// Create a tracker for testing
-	tracker := backend.NewMemoryAEADTracker()
-
-	// Setup AEAD options with nonce tracking enabled
-	keyID := "test-pkcs11-nonce-reuse"
-	opts := &types.AEADOptions{
-		NonceTracking:      true,
-		BytesTracking:      false,
-		BytesTrackingLimit: 0,
-	}
-
-	err := tracker.SetAEADOptions(keyID, opts)
-	if err != nil {
-		t.Fatalf("Failed to set AEAD options: %v", err)
-	}
-
-	// Generate a fixed nonce
-	fixedNonce := make([]byte, 12)
-	if _, err := rand.Read(fixedNonce); err != nil {
-		t.Fatalf("failed to generate nonce: %v", err)
-	}
-
-	// First check with nonce - should succeed
-	err = tracker.CheckNonce(keyID, fixedNonce)
-	if err != nil {
-		t.Fatalf("First CheckNonce failed: %v", err)
-	}
-
-	// Record the nonce
-	err = tracker.RecordNonce(keyID, fixedNonce)
-	if err != nil {
-		t.Fatalf("RecordNonce failed: %v", err)
-	}
-
-	// Second check with same nonce - should fail
-	err = tracker.CheckNonce(keyID, fixedNonce)
-	if err == nil {
-		t.Fatal("Expected nonce reuse to be detected")
-	}
-
-	// Verify error is ErrNonceReused
-	if !errors.Is(err, backend.ErrNonceReused) {
-		t.Errorf("Expected ErrNonceReused, got: %v", err)
-	}
-}
+// Nonce reuse detection is no longer a property of the tracker in isolation:
+// go-xkms#1201 moved it to the shared aead.KeyNonceGuard, claimed atomically
+// inside the real Encrypt path. See TestSymmetricEncrypter_RejectsNonceReuse
+// below, which exercises that path directly against this backend's mock
+// PKCS#11 module rather than the tracker alone.
 
 // TestPKCS11Backend_BytesLimit tests AEAD bytes limit enforcement using tracker directly.
 // Note: PKCS11 backend generates client-side nonces, so bytes tracking is applicable.
@@ -649,14 +606,20 @@ func TestSymmetricEncrypter_MatchesSoftwareGCM(t *testing.T) {
 			encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 			require.NoError(t, err)
 
-			nonce := bytes.Repeat([]byte{0xA5}, 12)
 			aad := []byte("associated data that is authenticated but not encrypted")
 
-			for _, plaintext := range [][]byte{
+			for i, plaintext := range [][]byte{
 				[]byte("the quick brown fox"),
 				{}, // GCM over an empty message is still a tag
 				bytes.Repeat([]byte{0x00}, 4096),
 			} {
+				// A distinct nonce per plaintext: the shared aead.KeyNonceGuard
+				// (go-xkms#1201) refuses a repeated (key, nonce) pair
+				// unconditionally, so this oracle comparison -- otherwise
+				// unrelated to nonce-reuse safety -- must not reuse one nonce
+				// across iterations under the same key.
+				nonce := bytes.Repeat([]byte{0xA5 + byte(i)}, 12)
+
 				encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
 					Nonce:          nonce,
 					AdditionalData: aad,

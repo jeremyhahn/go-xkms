@@ -922,8 +922,9 @@ var userUpdateCmd = &cobra.Command{
 	Use:   "update <username>",
 	Short: "Update a user account",
 	Long: `Update a user account's enabled state. Exactly one of --enable or
---disable must be provided; this maps onto the server's user update
-endpoint (PUT /api/v1/users/{username}).
+--disable must be provided; this maps onto the server's per-direction
+enable/disable endpoints (POST /api/v1/users/{username}/enable or
+/disable).
 
 Examples:
   xkmsctl user update alice --enable

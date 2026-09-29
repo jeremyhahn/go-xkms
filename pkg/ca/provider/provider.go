@@ -52,17 +52,26 @@ type CA interface {
 
 	// IssueCertificateRaw issues a certificate using primitive parameter types.
 	// sans entries use prefix notation: "DNS:example.com", "IP:1.2.3.4".
+	// tenantID ("" for the system/platform scope) is recorded as the
+	// certificate's issuing tenant, exactly as SignCSRWithSPIFFE's tenantID
+	// is for a CSR-signed certificate; CertificateTenant reads it back.
 	// Returns certificate PEM, chain PEM, private key PEM, and hex serial.
 	IssueCertificateRaw(
 		ctx context.Context,
 		commonName, organization string,
 		sans []string,
 		validityDays int,
-		profile, algorithm string,
+		profile, algorithm, tenantID string,
 	) (certPEM, chainPEM, keyPEM []byte, serialHex string, err error)
 
 	// Revoke marks a certificate as revoked by serial number and reason code.
 	Revoke(ctx context.Context, serial *big.Int, reason int) error
+
+	// CertificateTenant returns the tenant recorded at issuance for the
+	// certificate identified by serial ("" for the system/platform scope,
+	// including when the certificate was issued through a path that
+	// records no tenant at all -- see the concrete CA type's doc comment).
+	CertificateTenant(ctx context.Context, serial *big.Int) (string, error)
 
 	// GenerateCRL forces regeneration of a Certificate Revocation List in
 	// DER format, even when a still-valid one is already published.

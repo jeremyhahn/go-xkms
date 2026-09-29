@@ -398,6 +398,12 @@ TEST_FLAGS := -v -race -timeout 30m -tags="$(TEST_TAGS)"
 # arrive as a second flag: go test keeps only the last -tags it is given, so
 # appending a flag would silently drop the codec tags above.
 TEST_FLAGS_FIPS := -v -race -timeout 30m -tags="$(TEST_TAGS) fips"
+# !frost stub variant: TEST_TAGS minus frost, so the *_frost_stub_test.go
+# files (pkg/api/rest, pkg/api/mcp, pkg/api/grpc, pkg/server) build and run
+# under the "FROST not compiled in" configuration instead of being silently
+# excluded by every other test lane, which always carries frost (go-xkms#1249).
+TEST_TAGS_NOFROST := $(filter-out frost,$(TEST_TAGS))
+TEST_FLAGS_NOFROST := -v -race -timeout 30m -tags="$(TEST_TAGS_NOFROST)"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
 COVERAGE_HTML := $(COVERAGE_DIR)/coverage.html
 COVERAGE_THRESHOLD := 80
@@ -930,6 +936,7 @@ lib: builder-image
 test:
 	@$(MAKE) --no-print-directory test-scripts
 	@$(MAKE) --no-print-directory test-go
+	@$(MAKE) --no-print-directory test-nofrost
 	@$(MAKE) --no-print-directory test-web
 	@echo "$(GREEN)$(BOLD)✓ All unit tests passed (shell + Go + web)!$(RESET)"
 
@@ -982,6 +989,17 @@ test-go: check-insecure-tls
 		cat $(COVERAGE_DIR)/test.log | grep -E "FAIL|panic" | head -20; \
 		exit $$EXIT_CODE; \
 	fi'
+
+.PHONY: test-nofrost
+## test-nofrost: Run the !frost stub-build unit tests (pkg/api/rest, pkg/api/mcp,
+## pkg/api/grpc, pkg/server) with the CI tags minus frost. These packages carry
+## *_frost_stub_test.go files that only build without the frost tag, exercising
+## the "FROST not compiled in" refusal paths; test-go always carries frost, so
+## without this lane those files never build in CI (go-xkms#1249).
+test-nofrost:
+	@echo "$(CYAN)$(BOLD)→ Running !frost stub unit tests...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS_NOFROST) ./pkg/api/rest/... ./pkg/api/mcp/... ./pkg/api/grpc/... ./pkg/server/...
+	@echo "$(GREEN)✓ !frost stub unit tests complete$(RESET)"
 
 .PHONY: test-all
 ## test-all: Run ALL unit tests including hardware backends and import/export

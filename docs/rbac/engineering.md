@@ -1,6 +1,6 @@
 # RBAC — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1226, #1227, #1230, #1232)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1114, #1115, #1226, #1227, #1230, #1232, #1249)
 
 ## Exported surface
 
@@ -230,23 +230,31 @@ exactly these six roles; any other value fails at runtime with
 Since go-qrdb#504 removed the implicit default, every permission must
 declare a tenancy scope (`self` / `tenant-only` / `cross`) or the authorizer
 refuses it. qrdb declares the scope of its own canonical vocabulary; xkms
-declares scope **only** for the resource:action pairs it alone owns —
-verified as exactly five, all `ScopeSelf`:
+declares scope **only** for the resource:action pairs it alone owns — nine
+names, all `ScopeSelf`:
 
 ```go
 func selfScopedPermissions() []qrdbsdk.Permission {
 	return []qrdbsdk.Permission{
-		"keys:read",    // PKCS#11 object-state + seal-store reads (system-barrier state)
-		"keys:write",   // the mutating half of the same two stores
-		"keys:update",  // one compare-and-swap route on the PKCS#11 state store
-		"bootstrap:read", // the trust-bootstrap listener's own public keys (go-xkms#632)
+		"keys:update",     // PKCS11StateCAS + SealStoreReseal (system-barrier state)
+		"bootstrap:read",  // the trust-bootstrap listener's own public keys (go-xkms#632)
+		"policy:create",   // TPM 2.0 PCR-bank sealed-secret policy management
+		"policy:get",      // (pkg/seal/policy, go-xkms#691) — platform/hardware
+		"policy:list",     // state, not per-tenant key material, so it takes the
+		"policy:delete",   // same reach as keys:update and bootstrap:read above.
+		"policy:refresh",
+		"policy:verify",
+		"policy:export",
 	}
 }
 ```
 
-An in-code comment above this function states "the four below are the
-exceptions" — that count is **stale**; the function returns five. This
-document reflects the code, not the comment.
+go-xkms#1249 retired `keys:read` and `keys:write`: the PKCS#11 state store
+and the platform-sealed store now carry the ordinary per-verb
+`keys:create`/`get`/`list`/`delete` actions qrdb itself declares scope for
+on every transport, leaving `keys:update` (the compare-and-swap /
+reseal-in-place operations) as the only member of that family qrdb does not
+declare.
 
 ### `pkg/apimodule/module_grants.go` — what xkms grants, and to whom
 
@@ -311,11 +319,23 @@ specific permission before assuming a non-Admin role holds it.
   tables; go-xkms#1232's audit found and fixed one violation
   (`POST /api/v1/keys/wrap`/`unwrap` carried `keys:encrypt`/`keys:decrypt`
   instead of the `keys:wrap`/`keys:unwrap` gRPC and MCP already required for
-  the identical operation) and reported two more that need a product
-  decision rather than a mechanical fix (`POST /api/v1/passwords/access-mode`
-  serving under session-only auth where gRPC/MCP require `passwords:write`;
-  the `pkcs11state.*` family's REST per-verb CRUD actions vs gRPC's coarser
-  write/read tiering).
+  the identical operation). go-xkms#1249 fixed two more: the
+  `pkcs11state.*`/`sealStore.*` families' REST per-verb CRUD actions vs
+  gRPC's (and, for `sealStore.*`, MCP's) coarser write/read tiering, by
+  moving every transport onto the per-verb actions; and `EnableUser`/
+  `DisableUser` (gRPC) and `user.enable`/`user.disable` (MCP) requiring the
+  borrowed `users:update` while REST's single `PUT /api/v1/users/{username}`
+  route also gated both directions on `users:update` because it could not
+  see which direction a request meant before the permission gate ran — fixed
+  by splitting REST into `POST /api/v1/users/{username}/enable` and
+  `.../disable`, one route per qrdb-native permission
+  (`users:enable`/`users:disable`), matching gRPC and MCP exactly; `PUT`
+  no longer touches `enabled` at all. A third violation, `POST
+  /api/v1/passwords/access-mode` serving under session-only auth with no
+  RBAC permission where gRPC/MCP required `passwords:write`, was left open
+  pending a product decision until the owner ruled (2026-09-29) that the
+  password vault is not a login feature; REST now gates it on
+  `passwords:write` too. No violations remain allowlisted.
 - **A tenant named in a request is never the target tenant.** The gate
   resolves a self-scope permission against the caller's own tenant, so a
   handler that forwards a request tenant to a store or query escapes it. The
@@ -504,7 +524,8 @@ role must already exist (one of qrdb's built-ins; xkms creates none). The
 **first** user ever registered always receives `admin`, regardless of
 `--role`. There is no `xkmsctl user assign-role` or equivalent, and
 `xkmsctl user update` only toggles `--enable`/`--disable`
-(`pkg/api/rest/user_handlers.go:handleUpdateUser`, body `{enabled: *bool}`).
+(`pkg/api/rest/user_handlers.go:handleEnableUser`/`handleDisableUser`,
+`POST /api/v1/users/{username}/enable`/`.../disable`, no body).
 
 Role CRUD (defining a **custom** role beyond the built-ins) is reachable
 only through the embedded Go SDK:

@@ -124,11 +124,16 @@ func TestAzureKVImportExport(t *testing.T) {
 	require.True(t, ok, "Backend must implement ImportExportBackend interface")
 
 	// ========================================================================
-	// Test 1: Get Import Parameters - RSA-OAEP SHA-1
+	// Test 1: Get Import Parameters - plain RSA-OAEP is refused
 	// ========================================================================
-	t.Run("GetImportParameters_RSAOAEP_SHA1", func(t *testing.T) {
+	//
+	// Azure Key Vault's native BYOK key_hsm transfer format is always the
+	// hybrid CKM_RSA_AES_KEY_WRAP construction (go-xkms#1342): plain
+	// RSA-OAEP wrapping, with no AES-KWP layer, is not a valid key_hsm
+	// encoding on its own, so GetImportParameters refuses it up front.
+	t.Run("GetImportParameters_PlainRSAOAEP_Refused", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
-			CN:           "test-import-rsa-oaep-sha1",
+			CN:           "test-import-rsa-oaep-refused",
 			KeyAlgorithm: x509.RSA,
 			KeyType:      backend.KEY_TYPE_SIGNING,
 			StoreType:    backend.STORE_AZUREKV,
@@ -138,50 +143,10 @@ func TestAzureKVImportExport(t *testing.T) {
 			},
 		}
 
-		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_1)
-		require.NoError(t, err, "GetImportParameters should succeed")
-		require.NotNil(t, params, "Import parameters should not be nil")
-
-		// Verify parameters
-		assert.NotNil(t, params.WrappingPublicKey, "Wrapping public key should not be nil")
-		assert.NotNil(t, params.ImportToken, "Import token should not be nil")
-		assert.Equal(t, backend.WrappingAlgorithmRSAES_OAEP_SHA_1, params.Algorithm)
-		assert.NotNil(t, params.ExpiresAt, "Expiration time should not be nil")
-		assert.True(t, params.ExpiresAt.After(time.Now()), "Expiration should be in the future")
-
-		// Verify wrapping key is RSA
-		rsaPubKey, ok := params.WrappingPublicKey.(*rsa.PublicKey)
-		assert.True(t, ok, "Wrapping public key should be RSA")
-		assert.Equal(t, 2048, rsaPubKey.N.BitLen(), "Wrapping key should be 2048 bits")
-
-		t.Logf("✓ GetImportParameters succeeded with RSA-OAEP SHA-1")
-		t.Logf("  - Wrapping key size: %d bits", rsaPubKey.N.BitLen())
-		t.Logf("  - Import token length: %d bytes", len(params.ImportToken))
-		t.Logf("  - Expires at: %s", params.ExpiresAt.Format(time.RFC3339))
-	})
-
-	// ========================================================================
-	// Test 2: Get Import Parameters - RSA-OAEP SHA-256
-	// ========================================================================
-	t.Run("GetImportParameters_RSAOAEP_SHA256", func(t *testing.T) {
-		attrs := &types.KeyAttributes{
-			CN:           "test-import-rsa-oaep-sha256",
-			KeyAlgorithm: x509.RSA,
-			KeyType:      backend.KEY_TYPE_SIGNING,
-			StoreType:    backend.STORE_AZUREKV,
-			Hash:         crypto.SHA256,
-			RSAAttributes: &types.RSAAttributes{
-				KeySize: 2048,
-			},
-		}
-
-		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
-		require.NoError(t, err, "GetImportParameters should succeed")
-		require.NotNil(t, params, "Import parameters should not be nil")
-
-		assert.Equal(t, backend.WrappingAlgorithmRSAES_OAEP_SHA_256, params.Algorithm)
-
-		t.Logf("✓ GetImportParameters succeeded with RSA-OAEP SHA-256")
+		_, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		require.Error(t, err, "GetImportParameters should refuse plain RSA-OAEP")
+		assert.ErrorIs(t, err, backend.ErrNotSupported)
+		t.Logf("✓ GetImportParameters correctly refused plain RSA-OAEP: %v", err)
 	})
 
 	// ========================================================================
@@ -228,12 +193,26 @@ func TestAzureKVImportExport(t *testing.T) {
 		require.NotNil(t, params, "Import parameters should not be nil")
 
 		assert.Equal(t, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256, params.Algorithm)
+		assert.NotNil(t, params.ImportToken, "Import token should not be nil")
+		assert.NotNil(t, params.ExpiresAt, "Expiration time should not be nil")
+		assert.True(t, params.ExpiresAt.After(time.Now()), "Expiration should be in the future")
+
+		// The wrapping public key belongs to the vault's BYOK
+		// key-encryption key, not the target key attrs describe -- its
+		// size is fixed by azurekv.azureBYOKKEKKeySize regardless of the
+		// RSA key size being imported.
+		rsaPubKey, ok := params.WrappingPublicKey.(*rsa.PublicKey)
+		assert.True(t, ok, "Wrapping public key should be RSA")
+		assert.NotZero(t, rsaPubKey.N.BitLen(), "Wrapping key should report a bit length")
 
 		t.Logf("✓ GetImportParameters succeeded with RSA-AES Key Wrap SHA-256")
+		t.Logf("  - KEK size: %d bits", rsaPubKey.N.BitLen())
+		t.Logf("  - Import token length: %d bytes", len(params.ImportToken))
+		t.Logf("  - Expires at: %s", params.ExpiresAt.Format(time.RFC3339))
 	})
 
 	// ========================================================================
-	// Test 5: Import RSA Key - Complete Workflow with RSA-OAEP SHA-256
+	// Test 5: Import RSA Key - Complete Workflow with hybrid RSA-AES Key Wrap
 	// ========================================================================
 	t.Run("ImportRSAKey_Complete_Workflow", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
@@ -281,12 +260,14 @@ func TestAzureKVImportExport(t *testing.T) {
 		assert.Equal(t, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256, wrapped.Algorithm)
 		t.Logf("✓ Wrapped key material with hybrid RSA-AES (%d bytes wrapped -> %d bytes)", len(keyMaterial), len(wrapped.WrappedKey))
 
-		// Step 5: Verify unwrap works (local test)
-		t.Log("Step 5: Testing local unwrap...")
-		unwrapped, err := importExportBackend.UnwrapKey(context.Background(), wrapped, params)
-		require.NoError(t, err, "UnwrapKey failed")
-		assert.Equal(t, keyMaterial, unwrapped, "Unwrapped key material should match original")
-		t.Logf("✓ Successfully unwrapped and verified key material locally")
+		// Step 5: UnwrapKey is unsupported -- Azure Key Vault's HSM performs
+		// the unwrap itself during ImportKey, using the key-encryption
+		// key's private half, which never leaves the HSM boundary
+		// (go-xkms#1342). This process never sees the plaintext key.
+		t.Log("Step 5: Verifying local unwrap is refused...")
+		_, err = importExportBackend.UnwrapKey(context.Background(), wrapped, params)
+		require.ErrorIs(t, err, backend.ErrNotSupported, "UnwrapKey must be unsupported for native BYOK")
+		t.Logf("✓ UnwrapKey correctly refused: %v", err)
 
 		// Step 6: Import key into Azure Key Vault
 		t.Log("Step 6: Importing key into Azure Key Vault...")
@@ -348,7 +329,7 @@ func TestAzureKVImportExport(t *testing.T) {
 
 		// Step 2: Get import parameters
 		t.Log("Step 2: Getting import parameters from Azure Key Vault...")
-		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		require.NoError(t, err, "GetImportParameters failed")
 		t.Logf("✓ Received import parameters")
 
@@ -434,11 +415,11 @@ func TestAzureKVImportExport(t *testing.T) {
 		assert.Equal(t, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256, wrapped.Algorithm)
 		t.Logf("✓ Wrapped large key with hybrid RSA-AES (%d bytes -> %d bytes)", len(keyMaterial), len(wrapped.WrappedKey))
 
-		// Verify unwrap works
-		unwrapped, err := importExportBackend.UnwrapKey(context.Background(), wrapped, params)
-		require.NoError(t, err, "UnwrapKey failed")
-		assert.Equal(t, keyMaterial, unwrapped, "Unwrapped key material should match original")
-		t.Logf("✓ Successfully unwrapped large key material")
+		// UnwrapKey is unsupported: Azure Key Vault's HSM unwraps
+		// key_hsm itself during ImportKey (go-xkms#1342).
+		_, err = importExportBackend.UnwrapKey(context.Background(), wrapped, params)
+		require.ErrorIs(t, err, backend.ErrNotSupported, "UnwrapKey must be unsupported for native BYOK")
+		t.Logf("✓ UnwrapKey correctly refused for the large hybrid-wrapped key")
 
 		t.Log("✓✓✓ Hybrid RSA-AES wrapping test succeeded!")
 
@@ -511,7 +492,7 @@ func TestAzureKVImportExport(t *testing.T) {
 			},
 		}
 
-		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		require.NoError(t, err)
 
 		// Try to wrap empty key material
@@ -534,7 +515,7 @@ func TestAzureKVImportExport(t *testing.T) {
 			},
 		}
 
-		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		params, err := importExportBackend.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		require.NoError(t, err)
 
 		// Wrap invalid key material (random bytes)

@@ -46,12 +46,91 @@ func unifiedConfigOrDefault() *xkeyconfig.Config {
 	return xkeyconfig.DefaultConfig()
 }
 
+// resolveEnterpriseApplicationPolicy resolves the enterprise plane of the
+// attested-application allow-list (#1305) for loadPairingAttestationTrust,
+// which is called both from a command's own RunE and from deep re-attestation
+// call graphs that thread no *cobra.Command through (see
+// resolveSOPINFromEnv). Only XKEY_SO_PIN can supply the SO PIN here, never
+// --so-pin-stdin, since an unattended reconnect has no operator to answer a
+// stdin prompt. unified is the CLI's own loaded config (GetConfig()) rather
+// than read again here, so a test can supply a fixture the same way
+// resolvePairingPolicy's own unified parameter does.
+//
+// Unlike resolvePairingPolicy's own resolution -- used for the
+// unattestable-pairing WIDEN decision, whose safe fallback is simply the
+// ordinary strict pairing path, still fully functional -- an unverified
+// sealed section has NO safe fallback here: which allow-list a locked
+// deployment intends is unknown until the section verifies, and there is no
+// "ordinary strict path" to degrade to when the question is which
+// application to trust at all. So a genuinely SEALED config directory that
+// does not verify -- no XKEY_SO_PIN, or a PIN that does not match --
+// REFUSES outright with attestation.ErrApplicationPolicyUnverifiable, never
+// silently falling back to devices.yaml. A user (or attacker) able to write
+// devices.yaml but not produce the SO PIN must never be able to bypass a
+// deployment that locks the allow-list merely by leaving the PIN unsupplied.
+//
+// Only a genuinely UNSEALED (personal-mode) config directory falls through
+// to the user's own devices.yaml -- there, the policy section IS the user's
+// own file, so there is nothing to verify and nothing to bypass.
+func resolveEnterpriseApplicationPolicy(unified *xkeyconfig.Config) (*xkeyconfig.PolicySection, error) {
+	configDir := xkeyconfig.ConfigDir()
+	sealed := xkeyconfig.IsEnterpriseMode(configDir)
+
+	if !sealed {
+		// Personal mode: no enterprise plane exists to verify in the first
+		// place. unified may even be nil here -- loadPairingAttestationTrust
+		// runs from contexts that never went through RootCmd's initConfig (a
+		// direct unit test of the trust loader, chiefly) -- and an absent
+		// config in an unsealed directory is still no plane to refuse
+		// against; devices.yaml governs.
+		return nil, nil
+	}
+
+	// Sealed from here on: every exit below either verifies or refuses, and
+	// none of them falls back to devices.yaml.
+	if unified == nil {
+		return nil, &SentinelCauseError{
+			Sentinel: attestation.ErrApplicationPolicyUnverifiable, Cause: xkeyconfig.ErrConfigInvalid}
+	}
+
+	soPIN, err := resolveSOPINFromEnv()
+	if err != nil {
+		return nil, err
+	}
+
+	policy, err := xkeyconfig.LoadVerifiedPolicy(unified, configDir, soPIN)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: attestation.ErrApplicationPolicyUnverifiable, Cause: err}
+	}
+	return &policy.Policy, nil
+}
+
 // loadPairingAttestationTrust builds this machine's Android hardware
-// attestation trust material.
+// attestation trust material: the trust store's roots and the
+// attested-application allow-list, resolved across the user's devices.yaml
+// and, in a sealed (enterprise) deployment, the SO's allow-list instead once
+// XKEY_SO_PIN verifies it (#1305). A sealed deployment whose section does NOT
+// verify refuses outright -- see resolveEnterpriseApplicationPolicy -- so
+// pairing and re-attestation never run on an application allow-list this
+// machine could not confirm the SO's intent for.
 //
 // It is the CLI's half of a decision whose other half is shared: WHICH store
-// to open is per-surface, what to do with the pool is not.
+// and file to read is per-surface, what to do with them is not. A missing
+// devices.yaml allow-lists nothing, so LoadTrust refuses with
+// pairing.ErrApplicationPolicyUnconfigured; one that cannot be read refuses
+// outright rather than being mistaken for an absent policy.
 func loadPairingAttestationTrust() (_ *attestation.Trust, err error) {
+	devices, err := loadDevicesConfig()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
+	}
+
+	enterprise, err := resolveEnterpriseApplicationPolicy(GetConfig())
+	if err != nil {
+		return nil, err
+	}
+	apps := attestation.ResolveApplicationPolicy(devices.applicationPolicy(), enterprise)
+
 	store, err := openTrustStore()
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: attestation.ErrDeviceAttestVerifyFailed, Cause: err}
@@ -62,7 +141,7 @@ func loadPairingAttestationTrust() (_ *attestation.Trust, err error) {
 		}
 	}()
 
-	return attestation.LoadTrust(store)
+	return attestation.LoadTrust(store, apps)
 }
 
 // ErrPairingPolicyRefused indicates the config directory is sealed, an SO

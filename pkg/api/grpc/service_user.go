@@ -138,24 +138,38 @@ func (s *Service) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*p
 	return &pb.DeleteUserResponse{Username: req.Username, Deleted: true}, nil
 }
 
-// EnableUser enables an xkms user by username.
+// EnableUser enables an xkms user by username. It requires users:enable
+// (go-qrdb permission.UsersEnable) rather than the coarser users:update,
+// so a role can grant re-activation without also granting DisableUser or
+// the general user-mutation surface (go-xkms#1249).
 func (s *Service) EnableUser(ctx context.Context, req *pb.EnableUserRequest) (*pb.UserResponse, error) {
+	if req.GetUsername() == "" {
+		return nil, status.Error(codes.InvalidArgument, "username is required")
+	}
+	if err := s.authorize(ctx, auth.ResourceUsers, auth.ActionEnable, req.GetUsername()); err != nil {
+		return nil, err
+	}
 	return s.setUserEnabled(ctx, req.GetUsername(), true)
 }
 
-// DisableUser disables an xkms user by username.
+// DisableUser disables an xkms user by username. It requires users:disable
+// (go-qrdb permission.UsersDisable) rather than the coarser users:update,
+// for the same reason EnableUser requires users:enable (go-xkms#1249).
 func (s *Service) DisableUser(ctx context.Context, req *pb.DisableUserRequest) (*pb.UserResponse, error) {
+	if req.GetUsername() == "" {
+		return nil, status.Error(codes.InvalidArgument, "username is required")
+	}
+	if err := s.authorize(ctx, auth.ResourceUsers, auth.ActionDisable, req.GetUsername()); err != nil {
+		return nil, err
+	}
 	return s.setUserEnabled(ctx, req.GetUsername(), false)
 }
 
-// setUserEnabled toggles a user's enabled state and returns the updated user.
+// setUserEnabled performs the toggle and returns the updated user. Callers
+// (EnableUser, DisableUser) authorize before calling this helper — each with
+// its own permission — so this helper itself must never hold an authorize
+// call site.
 func (s *Service) setUserEnabled(ctx context.Context, username string, enabled bool) (*pb.UserResponse, error) {
-	if username == "" {
-		return nil, status.Error(codes.InvalidArgument, "username is required")
-	}
-	if err := s.authorize(ctx, auth.ResourceUsers, auth.ActionUpdate, username); err != nil {
-		return nil, err
-	}
 	svc := s.xkmsService
 	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")

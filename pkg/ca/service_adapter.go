@@ -80,6 +80,12 @@ func (ca *CA) SignCSRWithSPIFFE(ctx context.Context, csrPEM []byte, profile stri
 // "Email:user@example.com", "URI:https://example.com". Entries without
 // a recognized prefix are treated as DNS names.
 //
+// tenantID ("" for the system/platform scope) is recorded as the issued
+// certificate's owning tenant, exactly as SignCSRWithSPIFFE's tenantID is
+// for a CSR-signed certificate (both route through signCSR, the single
+// recording site); CertificateTenant reads it back for RevokeCertificate's
+// ownership check (go-xkms#1229).
+//
 // Returns the issued certificate PEM, chain PEM, private key PEM (if generated),
 // and the hex-encoded serial number.
 //
@@ -89,7 +95,7 @@ func (ca *CA) IssueCertificateRaw(
 	commonName, organization string,
 	sans []string,
 	validityDays int,
-	profile, algorithm string,
+	profile, algorithm, tenantID string,
 ) (certPEM, chainPEM, keyPEM []byte, serialHex string, err error) {
 
 	request := &CertificateRequest{
@@ -97,7 +103,8 @@ func (ca *CA) IssueCertificateRaw(
 			CommonName:   commonName,
 			Organization: organization,
 		},
-		Valid: validityDays,
+		Valid:    validityDays,
+		TenantID: tenantID,
 	}
 
 	// Parse SANs from prefix notation into structured form.
