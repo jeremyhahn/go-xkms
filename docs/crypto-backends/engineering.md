@@ -112,7 +112,7 @@ source of truth for both fields, as of the fix for #932.
 | tpm2 | Unconditionally `false` for every key `ListKeys` enumerates. `KeyTemplateSpec.Template` sets `FixedTPM=true`/`FixedParent=true` on every generated key (TCG TPM 2.0 Library Part 2 §12.2.3.5's "may never leave this TPM/parent"), and `ExportKey` refuses every key — generated or `ImportKey`'s duplicable sealed-keyedhash objects alike — unconditionally with `ErrExportNotSupported` | Unconditionally `true`: `ExportKeyMaterial` refuses every key unconditionally too, so plaintext is never released for any key this backend manages | `pkg/tpm2/template.go:165` (`FixedTPM`/`FixedParent` in `KeyTemplateSpec.Template`); `pkg/backend/tpm2/importexport.go:255` (`ExportKey` doc comment); `pkg/backend/tpm2/backend.go` `ListKeys` |
 | awskms | Unconditionally `false`. `Capabilities().Export` is `false` unconditionally, and `ExportKey`/`ExportKeyMaterial` refuse every key regardless of policy — AWS KMS never releases key material outside the service boundary | Unconditionally `true`, for the same reason | `pkg/backend/awskms/awskms.go:563` (`Capabilities`), `:1198` (`ExportKey`), `:1246` (`ExportKeyMaterial`), `ListKeys` |
 | gcpkms | Unconditionally `false`. `Capabilities().Export` is `false` unconditionally; GCP KMS exposes no API to release private key material for any protection level or import method | Unconditionally `true`, for the same reason | `pkg/backend/gcpkms/gcpkms.go:246` (`Capabilities`); `pkg/backend/gcpkms/gcpkms_importexport.go:264` (`ExportKey` doc comment), `:299` (`ExportKeyMaterial`); `ListKeys` |
-| azurekv | Unconditionally `false`. `Capabilities().Export` is `false` unconditionally; Azure Key Vault exposes no API to release private key material | Unconditionally `true`, for the same reason | `pkg/backend/azurekv/azurekv.go:290` (`Capabilities`); `pkg/backend/azurekv/azurekv_importexport.go:466` (`ExportKey`), `:502` (`ExportKeyMaterial`); `ListKeys` |
+| azurekv | Unconditionally `false`. `Capabilities().Export` is `false` unconditionally; Azure Key Vault exposes no API to release private key material | Unconditionally `true`, for the same reason | `pkg/backend/azurekv/azurekv.go:325` (`Capabilities`); `pkg/backend/azurekv/azurekv_importexport.go:480` (`ExportKey`), `:504` (`ExportKeyMaterial`); `ListKeys` |
 | vault | Per-key metadata record (`"exportable"`), written by `GenerateKey` (unconditionally `false` — H8, an asymmetric private key's public half is already available through the ordinary read-key endpoint), `GenerateSymmetricKey` and `ImportKey` (both carry the caller's `Exportable`). `ExportKeyMaterial` is genuine for a symmetric key created exportable, via Transit's own `transit/export` endpoint; `ExportKey` (the wrapped-for-a-third-party form) has no Vault-native equivalent and always refuses | Per-key metadata record (`"sensitive"`), mirroring the caller's own `Sensitive`, consulted by the service layer the same way every backend's is | `pkg/backend/vault/vault.go:192` (`GenerateKey`, H8), `ListKeys`; `pkg/backend/vault/vault_symmetric.go:99` (`GenerateSymmetricKey`); `pkg/backend/vault/vault_importexport.go:296` (`ExportKey` doc comment), `:333` (`ExportKeyMaterial`) |
 
 Two consequences follow directly from this table:
@@ -199,6 +199,17 @@ Two consequences follow directly from this table:
 - **Import and export capabilities are split.** A backend can implement `Import`
   independently from `Export`. Vault gained a real BYOK (Bring Your Own Key)
   import ceremony in place of simpler paste operations.
+- **An `ImportToken` is an opaque handle, never key material.** The
+  unwrapping private key stays inside the backend that minted it
+  (`pkg/backend/backend_importexport.go`, `ImportParameters`). The software,
+  symmetric and Azure Key Vault backends generate a local RSA wrapping
+  keypair, seal the private half in an `importtoken.SealedRSAKey`, and return
+  a random handle naming it; `UnwrapKey`/`ImportKey` resolve the handle with a
+  single-use `importtoken.Store.Take` and refuse an unknown, expired or
+  replayed handle with `backend.ErrKeyNotFound`
+  (`pkg/backend/azurekv/azurekv_importexport.go:62`, `:199`). Azure Key Vault
+  unwraps locally and imports the result as a JWK; it does not use Key
+  Vault's native key-exchange-key BYOK flow.
 - **`ExportBackend.ExportKeyTo(ctx, attrs, dstParams)` wraps for a
   caller-supplied destination, `ExportKey` for a wrapping key the backend
   mints and tracks for itself.** The two are not interchangeable for a

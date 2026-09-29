@@ -29,7 +29,9 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
+	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/importtoken"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -42,19 +44,21 @@ var _ backend.ImportExportBackend = (*Backend)(nil)
 
 // GetImportParameters retrieves the parameters needed to import a key into Azure Key Vault.
 //
-// Azure Key Vault import process:
-//  1. Generate a temporary RSA wrapping key pair
-//  2. Return the public key for wrapping key material
-//  3. Store the private key temporarily for unwrapping during import
+// This backend does not use Azure Key Vault's native BYOK (key-exchange key)
+// flow: the wrapped key material is unwrapped inside this process and the
+// resulting private key is sent to Key Vault's ImportKey API as a JWK. The
+// ceremony therefore needs a local wrapping keypair:
+//  1. Generate an ephemeral 2048-bit RSA wrapping keypair
+//  2. Seal the private half into an importtoken.SealedRSAKey held in
+//     b.importTokens under a fresh, random, opaque handle
+//  3. Return the public half plus that handle
 //
-// Unlike AWS KMS which generates wrapping keys in the HSM, Azure Key Vault expects
-// the key material to be wrapped before import using standard RSA-OAEP.
-//
-// The returned ImportParameters contain:
-//   - A temporary RSA public key for wrapping
-//   - An import token (the temporary private key, stored securely)
-//   - The specified wrapping algorithm
-//   - A 24-hour expiration time
+// The returned ImportParameters.ImportToken is the handle only -- never the
+// wrapping private key. The private key never leaves the backend, as
+// backend.ImportParameters requires (go-xkms#1340); UnwrapKey and ImportKey
+// resolve the handle with a single-use Take. b.importTokens enforces the
+// ceremony's 24-hour TTL and a hard cap on in-flight ceremonies
+// (go-xkms#1261).
 func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	if attrs == nil {
 		return nil, &errs.Message{Msg: "attributes cannot be nil"}
@@ -71,34 +75,30 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 		return nil, &errs.Detail{Err: backend.ErrNotSupported, Detail: fmt.Sprintf("Azure Key Vault does not support wrapping algorithm %s", algorithm)}
 	}
 
-	// Generate a temporary RSA key pair for wrapping
-	// Azure Key Vault expects 2048 or 4096 bit keys
-	wrappingKeySize := 2048
-	wrappingPrivateKey, err := rsa.GenerateKey(rand.Reader, wrappingKeySize)
+	// Generate a temporary RSA key pair for wrapping.
+	wrappingPrivateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to generate wrapping key pair", Err: err}
 	}
 
-	// Serialize the private key as the import token
-	// This is stored temporarily until ImportKey is called
-	privateKeyBytes := x509.MarshalPKCS1PrivateKey(wrappingPrivateKey)
+	// Seal the private key; only the public key stays in plaintext. See
+	// importtoken.SealedRSAKey for the seal/open/destroy handling.
+	wrappingKey, err := importtoken.NewSealedRSAKey(wrappingPrivateKey)
+	if err != nil {
+		return nil, err
+	}
 
-	// Store the private key temporarily with a unique ID based on CN. This
-	// is transient wrapping-key material for the in-flight import ceremony,
-	// never key metadata, so it stays in importTokens (process memory only)
-	// rather than Config.KeyStorage; see the Backend.importTokens doc
-	// comment in azurekv.go. importTokens keeps its own copy of the bytes,
-	// not privateKeyBytes itself: privateKeyBytes is also returned below as
-	// ImportParameters.ImportToken, and importTokens.Put's destroy callback
-	// (secure.Wipe) zeroes its argument's backing array in place on
-	// eviction -- sharing one slice between the two would let a later
-	// sweep or Close silently zero the bytes a caller still holds.
-	importTokenKey := fmt.Sprintf("import-token-%s", attrs.CN)
-	storedKeyBytes := make([]byte, len(privateKeyBytes))
-	copy(storedKeyBytes, privateKeyBytes)
-	expiresAt, putErr := b.importTokens.Put(importTokenKey, storedKeyBytes)
-	if putErr != nil {
-		return nil, &errs.Wrapped{Msg: "failed to store import token", Err: putErr}
+	// The handle is random and carries no key material. It is also
+	// independent of attrs.CN, so concurrent ceremonies for the same CN no
+	// longer overwrite each other's wrapping key.
+	token := uuid.New().String()
+
+	// Put enforces the store's TTL and hard cap and sweeps expired
+	// ceremonies before inserting this one; on refusal it destroys
+	// wrappingKey itself.
+	expiresAt, err := b.importTokens.Put(token, wrappingKey)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to store import token", Err: err}
 	}
 
 	// Determine key spec from attributes
@@ -118,8 +118,8 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 	}
 
 	return &backend.ImportParameters{
-		WrappingPublicKey: &wrappingPrivateKey.PublicKey,
-		ImportToken:       privateKeyBytes,
+		WrappingPublicKey: wrappingKey.PublicKey(),
+		ImportToken:       []byte(token),
 		Algorithm:         algorithm,
 		ExpiresAt:         &expiresAt,
 		KeySpec:           keySpec,
@@ -181,13 +181,21 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 }
 
 // UnwrapKey unwraps key material that was previously wrapped with WrapKey.
-// For Azure Key Vault, we perform unwrapping locally using the temporary private key
-// that was generated during GetImportParameters.
+// For Azure Key Vault, unwrapping is performed locally with the sealed
+// wrapping private key GetImportParameters stored under
+// wrapped.ImportToken.
+//
+// The import token is single-use: this call Takes it from b.importTokens
+// whether or not unwrapping succeeds, so a completed or failed ceremony
+// cannot be replayed against different key material, and the sealed
+// wrapping key is destroyed before this call returns. Unknown, expired and
+// already-consumed tokens are indistinguishable and all report
+// backend.ErrKeyNotFound.
 //
 // The returned byte slice contains plaintext key material; callers MUST
 // move it into a *secure.Buffer immediately and wipe the returned slice
-// once the data has been copied out. See importKeyMaterial for the
-// canonical handling pattern.
+// once the data has been copied out. See ImportKey for the canonical
+// handling pattern.
 func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if wrapped == nil {
 		return nil, &errs.Message{Msg: "wrapped key material cannot be nil"}
@@ -199,31 +207,34 @@ func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMate
 		return nil, &errs.Message{Msg: "import token is required"}
 	}
 
-	// Parse the private key from the import token
-	privateKey, err := x509.ParsePKCS1PrivateKey(wrapped.ImportToken)
+	// Take the wrapping key: this call owns destroying whatever it took.
+	wrappingKey, err := b.importTokens.Take(string(wrapped.ImportToken))
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse private key from import token", Err: err}
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "invalid or expired import token"}
 	}
+	defer wrappingKey.Destroy()
 
 	var keyMaterial []byte
+	useErr := wrappingKey.Use(func(privateKey *rsa.PrivateKey) error {
+		var unwrapErr error
+		switch wrapped.Algorithm {
+		case backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
+			backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
+			// Use simple RSA-OAEP unwrapping
+			keyMaterial, unwrapErr = wrapping.UnwrapRSAOAEP(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
 
-	switch wrapped.Algorithm {
-	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
-		backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
-		// Use simple RSA-OAEP unwrapping
-		keyMaterial, err = wrapping.UnwrapRSAOAEP(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
+		case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1,
+			backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
+			// Use hybrid RSA + AES-KWP unwrapping
+			keyMaterial, unwrapErr = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
 
-	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1,
-		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
-		// Use hybrid RSA + AES-KWP unwrapping
-		keyMaterial, err = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
-
-	default:
-		return nil, &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
-	}
-
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to unwrap key material", Err: err}
+		default:
+			return &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
+		}
+		return unwrapErr
+	})
+	if useErr != nil {
+		return nil, &errs.Wrapped{Msg: "failed to unwrap key material", Err: useErr}
 	}
 
 	return keyMaterial, nil
@@ -232,7 +243,8 @@ func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMate
 // ImportKey imports externally generated key material into Azure Key Vault.
 //
 // Azure Key Vault import process:
-//  1. Unwrap the key material using the temporary private key
+//  1. Unwrap the key material with the sealed wrapping key named by
+//     wrapped.ImportToken (consuming the single-use token)
 //  2. Parse the key material (RSA, ECDSA, etc.)
 //  3. Create a JSON Web Key (JWK) from the parsed key
 //  4. Import the JWK into Azure Key Vault using the ImportKey API
@@ -381,10 +393,6 @@ func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, 
 		return &errs.Wrapped{Msg: "failed to store metadata", Err: err}
 	}
 
-	// Clean up the temporary import token
-	importTokenKey := fmt.Sprintf("import-token-%s", attrs.CN)
-	b.importTokens.Delete(importTokenKey)
-
 	return nil
 }
 
@@ -458,10 +466,6 @@ func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes
 	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
 		return &errs.Wrapped{Msg: "failed to store metadata", Err: err}
 	}
-
-	// Clean up the temporary import token
-	importTokenKey := fmt.Sprintf("import-token-%s", attrs.CN)
-	b.importTokens.Delete(importTokenKey)
 
 	return nil
 }
