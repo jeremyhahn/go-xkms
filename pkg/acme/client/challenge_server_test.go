@@ -130,7 +130,7 @@ func newTestClientForMockACMEServer(t *testing.T, server *mockACMEServer) *Clien
 	accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	serverCert := server.Server.Certificate()
+	serverCert := server.Certificate()
 	require.NotNil(t, serverCert)
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Raw})
 
@@ -138,7 +138,7 @@ func newTestClientForMockACMEServer(t *testing.T, server *mockACMEServer) *Clien
 		AccountEmail:  "test@example.com",
 		AccountSigner: accountKey,
 		Config: &Config{
-			DirectoryURL:   server.Server.URL + "/directory",
+			DirectoryURL:   server.URL + "/directory",
 			SystemCertPool: false,
 			TrustedRoots:   []string{string(certPEM)},
 			Timeout:        10 * time.Second,
