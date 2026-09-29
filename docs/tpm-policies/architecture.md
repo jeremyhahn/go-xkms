@@ -108,10 +108,68 @@ approval is current". The server makes no software comparison.
      is verified against that Name.
 3. **Signing** happens only inside xkms, on policy create and update. A caller
    never supplies a signature.
-4. **Rotation** replaces the authority and so changes its Name. Every object
-   bound to the old Name would need re-creating, so rotation is out of scope:
-   an authority lives as long as its scope. It is destroyed only when the scope
-   is torn down, which requires the scope to have no objects.
+4. **Rotation** is required (owner ruling, 2026-09-29). See
+   [Authority rotation](#authority-rotation-pending-decision).
+
+## Authority rotation (pending decision)
+
+**Feasibility.** Rotation uses `TPM2_PolicyAuthorizeNV` indirection: an object
+binds to an NV index, and the NV index names the current authority, so writing
+the index moves every bound object to a new authority without re-keying. This
+was verified on 2026-09-29:
+
+| TPM | Revision | PolicyAuthorizeNV |
+|---|---|---|
+| go-tpm-tools simulator (MSFT) | 1.54 | advertised; runs, and the session digest equals the trial digest |
+| swtpm 0.7.3 (libtpms) | 1.64 | advertised; runs, and the session digest equals the trial digest |
+| production vTPM host (IBM firmware 2024-01-25) | 1.83 | advertised (capability query only) |
+
+go-tpm v0.9.8 implements `PolicyAuthorizeNV`, including its trial `Update`.
+
+**The gap in one index per tenant.** `PolicyAuthorizeNV` checks that the
+session's current digest equals the digest stored in the index, then *resets*
+the digest to `H(0 ‖ CC_PolicyAuthorizeNV ‖ Name(index))`. `PolicyAuthorize`
+resets it the same way. An object's `authPolicy` therefore records only which
+index it follows. If every object of a tenant follows one index, all of them
+share one `authPolicy`, and the TPM would accept any current approval of that
+tenant for any of its objects. The object-to-policy binding would then be
+enforced only in software. Three ways to keep the TPM enforcing it:
+
+| Option | Object binds to | Stored in NV | Update or rotation cost | NV cost on the physical TPM |
+|---|---|---|---|---|
+| **A** (recommended) | `PolicyAuthorizeNV(index(P))`, one index per named policy | `PolicyAuthorize(authority, policyRef(P))` digest | rotation rewrites each of the tenant's policy indices; an update re-signs the tenant's policies (a few) | one index per named policy, plus one counter per tenant |
+| B | `PolicyAuthorizeNV(index(tenant))` | `PolicyAuthorize(authority, tenantRef)` digest | approvals are per object (`PolicyNameHash(object Name)`), so every update or rotation re-signs every object of the tenant | one index plus one counter per tenant |
+| C | same as B | same as B | same as A | same as B, but the object-to-policy binding is enforced only by the registry |
+
+Option A keeps the session code simple and updates cheap. Its NV use is bounded
+by the number of named policies, not objects, and `vtpm` tenants spend their
+own vTPM's NV. The policy indices and the tenant counter are written with an
+`AUTHWRITE` secret held in the scope record. The authority never controls its
+own replacement.
+
+**Rotation steps (option A):**
+1. Create authority `k+1`.
+2. For each policy, write the index with `PolicyAuthorize(authority k+1, policyRef(P))`.
+3. Sign every policy's current approval with `k+1`.
+4. Store the scope record and approvals in one registry batch.
+5. Flush and evict authority `k`.
+
+Approvals signed by `k` no longer match any index, so rotation also revokes
+them. If the process crashes after the first index write, `k` and `k+1` are
+both recorded as `rotating`, and startup finishes the remaining writes.
+
+**Tenant key rotation (pending decision).** The ruling asks for key versions:
+a new version under the tenant's scope, old versions kept for verify and
+decrypt until retired, and "rotate all keys in this scope". xkms has no such
+model today:
+- the gRPC API declares `ListKeyVersions`, `Enable/DisableKeyVersion` and
+  `Enable/DisableAllKeyVersions`, but nothing implements them;
+- `RotateKey` replaces a software key in place and delegates to the cloud KMS's
+  own versioning;
+- TPM2 returns `ErrKeyRotationNotSupported`.
+
+The model is therefore a new, cross-backend design. It must decide how a
+verify or decrypt call selects a version.
 
 ## NV counter and revocation
 
@@ -172,13 +230,14 @@ assignments/by-policy/<name>/<id>   policy → objects
 
 ## Tenancy modes
 
-The physical TPM belongs to the system tenant. `tpm.mode` is set by the system
-administrator per tenant:
+The physical TPM belongs to the system tenant. `tpm.mode` is kept in the
+xkms-owned scope record at `{tenant}/tpm-policies/shared/scope`, and only the
+system administrator can set it:
 
 | Mode | Where the tenant's TPM objects live | Isolation |
 |---|---|---|
-| `none` (default) | nowhere; the tenant cannot create TPM2 keys, sealed objects or policies | n/a |
-| `shared` | physical TPM, under a per-tenant storage key that is a child of the Platform SRK | The tenant storage key's auth value is a random secret in the tenant's scope record. Blobs are under the tenant's prefix. One tenant cannot load another's objects, because it cannot authorize the other's parent. |
+| `none` | nowhere; the tenant cannot create TPM2 keys, sealed objects or policies | n/a |
+| `shared` (default) | physical TPM, under a per-tenant storage key that is a child of the Platform SRK | The tenant storage key's auth value is a random secret in the tenant's scope record. Blobs are under the tenant's prefix. One tenant cannot load another's objects, because it cannot authorize the other's parent. |
 | `vtpm` | a per-tenant vTPM (swtpm) that the node runs | a separate TPM: its own EK, SRK, authority, counter and NV |
 
 - The system tenant always uses the physical TPM, and its scope's storage key
@@ -217,9 +276,10 @@ inside its own container.
   - It restarts the process with backoff, and reconnects clients by reopening
     the socket.
 - **State key:** a random 32 bytes created when the tenant's scope is created,
-  and sealed under the physical TPM's `platform` policy. It is stored in the
-  system scope's storage. The node unseals it at start, so a vTPM's state
-  cannot be read off a different platform or after the platform PCR changes.
+  and sealed under `vtpm-state`, a named policy in the system scope. It is
+  stored in the system scope's storage and unsealed by the node at start. A
+  vTPM's state cannot be read on a different platform, and a firmware change is
+  handled by updating `vtpm-state` rather than by losing the vTPMs.
 - **First start:** `swtpm_setup` with an EK, then xkms provisions the vTPM's
   SRK, the tenant's authority and the counter.
 - **Tests:**
