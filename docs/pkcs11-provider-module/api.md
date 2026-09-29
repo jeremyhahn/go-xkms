@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — API
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114)
 
 Transport shapes for the rest of the repo:
 [`../key-management/api.md`](../key-management/api.md).
@@ -46,6 +46,25 @@ DTO as JSON. Every verb gates on the keys resource: the guarded delete needs
 Over gRPC and Unix every state RPC carries `keys:write` or `keys:read`.
 
 Types: `pkg/api/transport/types_pkcs11state.go`.
+
+**The tenant comes from the caller's identity.** `tenant_id` is optional. When
+present, it must name the authenticated caller's own tenant. The reserved
+`system` tenant and an empty value are the same namespace. A different tenant is
+refused, and so is a `token` containing `/`. The service decides this once
+(`pkg/xkms/servicer_pkcs11state.go:79`), and every transport answers the same
+way:
+
+| Fault | REST / QUIC | gRPC / Unix | Error |
+|---|---|---|---|
+| `tenant_id` names another tenant | 400 | `InvalidArgument` | `ErrPKCS11StateTenantMismatch` |
+| `token` empty | 400 | `InvalidArgument` | `ErrPKCS11StateTokenRequired` |
+| `token` contains `/` | 400 | `InvalidArgument` | `ErrPKCS11StateTokenSeparator` |
+| state store not enabled | 500 | `Internal` | `ErrPKCS11StateStoreUnavailable` |
+
+The mapping is `xkms.IsPKCS11StateRequestError`
+(`pkg/xkms/servicer_pkcs11state.go:53`), consulted by
+`pkg/api/rest/pkcs11state_handlers.go:71` and `mapPKCS11StateError`
+(`pkg/api/grpc/service_pkcs11state.go:36`).
 
 **`PKCS11StateCAS` and `PKCS11StatePutIfAbsent` are not conveniences.** Two
 concurrent Cryptoki sessions against the same token will otherwise clobber each

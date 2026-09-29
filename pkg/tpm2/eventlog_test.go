@@ -7,6 +7,7 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -2223,5 +2224,26 @@ func BenchmarkGetHashFunction(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = GetHashFunction(algorithms[i%len(algorithms)])
+	}
+}
+
+// TestParseEventLog_OversizedEventRefused proves an event declaring more
+// than MaxEventDataSize bytes of data is refused with a typed error before
+// its buffer is made, rather than asking make for up to 4 GiB.
+func TestParseEventLog_OversizedEventRefused(t *testing.T) {
+	entry := createEventLogEntry(0, 0x00000001, []struct {
+		algID  uint16
+		digest []byte
+	}{{algID: AlgSHA256, digest: make([]byte, 32)}}, nil)
+	// The event size is the entry's last four bytes (the data is empty).
+	binary.LittleEndian.PutUint32(entry[len(entry)-4:], 0xFFFFFFFF)
+
+	_, err := ParseEventLog(writeEventLogFixture(t, entry))
+	var tooLarge *EventDataTooLargeError
+	if !errors.As(err, &tooLarge) {
+		t.Fatalf("ParseEventLog() error = %v, want *EventDataTooLargeError", err)
+	}
+	if tooLarge.Size != 0xFFFFFFFF || tooLarge.EventNum != 1 {
+		t.Fatalf("EventDataTooLargeError = %+v", tooLarge)
 	}
 }

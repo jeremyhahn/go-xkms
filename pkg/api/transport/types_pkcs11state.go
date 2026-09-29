@@ -23,11 +23,14 @@ package transport
 // records and the server stores them verbatim in the embedded qrdb node, so the
 // wire contract never has to track the module's record schema.
 //
-// Records are namespaced by (TenantID, Token, Key): TenantID scopes to a tenant
-// (empty is the system scope), Token is the token label, and Key is the module's
-// own storage key (e.g. "pkcs11/tokens/0", "pkcs11/objects/<handle>"). This is
-// the same shape the local file/memory backends key on, so the remote backend is
-// a drop-in storage.Backend.
+// Records are namespaced by (tenant, Token, Key). The tenant is always the
+// authenticated caller's own, derived by the server from the identity; TenantID
+// is optional, and a non-empty value must name that same tenant or the request
+// is refused (xkms.ErrPKCS11StateTenantMismatch). Token is the token label and
+// must not contain '/'; Key is the module's own storage key (e.g.
+// "pkcs11/tokens/0", "pkcs11/objects/<handle>"). This is the same shape the
+// local file/memory backends key on, so the remote backend is a drop-in
+// storage.Backend.
 
 // PKCS11StatePutRequest stores a record.
 type PKCS11StatePutRequest struct {

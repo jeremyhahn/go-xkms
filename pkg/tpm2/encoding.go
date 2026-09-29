@@ -47,13 +47,60 @@ func EncodePCRs(pcrBanks []PCRBank) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Decodes a PCR bank slice from binary using the encoding/gob package
+const (
+	// maxPCRIndex is the highest PCR index a PC Client TPM implements.
+	maxPCRIndex = 23
+
+	// maxPCRDigestSize is the largest PCR value any TPM bank holds (SHA-512).
+	maxPCRDigestSize = 64
+
+	// maxPCRBanks bounds the number of banks in decoded PCR data. A TPM
+	// has one bank per supported hash algorithm; ReadPCRs reads four.
+	maxPCRBanks = 8
+
+	// maxEncodedPCRBytes bounds the encoded PCR data DecodePCRs accepts.
+	// A complete read of maxPCRBanks banks of SHA-512 PCRs encodes to well
+	// under this.
+	maxEncodedPCRBytes = 64 << 10
+)
+
+// DecodePCRs decodes a PCR bank slice encoded by EncodePCRs.
+//
+// The encoding travels inside attestation evidence (Quote.PCRs, the
+// TCG-CSR ProdCaData) and is decoded by the verifier, so it is treated as
+// adversarial: input longer than maxEncodedPCRBytes is refused with
+// ErrPCRDataTooLarge before gob sees it, and a decoded result no TPM could
+// have produced is refused with ErrInvalidPCRData.
 func DecodePCRs(pcrBanks []byte) ([]PCRBank, error) {
+	if len(pcrBanks) > maxEncodedPCRBytes {
+		return nil, ErrPCRDataTooLarge
+	}
 	banks := make([]PCRBank, 0)
 	buf := bytes.NewBuffer(pcrBanks)
 	decoder := gob.NewDecoder(buf)
 	if err := decoder.Decode(&banks); err != nil {
 		return nil, err
 	}
+	if err := validatePCRBanks(banks); err != nil {
+		return nil, err
+	}
 	return banks, nil
+}
+
+// validatePCRBanks checks decoded banks against what a TPM can report.
+func validatePCRBanks(banks []PCRBank) error {
+	if len(banks) > maxPCRBanks {
+		return ErrInvalidPCRData
+	}
+	for _, bank := range banks {
+		if len(bank.PCRs) > maxPCRIndex+1 {
+			return ErrInvalidPCRData
+		}
+		for _, pcr := range bank.PCRs {
+			if pcr.ID < 0 || pcr.ID > maxPCRIndex || len(pcr.Value) > maxPCRDigestSize {
+				return ErrInvalidPCRData
+			}
+		}
+	}
+	return nil
 }

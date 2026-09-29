@@ -14,9 +14,7 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"strings"
 
@@ -62,10 +60,11 @@ func authenticatedJWSFromContext(ctx context.Context) (*authenticatedJWSResult, 
 
 // peekJWSKeyID reports the "kid" field of a JWS protected header without
 // verifying the signature or consuming the replay-nonce: it only parses the
-// JWS envelope structure, the same way server.ClientID does for the
-// per-client limiter. A JWK-authenticated request (new-account, which has no
-// account yet), a malformed body, or a JWS with no signatures reports
-// ok=false — only a request that names an existing account by kid can ever
+// JWS envelope structure, to decide whether the request names an account at
+// all. The kid it returns is unverified and is never used as an identity —
+// parseKID verifies it before anything keys on it. A JWK-authenticated
+// request (new-account, which has no account yet), a malformed body, or a
+// JWS with no signatures reports ok=false — only a request that names an existing account by kid can ever
 // resolve to a tenant.
 func peekJWSKeyID(body []byte) (kid string, ok bool) {
 	jws, err := jose.ParseSigned(strings.TrimSpace(string(body)), server.AllowedJOSEAlgorithms)
@@ -95,7 +94,8 @@ func peekJWSKeyID(body []byte) (kid string, ok bool) {
 // replay-nonce is single-use, so a second live verification would spuriously
 // fail with badNonce. On success, the account's TenantID is published via
 // server.WithTenantID so any TenantRateLimiter mounted after this middleware
-// keys on it.
+// keys on it, and the verified account via server.WithVerifiedAccountID so
+// server.ClientID keys per-account buckets on it rather than on the client IP.
 //
 // A request with no kid (new-account's JWK-authenticated JWS, new-nonce,
 // directory, ca-bundle, or any GET) never publishes a tenant, and neither
@@ -108,13 +108,14 @@ func (s *RestService) TenantAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		body, err := io.ReadAll(r.Body)
+		// RequestBody returns the copy RequestBodyMiddleware already read;
+		// a read failure is left for the handler, whose own parseKID call
+		// reports the identical (buffered) error.
+		body, err := server.RequestBody(r)
 		if err != nil {
 			next.ServeHTTP(w, r)
 			return
 		}
-		_ = r.Body.Close()
-		r.Body = io.NopCloser(bytes.NewReader(body))
 
 		if _, ok := peekJWSKeyID(body); !ok {
 			next.ServeHTTP(w, r)
@@ -122,16 +123,15 @@ func (s *RestService) TenantAuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		account, payload, kidErr := s.parseKID(r.Context(), r)
-		// parseKID drained r.Body; restore the original bytes so any
-		// downstream body reader — server.ClientID's KID-based per-account
-		// bucket key for the per-category tenant rate limiters, or the
-		// handler itself in the (never expected) case the cache is bypassed
-		// — still sees the request as it arrived.
-		r.Body = io.NopCloser(bytes.NewReader(body))
 
 		ctx := withAuthenticatedJWS(r.Context(), account, payload, kidErr)
-		if kidErr == nil && account.TenantID != "" {
-			ctx = server.WithTenantID(ctx, account.TenantID)
+		if kidErr == nil {
+			// Only a verified kid may key a per-account rate-limit bucket
+			// (server.ClientID); an unverified one is attacker-chosen.
+			ctx = server.WithVerifiedAccountID(ctx, account.ID)
+			if account.TenantID != "" {
+				ctx = server.WithTenantID(ctx, account.TenantID)
+			}
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

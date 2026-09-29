@@ -19,10 +19,8 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/binary"
 	"testing"
-	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/stretchr/testify/require"
@@ -992,173 +990,6 @@ func TestDecodeGetAssertionCredentialDescriptorNonStringTransports(t *testing.T)
 }
 
 // =============================================================================
-// processHMACSecretExtension edge case tests (cmd_getassertion.go)
-// =============================================================================
-
-// TestProcessHMACSecretExtensionNoKey tests when credential has no HMAC secret key.
-func TestProcessHMACSecretExtensionNoKey(t *testing.T) {
-	auth := createTestAuthenticator(t)
-	rpID := "example.com"
-
-	// Create credential WITHOUT HMAC secret key.
-	credID, err := GenerateCredentialID()
-	require.NoError(t, err)
-
-	privateKey, publicKeyCOSE, err := GenerateCredentialKey(COSEAlgES256)
-	require.NoError(t, err)
-
-	privateKeyBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
-	require.NoError(t, err)
-
-	cred := withPrivateKey(&StoredCredential{
-		CredentialID:    credID,
-		RPID:            rpID,
-		RPName:          "Test RP",
-		UserID:          []byte("user-123"),
-		UserName:        "testuser@example.com",
-		UserDisplayName: "Test User",
-		PublicKeyCOSE:   publicKeyCOSE,
-		Algorithm:       COSEAlgES256,
-		SignCount:       0,
-		Discoverable:    false,
-		HMACSecretKey:   nil, // No HMAC secret key
-		CreatedAt:       time.Now().Unix(),
-	}, privateKeyBytes)
-
-	err = auth.storage.Store(cred)
-	require.NoError(t, err)
-
-	clientDataHash := generateTestClientDataHash()
-	salt1 := make([]byte, 32)
-	_, _ = rand.Read(salt1)
-
-	request := map[int]interface{}{
-		getAssertionParamRPID:           rpID,
-		getAssertionParamClientDataHash: clientDataHash,
-		getAssertionParamAllowList: []interface{}{
-			map[string]interface{}{
-				"type": "public-key",
-				"id":   cred.CredentialID,
-			},
-		},
-		getAssertionParamExtensions: map[string]interface{}{
-			"hmac-secret": map[string]interface{}{
-				"salt1": salt1,
-			},
-		},
-	}
-
-	reqBytes, err := cbor.Marshal(request)
-	require.NoError(t, err)
-
-	respBytes, err := auth.ProcessCBOR(CmdGetAssertion, reqBytes)
-	require.Error(t, err)
-	require.NotEqual(t, byte(StatusOK), respBytes[0])
-}
-
-// TestProcessHMACSecretExtensionInvalidInputType tests invalid input type.
-func TestProcessHMACSecretExtensionInvalidInputType(t *testing.T) {
-	auth := createTestAuthenticator(t)
-	rpID := "example.com"
-	cred := createAssertionTestCredential(t, auth, rpID, false)
-
-	clientDataHash := generateTestClientDataHash()
-
-	request := map[int]interface{}{
-		getAssertionParamRPID:           rpID,
-		getAssertionParamClientDataHash: clientDataHash,
-		getAssertionParamAllowList: []interface{}{
-			map[string]interface{}{
-				"type": "public-key",
-				"id":   cred.CredentialID,
-			},
-		},
-		getAssertionParamExtensions: map[string]interface{}{
-			"hmac-secret": "not-a-map", // Invalid type
-		},
-	}
-
-	reqBytes, err := cbor.Marshal(request)
-	require.NoError(t, err)
-
-	respBytes, err := auth.ProcessCBOR(CmdGetAssertion, reqBytes)
-	require.Error(t, err)
-	require.NotEqual(t, byte(StatusOK), respBytes[0])
-}
-
-// TestProcessHMACSecretExtensionInvalidSalt2Length tests invalid salt2 length.
-func TestProcessHMACSecretExtensionInvalidSalt2Length(t *testing.T) {
-	auth := createTestAuthenticator(t)
-	rpID := "example.com"
-	cred := createAssertionTestCredential(t, auth, rpID, false)
-
-	clientDataHash := generateTestClientDataHash()
-	salt1 := make([]byte, 32)
-	_, _ = rand.Read(salt1)
-	salt2 := make([]byte, 16) // Wrong size (should be 32)
-	_, _ = rand.Read(salt2)
-
-	request := map[int]interface{}{
-		getAssertionParamRPID:           rpID,
-		getAssertionParamClientDataHash: clientDataHash,
-		getAssertionParamAllowList: []interface{}{
-			map[string]interface{}{
-				"type": "public-key",
-				"id":   cred.CredentialID,
-			},
-		},
-		getAssertionParamExtensions: map[string]interface{}{
-			"hmac-secret": map[string]interface{}{
-				"salt1": salt1,
-				"salt2": salt2,
-			},
-		},
-	}
-
-	reqBytes, err := cbor.Marshal(request)
-	require.NoError(t, err)
-
-	respBytes, err := auth.ProcessCBOR(CmdGetAssertion, reqBytes)
-	require.Error(t, err)
-	require.NotEqual(t, byte(StatusOK), respBytes[0])
-}
-
-// TestProcessHMACSecretExtensionInterfaceKeyedMap tests interface-keyed map input.
-func TestProcessHMACSecretExtensionInterfaceKeyedMap(t *testing.T) {
-	auth := createTestAuthenticator(t)
-	rpID := "example.com"
-	cred := createAssertionTestCredential(t, auth, rpID, false)
-
-	clientDataHash := generateTestClientDataHash()
-	salt1 := make([]byte, 32)
-	_, _ = rand.Read(salt1)
-
-	// Build request with interface-keyed extension map.
-	request := map[int]interface{}{
-		getAssertionParamRPID:           rpID,
-		getAssertionParamClientDataHash: clientDataHash,
-		getAssertionParamAllowList: []interface{}{
-			map[string]interface{}{
-				"type": "public-key",
-				"id":   cred.CredentialID,
-			},
-		},
-		getAssertionParamExtensions: map[interface{}]interface{}{
-			"hmac-secret": map[interface{}]interface{}{
-				"salt1": salt1,
-			},
-		},
-	}
-
-	reqBytes, err := cbor.Marshal(request)
-	require.NoError(t, err)
-
-	respBytes, err := auth.ProcessCBOR(CmdGetAssertion, reqBytes)
-	require.NoError(t, err)
-	require.Equal(t, byte(StatusOK), respBytes[0])
-}
-
-// =============================================================================
 // HID adapter edge case tests (hid_adapter.go)
 // =============================================================================
 
@@ -1436,7 +1267,10 @@ func TestCTAPHIDHandler_LargeResponseFragmentation(t *testing.T) {
 // Additional helper for testing decryptPIN edge cases
 // =============================================================================
 
-// TestDecryptPINNoNullTerminator tests PIN without null terminator.
+// TestDecryptPINNoNullTerminator tests that a PIN filling the entire padded
+// block with no 0x00 terminator is rejected as a policy violation: it has no
+// room left for a terminator, so the PIN it represents is 64 bytes long,
+// exceeding the 63-byte maximum by construction (go-xkms#1149).
 func TestDecryptPINNoNullTerminator(t *testing.T) {
 	sharedSecret := make([]byte, 32)
 	_, _ = rand.Read(sharedSecret)
@@ -1461,12 +1295,13 @@ func TestDecryptPINNoNullTerminator(t *testing.T) {
 	auth := createTestAuthenticatorWithPIN(t)
 	defer func() { _ = auth.Close() }()
 
-	decrypted, err := auth.decryptPIN(sharedSecret, PINProtocol1, encryptedPIN)
-	require.NoError(t, err)
-	require.Equal(t, 64, len(decrypted)) // Should use entire length
+	_, err = auth.decryptPIN(sharedSecret, PINProtocol1, encryptedPIN)
+	require.ErrorIs(t, err, ErrPINPolicyViolation)
 }
 
-// TestDecryptPINTooShort tests PIN that's too short.
+// TestDecryptPINTooShort tests that a newPinEnc shorter than the exact
+// protocol-1 length (64 bytes) is rejected before CryptBlocks runs, rather
+// than panicking on a partial final AES block (go-xkms#1149).
 func TestDecryptPINTooShort(t *testing.T) {
 	auth := createTestAuthenticatorWithPIN(t)
 	defer func() { _ = auth.Close() }()
@@ -1475,7 +1310,7 @@ func TestDecryptPINTooShort(t *testing.T) {
 	shortPIN := make([]byte, 32) // Less than 64 bytes
 
 	_, err := auth.decryptPIN(sharedSecret, PINProtocol1, shortPIN)
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrInvalidParameter)
 }
 
 // TestDecryptBlockWrongSize tests block decryption with wrong size.
@@ -1487,7 +1322,7 @@ func TestDecryptBlockWrongSize(t *testing.T) {
 	wrongSizeBlock := make([]byte, 32) // Should be 16 bytes
 
 	_, err := auth.decryptBlock(sharedSecret, PINProtocol1, wrongSizeBlock)
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrDecryptionFailed)
 }
 
 // TestClientPINToUint8InvalidTypes tests clientPINToUint8 with invalid types.

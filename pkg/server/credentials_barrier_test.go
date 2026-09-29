@@ -85,23 +85,31 @@ func TestCredentialBarrierStrategy_RoundTripsAcrossRestart(t *testing.T) {
 // and initializeBackends need to consume it -- the general (non-node) xkms
 // barrier is itself built from already-initialized backends
 // (buildHardwareSealStrategies), which is exactly the cycle
-// config.Config.Validate() now refuses at load time. An embedded caller
-// that constructs *config.Config by hand and skips Validate() must still
-// fail closed here, with a typed error and no partial credential service,
-// rather than hang or silently proceed unsealed.
+// config.Config.Validate() refuses at load time.
+//
+// Since go-xkms#666, New() itself calls Validate() first, so this exact
+// configuration cannot reach initializeCredentialService through New() any
+// more -- Validate() now refuses it with a typed *errs.Message naming the
+// required shape, before New() touches storage at all (see
+// TestNew_CredentialServiceFailure_WrapsAsErrServiceInit for that path).
+// What remains to prove here is the backstop initializeCredentialService
+// itself still provides: any future caller that reaches it directly, without
+// going through New()/Validate(), still fails closed with the credential
+// package's own typed nil-barrier error rather than hanging or silently
+// proceeding unsealed.
 func TestNew_CredentialBarrierStrategy_UnsupportedConfigurationRefusedCleanly(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t) // Storage.Backend == "file": never node-flip-wired
-	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "passphrase"}
-	cfg.Credentials = config.CredentialsConfig{SealStrategy: "barrier"}
+	cfg := &config.Config{
+		Storage:     config.StorageConfig{Backend: "file"}, // never node-flip-wired
+		Barrier:     config.BarrierConfig{Enabled: true, Strategy: "passphrase"},
+		Credentials: config.CredentialsConfig{SealStrategy: "barrier"},
+	}
 	require.False(t, cfg.CredentialsBarrierStrategySupported(),
 		"precondition: file storage never adopts a node barrier")
 
-	srv, err := New(cfg)
-	require.Nil(t, srv, "a failed construction must not hand back a partially-built server")
+	s := newMinimalServer(t, cfg)
+	err := s.initializeCredentialService()
 	require.Error(t, err)
+	require.Nil(t, s.credentialService, "a failed initialization must not leave a partial credential service")
 	require.ErrorIs(t, err, ErrCredentialServiceFailed)
 	require.True(t, errors.Is(err, credentialspkg.ErrNilBarrier),
 		"the underlying cause must be the credential package's own typed nil-barrier error")

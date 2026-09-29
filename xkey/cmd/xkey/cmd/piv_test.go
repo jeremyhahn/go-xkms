@@ -27,14 +27,27 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
-	"github.com/spf13/viper"
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
 )
+
+// mustBuildPIVConfig calls buildPIVConfig and fails the test immediately on
+// error, for the many PIV storage tests that only care about the resolved
+// configuration. cmd may be nil.
+func mustBuildPIVConfig(t *testing.T, cmd *cobra.Command) *PIVConfig {
+	t.Helper()
+	cfg, err := buildPIVConfig(cmd)
+	require.NoError(t, err)
+	return cfg
+}
 
 // TestPIVConfig_Validate tests all validation paths for PIVConfig.
 func TestPIVConfig_Validate(t *testing.T) {
@@ -157,51 +170,42 @@ func TestPIVConfig_Validate(t *testing.T) {
 	}
 }
 
-// TestBuildPIVConfig tests config building from Viper.
+// TestBuildPIVConfig tests config building from the unified config
+// (buildPIVConfig no longer reads Viper at all -- go-xkms#871).
 func TestBuildPIVConfig(t *testing.T) {
-	resetViperForTest(t)
-	viper.Set(viperKeyPIVBackend, "software")
+	previous := loadedConfig
+	cfg := xkeyconfig.DefaultConfig()
+	cfg.PIV.Backend = "software"
+	loadedConfig = cfg
+	t.Cleanup(func() { loadedConfig = previous })
 
-	cfg := buildPIVConfig()
-	if cfg == nil {
+	pivCfg, err := buildPIVConfig(nil)
+	require.NoError(t, err)
+	if pivCfg == nil {
 		t.Fatal("buildPIVConfig() returned nil")
 	}
 
-	// Check that the backend is set from Viper
-	if cfg.Backend == "" {
+	// Check that the backend is set from the loaded config.
+	if pivCfg.Backend == "" {
 		t.Error("buildPIVConfig() returned empty backend")
 	}
 }
 
-// TestResetViperForTest_PreservesBoundDefaults is a regression test for
-// go-xkms#1047. viper.Reset() discards every BindPFlag/BindEnv registration
-// process-wide, not just the keys a test set; since each command registers
-// its bindings once in init(), a later test in the same binary that reads a
-// bound key (piv.backend here) would see an empty value instead of the
-// flag's default. resetViperForTest must scope cleanup to the keys the test
-// actually touched and leave the binding usable by whatever runs next.
-func TestResetViperForTest_PreservesBoundDefaults(t *testing.T) {
-	t.Run("TestBuildPIVConfig-style set and reset", func(t *testing.T) {
-		resetViperForTest(t)
-		viper.Set(viperKeyPIVBackend, "software")
+// TestBuildPIVConfig_NilConfigStillDefaultsToSoftware is a regression test
+// for go-xkms#1047's underlying concern applied to the new mechanism:
+// buildPIVConfig must not depend on some earlier test having populated
+// loadedConfig or a bound flag default. With no loaded config and no cmd at
+// all, it still resolves the documented "software" backend default.
+func TestBuildPIVConfig_NilConfigStillDefaultsToSoftware(t *testing.T) {
+	previous := loadedConfig
+	loadedConfig = nil
+	t.Cleanup(func() { loadedConfig = previous })
 
-		cfg := buildPIVConfig()
-		if cfg.Backend != PIVBackendSoftware {
-			t.Fatalf("buildPIVConfig().Backend = %q, want %q", cfg.Backend, PIVBackendSoftware)
-		}
-	})
-
-	t.Run("piv.backend still reflects its flag binding afterward", func(t *testing.T) {
-		if got := viper.GetString(viperKeyPIVBackend); got != defaultPIVBackend {
-			t.Fatalf("viper.GetString(%q) = %q after a prior test's cleanup, want %q (the --backend flag's bound default)",
-				viperKeyPIVBackend, got, defaultPIVBackend)
-		}
-
-		cfg := buildPIVConfig()
-		if cfg.Backend == "" {
-			t.Fatal("buildPIVConfig() returned an empty backend; the piv.backend BindPFlag registration was lost")
-		}
-	})
+	cfg, err := buildPIVConfig(nil)
+	require.NoError(t, err)
+	if cfg.Backend != PIVBackendSoftware {
+		t.Fatalf("buildPIVConfig(nil).Backend = %q, want %q", cfg.Backend, PIVBackendSoftware)
+	}
 }
 
 // TestBuildPIVConfig_StorageDefaults tests storage type defaults based on backend.
@@ -1116,25 +1120,36 @@ func TestPIVDefaultConstants(t *testing.T) {
 	}
 }
 
-// TestPIVViperKeys tests that viper keys are defined.
-func TestPIVViperKeys(t *testing.T) {
-	keys := []string{
-		viperKeyPIVBackend,
-		viperKeyPIVStorage,
-		viperKeyPIVStoragePath,
-		viperKeyPIVTPMDevice,
-		viperKeyPIVPKCS11Library,
-		viperKeyPIVPKCS11Token,
-		viperKeyPIVPKCS11PIN,
+// TestPIVConfigMapstructureTags proves every PIVConfig field pkg/config
+// exposes for the "piv" command group is tagged with the flag name it
+// mirrors, so pivConfigString's flag lookups and the config's env/file keys
+// never drift apart silently (go-xkms#871; replaces the deleted
+// TestPIVViperKeys, which pinned the BindPFlag-era viper key constants this
+// package no longer has).
+func TestPIVConfigMapstructureTags(t *testing.T) {
+	want := map[string]string{
+		"Backend":       "backend",
+		"Storage":       "storage",
+		"StoragePath":   "storage_path",
+		"TPMDevice":     "tpm_device",
+		"PKCS11Library": "pkcs11_library",
+		"PKCS11Token":   "pkcs11_token",
 	}
-
-	for _, key := range keys {
-		if key == "" {
-			t.Error("viper key should not be empty")
+	typ := reflect.TypeOf(xkeyconfig.PIVConfig{})
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		wantTag, ok := want[field.Name]
+		if !ok {
+			t.Errorf("xkeyconfig.PIVConfig has an untracked field %q", field.Name)
+			continue
 		}
-		if !strings.HasPrefix(key, "piv.") {
-			t.Errorf("viper key %q should have 'piv.' prefix", key)
+		delete(want, field.Name)
+		if got, _, _ := strings.Cut(field.Tag.Get("mapstructure"), ","); got != wantTag {
+			t.Errorf("PIVConfig.%s mapstructure tag = %q, want %q", field.Name, got, wantTag)
 		}
+	}
+	for name := range want {
+		t.Errorf("xkeyconfig.PIVConfig is missing the expected field %q", name)
 	}
 }
 
@@ -2870,9 +2885,9 @@ func TestPIVTouchPolicyConstants(t *testing.T) {
 
 // TestBuildPIVConfig_AllBackends tests buildPIVConfig for all backend types.
 func TestBuildPIVConfig_AllBackends_Detailed(t *testing.T) {
-	// This tests the actual buildPIVConfig function behavior
-	// Since it reads from viper, we test the defaults
-	cfg := buildPIVConfig()
+	// This tests the actual buildPIVConfig function behavior against its
+	// defaults: nil cmd, no loaded config.
+	cfg := mustBuildPIVConfig(t, nil)
 
 	// Verify the struct is populated
 	if cfg == nil {

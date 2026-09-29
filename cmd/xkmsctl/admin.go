@@ -131,6 +131,10 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 	if err != nil {
 		return err
 	}
+	origin, err := resolveWebAuthnOrigin(cmd, cfg.Server)
+	if err != nil {
+		return err
+	}
 
 	// Connect to the xkms service.
 	cl, err := cfg.CreateClient()
@@ -174,7 +178,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 		return ErrEmailRequired
 	}
 
-	attestation, err := webAuthnRegistration(ctx, cl, newAdapter, printer, username, email, displayName, string(RoleAdmin), "", pin)
+	attestation, err := webAuthnRegistration(ctx, cl, newAdapter, printer, username, email, displayName, string(RoleAdmin), origin, pin)
 	if err != nil {
 		return err
 	}
@@ -775,6 +779,7 @@ func init() {
 	adminCreateCmd.Flags().String("device", "", "specific FIDO2 device path to use")
 	adminCreateCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
 	addPINFlags(adminCreateCmd)
+	addOriginFlag(adminCreateCmd)
 
 	// Authentication method flag (read at runtime via cmd.Flags().GetString("method"))
 	adminCreateCmd.Flags().String("method", "fido2",

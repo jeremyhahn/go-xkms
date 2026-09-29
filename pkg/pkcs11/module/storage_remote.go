@@ -66,8 +66,9 @@ type remoteBackend struct {
 }
 
 // newRemoteBackend builds a remote storage.Backend. token is the token label the
-// records are namespaced under; tenantID is empty for a system-scoped module (the
-// server may further scope by the authenticated identity).
+// records are namespaced under. The server always namespaces by the
+// authenticated identity's tenant; tenantID is only a statement of it, so it may
+// be empty, and a value naming a different tenant is refused by the server.
 func newRemoteBackend(client PKCS11StateClient, tenantID, token string) (storage.Backend, error) {
 	if client == nil {
 		return nil, ErrRemoteClientRequired

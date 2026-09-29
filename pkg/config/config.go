@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/resolver"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -65,6 +66,23 @@ type Config struct {
 	// Trust configures the ordered strategy-chain trust resolver. When
 	// nil, trust resolution falls back to the OS system trust store.
 	Trust *resolver.Config `yaml:"trust,omitempty"`
+
+	// LoopbackDesktop marks this Config as backing the in-process loopback
+	// desktop engine (pkg/server/loopback), not a network-facing deployment.
+	// desktopConfig forces Protocols.REST on so the SPA can reach the engine
+	// over 127.0.0.1, which makes NetworkServing report true; Validate uses
+	// this field to skip, for that one launch shape only, the storage.backend
+	// "qrdb" and tls.enabled requirements NetworkServing's doc comment
+	// describes as exempt for local IPC. No other check is affected: a
+	// loopback config still needs a valid port, a configured backend, and
+	// everything else Validate enforces.
+	//
+	// It is a pure embedder signal, never a deployment setting: yaml:"-"
+	// keeps it unreachable from any config file, environment variable, or
+	// flag, so only trusted Go code in this process can set it. Today that is
+	// exactly one call site, desktopConfig, which builds the copy handed to
+	// server.New and never round-trips it through YAML.
+	LoopbackDesktop bool `yaml:"-"`
 }
 
 // CryptoConfig carries process-wide cryptographic policy.
@@ -338,6 +356,14 @@ type ServerConfig struct {
 	QUICPort  int    `yaml:"quic_port"`
 	MCPPort   int    `yaml:"mcp_port"`
 	NoisePort int    `yaml:"noise_port"`
+
+	// TrustedProxies lists the reverse proxies (IP addresses or CIDR
+	// prefixes) allowed to name the client in X-Forwarded-For / X-Real-IP.
+	// The REST rate limiters key on the client IP; a request from any other
+	// peer is keyed on its transport address, so a client cannot pick its
+	// own bucket by sending a forwarding header. Empty (the default) trusts
+	// no proxy. Parsed by ratelimit.ParseTrustedProxies.
+	TrustedProxies []string `yaml:"trusted_proxies,omitempty"`
 }
 
 // NetworkServing reports whether any network protocol is enabled. Network
@@ -346,9 +372,14 @@ type ServerConfig struct {
 // capability plane through the registered ServiceModule (pkg/apimodule).
 // It therefore requires storage.backend "qrdb" and explicit TLS material
 // (qrdb's transports are TLS-only and the xkms CA is not yet composed when
-// the node starts). QUIC is served as HTTP/3 on the REST port (advertised
-// via Alt-Svc); the Unix socket and the loopback desktop engine are local
-// IPC, not network serving.
+// the node starts) -- see Validate. QUIC is served as HTTP/3 on the REST
+// port (advertised via Alt-Svc); the Unix socket is local IPC and never sets
+// a protocol this method looks at, so it never makes NetworkServing true.
+//
+// The loopback desktop engine (pkg/server/loopback) is also local IPC, but
+// it does so by forcing Protocols.REST on for a 127.0.0.1 listener, so this
+// method reports true for it same as a real network deployment; Validate is
+// what carves it back out, via Config.LoopbackDesktop.
 func (c *Config) NetworkServing() bool {
 	return c.Protocols.REST || c.Protocols.GRPC || c.Protocols.QUIC || c.Protocols.MCP
 }
@@ -1120,6 +1151,13 @@ type AWSKMSConfig struct {
 	// plain Go string. See types.SecretValue and types.SecretValueBytes.
 	SecretKey *types.SecretValue `yaml:"secret_key"`
 	Endpoint  string             `yaml:"endpoint"`
+
+	// KeyID is the operator-supplied identifier of an existing AWS KMS
+	// customer master key to use as the barrier's seal key, instead of one
+	// xkmsd provisions itself on first init. Accepts a key ID, a key ARN, an
+	// alias name, or an alias ARN. Optional -- when empty, xkmsd creates and
+	// persists a new CMK (go-xkms#839, go-xkms#842).
+	KeyID string `yaml:"key_id,omitempty"`
 }
 
 // GCPKMSConfig contains GCP KMS backend settings
@@ -1419,8 +1457,11 @@ func (c *Config) Validate() error {
 	// node's certificate (the CA composes after — and stores into — the
 	// node), so explicit TLS material is required. Fail closed at
 	// validation rather than at node construction. Local IPC (the Unix
-	// socket and the loopback desktop engine) is exempt.
-	if c.NetworkServing() {
+	// socket and the loopback desktop engine) is exempt: the Unix socket
+	// never sets a NetworkServing protocol, and the loopback desktop engine
+	// opts out explicitly via LoopbackDesktop, which only trusted embedder
+	// code (pkg/server/loopback) can set.
+	if c.NetworkServing() && !c.LoopbackDesktop {
 		if c.Storage.Backend != "qrdb" {
 			return &errs.Message{Msg: fmt.Sprintf("network protocols require storage.backend \"qrdb\" (the embedded qrdb node is the unified API server); got %q — local-only deployments disable rest/grpc/quic/mcp and use the unix socket", c.Storage.Backend)}
 		}
@@ -1443,6 +1484,10 @@ func (c *Config) Validate() error {
 	}
 	if c.Protocols.Noise && (c.Server.NoisePort < 1 || c.Server.NoisePort > 65535) {
 		return &errs.Message{Msg: fmt.Sprintf("invalid Noise port: %d", c.Server.NoisePort)}
+	}
+
+	if _, err := ratelimit.ParseTrustedProxies(c.Server.TrustedProxies); err != nil {
+		return &errs.Wrapped{Msg: "invalid server.trusted_proxies", Err: err}
 	}
 
 	if _, err := c.Barrier.SealedWindowTimeoutDuration(); err != nil {
@@ -1626,7 +1671,11 @@ func (c *Config) Validate() error {
 	}
 	if c.Backends.TPM2 != nil && c.Backends.TPM2.Enabled {
 		hasEnabledBackend = true
-		if c.Backends.TPM2.DevicePath == "" {
+		// UseSimulator selects the in-process/TCP TPM simulator instead of a
+		// hardware device (TPM2Config's own doc comment), so it needs no
+		// device_path; device_path is required only for the real hardware
+		// path this check otherwise guards.
+		if c.Backends.TPM2.DevicePath == "" && !c.Backends.TPM2.UseSimulator {
 			return &errs.Message{Msg: "TPM2 device_path is required when enabled"}
 		}
 	}

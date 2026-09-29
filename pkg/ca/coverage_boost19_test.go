@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package ca coverage boost, nineteenth pass: revocation-persistence storage
-// faults (the revocationStore backend of putRevocationBlob) and the
+// faults (the revocationStore backend of putRevocationBlobIfAbsent) and the
 // mustMarshal panic-on-unsupported-type guard.
 package ca
 
@@ -28,12 +28,15 @@ import (
 )
 
 // errRevocationStoreFault is a non-sentinel storage fault used to exercise
-// putRevocationBlob's error-wrapping branches.
+// putRevocationBlobIfAbsent's error-wrapping branches.
 var errRevocationStoreFault = errors.New("b19: revocation store unavailable")
 
-// faultyPutBackend wraps a real storage.Backend and forces every Put call to
-// fail, letting tests drive putRevocationBlob's revocationStore error branch
-// without a live storage fault.
+// faultyPutBackend wraps a real storage.Backend and forces every Put and
+// PutIfAbsent call to fail, letting tests drive
+// putRevocationBlobIfAbsent's revocationStore error branch without a live
+// storage fault. Both methods fail (go-xkms#1131 moved the guarded write to
+// PutIfAbsent) so a test written against either verb still exercises the
+// same fault path.
 type faultyPutBackend struct {
 	storage.Backend
 }
@@ -42,9 +45,13 @@ func (f *faultyPutBackend) Put(ctx context.Context, key string, value []byte) er
 	return errRevocationStoreFault
 }
 
+func (f *faultyPutBackend) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	return false, errRevocationStoreFault
+}
+
 // TestPutRevocationBlob_RevocationStoreError_B19 exercises the
-// revocationStore.Put error branch (recordRevocation must surface the fault
-// wrapped in ErrStorageError, not silently swallow it).
+// revocationStore.PutIfAbsent error branch (recordRevocation must surface
+// the fault wrapped in ErrStorageError, not silently swallow it).
 func TestPutRevocationBlob_RevocationStoreError_B19(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)

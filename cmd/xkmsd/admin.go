@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -65,6 +66,17 @@ func (s *embeddedQRDBService) Close() error { return nil }
 
 // Compile-time interface check.
 var _ acmeqrdb.Service = (*embeddedQRDBService)(nil)
+
+// ErrAdminQRDBClientRequired is returned by finalizeAdminModule when the
+// embedded qrdb node has not published its SDK client
+// (server.Server.QRDBClient returns nil). The ACME admin surface has no
+// "authorization is optional" mode — pkg/acme/admin/authz.go's
+// ErrGateNotConfigured refuses an unwired PermissionGate for the same
+// reason — so construction is refused here rather than falling back to
+// auth.NewAuthorizer(nil), which would build a disabled authorizer that
+// allows every request (the documented, and here wrong, behavior for a
+// deployment that deliberately has RBAC disabled).
+var ErrAdminQRDBClientRequired = errors.New("admin: qrdb client is required to build the ACME admin authorizer")
 
 // adminUIPrefix is the admin SPA's mount prefix on the unified server.
 // Deliberately distinct from the crypto-plane Module's "/ui" (WithWebUI in
@@ -124,16 +136,20 @@ func newAdminModule() (*apimodule.AdminModule, error) {
 // acme.StorageFactory()) and delegates tenant identity, roles, and users to
 // the same embedded qrdb node (srv.TenantService(), srv.QRDBClient()).
 //
-// A nil acme (ACME disabled) is not an error here: the admin surface simply
-// has no CA or storage to administer, matching how every other ACME-admin
-// route already degrades when its backing subsystem is absent.
+// A nil acme (ACME disabled) is not an error here: the admin surface's CA-
+// and storage-backed routes answer a typed "not configured" response
+// (pkg/acme/admin's ErrCANotConfigured / ErrStorageNotConfigured, go-xkms#1075)
+// instead of failing to mount. A nil qrdb client is a different case and IS
+// an error: see ErrAdminQRDBClientRequired.
 func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logger) error {
 	qrdbClient := srv.QRDBClient()
-
-	var qrdbSvc acmeqrdb.Service
-	if qrdbClient != nil {
-		qrdbSvc = &embeddedQRDBService{Client: qrdbClient}
+	if qrdbClient == nil {
+		return &acmeInitError{
+			Stage:    "resolve qrdb client for admin authorization",
+			Sentinel: ErrAdminQRDBClientRequired,
+		}
 	}
+	qrdbSvc := &embeddedQRDBService{Client: qrdbClient}
 
 	adminSvc, err := admin.NewTenantAwareAdminService(
 		acme.CA(),
@@ -150,14 +166,15 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 	handlers := admin.NewHandlers(adminSvc, logger)
 	tenantHandlers := admin.NewTenantHandlers(adminSvc, logger)
 
-	authHandler := admin.NewMTLSAuthHandler(auth.NewMTLSAuthenticator(&auth.MTLSConfig{}))
-
-	var authorizer *auth.Authorizer
-	if qrdbClient != nil {
-		authorizer = auth.NewAuthorizer(qrdbClient.RBAC())
-	} else {
-		authorizer = auth.NewAuthorizer(nil)
-	}
+	// The client certificate is resolved to its qrdb user through the same
+	// SPKI-thumbprint store the crypto plane's mTLS authenticator uses, so the
+	// identity reaching the gate carries the user's tenant and qrdb role IDs.
+	// Without the store the authenticator can only read certificate fields: no
+	// roles, no tenant, and qrdb's authorizer denies every route — even for
+	// the first-boot administrator (go-xkms#1069).
+	mtlsConfig := &auth.MTLSConfig{UserStore: auth.NewQRDBUserStore(qrdbClient.Users())}
+	authorizer := auth.NewAuthorizer(qrdbClient.RBAC())
+	authHandler := admin.NewMTLSAuthHandler(auth.NewMTLSAuthenticator(mtlsConfig))
 	gate := admin.NewPermissionGate(authorizer, logger)
 
 	router := mux.NewRouter()

@@ -35,17 +35,24 @@ import (
 	acmeentities "github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	acmeqrdb "github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	acmestorage "github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	nativeca "github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// newEmbeddedQRDBServer builds a real *server.Server backed by an embedded
-// (in-process) qrdb node rooted at a temp dir, so tests below get a real
-// *qrdbsdk.Client (srv.QRDBClient()) rather than a hand-rolled fake.
-func newEmbeddedQRDBServer(t *testing.T) (*server.Server, *config.Config) {
+// embeddedQRDBConfig returns the base configuration every embedded-qrdb
+// fixture in this package shares: an embedded qrdb node rooted at a fresh
+// temp dir, network protocols off (RESTPort 0, only the Unix socket
+// enabled), TLS and auth both disabled, and a single software backend. It
+// passes config.Config.Validate (no NetworkServing protocol is on, so the
+// qrdb-storage + TLS requirement never engages) -- the "compliant
+// server.New fixture" #705's triage asked for, shared by every caller below
+// rather than each hand-rolling its own literal.
+func embeddedQRDBConfig(t *testing.T) *config.Config {
 	t.Helper()
 	tempDir := t.TempDir()
-	cfg := &config.Config{
+	return &config.Config{
 		Server:    config.ServerConfig{Host: "127.0.0.1", RESTPort: 0},
 		Protocols: config.ProtocolsConfig{Unix: true},
 		Unix: config.UnixConfig{
@@ -66,6 +73,14 @@ func newEmbeddedQRDBServer(t *testing.T) (*server.Server, *config.Config) {
 			Software: &config.SoftwareConfig{Enabled: true, Path: filepath.Join(tempDir, "software")},
 		},
 	}
+}
+
+// newEmbeddedQRDBServer builds a real *server.Server backed by an embedded
+// (in-process) qrdb node rooted at a temp dir, so tests below get a real
+// *qrdbsdk.Client (srv.QRDBClient()) rather than a hand-rolled fake.
+func newEmbeddedQRDBServer(t *testing.T) (*server.Server, *config.Config) {
+	t.Helper()
+	cfg := embeddedQRDBConfig(t)
 
 	srv, err := server.New(cfg)
 	if err != nil {
@@ -78,6 +93,50 @@ func newEmbeddedQRDBServer(t *testing.T) (*server.Server, *config.Config) {
 	})
 	if srv.QRDBClient() == nil {
 		t.Fatal("fixture setup: QRDBClient() = nil with a qrdb storage backend")
+	}
+	return srv, cfg
+}
+
+// newEmbeddedQRDBServerWithCA builds the same embedded-qrdb fixture as
+// newEmbeddedQRDBServer, plus a real software-backed self-signed root CA, for
+// tests that need a working srv.CA() -- startACMEServer's success path
+// (acme_success_test.go) chief among them.
+func newEmbeddedQRDBServerWithCA(t *testing.T) (*server.Server, *config.Config) {
+	t.Helper()
+	cfg := embeddedQRDBConfig(t)
+	cfg.CA = &nativeca.MultiIdentityCAConfig{
+		SelectedCA:          0,
+		DefaultValidityDays: 365,
+		Identity: []nativeca.Identity{
+			{
+				IsRoot: true,
+				Valid:  1,
+				Subject: nativeca.Subject{
+					CommonName:   "xkmsd test root CA",
+					Organization: "go-xkms",
+					Country:      "US",
+				},
+				Keys: []*types.KeyConfig{
+					{
+						KeyAlgorithm: types.AlgorithmECDSA,
+						ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := server.New(cfg)
+	if err != nil {
+		t.Fatalf("server.New: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := srv.Shutdown(); err != nil {
+			t.Errorf("server.Shutdown: %v", err)
+		}
+	})
+	if srv.CA() == nil {
+		t.Fatal("fixture setup: CA() = nil with a CA identity configured")
 	}
 	return srv, cfg
 }

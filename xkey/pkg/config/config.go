@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -30,6 +31,7 @@ type Config struct {
 	Backend            BackendConfig            `yaml:"backend" json:"backend" mapstructure:"backend"`
 	Backends           BackendsConfig           `yaml:"backends,omitempty" json:"backends,omitempty" mapstructure:"backends"`
 	FIDO2              FIDO2Config              `yaml:"fido2" json:"fido2" mapstructure:"fido2"`
+	PIV                PIVConfig                `yaml:"piv" json:"piv" mapstructure:"piv"`
 	OATH               OATHConfig               `yaml:"oath" json:"oath" mapstructure:"oath"`
 	Phone              PhoneConfig              `yaml:"phone" json:"phone" mapstructure:"phone"`
 	XKMSD              XKMSDConfig              `yaml:"xkmsd" json:"xkmsd" mapstructure:"xkmsd"`
@@ -43,6 +45,7 @@ type Config struct {
 	GUI                GUISection               `yaml:"gui" json:"gui" mapstructure:"gui"`
 	State              StateSection             `yaml:"state" json:"state" mapstructure:"state"`
 	Barrier            BarrierSection           `yaml:"barrier,omitempty" json:"barrier,omitempty" mapstructure:"barrier"`
+	Device             DeviceConfig             `yaml:"device" json:"device" mapstructure:"device"`
 }
 
 // BarrierSection holds settings for barrier sealing strategies that need
@@ -80,6 +83,31 @@ type FIDO2Config struct {
 	Extensions      map[string]bool `yaml:"extensions" json:"extensions" mapstructure:"extensions"`
 }
 
+// PIVConfig holds settings for the "xkey piv" certificate storage command
+// group, plus the sibling commands (cert, device listen, provision) that open
+// the same storage. It deliberately carries no PKCS#11 PIN or Security
+// Officer PIN field: those two secrets follow the same stdin-flag-then-
+// dedicated-environment-variable convention pin_input.go established for the
+// host PIN service's own PIN (--pkcs11-pin-stdin/XKEY_PIV_PKCS11_PIN and
+// --pkcs11-so-pin-stdin/XKEY_PIV_PKCS11_SO_PIN, piv.go), never a config file
+// or the generic per-leaf-key environment binding this section registers for
+// its other fields (go-xkms#871).
+type PIVConfig struct {
+	// Backend is the key backend: software, tpm2, or pkcs11.
+	Backend string `yaml:"backend" json:"backend" mapstructure:"backend"`
+	// Storage overrides the certificate storage type (file, tpm2, pkcs11).
+	// Empty defaults to match Backend.
+	Storage string `yaml:"storage" json:"storage" mapstructure:"storage"`
+	// StoragePath is the path for file storage.
+	StoragePath string `yaml:"storage_path" json:"storage_path" mapstructure:"storage_path"`
+	// TPMDevice is the TPM device path for the tpm2 backend/storage.
+	TPMDevice string `yaml:"tpm_device" json:"tpm_device" mapstructure:"tpm_device"`
+	// PKCS11Library is the PKCS#11 library path.
+	PKCS11Library string `yaml:"pkcs11_library" json:"pkcs11_library" mapstructure:"pkcs11_library"`
+	// PKCS11Token is the PKCS#11 token label.
+	PKCS11Token string `yaml:"pkcs11_token" json:"pkcs11_token" mapstructure:"pkcs11_token"`
+}
+
 // OATHConfig holds settings for the OATH TOTP/HOTP module.
 type OATHConfig struct {
 	Storage     string `yaml:"storage" json:"storage" mapstructure:"storage"`
@@ -109,6 +137,28 @@ type PhoneConfig struct {
 	// enrollment exposes the EK certificate and runs TPM2_ActivateCredential
 	// on the phone's behalf. The TPM is opened from tpm.device.
 	TPMEnrollment bool `yaml:"tpm_enrollment" json:"tpm_enrollment" mapstructure:"tpm_enrollment"`
+}
+
+// DeviceConfig holds settings for the `xkey device` command group that carry
+// config-file/environment meaning across invocations: a persistent security
+// posture (TrustNewDevices) and a default that both `device pair` and
+// `device scan` share (ScanTimeout). Per-invocation choices -- which device
+// to target, whether to force a re-pair, which device to filter `device
+// status` on -- have no config-file meaning and stay flag-only; they are
+// read directly off the command in cmd/xkey/cmd/device*.go and never reach
+// this struct (go-xkms#1071).
+type DeviceConfig struct {
+	// TrustNewDevices allows `device pair` and related commands to accept a
+	// device with no stored expected key (an empty Noise prologue). It
+	// mirrors the --trust-new-devices persistent flag; off by default,
+	// since it widens what a first, unauthenticated connection is allowed
+	// to be.
+	TrustNewDevices bool `yaml:"trust_new_devices" json:"trust_new_devices" mapstructure:"trust_new_devices"`
+
+	// ScanTimeout bounds how long `device pair` (auto-discovery) and
+	// `device scan` wait for BLE devices to answer before giving up, when
+	// --timeout is not given explicitly on that invocation.
+	ScanTimeout time.Duration `yaml:"scan_timeout" json:"scan_timeout" mapstructure:"scan_timeout"`
 }
 
 // XKMSDConfig holds connection settings for the xkmsd server.
@@ -146,7 +196,6 @@ type AgentConfig struct {
 // TPMConfig holds direct TPM access parameters.
 type TPMConfig struct {
 	Device          string `yaml:"device" json:"device" mapstructure:"device"`
-	EncryptSessions bool   `yaml:"encrypt_sessions" json:"encrypt_sessions" mapstructure:"encrypt_sessions"`
 	PlatformPCRBank string `yaml:"platform_pcr_bank" json:"platform_pcr_bank" mapstructure:"platform_pcr_bank"`
 	SealPCRBank     string `yaml:"seal_pcr_bank" json:"seal_pcr_bank" mapstructure:"seal_pcr_bank"`
 	SRKHandle       uint32 `yaml:"srk_handle" json:"srk_handle" mapstructure:"srk_handle"`
@@ -315,6 +364,20 @@ var validModes = map[string]struct{}{
 	"enterprise": {},
 }
 
+// validPIVBackends is the set of accepted piv.backend identifiers.
+var validPIVBackends = map[string]struct{}{
+	"software": {},
+	"tpm2":     {},
+	"pkcs11":   {},
+}
+
+// validPIVStorageTypes is the set of accepted piv.storage identifiers.
+var validPIVStorageTypes = map[string]struct{}{
+	"file":   {},
+	"tpm2":   {},
+	"pkcs11": {},
+}
+
 // validRemoteProtocols is the set of accepted remote backend protocols.
 var validRemoteProtocols = map[string]struct{}{
 	"rest": {},
@@ -338,13 +401,28 @@ func DefaultConfig() *Config {
 			},
 		},
 		FIDO2: FIDO2Config{
-			Storage:     "file",
+			// Attestation is the one FIDO2 default this Config bakes in: three
+			// call sites (xkey/cmd/xkey/cmd/fido2.go, extension_serve.go,
+			// pkg/gui/app.go) already treat "packed" as the app-wide default,
+			// overriding the "xkey fido2" command's own more conservative
+			// --attestation flag default ("none") when neither a flag, an
+			// XKEY_FIDO2_ATTESTATION variable nor a config file names one.
+			// Storage and DeviceName have no such established consumer, so
+			// they are left empty here rather than baking in a second,
+			// conflicting default ("file"/"xKey" vs. the command's own
+			// "memory"/"xKey (go-xkms)"): an unconfigured install keeps the
+			// command's existing behavior, and an explicit
+			// XKEY_FIDO2_STORAGE/config-file value still overrides it
+			// (go-xkms#871).
 			Attestation: "packed",
-			DeviceName:  "xKey",
+		},
+		PIV: PIVConfig{
+			Backend:       "software",
+			TPMDevice:     "/dev/tpmrm0",
+			PKCS11Library: "/usr/lib/softhsm/libsofthsm2.so",
 		},
 		TPM: TPMConfig{
 			Device:          "/dev/tpmrm0",
-			EncryptSessions: true,
 			PlatformPCRBank: "sha256",
 		},
 		OIDC: OIDCConfig{
@@ -371,6 +449,9 @@ func DefaultConfig() *Config {
 		},
 		State: StateSection{
 			StorageEngine: "file",
+		},
+		Device: DeviceConfig{
+			ScanTimeout: 30 * time.Second,
 		},
 		// Barrier.CloudKMS's four provider pointers are initialized (empty,
 		// not nil) rather than left nil: registerConfigKeys/walkConfigKeys
@@ -434,6 +515,10 @@ func (c *Config) Validate() error {
 	if c.OIDC.CallbackPort < 1 || c.OIDC.CallbackPort > 65535 {
 		return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": oidc.callback_port must be between 1 and 65535, got %d", c.OIDC.CallbackPort)}
 	}
+
+	if c.Device.ScanTimeout <= 0 {
+		return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": device.scan_timeout must be > 0, got %s", c.Device.ScanTimeout)}
+	}
 	for key, addr := range map[string]string{
 		"agent.listen_address":       c.Agent.ListenAddress,
 		"phone.relay_listen_address": c.Phone.RelayListenAddress,
@@ -455,6 +540,17 @@ func (c *Config) Validate() error {
 	if c.Backend.Default != "" {
 		if _, ok := validBackends[c.Backend.Default]; !ok {
 			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backend.default %q is not one of software, tpm2, pkcs11, phone", c.Backend.Default)}
+		}
+	}
+
+	if c.PIV.Backend != "" {
+		if _, ok := validPIVBackends[c.PIV.Backend]; !ok {
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": piv.backend %q is not one of software, tpm2, pkcs11", c.PIV.Backend)}
+		}
+	}
+	if c.PIV.Storage != "" {
+		if _, ok := validPIVStorageTypes[c.PIV.Storage]; !ok {
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": piv.storage %q is not one of file, tpm2, pkcs11", c.PIV.Storage)}
 		}
 	}
 

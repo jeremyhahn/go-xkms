@@ -447,7 +447,7 @@ func TestServer_PKCS11_HandlerDoesNotImplementPKCS11Handler(t *testing.T) {
 	require.NoError(t, json.NewDecoder(conn).Decode(&resp))
 
 	assert.Equal(t, StatusError, resp.Status)
-	assert.Contains(t, resp.Error, "does not implement PKCS11Handler")
+	assertNotEchoed(t, resp.Error, "does not implement PKCS11Handler")
 
 	cancel()
 	srv.Close()

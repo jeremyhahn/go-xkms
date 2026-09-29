@@ -124,7 +124,6 @@ type TrustedPlatformModule interface {
 	FixedProperties() (*PropertiesFixed, error)
 	Flush(handle tpm2.TPMHandle)
 	GoldenMeasurements() ([]byte, error)
-	HMAC(auth []byte) tpm2.Session
 	HMACSaltedSession(
 		handle tpm2.TPMHandle,
 		pub tpm2.TPMTPublic,
@@ -1119,15 +1118,7 @@ func (tpm *TPM2) SetHierarchyAuth(oldPasswd, newPasswd types.Password, hierarchy
 		}
 	}
 	for _, hierarchy := range hierarchies {
-		_, err := tpm2.HierarchyChangeAuth{
-			AuthHandle: tpm2.AuthHandle{
-				Handle: hierarchy,
-				Auth:   tpm2.PasswordAuth(oldPassword),
-			},
-			NewAuth: tpm2.TPM2BAuth{
-				Buffer: newPassword,
-			},
-		}.Execute(tpm.transport)
+		err := tpm.hierarchyChangeAuth(hierarchy, oldPassword, newPassword)
 		if err != nil {
 			// Reinstall recovery: if the empty-auth attempt failed with
 			// TPM_RC_BAD_AUTH, a prior platformd run on this TPM set the
@@ -1142,15 +1133,7 @@ func (tpm *TPM2) SetHierarchyAuth(oldPasswd, newPasswd types.Password, hierarchy
 			if len(oldPassword) == 0 && len(newPassword) > 0 && isTPMBadAuth(err) {
 				tpm.logger.Warn("hierarchy auth already set with soPIN; retrying with soPIN as old-auth (reinstall recovery)",
 					slog.String("first_error", err.Error()))
-				_, retryErr := tpm2.HierarchyChangeAuth{
-					AuthHandle: tpm2.AuthHandle{
-						Handle: hierarchy,
-						Auth:   tpm2.PasswordAuth(newPassword),
-					},
-					NewAuth: tpm2.TPM2BAuth{
-						Buffer: newPassword,
-					},
-				}.Execute(tpm.transport)
+				retryErr := tpm.hierarchyChangeAuth(hierarchy, newPassword, newPassword)
 				if retryErr == nil {
 					tpm.logger.Info("hierarchy auth confirmed (reinstall recovery)")
 					continue
@@ -1163,6 +1146,27 @@ func (tpm *TPM2) SetHierarchyAuth(oldPasswd, newPasswd types.Password, hierarchy
 		}
 	}
 	return nil
+}
+
+// hierarchyChangeAuth executes TPM2_HierarchyChangeAuth, proving oldAuth
+// through a salted session bound to the hierarchy and encrypting newAuth on
+// its way into the TPM (see hierarchyAuthSession).
+func (tpm *TPM2) hierarchyChangeAuth(hierarchy tpm2.TPMHandle, oldAuth, newAuth []byte) error {
+	session, closer, err := tpm.hierarchyAuthSession(hierarchy, oldAuth, encryptIn)
+	if err != nil {
+		return err
+	}
+	defer tpm.closeSession(closer, "HierarchyChangeAuth")
+	_, err = tpm2.HierarchyChangeAuth{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: hierarchy,
+			Auth:   session,
+		},
+		NewAuth: tpm2.TPM2BAuth{
+			Buffer: newAuth,
+		},
+	}.Execute(tpm.transport)
+	return err
 }
 
 // isTPMBadAuth reports whether err is a TPM_RC_BAD_AUTH failure -- the
@@ -1829,9 +1833,17 @@ func (tpm *TPM2) Hash(
 }
 
 // Performs a hash sequence using TPM2_HashSequenceStart,
-// TPM2_SequenceUpdate, TPM2_SequenceComplete under the
-// Endorsement Hierarchy, using the Hierarchy Authorization
-// provided in the key attributes Parent field.
+// TPM2_SequenceUpdate, TPM2_SequenceComplete, producing a TPM_RH_ENDORSEMENT
+// hash-check ticket.
+//
+// The sequence object is ephemeral and private to this call, so it is created
+// with an empty authValue. It used to take the hierarchy authorization -- the
+// SO PIN -- which then crossed the TPM bus in the clear on every command of
+// the sequence, for nothing: the ticket's hierarchy parameter needs no
+// authorization (TCG TPM 2.0 Part 3, section 17.5). go-tpm cannot put a
+// session on TPM2_HashSequenceStart (its response handle is not tagged, so a
+// response with an authorization area is misparsed), so encrypting a secret
+// auth value was not an option either.
 func (tpm *TPM2) HashSequence(
 	keyAttrs *types.KeyAttributes,
 	data []byte) ([]byte, []byte, error) {
@@ -1839,24 +1851,7 @@ func (tpm *TPM2) HashSequence(
 	var err error
 	var maxDigestBuffer = 1024
 
-	// Try to get hierarchy auth from parent, then self, then use empty auth
-	var hierarchyAuth []byte
-	switch {
-	case keyAttrs.Parent != nil && keyAttrs.Parent.TPMAttributes != nil && keyAttrs.Parent.TPMAttributes.HierarchyAuth != nil:
-		hierarchyAuth = keyAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
-	case keyAttrs.TPMAttributes != nil && keyAttrs.TPMAttributes.HierarchyAuth != nil:
-		hierarchyAuth = keyAttrs.TPMAttributes.HierarchyAuth.Bytes()
-	default:
-		// Use empty auth for hash sequence
-		hierarchyAuth = []byte{}
-	}
-
-	auth := hierarchyAuth
-
 	hashSequenceStart := tpm2.HashSequenceStart{
-		Auth: tpm2.TPM2BAuth{
-			Buffer: auth,
-		},
 		HashAlg: keyAttrs.TPMAttributes.HashAlg,
 	}
 	rspHSS, err := hashSequenceStart.Execute(tpm.transport)
@@ -1880,10 +1875,8 @@ func (tpm *TPM2) HashSequence(
 
 	authHandle := tpm2.AuthHandle{
 		Handle: rspHSS.SequenceHandle,
-		Name: tpm2.TPM2BName{
-			Buffer: auth,
-		},
-		Auth: tpm2.PasswordAuth(hierarchyAuth),
+		Name:   tpm2.HandleName(rspHSS.SequenceHandle),
+		Auth:   tpm2.PasswordAuth(nil),
 	}
 
 	for len(data) > maxDigestBuffer {
@@ -1936,6 +1929,11 @@ func (tpm *TPM2) SignValidate(
 	if keyAttrs.Password != nil {
 		akAuth = keyAttrs.Password.Bytes()
 	}
+	akSession, closeAKSession, err := tpm.objectAuthSession(akAuth, encryptNone)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closeAKSession, "SignValidate")
 
 	// Sign the digest
 	var hashSig []byte
@@ -1976,7 +1974,7 @@ func (tpm *TPM2) SignValidate(
 			KeyHandle: tpm2.AuthHandle{
 				Handle: keyAttrs.TPMAttributes.Handle,
 				Name:   keyAttrs.TPMAttributes.Name,
-				Auth:   tpm2.PasswordAuth(akAuth),
+				Auth:   akSession,
 			},
 			Digest: tpm2.TPM2BDigest{
 				Buffer: digest,
@@ -2025,7 +2023,7 @@ func (tpm *TPM2) SignValidate(
 			KeyHandle: tpm2.AuthHandle{
 				Handle: keyAttrs.TPMAttributes.Handle,
 				Name:   keyAttrs.TPMAttributes.Name,
-				Auth:   tpm2.PasswordAuth(akAuth),
+				Auth:   akSession,
 			},
 			Digest: tpm2.TPM2BDigest{
 				Buffer: digest,
@@ -2121,7 +2119,6 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 
 	tpm.logger.Debug("reading PCR values across all supported banks")
 
-	maxPCR := uint(23)
 	banks := make([]PCRBank, 0)
 
 	// Ordered, not a map. Ranging over a map randomizes the order of the
@@ -2151,7 +2148,7 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 		}
 		bankUnsupported := false
 		for _, pcr := range pcrList {
-			if pcr > maxPCR {
+			if pcr > maxPCRIndex {
 				tpm.logger.Error("invalid PCR index",
 					slog.String("bank", strings.ToLower(name)),
 					slog.Uint64("pcr", uint64(pcr)))

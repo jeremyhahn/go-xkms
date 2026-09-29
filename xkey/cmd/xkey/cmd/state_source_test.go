@@ -100,7 +100,7 @@ func (h *statelessTestHandler) HandleStatus() (*ipc.Response, error) {
 func startTestDaemon(t *testing.T, handler ipc.Handler) string {
 	t.Helper()
 
-	socketPath := filepath.Join(t.TempDir(), "xkey.sock")
+	socketPath := filepath.Join(privateTempDir(t), "xkey.sock")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	srv, err := ipc.NewServer(socketPath, handler, logger)
@@ -251,7 +251,7 @@ func TestAskDaemon_LiveDaemonAnswers(t *testing.T) {
 }
 
 func TestAskDaemon_NoDaemonFallsBackAndNamesReason(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "absent.sock")
+	socketPath := filepath.Join(privateTempDir(t), "absent.sock")
 
 	_, _, answered, reason, err := askDaemon(
 		stateTestCmd(t, socketPath, sourceAuto), sourceAuto,
@@ -282,7 +282,7 @@ func TestAskDaemon_SourceDaemonRefusesToFallBack(t *testing.T) {
 	// Falling back silently is what produced the false negative in the first
 	// place; an operator who asked for the daemon must be told when it is
 	// not there rather than handed the data directory's answer.
-	socketPath := filepath.Join(t.TempDir(), "absent.sock")
+	socketPath := filepath.Join(privateTempDir(t), "absent.sock")
 
 	_, _, answered, _, err := askDaemon(
 		stateTestCmd(t, socketPath, sourceDaemon), sourceDaemon,

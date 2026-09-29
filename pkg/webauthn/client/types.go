@@ -44,9 +44,9 @@ type Config struct {
 	Timeout time.Duration
 
 	// Origin is the WebAuthn origin bound into clientDataJSON. Empty
-	// derives it from ServerURL's scheme and host; if ServerURL is also
-	// empty, each AuthenticatorAdapter falls back to the WebAuthn
-	// same-origin default "https://<rpId>".
+	// derives it from ServerURL's scheme and host (OriginFromURL); if no
+	// origin can be derived NewClient refuses with fido2.ErrOriginRequired.
+	// The origin is never derived from the server-supplied rpId.
 	Origin string
 
 	// AuthenticatorAdapter bridges to the local CTAP2 authenticator:
@@ -172,8 +172,9 @@ type CeremonyOptions struct {
 	// PublicKeyCredentialRequestOptions from the RelyingParty's begin call.
 	OptionsJSON []byte
 
-	// Origin is the WebAuthn origin to bind into clientDataJSON. Empty
-	// selects the WebAuthn same-origin default "https://<rpId>".
+	// Origin is the WebAuthn origin to bind into clientDataJSON. It is
+	// required, and the options' rpId must be its effective domain or a
+	// registrable suffix of it (fido2.ValidateRPID).
 	Origin string
 
 	// PIN is the authenticator's CTAP2 PIN. Nil is correct for an

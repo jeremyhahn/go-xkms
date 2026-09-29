@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/webauthn`
 
@@ -119,8 +119,15 @@ invalidates every existing credential.
   from the request.
 - **Origin and RP id are verified on every finish.** A response from an
   unlisted origin fails.
-- **Signature counters move forward.** A counter that does not increase is
-  treated as a cloning signal, not as a retry.
+- **A counter that does not advance is reported, not refused.** go-webauthn
+  flags it as `CloneWarning`; `finishLoginUser` logs it at Warn and records
+  a `CloneWarningAuditAction` (`auth.webauthn.clone_warning`) audit event
+  through `ServiceParams.AuditLogger` (`service.go:91,440`,
+  `clone_warning.go:29,48`), and the login proceeds. The flag is sticky on the
+  stored credential, so every later login with it is reported
+  (`first_detection` marks the one that raised it). The action classifies
+  `SeveritySecurity`: a failed audit write fails the login. Refusing a flagged
+  credential is relying-party policy that this service does not impose.
 - **`AllowPublicRegistration` defaults closed, and nil ≠ false.** An unset
   flag means registration is disabled (go-xkms#184: the stack registration
   model is invite-only by default, and a setting that can silently produce an
@@ -184,7 +191,7 @@ ceremony create a duplicate account; a false error costs a retry.
 Through the three store interfaces. Production wiring is go-qrdb via
 `go-qrdb/sdk/go` (`qrdb_userstore.go`, `backend_stores.go`). Credentials carry
 the credential id, public key, AAGUID, sign counter and user handle. Sessions
-are short-lived and deleted on finish.
+are short-lived and in memory; see §"Session lifetime and the session cap".
 
 go-xkms defines no user model of its own — `User` is an interface satisfied by
 qrdb's identity.
@@ -231,6 +238,37 @@ the seam, a passkey enrolled through xkms's own registration routes created
 no factor, and login failed with "factor not found" while the credential sat
 in the shared store.
 
+### Session lifetime and the session cap
+
+A begin request stores a ceremony session before anyone is authenticated
+(`POST /api/v1/webauthn/login/begin` with an empty body is enough), so the
+session store is bounded two ways:
+
+- **Swept.** `SweepSessions(ctx, store, interval)`
+  (`pkg/webauthn/session_sweeper.go:34`) calls `Cleanup` on any store that
+  implements `SessionCleaner` (`interfaces.go:47`) every interval until `ctx`
+  ends, then returns; `Service.SweepSessions` (`session_sweeper.go:57`) runs it
+  on the service's own store. The default interval,
+  `DefaultSessionSweepInterval` (`session_sweeper.go:24`), is one minute.
+- **Capped.** `MemorySessionStore` holds at most `DefaultMaxSessions` (10,000,
+  `memory_stores.go:180`; `WithMaxSessions`, `:168`, overrides it). At the cap
+  `Save` (`:238`) first removes expired sessions itself, and refuses with
+  `*SessionLimitError` (`errors.go:79`; `IsSessionLimit`, `:90`) only when
+  every held session is still live. Transports map it to 503 /
+  `ResourceExhausted` ([api.md](api.md) §"Status and error mapping").
+
+**One owner for the sweeper.** xkmsd owns the one `Service` shared by the
+browser and SDK ceremonies, so `pkg/server` runs its sweeper:
+`startWebAuthnSessionSweeper` (`pkg/server/server.go:2698`), called from
+`Start` (`:2664`), runs it on a goroutine tracked by the server's wait group
+under the server context. `Shutdown` cancels that context and waits on the
+group, so the sweeper stops with the server and does not leak.
+
+A composing host's self-built surface (`rest.NewHostServer`) has no lifecycle
+hook to stop a goroutine, so it runs no sweeper; the sweep-on-save at the cap
+keeps its store bounded and self-healing. `rest.WebAuthnStores`
+`StartCleanupRoutine` is a thin wrapper over the same `SweepSessions`.
+
 ### Session expiry takes an injectable clock
 
 `MemorySessionStore` measures a session's TTL against a `Clock` — a
@@ -247,19 +285,22 @@ that establishes it by sleeping is asserting the machine was not busy —
 statements land more than 100ms apart, which under `-race` on a shared runner
 they can (#287).
 
-**The cleanup routine is the deliberate exception.** `StartCleanupRoutine`
-ticks on a real `time.Ticker`, so a test for it keeps real time and a short TTL
-and waits on the *event* — `MemorySessionStore.Count()` reaching zero — rather
-than on a duration. Handing that test a fake clock would stop the session ever
-expiring by the routine's reckoning, and it would wait for an event that cannot
-happen.
+**The sweeper ticks on a real `time.Ticker`**, but expiry is still measured
+against the store's clock. `session_sweeper_test.go` therefore advances an
+injected clock past the TTL, runs the sweeper with a one-millisecond interval,
+and waits on the *event* — `MemorySessionStore.Count()` reaching the expected
+value — rather than on a duration. `StartCleanupRoutine`'s own test keeps real
+time and a short TTL for the same reason.
 
 ## Test strategy
 
 - **Unit** — `service_test.go`, `config_test.go`, `types_test.go`,
   `registration_policy_test.go`, `verification_error_test.go`,
   `error_paths_test.go`, `memory_stores_test.go`, `backend_stores_test.go`,
-  `backend_stores_gaps_test.go`, `mock_authenticator_test.go`.
+  `backend_stores_gaps_test.go`, `mock_authenticator_test.go`,
+  `session_sweeper_test.go` (cap refuses then recovers after a sweep, the
+  sweeper removes expired sessions and returns when its context ends). The
+  lifecycle ownership is pinned in `pkg/server/rest_limits_test.go`.
 - **Store conformance** — `qrdb_userstore_test.go`, `qrdb_userstore_gaps_test.go`,
   `qrdb_error_paths_test.go`, and `qrdb_register_login_repro_test.go` (a
   regression reproduction kept as a permanent test).
@@ -273,7 +314,9 @@ happen.
 
 Ceremony outcomes are logged with the correlation ID. `Config.Debug` adds
 verbose ceremony detail and must stay off in production — it logs material
-useful to an attacker. Failures are audited through `pkg/audit`; the login
+useful to an attacker. Failures are audited through `pkg/audit`, and so is a
+login with a possibly cloned credential (see Invariants); xkmsd wires its audit
+logger in before the service is built. The login
 route groups sit behind the rate limiter (`pkg/ratelimit`), whose rejections are
 metered in `pkg/metrics`.
 
@@ -352,7 +395,11 @@ type AuthenticatorAdapter interface {
 
 `CeremonyOptions` carries the relying party's JSON options plus the two
 things they cannot carry: `Origin` (a browser takes it from its security
-context) and `PIN` (a browser prompts for it).
+context) and `PIN` (a browser prompts for it). `Origin` is required: both
+adapters refuse an empty one, and refuse a server rpId the origin does not
+cover, through `fido2.ValidateRPID` (`software_adapter.go:115,253`; the
+hardware adapter through `pkg/fido2`). `NewClient` refuses a configuration
+from which no origin can be derived (`client.go:64`).
 
 Two adapters ship:
 
@@ -379,7 +426,7 @@ type Config struct {
 	HTTPClient           *http.Client         // default HTTPRelyingParty's client (optional)
 	TLSConfig            *tls.Config          // used when HTTPClient is nil
 	Timeout              time.Duration        // default 30s
-	Origin               string               // WebAuthn origin; empty derives it from ServerURL
+	Origin               string               // WebAuthn origin; empty derives it from ServerURL (OriginFromURL); none derivable fails NewClient
 	AuthenticatorAdapter AuthenticatorAdapter // required
 	RelyingParty         RelyingParty         // nil builds the default HTTPRelyingParty from ServerURL
 }
@@ -415,6 +462,7 @@ SDK-transport RP (the `xkey`/`xkmsctl` shape), over an already-connected
 rp, _ := webauthnclient.NewTransportRelyingParty(transportClient)
 c, _ := webauthnclient.NewClient(&webauthnclient.Config{
 	RelyingParty:         rp,
+	Origin:               "https://kms.example.com", // required: no ServerURL to derive it from
 	AuthenticatorAdapter: adapter,
 })
 ```

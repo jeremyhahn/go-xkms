@@ -26,44 +26,41 @@ var _ UserStore = (*QRDBUserStore)(nil)
 // QRDBUserStore resolves mTLS identities against the qrdb-hosted user store —
 // the single source of identity for the stack. It satisfies UserStore for the
 // MTLSAuthenticator: given a client certificate's SPKI thumbprint, it resolves
-// the bound qrdb user via the server-side secondary index and maps the user's
-// first role id to its role name.
+// the bound qrdb user via the server-side secondary index and projects it
+// onto MTLSUser, carrying the user's permitted-method policy so the
+// authenticator can enforce it.
+//
+// The user's role assignments are carried as the qrdb role IDs the user record
+// holds, all of them, unmodified. That is go-qrdb's own identity contract: its
+// authentication middleware overwrites Identity.Roles with the stored RoleIDs,
+// and its authorizer resolves permissions by role ID. Projecting an ID to its
+// role name (as this store once did, and only for the first role) produced an
+// identity the authorizer could not resolve — "role: not found" — so every
+// request it authenticated was denied (go-xkms#1069).
 type QRDBUserStore struct {
 	users qrdbtransport.UserClient
-	roles qrdbtransport.RoleClient
 }
 
-// NewQRDBUserStore wires the qrdb user and role clients into a UserStore. Both
-// clients are required; the role client resolves role-id references to the
-// role names the authorizer matches on.
-func NewQRDBUserStore(users qrdbtransport.UserClient, roles qrdbtransport.RoleClient) *QRDBUserStore {
-	return &QRDBUserStore{users: users, roles: roles}
+// NewQRDBUserStore wires the qrdb user client into a UserStore.
+func NewQRDBUserStore(users qrdbtransport.UserClient) *QRDBUserStore {
+	return &QRDBUserStore{users: users}
 }
 
 // GetByCertFingerprint resolves the qrdb user bound to the given SPKI
-// thumbprint and projects it onto MTLSUser. The user's first role id is
-// resolved to its role name; a resolution failure leaves the role empty rather
-// than failing the lookup, so a valid cert binding still authenticates and
-// authorization degrades closed at the authorizer.
+// thumbprint and projects it onto MTLSUser, carrying every assigned role ID.
 func (s *QRDBUserStore) GetByCertFingerprint(ctx context.Context, fingerprint string) (MTLSUser, error) {
 	u, err := s.users.GetUserByCertThumbprint(ctx, fingerprint)
 	if err != nil {
 		return MTLSUser{}, err
 	}
 
-	role := ""
-	if len(u.RoleIDs) > 0 {
-		if r, rerr := s.roles.GetRole(ctx, u.RoleIDs[0]); rerr == nil {
-			role = r.Name
-		}
-	}
-
 	return MTLSUser{
 		Username: u.Username,
 		Email:    u.Email,
-		Role:     role,
+		Roles:    append([]string(nil), u.RoleIDs...),
 		TenantID: u.TenantID,
 		// Lifecycle is qrdb's only account state; only active authenticates.
-		Enabled: u.Lifecycle == string(qrdbsdk.LifecycleActive),
+		Enabled:     u.Lifecycle == string(qrdbsdk.LifecycleActive),
+		AuthMethods: u.AuthMethods,
 	}, nil
 }

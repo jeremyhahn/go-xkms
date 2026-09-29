@@ -45,6 +45,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -172,7 +173,16 @@ func TestAuditTrail_RevocationIsRecordedAndQueryable(t *testing.T) {
 		Certificate: base64.RawURLEncoding.EncodeToString(x509Cert.Raw),
 		Reason:      RevocationReasonKeyCompromise,
 	}
+	// X-Forwarded-For is only believed from a configured trusted proxy
+	// (go-xkms#1179); the request's transport peer must be one for the audit
+	// event to record the forwarded client rather than the peer itself.
+	proxies, err := ratelimit.ParseTrustedProxies([]string{"192.0.2.1"})
+	require.NoError(t, err)
+	audit.SetTrustedProxies(proxies)
+	defer audit.SetTrustedProxies(nil)
+
 	req := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/revoke-cert", payload, true, account.ID)
+	req.RemoteAddr = "192.0.2.1:56789"
 	req.Header.Set("X-Request-ID", "revocation-correlation-id")
 	req.Header.Set("X-Forwarded-For", "203.0.113.9")
 	req.Header.Set("User-Agent", "acme-client/1.0")
@@ -185,7 +195,7 @@ func TestAuditTrail_RevocationIsRecordedAndQueryable(t *testing.T) {
 	// real state change, not an attempt.
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
-	updated, err := certificateDAO.Get(req.Context(), acmeCert.ID)
+	updated, err := certificateDAO.Get(req.Context(), acmeCert.EntityID())
 	require.NoError(t, err)
 	require.Equal(t, common.StatusRevoked, updated.Status)
 
@@ -324,7 +334,7 @@ func TestAuditTrail_UnauthorizedRevocationIsRecorded(t *testing.T) {
 
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
-	unchanged, err := certificateDAO.Get(req.Context(), acmeCert.ID)
+	unchanged, err := certificateDAO.Get(req.Context(), acmeCert.EntityID())
 	require.NoError(t, err)
 	require.NotEqual(t, common.StatusRevoked, unchanged.Status)
 
@@ -529,7 +539,7 @@ func TestAuditTrail_WriteFailureFailsSecurityOperation(t *testing.T) {
 
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
-	updated, err := certificateDAO.Get(req.Context(), acmeCert.ID)
+	updated, err := certificateDAO.Get(req.Context(), acmeCert.EntityID())
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusRevoked, updated.Status)
 }

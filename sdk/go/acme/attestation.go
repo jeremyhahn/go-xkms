@@ -39,18 +39,23 @@ var ErrACMEEnrollCAUnsupported = errors.New("acme: configured CA does not suppor
 //   - endorse-01 issues an EK certificate for TPMs lacking a manufacturer EK
 //     cert; server-side verification is a no-op (the CA is not consulted here),
 //     and issuance is gated by External Account Binding in the challenge handler.
-func ACMEAttestationVerifiers(enroll, endorse bool) map[string]ACMEChallengeVerifierFunc {
+//
+// client is the server's shared ACMEChallengeClient; the enroll-01 verifier
+// contacts the device through it. The per-call resolver the challenge
+// handler passes is not used by enroll-01: target resolution belongs to the
+// client, whose dialer checks the resolved address.
+func ACMEAttestationVerifiers(client *ACMEChallengeClient, enroll, endorse bool) map[string]ACMEChallengeVerifierFunc {
 	m := make(map[string]ACMEChallengeVerifierFunc, 2)
 	if enroll {
 		m[ACMEChallengeTypeEnroll01] = func(
-			resolver *net.Resolver,
+			_ *net.Resolver,
 			ca ACMECertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 			enrollCA, ok := ca.(ACMEEnroll01TCGCSRVerifier)
 			if !ok {
 				return ErrACMEEnrollCAUnsupported
 			}
-			return enroll01.Verify(resolver, enrollCA, authzValue, challengePort, challengeToken, expectedKeyAuth)
+			return enroll01.Verify(client, enrollCA, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		}
 	}
 	if endorse {

@@ -19,13 +19,12 @@ package ca
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -35,6 +34,11 @@ import (
 // object store under "crls/distribution/<sha256(url)>.crl". An absent CRL
 // Distribution Points extension is not an error — the method simply returns
 // nil so callers can wire it into a generic import pipeline.
+//
+// Each URL is fetched under the same limits as ImportIssuingCAs: only
+// http and https URLs resolving to public addresses (ErrPKIFetchRefused),
+// with the response capped at maxCRLBytes (ErrPKIFetchTooLarge) and the
+// whole fetch at pkiFetchTimeout.
 //
 // Requires the object store to be configured.
 //
@@ -67,20 +71,12 @@ func (ca *CA) ImportDistributionCRLs(cert *x509.Certificate) error {
 			continue
 		}
 
-		// #nosec G107 - URL is from X.509 certificate CRLDP extension (issuer-controlled)
-		resp, err := http.Get(url)
+		// The URL is chosen by the certificate's issuer: fetchPKIObject
+		// refuses non-http(s) and non-public destinations and caps the body
+		// at maxCRLBytes.
+		body, err := ca.fetchPKIObject(context.Background(), url, maxCRLBytes)
 		if err != nil {
-			return errors.Join(append(closeErrs, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to download CRL from %s: %v", url, err)})...)
-		}
-		body, readErr := io.ReadAll(resp.Body)
-		if cerr := resp.Body.Close(); cerr != nil {
-			closeErrs = append(closeErrs, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to close CRL response body for %s: %v", url, cerr)})
-		}
-		if readErr != nil {
-			return errors.Join(append(closeErrs, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to read CRL from %s: %v", url, readErr)})...)
-		}
-		if resp.StatusCode != http.StatusOK {
-			return errors.Join(append(closeErrs, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("CRL download %s returned status %d", url, resp.StatusCode)})...)
+			return errors.Join(append(closeErrs, err)...)
 		}
 
 		// Validate the CRL parses and has an issuer.

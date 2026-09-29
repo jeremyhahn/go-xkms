@@ -16,6 +16,7 @@ package auth
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -45,12 +46,22 @@ type MTLSUser struct {
 	Email string
 	// DisplayName is a human-readable name.
 	DisplayName string
-	// Role is the user's authorization role.
-	Role string
+	// Roles are the identifiers of every role assigned to the user, exactly as
+	// the identity store records them. For the qrdb store these are qrdb role
+	// IDs — the only form go-qrdb's authorizer resolves (it looks roles up by
+	// ID, never by name) — so they are carried verbatim and never projected to
+	// names, and none is dropped: the authorizer grants the union of all of
+	// them.
+	Roles []string
 	// TenantID is the tenant scope for this user.
 	TenantID string
 	// Enabled indicates whether the user account is active.
 	Enabled bool
+	// AuthMethods is the account's permitted-authentication-method policy
+	// (qrdb User.AuthMethods), as qrdb stores it. Empty states no
+	// restriction; otherwise the mTLS authenticator refuses the account unless
+	// the list names qrdbsdk.MethodMTLS.
+	AuthMethods []string
 }
 
 // CertMetadata captures string-shaped attributes that the mTLS authenticator
@@ -104,8 +115,12 @@ type MTLSConfig struct {
 	// When provided, the authenticator looks up the user by the canonical SPKI
 	// thumbprint (qrdbsdk.ComputeSPKIThumbprint) of the client certificate. If found and enabled, the
 	// identity subject is set to the username and the role claim is added.
-	// If found but disabled, ErrUserDisabled is returned.
-	// If not found, the authenticator falls back to extracting identity from certificate fields.
+	// If found but disabled, ErrUserDisabled is returned. If found but the
+	// account's permitted-method policy excludes mTLS, *AuthMethodNotPermittedError
+	// is returned. If the certificate is bound to no user, ErrCertNotBound is
+	// returned; any other store error is returned as a *UserLookupError. Both
+	// fail closed: with a store configured, no identity is ever derived from
+	// certificate fields.
 	UserStore UserStore
 }
 
@@ -181,53 +196,83 @@ func (a *MTLSAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD
 	return identity, nil
 }
 
-// Name returns the authenticator name
+// Name returns qrdbsdk.MethodMTLS, the method name qrdb's permitted-method
+// policy is written against.
 func (a *MTLSAuthenticator) Name() string {
-	return "mtls"
+	return qrdbsdk.MethodMTLS
 }
 
-// buildIdentity constructs an identity from a client certificate. When a UserStore is
-// configured, it first attempts to look up the user by canonical SPKI thumbprint. If the
-// user is found and enabled, the identity is enriched with user information and role.
-// If the user is found but disabled, ErrUserDisabled is returned. If the user is not
-// found (or no UserStore is configured), the identity is extracted from the certificate fields.
+// buildIdentity constructs an identity from a client certificate. With a
+// UserStore configured, the identity is always the bound user's (see
+// userIdentity); without one, it is read from the certificate's fields.
 func (a *MTLSAuthenticator) buildIdentity(ctx context.Context, cert *x509.Certificate) (*Identity, error) {
 	if a.userStore != nil {
-		// Canonical mTLS identity: qrdb's SPKI thumbprint (SHA-256 over
-		// SubjectPublicKeyInfo, base64url). This is the single algorithm shared by
-		// qrdb, xkms, and quicbaas so cert bindings resolve consistently across the
-		// stack. Consumed via the qrdb SDK — never reimplemented locally.
-		fingerprint := qrdbsdk.ComputeSPKIThumbprint(cert)
-		user, err := a.userStore.GetByCertFingerprint(ctx, fingerprint)
-		if err == nil {
-			// User found -- check if enabled
-			if !user.Enabled {
-				return nil, ErrUserDisabled
-			}
+		return a.userIdentity(ctx, cert)
+	}
+	return a.certIdentity(cert), nil
+}
 
-			identity := &Identity{
-				Subject:  user.Username,
-				TenantID: user.TenantID,
-				Metadata: a.certMetadataMap(cert),
-			}
-
-			if user.Role != "" {
-				identity.Roles = []string{user.Role}
-			}
-			identity.Metadata["display_name"] = user.DisplayName
-			if user.Email != "" {
-				identity.Metadata["email"] = user.Email
-			}
-			identity.Metadata["auth_method"] = "mtls"
-			identity.Metadata["cert_serial"] = cert.SerialNumber.String()
-			identity.Metadata["cert_issuer"] = cert.Issuer.String()
-			identity.Metadata["cert_fingerprint"] = fingerprint
-
-			return identity, nil
+// userIdentity resolves the client certificate to its bound user through the
+// UserStore and builds the identity from the user record. Every outcome other
+// than a bound, enabled user whose permitted-method policy allows mTLS is a
+// refusal: ErrUserDisabled for a disabled account, *AuthMethodNotPermittedError
+// when the account's policy excludes mTLS, ErrCertNotBound when no user is
+// bound, and *UserLookupError when the store cannot answer. It never falls
+// back to the certificate's fields. That identity carries a caller-chosen
+// Subject (the CN) and TenantID (the first OU), which handlers use to scope
+// per-user state such as the password vault, and while the store is
+// unavailable it would admit an account the store would have refused
+// (go-xkms#1096).
+func (a *MTLSAuthenticator) userIdentity(ctx context.Context, cert *x509.Certificate) (*Identity, error) {
+	// Canonical mTLS identity: qrdb's SPKI thumbprint (SHA-256 over
+	// SubjectPublicKeyInfo, base64url). This is the single algorithm shared by
+	// qrdb, xkms, and quicbaas so cert bindings resolve consistently across the
+	// stack. Consumed via the qrdb SDK — never reimplemented locally.
+	fingerprint := qrdbsdk.ComputeSPKIThumbprint(cert)
+	user, err := a.userStore.GetByCertFingerprint(ctx, fingerprint)
+	if err != nil {
+		var notFound *qrdbsdk.UserNotFoundError
+		if errors.As(err, &notFound) {
+			return nil, ErrCertNotBound
 		}
-		// User not found -- fall through to certificate-based extraction
+		return nil, &UserLookupError{Err: err}
+	}
+	if !user.Enabled {
+		return nil, ErrUserDisabled
+	}
+	// A certificate is a valid credential for an account in good standing,
+	// but the account may still withdraw mTLS as a way in (a FIDO2-only
+	// user, say). qrdb enforces this in its own middleware; the xkms planes
+	// must too, or withdrawal fails open.
+	if err := checkAuthMethod(user, a.Name()); err != nil {
+		return nil, err
 	}
 
+	identity := &Identity{
+		Subject:  user.Username,
+		TenantID: user.TenantID,
+		Metadata: a.certMetadataMap(cert),
+	}
+
+	if len(user.Roles) > 0 {
+		identity.Roles = append([]string(nil), user.Roles...)
+	}
+	identity.Metadata["display_name"] = user.DisplayName
+	if user.Email != "" {
+		identity.Metadata["email"] = user.Email
+	}
+	identity.Metadata["auth_method"] = qrdbsdk.MethodMTLS
+	identity.Metadata["cert_serial"] = cert.SerialNumber.String()
+	identity.Metadata["cert_issuer"] = cert.Issuer.String()
+	identity.Metadata["cert_fingerprint"] = fingerprint
+
+	return identity, nil
+}
+
+// certIdentity builds a certificate-only identity for an authenticator with no
+// UserStore: Subject from the configured extractor, TenantID from the first
+// OU, and no roles.
+func (a *MTLSAuthenticator) certIdentity(cert *x509.Certificate) *Identity {
 	identity := &Identity{
 		Subject:  a.extractSubject(cert),
 		Metadata: a.certMetadataMap(cert),
@@ -238,11 +283,11 @@ func (a *MTLSAuthenticator) buildIdentity(ctx context.Context, cert *x509.Certif
 		identity.TenantID = cert.Subject.OrganizationalUnit[0]
 	}
 
-	identity.Metadata["auth_method"] = "mtls"
+	identity.Metadata["auth_method"] = qrdbsdk.MethodMTLS
 	identity.Metadata["cert_serial"] = cert.SerialNumber.String()
 	identity.Metadata["cert_issuer"] = cert.Issuer.String()
 
-	return identity, nil
+	return identity
 }
 
 // certMetadataMap converts the configured certificate metadata extractor's

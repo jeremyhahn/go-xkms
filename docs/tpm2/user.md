@@ -1,6 +1,6 @@
 # TPM 2.0 — User Guide
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## What a TPM gives you that software cannot
 
@@ -207,6 +207,45 @@ The simulator covers the whole surface. Two things surprise people:
 - It serves **one client at a time**. A second connection blocks rather than
   being refused, which looks exactly like a hang.
 
+## Session encryption is not a setting
+
+Everything secret that crosses the bus to the TPM — the SO PIN, the USER PIN,
+sealed data such as the PKCS#11 PIN, decrypted plaintext — is encrypted, and
+every PIN is proven through a salted session rather than sent. There is
+nothing to turn on, and nothing to turn off: an `encrypt-sessions` key left in
+an old `tpm` configuration block, or `encrypt_session` in a backend
+configuration map, is no longer read. How it works is in
+[`engineering.md`](engineering.md) §"Bus protection".
+
+## Legacy symmetric key cleanup
+
+Releases before the change that moved TPM symmetric (AES) keys onto the
+Platform SRK sealed them on the Shared SRK with no authorization, storing the
+AES key as `<CN>.priv` next to `<CN>.pub` in the TPM2 key directory. Those
+keys are refused rather than loaded:
+
+```
+$ xkmsctl key encrypt old-key "s3cret" --backend tpm2
+Error: tpm: symmetric key predates Platform SRK protection (Shared SRK
+parent, no authorization); delete and regenerate it: old-key: delete
+old-key.priv from the TPM2 key directory
+```
+
+`xkmsctl key delete` cannot remove one of these: for a sealed (keyed-hash)
+key it first unseals to prove you own it, and a pre-migration key was never
+sealed under a PIN it can unseal with — the delete fails before it reaches
+the files. There is no automatic scan for them. To recover:
+
+1. The error above names the CN and the `.priv` file to remove. Find the
+   TPM2 key directory this deployment is using — for `xkmsd` it is
+   `tpm2-keys` under the configured `storage.path`; for a standalone client
+   backend it is the directory the `tpm2` backend was configured with — and
+   remove both `<CN>.priv` and `<CN>.pub` for that CN by hand.
+2. Generate a replacement key under the same CN, for example
+   `xkmsctl key generate <CN> --key-type symmetric --algorithm aes-256-gcm --backend tpm2`.
+   It is sealed under the Platform SRK per the rules in
+   [`engineering.md`](engineering.md) §"Symmetric keys".
+
 ## Troubleshooting
 
 | What you see | What it means | What to do |
@@ -221,6 +260,7 @@ The simulator covers the whole surface. Two things surprise people:
 | EK certificate missing and `ErrEndorsementCertNotFound` on an air-gapped host | `ek.cert-download` is off (the default), so no network lookup is attempted | write the certificate locally (`ProvisionEKCert`), or set `ek.cert-download: true` if the host does have a path to the manufacturer service |
 | IAK/IDevID enrollment refused, "endorsement key certificate is not chained to a trusted tpm manufacturer root" | `ca.tcg-config.trust-anchors` is unset or does not name this device's manufacturer | see [`../certificate-authority/user.md`](../certificate-authority/user.md) "Enrolling a device with a TPM" |
 | the TPM "stops working" after hours of uptime | leaked sessions or object contexts | a code defect — the leak test suites exist for this |
+| `tpm2: failed to resolve the session salt key` | the EK handle could not be read for a reason other than being absent — often a transport fault | fix the transport; no session is started unsalted in its place |
 | a node's TPM behaves oddly in ways nothing explains | firmware bugs are real | check the chip's firmware revision before the code |
 
 ## Where to go next

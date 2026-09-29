@@ -88,7 +88,7 @@ func csrFor(t *testing.T, key *ecdsa.PrivateKey) *x509.CertificateRequest {
 func TestVerifyDoesNotAuthorizeDICEOnTheNonceAlone(t *testing.T) {
 	host, port := serveAttestation(t, diceAttestationObject(t, DICENonce(diceKeyAuth)))
 
-	err := Verify(net.DefaultResolver, &mockCA{}, host, port, "token", diceKeyAuth)
+	err := Verify(loopbackClient(), &mockCA{}, host, port, "token", diceKeyAuth)
 	require.Error(t, err, "a dice challenge authorized issuance with no csr in sight")
 	assert.ErrorIs(t, err, ErrKeyBindingRequired)
 }
@@ -103,7 +103,7 @@ func TestBindCSRKeyRefusesACSRForAnUnrelatedKey(t *testing.T) {
 	}
 	host, port := serveAttestation(t, object)
 
-	verified, err := VerifyAttestation(net.DefaultResolver, &mockCA{}, host, port, "token", diceKeyAuth)
+	verified, err := VerifyAttestation(loopbackClient(), &mockCA{}, host, port, "token", diceKeyAuth)
 	require.NoError(t, err)
 	require.NotNil(t, verified)
 	assert.Equal(t, FormatDICE, verified.Format)
@@ -196,7 +196,7 @@ func TestBindCSRKeySurvivesStorage(t *testing.T) {
 	}
 	host, port := serveAttestation(t, object)
 
-	verified, err := VerifyAttestation(net.DefaultResolver, &mockCA{}, host, port, "token", diceKeyAuth)
+	verified, err := VerifyAttestation(loopbackClient(), &mockCA{}, host, port, "token", diceKeyAuth)
 	require.NoError(t, err)
 	require.Equal(t, leafDER, verified.LeafDER, "the device's own bytes are what get written down")
 

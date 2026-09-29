@@ -640,14 +640,18 @@ service KeystoreService {
     option (qrdb.v1.permission) = "tenant_barrier:status";
   }
 
-  // UpdateTenantEntitlements updates a tenant's feature entitlements.
+  // UpdateTenantEntitlements updates a tenant's feature entitlements. Plan
+  // management: gated on tenants:set_entitlements, never tenants:update, and
+  // admitted only for a cross-tenant (system) identity.
   rpc UpdateTenantEntitlements(UpdateTenantEntitlementsRequest) returns (UpdateTenantEntitlementsResponse) {
-    option (qrdb.v1.permission) = "tenants:update";
+    option (qrdb.v1.permission) = "tenants:set_entitlements";
   }
 
-  // UpdateTenantQuotas updates a tenant's resource quotas.
+  // UpdateTenantQuotas updates a tenant's resource quotas. Plan management:
+  // gated on tenants:set_quotas, never tenants:update, and admitted only for a
+  // cross-tenant (system) identity.
   rpc UpdateTenantQuotas(UpdateTenantQuotasRequest) returns (UpdateTenantQuotasResponse) {
-    option (qrdb.v1.permission) = "tenants:update";
+    option (qrdb.v1.permission) = "tenants:set_quotas";
   }
 
   // ==================== Password Store Operations ====================
@@ -3161,8 +3165,9 @@ message PasswordAddResponse {
 
 // PasswordGetRequest requests retrieval of a password entry.
 message PasswordGetRequest {
+  reserved 2;
+  reserved "decrypt";
   string id = 1;
-  bool decrypt = 2;
 }
 
 // PasswordGetResponse contains the password entry.

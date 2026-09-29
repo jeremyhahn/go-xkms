@@ -1,6 +1,6 @@
 # xKey Desktop GUI — Architecture
 
-> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 This file replaces the pre-convention `gui/architecture.md`. The other files
 in this folder — `README.md`, `features.md`, `design-system.md`,
@@ -79,7 +79,12 @@ The GUI is reachable two ways, and they are architecturally distinct:
    process's false-negative read of the sealed on-disk data directory
    (comment at `ipc_state.go:22-30`). No PIN, password value, or key
    material is ever returned over it; the socket's only authentication is
-   filesystem permission.
+   filesystem permission — a `0700` directory the server refuses to reuse
+   if it is a symlink or another user's. On startup a socket already held by
+   a live listener is taken over only when `ipc.ReclaimSocket` confirms the
+   directory and the socket are this user's (`app.go:3330-3337`,
+   `xkey/pkg/ipc/socketdir.go:135`); see
+   [agent-automation/engineering.md](../agent-automation/engineering.md).
 
 ## Systray
 

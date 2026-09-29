@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — User Guide
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114)
 
 ## What you get
 
@@ -65,6 +65,12 @@ export XKMS_PKCS11_USER_PIN='…'
 ```
 
 Token state lives on the server, so several hosts can share one token view.
+Hosts share a token only if they authenticate as the same tenant. The server
+files token state under the tenant of the client certificate or identity, not
+under any `tenant_id` in the module's configuration. If the configured
+`tenant_id` names a different tenant, every state call fails with an
+invalid-argument error, so the token can neither load nor persist its state.
+Leave `tenant_id` unset, or set it to your own tenant.
 
 There is an `XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT` and it defaults to off.
 Turning it on sends token operations over an unauthenticated channel.
@@ -93,6 +99,7 @@ openssl pkeyutl -engine pkcs11 -keyform engine -sign \
 | What you see | What it means | What to do |
 |---|---|---|
 | `C_Initialize` fails naming a backend | the module was built without that backend's build tag | rebuild with the tag; the environment can only select what was compiled in |
+| state calls fail with `tenant_id does not match the authenticated identity's tenant` | the module's configured `tenant_id` is not the tenant its credentials authenticate as | unset `tenant_id` or correct it; the server always uses the authenticated tenant |
 | `C_Initialize` fails in remote mode | target unreachable, TLS material wrong, or storage unusable | it fails closed on purpose — fix the cause, do not look for a fallback |
 | `CKR_FUNCTION_NOT_SUPPORTED` (`0x54`) | this token will never do that operation | not a transient failure; four v3.2 surfaces are deliberately unimplemented |
 | `CKR_USER_NOT_LOGGED_IN` | the mechanism needs a login first | supply the user PIN |

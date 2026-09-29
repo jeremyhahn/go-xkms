@@ -52,32 +52,27 @@ func (f *frostBackendKeyStore) KeyProvider() types.KeyProvider { return f.provid
 // frostSecretBackend is an in-memory types.KeyProvider storing raw FROST
 // secret shares keyed by CN via the SealData field, mirroring
 // pkg/api/rest/handlers_frost_real_test.go's fixture of the same name.
-type frostSecretBackend struct {
-	data map[string][]byte
-}
+// frostSecretBackend is an in-memory types.SealingKeyProvider that "seals"
+// FROST secret shares by prefixing them with a fixed marker, mirroring the
+// secret-backend contract pkg/keyprovider/frost expects without a real
+// cipher.
+type frostSecretBackend struct{}
 
 func newFrostSecretBackend() *frostSecretBackend {
-	return &frostSecretBackend{data: make(map[string][]byte)}
+	return &frostSecretBackend{}
 }
 
 func (m *frostSecretBackend) Type() types.BackendType { return types.BackendTypeSoftware }
 func (m *frostSecretBackend) Capabilities() types.Capabilities {
-	return types.Capabilities{Keys: true, Signing: true}
+	return types.Capabilities{Keys: true, Signing: true, Sealing: true}
 }
 func (m *frostSecretBackend) GenerateKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	if attrs.SealData != nil {
-		m.data[attrs.CN] = attrs.SealData.Bytes()
-	}
-	return nil, nil
+	return nil, errors.New("not implemented")
 }
 func (m *frostSecretBackend) GetKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	if v, ok := m.data[attrs.CN]; ok {
-		return v, nil
-	}
 	return nil, errors.New("frost secret share not found")
 }
 func (m *frostSecretBackend) DeleteKey(_ context.Context, attrs *types.KeyAttributes) error {
-	delete(m.data, attrs.CN)
 	return nil
 }
 func (m *frostSecretBackend) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
@@ -93,6 +88,26 @@ func (m *frostSecretBackend) RotateKey(_ context.Context, _ *types.KeyAttributes
 	return errors.New("not implemented")
 }
 func (m *frostSecretBackend) Close() error { return nil }
+
+// frostSealMarker prefixes every "sealed" payload this fixture produces, so
+// Unseal can detect (and reject) a payload it did not produce.
+const frostSealMarker = "frost-test-sealed:"
+
+func (m *frostSecretBackend) CanSeal() bool { return true }
+
+func (m *frostSecretBackend) Seal(_ context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
+	return &types.SealedData{
+		Backend:    types.BackendTypeSoftware,
+		Ciphertext: append([]byte(frostSealMarker), data...),
+	}, nil
+}
+
+func (m *frostSecretBackend) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+	if sealed == nil || len(sealed.Ciphertext) < len(frostSealMarker) || string(sealed.Ciphertext[:len(frostSealMarker)]) != frostSealMarker {
+		return nil, errors.New("frost secret share not found")
+	}
+	return sealed.Ciphertext[len(frostSealMarker):], nil
+}
 
 // newFrostMCPServer registers a real *frost.FrostBackend with the xkms
 // service and returns an MCP *Server that resolves it, so handleFrost*

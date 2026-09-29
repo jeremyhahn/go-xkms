@@ -14,14 +14,12 @@
 package enroll01
 
 import (
-	"bytes"
 	"context"
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -33,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -131,6 +130,11 @@ type TrustedPlatformModule interface {
 	ActivateCredential(credentialBlob, encryptedSecret []byte) ([]byte, error)
 }
 
+// maxCSRResponseBytes caps the challenge endpoint's response: a
+// base64url-encoded packed TCG-CSR-IDEVID of at most
+// xkmssdk.MaxIDevIDCSRSize bytes.
+var maxCSRResponseBytes = int64(base64.RawURLEncoding.EncodedLen(xkmssdk.MaxIDevIDCSRSize))
+
 // Verify performs enroll-01 challenge verification.
 //
 // This function implements the server-side verification flow:
@@ -140,10 +144,16 @@ type TrustedPlatformModule interface {
 // 4. Sends credential to client for activation
 // 5. Verifies activated secret matches original
 //
+// Both requests go through client, the shared challenge-validation client:
+// domain must be a bare hostname or IP literal, a reserved target address
+// is refused after DNS resolution, redirects are refused, and each response
+// is capped (the CSR at maxCSRResponseBytes, the activation secret at
+// validation.DefaultMaxResponseBytes).
+//
 // Parameters:
-//   - resolver: DNS resolver for domain name resolution
+//   - client: the shared challenge-validation client
 //   - ca: TCG-CSR-IDEVID verifier for CSR verification and credential generation
-//   - domain: Domain name to verify
+//   - domain: the permanent-identifier host to contact
 //   - port: HTTP port for challenge communication
 //   - token: Challenge token
 //   - keyAuth: Key authorization (used as qualifying data)
@@ -152,48 +162,19 @@ type TrustedPlatformModule interface {
 //   - nil if credential activation succeeds and secret matches
 //   - error if verification fails at any step
 func Verify(
-	resolver *net.Resolver,
+	client *validation.Client,
 	ca TCGCSRVerifier,
 	domain, port, token, keyAuth string) error {
 
+	ctx := context.Background()
+
 	// Retrieve the TCG-CSR-IDevID from the challenge endpoint
-	endpoint := fmt.Sprintf("http://%s:%s%s%s", domain, port, challengePath, token)
-
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   5 * time.Second,
-				KeepAlive: 5 * time.Second,
-				Resolver:  resolver,
-			}).DialContext,
-			TLSHandshakeTimeout:   5 * time.Second,
-			ResponseHeaderTimeout: 5 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			// Enroll-01 uses plain HTTP - no TLS config needed
-			// since we don't follow redirects
-		},
-		// Don't follow redirects
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
-	resp, err := client.Get(endpoint)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			log.Printf("DEBUG: enroll-01: failed to close challenge response body: %v", closeErr)
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return caerrors.ConnectionFailureError("enroll-01: unexpected status code: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
+	body, err := client.Get(ctx, validation.Target{
+		Host:             domain,
+		Port:             port,
+		Path:             challengePath + token,
+		MaxResponseBytes: maxCSRResponseBytes,
+	})
 	if err != nil {
 		return err
 	}
@@ -213,9 +194,6 @@ func Verify(
 		return err
 	}
 
-	// Send the encrypted credential to the client for activation
-	secretEndpoint := fmt.Sprintf("http://%s:%s%s%s", domain, port, secretPath, token)
-
 	activationRequest := &activateCredentialRequest{
 		CredentialBlob:  base64.RawURLEncoding.EncodeToString(credentialBlob),
 		EncryptedSecret: base64.RawURLEncoding.EncodeToString(encryptedSecret),
@@ -226,33 +204,12 @@ func Verify(
 		return err
 	}
 
-	// The activation response gets its OWN variable rather than reusing resp.
-	//
-	// Reusing it was a latent panic: the GET above registered a deferred
-	// close closing over the VARIABLE. A failed Post assigns nil to that
-	// same variable and returns, and the deferred close then dereferenced
-	// the nil response instead of the GET's — so every transport failure on
-	// this request crashed the goroutine rather than returning the error
-	// four lines above. Verify runs against a host named by the challenge,
-	// so the peer chooses when to drop the connection. Found by making
-	// TestVerify_PostError deterministic (go-xkms#243): the timing race
-	// meant the test usually failed the GET and returned early, never
-	// reaching this line.
-	activationResp, err := client.Post(secretEndpoint, "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := activationResp.Body.Close(); closeErr != nil {
-			log.Printf("DEBUG: enroll-01: failed to close activation response body: %v", closeErr)
-		}
-	}()
-
-	if activationResp.StatusCode != http.StatusOK {
-		return caerrors.ConnectionFailureError("enroll-01: activation failed with status code: %d", activationResp.StatusCode)
-	}
-
-	body, err = io.ReadAll(activationResp.Body)
+	// Send the encrypted credential to the client for activation
+	activated, err := client.Post(ctx, validation.Target{
+		Host: domain,
+		Port: port,
+		Path: secretPath + token,
+	}, "application/json", jsonData)
 	if err != nil {
 		return err
 	}
@@ -263,7 +220,7 @@ func Verify(
 	// ConstantTimeCompare returns 0 immediately when the lengths differ,
 	// which is acceptable here because the secret's length is not itself
 	// secret.
-	if subtle.ConstantTimeCompare(body, secret) != 1 {
+	if subtle.ConstantTimeCompare(activated, secret) != 1 {
 		return caerrors.VerificationFailureError("enroll-01: invalid credential activation")
 	}
 

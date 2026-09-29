@@ -173,6 +173,14 @@ func (p pinSource) addFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool(p.stdinFlag, false, "Read the "+p.label+" from standard input")
 }
 
+// addPersistentFlags declares the source's one flag on cmd's persistent flag
+// set, so every descendant command inherits it (piv.go's PIVCmd is the
+// current use: every "piv" subcommand shares one --pkcs11-pin-stdin rather
+// than redeclaring it).
+func (p pinSource) addPersistentFlags(cmd *cobra.Command) {
+	cmd.PersistentFlags().Bool(p.stdinFlag, false, "Read the "+p.label+" from standard input")
+}
+
 // resolve returns the PIN from the highest-precedence source that carries
 // one: stdin when the stdin flag is set, then the environment variable. It
 // returns "" when neither does -- there is no third, flag-value source

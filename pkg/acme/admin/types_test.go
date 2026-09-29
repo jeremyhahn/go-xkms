@@ -112,7 +112,6 @@ func TestPagination_JSONSerialization(t *testing.T) {
 func TestCertificateInfo_JSONSerialization(t *testing.T) {
 	now := time.Now()
 	certInfo := CertificateInfo{
-		ID:           1,
 		SerialNumber: "123456789",
 		Subject:      "CN=example.com",
 		Issuer:       "CN=Test CA",
@@ -130,7 +129,6 @@ func TestCertificateInfo_JSONSerialization(t *testing.T) {
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
 
-	assert.Equal(t, certInfo.ID, decoded.ID)
 	assert.Equal(t, certInfo.SerialNumber, decoded.SerialNumber)
 	assert.Equal(t, certInfo.Subject, decoded.Subject)
 	assert.Equal(t, certInfo.Status, decoded.Status)
@@ -435,7 +433,6 @@ func TestConfig_DefaultValues(t *testing.T) {
 func TestCertificateInfo_OptionalFields(t *testing.T) {
 	now := time.Now()
 	certInfo := CertificateInfo{
-		ID:           1,
 		SerialNumber: "123",
 		Subject:      "CN=test",
 		Issuer:       "CN=CA",

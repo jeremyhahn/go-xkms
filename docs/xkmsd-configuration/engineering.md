@@ -1,6 +1,6 @@
 # xkmsd Configuration — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/config`
 
@@ -10,6 +10,7 @@
 | `Defaults() *Config` | The defaults layer. The only place an infrastructure literal may live. |
 | `DefaultServerHost` | `""` — every interface, dual-stack. See architecture.md for why not `0.0.0.0`. |
 | `ServerConfig.Host` | The bind host shared by every network listener and handed to the embedded qrdb node. |
+| `ServerConfig.TrustedProxies` (`yaml:"trusted_proxies"`, `pkg/config/config.go:366`) | Reverse proxies (IP or CIDR) whose `X-Forwarded-For` / `X-Real-IP` the REST rate limiters believe. Empty trusts none. `Validate` parses it with `ratelimit.ParseTrustedProxies` (`config.go:1489`) and fails with `*errs.Wrapped` around `*ratelimit.InvalidTrustedProxyError`; `pkg/server` parses it again into `rest.Config.TrustedProxies` (`pkg/server/server.go:2892`), and `cmd/xkmsd/acme.go`'s `startACMEServer` (`acme.go:164`) parses it a third time for the embedded ACME listener, feeding the identical result into `acmeserver.TrustedProxies` (the ACME rate limiter's resolver) and `audit.SetTrustedProxies` (`acme.go:168-169`, `pkg/acme/audit/hooks.go:117`) — one config key drives REST rate limiting, ACME rate limiting, and ACME audit source-IP attribution alike. Resolution rules: `pkg/ratelimit/clientip.go:102`. IPv6 rate-limit *bucket keys* (not audit records) are additionally folded to their `/64` by `ratelimit.RateLimitKey` (`clientip.go:171`); see `docs/acme-issuance/engineering.md`. |
 
 Unexported but load-bearing, all in `pkg/config/load.go`:
 
@@ -36,6 +37,28 @@ Unexported but load-bearing, all in `pkg/config/load.go`:
 |---|---|
 | `ServerConfig.Host` | Bind host of the listener; empty binds every interface. |
 | `(*Server).Start()` | Binds `net.JoinHostPort(Host, Port)`. Port `0` is ephemeral; `Port()` reports the bound port. A host that cannot be bound returns `*errs.Wrapped` and leaves `Port()` at 0. |
+
+## Exported surface — `pkg/server`
+
+| Symbol | Contract |
+|---|---|
+| `New(cfg *config.Config, opts ...Option) (*Server, error)` (`pkg/server/server.go`) | Calls `cfg.Validate()` first, before any filesystem or storage touch. A failure is returned as `*ErrServiceInit{Service: "configuration"}` wrapping `Validate`'s typed error. `Validate` also normalizes `cfg` in place (defaults `Storage.Backend` to `"pebble"`, `Storage.QRDB.Transport` to `"embedded"`, `Cluster.ShardID` to `1`), so every subsystem `New` initializes afterward sees the normalized values. |
+| `config.Config.LoopbackDesktop` (`pkg/config/config.go`, `yaml:"-"`) | Pure embedder signal, unreachable from any config file/env/flag. Set only by `pkg/server/loopback.desktopConfig`, which forces `Protocols.REST` on for the 127.0.0.1-only desktop engine listener. `Validate` reads it to skip, for that one launch shape, the `storage.backend "qrdb"` + `tls.enabled` requirement `NetworkServing` otherwise imposes on any REST-enabled config — no other check is affected. |
+
+## Invariant — `Server.New` always validates
+
+Before go-xkms#666, `config.Load` called `Validate`, but `server.New` did not
+call it itself — a caller that built `*config.Config` by hand (an embedder,
+or a test) could reach `New` with a configuration `Load` would have refused,
+including an empty `storage.path` that a PIN-manager or TPM2-backend code
+path then resolved directly against the filesystem (`Storage.Path + "/pin"`,
+pre-#666), reaching the filesystem root when the path was empty. `New` now
+calls `cfg.Validate()` unconditionally as its first action, so `config.Load`
+callers and hand-built-`*config.Config` callers get the identical fail-closed
+check; there is no path through `New` that skips it. `initializePINManager`
+and `initializePasswordStore` (`pkg/server/server.go`) additionally guard
+`storage.path` directly and use `filepath.Join`, for defense in depth if
+either is ever reached without going through `New`.
 
 ## Invariants
 
@@ -247,5 +270,9 @@ with `errs.Wrapped{Msg: "failed to listen on <addr>"}`.
 | `pkg/server` `TestResolveConfigSecrets_ResolvesReferenceAcrossConfig` | a `credential://` reference anywhere in the config resolves in the same pass, alongside untouched literal/empty fields elsewhere |
 | `pkg/server` `TestResolveConfigSecrets_UnresolvableReferenceFailsClosed`, `TestResolveConfigSecrets_UnresolvableCredentialReference` | a reference the registry claims but cannot fetch fails with the typed `*ErrConfigSecretResolution` |
 | `pkg/server` `TestResolveClusterCAKeyPassphrase_*`, `TestRegisterPhoneBackend_ResolvableCredentialReference` | the CA/cluster/phone call sites read an already-resolved field through `types.SecretValueBytes` alone, no per-field `Resolve` of their own |
+| `pkg/server` `TestNew_EmptyStoragePath_RejectedBeforeAnyFilesystemWrite` | `New` refuses an empty `storage.path` before any subsystem touches the filesystem; nothing is created under the working directory |
+| `pkg/server` `TestNew_InvalidConfig_RejectedWithTypedError`, `TestNew_ValidConfig_Succeeds` | `New` wraps any `Validate` failure as `*ErrServiceInit{Service: "configuration"}`, and still constructs normally for a configuration `Validate` accepts |
+| `pkg/server` `TestConfig_Validate_LoopbackDesktopExemptsNetworkServingRequirements`, `TestConfig_Validate_LoopbackDesktopDoesNotExemptOtherRESTConfigs` | `Config.LoopbackDesktop` skips the network-serving requirement for exactly the loopback desktop launch shape, and only that shape |
+| `pkg/server/loopback` `TestDesktopConfig_ForcesLoopbackRESTOnly`, `TestLaunch_BindsLoopbackOnly` | `desktopConfig` sets `LoopbackDesktop`, and a real loopback launch still succeeds through `New`'s `Validate` call |
 
 Run: `make test-config`, `make test-server`, `go test ./cmd/xkmsd/ ./pkg/api/grpc/`.

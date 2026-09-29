@@ -77,7 +77,7 @@ pin:
 - [CLI PIN Commands](../../xkey/docs/usage/cli/pin.md)
 
 ### Backend-Specific Configuration
-- [TPM2 Session Encryption](tpm2-session-encryption.md) - TPM 2.0 session encryption configuration
+- [TPM2 Session Encryption](../tpm2/engineering.md#bus-protection) - TPM 2.0 session encryption (always on, not configurable)
 
 ### TPM Dashboard GUI
 

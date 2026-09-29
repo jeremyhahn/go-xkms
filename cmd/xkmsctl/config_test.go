@@ -378,22 +378,21 @@ func TestDefaultUnixSocketPath(t *testing.T) {
 
 func TestConfig_Fields(t *testing.T) {
 	cfg := &Config{
-		ConfigFile:         "/path/to/config.yaml",
-		Backend:            "software",
-		KeyDir:             "/path/to/keys",
-		OutputFormat:       "json",
-		Verbose:            true,
-		Protocol:           "embedded",
-		Server:             "http://localhost:8443",
-		TLSCert:            "/path/to/cert.pem",
-		TLSKey:             "/path/to/key.pem",
-		TLSCACert:          "/path/to/ca.pem",
-		JWTToken:           "test-token",
-		TPM2Device:         "/dev/tpmrm0",
-		TPM2UseSimulator:   true,
-		TPM2EncryptSession: true,
-		TPM2SRKHandle:      0x81000001,
-		TPM2EKHandle:       0x81010001,
+		ConfigFile:       "/path/to/config.yaml",
+		Backend:          "software",
+		KeyDir:           "/path/to/keys",
+		OutputFormat:     "json",
+		Verbose:          true,
+		Protocol:         "embedded",
+		Server:           "http://localhost:8443",
+		TLSCert:          "/path/to/cert.pem",
+		TLSKey:           "/path/to/key.pem",
+		TLSCACert:        "/path/to/ca.pem",
+		JWTToken:         "test-token",
+		TPM2Device:       "/dev/tpmrm0",
+		TPM2UseSimulator: true,
+		TPM2SRKHandle:    0x81000001,
+		TPM2EKHandle:     0x81010001,
 	}
 
 	if cfg.ConfigFile != "/path/to/config.yaml" {
@@ -434,9 +433,6 @@ func TestConfig_Fields(t *testing.T) {
 	}
 	if !cfg.TPM2UseSimulator {
 		t.Error("TPM2UseSimulator not set correctly")
-	}
-	if !cfg.TPM2EncryptSession {
-		t.Error("TPM2EncryptSession not set correctly")
 	}
 	if cfg.TPM2SRKHandle != 0x81000001 {
 		t.Error("TPM2SRKHandle not set correctly")

@@ -64,31 +64,6 @@ func TestFIDO2Ceremony_RegisterHonorsContext(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
-// --- webauthnOrigin ---
-
-func TestWebAuthnOrigin(t *testing.T) {
-	tests := []struct {
-		name      string
-		serverURL string
-		want      string
-	}{
-		{"https with port", "https://xkms.example.com:8443", "https://xkms.example.com:8443"},
-		{"https without port", "https://xkms.example.com", "https://xkms.example.com"},
-		{"trailing path is dropped", "https://xkms.example.com:8443/api/v1", "https://xkms.example.com:8443"},
-		{"surrounding whitespace", "  https://xkms.example.com  ", "https://xkms.example.com"},
-		{"http", "http://localhost:8080", "http://localhost:8080"},
-		{"no scheme", "xkms.example.com:8443", ""},
-		{"empty", "", ""},
-		{"unparsable", "://nope", ""},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, webauthnOrigin(tc.serverURL))
-		})
-	}
-}
-
 // --- authenticator discovery ---
 
 // fakeHIDDevice is a HID device double. Only the descriptive accessors the

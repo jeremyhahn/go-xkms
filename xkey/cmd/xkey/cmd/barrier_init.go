@@ -65,6 +65,10 @@ Examples:
   # AWS KMS, ambient credentials (the AWS SDK's default credential chain)
   xkey barrier init --strategy aws_kms --aws-region us-east-1
 
+  # AWS KMS, sealing under an existing CMK instead of provisioning one
+  xkey barrier init --strategy aws_kms --aws-region us-east-1 \
+    --aws-key-id arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab
+
   # GCP Cloud KMS, ambient Application Default Credentials
   xkey barrier init --strategy gcp_kms --gcp-project-id my-project \
     --gcp-location us-east1 --gcp-key-ring xkey-barrier
@@ -206,6 +210,7 @@ func persistBarrierCloudKMSConfig(strategyFlag string) error {
 		awsCfg := &config.BarrierAWSKMSConfig{
 			Region:   barrierAWSRegion,
 			Endpoint: barrierAWSEndpoint,
+			KeyID:    barrierAWSKeyID,
 		}
 		if err := awsCfg.Validate(); err != nil {
 			return err

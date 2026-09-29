@@ -3001,6 +3001,42 @@ coverage-gcpkms:
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/gcpkms.out -o $(COVERAGE_DIR)/gcpkms.html
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/gcpkms.out | grep total
 
+.PHONY: coverage-aesgcm
+## coverage-aesgcm: Generate AES-256-GCM coverage report
+# A named target because pkg/crypto/aesgcm is two path segments below pkg/ --
+# GNU Make's pattern rules strip everything before the last "/" in a
+# command-line goal before matching, so `coverage-%` (below) can never match
+# `coverage-crypto/aesgcm` and there is no way to reach a nested package
+# through it directly; every other pkg/crypto/* coverage target in this file
+# is a named target for the same reason.
+coverage-aesgcm:
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test -v $(TAG_FLAGS) -coverprofile=$(COVERAGE_DIR)/aesgcm.out -covermode=atomic ./pkg/crypto/aesgcm/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/aesgcm.out -o $(COVERAGE_DIR)/aesgcm.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/aesgcm.out | grep total
+
+.PHONY: coverage-fips
+## coverage-fips: Generate pkg/crypto/fips coverage report, merged across the
+## default and GODEBUG=fips140=on lanes (go-xkms#706)
+# DefaultKDF/DefaultLUKSKDF select their branch on crypto/fips140.Enabled(),
+# runtime module STATE that is fixed for the life of the process (#219), not a
+# build tag -- so a single `go test` run only ever exercises the branch
+# matching whatever GODEBUG=fips140 was, or was not, set to when it started.
+# This runs the package's tests twice, once under each state, and merges the
+# two -coverprofile outputs by concatenating the second's body under the
+# first's "mode:" header: `go tool cover` sums per-block hit counts for
+# identical file:line blocks that appear more than once in one profile, so
+# this is a correct merge of the two runs' coverage, not a reformat. Named
+# for the same nested-path reason as coverage-aesgcm above.
+coverage-fips:
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) -coverprofile=$(COVERAGE_DIR)/fips.out -covermode=atomic ./pkg/crypto/fips/...
+	@GODEBUG=fips140=on $(GO) test $(TAG_FLAGS) -coverprofile=$(COVERAGE_DIR)/fips-fips140on.out -covermode=atomic ./pkg/crypto/fips/...
+	@{ head -1 $(COVERAGE_DIR)/fips.out; tail -n +2 $(COVERAGE_DIR)/fips.out; tail -n +2 $(COVERAGE_DIR)/fips-fips140on.out; } > $(COVERAGE_DIR)/fips-merged.out
+	@mv $(COVERAGE_DIR)/fips-merged.out $(COVERAGE_DIR)/fips.out
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/fips.out -o $(COVERAGE_DIR)/fips.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/fips.out | grep total
+
 .PHONY: coverage-wrapping
 ## coverage-wrapping: Generate key wrapping cryptographic primitives coverage report
 coverage-wrapping:
@@ -4384,6 +4420,15 @@ integration-test-bootstrap:
 	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
 		$(call compose,bootstrap) run --build --rm test
 	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
+
+.PHONY: integration-test-acmeadmin
+## integration-test-acmeadmin: Run ACME admin plane CLI integration tests (xkmsctl acme/xkmsctl tenant against a real xkmsd, REST only)
+integration-test-acmeadmin: stage-gomodauth
+	@echo "$(CYAN)$(BOLD)→ Running ACME admin plane integration tests...$(RESET)"
+	@cd test/integration/acmeadmin && $(call compose,acmeadmin) down -v >/dev/null 2>&1 || true
+	@cd test/integration/acmeadmin && trap '$(call compose,acmeadmin) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,acmeadmin) run --build --rm test
+	@echo "$(GREEN)✓ ACME admin plane integration tests complete$(RESET)"
 
 .PHONY: integration-test-cluster
 ## integration-test-cluster: Run 3-node Raft cluster + standalone-server integration tests (crypto gen/sign/verify replication, public-key consistency, delete replication, leader failover, node restart/rejoin catch-up, standalone lifecycle)

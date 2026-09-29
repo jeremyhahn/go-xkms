@@ -14,21 +14,16 @@
 package deviceattest01
 
 import (
-	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"log/slog"
-	"net"
-	"net/http"
-	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -142,9 +137,6 @@ var (
 	// WebAuthn Level 2 section 8.3.1 TPM attestation certificate requirements.
 	ErrAIKCertificateInvalid = errors.New("device-attest-01: AIK certificate does not meet the tpm attestation requirements")
 
-	// ErrPCRMismatch is returned when PCR values don't match expected policy
-	ErrPCRMismatch = errors.New("device-attest-01: PCR values do not match policy")
-
 	// ErrCertificateChainInvalid is returned when the AK certificate chain is invalid
 	ErrCertificateChainInvalid = errors.New("device-attest-01: AK certificate chain invalid")
 
@@ -209,7 +201,7 @@ type AttestationVerifier interface {
 // VerifiedAttestation.BindCSRKey has run against the key being certified.
 //
 // Parameters:
-//   - resolver: DNS resolver for domain name resolution
+//   - client: the shared challenge-validation client
 //   - ca: attestation verifier for the attestation object and x5c anchoring
 //   - domain: Domain/identifier to verify
 //   - port: HTTP port for challenge communication
@@ -221,11 +213,11 @@ type AttestationVerifier interface {
 //   - ErrKeyBindingRequired for a format whose binding needs the CSR
 //   - error if verification fails
 func Verify(
-	resolver *net.Resolver,
+	client *validation.Client,
 	ca AttestationVerifier,
 	domain, port, challengeToken, expectedKeyAuth string) error {
 
-	verified, err := VerifyAttestation(resolver, ca, domain, port, challengeToken, expectedKeyAuth)
+	verified, err := VerifyAttestation(client, ca, domain, port, challengeToken, expectedKeyAuth)
 	if err != nil {
 		return err
 	}
@@ -241,44 +233,20 @@ func Verify(
 // The returned value is NOT an authorization on its own for a format that
 // binds through the CSR: see VerifiedAttestation.
 func VerifyAttestation(
-	resolver *net.Resolver,
+	client *validation.Client,
 	ca AttestationVerifier,
 	domain, port, challengeToken, expectedKeyAuth string) (*VerifiedAttestation, error) {
 
-	// Retrieve attestation from client's challenge endpoint
-	endpoint := fmt.Sprintf("http://%s:%s%s%s", domain, port, challengePath, challengeToken)
-
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   5 * time.Second,
-				KeepAlive: 5 * time.Second,
-				Resolver:  resolver,
-			}).DialContext,
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
-	resp, err := client.Get(endpoint)
+	// Retrieve attestation from client's challenge endpoint through the
+	// shared challenge-validation client: a bare host only, no reserved
+	// target address, no redirects, and a capped response.
+	body, err := client.Get(context.Background(), validation.Target{
+		Host: domain,
+		Port: port,
+		Path: challengePath + challengeToken,
+	})
 	if err != nil {
-		return nil, caerrors.ConnectionFailureError("device-attest-01: failed to contact client: %v", err)
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			slog.Debug("device-attest-01: failed to close response body", slog.String("error", closeErr.Error()))
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, caerrors.ConnectionFailureError("device-attest-01: unexpected status code: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, caerrors.ConnectionFailureError("device-attest-01: failed to read response: %v", err)
+		return nil, err
 	}
 
 	// Decode the attestation request
@@ -467,227 +435,6 @@ func ParseAttestationObject(data []byte) (*AttestationObject, error) {
 func ValidateAttestationFormat(format AttestationFormat) bool {
 	_, supported := evidenceVerifiers[format]
 	return supported
-}
-
-// TPM magic value for generated structures
-const tpmGeneratedValue = 0xff544347 // 0xFF || "TCG"
-
-// TPM structure types
-const (
-	tpmSTAttestQuote = 0x8018 // TPM_ST_ATTEST_QUOTE
-)
-
-// TPMSAttest represents a parsed TPMS_ATTEST structure from TPM2_Quote
-type TPMSAttest struct {
-	Magic           uint32
-	Type            uint16
-	QualifiedSigner []byte
-	ExtraData       []byte
-	ClockInfo       TPMSClockInfo
-	FirmwareVersion uint64
-	Attested        TPMSQuoteInfo
-}
-
-// TPMSClockInfo represents the clock information in TPMS_ATTEST
-type TPMSClockInfo struct {
-	Clock        uint64
-	ResetCount   uint32
-	RestartCount uint32
-	Safe         bool
-}
-
-// TPMSQuoteInfo represents the quote-specific attestation data
-type TPMSQuoteInfo struct {
-	PCRSelect []TPMSPCRSelection
-	PCRDigest []byte
-}
-
-// TPMSPCRSelection represents a PCR selection structure
-type TPMSPCRSelection struct {
-	Hash         uint16
-	SizeOfBitmap uint8
-	PCRBitmap    []byte
-}
-
-// ExtractPCRsFromCertInfo extracts PCR values from a TPMS_ATTEST structure
-//
-// Parameters:
-//   - certInfo: Raw TPMS_ATTEST bytes from TPM2_Quote
-//
-// Returns:
-//   - Map of PCR index to PCR value
-//   - error if parsing fails
-func ExtractPCRsFromCertInfo(certInfo []byte) (map[uint][]byte, error) {
-	if len(certInfo) < 10 {
-		return nil, caerrors.MalformedError("certInfo too short: %d bytes", len(certInfo))
-	}
-
-	attest, err := ParseTPMSAttest(certInfo)
-	if err != nil {
-		return nil, err
-	}
-
-	// The PCR digest is a hash of all selected PCRs concatenated
-	// We can't extract individual PCR values from the digest alone
-	// Instead, we return the PCR selection and digest for verification
-	pcrs := make(map[uint][]byte)
-
-	// Mark which PCRs were included in the quote
-	for _, sel := range attest.Attested.PCRSelect {
-		for byteIdx, b := range sel.PCRBitmap {
-			for bitIdx := 0; bitIdx < 8; bitIdx++ {
-				if b&(1<<bitIdx) != 0 {
-					pcrIndex := uint(byteIdx*8 + bitIdx)
-					// We store nil to indicate the PCR was selected
-					// The actual value would need to be read from the TPM
-					pcrs[pcrIndex] = nil
-				}
-			}
-		}
-	}
-
-	return pcrs, nil
-}
-
-// ParseTPMSAttest parses a raw TPMS_ATTEST structure
-func ParseTPMSAttest(data []byte) (*TPMSAttest, error) {
-	if len(data) < 10 {
-		return nil, caerrors.MalformedError("data too short for TPMS_ATTEST")
-	}
-
-	attest := &TPMSAttest{}
-	offset := 0
-
-	// Magic (4 bytes, big-endian)
-	attest.Magic = uint32(data[offset])<<24 | uint32(data[offset+1])<<16 |
-		uint32(data[offset+2])<<8 | uint32(data[offset+3])
-	offset += 4
-
-	if attest.Magic != tpmGeneratedValue {
-		return nil, caerrors.BadAttestationStatementError("invalid TPM magic: got 0x%08x, want 0x%08x", attest.Magic, tpmGeneratedValue)
-	}
-
-	// Type (2 bytes, big-endian)
-	attest.Type = uint16(data[offset])<<8 | uint16(data[offset+1])
-	offset += 2
-
-	// QualifiedSigner (TPM2B_NAME: 2-byte size + data)
-	if offset+2 > len(data) {
-		return nil, caerrors.MalformedError("data too short for qualifiedSigner size")
-	}
-	signerSize := int(data[offset])<<8 | int(data[offset+1])
-	offset += 2
-	if offset+signerSize > len(data) {
-		return nil, caerrors.MalformedError("data too short for qualifiedSigner")
-	}
-	attest.QualifiedSigner = data[offset : offset+signerSize]
-	offset += signerSize
-
-	// ExtraData (TPM2B_DATA: 2-byte size + data)
-	if offset+2 > len(data) {
-		return nil, caerrors.MalformedError("data too short for extraData size")
-	}
-	extraSize := int(data[offset])<<8 | int(data[offset+1])
-	offset += 2
-	if offset+extraSize > len(data) {
-		return nil, caerrors.MalformedError("data too short for extraData")
-	}
-	attest.ExtraData = data[offset : offset+extraSize]
-	offset += extraSize
-
-	// ClockInfo (TPMS_CLOCK_INFO: 8+4+4+1 = 17 bytes)
-	if offset+17 > len(data) {
-		return nil, caerrors.MalformedError("data too short for clockInfo")
-	}
-	attest.ClockInfo.Clock = uint64(data[offset])<<56 | uint64(data[offset+1])<<48 |
-		uint64(data[offset+2])<<40 | uint64(data[offset+3])<<32 |
-		uint64(data[offset+4])<<24 | uint64(data[offset+5])<<16 |
-		uint64(data[offset+6])<<8 | uint64(data[offset+7])
-	offset += 8
-	attest.ClockInfo.ResetCount = uint32(data[offset])<<24 | uint32(data[offset+1])<<16 |
-		uint32(data[offset+2])<<8 | uint32(data[offset+3])
-	offset += 4
-	attest.ClockInfo.RestartCount = uint32(data[offset])<<24 | uint32(data[offset+1])<<16 |
-		uint32(data[offset+2])<<8 | uint32(data[offset+3])
-	offset += 4
-	attest.ClockInfo.Safe = data[offset] != 0
-	offset++
-
-	// FirmwareVersion (8 bytes)
-	if offset+8 > len(data) {
-		return nil, caerrors.MalformedError("data too short for firmwareVersion")
-	}
-	attest.FirmwareVersion = uint64(data[offset])<<56 | uint64(data[offset+1])<<48 |
-		uint64(data[offset+2])<<40 | uint64(data[offset+3])<<32 |
-		uint64(data[offset+4])<<24 | uint64(data[offset+5])<<16 |
-		uint64(data[offset+6])<<8 | uint64(data[offset+7])
-	offset += 8
-
-	// For quote attestation, parse TPMS_QUOTE_INFO
-	if attest.Type == tpmSTAttestQuote {
-		// TPMS_QUOTE_INFO contains:
-		// - pcrSelect: TPML_PCR_SELECTION
-		// - pcrDigest: TPM2B_DIGEST
-
-		// TPML_PCR_SELECTION: count (4 bytes) + array of TPMS_PCR_SELECTION
-		if offset+4 > len(data) {
-			return nil, caerrors.MalformedError("data too short for PCR selection count")
-		}
-		count := uint32(data[offset])<<24 | uint32(data[offset+1])<<16 |
-			uint32(data[offset+2])<<8 | uint32(data[offset+3])
-		offset += 4
-
-		for i := uint32(0); i < count; i++ {
-			if offset+3 > len(data) {
-				return nil, caerrors.MalformedError("data too short for PCR selection %d", i)
-			}
-			sel := TPMSPCRSelection{
-				Hash:         uint16(data[offset])<<8 | uint16(data[offset+1]),
-				SizeOfBitmap: data[offset+2],
-			}
-			offset += 3
-			if offset+int(sel.SizeOfBitmap) > len(data) {
-				return nil, caerrors.MalformedError("data too short for PCR bitmap")
-			}
-			sel.PCRBitmap = data[offset : offset+int(sel.SizeOfBitmap)]
-			offset += int(sel.SizeOfBitmap)
-			attest.Attested.PCRSelect = append(attest.Attested.PCRSelect, sel)
-		}
-
-		// pcrDigest (TPM2B_DIGEST: 2-byte size + data)
-		if offset+2 > len(data) {
-			return nil, caerrors.MalformedError("data too short for PCR digest size")
-		}
-		digestSize := int(data[offset])<<8 | int(data[offset+1])
-		offset += 2
-		if offset+digestSize > len(data) {
-			return nil, caerrors.MalformedError("data too short for PCR digest")
-		}
-		attest.Attested.PCRDigest = data[offset : offset+digestSize]
-	}
-
-	return attest, nil
-}
-
-// VerifyQualifyingData checks that the certInfo contains the expected qualifying data
-//
-// Parameters:
-//   - certInfo: Raw TPMS_ATTEST bytes
-//   - expectedData: Expected qualifying data (usually keyAuth)
-//
-// Returns:
-//   - true if qualifying data matches
-//   - false otherwise
-func VerifyQualifyingData(certInfo, expectedData []byte) bool {
-	// Parse the TPMS_ATTEST structure to extract the extraData field
-	attest, err := ParseTPMSAttest(certInfo)
-	if err != nil {
-		// Fall back to containment check if parsing fails
-		return bytes.Contains(certInfo, expectedData)
-	}
-
-	// Compare the extraData field with expected data
-	return bytes.Equal(attest.ExtraData, expectedData)
 }
 
 // EncodeAttestationForSubmission encodes an attestation object for ACME submission

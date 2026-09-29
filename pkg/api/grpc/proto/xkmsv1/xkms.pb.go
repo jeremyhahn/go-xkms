@@ -15725,7 +15725,6 @@ func (x *PasswordAddResponse) GetCreatedAt() string {
 type PasswordGetRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Decrypt       bool                   `protobuf:"varint,2,opt,name=decrypt,proto3" json:"decrypt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -15765,13 +15764,6 @@ func (x *PasswordGetRequest) GetId() string {
 		return x.Id
 	}
 	return ""
-}
-
-func (x *PasswordGetRequest) GetDecrypt() bool {
-	if x != nil {
-		return x.Decrypt
-	}
-	return false
 }
 
 // PasswordGetResponse contains the password entry.
@@ -21885,10 +21877,9 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x03 \x01(\tR\tcreatedAt\">\n" +
+	"created_at\x18\x03 \x01(\tR\tcreatedAt\"3\n" +
 	"\x12PasswordGetRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
-	"\adecrypt\x18\x02 \x01(\bR\adecrypt\"C\n" +
+	"\x02id\x18\x01 \x01(\tR\x02idJ\x04\b\x02\x10\x03R\adecrypt\"C\n" +
 	"\x13PasswordGetResponse\x12,\n" +
 	"\x05entry\x18\x01 \x01(\v2\x16.xkms.v1.PasswordEntryR\x05entry\"L\n" +
 	"\x13PasswordListRequest\x12\x1f\n" +
@@ -22245,7 +22236,7 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x13RESIDENT_KEY_OP_MAC\x10\x02\x12\x1e\n" +
 	"\x1aRESIDENT_KEY_OP_VERIFY_MAC\x10\x03\x12\x18\n" +
 	"\x14RESIDENT_KEY_OP_WRAP\x10\x04\x12\x1a\n" +
-	"\x16RESIDENT_KEY_OP_UNWRAP\x10\x052\xec\x83\x01\n" +
+	"\x16RESIDENT_KEY_OP_UNWRAP\x10\x052\xfa\x83\x01\n" +
 	"\x0fKeystoreService\x129\n" +
 	"\x06Health\x12\x16.xkms.v1.HealthRequest\x1a\x17.xkms.v1.HealthResponse\x12^\n" +
 	"\fListBackends\x12\x1c.xkms.v1.ListBackendsRequest\x1a\x1d.xkms.v1.ListBackendsResponse\"\x11\xc2\xf3\x18\rbackends:list\x12d\n" +
@@ -22379,9 +22370,9 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\fDeleteTenant\x12\x1c.xkms.v1.DeleteTenantRequest\x1a\x16.google.protobuf.Empty\"\x12\xc2\xf3\x18\x0etenants:delete\x12g\n" +
 	"\x11TenantBarrierInit\x12!.xkms.v1.TenantBarrierInitRequest\x1a\x16.google.protobuf.Empty\"\x17\xc2\xf3\x18\x13tenant_barrier:init\x12m\n" +
 	"\x13TenantBarrierUnseal\x12#.xkms.v1.TenantBarrierUnsealRequest\x1a\x16.google.protobuf.Empty\"\x19\xc2\xf3\x18\x15tenant_barrier:unseal\x12{\n" +
-	"\x13TenantBarrierStatus\x12#.xkms.v1.TenantBarrierStatusRequest\x1a$.xkms.v1.TenantBarrierStatusResponse\"\x19\xc2\xf3\x18\x15tenant_barrier:status\x12\x83\x01\n" +
-	"\x18UpdateTenantEntitlements\x12(.xkms.v1.UpdateTenantEntitlementsRequest\x1a).xkms.v1.UpdateTenantEntitlementsResponse\"\x12\xc2\xf3\x18\x0etenants:update\x12q\n" +
-	"\x12UpdateTenantQuotas\x12\".xkms.v1.UpdateTenantQuotasRequest\x1a#.xkms.v1.UpdateTenantQuotasResponse\"\x12\xc2\xf3\x18\x0etenants:update\x12]\n" +
+	"\x13TenantBarrierStatus\x12#.xkms.v1.TenantBarrierStatusRequest\x1a$.xkms.v1.TenantBarrierStatusResponse\"\x19\xc2\xf3\x18\x15tenant_barrier:status\x12\x8d\x01\n" +
+	"\x18UpdateTenantEntitlements\x12(.xkms.v1.UpdateTenantEntitlementsRequest\x1a).xkms.v1.UpdateTenantEntitlementsResponse\"\x1c\xc2\xf3\x18\x18tenants:set_entitlements\x12u\n" +
+	"\x12UpdateTenantQuotas\x12\".xkms.v1.UpdateTenantQuotasRequest\x1a#.xkms.v1.UpdateTenantQuotasResponse\"\x16\xc2\xf3\x18\x12tenants:set_quotas\x12]\n" +
 	"\vPasswordAdd\x12\x1b.xkms.v1.PasswordAddRequest\x1a\x1c.xkms.v1.PasswordAddResponse\"\x13\xc2\xf3\x18\x0fpasswords:write\x12\\\n" +
 	"\vPasswordGet\x12\x1b.xkms.v1.PasswordGetRequest\x1a\x1c.xkms.v1.PasswordGetResponse\"\x12\xc2\xf3\x18\x0epasswords:read\x12_\n" +
 	"\fPasswordList\x12\x1c.xkms.v1.PasswordListRequest\x1a\x1d.xkms.v1.PasswordListResponse\"\x12\xc2\xf3\x18\x0epasswords:read\x12f\n" +

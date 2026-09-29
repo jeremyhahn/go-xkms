@@ -247,7 +247,10 @@ func runCertRequest(cmd *cobra.Command, args []string) (err error) {
 	)
 
 	// Step 1: Ensure PIV is initialized for the configured backend.
-	pivCfg := buildPIVConfig()
+	pivCfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
 	if err := ensurePIVInitialized(pivCfg, logger); err != nil {
 		return errors.Join(ErrCertSignerUnavailable, err)
 	}
@@ -354,7 +357,11 @@ func runCertShow(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
-	pivCfg := buildPIVConfig()
+	pivCfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
+
 	storage, err := createPIVStorage(pivCfg, logger)
 	if err != nil {
 		return errors.Join(ErrPIVStorageCreationFailed, err)
@@ -429,7 +436,11 @@ func runCertExport(cmd *cobra.Command, args []string) (err error) {
 		return ErrCertFileRequired
 	}
 
-	pivCfg := buildPIVConfig()
+	pivCfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
+
 	storage, err := createPIVStorage(pivCfg, logger)
 	if err != nil {
 		return errors.Join(ErrPIVStorageCreationFailed, err)

@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — CLI
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 The relying party is a server component and has **no CLI verbs of its own**.
 What the CLI offers is the client side of its ceremonies, all driven through
@@ -49,6 +49,23 @@ precedence order as the `xkey auth` verbs (`xkey`'s equivalent has no
 ```
 printf '%s' "$PIN" | xkmsctl user register admin --pin-stdin --email admin@example.com
 printf '%s' "$PIN" | xkmsctl user login admin@example.com --pin-stdin
+```
+
+### The WebAuthn origin
+
+All three verbs bind a WebAuthn origin into the ceremony, and the local
+authenticator refuses a server rpId that origin does not cover (the origin's
+host, or a registrable-domain suffix of it). The origin is resolved by
+`resolveWebAuthnOrigin` (`cmd/xkmsctl/webauthn_origin.go:44`): `--origin`
+when given, otherwise the scheme and authority of an `http://` or `https://`
+`--server`. The default Unix socket, `grpc(s)://` and `quic://` servers have no
+web origin to derive, so over them `--origin` is required and the verb fails
+before anything reaches the network. It must be one of the server's configured
+`RPOrigins`.
+
+```
+xkmsctl user login admin@example.com --origin https://kms.example.com
+xkmsctl --server https://kms.example.com:8443 user login admin@example.com   # origin https://kms.example.com:8443
 ```
 
 The login key is the account's **email**, the key the server resolves the

@@ -16,10 +16,13 @@
 //
 // It is a thin, namespacing wrapper over a storage.Backend — the same pattern
 // pkg/staticpw uses for passwords — so it inherits the backend's atomic
-// PutIfAbsent and, when the backend is the embedded qrdb node's tenant barrier,
-// its per-tenant encryption. The values are opaque: the module serialises its
-// own PersistentTokenState / PersistentObject records and this store keeps them
-// verbatim, so the server never has to track the module's record schema.
+// PutIfAbsent and whatever at-rest protection the backend has. xkmsd builds ONE
+// store over one backend for every tenant (pkg/server createStorage); it is not
+// behind a tenant barrier, so tenants are separated only by the key prefix, and
+// the caller must supply a tenant it has derived from the authenticated identity,
+// never one taken from a request. The values are opaque: the module serialises
+// its own PersistentTokenState / PersistentObject records and this store keeps
+// them verbatim, so the server never has to track the module's record schema.
 package pkcs11state
 
 import (
@@ -43,9 +46,9 @@ type Store struct {
 	backend storage.Backend
 }
 
-// NewStore wraps a storage.Backend. The backend is expected to be already
-// scoped/encrypted for the caller (e.g. a tenant barrier); this store adds only
-// key namespacing on top.
+// NewStore wraps a storage.Backend. The store adds only key namespacing on top:
+// it does not scope or encrypt per tenant, so isolation between tenants rests on
+// the caller passing the authenticated tenant to every method.
 func NewStore(backend storage.Backend) (*Store, error) {
 	if backend == nil {
 		return nil, ErrNilBackend

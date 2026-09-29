@@ -72,6 +72,17 @@ account-scoped objects.
 `enroll-01` and `endorse-01` are go-xkms extensions. A standard client never
 selects them and is unaffected by their presence.
 
+The server contacts `http-01`, `enroll-01` and `device-attest-01` targets
+only at a bare hostname or IP that does not resolve to a reserved address
+(loopback, private, link-local, metadata), unless the operator set
+`acme.challenges.allow_private_targets`. A failed challenge's `error` is a
+fixed category -- `connection` with `detail` `"Challenge validation failed:
+connection failed"`, `"... unexpected HTTP status"`, `"... response too
+large"` or `"... redirect not permitted"`, or `incorrectResponse` with
+`"Challenge validation failed"` / `"... invalid validation target"` -- never
+the server's dial error, resolved address or the target's status code
+(go-xkms#1172).
+
 ### endorse-01 finalize
 
 An endorse-01 order's finalize CSR MUST carry the TPM's TCG manufacturer code
@@ -183,6 +194,13 @@ and is not documented as if it were; it follows the repo's normal
 authenticated-API conventions. The SDK surface is `sdk/go/acme/client/admin`;
 the CLI surface is `xkmsctl acme` ([`cli.md`](cli.md#xkmsctl-acme-admin)).
 
+Authorization is qrdb RBAC, resolved per route by `PermissionGate`. On
+xkmsd's unified mTLS listener the caller is the qrdb user its client
+certificate is bound to (SPKI thumbprint), with that user's roles; a
+certificate bound to no user, or a user holding no role that carries the
+route's permission, is answered `403` (`cmd/xkmsd/admin.go:159-167`; see
+[`engineering.md`](engineering.md#invariants)).
+
 ### Admin API response contract
 
 Every admin operation — tenants, tenant CA hierarchy, EAB, roles, users,
@@ -214,7 +232,9 @@ Errors are RFC 7807 problem documents with `urn:ietf:params:acme:error:*` types
 | nonce issued (`HEAD /acme/new-nonce`) | 200 with `Replay-Nonce` |
 | order still processing | 200 with `Retry-After` |
 | problem document | 4xx/5xx per the error table |
-| rate limited (xkmsd whenever `acme.rate_limit` is enabled, via `acmeserver.NewClientRateLimiterMiddleware` at `cmd/xkmsd/acme.go:280`; the standalone `TrustedCA` too; see [engineering.md](engineering.md) §Invariants) | 429 with `Retry-After` |
+| rate limited (xkmsd whenever `acme.rate_limit` is enabled, via `acmeserver.NewClientRateLimiterMiddleware` at `cmd/xkmsd/acme.go:281`; the standalone `TrustedCA` too; see [engineering.md](engineering.md) §Invariants) | 429 with `Retry-After` |
+| request body larger than 256 KiB (`server.MaxRequestBodySize`, `pkg/acme/server/request_body.go:38`) | 413, `malformed` problem |
+| new-order with more than 100 identifiers (`pkg/acme/server/handlers/new_order.go:36`) | 400, `malformed` problem |
 
 Every response carries a fresh `Replay-Nonce` header — a client that does not
 read it will fail its next POST with `badNonce`.

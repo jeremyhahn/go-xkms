@@ -1,6 +1,6 @@
 # Agent Automation — API
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 Transport shapes:
 [`../../../docs/key-management/api.md`](../../../docs/key-management/api.md).
@@ -19,15 +19,37 @@ the PIN was verified, and a ceremony with no PIN carries no UV.
 
 | Property | Value |
 |---|---|
-| Path | `--socket` / `XKEY_IPC_SOCKET` if set; else `<XKEY_HOME>/run/xkey.sock` when `XKEY_HOME` is set (a hashed runtime-dir path if that would exceed the `sun_path` limit); else `$XDG_RUNTIME_DIR/xkey/xkey.sock` (`xkey/pkg/ipc/socket.go` `DefaultSocketPath`) |
+| Path | `--socket` / `XKEY_IPC_SOCKET` if set; else `<XKEY_HOME>/run/xkey.sock` when `XKEY_HOME` is set (a hashed runtime-dir path if that would exceed the `sun_path` limit); else `<runtime dir>/xkey/xkey.sock`, where the runtime dir is `$XDG_RUNTIME_DIR`, or on macOS `$TMPDIR` then `~/Library/Caches`, or elsewhere `~/.xkey/run` (`xkey/pkg/ipc/socket.go:72` `DefaultSocketPath`, `:136` `runtimeDirFor`). Never a shared directory such as `/tmp` |
 | Transport | Unix domain socket |
-| Access control | **filesystem permissions only** |
+| Access control | filesystem permissions, enforced on both ends: the socket directory must be yours, not a symlink, mode exactly `0700` (`xkey/pkg/ipc/socketdir.go:51`); the client also checks the listener's kernel-reported uid (`xkey/pkg/ipc/peercred.go:26`) |
 | Clients | `xkey unlock`, `xkey touch`, `xkey fido2 status`, `xkey auth`, the browser extension's native-messaging host, `go-xkms/sdk/go` |
 | Implementation | `xkey/pkg/ipc` |
 
 There is no authentication on the socket itself. Anything that can open it while
 the authenticator is unlocked can use the credential. That is the security model,
 and it is why the socket lives in a per-user runtime directory.
+
+Because `xkey unlock` sends the user PIN over this socket, a client must never
+talk to a listener another user planted. Every xkey IPC client — `ipc.Client`,
+the PKCS#11 module transport, the native-messaging host — connects through
+`ipc.Dial` (`xkey/pkg/ipc/client.go:273`), which refuses:
+
+| Refusal | Error | When |
+|---|---|---|
+| Insecure directory | `ipc.ErrSocketDirInsecure` | the socket's directory is a symlink, not a directory, owned by anyone but you / root / the `sudo` user, or has any group or other bit |
+| Untrusted listener | `ipc.ErrPeerUntrusted` | the listening process's uid (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS and FreeBSD) is not you, root, or the `sudo` user |
+| No peer-credential API | `ipc.ErrPeerCredentialsUnsupported` | any other platform (OpenBSD, NetBSD, illumos, Windows): the client fails closed |
+| No per-user location | `ipc.ErrSocketPathUnresolved` | no `XKEY_IPC_SOCKET`, `XKEY_HOME`, `XDG_RUNTIME_DIR` and no resolvable home directory |
+
+Root is trusted because it can already read anything the socket protects; the
+`sudo` user is trusted because `sudo xkey fido2` serves the invoking user, whose
+clients then see a listener running as uid 0 (`xkey/pkg/ipc/socketdir.go:36`
+`trustedUIDs`).
+
+Handler failures reach the client as fixed text: `ipc: handler returned error`,
+or the bare sentinel for the few user-actionable classes (invalid message,
+barrier sealed, browser extension disabled). The detail is logged by the
+server, never echoed (`xkey/pkg/ipc/server.go:710-728` `clientErrorMessage`).
 
 Several instances can run side by side under one UID, one per `XKEY_HOME`. Each
 derives its own socket, and every command resolves the socket the same way, so

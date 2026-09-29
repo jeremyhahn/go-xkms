@@ -78,4 +78,10 @@ var (
 	// AllowLocalVaultURL. Off by default: a production build must not
 	// silently accept a fake vault endpoint.
 	ErrLocalVaultURLNotAllowed = errors.New("azurekv: local vault URL not allowed")
+
+	// ErrMetadataStorage is returned when Config.KeyStorage operations
+	// against this backend's CN -> key metadata records fail for a reason
+	// other than the record genuinely not existing (go-xkms#1098, mirroring
+	// awskms.ErrMetadataStorage from go-xkms#839).
+	ErrMetadataStorage = errors.New("azurekv: metadata storage failed")
 )

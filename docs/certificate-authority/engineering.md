@@ -1,6 +1,6 @@
 # Certificate Authority — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/ca`
 
@@ -63,6 +63,17 @@ and the `…WithXSigner` variants.
 
 **`CAChainImporter`** — `ImportDistributionCRLs(cert)`,
 `ImportIssuingCAs(ctx, cert)`. This is the AIA walk.
+Both methods fetch through `fetchPKIObject` (`pkg/ca/pki_fetch.go:112`)
+under fixed limits: http and https only, destinations `pkg/netguard.ReservedAddr`
+does not refuse only (checked at dial time, after DNS resolution, by the
+`pkg/netguard.GuardedTransport` dialer both this client and the ACME
+challenge-validation client build on — see
+[`../acme-issuance/engineering.md`](../acme-issuance/engineering.md)), at
+most 3 redirects, a 30-second timeout, and a body cap of 64 KiB for a
+certificate or 32 MiB for a CRL (`pki_fetch.go:31-49`). `ImportIssuingCAs`
+also requires each fetched issuer to verify the child's signature and stops
+a walk that repeats a certificate or climbs more than 5 issuers
+(`trust_chain_extensions.go:278-328`). None of the limits is configurable.
 
 **`CACrossSigner`** — `ImportXSignedCertificate(issuerCN, cert)`,
 `XSignedCertificate(issuerCN, attrs)`, `XSignedRootCertificate(issuerCN, cert)`,
@@ -166,13 +177,35 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
 - **The persisted CRL artifact is the source of truth; `certStore`'s
   `StoreCRL`/`GetCRL` is a cache, never authoritative.** `CA.CRL` checks the
   cache first, but a miss or a stale cached entry always falls through to
-  `ca.revocationStore` (or `ca.objectStore`) — never to signing without first
+  `ca.revocationStore` — never to signing without first
   checking there.
 - **CRL `Number` is monotonic per issuer, derived from the previously
   persisted artifact, not from wall-clock time.** Two regenerations inside
   the same clock tick — refresh-on-revoke firing twice in quick succession,
   or a test with a fixed injected clock — still produce strictly increasing
-  numbers.
+  numbers. Only `ErrCRLNotFound` starts the sequence at 1; a store fault or
+  an unparseable persisted number fails generation with `ErrStorageError`
+  (`nextCRLNumber`, `pkg/ca/crl_persistence.go:134`).
+- **Revocation reads fail closed (#1116).** `IsRevoked`, `Verify`,
+  `VerifyPeerCertificate`, OCSP, CRL generation and `Load` report "not
+  revoked" only for a definite `storage.ErrNotFound`. A store fault is
+  `ErrStorageError` with the storage cause kept in the chain
+  (`pkg/ca/ca_extensions.go:776`, `pkg/ca/crl_persistence.go:106`); a record
+  that does not decode, or names a serial other than the one its key is
+  for, is `ErrRevocationRecordCorrupt` naming the key
+  (`pkg/ca/ca_extensions.go:805`, `pkg/ca/errors.go:97`). `Load` refuses to
+  bring up a CA over a corrupt record rather than skip it.
+  `VerifyPeerCertificate` returns `ErrPeerVerificationFailed` joined with
+  the `IsRevoked` error (`pkg/ca/tls.go:508`, `:544`); OCSP answers
+  `ocsp.Unknown` with `ErrOCSPStorageError` joined with the cause
+  (`pkg/ca/ocsp.go:231`); CRL generation returns `ErrCRLGenerationFailed`
+  joined with the cause and publishes nothing.
+- **Cluster visibility.** A serial missing from the in-memory map is read
+  through to `revocationStore` (`lookupRevocation`,
+  `pkg/ca/ca_extensions.go:856`), and a CRL is built from the store's full
+  record set (`pkg/ca/crl_persistence.go:179`), so a revocation recorded on
+  any node is enforced and published by every node. Store hits are cached
+  (`cacheRevocation`, `pkg/ca/ca_extensions.go:831`); misses never are.
 - **Staleness is a read-time decision, not a write-time one.** There is no
   leader election and no background CRL scheduler; any instance may sign a
   refresh. A read past the persisted `NextUpdate` regenerates before
@@ -241,9 +274,16 @@ The lifecycle and validation errors named in the interface contract are
 `ErrAlreadyInitialized` and `ErrInvalidConfig`; key-layer failures surface as
 the keystore errors from `pkg/xkms/errors.go`
 (see [`../key-management/engineering.md`](../key-management/engineering.md)).
+`ErrRevocationRecordCorrupt` is the revocation readers' fail-closed error for
+a persisted record that cannot be decoded (#1116, see the invariant above).
 `ErrKeyRetrievalFailed` is `getOrGenerateCAKey`'s fail-closed error for a
 backend `GetKey` failure that is not a genuine not-found result (#801, see
 the invariant above).
+The chain importer's refusals are `ErrPKIFetchRefused` (scheme, destination
+address or redirect count), `ErrPKIFetchTooLarge` (body over the cap),
+`ErrAIAIssuerSignatureInvalid`, `ErrAIALoop` and `ErrAIADepthExceeded`
+(`pkg/ca/errors.go:183-205`). A download that fails for any other reason,
+including a non-200 status, stays `ErrStorageError`.
 
 Transport mapping is in `pkg/api/rest/handlers_ca.go` /
 `handlers_ca_bundle.go` / `handlers_ca_tcg.go`, `pkg/api/grpc/service_ca_bundle.go`,
@@ -341,9 +381,8 @@ store layout is internal, and a change to it needs a data migration.
 
 ### CRL persistence (#275)
 
-`pkg/ca/crl_persistence.go`. `ca.revocationStore` (preferred) or
-`ca.objectStore` (legacy fallback) — the same `storage.Backend` revocation
-records use, so a CRL artifact replicates under Raft exactly the way the
+`pkg/ca/crl_persistence.go`. `ca.revocationStore` — the sole persistence
+medium, the same `storage.Backend` revocation records use, so a CRL artifact replicates under Raft exactly the way the
 revocation state that produced it does. No separate storage wiring or server
 config exists for it.
 
@@ -351,6 +390,28 @@ config exists for it.
 |---|---|---|
 | `revocations/<serial-decimal>.json` | `persistedRevocation{Serial, Reason, RevokedAt, DeletedKeys}` | `recordRevocation` (`Revoke`, `RevokeCert`) |
 | `crl/<issuer-ski-hex>` | `persistedCRL{DER, Number, ThisUpdate, NextUpdate}` | `generateAndPersistCRL` (`GenerateCRL`, `CRL`, and the refresh-on-revoke hook in `recordRevocation`) |
+
+`recordRevocation` (`pkg/ca/ca_extensions.go:745`) persists before it
+caches (go-xkms#1131): it checks for a duplicate via `lookupRevocation` --
+the map, then the store, failing closed on a store read fault -- then
+writes the record with `putRevocationBlobIfAbsent`
+(`pkg/ca/ca_extensions.go:830`), and only caches the in-memory entry
+(`cacheRevocation`) once that write actually lands. A store write failure
+returns a typed `*errs.Joined` wrapping `ErrStorageError` and the
+underlying cause, and leaves the map untouched, so a caller can retry
+once the store recovers rather than have the retry rejected as a
+duplicate of a write that never persisted. The write uses `PutIfAbsent`,
+`storage.Backend`'s unconditional create-if-absent primitive (not the
+optional `CompareAndSwapper`/`CompareAndDeleter` capabilities) --
+replicated backends (every `go-qrdb`-backed `Backend` this package runs
+against) make it a linearizable cross-node compare-and-swap keyed on "no
+record exists yet" (`pkg/storage/qrdb/backend_putifabsent.go:53`), so two
+nodes racing to revoke the same serial can both attempt the write but
+only one succeeds; the loser observes `stored=false` and returns
+`ErrAlreadyRevoked` wrapped in `*errs.Detail` naming the winner's
+original reason and time (`alreadyRevokedError`,
+`pkg/ca/ca_extensions.go:814`), read back through the same
+`lookupRevocation` path, instead of silently overwriting it.
 
 The CRL key is the issuing certificate's Subject Key Identifier, hex-encoded
 — not its CN — because `crypto/x509.CreateRevocationList` requires the
@@ -450,7 +511,18 @@ up.
   `crl_persistence_test.go` (round trip across independent `*CA` instances
   sharing a backend, refresh-on-revoke, regenerate-on-read past/before
   `NextUpdate` via an injected `Clock`, force-regenerate),
-  `ocsp_revocationstore_test.go` (the OCSP cold-path fix), and
+  `ocsp_revocationstore_test.go` (the OCSP cold-path fix),
+  `revocation_cluster_test.go` (#1116: two `*CA` instances over one shared
+  in-memory revocation store — a revocation on A enforced by B's
+  `IsRevoked`, `Verify`, `VerifyPeerCertificate` and CRL — plus store-fault
+  and corrupt-record injection proving `IsRevoked`, OCSP, CRL listing, CRL
+  numbering, `Load` and `VerifyPeerCertificate` each fail closed),
+  `revocation_race_1131_test.go` (#1131, reusing that harness: a failed
+  `PutIfAbsent` leaves the in-memory map untouched and a retry after the
+  store recovers persists; two `*CA` instances racing to revoke the same
+  serial leave the loser with `ErrAlreadyRevoked` and the winner's reason
+  and time still on record; a store read fault during the duplicate check
+  fails closed before any write is attempted), and
   `revoke_delete_keys_test.go` (`RevokeCert(DeleteKeys)`: server-generated
   key + certificate deleted and subsequently not found, CSR-signed no-op,
   injected keystore/revocation-store failure propagation, and the
@@ -469,6 +541,18 @@ up.
   `ErrCertificateNotFound`, and a corrupt persisted root certificate fails
   `Load` with a distinct error that does not satisfy
   `errors.Is(_, ErrCertificateNotFound)`.
+  Chain import: `aia_import_test.go` serves real generated chains from an
+  httptest repository — a full walk at the depth limit imports every issuer;
+  one issuer deeper is refused after exactly five fetches; a
+  self-referencing AIA URL is refused as a loop; a certificate that did not
+  sign the child is refused and not stored; a loopback repository is
+  refused by the production client without receiving a request; an
+  oversized or unparseable response is refused. `pki_fetch_test.go` covers
+  the scheme filter, the body cap at and over the limit, a hostname
+  resolving to loopback, the metadata address, redirect loops and redirects
+  to a non-http scheme, and the CRL importer's private-address, oversized
+  and `ldap://` refusals; the reserved-address classification itself is
+  `pkg/netguard`'s (`reserved_test.go`, `dial_test.go`, `transport_test.go`).
 - **End to end** — `pkg/ca/issuance_e2e_test.go`,
   `pkg/api/rest/init_ceremony_e2e_test.go`.
 - **Integration** — `test/integration/certstore`, `test/integration/acme-tpm`,

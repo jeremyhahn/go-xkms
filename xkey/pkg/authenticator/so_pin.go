@@ -43,13 +43,6 @@ const (
 	// for the user PIN; the Security Officer credential uses it too.
 	DefaultSOPINMaxRetries = 8
 
-	// SOPINMaxConsecutiveFailures is the number of consecutive failed SO PIN
-	// attempts allowed within a single power cycle. CTAP 2.1 §6.5.5.7 requires
-	// the authenticator to refuse further attempts after three consecutive
-	// mismatches until it is power-cycled, which bounds an online brute force
-	// far below the total retry budget.
-	SOPINMaxConsecutiveFailures = 3
-
 	// sopinMinLength is the minimum SO PIN length in UTF-8 bytes.
 	sopinMinLength = 6
 
@@ -111,10 +104,8 @@ type SOPINManager struct {
 	retries atomic.Int32
 
 	// consecutiveFailures counts failed attempts since the last success or
-	// power-up. It is deliberately NOT persisted: "power cycle to continue" is
-	// only meaningful if a power cycle clears it, and for this authenticator a
-	// power cycle is a process restart.
-	consecutiveFailures atomic.Int32
+	// power-up. It is deliberately NOT persisted; see pinMismatchGuard.
+	consecutiveFailures pinMismatchGuard
 
 	// IsSet indicates whether an SO PIN has been configured.
 	IsSet bool
@@ -235,7 +226,7 @@ func (m *SOPINManager) BeginVerify(pin string) ([]byte, error) {
 // consecutive-failure counter.
 func (m *SOPINManager) ConfirmVerified() {
 	m.retries.Store(int32(DefaultSOPINMaxRetries))
-	m.consecutiveFailures.Store(0)
+	m.consecutiveFailures.reset()
 }
 
 // RecordFailure records that the SMK returned by BeginVerify did not decrypt
@@ -245,16 +236,14 @@ func (m *SOPINManager) ConfirmVerified() {
 // accounting CTAP 2.1 §6.5.5.7 requires and reports which of the three refusals
 // now applies.
 func (m *SOPINManager) RecordFailure() error {
-	m.consecutiveFailures.Add(1)
+	return m.consecutiveFailures.recordMismatch(m.IsBlocked(), soPINRefusals)
+}
 
-	switch {
-	case m.IsBlocked():
-		return ErrSOPINBlocked
-	case m.IsAuthBlocked():
-		return ErrSOPINAuthBlocked
-	default:
-		return ErrSOPINInvalid
-	}
+// soPINRefusals are the Security Officer PIN's failed-attempt errors.
+var soPINRefusals = pinRefusals{
+	blocked:     ErrSOPINBlocked,
+	authBlocked: ErrSOPINAuthBlocked,
+	invalid:     ErrSOPINInvalid,
 }
 
 // Rekey rotates the SO PIN to newPIN and returns the new Storage Master Key.
@@ -302,7 +291,7 @@ func (m *SOPINManager) SetRetries(n int) {
 // ConsecutiveFailures returns the number of failed attempts since the last
 // success or power cycle.
 func (m *SOPINManager) ConsecutiveFailures() int {
-	return int(m.consecutiveFailures.Load())
+	return m.consecutiveFailures.count()
 }
 
 // IsBlocked reports whether the SO PIN retry budget is exhausted. This state is
@@ -314,7 +303,7 @@ func (m *SOPINManager) IsBlocked() bool {
 // IsAuthBlocked reports whether too many consecutive attempts have failed since
 // the last power cycle. CTAP 2.1 §6.5.5.7.
 func (m *SOPINManager) IsAuthBlocked() bool {
-	return m.consecutiveFailures.Load() >= int32(SOPINMaxConsecutiveFailures)
+	return m.consecutiveFailures.authBlocked()
 }
 
 // validateSOPINPolicy validates that the SO PIN meets the length policy.

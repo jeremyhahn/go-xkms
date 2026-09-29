@@ -7,6 +7,10 @@ server:
   grpc_port: 9443
   quic_port: 8444
   mcp_port: 8445
+  # Reverse proxies (IP or CIDR) allowed to name the client in
+  # X-Forwarded-For / X-Real-IP for the REST login rate limiter. Empty (the
+  # default) trusts none: requests are keyed on the peer IP.
+  # trusted_proxies: ["10.0.0.10"]
 
 protocols:
   unix: true

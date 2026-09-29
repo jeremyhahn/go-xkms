@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -193,20 +192,6 @@ func TestDuration_RejectsInvalidYAML(t *testing.T) {
 
 	assert.Error(t, yaml.Unmarshal([]byte("grace: [1,2]\n"), &decoded),
 		"a non-scalar node must be rejected")
-}
-
-func TestGetTrustNewDevices(t *testing.T) {
-	cmd := &cobra.Command{}
-	cmd.Flags().Bool("trust-new-devices", false, "")
-
-	assert.False(t, GetTrustNewDevices(cmd))
-
-	require.NoError(t, setFlagForTest(t, cmd.Flags(), "trust-new-devices", "true"))
-	assert.True(t, GetTrustNewDevices(cmd))
-
-	// A command without the flag must report the safe default rather than
-	// panicking.
-	assert.False(t, GetTrustNewDevices(&cobra.Command{}))
 }
 
 func TestDecodePublicKey(t *testing.T) {

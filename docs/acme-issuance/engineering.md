@@ -31,9 +31,10 @@
 - `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go` — request-rate
   enforcement. `rate_limiter.go`'s `NewClientRateLimiterMiddleware` is
   wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA`
-  (`pkg/acme/client/trustedca.go:384-393`); the tenant limiter is
-  constructed nowhere outside its own file. See Invariants below and
-  go-xkms#882.
+  (`pkg/acme/client/trustedca.go`); the tenant limiters are wired by both
+  compositions too. See Invariants below and go-xkms#882, #886, #1171.
+- `pkg/acme/server/request_body.go` — the capped, read-once request body
+  (`RequestBodyMiddleware`, `RequestBody`); see Invariants below.
 - `pkg/acme/server/circuitbreaker` — the one circuit breaker implementation
   (`CircuitBreaker`, `Manager`, the `Middleware` HTTP wrapper, and the
   `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators;
@@ -102,6 +103,75 @@ once, to the externally visible base.
 
 ## Invariants
 
+- **Attestation PCR data is decoded under bounds.** The compliance hooks
+  decode the PCR banks inside a request's `ProdCaData`
+  (`pkg/acme/server/handlers/compliance_attestation.go:187`, `:764`) through
+  `DecodePCRs`, which refuses input over 64 KiB and banks no TPM reports
+  before either hook reads a value (see
+  [`../tpm2/engineering.md`](../tpm2/engineering.md)). The event-log hook
+  turns a refused decode into an `EventLogError`. The PCR hook treats it as
+  "PCR not present", which fails only under `PCRPolicy.StrictMode`; a
+  non-strict policy skips PCRs it cannot find, refused or absent alike
+  (`compliance_attestation.go:151-161`).
+
+- **The admin plane resolves every mTLS caller to its qrdb user before the
+  permission gate runs.** xkmsd builds the admin plane's authenticator with
+  the qrdb SPKI-thumbprint user store (`cmd/xkmsd/admin.go:175-178`), so the
+  identity `PermissionGate.Authorize` (`pkg/acme/admin/authz.go:83`) hands to
+  qrdb's RBAC carries the user's tenant and **qrdb role IDs** — every role,
+  verbatim (`pkg/auth/qrdb_userstore.go:50-59`, `pkg/auth/mtls.go:220`).
+  go-qrdb resolves permissions by role ID only; a role name, or a missing
+  store, leaves the identity with no resolvable role and every admin route
+  answers 403, which is what go-xkms#1069 was. A certificate bound to no user
+  still authenticates from its fields but holds no role, so it is refused on
+  every route. The admin plane declares no permission of its own: each
+  `gate.Wrap` resource:action (`pkg/acme/admin/handlers.go:108-143`,
+  `tenant_handlers.go:61-127`) is a qrdb-registered permission that qrdb
+  places on its built-in roles — Owner holds all of them; Admin holds all but
+  `roles:create`/`roles:update`/`roles:delete`; Operator and Auditor each hold
+  a subset of the read/list permissions (qrdb's placement, not restated by
+  xkms). `cmd/xkmsd/admin_authz_test.go` walks the published router
+  and pins all three properties against a first-boot-seeded node.
+- **The admin plane degrades typed, never panics, and never falls back to an
+  allow-all authorizer (go-xkms#1075).** `finalizeAdminModule` always
+  constructs the admin service, even with ACME disabled: `acme.CA()` and
+  `acme.StorageFactory()` are nil for a nil `*acmeServer`
+  (`cmd/xkmsd/admin.go:154-160`). Every `AdminService` method that reads
+  the CA or storage factory — certificate, account, and order
+  listing/lookup, revoke, and `GetStatus`/`GetStats`
+  (`pkg/acme/admin/service.go`) — guards its dependency and returns the
+  typed `ErrCANotConfigured` / `ErrStorageNotConfigured`
+  (`pkg/acme/admin/types.go:40-54`) instead of dereferencing a nil
+  interface. `Handlers`' `writeUnavailableIfNotConfigured`
+  (`pkg/acme/admin/handlers.go:567`) answers both with RFC 7807's 501 Not
+  Implemented, the same shape `ListAuditLogs` already used for a missing
+  audit trail. Separately, a nil qrdb client (`srv.QRDBClient() == nil`,
+  reachable only if the admin surface is composed without the embedded
+  qrdb node it always ships with) is not a degrade-and-continue case:
+  `finalizeAdminModule` refuses construction with the typed
+  `ErrAdminQRDBClientRequired` (`cmd/xkmsd/admin.go:79,146-151`) rather
+  than building `auth.NewAuthorizer(nil)`, which is legitimate
+  "RBAC disabled: allow all" elsewhere in the stack but has no such
+  meaning on a plane whose `PermissionGate` has no optional-authorization
+  mode. `cmd/xkmsd/admin_nildeps_test.go` walks the published router with
+  ACME disabled and proves every route answers without panicking, that
+  the CA/storage-backed routes answer 501, and that a nil qrdb client is
+  refused at construction.
+- **`PermissionGate.Authorize` (`pkg/acme/admin/authz.go:93`) is the one place
+  that logs an admin authorization denial, for every transport.** REST
+  (`Wrap`, `authz.go:142-156`), gRPC (`UnaryAuthorizationInterceptor`,
+  `pkg/acme/api/server/interceptor_authz.go:133-140`) and MCP
+  (`authorizeMCPMethod`, `pkg/acme/api/server/mcp_authz.go:95`) all resolve
+  their decision through this one gate, so a `slog.Warn` there — subject,
+  tenant, resource, action, the transport's method/route (an `extra
+  ...slog.Attr` each caller passes: HTTP method+path, gRPC full method, or the
+  MCP JSON-RPC method name), and the authorizer's cause — covers every
+  transport without a duplicate log call in each one (go-xkms#1110). The
+  cause never reaches the client: REST answers the fixed
+  `"Access denied: insufficient permissions"` detail, gRPC the fixed
+  `"permission denied: %s requires %s:%s"` message, and MCP's JSON-RPC
+  `Forbidden`/`Unauthorized` codes are unchanged by this — only the
+  server-side log gained the cause.
 - **Every POST carries a fresh nonce, and a nonce is consumed exactly once.**
   Replaying a nonce is rejected, not tolerated.
 - **Every POST is JWS-signed by the account key** (or, for `new-account`, by the
@@ -156,14 +226,69 @@ once, to the externally visible base.
   parameter model. A DNS failure that prevents determining the RRset
   (SERVFAIL, timeout, any non-NXDOMAIN error) fails closed per RFC 8659
   Section 5.1: it denies issuance rather than "proceeding with caution".
+- **Every request body is read once, capped, before anything parses it
+  (go-xkms#1171).** `server.RequestBodyMiddleware`
+  (`pkg/acme/server/request_body.go:142`) is the first middleware after
+  metrics instrumentation on both compositions
+  (`cmd/xkmsd/acme.go:609`, `pkg/acme/client/trustedca.go:443`). It reads
+  the body through `http.MaxBytesReader` at `server.MaxRequestBodySize`
+  (256 KiB, `request_body.go:38`) and replaces `r.Body` with a buffered
+  copy; every later consumer — `TenantAuthMiddleware`
+  (`handlers/tenant_auth.go:114`), and `parseKID`/`parseJWS` through
+  `parseSignedRequest` (`handlers/service.go:1078`) — calls
+  `server.RequestBody` (`request_body.go:102`) and gets those bytes without
+  touching the connection. A failed read is remembered, so a second caller
+  gets the same `*server.RequestBodyError` rather than reading the rest of an
+  oversized body. An oversized body is `malformed` with HTTP 413; any other
+  read failure is `malformed` with 400 (`RequestBodyError.Problem`,
+  `request_body.go:70`). The cap is 256 KiB, not 64 KiB, because a finalize
+  carrying a TCG-CSR-IDEVID embeds the UEFI boot event log, and the JWS
+  double base64url encoding grows it by 16/9: the real 41,196-byte log in
+  `test/integration/tpm2/testdata` alone is ~72 KiB on the wire.
 - **Rate limiting is a per-client cap, enforced before RFC 8555 processing
   begins.** `acmeserver.NewClientRateLimiterMiddleware`
-  (`pkg/acme/server/rate_limiter.go`) is mounted on the whole ACME surface —
-  by the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`) and by
-  xkmsd's embedded listener (`cmd/xkmsd/acme.go`'s `buildACMERouter`) — and
-  keys each client by JWS KID once an account exists, falling back to the
-  client IP before one does (`server.ClientID`). Exceeding the cap refuses
-  the request with `rateLimited`; it does not queue it.
+  (`pkg/acme/server/rate_limiter.go:266`) is mounted on the whole ACME
+  surface — by the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`)
+  and by xkmsd's embedded listener (`cmd/xkmsd/acme.go`'s `buildACMERouter`)
+  — and keys each client by IP (`server.ClientIP`, which honours
+  `X-Forwarded-For`/`X-Real-IP` only from a `server.TrustedProxies` peer).
+  It runs before the JWS is verified, so it never keys on the `kid`: an
+  unverified `kid` is attacker-chosen, and keying on it let one client mint
+  a fresh bucket per request (go-xkms#1171). Exceeding the cap refuses the
+  request with `rateLimited`; it does not queue it.
+- **A per-account bucket is keyed on a verified account only.**
+  `server.ClientID` (`rate_limiter.go:576`) returns the decimal account ID
+  that `TenantAuthMiddleware` published with `server.WithVerifiedAccountID`
+  (`handlers/tenant_auth.go:131`) after `parseKID` verified the JWS, and the
+  client IP otherwise. It never reads the body and never parses a `kid`
+  itself.
+- **The limiter's lock covers only the bucket arithmetic.**
+  `RateLimiter.MiddlewareFunc` (`rate_limiter.go:311`) derives the key,
+  calls `RateLimiter.Allow` (`rate_limiter.go:198`) — the only code that
+  holds the mutex — and serves the request after the lock is released. A
+  slow body, a slow handler, or a synchronous challenge validation against a
+  slow target never delays another request.
+- **Limiter state is bounded.** A `RateLimiter` evicts a bucket once it has
+  been idle for its TTL — `MaxRequests` intervals, the time a drained bucket
+  takes to refill, so eviction never grants or withholds a token
+  (`RateLimiter.ttl`, `rate_limiter.go:171`) — in a sweep that runs at most
+  once per TTL or per minute, whichever is shorter
+  (`sweepExpiredLocked`, `rate_limiter.go:235`). It tracks at most
+  `server.DefaultMaxEntries` (10,000, `rate_limiter.go:101`) keys; when full
+  it refuses a new key with `rateLimited` until one expires, the same
+  fail-closed policy `TenantRateLimiter` applies per tenant with
+  `MaxEntriesPerTenant` (which now defaults to the same constant,
+  `tenant_rate_limiter.go:145`). Of xkmsd's five category limiters
+  (`buildACMERouterLimiters`, `cmd/xkmsd/acme.go:722`), new-account is a
+  `RateLimiter` and gets these bounds directly; tenant, new-order,
+  certificate and failed-validation are `TenantRateLimiter`s, already capped
+  per tenant and swept by their cleanup goroutine, and their tenants and
+  client keys now come only from verified accounts or the client IP.
+- **An order carries at most 100 identifiers.** `NewOrderHandler` refuses a
+  larger list with `malformed` (400) before creating any authorization
+  (`pkg/acme/server/handlers/new_order.go:36,68`). `malformed`, not
+  `rejectedIdentifier`: the request as a whole is refused, not any one
+  identifier in it.
 - **Tenant admission control is keyed exclusively from an authenticated JWS
   "kid", never from a client-asserted header, host, or path (go-xkms#886).**
   `handlers.RestService.TenantAuthMiddleware`
@@ -270,6 +395,31 @@ once, to the externally visible base.
   `EndorseEABValidator.BoundTPMManufacturer`). Before this the handler passed
   none, and every enroll-01 of an endorsed TPM failed with a bare
   `Failed to sign TCG-CSR-IDEVID`; that failure now logs the CA's error.
+- **A certificate's identity is its full serial number, hex-encoded, never
+  truncated.** `entities.ACMECertificate.Serial` holds the complete X.509
+  serial number (up to 20 octets per RFC 5280 Section 4.1.2.2) as a lowercase
+  hex string; it is what the "id" segment of the `/acme/cert/{id}` URL
+  carries and what certificate fetch, revocation, and admin lookups key on.
+  The DAO's own numeric row key (`NumericID`) is an FNV-1a hash of Serial,
+  kept only to satisfy the generic DAO's `uint64` entity-ID contract - it is
+  never a certificate's public identity. Before go-xkms#744, the ID was the
+  serial's low 64 bits, so two certificates whose 128-bit serials happened to
+  share those bits collided in storage.
+- **A 64-bit hash still leaves a residual collision risk, and it is
+  handled, not assumed away.** `CertificateHandler` and `RevokeCertHandler`
+  compare the fetched row's `Serial` against the requested serial and treat
+  a mismatch as not-found - a hash collision can only ever produce a 404,
+  never the wrong certificate. `storage.SaveCertificateNoCollision` (used
+  by both `OrderFinalizeHandler` and the ACME client's local certificate
+  cache) refuses to let a save silently overwrite a different certificate
+  at the same row, returning `*storage.CertificateSerialCollisionError`;
+  it uses `GenericDAO.SaveIfAbsent` atomically when the backing KVStore
+  supports it (see pkg/storage/kvadapter), and falls back to a
+  Get-then-Save sequence otherwise - a fallback that is NOT atomic against
+  a second, concurrent writer racing to the same row, because sdk/go does
+  not re-export a sentinel this package could use to positively confirm
+  "no atomic support" versus some other `SaveIfAbsent` failure without
+  reaching past the SDK boundary into `go-qrdb/pkg/dao` directly.
 - **Revocation requires byte-equality with the stored certificate.** The
   submitted certificate's serial number is looked up, but because the returned
   record's identities must authorize the revocation and the submitted bytes are
@@ -351,6 +501,76 @@ permanent identifier in the RFC 4043 otherName (`deviceAttestCSR`,
 part of the statement, so the device spec's `pcr-selection` does not reach the
 evidence.
 
+## Challenge validation client
+
+Every verifier that contacts a target the ACME client named -- `http-01`,
+`enroll-01` (both its GET of the TCG-CSR-IDEVID and its POST of the
+credential challenge), and `device-attest-01` -- does so through one
+`*validation.Client` (`pkg/acme/challenges/validation/client.go:94`). The
+target is attacker-chosen: a `permanent-identifier` is an opaque string, and
+before go-xkms#1172 `enroll-01` spliced it into
+`fmt.Sprintf("http://%s:%s%s%s", ...)`, so a value like
+`169.254.169.254/latest/meta-data/#` chose the host, path and port of a
+server-side GET and POST, and the challenge's `error.detail` echoed back the
+status or dial error. `endorse-01` makes no request and does not use the
+client.
+
+What the client guarantees:
+
+- **The URL is built, not formatted.** `Target.URL`
+  (`client.go:155`) requires `policy.ValidateNetworkTarget`
+  (`pkg/acme/policy/validator.go:346`) -- a bare RFC 1123 hostname or a
+  canonical, zone-free IP literal -- and a TCP port, then assembles
+  `url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: path}`.
+  A host carrying `/ ? # @ :` or whitespace is `KindInvalidTarget` before any
+  request.
+- **Reserved addresses are refused at dial time.** Unless
+  `acme.challenges.allow_private_targets` is set, `NewClient` wires the
+  `net.Dialer.Control` hook to `netguard.DialControl(netguard.DenyReserved)`
+  (`client.go:98-104`, `pkg/netguard/dial.go`), which rejects any connection
+  whose resolved address satisfies `netguard.ReservedAddr`
+  (`pkg/netguard/reserved.go`): loopback, RFC 1918 / RFC 4193 private,
+  link-local (169.254/16 including the cloud metadata address, fe80::/10),
+  multicast, unspecified, CGNAT 100.64/10, the TEST-NETs, 240/4, NAT64, 6to4
+  and the other special-purpose ranges, with IPv4-mapped IPv6 unmapped
+  first. The hook sees the address actually being connected to, after
+  resolution, so a public-looking name that resolves (or re-resolves, DNS
+  rebinding) to an internal address is refused. `netguard.ReservedAddr` is
+  the one reserved-address classification in go-xkms: the CA's AIA/CRL
+  fetch client (`pkg/ca/pki_fetch.go`, see
+  [`../certificate-authority/engineering.md`](../certificate-authority/engineering.md))
+  and the `rejectReservedIPs` identifier policy
+  (`policy.IsReservedIP`, `validator.go:336`, which delegates to it) both
+  use it, so an address one refuses is reserved for all three.
+- **No proxy.** The transport's `Proxy` is nil (`client.go:122`), so the
+  address checked is the address dialed.
+- **Redirects.** `http-01` follows up to `MaxRedirects` (10) `http`/`https`
+  redirects, RFC 8555 section 8.3; each hop dials through the same transport,
+  so the dial-time check re-runs per hop (`redirectPolicy`, `client.go:244`).
+  `enroll-01` and `device-attest-01` refuse redirects.
+- **Bounded responses.** `readLimited` (`client.go:226`), built on
+  `netguard.ReadLimited` (`pkg/netguard/body.go`), reads through
+  `io.LimitReader(limit+1)` and refuses -- does not truncate -- a body over
+  the limit (`KindResponseTooLarge`). The default is `DefaultMaxResponseBytes`
+  (64 KiB, `client.go:64`); `enroll-01` raises it for the CSR fetch to the
+  base64url length of `tpm2.MaxIDevIDCSRSize`
+  (`pkg/acme/challenges/enroll-01/enroll01.go:136`), because the TCG-CSR
+  carries the boot event log.
+- **Generic client errors.** Failures are `*validation.Error`
+  (`pkg/acme/challenges/validation/errors.go`) whose `Kind` is a fixed,
+  client-safe category. `ChallengeHandler` logs and audits the full error but
+  returns only `challengeProblem(err)`
+  (`pkg/acme/server/handlers/challenge.go:47`): `connection` with
+  `"Challenge validation failed: <category>"` for a transport failure, and
+  `incorrectResponse` with `"Challenge validation failed"` for everything
+  else. A refused target reads exactly like any other connection failure, so
+  the challenge is not an oracle for which names resolve internally.
+
+One client is built per ACME server: `buildChallengeMap`
+(`cmd/xkmsd/acme.go:486`) for xkmsd, and a `TrustedCA` embedder builds its
+own with `NewACMEChallengeClient` (`sdk/go/acme`) and passes it to
+`http01.Verify` / `ACMEAttestationVerifiers(client, enroll, endorse)`.
+
 ## Circuit breakers and degradation
 
 `pkg/acme/server/circuitbreaker` is the one circuit breaker implementation
@@ -374,6 +594,35 @@ builds, for instance — unchanged. `cmd/xkmsd/acme.go`'s `buildChallengeMap`
 calls it after selecting verifiers from `acme.challenges`; `TrustedCA.Serve`
 calls it on whatever map a caller supplied through `WithChallengeMap`. A nil
 `Manager` (resilience not wired) or nil map returns the input unchanged.
+
+**Refused targets do not count toward a challenge breaker** (go-xkms#1181).
+The `http01` breaker is one breaker for the whole server, and the target it
+guards is chosen by the ACME client. `WrapChallengeVerifier`
+(`pkg/acme/server/circuitbreaker/decorators.go:41`) therefore runs the
+verifier through the breaker's unexported `execute`
+(`circuitbreaker.go:214`) with `validation.IsTargetRejected`
+(`pkg/acme/challenges/validation/errors.go:99`) as its exclusion predicate
+(`decorators.go:48`). A `*validation.Error` of `KindInvalidTarget` or
+`KindTargetRefused` -- a failure the validation client decided without
+contacting the target -- is returned to the verifier's caller unchanged but
+is not recorded (`circuitbreaker.go:242`): it is neither a failure nor a
+success, so it cannot open the breaker and cannot reset its failure count
+either. `releaseAdmission` (`circuitbreaker.go:258`) gives back a half-open
+slot such a call held, under the same generation rule as `afterRequest`.
+Before this, any account could open the breaker, and stall every `http-01`
+validation on the server, by requesting challenges against loopback or
+metadata addresses. Everything else still counts: `KindConnection` (a target
+that was contacted and could not be reached), the breaker's own timeout,
+`KindStatus`, `KindRedirect`, `KindResponseTooLarge` and a key-authorization
+mismatch.
+
+The breaker stays global, not per target host. What is left of the
+account-trippable surface -- an account naming a public host that drops
+connections, or answers 404 -- is the reason a per-host breaker would help,
+but it is not a small change: the `Manager` has no eviction, so one breaker
+per client-chosen host name is unbounded memory an account controls, and
+`GET /acme/health` reports breakers by name, so it would stop reporting a
+single `http01`. It is recorded as a follow-up, not done here.
 
 `storage` here is **not** the go-qrdb-backed ACME protocol state
 (`pkg/acme/storage` → `go-qrdb/sdk/go`, accounts/orders/authorizations/
@@ -459,8 +708,10 @@ The mapping an implementer needs:
 | account does not exist | `accountDoesNotExist` | 400 |
 | identifier not allowed by policy | `rejectedIdentifier` | 403 |
 | CAA forbids issuance | `caa` | 403 |
-| challenge validation failed | `incorrectResponse` / `connection` / `dns` | 403 |
+| challenge validation failed (fixed detail, never the verifier's error; see "Challenge validation client") | `incorrectResponse` / `connection` / `dns` | 403 |
 | rate limit exceeded | `rateLimited` | 429 |
+| request body over `MaxRequestBodySize` (256 KiB) | `malformed` | 413 |
+| more than 100 identifiers in one new-order | `malformed` | 400 |
 | order not ready to finalize | `orderNotReady` | 403 |
 | CSR does not match the order (`dns`/`ip` orders) | `badCSR` | 400 |
 | permanent-identifier CSR missing/malformed/extra otherName | `badCSR` | 400 |
@@ -538,6 +789,16 @@ identifier is still reachable at its real address. Off by default
 (`XKMS_ACME_ENROLLMENT_ALLOW_LOOPBACK_IDENTIFIER`): with the key false, a
 loopback identifier is refused with `ErrLoopbackIdentifierNotAllowed` before
 the challenge verifier runs, rather than being silently substituted (#140).
+
+`acme.challenges.allow_private_targets` (`ACMEChallengesConfig`,
+`pkg/config/acme.go:756`; `XKMS_ACME_CHALLENGES_ALLOW_PRIVATE_TARGETS`)
+lets the challenge validation client connect to reserved addresses --
+loopback, private, link-local, metadata. Off by default, which is the
+production setting. It exists for the test lanes, whose challenge targets
+are loopback or container-network addresses, and for lab deployments whose
+devices sit on a private network. With `allow_loopback_identifier` on, the
+substituted client IP is itself a private address in most labs, so both keys
+are normally set together there (go-xkms#1172).
 
 The xkmsd ACME listener (`acme.tls`, `ACMEConfig` / `ACMETLSConfig`,
 `pkg/config/acme.go`) always uses its own dedicated TLS certificate/key pair;
@@ -838,7 +1099,16 @@ storage. Changing the storage layout requires a data migration step.
   dependency decorators (`decorators_test.go`:
   `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService`, each exercised
   closed, open-fails-fast-without-calling-the-inner-dependency, and
-  half-open-probe-closes). `pkg/acme/server/handlers/resilience_test.go`
+  half-open-probe-closes). `exclusion_test.go` covers the exclusion
+  predicate (an excluded failure is returned but not recorded, does not
+  reset the failure count, releases a half-open slot; a failure the
+  predicate does not exclude, and the breaker's own timeout, are recorded),
+  and `decorators_test.go:132`/`:159`/`:179` drive `WrapChallengeVerifier`
+  with a real `validation.Client`: fifty refused or invalid targets leave a
+  `MaxFailures: 1` breaker closed, connections to a closed `127.0.0.1:0`
+  port (`AllowPrivateTargets`) open it, and refusals interleaved with those
+  failures do not hold it closed (go-xkms#1181).
+  `pkg/acme/server/handlers/resilience_test.go`
   covers the degradation-cache path end to end against the real
   `CABundleHandler`/`DirectoryHandler` code (fresh-serves-live,
   breaker-trips-on-failure, open-serves-stale-cache-degraded,
@@ -866,10 +1136,15 @@ storage. Changing the storage layout requires a data migration step.
 - **RFC conformance** — `test/integration/rfc8555`.
 - **Integration** — `test/integration/acme-server`, `acme-client`,
   `acme-admin`, `acme-multiprotocol`, `acme-tpm`, `acmeclient`, `acmeserver`,
-  `challenges`. Compose file: `test/integration/acme-docker-compose.integration.yml`.
+  `challenges`. The ACME admin plane's CLI coverage is
+  `test/integration/acmeadmin` (`xkmsctl acme`/`xkmsctl tenant` against a
+  real `xkmsd`), with its own compose file:
+  `test/integration/acmeadmin/docker-compose.yml`.
 - **TCG / attestation** — `test/integration/acme-tpm` plus
   `pkg/acme/server/handlers/audit_tcg_test.go`,
-  `compliance_attestation_test.go`. `swtpm_helper_test.go`'s
+  `compliance_attestation_test.go` (including `findPCRValue` refusing PCR
+  data no TPM produces and oversized PCR data, and preferring the SHA-256
+  bank). `swtpm_helper_test.go`'s
   `SwtpmConnection.Provision` enrolls the Platform SRK and installs a
   throwaway IAK certificate via the same
   `xkmssdk.EnrollSimulatorPlatformSRK`/`xkmssdk.ProvisionSimulatorIAKCertificate`
@@ -982,6 +1257,42 @@ references.
 `pkg/acme/audit` and `pkg/acme/server/handlers/audit.go` write audit records
 for account, order and issuance events, independent of the metrics above.
 Correlation IDs propagate from the transport middleware.
+
+**Audit source-IP resolution shares the rate limiter's trusted-proxy set
+(go-xkms#1179).** `audit.extractClientIP` (`pkg/acme/audit/hooks.go:128`)
+resolves the recorded source IP through the same `ratelimit.TrustedProxies`
+type the REST and ACME rate limiters use (`pkg/ratelimit/clientip.go:102`):
+the transport peer address, or, only when that peer is a configured trusted
+proxy, the right-most untrusted `X-Forwarded-For` hop. A package-level
+`trustedProxies` var (`hooks.go:107`) holds the value; `SetTrustedProxies`
+(`hooks.go:117`) sets it once at start-up. `startACMEServer`
+(`cmd/xkmsd/acme.go:164`) is the one place that parses
+`server.trusted_proxies` for the embedded ACME listener — the same config key
+`pkg/server/server.go:2892` parses for REST — and hands the result to both
+`acmeserver.TrustedProxies` (the ACME rate limiter's resolver) and
+`audit.SetTrustedProxies` (`cmd/xkmsd/acme.go:168-169`), so a forwarding
+header is trusted, or not, identically for rate limiting and for the audit
+trail. Neither introduces a second `trusted_proxies`-shaped key. An untrusted
+peer's forged `X-Forwarded-For` is never recorded as the source IP; audit
+records always keep full address precision (no /64 folding — that is a
+rate-limit-only concern, below).
+
+**IPv6 rate-limit keys fold to their /64, audit does not
+(go-xkms#1179).** `ratelimit.RateLimitKey` (`pkg/ratelimit/clientip.go:171`)
+takes the address `TrustedProxies.ClientIP` resolved and returns it unchanged
+for IPv4, or masked to its `/64` (`ipv6RateLimitPrefixBits`,
+`clientip.go:156`) for IPv6, so a client cannot evade a limiter by rotating
+through addresses an ISP delegates it within one `/64`. A value that is not a
+valid IP (a JWS key ID) passes through unchanged. `ratelimit.Middleware`
+(`pkg/ratelimit/ratelimit.go:247`) applies it for the REST limiters; the ACME
+limiters apply it through `rateLimitClientIPKey`/`rateLimitClientIDKey`
+(`pkg/acme/server/rate_limiter.go:456,467`), which every
+`*RateLimiter`/`*TenantRateLimiter` constructor in `rate_limiter.go` and
+`tenant_rate_limiter.go` now takes as its client-key function in place of the
+raw `ClientIP`/`ClientID`. `ClientIP`/`ClientID` themselves are unchanged and
+still return the full-precision address — `RateLimitKey` is applied only at
+the point a limiter builds its bucket key, never to the value the audit trail
+records.
 
 **Known gap:** the ACME server's per-tenant rate limiter
 (`pkg/acme/server/tenant_rate_limiter.go`) is wired through

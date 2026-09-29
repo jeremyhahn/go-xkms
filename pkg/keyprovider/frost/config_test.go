@@ -81,19 +81,29 @@ func (m *mockStorageBackend) Close() error {
 // test double never exercises.
 var errMockUnimplemented = errors.New("mock: not implemented")
 
-// mockSecretBackend implements types.KeyProvider for testing.
+// errMockSealed is returned by Unseal when the sealed data was not produced
+// by this mock's Seal (wrong backend marker or corrupt payload), standing in
+// for a real backend's "wrong or missing wrapping key" failure.
+var errMockSealed = errors.New("mock: sealed data not recognized")
+
+// mockSecretBackend implements types.SealingKeyProvider for testing: a
+// types.Sealer (Seal/Unseal/CanSeal, an in-memory stand-in for a real
+// backend's encryption) plus the types.KeyProvider methods FrostBackend
+// calls directly (Type/Capabilities).
 //
-// deleteErr, when set, is returned by DeleteKey unconditionally, and the
-// keyed entry is left untouched — this stands in for a secret backend whose
-// delete failed, letting tests confirm a retried KeyStore.DeleteKey resumes
-// correctly.
+// sealErr and unsealErr, when set, are returned by Seal/Unseal
+// unconditionally — standing in for a secret backend whose seal/unseal
+// failed, letting tests confirm a retried KeyStore.StoreKeyPackage /
+// DeleteKey resumes correctly, and that a wrong/missing wrapping key
+// surfaces as a typed error.
 type mockSecretBackend struct {
-	data      map[string][]byte
-	deleteErr error
+	sealErr   error
+	unsealErr error
+	canSeal   bool
 }
 
 func newMockSecretBackend() *mockSecretBackend {
-	return &mockSecretBackend{data: make(map[string][]byte)}
+	return &mockSecretBackend{canSeal: true}
 }
 
 func (m *mockSecretBackend) Type() types.BackendType {
@@ -101,32 +111,19 @@ func (m *mockSecretBackend) Type() types.BackendType {
 }
 
 func (m *mockSecretBackend) Capabilities() types.Capabilities {
-	return types.Capabilities{Keys: true, Signing: true}
+	return types.Capabilities{Keys: true, Signing: true, Sealing: true}
 }
 
 func (m *mockSecretBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	if attrs.SealData != nil {
-		m.data[attrs.CN] = attrs.SealData.Bytes()
-	}
-	return nil, nil
+	return nil, errMockUnimplemented
 }
 
 func (m *mockSecretBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	if v, ok := m.data[attrs.CN]; ok {
-		return v, nil
-	}
 	return nil, backend.ErrKeyNotFound
 }
 
 func (m *mockSecretBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
-	if m.deleteErr != nil {
-		return m.deleteErr
-	}
-	if _, ok := m.data[attrs.CN]; !ok {
-		return backend.ErrKeyNotFound
-	}
-	delete(m.data, attrs.CN)
-	return nil
+	return errMockUnimplemented
 }
 
 func (m *mockSecretBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
@@ -147,6 +144,43 @@ func (m *mockSecretBackend) RotateKey(ctx context.Context, attrs *types.KeyAttri
 
 func (m *mockSecretBackend) Close() error {
 	return nil
+}
+
+// CanSeal reports whether this mock is configured to support sealing.
+// Defaults to true (see newMockSecretBackend); a test that needs a
+// Sealer reporting false constructs a mockSecretBackend literal directly.
+func (m *mockSecretBackend) CanSeal() bool {
+	return m.canSeal
+}
+
+// Seal "encrypts" data by prefixing it with a fixed marker, so Unseal can
+// detect payloads it did not produce (the "wrong wrapping key" case) without
+// a real cipher.
+func (m *mockSecretBackend) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	if m.sealErr != nil {
+		return nil, m.sealErr
+	}
+	ciphertext := append([]byte("mock-sealed:"), data...)
+	return &types.SealedData{
+		Backend:    types.BackendTypeSoftware,
+		Ciphertext: ciphertext,
+	}, nil
+}
+
+// Unseal reverses Seal, returning errMockSealed for any payload lacking the
+// marker Seal writes (simulating a wrong or missing wrapping key).
+func (m *mockSecretBackend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	if m.unsealErr != nil {
+		return nil, m.unsealErr
+	}
+	if sealed == nil {
+		return nil, errMockSealed
+	}
+	const marker = "mock-sealed:"
+	if len(sealed.Ciphertext) < len(marker) || string(sealed.Ciphertext[:len(marker)]) != marker {
+		return nil, errMockSealed
+	}
+	return sealed.Ciphertext[len(marker):], nil
 }
 
 func TestConfig_Validate_Success(t *testing.T) {

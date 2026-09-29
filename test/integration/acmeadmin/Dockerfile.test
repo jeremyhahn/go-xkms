@@ -1,0 +1,41 @@
+FROM golang:1.27.0-bookworm
+ENV GOTOOLCHAIN=auto
+
+# Build deps for xkmsctl's cgo backends (pkcs11, tpm2) — matches Dockerfile.cli.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libsofthsm2 \
+    libsofthsm2-dev \
+    softhsm2 \
+    libtss2-dev \
+    libicu-dev \
+    libusb-1.0-0-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV GOWORK=off
+
+WORKDIR /workspace
+
+# Bake the source into the image at build time, matching
+# test/integration/bootstrap/Dockerfile.test: a runtime bind mount resolves
+# against the wrong filesystem on a Gitea Actions runner (see that file's
+# comment).
+COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+COPY xkey/go.mod xkey/go.sum ./xkey/
+
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=1 go build -buildvcs=false \
+        -tags="pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault" \
+        -o /usr/local/bin/xkmsctl \
+        ./cmd/xkmsctl
+
+RUN test -f /usr/local/bin/xkmsctl || (echo "ERROR: xkmsctl binary not built" && exit 1)

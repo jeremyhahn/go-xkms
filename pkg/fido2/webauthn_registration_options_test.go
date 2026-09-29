@@ -39,14 +39,14 @@ func buildCreationOptionsJSON(challenge, userID []byte, rpID, rpName, userName, 
 
 // TestParseWebAuthnRegistrationOptions_MapsFields proves every server field
 // is mapped into the device-driver options: challenge, rp id/name, user
-// id/name/displayName, the derived origin, user-verification, and timeout.
+// id/name/displayName, the caller's origin, user-verification, and timeout.
 func TestParseWebAuthnRegistrationOptions_MapsFields(t *testing.T) {
 	challenge := []byte("registration-challenge-value")
 	userID := []byte("user-handle-1")
 
 	optionsJSON := buildCreationOptionsJSON(challenge, userID, "xkms.example.com", "xKMS", "alice", "Alice Example", "required")
 
-	opts, err := ParseWebAuthnRegistrationOptions(optionsJSON, "")
+	opts, err := ParseWebAuthnRegistrationOptions(optionsJSON, "https://xkms.example.com")
 	if err != nil {
 		t.Fatalf("ParseWebAuthnRegistrationOptions: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestParseWebAuthnRegistrationOptions_AcceptsBareDocument(t *testing.T) {
 		`"rp":{"id":"bare.example.org"},` +
 		`"user":{"name":"carol"}}`)
 
-	opts, err := ParseWebAuthnRegistrationOptions(bare, "")
+	opts, err := ParseWebAuthnRegistrationOptions(bare, "https://bare.example.org")
 	if err != nil {
 		t.Fatalf("ParseWebAuthnRegistrationOptions (bare): %v", err)
 	}
@@ -130,7 +130,7 @@ func TestParseWebAuthnRegistrationOptions_AcceptsBareDocument(t *testing.T) {
 func TestParseWebAuthnRegistrationOptions_PaddedChallenge(t *testing.T) {
 	optionsJSON := []byte(`{"publicKey":{"challenge":"Y2hhbGxlbmdlLTE=","rp":{"id":"rp.example"}}}`)
 
-	opts, err := ParseWebAuthnRegistrationOptions(optionsJSON, "")
+	opts, err := ParseWebAuthnRegistrationOptions(optionsJSON, "https://rp.example")
 	if err != nil {
 		t.Fatalf("ParseWebAuthnRegistrationOptions: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestParseWebAuthnRegistrationOptions_Errors(t *testing.T) {
 func TestParseWebAuthnRegistrationOptions_NoUserID(t *testing.T) {
 	optionsJSON := []byte(`{"publicKey":{"challenge":"Y2hhbGxlbmdl","rp":{"id":"rp.example"},"user":{"name":"dave"}}}`)
 
-	opts, err := ParseWebAuthnRegistrationOptions(optionsJSON, "")
+	opts, err := ParseWebAuthnRegistrationOptions(optionsJSON, "https://rp.example")
 	if err != nil {
 		t.Fatalf("ParseWebAuthnRegistrationOptions: %v", err)
 	}

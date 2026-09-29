@@ -29,10 +29,9 @@
 // Usage:
 //
 //	config := &tpm2.Config{
-//	    Device:         "/dev/tpmrm0",
-//	    KeyDir:         "/var/lib/xkms/tpm2",
-//	    UseSimulator:   false,
-//	    EncryptSession: true,
+//	    Device:       "/dev/tpmrm0",
+//	    KeyDir:       "/var/lib/xkms/tpm2",
+//	    UseSimulator: false,
 //	}
 //	backend, err := tpm2.NewBackend(config)
 //	if err != nil {

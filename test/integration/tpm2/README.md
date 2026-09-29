@@ -112,14 +112,15 @@ Tests use the following TPM configuration:
 
 ```go
 &tpm2.Config{
-    CN:             "test-keystore-srk",
-    SRKHandle:      0x81000001,
-    EncryptSession: true,  // Enable for encryption tests
-    UseSimulator:   true,
-    SimulatorHost:  "tpm-simulator",
-    SimulatorPort:  2321,
+    CN:            "test-keystore-srk",
+    SRKHandle:     0x81000001,
+    UseSimulator:  true,
+    SimulatorHost: "tpm-simulator",
+    SimulatorPort: 2321,
 }
 ```
+
+Session encryption is always on; there is no configuration switch for it.
 
 ### Key Attributes
 
@@ -144,26 +145,17 @@ Common test key attributes:
 1. **`TestTPMSessionEncryption`**
    - Verifies encryption flags in session commands
    - Validates no plaintext sensitive data leaks
-   - Tests key generation and signing with encryption
 
-2. **`TestTPMSessionNoEncryption`**
-   - Baseline test without encryption
-   - Provides comparison data
+2. **`TestTPMMultipleOperationsEncryption`**
+   - Seals and unseals, checking every captured packet for plaintext
 
-3. **`TestTPMSessionEncryptionComparison`**
-   - Side-by-side encrypted vs unencrypted
-   - Quantifies encryption effectiveness
+3. **`TestTPMPacketParsing`**
+   - Exercises the capture's command and response header parsing
 
-4. **`TestTPMMultipleOperationsEncryption`**
-   - Tests encryption across operations:
-     - Key generation
-     - Key retrieval
-     - Signing
-   - Ensures consistent encryption
-
-5. **`TestTPMDecryptionEncryption`**
-   - Verifies decrypted plaintext protection
-   - Ensures plaintext never in transit
+Session encryption is unconditional, so there is no unencrypted baseline to
+compare against. The unit-level counterpart, which asserts that specific PINs
+and sealed secrets never appear on the bus, is
+`pkg/tpm2/session_encryption_simulator_test.go`.
 
 ### Analysis Metrics
 
@@ -354,7 +346,7 @@ func TestTPMNewFeature(t *testing.T) {
 ## Documentation
 
 Comprehensive documentation available:
-- [TPM2 Session Encryption Guide](../../../docs/tpm2-session-encryption.md)
+- [TPM2 Session Encryption](../../../docs/tpm2/engineering.md#bus-protection)
 - [Certificate Management Guide](../../../docs/certificates.md)
 
 ## License

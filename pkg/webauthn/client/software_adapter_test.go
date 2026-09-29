@@ -37,7 +37,7 @@ func TestSoftwareAdapter_MakeCredential_Success(t *testing.T) {
 	challenge := base64.RawURLEncoding.EncodeToString([]byte("test-challenge-1234567890123456"))
 	options := buildTestCreationOptions("localhost", challenge)
 
-	result, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: options})
+	result, err := adapter.MakeCredential(context.Background(), ceremonyFor(options))
 	if err != nil {
 		t.Fatalf("MakeCredential() error: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestSoftwareAdapter_MakeCredential_Success(t *testing.T) {
 func TestSoftwareAdapter_MakeCredential_InvalidJSON(t *testing.T) {
 	adapter := NewSoftwareAdapter()
 
-	_, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: []byte("not json")})
+	_, err := adapter.MakeCredential(context.Background(), ceremonyFor([]byte("not json")))
 	if err == nil {
 		t.Fatal("MakeCredential() should return error for invalid JSON")
 	}
@@ -98,7 +98,7 @@ func TestSoftwareAdapter_MakeCredential_MissingRPID(t *testing.T) {
 	challenge := base64.RawURLEncoding.EncodeToString([]byte("test-challenge"))
 	options := buildTestCreationOptions("", challenge)
 
-	_, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: options})
+	_, err := adapter.MakeCredential(context.Background(), ceremonyFor(options))
 	if err == nil {
 		t.Fatal("MakeCredential() should return error for missing RP ID")
 	}
@@ -113,7 +113,7 @@ func TestSoftwareAdapter_MakeCredential_InvalidChallenge(t *testing.T) {
 	// Use invalid base64 as challenge
 	options := buildTestCreationOptions("localhost", "!!!invalid-base64!!!")
 
-	_, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: options})
+	_, err := adapter.MakeCredential(context.Background(), ceremonyFor(options))
 	if err == nil {
 		t.Fatal("MakeCredential() should return error for invalid challenge")
 	}
@@ -129,7 +129,7 @@ func TestSoftwareAdapter_GetAssertion_Success(t *testing.T) {
 	challenge1 := base64.RawURLEncoding.EncodeToString([]byte("registration-challenge-12345678"))
 	creationOpts := buildTestCreationOptions("localhost", challenge1)
 
-	attestation, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: creationOpts})
+	attestation, err := adapter.MakeCredential(context.Background(), ceremonyFor(creationOpts))
 	if err != nil {
 		t.Fatalf("MakeCredential() error: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestSoftwareAdapter_GetAssertion_Success(t *testing.T) {
 	challenge2 := base64.RawURLEncoding.EncodeToString([]byte("assertion-challenge-123456789"))
 	assertionOpts := buildTestAssertionOptions("localhost", challenge2, credID)
 
-	result, err := adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: assertionOpts})
+	result, err := adapter.GetAssertion(context.Background(), ceremonyFor(assertionOpts))
 	if err != nil {
 		t.Fatalf("GetAssertion() error: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestSoftwareAdapter_GetAssertion_NoCredential(t *testing.T) {
 	challenge := base64.RawURLEncoding.EncodeToString([]byte("assertion-challenge"))
 	assertionOpts := buildTestAssertionOptions("localhost", challenge, "nonexistent-cred-id")
 
-	_, err := adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: assertionOpts})
+	_, err := adapter.GetAssertion(context.Background(), ceremonyFor(assertionOpts))
 	if err == nil {
 		t.Fatal("GetAssertion() should return error when no credential is found")
 	}
@@ -197,7 +197,7 @@ func TestSoftwareAdapter_GetAssertion_NoCredential(t *testing.T) {
 func TestSoftwareAdapter_GetAssertion_InvalidJSON(t *testing.T) {
 	adapter := NewSoftwareAdapter()
 
-	_, err := adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: []byte("invalid")})
+	_, err := adapter.GetAssertion(context.Background(), ceremonyFor([]byte("invalid")))
 	if err == nil {
 		t.Fatal("GetAssertion() should return error for invalid JSON")
 	}
@@ -212,7 +212,7 @@ func TestSoftwareAdapter_GetAssertion_MissingRPID(t *testing.T) {
 	challenge := base64.RawURLEncoding.EncodeToString([]byte("test-challenge"))
 	assertionOpts := buildTestAssertionOptions("", challenge, "some-id")
 
-	_, err := adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: assertionOpts})
+	_, err := adapter.GetAssertion(context.Background(), ceremonyFor(assertionOpts))
 	if err == nil {
 		t.Fatal("GetAssertion() should return error for missing RP ID")
 	}
@@ -226,7 +226,7 @@ func TestSoftwareAdapter_GetAssertion_InvalidChallenge(t *testing.T) {
 
 	assertionOpts := buildTestAssertionOptions("localhost", "!!!invalid!!!", "some-id")
 
-	_, err := adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: assertionOpts})
+	_, err := adapter.GetAssertion(context.Background(), ceremonyFor(assertionOpts))
 	if err == nil {
 		t.Fatal("GetAssertion() should return error for invalid challenge")
 	}
@@ -243,7 +243,7 @@ func TestSoftwareAdapter_GetAssertion_WithoutAllowList(t *testing.T) {
 	challenge1 := base64.RawURLEncoding.EncodeToString([]byte("registration-challenge-12345678"))
 	creationOpts := buildCreationOptionsWithAuthenticatorSelection("localhost", challenge1,
 		map[string]interface{}{"residentKey": "required"})
-	_, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: creationOpts})
+	_, err := adapter.MakeCredential(context.Background(), ceremonyFor(creationOpts))
 	if err != nil {
 		t.Fatalf("MakeCredential() error: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestSoftwareAdapter_GetAssertion_WithoutAllowList(t *testing.T) {
 	challenge2 := base64.RawURLEncoding.EncodeToString([]byte("assertion-challenge-123456789a"))
 	assertionOpts := buildTestAssertionOptionsNoAllowList("localhost", challenge2)
 
-	result, err := adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: assertionOpts})
+	result, err := adapter.GetAssertion(context.Background(), ceremonyFor(assertionOpts))
 	if err != nil {
 		t.Fatalf("GetAssertion() without allow list error: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestSoftwareAdapter_CredentialCount(t *testing.T) {
 	// Create a credential
 	challenge := base64.RawURLEncoding.EncodeToString([]byte("test-challenge-1234567890123456"))
 	options := buildTestCreationOptions("localhost", challenge)
-	_, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: options})
+	_, err := adapter.MakeCredential(context.Background(), ceremonyFor(options))
 	if err != nil {
 		t.Fatalf("MakeCredential() error: %v", err)
 	}
@@ -299,11 +299,11 @@ func TestSoftwareAdapter_MultipleCredentials(t *testing.T) {
 	opts1 := buildCreationOptionsWithAuthenticatorSelection("rp1.example.com", challenge1, rkRequired)
 	opts2 := buildCreationOptionsWithAuthenticatorSelection("rp2.example.com", challenge2, rkRequired)
 
-	_, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: opts1})
+	_, err := adapter.MakeCredential(context.Background(), ceremonyFor(opts1))
 	if err != nil {
 		t.Fatalf("MakeCredential(rp1) error: %v", err)
 	}
-	_, err = adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: opts2})
+	_, err = adapter.MakeCredential(context.Background(), ceremonyFor(opts2))
 	if err != nil {
 		t.Fatalf("MakeCredential(rp2) error: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestSoftwareAdapter_MultipleCredentials(t *testing.T) {
 	assertChallenge := base64.RawURLEncoding.EncodeToString([]byte("assert-challenge-12345678901234"))
 	assertOpts := buildTestAssertionOptionsNoAllowList("rp1.example.com", assertChallenge)
 
-	result, err := adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: assertOpts})
+	result, err := adapter.GetAssertion(context.Background(), ceremonyFor(assertOpts))
 	if err != nil {
 		t.Fatalf("GetAssertion(rp1) error: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestSoftwareAdapter_WrongRPID(t *testing.T) {
 	challenge := base64.RawURLEncoding.EncodeToString([]byte("challenge-1234567890123456789012"))
 	opts := buildCreationOptionsWithAuthenticatorSelection("rp1.example.com", challenge,
 		map[string]interface{}{"residentKey": "required"})
-	_, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: opts})
+	_, err := adapter.MakeCredential(context.Background(), ceremonyFor(opts))
 	if err != nil {
 		t.Fatalf("MakeCredential() error: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestSoftwareAdapter_WrongRPID(t *testing.T) {
 	assertChallenge := base64.RawURLEncoding.EncodeToString([]byte("assert-challenge-12345678901234"))
 	assertOpts := buildTestAssertionOptionsNoAllowList("rp2.example.com", assertChallenge)
 
-	_, err = adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: assertOpts})
+	_, err = adapter.GetAssertion(context.Background(), ceremonyFor(assertOpts))
 	if err == nil {
 		t.Fatal("GetAssertion() should fail for wrong RP ID")
 	}
@@ -661,7 +661,7 @@ func TestSoftwareAdapter_MakeCredential_WithAuthenticatorSelection(t *testing.T)
 			adapter := NewSoftwareAdapter()
 
 			opts := buildCreationOptionsWithAuthenticatorSelection("localhost", challenge, tc.authSel)
-			result, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: opts})
+			result, err := adapter.MakeCredential(context.Background(), ceremonyFor(opts))
 			if err != nil {
 				t.Fatalf("MakeCredential() error: %v", err)
 			}
@@ -736,7 +736,7 @@ func TestSoftwareAdapter_MakeCredential_WithPubKeyCredParams(t *testing.T) {
 			}
 			data, _ := json.Marshal(opts)
 
-			result, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: data})
+			result, err := adapter.MakeCredential(context.Background(), ceremonyFor(data))
 			if err != nil {
 				t.Fatalf("MakeCredential() error: %v", err)
 			}
@@ -796,7 +796,7 @@ func TestSoftwareAdapter_MakeCredential_WithAttestation(t *testing.T) {
 			}
 			data, _ := json.Marshal(opts)
 
-			result, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: data})
+			result, err := adapter.MakeCredential(context.Background(), ceremonyFor(data))
 			if err != nil {
 				t.Fatalf("MakeCredential() with attestation=%q error: %v", tc.attestation, err)
 			}
@@ -871,7 +871,7 @@ func TestSoftwareAdapter_MakeCredential_WithExtensions(t *testing.T) {
 			}
 			data, _ := json.Marshal(opts)
 
-			result, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: data})
+			result, err := adapter.MakeCredential(context.Background(), ceremonyFor(data))
 			if err != nil {
 				t.Fatalf("MakeCredential() with extensions error: %v", err)
 			}
@@ -979,7 +979,7 @@ func TestSoftwareAdapter_GetAssertion_WithUserVerification(t *testing.T) {
 			}
 			creationOpts := buildCreationOptionsWithAuthenticatorSelection("localhost", regChallenge, authSel)
 
-			attestation, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: creationOpts})
+			attestation, err := adapter.MakeCredential(context.Background(), ceremonyFor(creationOpts))
 			if err != nil {
 				t.Fatalf("MakeCredential() error: %v", err)
 			}
@@ -990,7 +990,7 @@ func TestSoftwareAdapter_GetAssertion_WithUserVerification(t *testing.T) {
 			assertChallenge := base64.RawURLEncoding.EncodeToString([]byte("assert-challenge-uv-test-12345"))
 			assertionOpts := buildAssertionOptionsWithUV("localhost", assertChallenge, credID, tc.assertionUV)
 
-			result, err := adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: assertionOpts})
+			result, err := adapter.GetAssertion(context.Background(), ceremonyFor(assertionOpts))
 			if err != nil {
 				t.Fatalf("GetAssertion() error: %v", err)
 			}
@@ -1048,7 +1048,7 @@ func TestSoftwareAdapter_MakeCredential_WithTimeout(t *testing.T) {
 			}
 			data, _ := json.Marshal(opts)
 
-			result, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: data})
+			result, err := adapter.MakeCredential(context.Background(), ceremonyFor(data))
 			if err != nil {
 				t.Fatalf("MakeCredential() with timeout=%d error: %v", tc.timeout, err)
 			}
@@ -1093,7 +1093,7 @@ func TestSoftwareAdapter_MakeCredential_WithExcludeCredentials(t *testing.T) {
 	}
 	data, _ := json.Marshal(opts)
 
-	result, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: data})
+	result, err := adapter.MakeCredential(context.Background(), ceremonyFor(data))
 	if err != nil {
 		t.Fatalf("MakeCredential() with excludeCredentials error: %v", err)
 	}
@@ -1149,7 +1149,7 @@ func TestSoftwareAdapter_MakeCredential_WithAllOptions(t *testing.T) {
 	}
 	data, _ := json.Marshal(opts)
 
-	result, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: data})
+	result, err := adapter.MakeCredential(context.Background(), ceremonyFor(data))
 	if err != nil {
 		t.Fatalf("MakeCredential() with all options error: %v", err)
 	}
@@ -1177,7 +1177,7 @@ func TestSoftwareAdapter_GetAssertion_WithTimeout(t *testing.T) {
 	regChallenge := base64.RawURLEncoding.EncodeToString([]byte("reg-timeout-challenge-123456789"))
 	creationOpts := buildTestCreationOptions("localhost", regChallenge)
 
-	attestation, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: creationOpts})
+	attestation, err := adapter.MakeCredential(context.Background(), ceremonyFor(creationOpts))
 	if err != nil {
 		t.Fatalf("MakeCredential() error: %v", err)
 	}
@@ -1198,7 +1198,7 @@ func TestSoftwareAdapter_GetAssertion_WithTimeout(t *testing.T) {
 	}
 	data, _ := json.Marshal(opts)
 
-	result, err := adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: data})
+	result, err := adapter.GetAssertion(context.Background(), ceremonyFor(data))
 	if err != nil {
 		t.Fatalf("GetAssertion() with timeout error: %v", err)
 	}
@@ -1220,7 +1220,7 @@ func TestSoftwareAdapter_GetAssertion_WithExtensions(t *testing.T) {
 	regChallenge := base64.RawURLEncoding.EncodeToString([]byte("reg-ext-challenge-123456789012"))
 	creationOpts := buildTestCreationOptions("localhost", regChallenge)
 
-	attestation, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: creationOpts})
+	attestation, err := adapter.MakeCredential(context.Background(), ceremonyFor(creationOpts))
 	if err != nil {
 		t.Fatalf("MakeCredential() error: %v", err)
 	}
@@ -1245,7 +1245,7 @@ func TestSoftwareAdapter_GetAssertion_WithExtensions(t *testing.T) {
 	}
 	data, _ := json.Marshal(opts)
 
-	result, err := adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: data})
+	result, err := adapter.GetAssertion(context.Background(), ceremonyFor(data))
 	if err != nil {
 		t.Fatalf("GetAssertion() with extensions error: %v", err)
 	}
@@ -1277,7 +1277,7 @@ func TestSoftwareAdapter_MakeCredential_UPAlwaysSet(t *testing.T) {
 		adapter := NewSoftwareAdapter()
 		opts := buildCreationOptionsWithAuthenticatorSelection("localhost", challenge, authSel)
 
-		result, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: opts})
+		result, err := adapter.MakeCredential(context.Background(), ceremonyFor(opts))
 		if err != nil {
 			t.Fatalf("case %d: MakeCredential() error: %v", i, err)
 		}
@@ -1301,7 +1301,7 @@ func TestSoftwareAdapter_GetAssertion_UPAlwaysSet(t *testing.T) {
 		regChallenge := base64.RawURLEncoding.EncodeToString([]byte("reg-up-assert-challenge-1234567"))
 		creationOpts := buildTestCreationOptions("localhost", regChallenge)
 
-		attestation, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: creationOpts})
+		attestation, err := adapter.MakeCredential(context.Background(), ceremonyFor(creationOpts))
 		if err != nil {
 			t.Fatalf("uv=%q: MakeCredential() error: %v", uv, err)
 		}
@@ -1311,7 +1311,7 @@ func TestSoftwareAdapter_GetAssertion_UPAlwaysSet(t *testing.T) {
 		assertChallenge := base64.RawURLEncoding.EncodeToString([]byte("assert-up-check-challenge-12345"))
 		assertionOpts := buildAssertionOptionsWithUV("localhost", assertChallenge, credID, uv)
 
-		result, err := adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: assertionOpts})
+		result, err := adapter.GetAssertion(context.Background(), ceremonyFor(assertionOpts))
 		if err != nil {
 			t.Fatalf("uv=%q: GetAssertion() error: %v", uv, err)
 		}
@@ -1331,7 +1331,7 @@ func TestSoftwareAdapter_AttestationObjectIsCBOR(t *testing.T) {
 	challenge := base64.RawURLEncoding.EncodeToString([]byte("cbor-verify-challenge-123456789"))
 	opts := buildTestCreationOptions("localhost", challenge)
 
-	result, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: opts})
+	result, err := adapter.MakeCredential(context.Background(), ceremonyFor(opts))
 	if err != nil {
 		t.Fatalf("MakeCredential() error: %v", err)
 	}
@@ -1379,7 +1379,7 @@ func TestSoftwareAdapter_SignatureInAssertion(t *testing.T) {
 
 	regChallenge := base64.RawURLEncoding.EncodeToString([]byte("sig-verify-reg-challenge-123456"))
 	creationOpts := buildTestCreationOptions("localhost", regChallenge)
-	attestation, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: creationOpts})
+	attestation, err := adapter.MakeCredential(context.Background(), ceremonyFor(creationOpts))
 	if err != nil {
 		t.Fatalf("MakeCredential() error: %v", err)
 	}
@@ -1387,7 +1387,7 @@ func TestSoftwareAdapter_SignatureInAssertion(t *testing.T) {
 
 	assertChallenge := base64.RawURLEncoding.EncodeToString([]byte("sig-verify-assert-challenge-1234"))
 	assertionOpts := buildTestAssertionOptions("localhost", assertChallenge, credID)
-	result, err := adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: assertionOpts})
+	result, err := adapter.GetAssertion(context.Background(), ceremonyFor(assertionOpts))
 	if err != nil {
 		t.Fatalf("GetAssertion() error: %v", err)
 	}
@@ -1621,7 +1621,7 @@ func TestSoftwareAdapter_MakeCredential_InvalidUserID(t *testing.T) {
 		},
 	})
 
-	_, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: opts})
+	_, err := adapter.MakeCredential(context.Background(), ceremonyFor(opts))
 	if err == nil {
 		t.Fatal("MakeCredential() should return error for invalid user ID encoding")
 	}
@@ -1636,7 +1636,7 @@ func TestSoftwareAdapter_GetAssertion_InvalidAllowCredentialID(t *testing.T) {
 	// First register a credential
 	regChallenge := base64.RawURLEncoding.EncodeToString([]byte("inv-allow-reg-challenge-12345678"))
 	creationOpts := buildTestCreationOptions("localhost", regChallenge)
-	_, err := adapter.MakeCredential(context.Background(), &CeremonyOptions{OptionsJSON: creationOpts})
+	_, err := adapter.MakeCredential(context.Background(), ceremonyFor(creationOpts))
 	if err != nil {
 		t.Fatalf("MakeCredential() error: %v", err)
 	}
@@ -1654,7 +1654,7 @@ func TestSoftwareAdapter_GetAssertion_InvalidAllowCredentialID(t *testing.T) {
 	})
 
 	// This should not panic -- the code falls back to using raw bytes
-	_, err = adapter.GetAssertion(context.Background(), &CeremonyOptions{OptionsJSON: opts})
+	_, err = adapter.GetAssertion(context.Background(), ceremonyFor(opts))
 	// It will likely fail because the credential ID doesn't match, which is expected
 	if err == nil {
 		// If it doesn't fail, that's OK too -- we just wanted to exercise the fallback path
@@ -1663,4 +1663,32 @@ func TestSoftwareAdapter_GetAssertion_InvalidAllowCredentialID(t *testing.T) {
 	if !errors.Is(err, ErrCTAPOperationFailed) {
 		t.Errorf("error should wrap ErrCTAPOperationFailed, got: %v", err)
 	}
+}
+
+// ceremonyFor wraps optionsJSON in CeremonyOptions carrying the origin a
+// browser on the relying party's own host reports: https://<rp id>, read from
+// the options' rp.id (creation) or rpId (request). Options with no RP ID, or
+// that are not JSON, get no origin, so the parse and missing-RP-ID failures
+// they exercise are the ones reported.
+func ceremonyFor(optionsJSON []byte) *CeremonyOptions {
+	var doc struct {
+		PublicKey struct {
+			RP struct {
+				ID string `json:"id"`
+			} `json:"rp"`
+			RPID string `json:"rpId"`
+		} `json:"publicKey"`
+	}
+	opts := &CeremonyOptions{OptionsJSON: optionsJSON}
+	if err := json.Unmarshal(optionsJSON, &doc); err != nil {
+		return opts
+	}
+	rpID := doc.PublicKey.RP.ID
+	if rpID == "" {
+		rpID = doc.PublicKey.RPID
+	}
+	if rpID != "" {
+		opts.Origin = "https://" + rpID
+	}
+	return opts
 }

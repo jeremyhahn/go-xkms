@@ -312,6 +312,8 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
 		h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid authenticator response")
 	case errors.Is(err, webauthn.ErrPublicRegistrationDisabled):
 		h.writeError(w, http.StatusForbidden, ErrorCodeRegistrationDisabled, "public registration is disabled")
+	case webauthn.IsSessionLimit(err):
+		h.writeError(w, http.StatusServiceUnavailable, ErrorCodeSessionLimit, "too many unfinished ceremonies; retry later")
 	default:
 		h.writeError(w, http.StatusInternalServerError, ErrorCodeInternalError, "internal server error")
 	}

@@ -18,7 +18,7 @@ import (
 )
 
 func TestCanSeal(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// TPM2 should be able to seal when properly initialized
@@ -40,7 +40,7 @@ func TestCanSeal_NilTransport(t *testing.T) {
 // TestSeal_NilOptions verifies that Seal with nil opts uses Platform SRK defaults
 // and succeeds on a provisioned TPM.
 func TestSeal_NilOptions(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -58,7 +58,7 @@ func TestSeal_NilOptions(t *testing.T) {
 // TestSeal_NilKeyAttributes verifies that Seal with nil KeyAttributes uses
 // Platform SRK defaults and succeeds on a provisioned TPM.
 func TestSeal_NilKeyAttributes(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -78,7 +78,7 @@ func TestSeal_NilKeyAttributes(t *testing.T) {
 // TestSeal_NilOptions_RoundTrip verifies that seal with nil opts produces data
 // that can be unsealed with nil opts.
 func TestSeal_NilOptions_RoundTrip(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -98,7 +98,7 @@ func TestSeal_NilOptions_RoundTrip(t *testing.T) {
 }
 
 func TestUnseal_NilSealedData(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -111,7 +111,7 @@ func TestUnseal_NilSealedData(t *testing.T) {
 }
 
 func TestUnseal_WrongBackendType(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -130,7 +130,7 @@ func TestUnseal_WrongBackendType(t *testing.T) {
 // TestUnseal_NilOptions verifies that Unseal with nil opts uses Platform SRK
 // defaults and the KeyID from sealed data.
 func TestUnseal_NilOptions(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -151,7 +151,7 @@ func TestUnseal_NilOptions(t *testing.T) {
 // TestUnseal_NilKeyAttributes verifies that Unseal with nil KeyAttributes
 // uses Platform SRK defaults and the KeyID from sealed data.
 func TestUnseal_NilKeyAttributes(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -173,7 +173,7 @@ func TestUnseal_NilKeyAttributes(t *testing.T) {
 }
 
 func TestUnseal_NoBackendAvailable(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -202,7 +202,7 @@ func TestUnseal_NoBackendAvailable(t *testing.T) {
 }
 
 func TestSeal_NoBackendAvailable(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -226,7 +226,7 @@ func TestSeal_NoBackendAvailable(t *testing.T) {
 }
 
 func TestSeal_InvalidBackendType(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -245,7 +245,7 @@ func TestSeal_InvalidBackendType(t *testing.T) {
 }
 
 func TestUnseal_InvalidBackendType(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -268,7 +268,7 @@ func TestUnseal_InvalidBackendType(t *testing.T) {
 
 // TestSealWithNilData tests that Seal generates a random key when data is nil
 func TestSealWithNilData(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -292,7 +292,7 @@ func TestSealWithNilData(t *testing.T) {
 
 // TestUnsealWithProvidedBlobs tests the Seal/Unseal roundtrip
 func TestUnsealWithProvidedBlobs(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -331,7 +331,7 @@ func TestUnsealWithProvidedBlobs(t *testing.T) {
 // TestDefaultSealKeyAttributes verifies the default key attributes helper
 // uses the Platform SRK.
 func TestDefaultSealKeyAttributes(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -361,7 +361,7 @@ func TestDefaultSealKeyAttributes_NoPlatformSRK(t *testing.T) {
 // TestDefaultUnsealKeyAttributes verifies the default unseal key attributes
 // helper uses the Platform SRK.
 func TestDefaultUnsealKeyAttributes(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance, ok := tpm.(*TPM2)
@@ -395,7 +395,7 @@ func TestDefaultUnsealKeyAttributes_NoPlatformSRK(t *testing.T) {
 // Seal actually copied opts.Password onto it before sealing, and Unseal did
 // the same before unsealing.
 func TestSeal_Unseal_OptsPassword_RoundTrip(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 	tpm2Instance := tpm.(*TPM2)
 
@@ -432,7 +432,7 @@ func TestSeal_Unseal_OptsPassword_RoundTrip(t *testing.T) {
 // before calling SealKey rather than leaving KeyedHashTemplate's own (empty)
 // AuthPolicy in place.
 func TestSeal_TPMPolicy_AuthPolicyOverridesTemplate(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 	tpm2Instance := tpm.(*TPM2)
 
@@ -464,7 +464,7 @@ func TestSeal_TPMPolicy_AuthPolicyOverridesTemplate(t *testing.T) {
 // before sealing. opts.KeyAttributes is a pointer Seal mutates in place, so
 // the copy is observable directly on the caller's struct after Seal returns.
 func TestSeal_TPMPolicy_CopiesPCRSelectionAndHashAlg(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 	tpm2Instance := tpm.(*TPM2)
 

@@ -31,7 +31,7 @@ import (
 func startTestServer(t *testing.T, handler Handler) (*Client, func()) {
 	t.Helper()
 
-	sockPath := filepath.Join(t.TempDir(), "test.sock")
+	sockPath := filepath.Join(privateDir(t), "test.sock")
 
 	srv, err := NewServer(sockPath, handler, testLogger())
 	require.NoError(t, err)
@@ -97,7 +97,7 @@ func TestClient_Status(t *testing.T) {
 }
 
 func TestClient_DaemonNotRunning(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+	sockPath := filepath.Join(privateDir(t), "nonexistent.sock")
 	client := NewClient(sockPath)
 	defer client.Close()
 
@@ -108,7 +108,7 @@ func TestClient_DaemonNotRunning(t *testing.T) {
 }
 
 func TestClient_DaemonNotRunning_TypePassword(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+	sockPath := filepath.Join(privateDir(t), "nonexistent.sock")
 	client := NewClient(sockPath)
 	defer client.Close()
 
@@ -118,7 +118,7 @@ func TestClient_DaemonNotRunning_TypePassword(t *testing.T) {
 }
 
 func TestClient_DaemonNotRunning_Status(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+	sockPath := filepath.Join(privateDir(t), "nonexistent.sock")
 	client := NewClient(sockPath)
 	defer client.Close()
 
@@ -128,7 +128,7 @@ func TestClient_DaemonNotRunning_Status(t *testing.T) {
 }
 
 func TestClient_Close(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "test.sock")
+	sockPath := filepath.Join(privateDir(t), "test.sock")
 	client := NewClient(sockPath)
 
 	assert.NoError(t, client.Close())
@@ -140,7 +140,7 @@ func TestClient_Close(t *testing.T) {
 }
 
 func TestClient_Close_AllMethods(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "test.sock")
+	sockPath := filepath.Join(privateDir(t), "test.sock")
 	client := NewClient(sockPath)
 	require.NoError(t, client.Close())
 
@@ -202,7 +202,7 @@ func TestClient_MultipleCalls(t *testing.T) {
 
 func TestClient_ServerClosesBeforeResponse(t *testing.T) {
 	// Create a raw Unix socket that accepts and immediately closes.
-	sockPath := filepath.Join(t.TempDir(), "test.sock")
+	sockPath := filepath.Join(privateDir(t), "test.sock")
 	listener, err := net.Listen("unix", sockPath)
 	require.NoError(t, err)
 	defer listener.Close()
@@ -327,8 +327,7 @@ func TestNewClient_SetsDefaultTimeout(t *testing.T) {
 
 func TestClient_ConnectionFailed_PermissionDenied(t *testing.T) {
 	// Create a socket that is not accessible due to permissions.
-	dir := t.TempDir()
-	sockPath := filepath.Join(dir, "test.sock")
+	sockPath := filepath.Join(privateDir(t), "test.sock")
 
 	// Create a listener, then remove access permissions.
 	listener, err := net.Listen("unix", sockPath)

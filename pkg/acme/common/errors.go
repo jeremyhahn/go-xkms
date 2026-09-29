@@ -146,6 +146,14 @@ func RateLimited(detail string) *entities.Error {
 	return entities.NewError(ErrTypeRateLimited, detail, http.StatusTooManyRequests, nil)
 }
 
+// RequestTooLarge creates an ACME error for a request body larger than the
+// server accepts. RFC 8555 Section 6.7 defines no dedicated type for this, so
+// it is "malformed" — the request cannot be processed as sent — carried with
+// HTTP 413 Content Too Large (RFC 9110 Section 15.5.14).
+func RequestTooLarge(detail string) *entities.Error {
+	return entities.NewError(ErrTypeMalformedError, detail, http.StatusRequestEntityTooLarge, nil)
+}
+
 // RejectedIdentifier creates an ACME error for identifiers the server's
 // issuance policy refuses: blocklisted domains/FQDNs/wildcards/IPs,
 // non-public-suffix domains, and reserved-range IPs. HTTP 403 per the

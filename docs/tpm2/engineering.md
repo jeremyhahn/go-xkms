@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/tpm2`
 
@@ -232,6 +232,197 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   self-certification (`TPM2_CertifyCreation`) is authorized by the IAK's own
   authValue, not the EK's (#467).
 
+- **`DecodePCRs` treats its input as adversarial.** `Quote.PCRs` and the
+  TCG-CSR `ProdCaData` carry PCR banks encoded by `EncodePCRs` with
+  `encoding/gob`, and verifiers decode what a remote attester sent.
+  `encoding/gob` is not hardened against adversarial input, so `DecodePCRs`
+  (`pkg/tpm2/encoding.go:74`) refuses more than 64 KiB before decoding and
+  validates the result against what `ReadPCRs` can produce
+  (`encoding.go:50-66`, sharing `maxPCRIndex` with `ReadPCRs`). The gob
+  encoding itself is unchanged: it is the wire format producers already emit.
+
+## Bus protection
+
+The TPM bus is outside the security boundary: an observer with a probe on
+LPC/SPI/I²C sees every command and response. No secret crosses it in
+plaintext, and nothing about that is configurable.
+
+**Salt key.** Every session that carries a secret is salted: its session key
+comes from a random salt encrypted to a TPM-resident key, so a capture neither
+decrypts its parameters nor lets the auth value behind its HMAC be brute
+forced offline. `saltKey` (`pkg/tpm2/session.go:94`) uses the persistent EK at
+`ek.handle`, which it only reads (`TPM2_ReadPublic`) and never modifies. When
+no EK is resident — between `TPM2_Clear` and `CreateEK` during provisioning,
+or on a TPM whose EK was never persisted — `nullSaltKey` (`session.go:115`)
+creates an ephemeral ECC P-256 key in the NULL hierarchy from go-tpm's
+`ECCSRKTemplate` (`session.go:122`), and `startSaltedSession`
+(`session.go:181`) flushes it as soon as `TPM2_StartAuthSession` returns. A
+failure to flush it does not fail the command the session serves — the
+session no longer needs it — but is returned by the session's closer, the
+teardown channel every caller already handles. Any other lookup failure is
+`ErrSaltKey`; it is never answered with an unsalted session.
+
+**Auth values.** A non-empty auth value is proven through a salted HMAC
+session, never a `TPM_RS_PW` password session, which would put the value on
+the bus verbatim:
+
+- objects and NV indexes — `objectAuthSession` (`session.go:261`);
+- hierarchies (the SO PIN) — `hierarchyAuthSession` (`session.go:272`), bound
+  to the hierarchy. `TPM2_HierarchyChangeAuth` and `TPM2_Clear` change the
+  hierarchy's own auth, and the TPM computes their response HMAC with the new
+  value; a bound session authorizing its bind entity leaves the auth value out
+  of the HMAC key, so the response verifies. `withHierarchyAuth`
+  (`session.go:324`) wraps a command in one;
+- the PIN branch of the platform policy — `platformPolicySession`
+  (`session.go:442`) salts the `PolicyAuthValue` session. Unsalted, its HMAC
+  key is the PIN alone.
+
+An empty auth value with nothing to encrypt stays a zero-round-trip empty
+password session.
+
+**Parameter encryption.** AES-128-CFB on the first command or response
+parameter, in the direction the secret travels (`paramEncryption`,
+`session.go:50`): the TPM refuses the attribute with `TPM_RC_ATTRIBUTES` on a
+command whose first parameter is not a TPM2B, so it is set per command, never
+blanket. Where the package builds the authorization itself the same session
+encrypts; where the authorization comes from `CreateSession` /
+`CreateKeySession` — a policy session may answer the PCR branch, which cannot
+encrypt because the TPM mixes the entity's auth value into the key — a
+separate `encryptionSession` (`session.go:250`) is attached as an extra
+session.
+
+| Command | Secret | Protection | Site |
+|---|---|---|---|
+| `TPM2_CreatePrimary` (EK, SSRK, PSRK, IAK, IDevID, `ChangeAuth`) | new key's `userAuth` (the USER PIN for the PSRK); hierarchy auth | salted bound session, encrypt in | `createPrimary`, `key.go:552` |
+| `TPM2_EvictControl` | hierarchy auth | salted bound session | `evictControl`, `key.go:570` |
+| `TPM2_HierarchyChangeAuth` | old and new hierarchy auth | salted bound session, encrypt in | `hierarchyChangeAuth`, `tpm.go:1154` |
+| `TPM2_Clear` | lockout auth | salted bound session | `Clear`, `provision.go:26` |
+| `TPM2_PolicySecret` (endorsement) | endorsement auth | salted bound session | `policySecret`, `session.go:343` |
+| `TPM2_NV_DefineSpace` | hierarchy auth, index auth | salted bound session, encrypt in | `nvDefineSpace`, `nvram.go:888` |
+| `TPM2_NV_Write` (`NVWrite`) | sealed data; hierarchy auth | salted bound session, encrypt in | `nvram.go:117` |
+| `TPM2_NV_Read` (`NVRead`) | sealed data | extra session, encrypt out | `nvram.go:310` |
+| `TPM2_NV_Increment`, `TPM2_NV_Extend`, `TPM2_NV_UndefineSpace`, NV reads under owner auth | hierarchy auth | salted bound session | `nvram.go:539`, `:638`, `:864`, `nvReadAuthorization` `:911` |
+| `TPM2_Create` / `TPM2_CreateLoaded` (seal, RSA, ECDSA, secret, symmetric) | sealed data (symmetric keys included), key `userAuth` | extra session, encrypt in | `seal.go:145`, `rsa.go:124`, `ecdsa.go:123`, `secretkey.go:86` |
+| `TPM2_Unseal` | sealed data (the auto-unsealed PKCS#11 PIN, symmetric key material) | extra session, encrypt out | `seal.go:322`, `seal.go:431` |
+| `TPM2_RSA_Decrypt`, `TPM2_ECDH_ZGen` | plaintext, shared secret | extra session, encrypt out | `rsa.go:307`, `ecdh.go:112` |
+| `TPM2_ActivateCredential` | recovered credential | extra session, encrypt out | `attestation.go:614` |
+| `TPM2_GetRandom` | key material | extra session, encrypt out | `random.go:88` |
+| `TPM2_Sign`, `TPM2_Quote`, `TPM2_Certify`, `TPM2_CertifyCreation`, `TPM2_Load` | key or parent auth | salted HMAC or policy session | `CreateSession` `session.go:620`, `createKeySession` `session.go:808` |
+
+`TPM2_NV_Extend` is not in go-tpm; `nvExtendExecute` (`nv_extend.go:38`)
+marshals it by hand but computes and verifies its authorization through the
+go-tpm `Session`, so it takes the same salted sessions as every other command.
+`HashSequence` (`tpm.go:1847`) runs its sequence object under an empty auth
+value: the ticket's hierarchy needs no authorization, and go-tpm cannot attach
+a session to `TPM2_HashSequenceStart` (its response handle is untagged).
+
+**Callers on a raw transport.** Three callers drive go-tpm on a transport of
+their own rather than through a `TPM2`. They take the same session layer
+through its transport-level entry points, which salt against the ephemeral
+NULL-hierarchy key (a bare transport carries no EK configuration) and never
+touch the EK or any SRK:
+
+- `HierarchyAuthSession(t, hierarchy, auth)` (`session.go:291`) — the salted
+  bound hierarchy session of `hierarchyAuthSession`, encrypting nothing; an
+  empty auth is the empty password session.
+- `CommandEncryptionSession(t)` (`session.go:306`) and
+  `ResponseEncryptionSession(t)` (`session.go:317`) — the extra session of
+  `encryptionSession`, encrypting the command's or the response's first
+  parameter.
+
+| Caller | Command | Secret | Protection | Site |
+|---|---|---|---|---|
+| `pkg/luks` `SealPassphrase` | `TPM2_Create` under the sealing parent | LUKS passphrase | extra session, encrypt in | `pkg/luks/tpm.go:241` |
+| `pkg/luks` `UnsealPassphrase` | `TPM2_Unseal` (PCR policy session) | LUKS passphrase | extra session, encrypt out | `pkg/luks/tpm.go:355` |
+| `pkg/storage/hardware` `TPM2CertStorage` | `TPM2_NV_DefineSpace`, `TPM2_NV_Write`, `TPM2_NV_Read`, `TPM2_NV_UndefineSpace` | owner auth (SO PIN) | salted bound session | `ownerAuthSession`, `pkg/storage/hardware/tpm2_cert_storage.go:681` |
+| `pkg/backend/tpm2` `UnwrapKey` | `TPM2_Unseal` of the imported object | unwrapped key material | extra session, encrypt out | `pkg/backend/tpm2/importexport.go:423` |
+
+`pkg/luks` opens its own transport per operation (`TPMOpener`) and hands it
+to the entry points; its sealing parent and PCR policy are unchanged. The
+certificate NV indexes hold public certificates under an empty index auth,
+so their data is not encrypted — only the SO PIN needed protecting.
+
+## Symmetric keys
+
+`GenerateSymmetricKey`, `GetSymmetricKey` and `SymmetricEncrypter`
+(`pkg/tpm2/symmetric.go:98`, `:211`, `:278`) back the `types.SymmetricKeyProvider`
+of `pkg/backend/tpm2` (`backend.go:960`, `:1006`) and the PKCS#11 `C_DeriveKey`
+path (`pkg/tpm2/kdf.go:57`). The AES key (128 or 256 bits) is generated in Go,
+sealed in the TPM as a keyed-hash object, and unsealed for every `Encrypt`,
+`Decrypt` and derivation; AES-GCM itself runs in Go (`pkg/crypto/aead`).
+
+**Storage is the seal path.** A symmetric key is created by `sealKeyInternal`
+(`seal.go:24`) and unsealed by `unsealKeyInternal` (`seal.go:250`), the path
+every other secret sealed under the Platform SRK takes; `symmetric.go` adds no
+session or policy code of its own:
+
+- **Parent: the Platform SRK, only.** `symmetricSealAttrs`
+  (`symmetric.go:169`) takes `attrs.Parent`, or the Platform SRK's own
+  attributes when none is named, and refuses any parent whose handle is not
+  `platformSRKHandle` (`platform_keystore.go:599`) with
+  `ErrSymmetricKeyParent`. The Shared SRK is never a parent.
+- **Parent authorization: USER PIN or platform policy.** `TPM2_Create` and
+  `TPM2_Load` are authorized by `CreateSession` (`session.go:523`): with
+  `Parent.Password` set, the salted USER PIN session (the `PolicyAuthValue`
+  branch when the Platform SRK carries the platform policy); without it, the
+  PCR branch. Nobody without the PIN, or without the measured platform state,
+  can load the key.
+- **Object authorization, as for every sealed object.** The object's
+  `userAuth` is `attrs.Password` (`seal.go:55`); with `attrs.PlatformPolicy`
+  its `authPolicy` is the platform policy digest and the policy pin is
+  recorded beside it (`seal.go:100`, `:236`). `TPM2_Unseal` is authorized by
+  `createKeySession` (`session.go:711`). The template is always
+  `KeyedHashTemplate` (`types.go:735`); a caller's `TPMAttributes` is dropped.
+- **DA protection.** `NoDA` is clear, as on every sealed object and on the
+  Platform SRK itself (`enableDAOnSRK`, `platform_keystore.go:652`): a wrong
+  object password advances the lockout counter.
+- **Bus.** The key material enters under an `encryptIn` session
+  (`seal.go:138`) and leaves under an `encryptOut` session (`seal.go:315`),
+  both salted. It never crosses the TPM bus in plaintext.
+
+Blobs are `<CN>.blob`, `<CN>.pub` and, for a platform-policy key,
+`<CN>.policy`, the same files `DeleteKey` removes.
+
+**Keys written before this rule.** Earlier releases parented symmetric keys
+on the Shared SRK with no authorization and `NoDA` set, and stored them as
+`<CN>.priv` plus a size-prefixed `<CN>.pub`. They are not migrated.
+`GetSymmetricKey` recognises that public area (`unprotectedSymmetricKeyBlob`,
+`symmetric.go:552`) and returns `ErrUnprotectedSymmetricKey`, whose detail
+names the exact `<CN>.priv` file to remove (`symmetric.go:241`).
+
+`FileBackend.Delete` (`store/file_backend.go:95`) includes
+`FSEXT_LEGACY_PRIVATE_BLOB` (`.priv`, `store/interfaces.go:51`) in the
+extensions it removes, so a `<CN>.priv` blob is cleaned up whenever `Delete`
+runs for that CN. It cannot run there on its own: `DeleteKey` for a sealed
+object first calls `UnsealKey` to prove the caller owns the key
+(`key.go:1775`), and `UnsealKey` loads the private blob from
+`FSEXT_PRIVATE_BLOB` (`.blob`) — a pre-#1148 key has no such file, so the
+load fails before `DeleteKey` ever reaches the delete step. A pre-#1148 key
+is therefore never removable through `DeleteKey`/`DeleteKeyPair`; an operator
+who hits `ErrUnprotectedSymmetricKey` deletes the named `<CN>.priv` (and its
+`<CN>.pub`) from the TPM2 key directory by hand — see
+[`user.md`](user.md)'s "Legacy symmetric key cleanup" for the exact steps.
+There is no scanning command that finds these files automatically; adding
+one is a future decision, not part of this fix (go-xkms#1168).
+
+**Why not `TPM2_EncryptDecrypt2`.** A TPM-resident `TPM_ALG_SYMCIPHER` key
+would never leave the TPM, but the command offers CFB, CBC, ECB, CTR and OFB
+only; no mode is authenticated. GCM could be composed from TPM CTR plus a Go
+GHASH, at the cost of exposing the hash subkey `H` to the host, of a
+composition that is not a FIPS-validated GCM, and of a TPM round trip per
+1 KiB (`MAX_DIGEST_BUFFER`). The command is also optional in the PC Client
+profile and absent on some firmware TPMs. It is feasible later as an opt-in
+for small payloads, behind a `TPM2_GetCapability(TPM_CAP_COMMANDS)` check,
+not as the default.
+
+Tests: `symmetric_psrk_simulator_test.go` covers the USER PIN round trip, a
+missing or wrong PIN (`TPM_RC_AUTH_FAIL`), both platform-policy branches (a
+moved PCR refuses the PCR branch with `TPM_RC_POLICY_FAIL`; the PIN branch
+survives), the object's own password, the Platform SRK as the parent handle
+of every `TPM2_Create` and `TPM2_Load`, the refusal of a Shared SRK parent and
+of a pre-rule blob. The #1147 bus recorder asserts that neither the AES key
+nor the PIN appears in any command or response.
+
 ## Error semantics
 
 Typed errors throughout; `pkg/attestation/errors.go` holds the verification
@@ -247,6 +438,10 @@ vocabulary. The categories that need distinguishing:
 | EK chain does not verify | the manufacturer root is not trusted |
 | AK certification invalid | the AK is not bound to that EK |
 | quote signature or nonce invalid | the evidence is not fresh or not from that AK |
+| `ErrSymmetricKeyParent` | a symmetric key was asked to live under a parent other than the Platform SRK, or no Platform SRK is available. Nothing is created or loaded |
+| `ErrUnprotectedSymmetricKey` | the stored symmetric key predates the Platform SRK rule (Shared SRK parent, no authorization, `NoDA`). It is refused, never loaded; delete and regenerate it |
+| `ErrPCRDataTooLarge` | encoded PCR banks over 64 KiB, refused by `DecodePCRs` before gob decodes them (`pkg/tpm2/encoding.go:74`) |
+| `ErrInvalidPCRData` | decoded PCR banks no TPM reports: more than 8 banks, more than 24 PCRs in a bank, an index outside 0..23, or a value longer than 64 bytes (`validatePCRBanks`, `pkg/tpm2/encoding.go:91`) |
 | `ErrECCPublicArea` | the ECC public area does not yield a valid public key: bad parameters, an unknown curve, or a point that is not on the curve. On the `TPM2_Certify` path it is wrapped as `ErrCertifyMalformed`; the underlying `ecpoint.ErrInvalidPoint` stays reachable through `errors.Is` |
 | `ErrAdminWithPolicyNoAuthPolicy` | the template about to be created from sets `adminWithPolicy` while naming no `authPolicy`, so the object's ADMIN role would be unauthorizable by anything. Raised by `assertAdminAuthorizable` before `TPM2_CreatePrimary`; nothing is created |
 | `ErrDevIDTemplateNonConformant` | the IDevID or IAK template about to be created from departs from TCG Templates H-0 through H-4 in an attribute, its `authPolicy`, its `unique` string, its scheme, its symmetric definition, its exponent, its KDF or its curve. Raised by `assertDevIDTemplateConformant` before `TPM2_CreatePrimary`; nothing is created |
@@ -267,6 +462,8 @@ vocabulary. The categories that need distinguishing:
 | `ErrTCGCSRPad` | the TPM's RNG could not supply the §13.1 random pad |
 | `ErrEKCertServiceUnreachable` | `EKConfig.CertDownload` is `true` and the manufacturer EK certificate service request (`downloadEKCertFromManufacturer`) failed to connect, timed out, or answered a non-200 status. The underlying transport error — including a context-deadline timeout — is reachable as detail through `errors.Is` |
 | `ErrEKCertServiceParseFailed` | the manufacturer EK certificate service answered 200 but the body was neither valid DER nor PEM `x509.Certificate` bytes |
+| `ErrSaltKey` | no key could be resolved to salt a session against: reading the EK failed for a reason other than an absent handle, or the ephemeral NULL-hierarchy key could not be created. No unsalted session is started in its place |
+| `ErrSaltedSession` | `TPM2_StartAuthSession` for a salted session failed; the TPM or transport error stays in the chain |
 | `ErrProvisioningStateRead` | `State` could not compute the live platform policy digest needed for `PlatformSRKPolicyCurrent` |
 | `ErrClearLockoutRefused`, `ErrClearPlatformRefused` | `ClearForReprovision`'s LOCKOUT or PLATFORM `TPM2_Clear` attempt was refused; logged, then the next path is tried |
 | `ErrForceClear` | the PPI sysfs write (`ForceClear`, the seam `ppiRequestWriter`) failed |
@@ -300,6 +497,27 @@ ECDSA) — changing it changes every verifier in `pkg/ca` and `pkg/acme`; and
 `idevid.pad=false` emits an unpadded structure the specification's typedef
 does not describe. `UnmarshalIDevIDCSR` accepts both structure versions so a
 CA on this release still enrolls a device on the previous one.
+
+**Parsing is bounded by the input, not by the length fields.** A
+TCG-CSR-IDEVID reaches the CA from the network -- the `enroll-01` challenge
+response and ACME finalize (`pkg/acme/server/handlers/order_finalize.go`) --
+and carries fifteen attacker-chosen 32-bit lengths.
+`UnmarshalIDevIDCSR` (`pkg/tpm2/idevid_csr.go:656`) refuses input over
+`MaxIDevIDCSRSize` (1 MiB, `idevid_csr.go:35`) with
+`*IDevIDCSRTooLargeError`, and every variable-length field, the signature
+included, is read by `readSizedField` (`idevid_csr.go:822`), which compares
+the declared length with the bytes remaining **before** `make` and returns
+`*IDevIDCSRFieldSizeError{Field, Declared, Remaining}` (it wraps
+`io.ErrUnexpectedEOF`) when it does not fit. `UnpackIDevIDContent`
+(`idevid_csr.go:702`) applies the same bound to a caller's reader.
+`UnpackIDevIDCSR` (`idevid_csr.go:849`), whose size fields and data slices
+are independent struct fields, copies through `copySizedField`
+(`idevid_csr.go:839`): a size larger than its slice is `store.ErrCorruptCopy`
+before the buffer is allocated. `ParseEventLog` bounds each event's data at
+`MaxEventDataSize` (`pkg/tpm2/eventlog.go:38`, `*EventDataTooLargeError`).
+`UnpackProdCaData` (`prodcadata.go`) already checked the sum of its four
+lengths against the input before allocating. Regression and fuzz coverage:
+`pkg/tpm2/idevid_csr_bounds_test.go` (`FuzzUnmarshalIDevIDCSR`), go-xkms#1172.
 
 ## Configuration
 
@@ -339,9 +557,9 @@ CA on this release still enrolls a device on the previous one.
   Policy NV Index with the platform Delegation Policy (see Invariants). The
   default configuration sets it on the IDevID. It does not alter the key.
 - **PCR selection and policy** — `pkg/seal/policy` and `pcr.go`.
-- **Session encryption** — TPM2 session encryption is configurable; see the
-  legacy `docs/configuration/tpm2-session-encryption.md` pending its own
-  migration.
+- **Session encryption** — not configurable. Every secret crosses the TPM bus
+  encrypted, always; the `encrypt-sessions` / `EncryptSession` switch was
+  removed (#1147). See [Bus protection](#bus-protection).
 - **`ek.cert-download`** (`EKConfig.CertDownload`, default `false`) — opts in
   to downloading the EK certificate from the TPM manufacturer's EK
   certificate service (`https://ekop.intel.com/ekcertservice/` by default)
@@ -421,6 +639,27 @@ The suite is unusually large and deliberately structured:
   DER/PEM download, a request that exceeds `CertDownloadTimeout`
   (`ErrEKCertServiceUnreachable`, bounded rather than blocking), and a
   malformed response (`ErrEKCertServiceParseFailed`).
+- **Bus capture** (`session_encryption_simulator_test.go`) — routes the TPM
+  through a recording transport and, for provisioning with an SO PIN, PSRK
+  creation, sealing and unsealing through both the PIN and the PCR branch, an
+  NV secret under owner auth and `TPM2_GetRandom`, asserts that the plaintext
+  PIN or secret appears in no command and no response, that each
+  secret-bearing command carries a session with the decrypt or encrypt
+  attribute, and that the sessions authorizing it are salted. The recorder
+  copies each command before forwarding it: the in-process simulator decrypts
+  an encrypted parameter in place, in the buffer it is handed. The same file
+  covers `saltKey` with no EK resident and with a failing transport. The
+  recorder is `pkg/tpm2/tpm2test/tpmbus`, which imports nothing from go-xkms
+  so the raw-transport callers use it too:
+  `session_transport_simulator_test.go` (the transport-level entry points,
+  including a salt key the TPM refuses to flush),
+  `pkg/luks/tpm_bus_simulator_test.go`,
+  `pkg/storage/hardware/tpm2_cert_storage_bus_test.go` and
+  `pkg/backend/tpm2/importexport_bus_sim_test.go`. The
+  integration counterpart, `test/integration/tpm2/capture_test.go`, runs the
+  same kind of capture against the devcontainer's networked simulator
+  (`make test-tpm2-encryption`, or `make test-tpm2-encryption-local` against a
+  local simulator).
 - **Leak suites** — object contexts, auth sessions, auth sessions under
   transport fault, general resources. These are the regression guard for the
   package's hardest rule.

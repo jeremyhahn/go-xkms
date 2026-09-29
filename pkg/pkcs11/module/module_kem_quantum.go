@@ -14,9 +14,10 @@
 // Package module provides the quantum-enabled KEM dispatch functions for
 // the PKCS#11 v3.2 C_EncapsulateKey and C_DecapsulateKey operations.
 //
-// When built with the "quantum" build tag, these functions type-assert the
-// quantumCrypto field to *QuantumCryptoManager and delegate to the
-// EncapsulateInit/Encapsulate and DecapsulateInit/Decapsulate methods.
+// These functions are compiled in every build: there is no "quantum" build
+// tag (see module_quantum.go). They type-assert the quantumCrypto field to
+// *QuantumCryptoManager and delegate to the EncapsulateInit/Encapsulate and
+// DecapsulateInit/Decapsulate methods.
 //
 // References:
 //   - NIST FIPS 203: Module-Lattice-Based Key-Encapsulation Mechanism Standard

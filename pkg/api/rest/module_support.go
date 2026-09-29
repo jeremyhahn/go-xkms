@@ -38,7 +38,9 @@ import (
 // before the handler chain runs — the identity plane is shared by
 // construction (xkms auth.Identity IS qrdb's Identity).
 func (s *Server) BindRoute(spec RouteSpec) http.Handler {
-	var h http.Handler = spec.Handler(s)
+	// The request body bound is xkms's own per-route concern, identical to
+	// the legacy router's (registerRoutes).
+	h := BodyLimitMiddleware(spec.bodyLimit())(spec.Handler(s))
 
 	// Authentication is NOT applied here: on the unified server go-qrdb's
 	// middleware authenticates every non-public route — its own mTLS chain
@@ -51,7 +53,7 @@ func (s *Server) BindRoute(spec RouteSpec) http.Handler {
 		h = s.TenantMiddleware()(h)
 	case GroupAuthSession, GroupWebAuthn:
 		if s.authRateLimiter != nil && s.authRateLimiter.IsEnabled() {
-			h = ratelimit.Middleware(s.authRateLimiter)(h)
+			h = ratelimit.Middleware(s.authRateLimiter, s.trustedProxies)(h)
 		}
 	}
 

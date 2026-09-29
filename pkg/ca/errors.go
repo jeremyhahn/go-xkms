@@ -87,7 +87,18 @@ var (
 	ErrCRLGenerationFailed = errors.New("ca: crl generation failed")
 
 	// ErrAlreadyRevoked indicates the certificate is already revoked.
+	// recordRevocation (go-xkms#1131) returns it wrapped in *errs.Detail,
+	// naming the original revocation's time and reason, whenever the
+	// existing record was readable; errors.Is still matches the wrapped
+	// form.
 	ErrAlreadyRevoked = errors.New("ca: certificate already revoked")
+
+	// ErrRevocationRecordCorrupt indicates a persisted revocation record
+	// could not be decoded, or decoded to a serial that does not match the
+	// key it is stored under. Every reader of revocation state fails closed
+	// on it: a record that cannot be read is never treated as "not
+	// revoked", because that would silently un-revoke the certificate.
+	ErrRevocationRecordCorrupt = errors.New("ca: corrupt revocation record")
 )
 
 // Chain errors indicate issues with certificate chain validation.
@@ -163,6 +174,34 @@ var (
 
 	// ErrStorageError indicates a storage operation failed.
 	ErrStorageError = errors.New("ca: storage operation failed")
+)
+
+// PKI fetch errors indicate a refused or failed download of a certificate or
+// CRL named by another certificate's AIA or CRL distribution point extension.
+// Those URLs are chosen by whoever issued the certificate, so every fetch is
+// treated as attacker-directed.
+var (
+	// ErrPKIFetchRefused indicates the URL was not fetched: its scheme is not
+	// http or https, it resolves to a loopback, private, link-local or
+	// otherwise non-public address, or it redirected too many times.
+	ErrPKIFetchRefused = errors.New("ca: pki object fetch refused")
+
+	// ErrPKIFetchTooLarge indicates the response body exceeded the size
+	// limit for the object being fetched.
+	ErrPKIFetchTooLarge = errors.New("ca: pki object response too large")
+
+	// ErrAIALoop indicates an AIA walk fetched a certificate it had already
+	// visited, so following it would never terminate.
+	ErrAIALoop = errors.New("ca: aia chain loops")
+
+	// ErrAIADepthExceeded indicates an AIA walk reached maxAIADepth issuers
+	// without arriving at a self-signed certificate.
+	ErrAIADepthExceeded = errors.New("ca: aia chain too deep")
+
+	// ErrAIAIssuerSignatureInvalid indicates a certificate fetched from an
+	// AIA URL did not sign the certificate that named it, so it is not that
+	// certificate's issuer and is never imported.
+	ErrAIAIssuerSignatureInvalid = errors.New("ca: aia certificate did not sign the child certificate")
 )
 
 // Serial number errors indicate issues with certificate serial generation.

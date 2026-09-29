@@ -13,7 +13,7 @@
 
 // Package ca coverage boost, fifteenth pass: targets remaining uncovered
 // functions identified after boost14. All tests are in-memory, fast,
-// race-detector clean. Tests that mutate package-level state (aiaHTTPClient)
+// race-detector clean. Tests that mutate package-level state
 // or shared CA fields must NOT use t.Parallel().
 package ca
 
@@ -655,6 +655,7 @@ func TestImportDistributionCRLs_HTTPGetError_B15(t *testing.T) {
 	server.Close() // close before the request is made
 
 	ca := setupTestCAWithObjectStore(t)
+	allowLoopbackFetch(ca)
 
 	// Build a leaf cert with a CRL distribution point pointing to the closed URL.
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

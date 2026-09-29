@@ -66,7 +66,9 @@ func (f *fakeQRDBUserClient) GetUserByCertThumbprint(ctx context.Context, thumbp
 	}
 	u, ok := f.byThumbprint[thumbprint]
 	if !ok {
-		return nil, errors.New("user not found")
+		// The SDK's one typed not-found, exactly as every qrdb transport
+		// returns it for an unbound thumbprint.
+		return nil, &qrdbtransport.UserNotFoundError{Lookup: "cert_spki/" + thumbprint}
 	}
 	return u, nil
 }
@@ -103,110 +105,65 @@ func (f *fakeQRDBUserClient) DisableUser(ctx context.Context, id uint64) error {
 	return errors.New("not implemented in fake")
 }
 
-// fakeQRDBRoleClient is a narrow in-memory stand-in for qrdbtransport.RoleClient
-// exercising only GetRole, the single method QRDBUserStore calls.
-type fakeQRDBRoleClient struct {
-	byID map[string]*qrdbtransport.Role
-	err  error
-}
-
-func newFakeQRDBRoleClient() *fakeQRDBRoleClient {
-	return &fakeQRDBRoleClient{byID: make(map[string]*qrdbtransport.Role)}
-}
-
-func (f *fakeQRDBRoleClient) CreateRole(ctx context.Context, req *qrdbtransport.CreateRoleRequest) (*qrdbtransport.Role, error) {
-	return nil, errors.New("not implemented in fake")
-}
-
-func (f *fakeQRDBRoleClient) GetRole(ctx context.Context, id string) (*qrdbtransport.Role, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	r, ok := f.byID[id]
-	if !ok {
-		return nil, errors.New("role not found")
-	}
-	return r, nil
-}
-
-func (f *fakeQRDBRoleClient) GetRoleByName(ctx context.Context, req *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
-	return nil, errors.New("not implemented in fake")
-}
-
-func (f *fakeQRDBRoleClient) UpdateRole(ctx context.Context, req *qrdbtransport.UpdateRoleRequest) (*qrdbtransport.Role, error) {
-	return nil, errors.New("not implemented in fake")
-}
-
-func (f *fakeQRDBRoleClient) DeleteRole(ctx context.Context, id string) error {
-	return errors.New("not implemented in fake")
-}
-
-func (f *fakeQRDBRoleClient) ListRoles(ctx context.Context, req *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error) {
-	return nil, errors.New("not implemented in fake")
-}
-
-func (f *fakeQRDBRoleClient) AssignRole(ctx context.Context, userID uint64, roleID string) error {
-	return errors.New("not implemented in fake")
-}
-
-func (f *fakeQRDBRoleClient) UnassignRole(ctx context.Context, userID uint64, roleID string) error {
-	return errors.New("not implemented in fake")
-}
-
-func (f *fakeQRDBRoleClient) ListPermissions(ctx context.Context) (*qrdbtransport.ListPermissionsResponse, error) {
-	return nil, errors.New("not implemented in fake")
-}
-
-func (f *fakeQRDBRoleClient) ResolvePermissions(ctx context.Context, req *qrdbtransport.ResolvePermissionsRequest) (*qrdbtransport.ResolvePermissionsResponse, error) {
-	return nil, errors.New("not implemented in fake")
-}
-
-// ReconcileBuiltInRoles is outside this fake's stated scope -- QRDBUserStore
-// calls GetRole and nothing else -- so it reports the verb as unimplemented
-// exactly as the fake's other out-of-scope methods do. The real convergence
-// lives in pkg/qrdbrole.
-func (f *fakeQRDBRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
-	return nil, errors.New("not implemented in fake")
-}
-
 func TestNewQRDBUserStore(t *testing.T) {
 	users := newFakeQRDBUserClient()
-	roles := newFakeQRDBRoleClient()
-	store := NewQRDBUserStore(users, roles)
+	store := NewQRDBUserStore(users)
 	require.NotNil(t, store)
 	assert.Same(t, users, store.users)
-	assert.Same(t, roles, store.roles)
 }
 
+// TestQRDBUserStore_GetByCertFingerprint_Success proves the store carries
+// every assigned role as the qrdb role ID the user record holds -- go-qrdb's
+// authorizer resolves permissions by role ID, never by name (go-xkms#1069).
 func TestQRDBUserStore_GetByCertFingerprint_Success(t *testing.T) {
 	users := newFakeQRDBUserClient()
 	users.byThumbprint["thumb-1"] = &qrdbtransport.User{
-		Username:  "alice",
-		Email:     "alice@example.com",
-		TenantID:  "tenant-a",
-		RoleIDs:   []string{"role-1"},
-		Lifecycle: string(qrdbsdk.LifecycleActive),
+		Username:    "alice",
+		Email:       "alice@example.com",
+		TenantID:    "tenant-a",
+		RoleIDs:     []string{"role-id-admin", "role-id-owner"},
+		Lifecycle:   string(qrdbsdk.LifecycleActive),
+		AuthMethods: []string{"mtls", "webauthn"},
 	}
-	roles := newFakeQRDBRoleClient()
-	roles.byID["role-1"] = &qrdbtransport.Role{ID: "role-1", Name: "admin"}
 
-	store := NewQRDBUserStore(users, roles)
+	store := NewQRDBUserStore(users)
 	u, err := store.GetByCertFingerprint(context.Background(), "thumb-1")
 	require.NoError(t, err)
 	assert.Equal(t, "alice", u.Username)
 	assert.Equal(t, "alice@example.com", u.Email, "the canonical login key must be projected")
-	assert.Equal(t, "admin", u.Role)
+	assert.Equal(t, []string{"role-id-admin", "role-id-owner"}, u.Roles,
+		"every role ID must be carried verbatim, none dropped or renamed")
 	assert.Equal(t, "tenant-a", u.TenantID)
 	assert.True(t, u.Enabled)
+	assert.Equal(t, []string{"mtls", "webauthn"}, u.AuthMethods, "the permitted-method policy must be projected")
+}
+
+// TestQRDBUserStore_GetByCertFingerprint_RolesAreACopy proves the projected
+// roles do not alias the user record's slice, so a caller mutating the
+// identity cannot rewrite the store's answer.
+func TestQRDBUserStore_GetByCertFingerprint_RolesAreACopy(t *testing.T) {
+	users := newFakeQRDBUserClient()
+	record := &qrdbtransport.User{
+		Username:  "dave",
+		TenantID:  "system",
+		RoleIDs:   []string{"role-id-admin"},
+		Lifecycle: string(qrdbsdk.LifecycleActive),
+	}
+	users.byThumbprint["thumb-4"] = record
+
+	u, err := NewQRDBUserStore(users).GetByCertFingerprint(context.Background(), "thumb-4")
+	require.NoError(t, err)
+	u.Roles[0] = "tampered"
+	assert.Equal(t, "role-id-admin", record.RoleIDs[0])
 }
 
 func TestQRDBUserStore_GetByCertFingerprint_UserNotFound(t *testing.T) {
-	users := newFakeQRDBUserClient()
-	roles := newFakeQRDBRoleClient()
-	store := NewQRDBUserStore(users, roles)
+	store := NewQRDBUserStore(newFakeQRDBUserClient())
 
 	_, err := store.GetByCertFingerprint(context.Background(), "missing-thumb")
-	require.Error(t, err)
+	var notFound *qrdbsdk.UserNotFoundError
+	require.ErrorAs(t, err, &notFound,
+		"the store must pass qrdb's typed not-found through so the authenticator can tell it from an outage")
 }
 
 func TestQRDBUserStore_GetByCertFingerprint_NoRoleIDs(t *testing.T) {
@@ -217,13 +174,12 @@ func TestQRDBUserStore_GetByCertFingerprint_NoRoleIDs(t *testing.T) {
 		RoleIDs:   nil,
 		Lifecycle: string(qrdbsdk.LifecycleActive),
 	}
-	roles := newFakeQRDBRoleClient()
-	store := NewQRDBUserStore(users, roles)
+	store := NewQRDBUserStore(users)
 
 	u, err := store.GetByCertFingerprint(context.Background(), "thumb-2")
 	require.NoError(t, err)
 	assert.Equal(t, "bob", u.Username)
-	assert.Empty(t, u.Role, "role should be empty when the user carries no role ids")
+	assert.Empty(t, u.Roles, "roles should be empty when the user carries no role ids")
 }
 
 // TestQRDBUserStore_GetByCertFingerprint_NoEmailLoginKey proves a user
@@ -237,7 +193,7 @@ func TestQRDBUserStore_GetByCertFingerprint_NoEmailLoginKey(t *testing.T) {
 		TenantID:  "system",
 		Lifecycle: string(qrdbsdk.LifecycleActive),
 	}
-	store := NewQRDBUserStore(users, newFakeQRDBRoleClient())
+	store := NewQRDBUserStore(users)
 
 	u, err := store.GetByCertFingerprint(context.Background(), "thumb-svc")
 	require.NoError(t, err)
@@ -245,25 +201,21 @@ func TestQRDBUserStore_GetByCertFingerprint_NoEmailLoginKey(t *testing.T) {
 	assert.Empty(t, u.Email, "no login key must project as empty, never fabricated")
 }
 
-// TestQRDBUserStore_GetByCertFingerprint_RoleResolutionFails proves that a
-// failed role lookup degrades the resolved role to empty rather than failing
-// the cert-bound lookup outright, matching the documented behavior: a valid
-// cert binding still authenticates even if the role name cannot be resolved.
-func TestQRDBUserStore_GetByCertFingerprint_RoleResolutionFails(t *testing.T) {
+// TestQRDBUserStore_GetByCertFingerprint_DisabledUser proves a user whose
+// lifecycle is not active projects Enabled=false, so the authenticator
+// refuses it.
+func TestQRDBUserStore_GetByCertFingerprint_DisabledUser(t *testing.T) {
 	users := newFakeQRDBUserClient()
 	users.byThumbprint["thumb-3"] = &qrdbtransport.User{
 		Username:  "carol",
 		TenantID:  "tenant-c",
-		RoleIDs:   []string{"role-missing"},
+		RoleIDs:   []string{"role-id-user"},
 		Lifecycle: string(qrdbsdk.LifecycleDisabled),
 	}
-	roles := newFakeQRDBRoleClient()
-	roles.err = errors.New("role service unavailable")
-	store := NewQRDBUserStore(users, roles)
+	store := NewQRDBUserStore(users)
 
 	u, err := store.GetByCertFingerprint(context.Background(), "thumb-3")
 	require.NoError(t, err)
 	assert.Equal(t, "carol", u.Username)
-	assert.Empty(t, u.Role)
 	assert.False(t, u.Enabled)
 }

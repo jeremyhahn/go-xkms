@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -416,12 +417,25 @@ func (b *Backend) loadAndUnseal(public *tpm2.TPMTPublic, outPrivate tpm2.TPM2BPr
 	}
 	defer b.tpm.Flush(loadResp.ObjectHandle)
 
+	// The key material leaves the TPM in TPM2_Unseal's first response
+	// parameter. The imported object's empty password authorization cannot
+	// encrypt it, so a salted session of its own encrypts it on the way out.
+	encSession, closeEncSession, err := pkgtpm2.ResponseEncryptionSession(b.tpm.Transport())
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrSessionCreationFailed, Detail: "unseal encryption session", Cause: err}
+	}
+	defer func() {
+		if closeErr := closeEncSession(); closeErr != nil {
+			b.logger.Error("failed to close unseal encryption session", slog.String("error", closeErr.Error()))
+		}
+	}()
+
 	unseal, err := tpm2.Unseal{
 		ItemHandle: tpm2.NamedHandle{
 			Handle: loadResp.ObjectHandle,
 			Name:   loadResp.Name,
 		},
-	}.Execute(b.tpm.Transport())
+	}.Execute(b.tpm.Transport(), encSession)
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to unseal imported object: %v", err)}
 	}

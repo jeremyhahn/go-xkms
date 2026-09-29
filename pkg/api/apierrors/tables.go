@@ -127,6 +127,10 @@ var BarrierSentinelClasses = []SentinelClass{
 	{seal.ErrStrategyMismatch, ClassFailedPrecondition},
 	{seal.ErrCorruptRootKey, ClassDataLoss},
 	{seal.ErrEncryptorNotAvailable, ClassFailedPrecondition},
+	// BarrierEnableEncryption's target tenant is caller-supplied; XKMSService's
+	// tenant binding refuses a foreign one with an error that unwraps to
+	// go-qrdb's unknown-tenant sentinel (xkms.TenantBindingError).
+	{qrdbsdk.ErrTenantMissing, ClassNotFound},
 
 	// Shamir secret sharing errors.
 	{seal.ErrShamirNotConfigured, ClassFailedPrecondition},

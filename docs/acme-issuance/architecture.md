@@ -82,7 +82,7 @@ Rejected alternatives:
 | Issuance | `pkg/acme/server/handlers.OrderFinalizeHandler` calls `s.ca` (`pkg/ca`) directly; `pkg/acme/issuance` is not on this path — see Data flow below |
 | Storage | `pkg/acme/storage`, `pkg/acme/qrdb` (through `go-qrdb/sdk/go`) |
 | Identifier policy, CAA | `pkg/acme/policy`, `pkg/acme/server/caa.go` — both wired, see Trust boundaries |
-| Rate limits | `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` — wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`), keyed per client (JWS KID or IP); `tenant_rate_limiter.go` exists but is wired into neither; see Trust boundaries |
+| Rate limits, request body cap | `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` — wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`), keyed per client IP; the tenant and per-category limiters (`tenant_rate_limiter.go`) keyed on verified accounts; `pkg/acme/server/request_body.go`'s `RequestBodyMiddleware` reads every body once, capped at 256 KiB, ahead of all of them; see Trust boundaries |
 | Circuit breakers, degradation cache | `pkg/acme/server/circuitbreaker` (breakers, `Manager`, the HTTP middleware, and the `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators), `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers` (the shared challenge-verifier wrapping helper), `pkg/acme/server/degradation` (the cache `GET /acme/directory` and `GET /acme/ca-bundle` fall back to) — wired into both xkmsd and the standalone `TrustedCA`; see Trust boundaries |
 | Certificate Transparency | `pkg/acme/ct` |
 | Admin plane | `pkg/acme/admin` |
@@ -141,6 +141,14 @@ through ACME against an existing node's directory.
   clients already retry.
 - **Challenge validation happens server-side, out of band.** Nothing the client
   asserts about itself is trusted; the server fetches, resolves, or activates.
+- **The validation target is client-chosen, so the server's reach is
+  bounded.** Every fetch from a client-named host goes through one
+  SSRF-safe client (`pkg/acme/challenges/validation`): bare host only, no
+  loopback/private/link-local/metadata address after DNS resolution, capped
+  responses, and client-facing errors reduced to a fixed category. Reaching a
+  private target is an explicit, default-off switch,
+  `acme.challenges.allow_private_targets` (go-xkms#1172; see
+  [`engineering.md`](engineering.md) "Challenge validation client").
 - **`enroll-01` trusts the TPM manufacturer chain**, not the requester. If the
   EK certificate does not chain to a trusted manufacturer root, activation
   cannot succeed.
@@ -164,7 +172,12 @@ through ACME against an existing node's directory.
   `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` is
   mounted on the whole ACME surface by both ACME server compositions
   (xkmsd's `cmd/xkmsd/acme.go`, the standalone `TrustedCA`), keying each
-  client by JWS KID or IP. The per-tenant overall quota and the RFC 8555
+  client by IP — never by an unverified JWS `kid`, which a client could vary
+  per request. Its lock covers only the token arithmetic, and its state is
+  bounded by a TTL and an entry cap. Ahead of it, `RequestBodyMiddleware`
+  reads each request body once, capped at 256 KiB, so no limiter or
+  handler ever reads the connection while holding shared state
+  (go-xkms#1171). The per-tenant overall quota and the RFC 8555
   Section 6.6 per-category limits (`tenant_rate_limiter.go`,
   `rate_limiter.go`) are wired into both compositions, keyed exclusively on
   a tenant `handlers.RestService.TenantAuthMiddleware` resolves from a fully
@@ -192,6 +205,11 @@ through ACME against an existing node's directory.
   `TCAACMEConfig.Resilience` rather than a parallel type, so the same
   `storage`/`kms`/`http01`/`dns01` breaker sections and defaults apply to
   both compositions' configuration.
+  A challenge the validation client refuses before contacting the target
+  (an invalid target, or a reserved address) does not count toward the
+  `http01`/`dns01` breaker (go-xkms#1181): the target is client-chosen, so
+  counting refusals would let any account open the server-wide breaker. See
+  [`engineering.md`](engineering.md) "Circuit breakers and degradation".
   An open breaker fails only the call it guards — a challenge validation
   attempt returns an `incorrectResponse` problem instead of hanging on a dead
   verifier target, a KMS-backed finalize fails instead of blocking — it does

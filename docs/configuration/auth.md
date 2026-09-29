@@ -270,7 +270,9 @@ resolution strategies, tried in order (`MTLSAuthenticator.buildIdentity`,
    with `qrdbsdk.ComputeSPKIThumbprint` and looked up against the user's cert
    bindings. When a match is found and the user is enabled, `Username` becomes
    the identity subject, the user's `TenantID` becomes the identity tenant, and
-   the user's `Role` becomes `Identity.Roles`. A matched but disabled user
+   every role the user holds becomes `Identity.Roles`, as the qrdb role IDs the
+   user record stores — the form go-qrdb's authorizer resolves permissions by
+   (`pkg/auth/qrdb_userstore.go`). A matched but disabled user
    yields `ErrUserDisabled`. Binding by public key rather than by certificate
    DER means a re-issued certificate for the same key still resolves.
 
@@ -362,15 +364,17 @@ than serving an unauthorized surface that operators believe is protected.
 
 ### Certificate-Only Identity (No UserStore)
 
-Without a `UserStore` — or when the certificate's SPKI thumbprint is not bound
-to any user — the authenticator produces a certificate-only identity. It carries
-the certificate's fields in `Identity.Metadata` (including
-`organizational_unit`) and takes its tenant from the first OU, but **it carries
-no roles**. There is no OU-to-role convention in the code.
+Only without a `UserStore` (no qrdb identity plane hosted) does the
+authenticator produce a certificate-only identity. It carries the certificate's
+fields in `Identity.Metadata` (including `organizational_unit`) and takes its
+tenant from the first OU, but **it carries no roles**. There is no OU-to-role
+convention in the code.
 
-With RBAC enabled such an identity holds no grants and is denied by every
-transport gate. Bind the certificate to a user (see
-[Certificate Binding](#certificate-binding)) so a role is resolved.
+With a `UserStore` configured, a certificate bound to no user is refused
+(`ErrCertNotBound`), and a store that cannot answer fails closed
+(`*UserLookupError`). Neither case produces a certificate-only identity. Bind
+the certificate to a user (see [Certificate Binding](#certificate-binding)).
+See [`../rbac/engineering.md`](../rbac/engineering.md), which is normative.
 
 ### Authentication Flow
 

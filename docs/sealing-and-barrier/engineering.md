@@ -1,6 +1,6 @@
 # Sealing and Barrier — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/seal`
 
@@ -76,6 +76,7 @@ type SealMetadataSaver interface {
 type SealOperatorKeyProvider interface{ OperatorSealKeyID() string }
 type ErrSealBackendUnavailable struct{ Strategy, Purpose string }
 type ErrNotCloudSealStrategy struct{ Strategy string }
+type ErrOperatorSealKeyNotFound struct{ Strategy, KeyID string; Err error }
 ```
 
 `BuildCloudKMSStrategy` accepts only `StrategyAWSKMS`/`StrategyGCPKMS`/
@@ -110,10 +111,16 @@ check-and-skip runs:
 
 - If the backend implements `SealOperatorKeyProvider` and
   `OperatorSealKeyID()` returns a non-empty key ID, ARN, or alias — for
-  `*awskms.Backend`, `Config.KeyID` — that real identifier seeds the
-  persisted metadata via `SealMetadataSaver.Save`, and `GetSymmetricKey`'s
-  `DescribeKey` call confirms it still exists before reuse. `CreateKey` is
-  never called.
+  `*awskms.Backend`, `Config.KeyID` (go-xkms#842; format checked by
+  `Config.Validate` against AWS's own key-ID/ARN/alias/alias-ARN shapes,
+  returning `ErrInvalidKeyID` for anything else) — that real identifier
+  seeds the persisted metadata via `SealMetadataSaver.Save`, and
+  `GetSymmetricKey`'s `DescribeKey` call confirms it still exists before
+  reuse. `CreateKey` is never called for an operator-configured key: if
+  `DescribeKey` reports the key does not exist, `EnsureSealKey` fails closed
+  with `ErrOperatorSealKeyNotFound` instead of falling through to
+  `GenerateSymmetricKey` and silently provisioning a different, unrequested
+  CMK in its place.
 - Otherwise nothing is seeded. `GetSymmetricKey` reads `Config.KeyStorage`
   directly: on a truly fresh key it misses and `GenerateSymmetricKey` calls
   AWS KMS's `CreateKey`, persisting the AWS-assigned key ID it returns —
@@ -319,8 +326,18 @@ so this is the one compatibility rule in the repo with no workaround.
   resolves the persisted key and unseals data sealed before the restart,
   without calling `CreateKey` again**, an operator-configured `Config.KeyID`
   is resolved and reused without ever calling `CreateKey`, an init→seal→unseal
-  round trip, and a missing-credentials failure surfacing from
-  `BuildCloudKMSStrategy` itself).
+  round trip, a missing-credentials failure surfacing from
+  `BuildCloudKMSStrategy` itself, and
+  (`TestBuildCloudKMSStrategy_AWSKMSBackend_OperatorConfiguredKeyNotFound`,
+  go-xkms#842) an operator-configured `Config.KeyID` that `DescribeKey`
+  reports as not found fails closed with `ErrOperatorSealKeyNotFound`
+  without ever calling `CreateKey`; `cloud_provision_test.go`'s generic mock
+  carries the equivalent no-build-tag case
+  (`TestEnsureSealKey_AWSKMSOperatorKeyNotFoundFailsClosed`)). `Config`'s own
+  `TestIsValidKeyID`/`TestConfigValidate` (`config_test.go`, `awskms` tag)
+  cover every AWS key-ID/ARN/alias/alias-ARN shape `Config.KeyID` accepts,
+  plus the multi-Region (`mrk-`) and GovCloud/China-partition ARN forms, and
+  the malformed-value `ErrInvalidKeyID` case.
 - **AWS KMS metadata persistence** — `pkg/backend/awskms/persistence_test.go`
   (`awskms` tag): a `failingStorage` wrapper injects a `Config.KeyStorage`
   failure into one call at a time, proving `GenerateSymmetricKey`,

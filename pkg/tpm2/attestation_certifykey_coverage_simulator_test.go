@@ -68,7 +68,7 @@ func TestCertifyKey_TransientKey_EveryCommandFailurePropagates(t *testing.T) {
 		// registered right after LoadKeyPair succeeds); like every other
 		// tpm.Flush call in this package it logs a failure instead of
 		// returning it, and a defer always runs last.
-		6)
+		5)
 }
 
 // TestCertifyKey_RSAUnionMismatch_RSASSAAgainstActualPSSSignature proves

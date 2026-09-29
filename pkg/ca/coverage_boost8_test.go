@@ -470,7 +470,7 @@ func TestRecordRevocation_NilSerial_B8(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — putRevocationBlob with revocationStore (Backend)
+// ca_extensions.go — putRevocationBlobIfAbsent with revocationStore (Backend)
 // =============================================================================
 
 func TestPutRevocationBlob_RevocationStorePath_B8(t *testing.T) {
@@ -480,27 +480,14 @@ func TestPutRevocationBlob_RevocationStorePath_B8(t *testing.T) {
 		revocationStore: backend,
 		revocations:     make(map[string]*RevocationInfo),
 	}
-	require.NoError(t, ca.putRevocationBlob(context.Background(), big.NewInt(55555), []byte(`{"serial":"55555"}`)))
+	stored, err := ca.putRevocationBlobIfAbsent(context.Background(), big.NewInt(55555), []byte(`{"serial":"55555"}`))
+	require.NoError(t, err)
+	assert.True(t, stored)
 }
 
 // =============================================================================
 // ca_extensions.go — Issued: both certStore and keyStore paths
 // =============================================================================
-
-// =============================================================================
-// trust_chain_extensions.go — ImportIssuingCAs: bad-request path (malformed URL)
-// =============================================================================
-
-func TestImportIssuingCAs_BadURL_B8(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCAWithObjectStore(t)
-	cert := &x509.Certificate{
-		Subject:               pkix.Name{CommonName: "bad-url-b8"},
-		IssuingCertificateURL: []string{"://invalid-url"},
-	}
-	err := ca.ImportIssuingCAs(context.Background(), cert)
-	assert.Error(t, err)
-}
 
 // =============================================================================
 // ca_extensions.go — SignedBlob not-initialized path

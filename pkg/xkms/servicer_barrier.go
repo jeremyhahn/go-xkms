@@ -295,12 +295,20 @@ func (s *XKMSService) BarrierGenerateRootToken(ctx context.Context, req *transpo
 // migration itself is launched in the background after a short grace period.
 // Clients poll BarrierStatus and observe completion when the reported strategy
 // changes from "none" to the keyed target.
+//
+// The target is caller-supplied, so it is bound to the caller's tenant
+// (bindTenantTarget): a tenant-scoped caller may migrate only its own tenant's
+// barrier, and naming another tenant or the system barrier (empty TenantID) is
+// refused with a *TenantBindingError that reads as not-found.
 func (s *XKMSService) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
 	if s.encMigrator == nil {
 		return nil, ErrNotConfigured
 	}
 	if req == nil {
 		return nil, ErrNilRequest
+	}
+	if err := bindTenantTarget(ctx, "barrier enable encryption", req.TenantID); err != nil {
+		return nil, err
 	}
 
 	scope := qrdbsdk.BarrierScope{Kind: qrdbsdk.ScopeSystem}

@@ -39,6 +39,7 @@ const (
 // ChallengeServer manages an HTTP server for responding to ACME HTTP-01 challenges.
 type ChallengeServer struct {
 	server       *http.Server
+	listener     net.Listener
 	keyAuth      string
 	token        string
 	host         string
@@ -81,15 +82,30 @@ func (cs *ChallengeServer) Start() error {
 	if err != nil {
 		return caerrors.ConnectionFailureError("failed to listen on %s: %v", addr, err)
 	}
+	cs.listener = listener
 
 	go func() {
-		cs.logger.Info("HTTP-01 challenge server started", slog.String("addr", addr))
+		cs.logger.Info("HTTP-01 challenge server started", slog.String("addr", listener.Addr().String()))
 		if err := cs.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			cs.logger.Error("HTTP server error", slog.String("error", err.Error()))
 		}
 	}()
 
 	return nil
+}
+
+// Addr returns the address the challenge server is listening on. It is nil
+// until Start has bound a listener. Callers that start the server with port
+// "0" use Addr to discover the port the kernel actually assigned, rather
+// than pre-allocating a port and racing another process to rebind it.
+func (cs *ChallengeServer) Addr() net.Addr {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	if cs.listener == nil {
+		return nil
+	}
+	return cs.listener.Addr()
 }
 
 // handleChallenge serves the key authorization for HTTP-01 challenges.

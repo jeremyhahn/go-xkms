@@ -1071,6 +1071,27 @@ func (s *RestService) requestURL(r *http.Request) (string, error) {
 	return s.baseRESTURI + relPath, nil
 }
 
+// parseSignedRequest parses the request body as a JWS with at least one
+// signature, without verifying it. The body comes from server.RequestBody, so
+// it is the one capped copy RequestBodyMiddleware read, never a second read of
+// the connection.
+func parseSignedRequest(r *http.Request) (*jose.JSONWebSignature, error) {
+	body, err := server.RequestBody(r)
+	if err != nil {
+		return nil, caerrors.MalformedError("failed to read request body: %v", err)
+	}
+
+	jws, err := jose.ParseSigned(strings.TrimSpace(string(body)), server.AllowedJOSEAlgorithms)
+	if err != nil {
+		return nil, caerrors.MalformedError("failed to parse JWS: %v", err)
+	}
+
+	if len(jws.Signatures) == 0 {
+		return nil, caerrors.MalformedError("no signatures found in JWS")
+	}
+	return jws, nil
+}
+
 // parseKID parses a JWS request with a KID (Key ID) in the protected header.
 // It validates the JWS signature, nonce, and retrieves the associated account.
 //
@@ -1085,23 +1106,9 @@ func (s *RestService) parseKID(ctx context.Context, r *http.Request) (*entities.
 		return cached.account, cached.payload, cached.err
 	}
 
-	body, err := io.ReadAll(r.Body)
+	jws, err := parseSignedRequest(r)
 	if err != nil {
-		return nil, nil, caerrors.InternalServerError("failed to read request body: %v", err)
-	}
-	// The body has already been read in full above, and net/http closes the
-	// server request body itself once the handler returns, so a close error
-	// here is neither actionable nor meaningful (go-xkms#866).
-	defer func() { _ = r.Body.Close() }()
-
-	jwsString := strings.TrimSpace(string(body))
-	jws, err := jose.ParseSigned(jwsString, server.AllowedJOSEAlgorithms)
-	if err != nil {
-		return nil, nil, caerrors.MalformedError("failed to parse JWS: %v", err)
-	}
-
-	if len(jws.Signatures) == 0 {
-		return nil, nil, caerrors.MalformedError("no signatures found in JWS")
+		return nil, nil, err
 	}
 
 	protectedHeader := jws.Signatures[0].Header
@@ -1193,23 +1200,9 @@ func (s *RestService) parseKID(ctx context.Context, r *http.Request) (*entities.
 // parseJWS parses a JWS request with a JWK (JSON Web Key) in the protected header.
 // This is used for new account creation where no KID exists yet.
 func (s *RestService) parseJWS(r *http.Request) (*jose.JSONWebKey, []byte, error) {
-	body, err := io.ReadAll(r.Body)
+	jws, err := parseSignedRequest(r)
 	if err != nil {
-		return nil, nil, caerrors.InternalServerError("failed to read request body: %v", err)
-	}
-	// The body has already been read in full above, and net/http closes the
-	// server request body itself once the handler returns, so a close error
-	// here is neither actionable nor meaningful (go-xkms#866).
-	defer func() { _ = r.Body.Close() }()
-
-	jwsString := strings.TrimSpace(string(body))
-	jws, err := jose.ParseSigned(jwsString, server.AllowedJOSEAlgorithms)
-	if err != nil {
-		return nil, nil, caerrors.MalformedError("failed to parse JWS: %v", err)
-	}
-
-	if len(jws.Signatures) == 0 {
-		return nil, nil, caerrors.MalformedError("no signatures found in JWS")
+		return nil, nil, err
 	}
 
 	protectedHeader := jws.Signatures[0].Header

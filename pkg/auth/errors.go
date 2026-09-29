@@ -13,7 +13,10 @@
 
 package auth
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 var (
 	// ErrNoAuthenticators is returned when a composite authenticator is created with no authenticators.
@@ -37,4 +40,59 @@ var (
 	// ErrUnauthenticated is returned by the Authorizer when no identity is
 	// present on the request context — authentication must run first.
 	ErrUnauthenticated = errors.New("authentication required")
+
+	// ErrCertNotBound is returned by the mTLS authenticator when a UserStore
+	// is configured and the client certificate's SPKI thumbprint is bound to
+	// no user. Once an identity plane is present, only a bound certificate
+	// authenticates.
+	ErrCertNotBound = errors.New("client certificate is not bound to a user")
 )
+
+// AuthMethodNotPermittedError is returned when a certificate resolves to an
+// account in good standing whose permitted-authentication-method policy does
+// not include the method that authenticated the request.
+//
+// It mirrors go-qrdb's auth/middleware AuthMethodNotPermittedError field for
+// field so an operator reads the same refusal on the xkms planes as on qrdb's
+// own: which method was refused against which permitted set.
+type AuthMethodNotPermittedError struct {
+	// Username is the account the certificate resolved to.
+	Username string
+
+	// TenantID is the account's tenant.
+	TenantID string
+
+	// Method is the authenticator that succeeded (e.g. "mtls").
+	Method string
+
+	// Permitted is the account's policy, in the order qrdb stores it.
+	Permitted []string
+}
+
+// Error names the refused method and the permitted set.
+func (e *AuthMethodNotPermittedError) Error() string {
+	return "auth: authentication method " + e.Method +
+		" is not permitted for " + e.Username + " in tenant " + e.TenantID +
+		" (permitted: " + strings.Join(e.Permitted, ", ") + ")"
+}
+
+// UserLookupError is returned by the mTLS authenticator when the configured
+// UserStore fails to resolve a client certificate for any reason other than a
+// definite not-found: the store is sealed, unreachable, or otherwise
+// unavailable. Authentication fails closed, because an account the store
+// would have refused (disabled or unbound) must not authenticate while the
+// store cannot say so.
+type UserLookupError struct {
+	// Err is the store's error.
+	Err error
+}
+
+// Error returns a human-readable description.
+func (e *UserLookupError) Error() string {
+	return "mtls user lookup failed: " + e.Err.Error()
+}
+
+// Unwrap returns the store's error.
+func (e *UserLookupError) Unwrap() error {
+	return e.Err
+}

@@ -105,6 +105,10 @@ type Server struct {
 	// authRateLimiter throttles the login/refresh/ceremony endpoints.
 	authRateLimiter *ratelimit.Limiter
 
+	// trustedProxies resolves the client IP both rate limiters key on; nil
+	// trusts no forwarding header.
+	trustedProxies *ratelimit.TrustedProxies
+
 	// ui carries the embedded web UI mount options; nil leaves the UI
 	// unmounted.
 	ui *UIOptions
@@ -141,6 +145,11 @@ type Config struct {
 
 	// ReadTimeout is the maximum duration for reading the entire request
 	ReadTimeout time.Duration
+
+	// ReadHeaderTimeout is the maximum duration for reading the request
+	// headers (default: 10s). It bounds a slow-header (Slowloris) client
+	// independently of the whole-request ReadTimeout.
+	ReadHeaderTimeout time.Duration
 
 	// WriteTimeout is the maximum duration before timing out writes
 	WriteTimeout time.Duration
@@ -266,6 +275,11 @@ type Config struct {
 	// login, refresh, and WebAuthn ceremony endpoints. Optional.
 	AuthRateLimiter *ratelimit.Limiter
 
+	// TrustedProxies are the reverse proxies allowed to name the client in
+	// X-Forwarded-For / X-Real-IP for the rate limiters. Nil (the default)
+	// trusts none: every request is keyed on its transport peer's IP.
+	TrustedProxies *ratelimit.TrustedProxies
+
 	// UI configures the embedded single-page web UI. Nil (the default)
 	// leaves the UI unmounted and the router serves the API only.
 	UI *UIOptions
@@ -318,6 +332,9 @@ func NewServer(cfg *Config) (*Server, error) {
 	}
 	if cfg.ReadTimeout == 0 {
 		cfg.ReadTimeout = 15 * time.Second
+	}
+	if cfg.ReadHeaderTimeout == 0 {
+		cfg.ReadHeaderTimeout = 10 * time.Second
 	}
 	if cfg.WriteTimeout == 0 {
 		cfg.WriteTimeout = 15 * time.Second
@@ -375,6 +392,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		pivLogin:        cfg.PIVLogin,
 		rbacAuthorizer:  cfg.RBACAuthorizer,
 		authRateLimiter: cfg.AuthRateLimiter,
+		trustedProxies:  cfg.TrustedProxies,
 		ui:              cfg.UI,
 		// Cluster status/membership reads must work on a standalone node
 		// (degrading gracefully rather than requiring an "enabled" gate), so
@@ -465,6 +483,7 @@ func NewServer(cfg *Config) (*Server, error) {
 				UserStore:       webauthnUserStore,
 				SessionStore:    sessionStore,
 				CredentialStore: credentialStore,
+				AuditLogger:     server.auditor,
 			})
 			if err != nil {
 				return nil, &errs.Wrapped{Msg: "failed to create webauthn service", Err: err}
@@ -615,12 +634,13 @@ func NewServer(cfg *Config) (*Server, error) {
 	// Create HTTP server. Host defaults to all interfaces; the loopback
 	// launcher pins 127.0.0.1.
 	httpServer := &http.Server{
-		Addr:         net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port)),
-		Handler:      router,
-		ReadTimeout:  cfg.ReadTimeout,
-		WriteTimeout: cfg.WriteTimeout,
-		IdleTimeout:  cfg.IdleTimeout,
-		TLSConfig:    cfg.TLSConfig,
+		Addr:              net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port)),
+		Handler:           router,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		ReadTimeout:       cfg.ReadTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
+		TLSConfig:         cfg.TLSConfig,
 	}
 
 	server.server = httpServer
@@ -642,7 +662,7 @@ func (s *Server) setupRouter() *chi.Mux {
 
 	// Rate limiting middleware (if configured)
 	if s.rateLimiter != nil && s.rateLimiter.IsEnabled() {
-		r.Use(ratelimit.Middleware(s.rateLimiter))
+		r.Use(ratelimit.Middleware(s.rateLimiter, s.trustedProxies))
 		s.logger.Info("Rate limiting enabled for REST API")
 	}
 
@@ -695,14 +715,15 @@ func (s *Server) registerRoutes(r chi.Router) {
 		byGroup[spec.Group] = append(byGroup[spec.Group], spec)
 	}
 
+	// Every route's body is bounded (BodyLimitMiddleware, RouteSpec
+	// MaxBodyBytes); permission routes are additionally RBAC-decorated.
 	register := func(g chi.Router, spec RouteSpec) {
-		h := spec.Handler(s)
+		var chain []func(http.Handler) http.Handler
 		if spec.Auth == RouteAuthPermission && s.rbacMiddleware != nil {
-			g.With(s.rbacMiddleware.RequirePermission(spec.Resource, spec.Action)).
-				MethodFunc(spec.Method, spec.Pattern, h)
-			return
+			chain = append(chain, s.rbacMiddleware.RequirePermission(spec.Resource, spec.Action))
 		}
-		g.MethodFunc(spec.Method, spec.Pattern, h)
+		chain = append(chain, BodyLimitMiddleware(spec.bodyLimit()))
+		g.With(chain...).MethodFunc(spec.Method, spec.Pattern, spec.Handler(s))
 	}
 
 	// Root routes: no group middleware (health, discovery, bootstrap).
@@ -731,12 +752,12 @@ func (s *Server) registerRoutes(r chi.Router) {
 	if specs := byGroup[GroupAuthSession]; len(specs) > 0 {
 		r.Route("/api/v1/auth", func(g chi.Router) {
 			if s.authRateLimiter != nil && s.authRateLimiter.IsEnabled() {
-				g.Use(ratelimit.Middleware(s.authRateLimiter))
+				g.Use(ratelimit.Middleware(s.authRateLimiter, s.trustedProxies))
 			}
 			for _, spec := range specs {
 				spec.Pattern = relative(spec, "/api/v1/auth")
 				if spec.Auth == RouteAuthSession {
-					g.With(s.AuthenticationMiddleware()).
+					g.With(s.AuthenticationMiddleware(), BodyLimitMiddleware(spec.bodyLimit())).
 						MethodFunc(spec.Method, spec.Pattern, spec.Handler(s))
 					continue
 				}
@@ -749,7 +770,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 	if specs := byGroup[GroupWebAuthn]; len(specs) > 0 {
 		r.Route("/api/v1/webauthn", func(g chi.Router) {
 			if s.authRateLimiter != nil && s.authRateLimiter.IsEnabled() {
-				g.Use(ratelimit.Middleware(s.authRateLimiter))
+				g.Use(ratelimit.Middleware(s.authRateLimiter, s.trustedProxies))
 			}
 			for _, spec := range specs {
 				spec.Pattern = relative(spec, "/api/v1/webauthn")

@@ -23,10 +23,10 @@ import (
 	"path/filepath"
 	"time"
 
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
@@ -71,6 +71,11 @@ var (
 
 // Default device configuration values.
 const (
+	// defaultDeviceScanTimeout is shown in --timeout's help text as the flag's
+	// own pflag default; the value actually applied when --timeout is not
+	// explicitly set comes from resolveDeviceScanTimeout, which reads
+	// device.scan_timeout via deviceConfig() (xkeyconfig.DefaultConfig().Device.ScanTimeout,
+	// kept equal to this constant).
 	defaultDeviceScanTimeout = 30 * time.Second
 	devicesConfigFileName    = "devices.yaml"
 )
@@ -230,19 +235,21 @@ func init() {
 	deviceCmd.AddCommand(deviceUnpairCmd)
 	deviceCmd.AddCommand(deviceStatusCmd)
 
-	// Persistent flags for all device subcommands
+	// Persistent flags for all device subcommands. The default shown here is
+	// cosmetic only -- GetTrustNewDevices ignores it and falls through to
+	// device.trust_new_devices (env XKEY_DEVICE_TRUST_NEW_DEVICES, then the
+	// config file) whenever the flag was not explicitly set (go-xkms#1071).
 	deviceCmd.PersistentFlags().Bool("trust-new-devices", false,
-		"Allow connection to unpaired devices (empty prologue)")
+		"Allow connection to unpaired devices (empty prologue) (default: device.trust_new_devices, false)")
 
-	// Unpair flags
+	// Unpair flags. --force is a per-invocation choice with no config-file
+	// meaning: it is read directly off the flag and never reaches
+	// xkeyconfig.Config (go-xkms#1071).
 	deviceUnpairCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 
-	// Status flags
+	// Status flags. --device filters this one invocation's output and has no
+	// config-file meaning; read directly off the flag (go-xkms#1071).
 	deviceStatusCmd.Flags().String("device", "", "Specific device to check")
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("device.trust_new_devices", deviceCmd.PersistentFlags().Lookup("trust-new-devices"))
-	_ = viper.BindPFlag("device.status.device", deviceStatusCmd.Flags().Lookup("device"))
 }
 
 // runDeviceList executes the device list command.
@@ -508,9 +515,39 @@ func decodePublicKey(encoded string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(encoded)
 }
 
-// GetTrustNewDevices returns the value of the --trust-new-devices flag from context.
-// This can be used by other commands that create PhoneKeyBackendConfig.
-func GetTrustNewDevices(cmd *cobra.Command) bool {
-	trustNewDevices, _ := cmd.Flags().GetBool("trust-new-devices")
-	return trustNewDevices
+// deviceConfig returns the loaded configuration's Device section, or the
+// built-in defaults when no configuration was loaded. It is the `device`
+// group's counterpart to listenerConfig (listen_config.go).
+func deviceConfig() xkeyconfig.DeviceConfig {
+	if cfg := GetConfig(); cfg != nil {
+		return cfg.Device
+	}
+	return xkeyconfig.DefaultConfig().Device
+}
+
+// GetTrustNewDevices resolves whether device commands should accept a device
+// with no stored expected key (an empty Noise prologue): the
+// --trust-new-devices flag when explicitly set on cmd, else
+// device.trust_new_devices from the unified config (environment
+// XKEY_DEVICE_TRUST_NEW_DEVICES or the config file), else the built-in
+// default of false. Exported so other command files under cmd/xkey/cmd that
+// build a phone key-backend config resolve the setting the same way
+// (go-xkms#1071).
+func GetTrustNewDevices(cmd *cobra.Command) (bool, error) {
+	if commandFlagChanged(cmd, "trust-new-devices") {
+		return commandFlagBool(cmd, "trust-new-devices")
+	}
+	return deviceConfig().TrustNewDevices, nil
+}
+
+// resolveDeviceScanTimeout resolves the BLE scan timeout shared by `device
+// pair` (auto-discovery) and `device scan`: the --timeout flag when
+// explicitly set on cmd, else device.scan_timeout from the unified config
+// (environment XKEY_DEVICE_SCAN_TIMEOUT or the config file), else the
+// built-in default of 30s (go-xkms#1071).
+func resolveDeviceScanTimeout(cmd *cobra.Command) (time.Duration, error) {
+	if commandFlagChanged(cmd, "timeout") {
+		return commandFlagDuration(cmd, "timeout")
+	}
+	return deviceConfig().ScanTimeout, nil
 }

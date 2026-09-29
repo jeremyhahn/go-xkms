@@ -32,8 +32,6 @@ import (
 	"errors"
 	"io"
 	"math/big"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -318,19 +316,20 @@ func TestRevokeCert_NotInitialized(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — loadPersistedRevocations (70%) — corrupt record path
+// ca_extensions.go — loadPersistedRevocations — corrupt record path
 // =============================================================================
 
-// This exercises the corrupt-unmarshal branch by inserting a junk blob
-// directly into revocationStore, the sole persistence medium.
+// TestLoadPersistedRevocations_CorruptBlob proves a non-JSON record under the
+// revocation prefix fails the load with ErrRevocationRecordCorrupt naming
+// the key, rather than being skipped.
 func TestLoadPersistedRevocations_CorruptBlob(t *testing.T) {
 	ca := setupTestCA(t)
-	// Insert a non-JSON blob under the revocation key prefix.
 	key := revocationKeyPrefix + "badrecord.json"
 	require.NoError(t, ca.revocationStore.Put(context.Background(), key, []byte("not-json")))
-	// loadPersistedRevocations should log+skip, not return an error.
+
 	err := ca.loadPersistedRevocations(context.Background())
-	assert.NoError(t, err)
+	require.ErrorIs(t, err, ErrRevocationRecordCorrupt)
+	assert.Contains(t, err.Error(), key)
 }
 
 // stubReader is a minimal io.ReadCloser for injecting bytes into tests.
@@ -372,13 +371,15 @@ func TestListRevocationBlobs_EmptyStores(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — putRevocationBlob: revocationStore is the sole
+// ca_extensions.go — putRevocationBlobIfAbsent: revocationStore is the sole
 // persistence medium, whether or not an objectStore is also configured
 // =============================================================================
 
 func TestPutRevocationBlob_PersistsThroughRevocationStore(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	require.NoError(t, ca.putRevocationBlob(context.Background(), big.NewInt(88888), []byte(`{"serial":"88888"}`)))
+	stored, err := ca.putRevocationBlobIfAbsent(context.Background(), big.NewInt(88888), []byte(`{"serial":"88888"}`))
+	require.NoError(t, err)
+	assert.True(t, stored)
 	got, err := ca.revocationStore.Get(context.Background(), revocationKey(big.NewInt(88888))+".json")
 	require.NoError(t, err)
 	assert.Equal(t, []byte(`{"serial":"88888"}`), got)
@@ -552,68 +553,6 @@ func TestImportIssuingCAs_NoAIAUrls(t *testing.T) {
 	cert, _ := makeSelfSignedCert(t, "no-aia")
 	err := ca.ImportIssuingCAs(context.Background(), cert)
 	assert.NoError(t, err)
-}
-
-func TestImportIssuingCAs_HTTPServerDER(t *testing.T) {
-	// Serve a DER-encoded cert at a test HTTP server.
-	issuingCert, _ := makeSelfSignedCert(t, "served-issuer")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/pkix-cert")
-		_, _ = w.Write(issuingCert.Raw)
-	}))
-	t.Cleanup(srv.Close)
-
-	ca := setupTestCA(t)
-
-	// Build a leaf cert pointing AIA at our test server.
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	root, err := ca.TrustedRoot()
-	require.NoError(t, err)
-
-	tpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(9999),
-		Subject:               pkix.Name{CommonName: "aia-leaf"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IssuingCertificateURL: []string{srv.URL + "/issuer.der"},
-	}
-	// Self-sign the leaf for simplicity (only the AIA URLs matter here).
-	certDER, err := x509.CreateCertificate(rand.Reader, tpl, root, &key.PublicKey, ca)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	err = ca.ImportIssuingCAs(context.Background(), cert)
-	require.NoError(t, err)
-}
-
-func TestImportIssuingCAs_ServerError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	t.Cleanup(srv.Close)
-
-	ca := setupTestCA(t)
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	root, err := ca.TrustedRoot()
-	require.NoError(t, err)
-
-	tpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(8888),
-		Subject:               pkix.Name{CommonName: "aia-error-leaf"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IssuingCertificateURL: []string{srv.URL + "/bad"},
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tpl, root, &key.PublicKey, ca)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	err = ca.ImportIssuingCAs(context.Background(), cert)
-	assert.ErrorIs(t, err, ErrStorageError)
 }
 
 // =============================================================================

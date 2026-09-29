@@ -67,7 +67,7 @@ func (f *commandNotSupportedOnceTransport) Send(input []byte) ([]byte, error) {
 // actually produces a usable, correctly loaded key when TPM2_CreateLoaded
 // itself is unsupported.
 func TestCreateRSA_LegacyCreateLoadFallback_Succeeds(t *testing.T) {
-	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t, false)
+	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t)
 	tpmImpl := tpm.(*TPM2)
 	tpmImpl.transport = &commandNotSupportedOnceTransport{inner: tpmImpl.transport, failCC: tpm2.TPMCCCreateLoaded}
 
@@ -88,7 +88,7 @@ func TestCreateRSA_LegacyCreateLoadFallback_Succeeds(t *testing.T) {
 // TestCreateECDSA_LegacyCreateLoadFallback_Succeeds is the ECDSA mirror of
 // TestCreateRSA_LegacyCreateLoadFallback_Succeeds.
 func TestCreateECDSA_LegacyCreateLoadFallback_Succeeds(t *testing.T) {
-	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t, false)
+	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t)
 	tpmImpl := tpm.(*TPM2)
 	tpmImpl.transport = &commandNotSupportedOnceTransport{inner: tpmImpl.transport, failCC: tpm2.TPMCCCreateLoaded}
 

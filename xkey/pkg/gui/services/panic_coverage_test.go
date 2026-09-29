@@ -126,7 +126,6 @@ func (m *allPanicTPM) FixedProperties() (*xkms.PropertiesFixed, error) {
 }
 func (m *allPanicTPM) Flush(_ tpm2.TPMHandle)              { panic("allPanicTPM: Flush") }
 func (m *allPanicTPM) GoldenMeasurements() ([]byte, error) { panic("allPanicTPM: GoldenMeasurements") }
-func (m *allPanicTPM) HMAC(_ []byte) tpm2.Session          { panic("allPanicTPM: HMAC") }
 func (m *allPanicTPM) HMACSaltedSession(_ tpm2.TPMHandle, _ tpm2.TPMTPublic, _ []byte) (tpm2.Session, func() error, error) {
 	panic("allPanicTPM: HMACSaltedSession")
 }

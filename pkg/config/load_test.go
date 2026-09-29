@@ -813,3 +813,31 @@ barrier:
 		t.Fatalf("cfg.Barrier.Strategy = %q, want %q", cfg.Barrier.Strategy, "passphrase")
 	}
 }
+
+// TestLoad_ACMEChallengesAllowPrivateTargets pins the defaults-layer value of
+// acme.challenges.allow_private_targets: a file that never mentions the key
+// resolves to false, so challenge validation refuses reserved addresses
+// unless the operator opts in, and
+// XKMS_ACME_CHALLENGES_ALLOW_PRIVATE_TARGETS=true enables it (#1172).
+func TestLoad_ACMEChallengesAllowPrivateTargets(t *testing.T) {
+	t.Run("defaults layer is false", func(t *testing.T) {
+		cfg, err := Load(writeConfigBody(t, "", ""))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.ACME != nil && cfg.ACME.Challenges.AllowPrivateTargets {
+			t.Fatalf("ACME.Challenges.AllowPrivateTargets = true, want false with no file key")
+		}
+	})
+
+	t.Run("environment enables it with no acme section in the file", func(t *testing.T) {
+		t.Setenv("XKMS_ACME_CHALLENGES_ALLOW_PRIVATE_TARGETS", "true")
+		cfg, err := Load(writeConfigBody(t, "", ""))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.ACME == nil || !cfg.ACME.Challenges.AllowPrivateTargets {
+			t.Fatalf("ACME = %+v, want Challenges.AllowPrivateTargets true from the environment", cfg.ACME)
+		}
+	})
+}

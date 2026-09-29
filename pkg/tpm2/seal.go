@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -114,6 +115,10 @@ func (tpm *TPM2) sealKeyInternal(
 			return nil, store.ErrInvalidKeyedHashSecret
 		}
 	}
+	// secretBytes is this function's own copy -- SealData.Bytes copies, and
+	// the generated secret is copied into keyAttrs.SealData -- so it is wiped
+	// once the object is created rather than left in the heap.
+	defer enclave.Wipe(secretBytes)
 
 	if tpm.debugSecrets {
 		tpm.logger.Debug("tpm: sealing HMAC secret",
@@ -124,6 +129,15 @@ func (tpm *TPM2) sealKeyInternal(
 	session, closer, err = tpm.CreateSession(keyAttrs)
 	if err != nil {
 		tpm.logger.Error("failed to create session for seal", slog.String("error", err.Error()))
+		return nil, err
+	}
+
+	// The sealed secret and the object's authValue are encrypted on their
+	// way into the TPM by a salted session of their own: the parent's
+	// authorization may be a policy session, which cannot carry them.
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptIn)
+	if err != nil {
+		tpm.closeSession(closer, "seal parent")
 		return nil, err
 	}
 
@@ -147,8 +161,10 @@ func (tpm *TPM2) sealKeyInternal(
 				),
 			},
 		},
-	}.Execute(tpm.transport)
+	}.Execute(tpm.transport, encSession)
+	tpm.closeSession(closeEncSession, "seal encryption")
 	if err != nil {
+		tpm.closeSession(closer, "seal parent")
 		tpm.logger.Error("failed to create seal key", slog.String("error", err.Error()))
 		return nil, err
 	}
@@ -293,6 +309,15 @@ func (tpm *TPM2) unsealKeyInternal(
 		return nil, err2
 	}
 
+	// The sealed secret leaves the TPM encrypted under a salted session of
+	// its own: the key session may answer the PCR branch of the platform
+	// policy, which cannot encrypt it.
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptOut)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closeEncSession, "unseal encryption")
+
 	// Unseal the data using the key session
 	unseal, err := tpm2.Unseal{
 		ItemHandle: tpm2.AuthHandle{
@@ -300,7 +325,7 @@ func (tpm *TPM2) unsealKeyInternal(
 			Name:   sealKey.Name,
 			Auth:   session2,
 		},
-	}.Execute(tpm.transport)
+	}.Execute(tpm.transport, encSession)
 	if err != nil {
 		tpm.logger.Error("failed to unseal data", slog.String("error", err.Error()))
 		return nil, err
@@ -393,6 +418,15 @@ func (tpm *TPM2) unsealFromBlobs(
 		return nil, err2
 	}
 
+	// The sealed secret leaves the TPM encrypted under a salted session of
+	// its own: the key session may answer the PCR branch of the platform
+	// policy, which cannot encrypt it.
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptOut)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closeEncSession, "unseal encryption")
+
 	// Unseal the data using the key session
 	unseal, err := tpm2.Unseal{
 		ItemHandle: tpm2.AuthHandle{
@@ -400,7 +434,7 @@ func (tpm *TPM2) unsealFromBlobs(
 			Name:   sealKey.Name,
 			Auth:   session2,
 		},
-	}.Execute(tpm.transport)
+	}.Execute(tpm.transport, encSession)
 	if err != nil {
 		tpm.logger.Error("failed to unseal data from blobs", slog.String("error", err.Error()))
 		return nil, err

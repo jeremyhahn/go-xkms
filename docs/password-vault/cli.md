@@ -1,6 +1,6 @@
 # Password Vault — CLI
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 Binary: `xkmsctl`, group `password` (`cmd/xkmsctl/password.go`). Global flags:
 [`../key-management/cli.md`](../key-management/cli.md).
@@ -22,8 +22,6 @@ xkmsctl password lock
 ```
 
 `--user-pin` accepts `-` for stdin and prompts when omitted.
-
-Under `pin_per_operation` there is no unlock step — every read carries the PIN.
 
 ## `password add <name>`
 
@@ -53,17 +51,21 @@ password"; do not.
 
 | Flag | Type | Default | Purpose |
 |---|---|---|---|
-| `--decrypt` | bool | `false` | **include the plaintext** |
-| `--user-pin` | string | `""` | required in `pin_per_operation` mode |
 | `--tenant-id` | string | `""` | tenant scope |
 
 ```
-xkmsctl password get pw-123 -o json                 # metadata only
-xkmsctl password get pw-123 --decrypt --user-pin -  # the actual password
+xkmsctl password get pw-123 -o json
 ```
 
-Plaintext is opt-in. Without `--decrypt` you get metadata, which is usually what
-a script wants and always what a screen-share wants.
+The store must be unlocked first (`password unlock`); the entry, including the
+password field, comes back exactly as stored
+(`pkg/xkms/servicer_password.go:168`). There is no per-request decrypt option:
+confidentiality at rest is provided by the tenant barrier, not by a decryption
+step on `get`, and every store reachable through this servicer
+(`staticpw.BackendStore`, `staticpw.ScopedStore`, `staticpw.DAOStore`) returns
+entries the same way. `xkmsctl` never accepted a `--decrypt` or `--user-pin`
+flag on `get`; earlier revisions of this page described one, but the servicer
+never implemented it (removed in #1061).
 
 ## `password list`
 
@@ -96,15 +98,17 @@ xkmsctl password update pw-123 --password - --expires-at 2027-01-01T00:00:00Z
 
 ```
 xkmsctl password access-mode session_based
-xkmsctl password access-mode pin_per_operation
 ```
 
-This is a security policy, not a preference:
+`session_based` is the only mode that can actually take effect: the mode is
+fixed by how the store was set up when the server started
+(`pkg/staticpw/access.go:17`-`26`). Requesting the mode already in force
+succeeds; requesting `pin_per_operation` against a `session_based` store
+fails rather than silently doing nothing.
 
 - **`session_based`** — unlock once, read freely until locked. Anything that can
-  reach the store while unlocked can read every entry in scope.
-- **`pin_per_operation`** — the PIN on every read. More friction, much smaller
-  window.
+  reach the store while unlocked can read every entry in scope. `password lock`
+  when you are done.
 
 ## `password generate`
 

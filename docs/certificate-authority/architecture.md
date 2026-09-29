@@ -1,6 +1,6 @@
 # Certificate Authority — Architecture
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## The problem
 
@@ -133,7 +133,7 @@ change.
 `certstore.compositeCertStore`'s `StoreCRL`/`GetCRL` are kept, not removed:
 they are the in-memory hot-path cache `CA.CRL` checks first, warmed by every
 call on that instance that (re)generates a CRL. They are not a second source
-of truth — the persisted artifact in `revocationStore`/`objectStore` is, and
+of truth — the persisted artifact in `revocationStore` is, and
 every path that bypasses the cache (a miss, or a different instance) reads
 that.
 
@@ -145,15 +145,37 @@ instance, so that record has to be replicated state in `revocationStore`
 like the revocation record itself, not something held only in the memory of
 the node that issued the certificate.
 
-OCSP (`pkg/ca/ocsp.go`) answers from the same revocation state: its hot path
-is the in-memory map, refreshed by every `Revoke`/`RevokeCert` on that
-instance; its cold path (a fresh process, or a revocation written by another
-instance) now reads through `getRevocationBlob`, which uses the same
-`revocationStore`-preferred-over-`objectStore` order as the CRL and
-revocation-record helpers. Before #275 the cold path only consulted
-`objectStore`, so a CA configured with only the datastore-backed
-`revocationStore` — the common replicated configuration — silently answered
-`ocsp.Good` for a revocation another instance had recorded.
+Every revocation reader goes through one read path, and every one of them
+fails closed (go-xkms#1116):
+
+- **Single serial** — `CA.lookupRevocation` (`pkg/ca/ca_extensions.go:856`)
+  checks this instance's in-memory map, then reads through to
+  `revocationStore`. `IsRevoked` (`pkg/ca/ca.go:2152`) — and so `Verify`
+  (`pkg/ca/ca.go:2030`) and `VerifyPeerCertificate` (`pkg/ca/tls.go:502`,
+  `:538`) — and the OCSP responder's `checkCertificateStatus`
+  (`pkg/ca/ocsp.go:231`) all call it. Before #1116 only OCSP read through;
+  `IsRevoked` answered from the map alone, which is filled at `Load` and by
+  this instance's own revocations, so a certificate revoked on node A still
+  passed `Verify` on node B.
+- **Full set** — `CA.loadPersistedRevocations`
+  (`pkg/ca/ca_extensions.go:888`) scans every record in `revocationStore`
+  into the map. `Load` runs it at startup (`pkg/ca/ca.go:914`), and
+  `generateAndPersistCRL` runs it before building a CRL
+  (`pkg/ca/crl_persistence.go:179`). Before #1116 CRL generation built from
+  the map alone, so node B's regenerated CRL overwrote the shared
+  `crl/<ski>` artifact without node A's revocations.
+
+A store hit on the single-serial path is cached in the map; a miss never is.
+Revocation is permanent here — there is no un-revoke or certificate-hold
+release — so a cached hit cannot go stale, while a cached miss would hide the
+next revocation any other node records. Fail closed means: only a definite
+`storage.ErrNotFound` reads as "not revoked". A store fault, a corrupt record,
+a listing failure, or an unreadable previous CRL number is an error that
+refuses the verification, the OCSP answer (`ocsp.Unknown`), the CRL, or the
+`Load` — never a silent un-revoke and never a CRL number that goes backwards.
+
+`IsRevoked` keeps its context-free signature (it is part of `TrustedCA` and
+`provider.CA`), so its read-through runs under `context.Background()`.
 
 Trust distribution has a deliberately **public** route:
 `GET /v1/ca/bootstrap` is `RouteAuthPublic` under `GroupRoot`, because a client
@@ -206,6 +228,25 @@ enforces.
   (`ErrTCGEKCertUntrusted`) rather than falling back to residency-only proof
   -- there is no permissive default a device can rely on by supplying its own
   EK certificate.
+- **AIA and CRL distribution point URLs are attacker-directed.** Whoever
+  issued a certificate chose them, so `ImportIssuingCAs` and
+  `ImportDistributionCRLs` fetch through one bounded path, `fetchPKIObject`
+  (`pkg/ca/pki_fetch.go:112`). It fetches only http and https URLs
+  (`checkFetchURL`, `pki_fetch.go:86`). Its client is built by
+  `pkg/netguard.GuardedTransport` (`pki_fetch.go:63-81`), the same guarded
+  dialer the ACME challenge-validation client uses (see
+  [`../acme-issuance/architecture.md`](../acme-issuance/architecture.md)):
+  the dialer's `Control` hook refuses every `netguard.ReservedAddr` address
+  after DNS resolution, so a rebinding hostname or a redirect cannot reach
+  loopback, private, link-local (including cloud metadata), CGNAT, the
+  TEST-NETs, NAT64, 6to4 or the other special-purpose ranges. Bodies are
+  capped at 64 KiB for a certificate and 32 MiB for a CRL
+  (`netguard.ReadLimited`, `pki_fetch.go:137`). The AIA walk also verifies
+  that each fetched certificate signed the certificate that named it
+  (`trust_chain_extensions.go:314`), ends on a repeated certificate
+  (`:310`), and refuses a walk more than five issuers deep (`:295`), so an
+  AIA URL can neither plant an unrelated certificate in the store nor loop
+  forever.
 - **Multi-keystore CAs** (`pkg/ca/multi_keystore*.go`) let one CA identity hold
   parallel keys of different algorithms in different backends. Each is a
   distinct trust root even though they share a name — `CABundleFiltered(storeType, keyAlgorithm)`

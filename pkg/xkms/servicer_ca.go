@@ -28,7 +28,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 )
@@ -42,10 +41,6 @@ var (
 	// ErrAttestationVerificationFailed is returned when the attestation proof
 	// fails verification.
 	ErrAttestationVerificationFailed = errors.New("ca: attestation verification failed")
-
-	// ErrCSRSigningDenied is returned when the caller does not have permission
-	// to sign CSRs.
-	ErrCSRSigningDenied = errors.New("ca: CSR signing denied (insufficient permissions)")
 
 	// ErrAttestationNotConfigured is returned when a CSR carries an attestation
 	// but the server has no attestation trust anchors wired at all. The request
@@ -140,6 +135,15 @@ func (s *XKMSService) GetCACertificate(ctx context.Context, req *transport.GetCA
 }
 
 // SignCSR signs a certificate signing request using the CA.
+//
+// Authorization is not decided here. Every transport that reaches this method
+// has already required the operation's declared permission, certs:generate,
+// from the qrdb authorizer before dispatching -- REST and its HTTP/3 (QUIC)
+// listener through pkg/api/rest/routes.go, MCP through pkg/api/mcp/authz.go --
+// exactly as for every other servicer method; gRPC signs through the CA under
+// the same certs:generate check (pkg/api/grpc/service_ca.go). A second, local decision here once
+// compared the identity's roles against role NAMES while identities carry
+// role IDENTIFIERS, and so refused every authenticated caller (go-xkms#1074).
 func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest) (resp *transport.SignCSRResponse, err error) {
 	start := time.Now()
 	defer func() { recordServiceOp(metrics.OpSign, caMetricsBackend, start, err) }()
@@ -151,20 +155,21 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 		return nil, ErrNilData
 	}
 
-	// RBAC: check that the caller has permission to sign CSRs.
-	// Local calls (no identity in context) are allowed — they come from
-	// the GUI or CLI running on the same machine.
-	if identity := auth.GetIdentity(ctx); identity != nil {
-		if !identity.HasRole("admin") && !identity.HasRole("user") && !identity.HasRole("operator") {
-			slog.Warn("CSR signing denied", "subject", identity.Subject)
-			return nil, ErrCSRSigningDenied
-		}
-	}
-
 	// Verify attestation if provided. When the server requires attestation
 	// (future config flag), missing attestation will be rejected.
 	if req.AttestationFormat != "" {
 		if err := s.verifyCSRAttestation(req); err != nil {
+			return nil, err
+		}
+	}
+
+	// The tenant stamped into the SPIFFE SAN is caller-supplied and login
+	// derives the caller's tenant from it, so a tenant-scoped caller may name
+	// only its own tenant (or none). Naming another tenant would mint a
+	// credential for that tenant and is refused with a *TenantBindingError
+	// that reads as not-found.
+	if req.TenantID != "" {
+		if err := bindTenantTarget(ctx, "sign csr", req.TenantID); err != nil {
 			return nil, err
 		}
 	}

@@ -17,13 +17,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,17 +62,18 @@ func TestAttestationFormat_String(t *testing.T) {
 
 func TestVerify_NetworkError(t *testing.T) {
 	ca := &mockCA{}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	// Use invalid port to trigger network error
-	err := Verify(resolver, ca, "127.0.0.1", "99999", "token", "keyauth")
+	// Port 1 on loopback has no listener: the connection is refused.
+	err := Verify(client, ca, "127.0.0.1", "1", "token", "keyauth")
 	if err == nil {
-		t.Error("Verify() should fail with network error")
+		t.Fatal("Verify() should fail with network error")
 	}
 
 	// Verify it's a network error, not a CA verification error
-	if !strings.Contains(err.Error(), "failed to contact client") {
-		t.Errorf("Expected network error, got: %v", err)
+	var verr *validation.Error
+	if !errors.As(err, &verr) || verr.Kind != validation.KindConnection {
+		t.Errorf("Expected a KindConnection *validation.Error, got: %v", err)
 	}
 }
 
@@ -89,15 +90,16 @@ func TestVerify_HTTPStatusError(t *testing.T) {
 	port := parts[1]
 
 	ca := &mockCA{}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
+	err := Verify(client, ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail with non-200 status")
 	}
 
-	if !strings.Contains(err.Error(), "unexpected status code") {
-		t.Errorf("Expected status code error, got: %v", err)
+	var status *validation.StatusError
+	if !errors.As(err, &status) || status.StatusCode != http.StatusNotFound {
+		t.Errorf("Expected a 404 *validation.StatusError, got: %v", err)
 	}
 }
 
@@ -115,9 +117,9 @@ func TestVerify_InvalidJSON(t *testing.T) {
 	port := parts[1]
 
 	ca := &mockCA{}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
+	err := Verify(client, ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail with invalid JSON")
 	}
@@ -144,9 +146,9 @@ func TestVerify_InvalidCBOR(t *testing.T) {
 	port := parts[1]
 
 	ca := &mockCA{}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
+	err := Verify(client, ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail with invalid CBOR")
 	}
@@ -186,9 +188,9 @@ func TestVerify_InvalidAttestationFormat(t *testing.T) {
 	port := parts[1]
 
 	ca := &mockCA{}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
+	err := Verify(client, ca, host, port, "token", "keyauth")
 	if err != ErrInvalidAttestationFormat {
 		t.Errorf("Expected ErrInvalidAttestationFormat, got: %v", err)
 	}
@@ -226,9 +228,9 @@ func TestVerify_CAVerificationError(t *testing.T) {
 	ca := &mockCA{
 		verifyError: errors.New("CA verification failed"),
 	}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
+	err := Verify(client, ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when CA verification fails")
 	}
@@ -270,9 +272,9 @@ func TestVerify_AKCertificateChainError(t *testing.T) {
 	ca := &mockCA{
 		verifyAKChainError: errors.New("AK chain verification failed"),
 	}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
+	err := Verify(client, ca, host, port, "token", "keyauth")
 	if err != ErrCertificateChainInvalid {
 		t.Errorf("Expected ErrCertificateChainInvalid, got: %v", err)
 	}
@@ -341,397 +343,6 @@ func TestValidateAttestationFormat_Invalid(t *testing.T) {
 	if ValidateAttestationFormat(AttestationFormat("")) {
 		t.Error("ValidateAttestationFormat() should return false for empty format")
 	}
-}
-
-// Tests for VerifyQualifyingData
-
-func TestVerifyQualifyingData_Success(t *testing.T) {
-	certInfo := []byte("this contains the expected qualifying data")
-	expectedData := []byte("expected qualifying data")
-
-	if !VerifyQualifyingData(certInfo, expectedData) {
-		t.Error("VerifyQualifyingData() should return true when data is present")
-	}
-}
-
-func TestVerifyQualifyingData_NotFound(t *testing.T) {
-	certInfo := []byte("this does not contain the data")
-	expectedData := []byte("missing data")
-
-	if VerifyQualifyingData(certInfo, expectedData) {
-		t.Error("VerifyQualifyingData() should return false when data is not present")
-	}
-}
-
-func TestVerifyQualifyingData_EmptyCertInfo(t *testing.T) {
-	certInfo := []byte("")
-	expectedData := []byte("some data")
-
-	if VerifyQualifyingData(certInfo, expectedData) {
-		t.Error("VerifyQualifyingData() should return false for empty certInfo")
-	}
-}
-
-func TestVerifyQualifyingData_EmptyExpected(t *testing.T) {
-	certInfo := []byte("some cert info")
-	expectedData := []byte("")
-
-	// Empty string is always contained
-	if !VerifyQualifyingData(certInfo, expectedData) {
-		t.Error("VerifyQualifyingData() should return true for empty expected data")
-	}
-}
-
-func TestVerifyQualifyingData_PartialMatch(t *testing.T) {
-	certInfo := []byte("some-prefix-EXPECTED-DATA-suffix")
-	expected := []byte("EXPECTED-DATA")
-
-	result := VerifyQualifyingData(certInfo, expected)
-	assert.True(t, result, "Should find expected data within certInfo")
-}
-
-func TestVerifyQualifyingData_NoMatch(t *testing.T) {
-	certInfo := []byte("completely-different-data")
-	expected := []byte("EXPECTED-DATA")
-
-	result := VerifyQualifyingData(certInfo, expected)
-	assert.False(t, result, "Should not find expected data")
-}
-
-func TestVerifyQualifyingData_InvalidCertInfoFallback(t *testing.T) {
-	// Use certInfo that is too short to parse as TPMS_ATTEST
-	// but still contains the expected data (fallback to bytes.Contains)
-	certInfo := []byte("short-certinfo-with-expected-data")
-	expectedData := []byte("expected-data")
-
-	// This should fall back to bytes.Contains since ParseTPMSAttest will fail
-	result := VerifyQualifyingData(certInfo, expectedData)
-	assert.True(t, result, "Should find expected data via fallback containment check")
-}
-
-func TestVerifyQualifyingData_InvalidCertInfoFallbackNotFound(t *testing.T) {
-	// Short certInfo that will fail TPMS_ATTEST parsing
-	certInfo := []byte("short-certinfo")
-	expectedData := []byte("missing-data")
-
-	// Should return false via fallback bytes.Contains
-	result := VerifyQualifyingData(certInfo, expectedData)
-	assert.False(t, result, "Should not find missing data")
-}
-
-func TestVerifyQualifyingData_ValidTPMSAttestExactMatch(t *testing.T) {
-	// Build a valid TPMS_ATTEST structure with specific extraData
-	expectedData := []byte("test-keyauth")
-
-	// Build TPMS_ATTEST with the expectedData in the extraData field
-	var buf []byte
-
-	// Magic (4 bytes, big-endian): TPM_GENERATED_VALUE = 0xFF544347
-	buf = append(buf, 0xFF, 0x54, 0x43, 0x47)
-
-	// Type (2 bytes): TPM_ST_ATTEST_QUOTE = 0x8018
-	buf = append(buf, 0x80, 0x18)
-
-	// QualifiedSigner (TPM2B_NAME: 2-byte size + data)
-	buf = append(buf, 0x00, 0x02) // size = 2
-	buf = append(buf, 0xAA, 0xBB) // data
-
-	// ExtraData (TPM2B_DATA: 2-byte size + data)
-	extraDataSize := len(expectedData)
-	buf = append(buf, byte(extraDataSize>>8), byte(extraDataSize&0xFF)) // size
-	buf = append(buf, expectedData...)                                  // data
-
-	// ClockInfo (TPMS_CLOCK_INFO = 17 bytes)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01) // Clock
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)                         // ResetCount
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)                         // RestartCount
-	buf = append(buf, 0x01)                                           // Safe
-
-	// FirmwareVersion (8 bytes)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-
-	// TPML_PCR_SELECTION (for quote type)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x01) // count = 1
-
-	// TPMS_PCR_SELECTION
-	buf = append(buf, 0x00, 0x0B) // hash = SHA256
-	buf = append(buf, 0x03)       // sizeOfSelect = 3
-	buf = append(buf, 0x01, 0x00, 0x00)
-
-	// pcrDigest
-	buf = append(buf, 0x00, 0x20) // size = 32
-	buf = append(buf, make([]byte, 32)...)
-
-	// VerifyQualifyingData should parse and compare extraData field
-	result := VerifyQualifyingData(buf, expectedData)
-	assert.True(t, result, "Should find expected data in extraData field of valid TPMS_ATTEST")
-}
-
-func TestVerifyQualifyingData_ValidTPMSAttestMismatch(t *testing.T) {
-	expectedData := []byte("different-keyauth")
-	actualExtraData := []byte("test-keyauth")
-
-	// Build TPMS_ATTEST with different extraData
-	var buf []byte
-
-	// Magic
-	buf = append(buf, 0xFF, 0x54, 0x43, 0x47)
-
-	// Type
-	buf = append(buf, 0x80, 0x18)
-
-	// QualifiedSigner
-	buf = append(buf, 0x00, 0x02)
-	buf = append(buf, 0xAA, 0xBB)
-
-	// ExtraData (with actualExtraData, not expectedData)
-	extraDataSize := len(actualExtraData)
-	buf = append(buf, byte(extraDataSize>>8), byte(extraDataSize&0xFF))
-	buf = append(buf, actualExtraData...)
-
-	// ClockInfo
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x01)
-
-	// FirmwareVersion
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-
-	// TPML_PCR_SELECTION
-	buf = append(buf, 0x00, 0x00, 0x00, 0x01)
-	buf = append(buf, 0x00, 0x0B)
-	buf = append(buf, 0x03)
-	buf = append(buf, 0x01, 0x00, 0x00)
-	buf = append(buf, 0x00, 0x20)
-	buf = append(buf, make([]byte, 32)...)
-
-	// Should return false because extraData doesn't match expected
-	result := VerifyQualifyingData(buf, expectedData)
-	assert.False(t, result, "Should not match when extraData differs from expected")
-}
-
-func TestVerifyQualifyingData_ExactMatch(t *testing.T) {
-	certInfo := []byte("test-data")
-	expected := []byte("test-data")
-
-	result := VerifyQualifyingData(certInfo, expected)
-	assert.True(t, result)
-}
-
-func TestVerifyQualifyingData_BinaryData(t *testing.T) {
-	certInfo := []byte{0x00, 0xDE, 0xAD, 0xBE, 0xEF, 0x00}
-	expected := []byte{0xDE, 0xAD, 0xBE, 0xEF}
-
-	result := VerifyQualifyingData(certInfo, expected)
-	assert.True(t, result)
-}
-
-// Tests for ExtractPCRsFromCertInfo
-
-func TestExtractPCRsFromCertInfo_Success(t *testing.T) {
-	// Create a valid TPMS_ATTEST structure with TPM_GENERATED magic
-	// and TPM_ST_ATTEST_QUOTE type (0x8018)
-	certInfo := buildValidTPMSAttest()
-
-	pcrs, err := ExtractPCRsFromCertInfo(certInfo)
-	if err != nil {
-		t.Errorf("ExtractPCRsFromCertInfo() should not return error: %v", err)
-	}
-
-	// After parsing, pcrs should be populated with PCR selection info
-	if pcrs == nil {
-		t.Error("ExtractPCRsFromCertInfo() should return PCR data for valid input")
-	}
-}
-
-func TestExtractPCRsFromCertInfo_EmptyInput(t *testing.T) {
-	certInfo := []byte("")
-
-	_, err := ExtractPCRsFromCertInfo(certInfo)
-	if err == nil {
-		t.Error("ExtractPCRsFromCertInfo() should return error for empty input")
-	}
-}
-
-func TestExtractPCRsFromCertInfo_InvalidMagic(t *testing.T) {
-	certInfo := []byte("test-cert-info-invalid")
-
-	_, err := ExtractPCRsFromCertInfo(certInfo)
-	if err == nil {
-		t.Error("ExtractPCRsFromCertInfo() should return error for invalid TPM magic")
-	}
-}
-
-func TestExtractPCRsFromCertInfo_ValidPCRSelection(t *testing.T) {
-	data := buildValidTPMSAttest()
-
-	pcrs, err := ExtractPCRsFromCertInfo(data)
-	require.NoError(t, err)
-	assert.NotNil(t, pcrs)
-}
-
-func TestExtractPCRsFromCertInfo_TruncatedQuoteInfo(t *testing.T) {
-	// Build data with valid header but truncated quote info
-	data := []byte{
-		0xFF, 0x54, 0x43, 0x47, // Magic
-		0x80, 0x18, // Type (quote)
-		0x00, 0x00, // QualifiedSigner size = 0
-		0x00, 0x00, // ExtraData size = 0
-		// ClockInfo (17 bytes)
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x01,
-		// FirmwareVersion (8 bytes)
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-		// Truncated QuoteInfo - missing count
-	}
-
-	_, err := ExtractPCRsFromCertInfo(data)
-	require.Error(t, err)
-}
-
-func TestExtractPCRsFromCertInfo_MultiplePCRsSelected(t *testing.T) {
-	// Build valid TPMS_ATTEST with multiple PCRs selected in bitmap
-	var buf []byte
-
-	buf = append(buf, 0xFF, 0x54, 0x43, 0x47) // Magic
-	buf = append(buf, 0x80, 0x18)             // Type: QUOTE
-	buf = append(buf, 0x00, 0x00)             // QualifiedSigner (empty)
-	buf = append(buf, 0x00, 0x00)             // ExtraData (empty)
-
-	// ClockInfo
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x01)
-
-	// FirmwareVersion
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-
-	// TPML_PCR_SELECTION
-	buf = append(buf, 0x00, 0x00, 0x00, 0x01) // count = 1
-
-	// TPMS_PCR_SELECTION with PCRs 0, 1, 7, 14 selected
-	// Byte 0: bits 0,1,7 = 0x83
-	// Byte 1: bit 6 (PCR 14) = 0x40
-	buf = append(buf, 0x00, 0x0B) // hash = SHA256
-	buf = append(buf, 0x03)       // sizeOfSelect = 3
-	buf = append(buf, 0x83, 0x40, 0x00)
-
-	// pcrDigest
-	buf = append(buf, 0x00, 0x20)
-	buf = append(buf, make([]byte, 32)...)
-
-	pcrs, err := ExtractPCRsFromCertInfo(buf)
-	assert.NoError(t, err)
-	assert.NotNil(t, pcrs)
-
-	// Should have PCRs 0, 1, 7, 14 in the map
-	_, hasPCR0 := pcrs[0]
-	_, hasPCR1 := pcrs[1]
-	_, hasPCR7 := pcrs[7]
-	_, hasPCR14 := pcrs[14]
-
-	assert.True(t, hasPCR0, "PCR 0 should be selected")
-	assert.True(t, hasPCR1, "PCR 1 should be selected")
-	assert.True(t, hasPCR7, "PCR 7 should be selected")
-	assert.True(t, hasPCR14, "PCR 14 should be selected")
-}
-
-// buildValidTPMSAttest creates a minimal valid TPMS_ATTEST structure for testing
-func buildValidTPMSAttest() []byte {
-	// Build a sequential TPMS_ATTEST structure as per TPM 2.0 spec
-	var buf []byte
-
-	// Magic (4 bytes, big-endian): TPM_GENERATED_VALUE = 0xFF544347
-	buf = append(buf, 0xFF, 0x54, 0x43, 0x47)
-
-	// Type (2 bytes): TPM_ST_ATTEST_QUOTE = 0x8018
-	buf = append(buf, 0x80, 0x18)
-
-	// QualifiedSigner (TPM2B_NAME: 2-byte size + data)
-	buf = append(buf, 0x00, 0x02) // size = 2
-	buf = append(buf, 0xAA, 0xBB) // data
-
-	// ExtraData (TPM2B_DATA: 2-byte size + data)
-	buf = append(buf, 0x00, 0x04)             // size = 4
-	buf = append(buf, 0x01, 0x02, 0x03, 0x04) // data
-
-	// ClockInfo (TPMS_CLOCK_INFO = 17 bytes)
-	// clock (8 bytes)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-	// resetCount (4 bytes)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	// restartCount (4 bytes)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	// safe (1 byte)
-	buf = append(buf, 0x01)
-
-	// FirmwareVersion (8 bytes)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-
-	// TPMS_QUOTE_INFO (attested data for TPM_ST_ATTEST_QUOTE)
-	// pcrSelect (TPML_PCR_SELECTION)
-	// count (4 bytes)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x01) // 1 selection
-
-	// TPMS_PCR_SELECTION
-	// hash (2 bytes): TPM_ALG_SHA256 = 0x000B
-	buf = append(buf, 0x00, 0x0B)
-	// sizeOfSelect (1 byte)
-	buf = append(buf, 0x03)
-	// pcrSelect (3 bytes bitmap)
-	buf = append(buf, 0xFF, 0x00, 0x00) // PCRs 0-7 selected
-
-	// pcrDigest (TPM2B_DIGEST: 2-byte size + digest)
-	buf = append(buf, 0x00, 0x20) // size = 32 (SHA256)
-	// Digest data (32 zero bytes)
-	digest := make([]byte, 32)
-	buf = append(buf, digest...)
-
-	return buf
-}
-
-// buildTPMSAttestWithExtraData builds a TPMS_ATTEST with specific extra data
-func buildTPMSAttestWithExtraData(extraData []byte) []byte {
-	var buf []byte
-
-	// Magic (4 bytes): TPM_GENERATED_VALUE = 0xFF544347
-	buf = append(buf, 0xFF, 0x54, 0x43, 0x47)
-
-	// Type (2 bytes): TPM_ST_ATTEST_QUOTE = 0x8018
-	buf = append(buf, 0x80, 0x18)
-
-	// QualifiedSigner (TPM2B_NAME: 2-byte size + data)
-	buf = append(buf, 0x00, 0x02) // size = 2
-	buf = append(buf, 0xAA, 0xBB) // data
-
-	// ExtraData (TPM2B_DATA: 2-byte size + data)
-	extraDataLen := uint16(len(extraData))
-	buf = append(buf, byte(extraDataLen>>8), byte(extraDataLen&0xFF))
-	buf = append(buf, extraData...)
-
-	// ClockInfo (TPMS_CLOCK_INFO = 17 bytes)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01) // clock
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)                         // resetCount
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)                         // restartCount
-	buf = append(buf, 0x01)                                           // safe
-
-	// FirmwareVersion (8 bytes)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-
-	// TPMS_QUOTE_INFO
-	buf = append(buf, 0x00, 0x00, 0x00, 0x01) // count = 1
-	buf = append(buf, 0x00, 0x0B)             // hash = TPM_ALG_SHA256
-	buf = append(buf, 0x03)                   // sizeOfSelect = 3
-	buf = append(buf, 0xFF, 0x00, 0x00)       // pcrSelect
-	buf = append(buf, 0x00, 0x20)             // digest size = 32
-	digest := make([]byte, 32)
-	buf = append(buf, digest...)
-
-	return buf
 }
 
 // Tests for EncodeAttestationForSubmission
@@ -1136,488 +747,6 @@ func TestEncodeAttestationForSubmission_CBORMarshalError(t *testing.T) {
 	})
 }
 
-// Tests for ParseTPMSAttest
-
-func TestParseTPMSAttest_Success(t *testing.T) {
-	// Build a valid TPMS_ATTEST structure
-	data := buildValidTPMSAttest()
-
-	attest, err := ParseTPMSAttest(data)
-	require.NoError(t, err)
-	assert.NotNil(t, attest)
-	assert.Equal(t, uint32(0xFF544347), attest.Magic)
-}
-
-func TestParseTPMSAttest_DataTooShort(t *testing.T) {
-	// Less than 10 bytes
-	data := []byte{0x01, 0x02, 0x03}
-
-	_, err := ParseTPMSAttest(data)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "data too short")
-}
-
-func TestParseTPMSAttest_InvalidMagic(t *testing.T) {
-	// Build data with wrong magic
-	data := []byte{
-		0x00, 0x00, 0x00, 0x00, // Invalid magic
-		0x00, 0x00, // Type
-		0x00, 0x00, 0x00, 0x00, // Some padding
-	}
-
-	_, err := ParseTPMSAttest(data)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid TPM magic")
-}
-
-func TestParseTPMSAttest_TooShortForQualifiedSignerSize(t *testing.T) {
-	// Test with exactly 10 bytes - passes initial check, but at offset 6
-	// signerSize check needs offset+2=8 <= len(10), so it passes
-	// Then we read signerSize and check offset+signerSize > len
-	data := []byte{
-		0xFF, 0x54, 0x43, 0x47, // Magic (4 bytes)
-		0x00, 0x18, // Type (2 bytes)
-		0x00, 0x10, // QualifiedSigner size = 16 bytes (2 bytes)
-		0x00, 0x00, // Only 2 bytes of padding
-	}
-
-	_, err := ParseTPMSAttest(data)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "qualifiedSigner")
-}
-
-func TestParseTPMSAttest_TooShortForQualifiedSignerData(t *testing.T) {
-	// Build data with valid magic but truncated qualifiedSigner data
-	data := []byte{
-		0xFF, 0x54, 0x43, 0x47, // Magic (4 bytes)
-		0x00, 0x18, // Type (2 bytes)
-		0x00, 0x20, // QualifiedSigner size = 32 bytes (2 bytes)
-		0x00, 0x00, // Only 2 bytes of data instead of 32
-	}
-
-	_, err := ParseTPMSAttest(data)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "qualifiedSigner")
-}
-
-func TestParseTPMSAttest_TooShortForExtraDataSize(t *testing.T) {
-	// Build data with valid magic and qualifiedSigner but truncated at extraData
-	data := []byte{
-		0xFF, 0x54, 0x43, 0x47, // Magic (4 bytes)
-		0x00, 0x18, // Type (2 bytes)
-		0x00, 0x02, // QualifiedSigner size = 2 (2 bytes)
-		0xAB, 0xCD, // QualifiedSigner data (2 bytes)
-		// Total = 10 bytes, at offset 10, need 2 more for extraData size
-	}
-
-	_, err := ParseTPMSAttest(data)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "extraData")
-}
-
-func TestParseTPMSAttest_TooShortForExtraData(t *testing.T) {
-	data := []byte{
-		0xFF, 0x54, 0x43, 0x47, // Magic
-		0x00, 0x18, // Type
-		0x00, 0x02, // QualifiedSigner size = 2
-		0xAB, 0xCD, // QualifiedSigner data
-		0x00, 0x10, // ExtraData size = 16
-		// No extraData follows
-	}
-
-	_, err := ParseTPMSAttest(data)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "extraData")
-}
-
-func TestParseTPMSAttest_TooShortForClockInfo(t *testing.T) {
-	data := []byte{
-		0xFF, 0x54, 0x43, 0x47, // Magic
-		0x00, 0x18, // Type
-		0x00, 0x02, // QualifiedSigner size = 2
-		0xAB, 0xCD, // QualifiedSigner data
-		0x00, 0x02, // ExtraData size = 2
-		0xEF, 0x12, // ExtraData
-		// Missing ClockInfo (17 bytes)
-	}
-
-	_, err := ParseTPMSAttest(data)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "clockInfo")
-}
-
-func TestParseTPMSAttest_TooShortForFirmwareVersion(t *testing.T) {
-	// Build minimal valid up to clockInfo, then truncate
-	data := []byte{
-		0xFF, 0x54, 0x43, 0x47, // Magic
-		0x00, 0x18, // Type
-		0x00, 0x00, // QualifiedSigner size = 0
-		0x00, 0x00, // ExtraData size = 0
-		// ClockInfo (17 bytes)
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Clock
-		0x00, 0x00, 0x00, 0x00, // ResetCount
-		0x00, 0x00, 0x00, 0x00, // RestartCount
-		0x01, // Safe
-		// Missing FirmwareVersion (8 bytes)
-	}
-
-	_, err := ParseTPMSAttest(data)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "firmwareVersion")
-}
-
-func TestParseTPMSAttest_ValidQuoteInfo(t *testing.T) {
-	// Build a valid TPMS_ATTEST with quote info
-	data := buildValidTPMSAttest()
-
-	attest, err := ParseTPMSAttest(data)
-	require.NoError(t, err)
-	assert.NotNil(t, attest)
-
-	// Verify magic
-	assert.Equal(t, uint32(0xFF544347), attest.Magic)
-
-	// Verify type is quote
-	assert.Equal(t, uint16(0x8018), attest.Type)
-
-	// Verify attested info exists (quote info)
-	assert.NotNil(t, attest.Attested)
-}
-
-func TestParseTPMSAttest_ExtractExtraData(t *testing.T) {
-	// Build TPMS_ATTEST with specific extra data
-	data := buildTPMSAttestWithExtraData([]byte("test-qualifying-data"))
-
-	attest, err := ParseTPMSAttest(data)
-	require.NoError(t, err)
-	assert.NotNil(t, attest)
-	assert.Equal(t, []byte("test-qualifying-data"), attest.ExtraData)
-}
-
-func TestParseTPMSAttest_NonQuoteType(t *testing.T) {
-	// Build TPMS_ATTEST with a different type (not TPM_ST_ATTEST_QUOTE)
-	var buf []byte
-
-	// Magic
-	buf = append(buf, 0xFF, 0x54, 0x43, 0x47)
-
-	// Type: TPM_ST_ATTEST_CERTIFY = 0x8017 (different from QUOTE)
-	buf = append(buf, 0x80, 0x17)
-
-	// QualifiedSigner
-	buf = append(buf, 0x00, 0x02)
-	buf = append(buf, 0xAA, 0xBB)
-
-	// ExtraData
-	buf = append(buf, 0x00, 0x04)
-	buf = append(buf, 0x01, 0x02, 0x03, 0x04)
-
-	// ClockInfo
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x01)
-
-	// FirmwareVersion
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-
-	// For non-quote types, TPMS_QUOTE_INFO parsing is skipped
-	attest, err := ParseTPMSAttest(buf)
-	assert.NoError(t, err)
-	assert.NotNil(t, attest)
-	assert.Equal(t, uint16(0x8017), attest.Type)
-
-	// Quote-specific fields should be empty
-	assert.Empty(t, attest.Attested.PCRSelect)
-	assert.Empty(t, attest.Attested.PCRDigest)
-}
-
-func TestParseTPMSAttest_QuoteWithMultiplePCRSelections(t *testing.T) {
-	var buf []byte
-
-	// Magic
-	buf = append(buf, 0xFF, 0x54, 0x43, 0x47)
-
-	// Type: TPM_ST_ATTEST_QUOTE
-	buf = append(buf, 0x80, 0x18)
-
-	// QualifiedSigner
-	buf = append(buf, 0x00, 0x02)
-	buf = append(buf, 0xAA, 0xBB)
-
-	// ExtraData
-	buf = append(buf, 0x00, 0x04)
-	buf = append(buf, 0x01, 0x02, 0x03, 0x04)
-
-	// ClockInfo
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x01)
-
-	// FirmwareVersion
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-
-	// TPML_PCR_SELECTION with count = 2
-	buf = append(buf, 0x00, 0x00, 0x00, 0x02)
-
-	// First TPMS_PCR_SELECTION (SHA256)
-	buf = append(buf, 0x00, 0x0B) // hash = SHA256
-	buf = append(buf, 0x03)       // sizeOfSelect = 3
-	buf = append(buf, 0xFF, 0x00, 0x00)
-
-	// Second TPMS_PCR_SELECTION (SHA384)
-	buf = append(buf, 0x00, 0x0C) // hash = SHA384
-	buf = append(buf, 0x03)       // sizeOfSelect = 3
-	buf = append(buf, 0x00, 0xFF, 0x00)
-
-	// pcrDigest
-	buf = append(buf, 0x00, 0x30) // size = 48 (SHA384)
-	buf = append(buf, make([]byte, 48)...)
-
-	attest, err := ParseTPMSAttest(buf)
-	assert.NoError(t, err)
-	assert.NotNil(t, attest)
-	assert.Len(t, attest.Attested.PCRSelect, 2)
-	assert.Equal(t, uint16(0x000B), attest.Attested.PCRSelect[0].Hash)
-	assert.Equal(t, uint16(0x000C), attest.Attested.PCRSelect[1].Hash)
-}
-
-func TestParseTPMSAttest_TooShortForPCRSelectionCount(t *testing.T) {
-	var buf []byte
-
-	// Magic
-	buf = append(buf, 0xFF, 0x54, 0x43, 0x47)
-
-	// Type: TPM_ST_ATTEST_QUOTE
-	buf = append(buf, 0x80, 0x18)
-
-	// QualifiedSigner (empty)
-	buf = append(buf, 0x00, 0x00)
-
-	// ExtraData (empty)
-	buf = append(buf, 0x00, 0x00)
-
-	// ClockInfo
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x01)
-
-	// FirmwareVersion
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-
-	// Missing TPML_PCR_SELECTION count (truncated here)
-
-	_, err := ParseTPMSAttest(buf)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "PCR selection count")
-}
-
-func TestParseTPMSAttest_TooShortForPCRSelection(t *testing.T) {
-	var buf []byte
-
-	// Magic
-	buf = append(buf, 0xFF, 0x54, 0x43, 0x47)
-
-	// Type: TPM_ST_ATTEST_QUOTE
-	buf = append(buf, 0x80, 0x18)
-
-	// QualifiedSigner (empty)
-	buf = append(buf, 0x00, 0x00)
-
-	// ExtraData (empty)
-	buf = append(buf, 0x00, 0x00)
-
-	// ClockInfo
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x01)
-
-	// FirmwareVersion
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-
-	// TPML_PCR_SELECTION with count = 1
-	buf = append(buf, 0x00, 0x00, 0x00, 0x01)
-
-	// Incomplete TPMS_PCR_SELECTION (only 2 bytes instead of 3+)
-	buf = append(buf, 0x00, 0x0B) // hash only, missing sizeOfSelect
-
-	_, err := ParseTPMSAttest(buf)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "PCR selection")
-}
-
-func TestParseTPMSAttest_TooShortForPCRBitmap(t *testing.T) {
-	var buf []byte
-
-	// Magic
-	buf = append(buf, 0xFF, 0x54, 0x43, 0x47)
-
-	// Type: TPM_ST_ATTEST_QUOTE
-	buf = append(buf, 0x80, 0x18)
-
-	// QualifiedSigner (empty)
-	buf = append(buf, 0x00, 0x00)
-
-	// ExtraData (empty)
-	buf = append(buf, 0x00, 0x00)
-
-	// ClockInfo
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x01)
-
-	// FirmwareVersion
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-
-	// TPML_PCR_SELECTION with count = 1
-	buf = append(buf, 0x00, 0x00, 0x00, 0x01)
-
-	// TPMS_PCR_SELECTION header
-	buf = append(buf, 0x00, 0x0B) // hash
-	buf = append(buf, 0x10)       // sizeOfSelect = 16 (too large for remaining data)
-	buf = append(buf, 0x01, 0x02) // Only 2 bytes of bitmap
-
-	_, err := ParseTPMSAttest(buf)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "PCR bitmap")
-}
-
-func TestParseTPMSAttest_TooShortForPCRDigestSize(t *testing.T) {
-	var buf []byte
-
-	// Magic
-	buf = append(buf, 0xFF, 0x54, 0x43, 0x47)
-
-	// Type: TPM_ST_ATTEST_QUOTE
-	buf = append(buf, 0x80, 0x18)
-
-	// QualifiedSigner (empty)
-	buf = append(buf, 0x00, 0x00)
-
-	// ExtraData (empty)
-	buf = append(buf, 0x00, 0x00)
-
-	// ClockInfo
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x01)
-
-	// FirmwareVersion
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-
-	// TPML_PCR_SELECTION with count = 1
-	buf = append(buf, 0x00, 0x00, 0x00, 0x01)
-
-	// Complete TPMS_PCR_SELECTION
-	buf = append(buf, 0x00, 0x0B) // hash
-	buf = append(buf, 0x03)       // sizeOfSelect = 3
-	buf = append(buf, 0x01, 0x00, 0x00)
-
-	// Missing pcrDigest size
-
-	_, err := ParseTPMSAttest(buf)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "PCR digest size")
-}
-
-func TestParseTPMSAttest_TooShortForPCRDigest(t *testing.T) {
-	var buf []byte
-
-	// Magic
-	buf = append(buf, 0xFF, 0x54, 0x43, 0x47)
-
-	// Type: TPM_ST_ATTEST_QUOTE
-	buf = append(buf, 0x80, 0x18)
-
-	// QualifiedSigner (empty)
-	buf = append(buf, 0x00, 0x00)
-
-	// ExtraData (empty)
-	buf = append(buf, 0x00, 0x00)
-
-	// ClockInfo
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
-	buf = append(buf, 0x01)
-
-	// FirmwareVersion
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)
-
-	// TPML_PCR_SELECTION with count = 1
-	buf = append(buf, 0x00, 0x00, 0x00, 0x01)
-
-	// Complete TPMS_PCR_SELECTION
-	buf = append(buf, 0x00, 0x0B) // hash
-	buf = append(buf, 0x03)       // sizeOfSelect = 3
-	buf = append(buf, 0x01, 0x00, 0x00)
-
-	// pcrDigest size indicates 32 bytes, but only 2 bytes follow
-	buf = append(buf, 0x00, 0x20) // size = 32
-	buf = append(buf, 0xAB, 0xCD) // Only 2 bytes
-
-	_, err := ParseTPMSAttest(buf)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "PCR digest")
-}
-
-func TestParseTPMSAttest_EdgeCases(t *testing.T) {
-	t.Run("exactly_minimum_size", func(t *testing.T) {
-		// Create minimal valid data
-		data := make([]byte, 10)
-		// Set magic value
-		data[0] = 0xff
-		data[1] = 0x54
-		data[2] = 0x43
-		data[3] = 0x47
-
-		_, err := ParseTPMSAttest(data)
-		// Should fail due to missing data but magic is valid
-		assert.Error(t, err)
-	})
-
-	t.Run("invalid_magic", func(t *testing.T) {
-		data := make([]byte, 100)
-		// Set invalid magic
-		data[0] = 0x00
-		data[1] = 0x00
-		data[2] = 0x00
-		data[3] = 0x00
-
-		_, err := ParseTPMSAttest(data)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid TPM magic")
-	})
-
-	t.Run("truncated_data", func(t *testing.T) {
-		data := make([]byte, 8)
-		// Set valid magic
-		data[0] = 0xff
-		data[1] = 0x54
-		data[2] = 0x43
-		data[3] = 0x47
-		// Set type
-		data[4] = 0x00
-		data[5] = 0x00
-
-		_, err := ParseTPMSAttest(data)
-		assert.Error(t, err)
-		// The error could be about data being too short or qualifiedSigner
-		assert.True(t, err != nil)
-	})
-}
-
-func TestParseTPMSAttest_TooShort(t *testing.T) {
-	_, err := ExtractPCRsFromCertInfo([]byte{1, 2, 3})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "too short")
-}
-
 // Tests for AttestationObject CBOR roundtrip
 
 func TestAttestationObject_CBORRoundtrip(t *testing.T) {
@@ -1708,41 +837,12 @@ func TestAttestationRequest_Fields(t *testing.T) {
 	assert.Equal(t, []byte("attestation-statement"), req.AttStmt)
 }
 
-func TestTPMSAttest_Struct(t *testing.T) {
-	clockInfo := TPMSClockInfo{
-		Clock:        12345,
-		ResetCount:   1,
-		RestartCount: 2,
-		Safe:         true,
-	}
-
-	assert.Equal(t, uint64(12345), clockInfo.Clock)
-	assert.Equal(t, uint32(1), clockInfo.ResetCount)
-	assert.Equal(t, uint32(2), clockInfo.RestartCount)
-	assert.True(t, clockInfo.Safe)
-
-	quoteInfo := TPMSQuoteInfo{
-		PCRSelect: []TPMSPCRSelection{
-			{
-				Hash:         0x000b,
-				SizeOfBitmap: 3,
-				PCRBitmap:    []byte{0x01, 0x00, 0x00},
-			},
-		},
-		PCRDigest: []byte("digest"),
-	}
-
-	assert.Equal(t, 1, len(quoteInfo.PCRSelect))
-	assert.Equal(t, []byte("digest"), quoteInfo.PCRDigest)
-}
-
 func TestErrorVariables(t *testing.T) {
 	assert.NotNil(t, ErrInvalidKeyAlgorithm)
 	assert.NotNil(t, ErrInvalidAttestationFormat)
 	assert.NotNil(t, ErrInvalidAttestationObject)
 	assert.NotNil(t, ErrTPMAttestationInvalid)
 	assert.NotNil(t, ErrAIKCertificateInvalid)
-	assert.NotNil(t, ErrPCRMismatch)
 	assert.NotNil(t, ErrCertificateChainInvalid)
 
 	assert.Contains(t, ErrInvalidKeyAlgorithm.Error(), "invalid key algorithm")
@@ -1750,7 +850,6 @@ func TestErrorVariables(t *testing.T) {
 	assert.Contains(t, ErrInvalidAttestationObject.Error(), "invalid attestation object")
 	assert.Contains(t, ErrTPMAttestationInvalid.Error(), "tpm attestation statement invalid")
 	assert.Contains(t, ErrAIKCertificateInvalid.Error(), "AIK certificate")
-	assert.Contains(t, ErrPCRMismatch.Error(), "PCR values do not match")
 	assert.Contains(t, ErrCertificateChainInvalid.Error(), "certificate chain invalid")
 }
 

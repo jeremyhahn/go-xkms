@@ -55,6 +55,10 @@ func NewAdminService(
 
 // ListCertificates retrieves a paginated list of certificates
 func (s *AdminService) ListCertificates(ctx context.Context, req ListCertificatesRequest) ([]*CertificateInfo, *Pagination, error) {
+	if s.storageFactory == nil {
+		return nil, nil, ErrStorageNotConfigured
+	}
+
 	// Set default pagination
 	if req.Page < 1 {
 		req.Page = 1
@@ -130,7 +134,7 @@ func (s *AdminService) ListCertificates(ctx context.Context, req ListCertificate
 	for _, cert := range filteredCerts[start:end] {
 		certInfo, err := s.convertToCertificateInfo(cert)
 		if err != nil {
-			s.logger.Warn("failed to convert certificate", slog.Uint64("id", cert.ID), slog.String("error", err.Error()))
+			s.logger.Warn("failed to convert certificate", slog.String("serial", cert.Serial), slog.String("error", err.Error()))
 			continue
 		}
 		result = append(result, certInfo)
@@ -147,6 +151,10 @@ func (s *AdminService) ListCertificates(ctx context.Context, req ListCertificate
 
 // GetCertificate retrieves a certificate by serial number
 func (s *AdminService) GetCertificate(ctx context.Context, serial string) (*CertificateInfo, error) {
+	if s.storageFactory == nil {
+		return nil, ErrStorageNotConfigured
+	}
+
 	certDAO, err := s.storageFactory.CertificateDAO()
 	if err != nil {
 		return nil, caerrors.StorageFailureError("failed to get certificate DAO: %s", err)
@@ -178,6 +186,13 @@ func (s *AdminService) GetCertificate(ctx context.Context, serial string) (*Cert
 
 // RevokeCertificate revokes a certificate by serial number
 func (s *AdminService) RevokeCertificate(ctx context.Context, serial string, reason string) error {
+	if s.storageFactory == nil {
+		return ErrStorageNotConfigured
+	}
+	if s.ca == nil {
+		return ErrCANotConfigured
+	}
+
 	certDAO, err := s.storageFactory.CertificateDAO()
 	if err != nil {
 		return caerrors.StorageFailureError("failed to get certificate DAO: %s", err)
@@ -243,6 +258,10 @@ func (s *AdminService) ListExpiringCertificates(ctx context.Context, days int, p
 
 // ListAccounts retrieves a paginated list of ACME accounts
 func (s *AdminService) ListAccounts(ctx context.Context, req ListAccountsRequest) ([]*AccountInfo, *Pagination, error) {
+	if s.storageFactory == nil {
+		return nil, nil, ErrStorageNotConfigured
+	}
+
 	// Set default pagination
 	if req.Page < 1 {
 		req.Page = 1
@@ -317,6 +336,10 @@ func (s *AdminService) ListAccounts(ctx context.Context, req ListAccountsRequest
 
 // GetAccount retrieves an account by ID
 func (s *AdminService) GetAccount(ctx context.Context, accountID uint64) (*AccountInfo, error) {
+	if s.storageFactory == nil {
+		return nil, ErrStorageNotConfigured
+	}
+
 	accountDAO, err := s.storageFactory.AccountDAO()
 	if err != nil {
 		return nil, caerrors.StorageFailureError("failed to get account DAO: %s", err)
@@ -332,6 +355,10 @@ func (s *AdminService) GetAccount(ctx context.Context, accountID uint64) (*Accou
 
 // DisableAccount disables an ACME account
 func (s *AdminService) DisableAccount(ctx context.Context, accountID uint64) error {
+	if s.storageFactory == nil {
+		return ErrStorageNotConfigured
+	}
+
 	accountDAO, err := s.storageFactory.AccountDAO()
 	if err != nil {
 		return caerrors.StorageFailureError("failed to get account DAO: %s", err)
@@ -353,6 +380,10 @@ func (s *AdminService) DisableAccount(ctx context.Context, accountID uint64) err
 
 // ListOrders retrieves a paginated list of orders
 func (s *AdminService) ListOrders(ctx context.Context, req ListOrdersRequest) ([]*OrderInfo, *Pagination, error) {
+	if s.storageFactory == nil {
+		return nil, nil, ErrStorageNotConfigured
+	}
+
 	// Set default pagination
 	if req.Page < 1 {
 		req.Page = 1
@@ -457,6 +488,10 @@ func (s *AdminService) ListOrders(ctx context.Context, req ListOrdersRequest) ([
 
 // GetOrder retrieves an order by ID
 func (s *AdminService) GetOrder(ctx context.Context, orderID uint64, accountID uint64) (*OrderInfo, error) {
+	if s.storageFactory == nil {
+		return nil, ErrStorageNotConfigured
+	}
+
 	orderDAO, err := s.storageFactory.OrderDAO(accountID)
 	if err != nil {
 		return nil, caerrors.StorageFailureError("failed to get order DAO: %s", err)
@@ -472,6 +507,10 @@ func (s *AdminService) GetOrder(ctx context.Context, orderID uint64, accountID u
 
 // GetStatus retrieves CA status information
 func (s *AdminService) GetStatus(ctx context.Context) (*CAStatus, error) {
+	if s.ca == nil {
+		return nil, ErrCANotConfigured
+	}
+
 	rootCert, err := s.ca.TrustedRoot()
 	if err != nil {
 		return nil, caerrors.InternalServerError("failed to get root CA: %s", err)
@@ -513,6 +552,10 @@ func (s *AdminService) GetStatus(ctx context.Context) (*CAStatus, error) {
 
 // GetStats retrieves CA statistics
 func (s *AdminService) GetStats(ctx context.Context) (*CAStats, error) {
+	if s.storageFactory == nil {
+		return nil, ErrStorageNotConfigured
+	}
+
 	stats := &CAStats{}
 
 	// Get certificate statistics
@@ -606,7 +649,6 @@ func (s *AdminService) convertToCertificateInfo(cert *entities.ACMECertificate) 
 	}
 
 	return &CertificateInfo{
-		ID:           cert.ID,
 		SerialNumber: x509Cert.SerialNumber.String(),
 		Subject:      x509Cert.Subject.String(),
 		Issuer:       x509Cert.Issuer.String(),
