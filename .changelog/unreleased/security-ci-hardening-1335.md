@@ -1,7 +1,0 @@
-- **CI workflows are hardened (#1335).**
-  - Third-party actions are pinned to full commit SHAs.
-  - `ci.yml` defaults to `permissions: contents: read`, with per-job overrides.
-  - Every checkout sets `persist-credentials: false`.
-  - Workflow outputs reach scripts through environment variables, not template interpolation.
-  - Build and scan images are pinned by digest.
-  - Release-process changes (#1334) are left out on the owner's instruction.
