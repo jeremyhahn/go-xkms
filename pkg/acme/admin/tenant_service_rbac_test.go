@@ -24,6 +24,7 @@ import (
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,7 +48,7 @@ func TestTenantAwareAdminService_BarrierSvc_GetterSetter(t *testing.T) {
 	svc := newNilQRDBTenantService(t)
 	assert.Nil(t, svc.BarrierSvc())
 
-	stub := NewBarrierService(BarrierModeEmbedded, nil, slog.Default())
+	stub := NewBarrierService(&xkms.XKMSService{}, slog.Default())
 	svc.SetBarrierService(stub)
 	assert.Equal(t, stub, svc.BarrierSvc())
 }

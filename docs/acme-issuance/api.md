@@ -198,7 +198,7 @@ Authorization is qrdb RBAC, resolved per route by `PermissionGate`. On
 xkmsd's unified mTLS listener the caller is the qrdb user its client
 certificate is bound to (SPKI thumbprint), with that user's roles; a
 certificate bound to no user, or a user holding no role that carries the
-route's permission, is answered `403` (`cmd/xkmsd/admin.go:177-186`; see
+route's permission, is answered `403` (`cmd/xkmsd/admin.go:200-209`; see
 [`engineering.md`](engineering.md#invariants)).
 
 ### Admin API response contract
@@ -232,6 +232,7 @@ reach.
 | a role or user of another tenant under its own `{id}` (every caller, the platform included) | `404`, `Role not found` / `User not found` | `NotFound` | `tenantRole` / `tenantUser`, `pkg/acme/admin/tenant_service.go:1598`, `:1705` |
 | `GET /api/v1/tenants` | `200`, its own tenant only | same | `pkg/acme/admin/tenant_service.go:547` |
 | `POST /api/v1/tenants`, `GET /admin/audit` | `403`, the gate's own `Access denied: insufficient permissions` body | `PermissionDenied` | `requirePlatformScope`, `pkg/acme/admin/tenant_binding.go:113` |
+| every `/admin/barrier/*` route (status, initialize, seal, unseal, `shamir/initialize`, `shamir/unseal-share`, rekey, `recovery/generate`, `recovery/recover`, `recovery/status`, `root-token`), whatever `seal:*` / `barrier:*` grants it holds (go-xkms#1244) | `403`, the gate's own `Access denied: insufficient permissions` body; the barrier is not touched | not exposed (REST only) | the XKMSService's `requirePlatformScope`, `pkg/xkms/tenant_binding.go:88`, reached through `SystemBarrier`, `pkg/acme/admin/barrier_service.go:199`; answered by `writeBarrierError`, `pkg/acme/admin/barrier_handlers.go:279` |
 | `/admin/certificates*`, `/admin/accounts*`, `/admin/orders*`, `/admin/stats` | only its tenant's accounts and the certificates their orders were issued; anything else is `404` on get/revoke/disable, absent from lists | `NotFound` / absent | `pkg/acme/admin/service.go:551-694` |
 
 gRPC maps these through `convertAdminErrorToGRPC`

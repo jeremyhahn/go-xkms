@@ -15,34 +15,37 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
-	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// BarrierMode identifies whether the barrier is managed locally or by a remote QRDB server.
+// BarrierMode identifies where the barrier the admin plane operates lives.
 type BarrierMode string
 
-const (
-	// BarrierModeEmbedded indicates the barrier is managed locally by an embedded QRDB instance.
-	BarrierModeEmbedded BarrierMode = "embedded"
-	// BarrierModeRemote indicates the barrier is managed by a remote QRDB server.
-	BarrierModeRemote BarrierMode = "remote"
-)
+// BarrierModeEmbedded is the only mode the admin plane reports: it operates
+// the system barrier through the in-process XKMSService (SystemBarrier) and
+// holds no barrier client of its own. The field stays on the status response
+// because the admin SPA keys its sealed-barrier redirect on it.
+const BarrierModeEmbedded BarrierMode = "embedded"
 
-// BarrierRemoteModeError is returned when a mutating barrier operation is
-// attempted in remote mode.
-type BarrierRemoteModeError struct {
+// BarrierNotEnabledError is returned when a barrier operation is attempted
+// but the server has no system barrier configured.
+type BarrierNotEnabledError struct {
 	Operation string
 }
 
 // Error implements the error interface.
-func (e *BarrierRemoteModeError) Error() string {
-	return fmt.Sprintf("admin: barrier operation %q not available in remote mode", e.Operation)
+func (e *BarrierNotEnabledError) Error() string {
+	return fmt.Sprintf("admin: barrier %q not available — barrier not enabled", e.Operation)
 }
 
-// BarrierNotInitializedError is returned when the barrier has not been initialized.
+// BarrierNotInitializedError is returned when an operation needs an
+// initialized barrier and the barrier has not been initialized.
 type BarrierNotInitializedError struct{}
 
 // Error implements the error interface.
@@ -164,89 +167,111 @@ type BarrierRootTokenResponse struct {
 
 // BarrierService defines the interface for barrier management operations.
 type BarrierService interface {
-	// Status returns the current barrier state and mode.
+	// Status returns the current barrier state.
 	Status(ctx context.Context) (*BarrierStatusResponse, error)
-	// Initialize initializes the barrier with a passphrase (embedded only).
+	// Initialize initializes the barrier with a passphrase.
 	Initialize(ctx context.Context, req *BarrierInitializeRequest) error
-	// Seal seals the barrier (embedded only).
+	// Seal seals the barrier.
 	Seal(ctx context.Context) error
-	// Unseal unseals the barrier with a passphrase (embedded only).
+	// Unseal unseals the barrier with a passphrase.
 	Unseal(ctx context.Context, req *BarrierUnsealRequest) error
-	// InitializeShamir initializes with Shamir secret sharing (embedded only).
+	// InitializeShamir initializes with Shamir secret sharing.
 	InitializeShamir(ctx context.Context, req *BarrierInitializeShamirRequest) (*BarrierInitializeShamirResponse, error)
-	// UnsealWithShare submits a single Shamir share (embedded only).
+	// UnsealWithShare submits a single Shamir share.
 	UnsealWithShare(ctx context.Context, req *BarrierUnsealShareRequest) (*BarrierUnsealShareResponse, error)
-	// Rekey generates new Shamir shares (embedded only).
+	// Rekey generates new Shamir shares.
 	Rekey(ctx context.Context, req *BarrierRekeyRequest) (*BarrierRekeyResponse, error)
-	// GenerateRecoveryKeys generates disaster recovery keys (embedded only).
+	// GenerateRecoveryKeys generates disaster recovery keys.
 	GenerateRecoveryKeys(ctx context.Context, req *BarrierGenerateRecoveryKeysRequest) (*BarrierRecoveryKeysResponse, error)
-	// RecoverWithKeys recovers the barrier using recovery keys (embedded only).
+	// RecoverWithKeys recovers the barrier using recovery keys.
 	RecoverWithKeys(ctx context.Context, req *BarrierRecoverWithKeysRequest) error
-	// HasRecoveryKeys checks if recovery keys exist (embedded only).
+	// HasRecoveryKeys checks if recovery keys exist.
 	HasRecoveryKeys(ctx context.Context) (bool, error)
-	// GenerateRootToken generates a root token from Shamir shares (embedded only).
+	// GenerateRootToken generates a root token from Shamir shares.
 	GenerateRootToken(ctx context.Context, req *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error)
 }
 
-// Ensure barrierService implements BarrierService at compile time.
-var _ BarrierService = (*barrierService)(nil)
+// SystemBarrier is the system-barrier surface of the XKMSService the admin
+// plane operates the barrier through. Every method is platform-scoped by the
+// XKMSService itself (requirePlatformScope, go-xkms#1227): a tenant-scoped
+// caller is refused before the barrier is touched. The admin plane holds no
+// barrier handle of its own, so it cannot bypass that check (go-xkms#1244).
+type SystemBarrier interface {
+	BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error)
+	BarrierInitialize(ctx context.Context, req *transport.BarrierInitializeRequest) error
+	BarrierSeal(ctx context.Context) error
+	BarrierUnseal(ctx context.Context, req *transport.BarrierUnsealRequest) error
+	BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error)
+	BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error)
+	BarrierRekey(ctx context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error)
+	BarrierGenerateRecoveryKeys(ctx context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error)
+	BarrierRecoverWithKeys(ctx context.Context, req *transport.BarrierRecoverWithKeysRequest) error
+	BarrierHasRecoveryKeys(ctx context.Context) (*transport.BarrierHasRecoveryKeysResponse, error)
+	BarrierGenerateRootToken(ctx context.Context, req *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error)
+}
+
+// Compile-time checks: the XKMSService is the SystemBarrier, and
+// barrierService is the BarrierService.
+var (
+	_ SystemBarrier  = (*xkms.XKMSService)(nil)
+	_ BarrierService = (*barrierService)(nil)
+)
 
 type barrierService struct {
-	mode    BarrierMode
-	barrier db.BarrierClient
+	barrier SystemBarrier
 	logger  *slog.Logger
 }
 
-// NewBarrierService creates a new barrier service instance.
-func NewBarrierService(mode BarrierMode, barrier db.BarrierClient, logger *slog.Logger) BarrierService {
+// NewBarrierService returns the admin plane's BarrierService over the
+// XKMSService's system barrier.
+func NewBarrierService(barrier SystemBarrier, logger *slog.Logger) BarrierService {
 	return &barrierService{
-		mode:    mode,
 		barrier: barrier,
 		logger:  logger,
 	}
 }
 
-// BarrierNotEnabledError is returned when a barrier operation is attempted
-// but the barrier is not configured.
-type BarrierNotEnabledError struct {
-	Operation string
-}
-
-// Error implements the error interface.
-func (e *BarrierNotEnabledError) Error() string {
-	return fmt.Sprintf("admin: barrier %q not available — barrier not enabled", e.Operation)
-}
-
-// requireEmbedded returns a BarrierRemoteModeError if the barrier is in remote mode.
-func (s *barrierService) requireEmbedded(operation string) error {
-	if s.barrier == nil {
+// translateBarrierError maps an XKMSService barrier error onto the admin
+// plane's error vocabulary:
+//
+//   - the platform-scope refusal (*xkms.TenantBindingError) becomes a
+//     *PlatformScopeError, the admin plane's refusal for platform-only
+//     operations, which every admin route answers exactly as it answers a
+//     caller that lacks the permission (writePermissionDenied);
+//   - xkms.ErrNotConfigured (no system barrier) becomes a
+//     *BarrierNotEnabledError;
+//   - seal.ErrNotInitialized becomes a *BarrierNotInitializedError;
+//   - anything else is wrapped in a *BarrierError.
+func translateBarrierError(operation string, err error) error {
+	var bindErr *xkms.TenantBindingError
+	if errors.As(err, &bindErr) {
+		return &PlatformScopeError{Op: "barrier " + operation, CallerTenantID: bindErr.CallerTenantID}
+	}
+	if errors.Is(err, xkms.ErrNotConfigured) {
 		return &BarrierNotEnabledError{Operation: operation}
 	}
-	if s.mode == BarrierModeRemote {
-		return &BarrierRemoteModeError{Operation: operation}
+	if errors.Is(err, seal.ErrNotInitialized) {
+		return &BarrierNotInitializedError{}
 	}
-	return nil
+	return &BarrierError{Operation: operation, Err: err}
 }
 
-// Status returns the current barrier state and mode. When the barrier is not
-// configured (nil client), it returns a response indicating the barrier is
-// disabled rather than returning an error.
+// Status returns the current barrier state. A server with no system barrier
+// reports Enabled=false rather than an error; a tenant-scoped caller is
+// refused like every other barrier operation.
 func (s *barrierService) Status(ctx context.Context) (*BarrierStatusResponse, error) {
-	if s.barrier == nil {
-		return &BarrierStatusResponse{
-			Mode:    s.mode,
-			Enabled: false,
-			Sealed:  false,
-		}, nil
-	}
-
 	resp, err := s.barrier.BarrierStatus(ctx)
 	if err != nil {
-		return nil, &BarrierError{Operation: "status", Err: err}
+		// The XKMSService checks the caller's scope before it looks for a
+		// barrier, so a tenant-scoped caller never learns whether one exists.
+		if errors.Is(err, xkms.ErrNotConfigured) {
+			return &BarrierStatusResponse{Mode: BarrierModeEmbedded}, nil
+		}
+		return nil, translateBarrierError("status", err)
 	}
 	return &BarrierStatusResponse{
+		Mode:           BarrierModeEmbedded,
 		Enabled:        true,
-		Mode:           s.mode,
 		Sealed:         resp.Sealed,
 		Strategy:       resp.Strategy,
 		HardwareBacked: resp.HardwareBacked,
@@ -256,13 +281,8 @@ func (s *barrierService) Status(ctx context.Context) (*BarrierStatusResponse, er
 
 // Initialize initializes the barrier with a passphrase.
 func (s *barrierService) Initialize(ctx context.Context, req *BarrierInitializeRequest) error {
-	if err := s.requireEmbedded("initialize"); err != nil {
-		return err
-	}
-	if err := s.barrier.BarrierInitialize(ctx, &db.BarrierInitializeRequest{
-		Secret: []byte(req.Secret),
-	}); err != nil {
-		return &BarrierError{Operation: "initialize", Err: err}
+	if err := s.barrier.BarrierInitialize(ctx, &transport.BarrierInitializeRequest{Secret: req.Secret}); err != nil {
+		return translateBarrierError("initialize", err)
 	}
 	s.logger.Info("barrier initialized")
 	return nil
@@ -270,11 +290,8 @@ func (s *barrierService) Initialize(ctx context.Context, req *BarrierInitializeR
 
 // Seal seals the barrier, preventing further data access.
 func (s *barrierService) Seal(ctx context.Context) error {
-	if err := s.requireEmbedded("seal"); err != nil {
-		return err
-	}
 	if err := s.barrier.BarrierSeal(ctx); err != nil {
-		return &BarrierError{Operation: "seal", Err: err}
+		return translateBarrierError("seal", err)
 	}
 	s.logger.Info("barrier sealed")
 	return nil
@@ -282,13 +299,8 @@ func (s *barrierService) Seal(ctx context.Context) error {
 
 // Unseal unseals the barrier with a passphrase.
 func (s *barrierService) Unseal(ctx context.Context, req *BarrierUnsealRequest) error {
-	if err := s.requireEmbedded("unseal"); err != nil {
-		return err
-	}
-	if err := s.barrier.BarrierUnseal(ctx, &db.BarrierUnsealRequest{
-		Secret: []byte(req.Secret),
-	}); err != nil {
-		return &BarrierError{Operation: "unseal", Err: err}
+	if err := s.barrier.BarrierUnseal(ctx, &transport.BarrierUnsealRequest{Secret: req.Secret}); err != nil {
+		return translateBarrierError("unseal", err)
 	}
 	s.logger.Info("barrier unsealed")
 	return nil
@@ -296,16 +308,13 @@ func (s *barrierService) Unseal(ctx context.Context, req *BarrierUnsealRequest) 
 
 // InitializeShamir initializes the barrier with Shamir secret sharing.
 func (s *barrierService) InitializeShamir(ctx context.Context, req *BarrierInitializeShamirRequest) (*BarrierInitializeShamirResponse, error) {
-	if err := s.requireEmbedded("initialize-shamir"); err != nil {
-		return nil, err
-	}
-	resp, err := s.barrier.BarrierInitializeShamir(ctx, &db.BarrierInitializeShamirRequest{
-		Secret:      []byte(req.Secret),
+	resp, err := s.barrier.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
+		Secret:      req.Secret,
 		Threshold:   req.Threshold,
 		TotalShares: req.TotalShares,
 	})
 	if err != nil {
-		return nil, &BarrierError{Operation: "initialize-shamir", Err: err}
+		return nil, translateBarrierError("initialize-shamir", err)
 	}
 	s.logger.Info("barrier initialized with shamir",
 		slog.Int("threshold", resp.Threshold),
@@ -319,14 +328,9 @@ func (s *barrierService) InitializeShamir(ctx context.Context, req *BarrierIniti
 
 // UnsealWithShare submits a single Shamir share toward the unseal threshold.
 func (s *barrierService) UnsealWithShare(ctx context.Context, req *BarrierUnsealShareRequest) (*BarrierUnsealShareResponse, error) {
-	if err := s.requireEmbedded("unseal-share"); err != nil {
-		return nil, err
-	}
-	resp, err := s.barrier.BarrierUnsealWithShare(ctx, &db.BarrierUnsealShareRequest{
-		Share: req.Share,
-	})
+	resp, err := s.barrier.BarrierUnsealWithShare(ctx, &transport.BarrierUnsealShareRequest{Share: req.Share})
 	if err != nil {
-		return nil, &BarrierError{Operation: "unseal-share", Err: err}
+		return nil, translateBarrierError("unseal-share", err)
 	}
 	s.logger.Info("barrier unseal share submitted",
 		slog.Int("submitted", resp.Submitted),
@@ -341,15 +345,12 @@ func (s *barrierService) UnsealWithShare(ctx context.Context, req *BarrierUnseal
 
 // Rekey generates new Shamir shares with the specified threshold and total count.
 func (s *barrierService) Rekey(ctx context.Context, req *BarrierRekeyRequest) (*BarrierRekeyResponse, error) {
-	if err := s.requireEmbedded("rekey"); err != nil {
-		return nil, err
-	}
-	resp, err := s.barrier.BarrierRekey(ctx, &db.BarrierRekeyRequest{
+	resp, err := s.barrier.BarrierRekey(ctx, &transport.BarrierRekeyRequest{
 		Threshold: req.Threshold,
 		Total:     req.Total,
 	})
 	if err != nil {
-		return nil, &BarrierError{Operation: "rekey", Err: err}
+		return nil, translateBarrierError("rekey", err)
 	}
 	s.logger.Info("barrier rekeyed",
 		slog.Int("threshold", resp.Threshold),
@@ -363,35 +364,27 @@ func (s *barrierService) Rekey(ctx context.Context, req *BarrierRekeyRequest) (*
 
 // GenerateRecoveryKeys generates disaster recovery keys.
 func (s *barrierService) GenerateRecoveryKeys(ctx context.Context, req *BarrierGenerateRecoveryKeysRequest) (*BarrierRecoveryKeysResponse, error) {
-	if err := s.requireEmbedded("generate-recovery-keys"); err != nil {
-		return nil, err
-	}
-	resp, err := s.barrier.BarrierGenerateRecoveryKeys(ctx, &db.BarrierGenerateRecoveryKeysRequest{
+	resp, err := s.barrier.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{
 		Threshold: req.Threshold,
 		Total:     req.Total,
 	})
 	if err != nil {
-		return nil, &BarrierError{Operation: "generate-recovery-keys", Err: err}
+		return nil, translateBarrierError("generate-recovery-keys", err)
 	}
 	s.logger.Info("barrier recovery keys generated",
 		slog.Int("threshold", resp.Threshold),
-		slog.Int("total", resp.Total))
+		slog.Int("total", resp.TotalShares))
 	return &BarrierRecoveryKeysResponse{
 		Threshold:  resp.Threshold,
-		Total:      resp.Total,
+		Total:      resp.TotalShares,
 		ShareCount: resp.ShareCount,
 	}, nil
 }
 
 // RecoverWithKeys recovers the barrier using recovery keys.
 func (s *barrierService) RecoverWithKeys(ctx context.Context, req *BarrierRecoverWithKeysRequest) error {
-	if err := s.requireEmbedded("recover-with-keys"); err != nil {
-		return err
-	}
-	if err := s.barrier.BarrierRecoverWithKeys(ctx, &db.BarrierRecoverWithKeysRequest{
-		Keys: req.Keys,
-	}); err != nil {
-		return &BarrierError{Operation: "recover-with-keys", Err: err}
+	if err := s.barrier.BarrierRecoverWithKeys(ctx, &transport.BarrierRecoverWithKeysRequest{Keys: req.Keys}); err != nil {
+		return translateBarrierError("recover-with-keys", err)
 	}
 	s.logger.Info("barrier recovered with keys")
 	return nil
@@ -399,26 +392,18 @@ func (s *barrierService) RecoverWithKeys(ctx context.Context, req *BarrierRecove
 
 // HasRecoveryKeys checks if recovery keys exist.
 func (s *barrierService) HasRecoveryKeys(ctx context.Context) (bool, error) {
-	if err := s.requireEmbedded("has-recovery-keys"); err != nil {
-		return false, err
-	}
 	resp, err := s.barrier.BarrierHasRecoveryKeys(ctx)
 	if err != nil {
-		return false, &BarrierError{Operation: "has-recovery-keys", Err: err}
+		return false, translateBarrierError("has-recovery-keys", err)
 	}
 	return resp.HasKeys, nil
 }
 
 // GenerateRootToken generates a root token from Shamir shares.
 func (s *barrierService) GenerateRootToken(ctx context.Context, req *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error) {
-	if err := s.requireEmbedded("generate-root-token"); err != nil {
-		return nil, err
-	}
-	resp, err := s.barrier.BarrierGenerateRootToken(ctx, &db.BarrierGenerateRootTokenRequest{
-		Shares: req.Shares,
-	})
+	resp, err := s.barrier.BarrierGenerateRootToken(ctx, &transport.BarrierGenerateRootTokenRequest{Shares: req.Shares})
 	if err != nil {
-		return nil, &BarrierError{Operation: "generate-root-token", Err: err}
+		return nil, translateBarrierError("generate-root-token", err)
 	}
 	s.logger.Info("barrier root token generated")
 	return &BarrierRootTokenResponse{

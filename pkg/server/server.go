@@ -844,7 +844,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		// Published under the lock: with the unified API server enabled the
 		// embedded node serves module RPCs concurrently with this
 		// composition, and the module resolver reads the reference through
-		// xkmsServiceRef.
+		// XKMSService.
 		s.mu.Lock()
 		s.xkmsService = svc
 		s.mu.Unlock()
@@ -2811,11 +2811,13 @@ func (s *Server) startUnix() {
 	}
 }
 
-// xkmsServiceRef returns the composed XKMSService reference under the
+// XKMSService returns the composed XKMSService reference under the
 // server lock, or nil while composition is still running. The module's
 // lazy resolvers read through this so the unified server's concurrent RPCs
-// never race the composition-time assignment.
-func (s *Server) xkmsServiceRef() *xkms.XKMSService {
+// never race the composition-time assignment, and the composing binary hands
+// it to the ACME admin plane, whose barrier routes operate the system
+// barrier only through it (go-xkms#1244).
+func (s *Server) XKMSService() *xkms.XKMSService {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.xkmsService
