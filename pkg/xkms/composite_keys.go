@@ -36,6 +36,23 @@ func (c *compositeBackend) GenerateRSA(ctx context.Context, attrs *types.KeyAttr
 		return nil, ErrInvalidKeyAttributes
 	}
 
+	// compositeBackend.GenerateRSA is the one Backend implementation every
+	// caller reaches -- the transport.GenerateKeyRequest service, the
+	// REST and gRPC handlers that build their own attributes independently
+	// of it, the CA and PIV key-generation helpers -- before a concrete
+	// backend (PKCS#11, TPM, software, a cloud KMS) ever sees the request.
+	// An explicitly requested modulus below RSAKeySize2048 is refused here
+	// so every one of those paths is covered by a single check, not just
+	// the ones that happen to run KeyAttributes.Validate first. A caller
+	// that named no size at all (RSAAttributes nil, or KeySize zero) is
+	// left alone: resolving that to the RSAKeySize2048 default is the
+	// concrete backend's job, not this layer's (go-xkms#1204).
+	if attrs.RSAAttributes != nil && attrs.RSAAttributes.KeySize != 0 {
+		if err := types.ValidateRSAKeySize(attrs.RSAAttributes.KeySize); err != nil {
+			return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: err.Error()}
+		}
+	}
+
 	// Set algorithm
 	attrs.KeyAlgorithm = x509.RSA
 

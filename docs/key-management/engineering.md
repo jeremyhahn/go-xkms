@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -222,6 +222,77 @@ as a documented PKCS#11-edge exception, because it is not one: no consumer at
 that edge reads the field, and a backend releases raw key material only for a
 single-family symmetric key, so both of the copy's extra branches were
 unreachable there. **There is no fourth formatter.**
+
+## RSA modulus size floor is enforced project-wide (go-xkms#1204)
+
+`types.RSAKeySize2048` (`pkg/types/algorithms.go`) is the minimum RSA modulus
+this project generates or imports anywhere, and `types.ValidateRSAKeySize`
+(`pkg/types/algorithms.go:641`) is the one function that judges a size
+against it, returning the typed `*types.RSAKeySizeError`
+(`pkg/types/algorithms.go:629`) rather than an `fmt.Errorf`. It performs no
+substitution: a zero size is refused exactly like any other undersized
+value, so a call site that wants zero to mean "use the default" resolves
+that itself before calling it.
+
+Before go-xkms#1204, `KeyAttributes.Validate` (`pkg/types/types.go:1271`)
+already enforced the floor for anything that called it, but the RPC service
+layer never did: `buildKeyAttributes` and the shared import-template
+resolver both built a `*types.KeyAttributes` and handed it straight to a
+backend. PKCS#11's `GenerateRSAWithSize` only raised sizes below 512, and
+TPM's `CreateRSA` applied no floor at all, so a `GenerateKeyRequest` or
+`ImportKeyRequest` naming 1024 bits reached hardware key generation
+unchecked on both backends. The fix is layered, not single-point, because
+the RPC service is not the only caller of any of these:
+
+- **Service boundary.** `pkg/xkms/servicer_key.go`'s `validateKeyAttributes`
+  (line 1290) wraps `KeyAttributes.Validate` in the service's own
+  `ErrValidation{Sentinel: ErrInvalidKeyAttributes}` so every transport maps
+  the refusal onto the same 400-class response every other validation
+  failure gets. `buildKeyAttributes` (GenerateKey, line 1430) and
+  `applyKeyTemplate` (the template resolver shared by `ImportKey`,
+  `GetImportParameters` and `UnwrapKeyByID`, line 1412) both call it as the
+  last step before returning attributes.
+- **PKCS#11.** `Backend.GenerateRSAWithSize`
+  (`pkg/backend/pkcs11/pkcs11.go:1161`) resolves a zero size to
+  `types.RSAKeySize2048` and then calls `types.ValidateRSAKeySize` before
+  touching `b.pool`, so the refusal is reachable — and unit-testable —
+  without a live HSM session. A size between 1 and 511 bits used to be
+  silently promoted to 2048; it is now refused like any other undersized
+  request, matching this project's "refuse, never silently substitute"
+  convention elsewhere in the same file.
+- **TPM.** `TPM2.CreateRSA` (`pkg/tpm2/rsa.go:71`) validates the resolved
+  `spec.KeyBits` immediately after applying the `DefaultRSAKeyBits` default
+  and before calling `KeyTemplate`. This is a different question from
+  `rsaTemplate`'s own `definedRSAKeyBits` check (`pkg/tpm2/template.go`),
+  which asks whether TPM 2.0 defines a modulus size at all — and still
+  includes 1024, since TCG's reference implementation does. `ValidateRSAKeySize`
+  is this project's minimum-strength policy, not a device-capability
+  question, so it runs first and independently.
+- **Composite Backend.** `compositeBackend.GenerateRSA`
+  (`pkg/xkms/composite_keys.go:34`) is the one `xkms.Backend` implementation
+  every caller in this module reaches before a concrete backend ever sees a
+  request — not just the RPC service's `buildKeyAttributes`, but also the
+  REST and gRPC transport handlers that build `types.KeyAttributes`
+  independently of it (`pkg/api/rest/handlers.go`'s `GenerateKeyHandler`,
+  `pkg/api/grpc/service.go`'s `GenerateKey`), and the CA and PIV
+  key-generation helpers (`pkg/ca/ca.go`, `pkg/xkms/piv_keygen_backend.go`).
+  It refuses an explicitly-requested undersized modulus and leaves
+  `RSAAttributes == nil` or `KeySize == 0` alone, since resolving that to the
+  default is the concrete backend's job, not this layer's.
+
+**What is not yet covered.** `pkg/api/rest/handlers.go`'s `ImportKeyHandler`
+and `GetImportParametersHandler`, and `pkg/api/grpc/service.go`'s
+`ImportKey`, each build their own `types.KeyAttributes` for the import
+ceremony independently of `pkg/xkms/servicer_key.go`'s `buildImportKeyAttributes`
+/ `applyKeyTemplate`, and neither transport's copy runs
+`KeyAttributes.Validate` before calling the backend's `ImportKey`. There is
+no `compositeBackend`-equivalent choke point for import the way there is for
+generation, because `ImportKey` is a `backend.ImportBackend` method called
+directly on the concrete backend. This is pre-existing duplication (the same
+three RPCs — `GenerateKey`, `ImportKey`, `GetImportParameters` — have an
+independent implementation in each of `pkg/api/rest/handlers.go`,
+`pkg/api/grpc/service.go` and `pkg/xkms/servicer_key.go`), not introduced by
+this fix, and is filed as a follow-up rather than folded into this change.
 
 ## Error semantics
 

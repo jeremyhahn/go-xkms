@@ -15,6 +15,7 @@ package types
 
 import (
 	"crypto/x509"
+	"fmt"
 	"strings"
 )
 
@@ -609,6 +610,40 @@ const (
 	// RSAKeySize4096 is 4096-bit RSA (high security).
 	RSAKeySize4096 = 4096
 )
+
+// RSAKeySizeError reports that a requested RSA modulus size falls below the
+// minimum this project permits any backend to generate or import.
+//
+// NIST SP 800-131A Rev. 2 and the CA/Browser Forum Baseline Requirements
+// both retire RSA moduli under 2048 bits, so RSAKeySize2048 is the floor
+// every code path in go-xkms enforces. ValidateRSAKeySize is the one place
+// that floor is written down (go-xkms#1204): KeyAttributes.Validate, the
+// PKCS#11 and TPM backends' own RSA generation, and the composite Backend's
+// GenerateRSA all call it instead of each repeating the literal 2048.
+type RSAKeySizeError struct {
+	// Requested is the modulus size in bits the caller asked for.
+	Requested int
+}
+
+// Error implements the error interface.
+func (e *RSAKeySizeError) Error() string {
+	return fmt.Sprintf("types: RSA key size must be at least %d bits, got %d", RSAKeySize2048, e.Requested)
+}
+
+// ValidateRSAKeySize refuses an RSA modulus size smaller than RSAKeySize2048.
+//
+// It performs no substitution: a zero size (meaning "the caller named
+// none") is refused exactly like any other undersized value. A call site
+// that wants zero to select the RSAKeySize2048 default resolves that itself
+// before calling ValidateRSAKeySize, the way applyAsymmetricAlgorithm
+// already does for the RPC surface -- this function's only job is judging
+// the size that is actually about to be used.
+func ValidateRSAKeySize(bits int) error {
+	if bits < RSAKeySize2048 {
+		return &RSAKeySizeError{Requested: bits}
+	}
+	return nil
+}
 
 // =============================================================================
 // AES Key Size Constants

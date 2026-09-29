@@ -1304,8 +1304,8 @@ func (attrs *KeyAttributes) Validate() error {
 			if attrs.RSAAttributes == nil {
 				return &errs.Message{Msg: "RSA attributes are required for RSA keys"}
 			}
-			if attrs.RSAAttributes.KeySize < 2048 {
-				return &errs.Message{Msg: "RSA key size must be at least 2048 bits"}
+			if err := ValidateRSAKeySize(attrs.RSAAttributes.KeySize); err != nil {
+				return err
 			}
 		case x509.ECDSA:
 			if attrs.ECCAttributes == nil {

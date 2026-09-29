@@ -1264,7 +1264,7 @@ func applyKeyTemplate(attrs *types.KeyAttributes, field, keyType string, keySize
 		}
 		attrs.KeyType = types.KeyTypeSecret
 		attrs.SymmetricAlgorithm = symmetric
-		return nil
+		return validateKeyAttributes(attrs)
 	}
 
 	if err := applyAsymmetricAlgorithm(attrs, keyType, keySize, curve); err != nil {
@@ -1274,6 +1274,23 @@ func applyKeyTemplate(attrs *types.KeyAttributes, field, keyType string, keySize
 		return err
 	}
 	attrs.KeyType = types.KeyTypeSigning
+	return validateKeyAttributes(attrs)
+}
+
+// validateKeyAttributes runs types.KeyAttributes.Validate and translates a
+// failure into the service's own ErrValidation, so every transport maps it
+// onto the same 400-class response every other validation refusal gets
+// instead of falling through to a 500.
+//
+// buildKeyAttributes and applyKeyTemplate both call this as the last step
+// before handing attributes to a backend. Before this call existed, neither
+// one ran KeyAttributes.Validate at all, so an RSA request under 2048 bits
+// reached PKCS#11 and TPM key generation -- and the import ceremony --
+// unchecked (go-xkms#1204).
+func validateKeyAttributes(attrs *types.KeyAttributes) error {
+	if err := attrs.Validate(); err != nil {
+		return &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: err.Error()}
+	}
 	return nil
 }
 
@@ -1392,6 +1409,9 @@ func buildKeyAttributes(req *transport.GenerateKeyRequest, backendName string, s
 	if symAlgo := ParseSymmetricAlgorithm(algorithm); symAlgo != "" {
 		attrs.SymmetricAlgorithm = symAlgo
 		attrs.KeyType = types.KeyTypeSecret
+		if err := validateKeyAttributes(attrs); err != nil {
+			return nil, err
+		}
 		return attrs, nil
 	}
 
@@ -1399,6 +1419,15 @@ func buildKeyAttributes(req *transport.GenerateKeyRequest, backendName string, s
 		if errors.Is(err, errAlgorithmNotAsymmetric) {
 			return nil, &ErrValidation{Sentinel: ErrUnsupportedKeyAlgorithm, Detail: algorithm}
 		}
+		return nil, err
+	}
+
+	// KeyAttributes.Validate is the layer that enforces RSAKeySize2048 as the
+	// minimum RSA modulus (pkg/types/types.go). Every RSA request this
+	// service builds runs through it here, so a caller that asked for
+	// fewer than 2048 bits is refused before a key is ever generated on any
+	// backend -- PKCS#11 and TPM included (go-xkms#1204).
+	if err := validateKeyAttributes(attrs); err != nil {
 		return nil, err
 	}
 
