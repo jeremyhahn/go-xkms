@@ -23,7 +23,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pinstrategy"
 )
 
 // fakePlatformKeyStorer is a minimal xkms.PlatformKeyStorer for
@@ -70,7 +69,7 @@ func TestResolvePINBackend_FreshDataDirWithNoTPMAccessorSelectsSoftware(t *testi
 	assert.Equal(t, qrdbsdk.PINStrategySoftware, strategy)
 	assert.Equal(t, qrdbsdk.PINStrategySoftware, backend.Strategy())
 
-	persisted, err := pinstrategy.Load(filepath.Join(dataDir, "pin"))
+	persisted, err := xkms.LoadPINStrategy(filepath.Join(dataDir, "pin"))
 	require.NoError(t, err)
 	assert.Equal(t, qrdbsdk.PINStrategySoftware, persisted)
 }
@@ -91,7 +90,7 @@ func TestResolvePINBackend_ReadySRKSelectsTPM2(t *testing.T) {
 func TestResolvePINBackend_PersistedStrategyGoverns(t *testing.T) {
 	dataDir := t.TempDir()
 	pinDir := filepath.Join(dataDir, "pin")
-	require.NoError(t, pinstrategy.Save(pinDir, qrdbsdk.PINStrategySoftware))
+	require.NoError(t, xkms.SavePINStrategy(pinDir, qrdbsdk.PINStrategySoftware))
 
 	backend, strategy, err := ResolvePINBackend(nil, dataDir, xkms.StorageEngineFile, nil)
 	require.NoError(t, err)

@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pinstrategy"
 )
 
 // openTPMModule opens the TPM — the hardware device at the resolved path,
@@ -36,7 +35,7 @@ import (
 //
 // Returns (nil, nil, err) when no TPM is available; the caller decides
 // whether that is fatal (the persisted PIN strategy names tpm2, so
-// pinstrategy.Resolve must refuse rather than silently choose a different
+// xkms.ResolvePINBackend must refuse rather than silently choose a different
 // backend) or expected (pinselect's fresh-install auto-selection, which
 // treats an unavailable TPM as "prefer the next strategy").
 func openTPMModule(logger *slog.Logger, dataDir, device string, useSimulator bool) (xkms.TrustedPlatformModule, io.Closer, error) {
@@ -84,14 +83,14 @@ func openTPMModule(logger *slog.Logger, dataDir, device string, useSimulator boo
 
 // newPINTPMProvider builds the pinselect.TPMProvider that `xkey pin` and
 // the headless daemon use to decide whether TPM2 governs PIN verification,
-// through the same rule (pinstrategy.NewTPMProvider) the xKey GUI's
+// through the same rule (xkms.NewPINTPMProvider) the xKey GUI's
 // guiTPMProvider uses. Unlike the GUI's shared, mutex-serialized
 // TPMAccessor, this opens its own short-lived TPM connection: these entry
 // points are either a one-shot CLI command or the daemon's own single
 // PIN-service init, so there is no cross-service TPM contention to
 // serialize.
 func newPINTPMProvider(logger *slog.Logger, dataDir, device string, useSimulator, persistedTPM2 bool) xkms.PINTPMProvider {
-	return pinstrategy.NewTPMProvider(func() (pinstrategy.PlatformKeyStoreProvider, error) {
+	return xkms.NewPINTPMProvider(func() (xkms.PINPlatformKeyStoreProvider, error) {
 		tpm, _, err := openTPMModule(logger, dataDir, device, useSimulator)
 		if err != nil {
 			return nil, err

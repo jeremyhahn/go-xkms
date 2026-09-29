@@ -339,7 +339,7 @@ func TestServer_InitializePINManager_DefaultStrategy(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.PIN.Enabled = true
-	cfg.PIN.Strategy = "" // should default to "software"
+	cfg.PIN.Strategy = "" // defaults to auto: software when no TPM is confirmed
 
 	server, err := New(cfg)
 	require.NoError(t, err)

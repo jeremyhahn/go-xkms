@@ -575,6 +575,10 @@ var ProvisionSimulatorIAKCertificate = tpm2test.ProvisionIAKCertificate
 // NewPlatformKeyStore creates a new PlatformKeyStore with integrated TPM PIN management.
 var NewPlatformKeyStore = tpm2.NewPlatformKeyStore
 
+// AttachPlatformKeyStore returns a TPM's PlatformKeyStore, creating and
+// attaching one when it has none -- the one path xkmsd and xKey share.
+var AttachPlatformKeyStore = tpm2.AttachPlatformKeyStore
+
 // NewPlatformPassword creates a new PlatformPassword for just-in-time TPM password retrieval.
 var NewPlatformPassword = tpm2.NewPlatformPassword
 

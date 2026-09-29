@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package pinstrategy
+package pinselect
 
 import (
 	"errors"
@@ -25,37 +25,37 @@ import (
 // package. Resolve treats it as "decide and persist"; a caller that must
 // not manufacture state (a plain status read of a legacy store, say) treats
 // it as "governing strategy unknown".
-var ErrStrategyNotPersisted = errors.New("pinstrategy: no PIN strategy persisted for this data directory")
+var ErrStrategyNotPersisted = errors.New("pinselect: no PIN strategy persisted for this data directory")
 
-// LoadError wraps a failure reading or decoding the persisted strategy
+// StrategyLoadError wraps a failure reading or decoding the persisted strategy
 // file. It is distinct from ErrStrategyNotPersisted, which means the file
 // is simply absent.
-type LoadError struct {
+type StrategyLoadError struct {
 	Path  string
 	Cause error
 }
 
 // Error implements the error interface.
-func (e *LoadError) Error() string {
-	return fmt.Sprintf("pinstrategy: failed to load strategy from %s: %v", e.Path, e.Cause)
+func (e *StrategyLoadError) Error() string {
+	return fmt.Sprintf("pinselect: failed to load strategy from %s: %v", e.Path, e.Cause)
 }
 
 // Unwrap returns the underlying cause for errors.Is / errors.As traversal.
-func (e *LoadError) Unwrap() error { return e.Cause }
+func (e *StrategyLoadError) Unwrap() error { return e.Cause }
 
-// SaveError wraps a failure persisting the strategy file.
-type SaveError struct {
+// StrategySaveError wraps a failure persisting the strategy file.
+type StrategySaveError struct {
 	Path  string
 	Cause error
 }
 
 // Error implements the error interface.
-func (e *SaveError) Error() string {
-	return fmt.Sprintf("pinstrategy: failed to save strategy to %s: %v", e.Path, e.Cause)
+func (e *StrategySaveError) Error() string {
+	return fmt.Sprintf("pinselect: failed to save strategy to %s: %v", e.Path, e.Cause)
 }
 
 // Unwrap returns the underlying cause for errors.Is / errors.As traversal.
-func (e *SaveError) Unwrap() error { return e.Cause }
+func (e *StrategySaveError) Unwrap() error { return e.Cause }
 
 // ProviderUnavailableError is returned by Resolve when the data
 // directory's persisted, governing PIN strategy needs a provider (TPM2,
@@ -73,7 +73,7 @@ type ProviderUnavailableError struct {
 // Error implements the error interface.
 func (e *ProviderUnavailableError) Error() string {
 	return fmt.Sprintf(
-		"pinstrategy: PIN strategy %q governs this device but is unavailable in this build/host; refusing to answer from a different backend",
+		"pinselect: PIN strategy %q governs this device but is unavailable in this build/host; refusing to answer from a different backend",
 		e.Strategy,
 	)
 }
@@ -87,5 +87,22 @@ type UnknownStrategyError struct {
 
 // Error implements the error interface.
 func (e *UnknownStrategyError) Error() string {
-	return fmt.Sprintf("pinstrategy: unrecognized persisted PIN strategy %q", e.Strategy)
+	return fmt.Sprintf("pinselect: unrecognized persisted PIN strategy %q", e.Strategy)
+}
+
+// StrategyMismatchError is returned by Resolve when the configured PIN
+// strategy differs from the one recorded for the PIN directory. Changing
+// the governing backend in place would orphan every PIN set under the
+// recorded one, so it is refused by name rather than applied.
+type StrategyMismatchError struct {
+	Configured qrdbsdk.PINStrategyID
+	Persisted  qrdbsdk.PINStrategyID
+}
+
+// Error implements the error interface.
+func (e *StrategyMismatchError) Error() string {
+	return fmt.Sprintf(
+		"pinselect: configured PIN strategy %q differs from the recorded governing strategy %q; refusing to switch backends in place",
+		e.Configured, e.Persisted,
+	)
 }

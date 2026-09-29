@@ -11,18 +11,20 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package pinstrategy
+package pinselect
 
 import (
 	"errors"
 	"testing"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// fakePlatformKeyStorer is a minimal xkmssdk.PlatformKeyStorer for
+// fakePlatformKeyStorer is a minimal pkgtpm2.PlatformKeyStorer for
 // tpmProvider tests.
 type fakePlatformKeyStorer struct {
 	initialized bool
@@ -30,8 +32,8 @@ type fakePlatformKeyStorer struct {
 	provisioned bool
 }
 
-func (f *fakePlatformKeyStorer) SRKAttributes() *xkmssdk.KeyAttributes       { return nil }
-func (f *fakePlatformKeyStorer) Backend() xkmssdk.TPMKeyBackend              { return nil }
+func (f *fakePlatformKeyStorer) SRKAttributes() *types.KeyAttributes         { return nil }
+func (f *fakePlatformKeyStorer) Backend() store.KeyBackend                   { return nil }
 func (f *fakePlatformKeyStorer) Initialize(string, string) error             { return nil }
 func (f *fakePlatformKeyStorer) EnrollPlatformSRK(string, string) error      { return nil }
 func (f *fakePlatformKeyStorer) InitializeWithDefaults() error               { return nil }
@@ -46,14 +48,14 @@ func (f *fakePlatformKeyStorer) IsProvisioned() bool                         { r
 func (f *fakePlatformKeyStorer) IsAuthReady() bool                           { return f.authReady }
 func (f *fakePlatformKeyStorer) SetAuthReady(ready bool)                     { f.authReady = ready }
 
-var _ xkmssdk.PlatformKeyStorer = (*fakePlatformKeyStorer)(nil)
+var _ pkgtpm2.PlatformKeyStorer = (*fakePlatformKeyStorer)(nil)
 
 // fakeTPMModule is a minimal PlatformKeyStoreProvider stand-in.
 type fakeTPMModule struct {
-	pks xkmssdk.PlatformKeyStorer
+	pks pkgtpm2.PlatformKeyStorer
 }
 
-func (f *fakeTPMModule) PlatformKeyStore() xkmssdk.PlatformKeyStorer { return f.pks }
+func (f *fakeTPMModule) PlatformKeyStore() pkgtpm2.PlatformKeyStorer { return f.pks }
 
 var _ PlatformKeyStoreProvider = (*fakeTPMModule)(nil)
 

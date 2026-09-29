@@ -58,3 +58,56 @@ type PINTPMBackend = pintpm2.TPM2Backend
 // NewPINTPMBackend creates a PINTPMBackend that delegates PIN verification
 // to the given TPMPlatformAuthProvider.
 var NewPINTPMBackend = pintpm2.NewTPM2Backend
+
+// PIN strategy resolution: the ONE rule xkmsd, the xKey GUI, the headless
+// daemon and `xkey pin` share for deciding which PIN backend governs a PIN
+// directory and recording that choice beside the PIN state.
+
+// PINResolveConfig drives ResolvePINBackend.
+type PINResolveConfig = pinselect.ResolveConfig
+
+// ResolvePINBackend returns the governing PIN backend for a PIN directory,
+// selecting and persisting one on first use.
+var ResolvePINBackend = pinselect.Resolve
+
+// PINStrategyAuto requests pinselect's hardware-first choice.
+const PINStrategyAuto = pinselect.StrategyAuto
+
+// PINStrategyPath returns the file recording a PIN directory's governing
+// strategy.
+var PINStrategyPath = pinselect.StrategyPath
+
+// LoadPINStrategy reads a PIN directory's governing strategy.
+var LoadPINStrategy = pinselect.LoadStrategy
+
+// SavePINStrategy records a PIN directory's governing strategy.
+var SavePINStrategy = pinselect.SaveStrategy
+
+// ErrPINStrategyNotPersisted reports that no governing strategy is recorded.
+var ErrPINStrategyNotPersisted = pinselect.ErrStrategyNotPersisted
+
+// PINStrategyLoadError wraps a failure reading the strategy record.
+type PINStrategyLoadError = pinselect.StrategyLoadError
+
+// PINStrategySaveError wraps a failure writing the strategy record.
+type PINStrategySaveError = pinselect.StrategySaveError
+
+// PINProviderUnavailableError reports that the governing strategy's
+// provider cannot be reached in this build or host.
+type PINProviderUnavailableError = pinselect.ProviderUnavailableError
+
+// PINUnknownStrategyError reports a strategy ID this build does not know.
+type PINUnknownStrategyError = pinselect.UnknownStrategyError
+
+// PINStrategyMismatchError reports a configured strategy that differs from
+// the recorded one.
+type PINStrategyMismatchError = pinselect.StrategyMismatchError
+
+// PINPlatformKeyStoreProvider is the TPM surface NewPINTPMProvider needs.
+type PINPlatformKeyStoreProvider = pinselect.PlatformKeyStoreProvider
+
+// PINTPMAcquireFunc opens, or returns a cached handle to, a TPM module.
+type PINTPMAcquireFunc = pinselect.TPMAcquireFunc
+
+// NewPINTPMProvider adapts a TPM module accessor to a PINTPMProvider.
+var NewPINTPMProvider = pinselect.NewTPMProvider

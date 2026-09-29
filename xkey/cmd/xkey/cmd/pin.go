@@ -30,7 +30,6 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pinstrategy"
 )
 
 const (
@@ -248,7 +247,7 @@ func (p cliSoftwarePINProvider) HashConfig() qrdbsdk.PINHashConfig {
 }
 
 // newPINService resolves the PIN backend that governs the PIN state under
-// dataDir through the shared pinstrategy package — the same resolution
+// dataDir through the shared pinselect resolver (xkms.ResolvePINBackend) — the same resolution
 // rule the xKey GUI and the headless daemon use — and wires it into a
 // qrdbsdk.PINService.
 //
@@ -257,7 +256,7 @@ func (p cliSoftwarePINProvider) HashConfig() qrdbsdk.PINHashConfig {
 // persists the choice. A PIN store whose persisted strategy needs a
 // provider unavailable in this build/host (a device set up through the
 // GUI's TPM2 wizard, probed here without a TPM present) returns
-// *pinstrategy.ProviderUnavailableError instead of silently answering
+// *xkms.PINProviderUnavailableError instead of silently answering
 // from the software store: that silent fallback is the bug go-xkms#307
 // reports.
 func newPINService(dataDir string) (*qrdbsdk.PINService, error) {
@@ -267,12 +266,12 @@ func newPINService(dataDir string) (*qrdbsdk.PINService, error) {
 
 	pinDir := pinStateDir(dataDir)
 
-	persisted, loadErr := pinstrategy.Load(pinDir)
+	persisted, loadErr := xkms.LoadPINStrategy(pinDir)
 	persistedTPM2 := loadErr == nil && persisted == qrdbsdk.PINStrategyTPM2
 
-	backend, _, err := pinstrategy.Resolve(pinstrategy.Config{
+	backend, _, err := xkms.ResolvePINBackend(xkms.PINResolveConfig{
 		PINDir: pinDir,
-		PINSelectConfig: xkms.PINSelectConfig{
+		Config: xkms.PINSelectConfig{
 			TPM:      newPINTPMProvider(logger, dataDir, pinTPMDevice, pinTPMSimulator, persistedTPM2),
 			Software: cliSoftwarePINProvider{pinDir: pinDir},
 			Logger:   logger,

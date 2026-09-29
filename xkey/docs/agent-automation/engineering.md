@@ -53,14 +53,14 @@ Takes the PIN flags above plus `--socket` (auto-detect). Errors:
 gates on: the daemon granted the unlock but still reports itself locked, or
 released some subsystems and left others (the barrier) locked.
 
-The PIN `unlock` verifies against is resolved by `xkey/pkg/pinstrategy`
+The PIN `unlock` verifies against is resolved by `pkg/pinselect` (reached through `xkmssdk.ResolvePINBackend`)
 (go-xkms#307): the persisted strategy at `<dataDir>/pin/strategy`, read by
 the GUI, `xkey extension serve` and `xkey pin` alike, so the same value
 authenticates everywhere. `xkey extension serve` resolves it once at
 startup; when the persisted strategy needs a provider unavailable on that
 host (typically `tpm2` on a container with no TPM), the daemon refuses to
 start at all — `ErrServePINManagerInitFailed` wrapping
-`*pinstrategy.ProviderUnavailableError` — rather than starting against a
+`*pinselect.ProviderUnavailableError` — rather than starting against a
 different backend than the one governing the device. `unlock` against such
 a host then fails closed as `ErrUnlockDaemonNotRunning`, not
 `ErrUnlockFailed`: there is no daemon to answer. An automation pipeline

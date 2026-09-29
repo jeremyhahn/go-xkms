@@ -11,24 +11,26 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package pinstrategy
+package pinselect
 
 import (
 	"log/slog"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+
+	"github.com/jeremyhahn/go-xkms/pkg/pintpm2"
 )
 
-// PlatformKeyStoreProvider is the minimal TPM surface pinstrategy needs:
+// PlatformKeyStoreProvider is the minimal TPM surface NewTPMProvider needs:
 // access to the platform key store that backs TPM2 PIN verification. Any
-// xkmssdk.TrustedPlatformModule already satisfies it; NewTPMProvider is
+// pkgtpm2.TrustedPlatformModule already satisfies it; NewTPMProvider is
 // declared against this narrower interface, not the full TPM surface, so
 // callers (and their tests) only need to supply the one method this
 // package actually calls.
 type PlatformKeyStoreProvider interface {
 	// PlatformKeyStore returns the TPM-backed key store used for user-PIN
 	// auth, or nil when the module has none.
-	PlatformKeyStore() xkmssdk.PlatformKeyStorer
+	PlatformKeyStore() pkgtpm2.PlatformKeyStorer
 }
 
 // TPMAcquireFunc opens, or returns a cached handle to, a TPM module for
@@ -66,14 +68,14 @@ type TPMAcquireFunc func() (PlatformKeyStoreProvider, error)
 //     still reports the PIN as unset until a verification against the
 //     real auth value succeeds, so no attempt is spent on an unconfirmed
 //     value without the caller actually supplying one.
-func NewTPMProvider(acquire TPMAcquireFunc, persistedTPM2 bool, log *slog.Logger) xkmssdk.PINTPMProvider {
+func NewTPMProvider(acquire TPMAcquireFunc, persistedTPM2 bool, log *slog.Logger) TPMProvider {
 	if log == nil {
 		log = slog.Default()
 	}
 	return tpmProvider{acquire: acquire, persistedTPM2: persistedTPM2, log: log}
 }
 
-// tpmProvider implements xkmssdk.PINTPMProvider (pkg/pinselect.TPMProvider)
+// tpmProvider implements TPMProvider (pkg/pinselect.TPMProvider)
 // over a TPMAcquireFunc.
 type tpmProvider struct {
 	acquire       TPMAcquireFunc
@@ -81,8 +83,8 @@ type tpmProvider struct {
 	log           *slog.Logger
 }
 
-// PlatformAuth implements xkmssdk.PINTPMProvider.
-func (p tpmProvider) PlatformAuth() (xkmssdk.TPMPlatformAuthProvider, bool) {
+// PlatformAuth implements TPMProvider.
+func (p tpmProvider) PlatformAuth() (pintpm2.PlatformAuthProvider, bool) {
 	if p.acquire == nil {
 		return nil, false
 	}
@@ -105,7 +107,7 @@ func (p tpmProvider) PlatformAuth() (xkmssdk.TPMPlatformAuthProvider, bool) {
 		p.log.Warn("PIN backend: TPM2 governs per persisted strategy, SRK auth unconfirmed this session")
 	}
 
-	provider, ok := pks.(xkmssdk.TPMPlatformAuthProvider)
+	provider, ok := pks.(pintpm2.PlatformAuthProvider)
 	if !ok {
 		return nil, false
 	}

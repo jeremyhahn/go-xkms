@@ -26,9 +26,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/jeremyhahn/go-enclave"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+
+	"github.com/jeremyhahn/go-enclave"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -38,7 +39,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pinstrategy"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
@@ -329,7 +329,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 
 	// 6. Initialize PIN manager.
 	//
-	// The backend is resolved through the shared pinstrategy package — the
+	// The backend is resolved through the shared pinselect resolver (xkms.ResolvePINBackend) — the
 	// same rule the xKey GUI and `xkey pin` use — instead of hard-coding
 	// the software backend. A device whose PIN was set up through the
 	// GUI's TPM2 wizard persists strategy=tpm2 beside the PIN state; this
@@ -347,14 +347,14 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	pinTPMDevice, _ := cmd.Flags().GetString("tpm-device")
 	pinTPMSimulator, _ := cmd.Flags().GetBool("tpm-simulator")
 
-	persistedStrategy, loadErr := pinstrategy.Load(pinDir)
+	persistedStrategy, loadErr := xkms.LoadPINStrategy(pinDir)
 	persistedTPM2 := loadErr == nil && persistedStrategy == qrdbsdk.PINStrategyTPM2
 
 	// Capture the TPM connection's closer (if PlatformAuth ends up opening
 	// one) so it outlives Resolve: the daemon keeps using it for every
 	// subsequent PIN verification, not just the one Resolve performs here.
 	var pinTPMCloser io.Closer
-	pinTPMProvider := pinstrategy.NewTPMProvider(func() (pinstrategy.PlatformKeyStoreProvider, error) {
+	pinTPMProvider := xkms.NewPINTPMProvider(func() (xkms.PINPlatformKeyStoreProvider, error) {
 		tpm, closer, err := openTPMModule(logger, dataDir, pinTPMDevice, pinTPMSimulator)
 		if err != nil {
 			return nil, err
@@ -363,9 +363,9 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 		return tpm, nil
 	}, persistedTPM2, logger)
 
-	pinBackend, _, err := pinstrategy.Resolve(pinstrategy.Config{
+	pinBackend, _, err := xkms.ResolvePINBackend(xkms.PINResolveConfig{
 		PINDir: pinDir,
-		PINSelectConfig: xkms.PINSelectConfig{
+		Config: xkms.PINSelectConfig{
 			TPM:      pinTPMProvider,
 			Software: cliSoftwarePINProvider{pinDir: pinDir},
 			Logger:   logger,

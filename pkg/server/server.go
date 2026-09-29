@@ -69,8 +69,6 @@ import (
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	pinadapter "github.com/jeremyhahn/go-xkms/pkg/storage/pinadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	clustercapkg "github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -1773,63 +1771,6 @@ func xkmsDefaultEntitlements() *qrdbsdk.Entitlements {
 		AllowSystemManagedBarrier: true,
 		AllowDedicatedWAL:         true,
 	}
-}
-
-// initializePINManager creates and configures the PIN management subsystem.
-func (s *Server) initializePINManager() error {
-	if !s.config.PIN.Enabled {
-		s.logger.Info("PIN management disabled")
-		return nil
-	}
-
-	s.logger.Info("Initializing PIN manager...")
-
-	// Create the PIN manager based on strategy
-	strategy := s.config.PIN.Strategy
-	if strategy == "" {
-		strategy = "software"
-	}
-
-	// The software PIN store is always file-backed (filestorage.New below),
-	// independent of storage.backend, so it needs storage.path even for a
-	// qrdb backend. config.Validate requires storage.path for every backend
-	// except a remote qrdb transport (rest/grpc), which is the one shape
-	// that can still reach here with it empty; guard rather than let
-	// filestorage.New resolve "" + "/pin" into the filesystem root's own
-	// "/pin" directory (go-xkms#666).
-	if s.config.Storage.Path == "" {
-		return &ErrConfigRequired{
-			Field:   "storage.path",
-			Backend: "pin",
-			Hint:    "the PIN state directory is derived from storage.path and must not resolve to the filesystem root",
-		}
-	}
-	pinDir := filepath.Join(s.config.Storage.Path, "pin")
-
-	switch strategy {
-	case "software":
-		fileStore, err := filestorage.New(pinDir)
-		if err != nil {
-			return &ErrStorageCreate{Resource: "PIN state directory", Err: err}
-		}
-		pinStore, err := pinadapter.New(fileStore)
-		if err != nil {
-			return &ErrServiceInit{Service: "software PIN manager", Err: err}
-		}
-		hashConfig := qrdbsdk.AutoDetectHashConfig()
-		backend, err := qrdbsdk.NewSoftwareBackend(pinStore, hashConfig)
-		if err != nil {
-			return &ErrServiceInit{Service: "software PIN manager", Err: err}
-		}
-		s.pinManager = backend
-	default:
-		return &ErrUnknownPINStrategy{Strategy: strategy}
-	}
-
-	s.logger.Info("PIN manager initialized",
-		slog.String("strategy", strategy))
-
-	return nil
 }
 
 // initializePasswordStore initializes the static password store.

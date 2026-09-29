@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package pinstrategy
+package pinselect
 
 import (
 	"errors"
@@ -23,7 +23,7 @@ import (
 
 func TestLoadError_MessageAndUnwrap(t *testing.T) {
 	cause := errors.New("permission denied")
-	e := &LoadError{Path: "/data/pin/strategy", Cause: cause}
+	e := &StrategyLoadError{Path: "/data/pin/strategy", Cause: cause}
 
 	if !strings.Contains(e.Error(), "/data/pin/strategy") {
 		t.Fatalf("Error() should name the path, got %q", e.Error())
@@ -38,7 +38,7 @@ func TestLoadError_MessageAndUnwrap(t *testing.T) {
 
 func TestSaveError_MessageAndUnwrap(t *testing.T) {
 	cause := errors.New("disk full")
-	e := &SaveError{Path: "/data/pin/strategy", Cause: cause}
+	e := &StrategySaveError{Path: "/data/pin/strategy", Cause: cause}
 
 	if !strings.Contains(e.Error(), "/data/pin/strategy") {
 		t.Fatalf("Error() should name the path, got %q", e.Error())

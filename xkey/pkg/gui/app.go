@@ -2562,15 +2562,14 @@ func (a *App) getTPM() xkmssdk.TrustedPlatformModule {
 		return nil
 	}
 
-	// Initialize the Platform Key Store so the Platform SRK is visible.
-	// NewPlatformKeyStore auto-detects prior initialization from the PIN state file.
+	// Attach the Platform Key Store so the Platform SRK is visible, through
+	// the same helper xkmsd uses. It auto-detects prior initialization by
+	// probing the Platform SRK handle.
 	if cfg.PlatformSRK != nil && factory != nil {
-		pinStatePath := filepath.Join(tpmDataDir, "pin_state.json")
-		pks, pksErr := xkmssdk.NewPlatformKeyStore(a.log, tpm, factory.KeyBackend(), &cfg, pinStatePath)
+		pks, pksErr := xkmssdk.AttachPlatformKeyStore(a.log, tpm, factory.KeyBackend())
 		if pksErr != nil {
-			a.log.Warn("failed to create platform key store", "error", pksErr)
-		} else if tpm2Impl, ok := tpm.(*xkmssdk.TPM2); ok {
-			tpm2Impl.SetPlatformKeyStore(pks)
+			a.log.Warn("failed to attach platform key store", "error", pksErr)
+		} else {
 			// Auto-initialize the Platform Key Store (creates Platform SRK)
 			// only for returning users (setup already completed). During first-
 			// run, the setup wizard creates the SRK with the user PIN as auth
@@ -3119,7 +3118,7 @@ func (a *App) postDataDirStartup() {
 
 // initPINService creates a qrdbsdk.PINService with the appropriate backend
 // and wires it to the GUI PINService. The backend itself is resolved by
-// services.ResolvePINBackend through the shared pinstrategy package
+// services.ResolvePINBackend through the shared pinselect resolver (xkmssdk.ResolvePINBackend)
 // (go-xkms#307): the same PIN strategy governs the xKey GUI, the headless
 // daemon and `xkey pin`, all read from <dataDir>/pin/strategy rather than
 // a GUI-only config file, so a PIN set through any one of them

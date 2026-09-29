@@ -161,9 +161,9 @@ daemon always hard-coded software, so a PIN enrolled through a TPM2 wizard
 run authenticated through the GUI but not through either of them.
 
 The choice now lives at `<dataDir>/pin/strategy`, beside the PIN state
-itself, written and read by `xkey/pkg/pinstrategy` — a plain package with
+itself, written and read by `pkg/pinselect` (reached through `xkmssdk.ResolvePINBackend`) — a plain package with
 no cgo or Wails dependency, so the GUI, `xkey pin` and `xkey extension
-serve` all resolve it the same way (`pinstrategy.Resolve`,
+serve` all resolve it the same way (`pinselect.Resolve`,
 `services.ResolvePINBackend` on the GUI side). `App.initPINService`
 migrates an older install's `GUIConfig.PINStrategy` into that file once,
 the first time it runs against a data directory with no strategy record of

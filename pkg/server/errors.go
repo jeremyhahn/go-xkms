@@ -33,6 +33,10 @@ var (
 	// the same way; this is the layer that had to start listening.
 	ErrShutdownIncomplete = errors.New("server: shutdown could not confirm every component drained")
 
+	// ErrPINTPMUnavailable is reported to the TPM2 PIN strategy when xkmsd
+	// has no TPM2 key backend (backends.tpm2.enabled is false).
+	ErrPINTPMUnavailable = errors.New("server: the tpm2 PIN strategy needs backends.tpm2 enabled")
+
 	ErrPhoneConfigNil = errors.New("server: phone backend configuration is not set")
 
 	// ErrPhoneBackendCreate indicates the phone backend could not be created.

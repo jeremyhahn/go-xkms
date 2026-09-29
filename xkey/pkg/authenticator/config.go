@@ -470,7 +470,7 @@ type Config struct {
 	// every set/change/verify, via qrdbsdk.PINService.SetFIDO2HashSetter.
 	// It does NOT synchronize a separate PKCS#11 or file-based PIN store:
 	// go-xkms has exactly one governing PIN backend per device, resolved
-	// by xkey/pkg/pinstrategy (see go-xkms#307); this flag only concerns
+	// by pkg/pinselect (xkmssdk.ResolvePINBackend) (see go-xkms#307); this flag only concerns
 	// the FIDO2 authenticator's own cached hash of that one PIN.
 	// Default: true
 	UnifiedPIN bool `yaml:"unified-pin" json:"unified_pin" mapstructure:"unified-pin"`

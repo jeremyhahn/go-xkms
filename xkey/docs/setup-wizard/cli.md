@@ -18,7 +18,7 @@ Before go-xkms#307 the wizard (running inside the GUI) could enroll the
 user PIN on a TPM2 Platform SRK while `xkey pin` still hard-coded the
 software store, so a PIN that verified through one answered "invalid" from
 the other. `xkey pin` and the headless daemon now resolve through the same
-`xkey/pkg/pinstrategy` record the wizard persists, and refuse — rather than
+`pkg/pinselect` (reached through `xkmssdk.ResolvePINBackend`) record the wizard persists, and refuse — rather than
 silently falling back to software — when that record names a backend they
 cannot reach.
 

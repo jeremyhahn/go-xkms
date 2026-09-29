@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package pinstrategy
+package pinselect
 
 import (
 	"errors"
@@ -25,11 +25,11 @@ import (
 func TestSaveLoad_RoundTrip(t *testing.T) {
 	pinDir := t.TempDir()
 
-	if err := Save(pinDir, qrdbsdk.PINStrategyTPM2); err != nil {
+	if err := SaveStrategy(pinDir, qrdbsdk.PINStrategyTPM2); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	got, err := Load(pinDir)
+	got, err := LoadStrategy(pinDir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -48,14 +48,14 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 func TestSave_OverwritesPreviousStrategy(t *testing.T) {
 	pinDir := t.TempDir()
 
-	if err := Save(pinDir, qrdbsdk.PINStrategySoftware); err != nil {
+	if err := SaveStrategy(pinDir, qrdbsdk.PINStrategySoftware); err != nil {
 		t.Fatalf("Save (software): %v", err)
 	}
-	if err := Save(pinDir, qrdbsdk.PINStrategyTPM2); err != nil {
+	if err := SaveStrategy(pinDir, qrdbsdk.PINStrategyTPM2); err != nil {
 		t.Fatalf("Save (tpm2): %v", err)
 	}
 
-	got, err := Load(pinDir)
+	got, err := LoadStrategy(pinDir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestSave_OverwritesPreviousStrategy(t *testing.T) {
 func TestLoad_NotPersistedIsTypedSentinel(t *testing.T) {
 	pinDir := t.TempDir()
 
-	_, err := Load(pinDir)
+	_, err := LoadStrategy(pinDir)
 	if !errors.Is(err, ErrStrategyNotPersisted) {
 		t.Fatalf("Load on empty PIN dir: got %v, want ErrStrategyNotPersisted", err)
 	}
@@ -79,20 +79,20 @@ func TestLoad_CorruptFileIsLoadError(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	_, err := Load(pinDir)
-	var loadErr *LoadError
+	_, err := LoadStrategy(pinDir)
+	var loadErr *StrategyLoadError
 	if !errors.As(err, &loadErr) {
-		t.Fatalf("Load on corrupt file: got %T %v, want *LoadError", err, err)
+		t.Fatalf("Load on corrupt file: got %T %v, want *StrategyLoadError", err, err)
 	}
 }
 
 func TestSave_EmptyStrategyIsError(t *testing.T) {
 	pinDir := t.TempDir()
 
-	err := Save(pinDir, "")
-	var saveErr *SaveError
+	err := SaveStrategy(pinDir, "")
+	var saveErr *StrategySaveError
 	if !errors.As(err, &saveErr) {
-		t.Fatalf("Save(\"\"): got %T %v, want *SaveError", err, err)
+		t.Fatalf("SaveStrategy(\"\"): got %T %v, want *StrategySaveError", err, err)
 	}
 }
 
@@ -108,10 +108,10 @@ func TestSave_UnwritablePINDirIsSaveError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(root, 0700) })
 
-	err := Save(pinDir, qrdbsdk.PINStrategySoftware)
-	var saveErr *SaveError
+	err := SaveStrategy(pinDir, qrdbsdk.PINStrategySoftware)
+	var saveErr *StrategySaveError
 	if !errors.As(err, &saveErr) {
-		t.Fatalf("Save into unwritable dir: got %T %v, want *SaveError", err, err)
+		t.Fatalf("Save into unwritable dir: got %T %v, want *StrategySaveError", err, err)
 	}
 }
 
@@ -121,23 +121,23 @@ func TestLoad_UnreadableFileIsLoadError(t *testing.T) {
 	}
 
 	pinDir := t.TempDir()
-	if err := Save(pinDir, qrdbsdk.PINStrategySoftware); err != nil {
+	if err := SaveStrategy(pinDir, qrdbsdk.PINStrategySoftware); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := os.Chmod(Path(pinDir), 0000); err != nil {
+	if err := os.Chmod(StrategyPath(pinDir), 0000); err != nil {
 		t.Fatalf("Chmod: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(Path(pinDir), 0600) })
+	t.Cleanup(func() { _ = os.Chmod(StrategyPath(pinDir), 0600) })
 
-	_, err := Load(pinDir)
-	var loadErr *LoadError
+	_, err := LoadStrategy(pinDir)
+	var loadErr *StrategyLoadError
 	if !errors.As(err, &loadErr) {
-		t.Fatalf("Load on unreadable file: got %T %v, want *LoadError", err, err)
+		t.Fatalf("Load on unreadable file: got %T %v, want *StrategyLoadError", err, err)
 	}
 }
 
 func TestPath_BesidePINState(t *testing.T) {
-	got := Path("/data/pin")
+	got := StrategyPath("/data/pin")
 	want := filepath.Join("/data/pin", "strategy")
 	if got != want {
 		t.Fatalf("Path = %q, want %q", got, want)

@@ -1,6 +1,6 @@
 # PIN Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1227)
+> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## Exported surface
 
@@ -32,6 +32,56 @@ func Select(cfg Config) (qrdbsdk.PINBackend, error)
 strategy IDs in `Preference` are skipped; software should always appear last so
 `Select` can resolve. It emits exactly one decision line:
 `"PIN backend selected" strategy=<id>`.
+
+#### Governing strategy: `Resolve`
+
+`Select` makes a choice; `Resolve` makes it once and records it. xkmsd, the
+xKey GUI, `xkey pin` and `xkey extension serve` all call `Resolve`, so a PIN
+set through one authenticates through the others (go-xkms#307). xKey reaches it
+as `xkmssdk.ResolvePINBackend`.
+
+```go
+const StrategyAuto qrdbsdk.PINStrategyID = "auto"
+
+type ResolveConfig struct {
+	Config                            // providers, as for Select
+	PINDir   string                   // <PINDir>/strategy holds the record
+	Strategy qrdbsdk.PINStrategyID    // StrategyAuto/"" or an explicit ID
+}
+
+func Resolve(cfg ResolveConfig) (qrdbsdk.PINBackend, qrdbsdk.PINStrategyID, error)
+func StrategyPath(pinDir string) string
+func LoadStrategy(pinDir string) (qrdbsdk.PINStrategyID, error) // ErrStrategyNotPersisted
+func SaveStrategy(pinDir string, strategy qrdbsdk.PINStrategyID) error
+func NewTPMProvider(acquire TPMAcquireFunc, persistedTPM2 bool, log *slog.Logger) TPMProvider
+```
+
+| Record | Configured | Result |
+|---|---|---|
+| none | auto | `Select`, then record the choice |
+| none | explicit | build exactly that backend, then record it |
+| X | auto or X | build exactly X |
+| X | Y ≠ X | `*StrategyMismatchError`: switching would orphan every PIN set under X |
+
+A governing provider that cannot answer is `*ProviderUnavailableError`, never a
+fallback to software. An unknown ID is `*UnknownStrategyError`. A refused build
+records nothing.
+
+`NewTPMProvider` offers the TPM only when its `PlatformKeyStore` exists, and
+only when the Platform SRK's auth is confirmed or TPM2 already governs (recorded
+or explicitly configured). An inherited SRK with an unknown auth value is never
+silently adopted.
+
+`pkg/tpm2.AttachPlatformKeyStore(logger, tpm, backend)` is how xkmsd and xKey
+give a TPM its one `PlatformKeyStore`. It returns the existing store if there
+is one.
+
+#### xkmsd
+
+`pin.strategy` is `auto` (the default), `software` or `tpm2`; any other value
+is `*ErrUnknownPINStrategy`. PIN state lives in `<storage.path>/pin`. `tpm2`
+needs `backends.tpm2.enabled`; the PIN is the auth value of that TPM's Platform
+SRK. Without the backend, startup fails with `*ProviderUnavailableError`.
 
 ### `pkg/pintpm2`
 

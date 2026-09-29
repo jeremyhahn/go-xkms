@@ -21,11 +21,10 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pinstrategy"
 )
 
 // ResolvePINBackend resolves the PIN backend that governs the PIN state
-// under dataDir, through the shared pinstrategy package (go-xkms#307): the
+// under dataDir, through the shared pinselect resolver (xkmssdk.ResolvePINBackend) (go-xkms#307): the
 // same rule the headless daemon and `xkey pin` use, so a PIN set through
 // any one of them authenticates through the others. It is the business
 // logic behind App.initPINService, kept in the service layer (rather than
@@ -46,12 +45,12 @@ func ResolvePINBackend(
 
 	pinDir := filepath.Join(dataDir, "pin")
 
-	persisted, loadErr := pinstrategy.Load(pinDir)
+	persisted, loadErr := xkmssdk.LoadPINStrategy(pinDir)
 	persistedTPM2 := loadErr == nil && persisted == qrdbsdk.PINStrategyTPM2
 
 	var tpmProvider xkmssdk.PINTPMProvider
 	if tpmAccessor != nil {
-		tpmProvider = pinstrategy.NewTPMProvider(func() (pinstrategy.PlatformKeyStoreProvider, error) {
+		tpmProvider = xkmssdk.NewPINTPMProvider(func() (xkmssdk.PINPlatformKeyStoreProvider, error) {
 			tpm, err := tpmAccessor.Acquire()
 			if err != nil {
 				return nil, err
@@ -61,9 +60,9 @@ func ResolvePINBackend(
 		}, persistedTPM2, log)
 	}
 
-	return pinstrategy.Resolve(pinstrategy.Config{
+	return xkmssdk.ResolvePINBackend(xkmssdk.PINResolveConfig{
 		PINDir: pinDir,
-		PINSelectConfig: xkmssdk.PINSelectConfig{
+		Config: xkmssdk.PINSelectConfig{
 			TPM:      tpmProvider,
 			Software: softwarePINProvider{dataDir: dataDir, engine: engine},
 			Logger:   log,

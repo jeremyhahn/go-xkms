@@ -11,21 +11,15 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package pinstrategy is the single, shared record of which PIN backend
-// governs a device: TPM2, PKCS#11 or software. It is the fix for
-// go-xkms#307, where the xKey GUI persisted its choice inside its own
-// (cgo, GUI-only) config file while the headless daemon and `xkey pin`
-// hard-coded the software backend, so a PIN set through one authenticated
-// against another.
-//
-// pinstrategy has no cgo dependency and no GUI dependency: it is imported
-// by the GUI, the headless daemon and the CLI alike, so all three read and
-// write exactly one record and resolve it through exactly one rule (see
-// Resolve). Callers supply their own environment adapters (how to reach a
-// TPM, a PKCS#11 token, where software PIN state persists) through the
-// same provider interfaces pkg/pinselect defines; pinstrategy adds the
-// persistence layer pinselect itself does not know about.
-package pinstrategy
+// This file is the single, shared record of which PIN backend governs a
+// device: TPM2, PKCS#11 or software. It is the fix for go-xkms#307, where
+// the xKey GUI persisted its choice inside its own config file while the
+// headless daemon and `xkey pin` hard-coded the software backend, so a PIN
+// set through one authenticated against another. xkmsd, the xKey GUI, the
+// headless daemon and the CLI all read and write this one record and
+// resolve it through one rule (see Resolve).
+
+package pinselect
 
 import (
 	"encoding/json"
@@ -52,7 +46,7 @@ type strategyRecord struct {
 // (<dataDir>/pin by default, but callers that relocate PIN state — e.g.
 // the headless daemon's --pin-state flag — pass that location instead):
 // <pinDir>/strategy.
-func Path(pinDir string) string {
+func StrategyPath(pinDir string) string {
 	return filepath.Join(pinDir, strategyFileName)
 }
 
@@ -63,20 +57,20 @@ func Path(pinDir string) string {
 // it as "auto-select and persist"; callers that must not manufacture
 // state treat it as "governing strategy unknown" and report that rather
 // than guessing.
-func Load(pinDir string) (qrdbsdk.PINStrategyID, error) {
-	path := Path(pinDir)
+func LoadStrategy(pinDir string) (qrdbsdk.PINStrategyID, error) {
+	path := StrategyPath(pinDir)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", ErrStrategyNotPersisted
 		}
-		return "", &LoadError{Path: path, Cause: err}
+		return "", &StrategyLoadError{Path: path, Cause: err}
 	}
 
 	var rec strategyRecord
 	if err := json.Unmarshal(data, &rec); err != nil {
-		return "", &LoadError{Path: path, Cause: err}
+		return "", &StrategyLoadError{Path: path, Cause: err}
 	}
 	if rec.Strategy == "" {
 		return "", ErrStrategyNotPersisted
@@ -90,28 +84,28 @@ func Load(pinDir string) (qrdbsdk.PINStrategyID, error) {
 // write is atomic (temp file, then rename) so a crash mid-write cannot
 // leave a truncated file that Load would misread as corrupt or, worse, as
 // a different strategy.
-func Save(pinDir string, strategy qrdbsdk.PINStrategyID) error {
-	path := Path(pinDir)
+func SaveStrategy(pinDir string, strategy qrdbsdk.PINStrategyID) error {
+	path := StrategyPath(pinDir)
 
 	if strategy == "" {
-		return &SaveError{Path: path, Cause: errors.New("empty strategy")}
+		return &StrategySaveError{Path: path, Cause: errors.New("empty strategy")}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return &SaveError{Path: path, Cause: err}
+		return &StrategySaveError{Path: path, Cause: err}
 	}
 
 	data, err := json.MarshalIndent(strategyRecord{Strategy: strategy}, "", "  ")
 	if err != nil {
-		return &SaveError{Path: path, Cause: err}
+		return &StrategySaveError{Path: path, Cause: err}
 	}
 
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return &SaveError{Path: path, Cause: err}
+		return &StrategySaveError{Path: path, Cause: err}
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		return &SaveError{Path: path, Cause: err}
+		return &StrategySaveError{Path: path, Cause: err}
 	}
 
 	return nil

@@ -1,6 +1,6 @@
 # PIN Management — User Guide
 
-> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## Two PINs, two jobs
 
@@ -75,18 +75,35 @@ interval.
 
 ## Which PIN store am I actually using?
 
-This is worth knowing, because the three are not equally strong. The server
-decides at startup — TPM first, then a PKCS#11 token, then software — and logs
-one line:
+This is worth knowing, because the three stores are not equally strong. xkmsd
+and xKey choose the store the same way, and the first choice is recorded in
+`pin/strategy` beside the PIN state. After that, every start uses the recorded
+store.
+
+On xkmsd, set it with `pin.strategy`:
+
+```yaml
+pin:
+  enabled: true
+  strategy: tpm2      # auto (default) | software | tpm2
+backends:
+  tpm2:
+    enabled: true     # required for strategy: tpm2
+```
+
+- `tpm2` keeps your PIN in the TPM as the auth value of the Platform SRK. The
+  TPM checks the PIN and applies its own lockout. If no TPM is available, the
+  server refuses to start instead of falling back to software.
+- `auto` uses a TPM only if the PIN on it is already confirmed. Otherwise it
+  records `software`.
+- Changing the setting after a store is recorded is refused, because it would
+  orphan every PIN in the old store. To switch, reset PIN state deliberately.
+
+The server logs the store it uses at startup:
 
 ```
-PIN backend selected  strategy=tpm2
+PIN manager initialized  strategy=tpm2
 ```
-
-There is no command to ask it later. If a machine lost its TPM, or a token was
-not plugged in when the service started, that line will say `software`, and your
-PINs are protected by software from that moment on. Check it after any hardware
-or configuration change.
 
 ## Troubleshooting
 

@@ -39,6 +39,10 @@ var (
 	// ErrPlatformKeyStoreNilConfig is returned when the config parameter is nil.
 	ErrPlatformKeyStoreNilConfig = errors.New("tpm2: platform key store requires a non-nil config")
 
+	// ErrPlatformKeyStoreNotAttachable is returned by AttachPlatformKeyStore
+	// when the TPM implementation cannot carry a platform key store.
+	ErrPlatformKeyStoreNotAttachable = errors.New("tpm2: this TPM implementation cannot carry a platform key store")
+
 	// ErrPlatformKeyStoreAlreadyInitialized is returned when Initialize is
 	// called on an already initialized store.
 	ErrPlatformKeyStoreAlreadyInitialized = errors.New("tpm2: platform key store already initialized")
@@ -183,6 +187,37 @@ func NewPlatformKeyStore(
 		}
 	}
 
+	return pks, nil
+}
+
+// platformKeyStoreSetter is the attach seam AttachPlatformKeyStore needs;
+// *TPM2 implements it.
+type platformKeyStoreSetter interface {
+	SetPlatformKeyStore(pks PlatformKeyStorer)
+}
+
+// AttachPlatformKeyStore returns the PlatformKeyStore tpm already carries or,
+// when it has none, creates one over backend from tpm's own configuration
+// and attaches it. It is the one way xkmsd and xKey give a TPM its
+// PlatformKeyStore, so both reach the Platform SRK's user-PIN auth (the TPM2
+// PIN backend, PlatformKeyStore.PINBackend) through the same object and a
+// second store with its own PIN state is never created for one TPM.
+func AttachPlatformKeyStore(logger *slog.Logger, tpm TrustedPlatformModule, backend store.KeyBackend) (PlatformKeyStorer, error) {
+	if tpm == nil {
+		return nil, ErrPlatformKeyStoreNilTPM
+	}
+	if existing := tpm.PlatformKeyStore(); existing != nil {
+		return existing, nil
+	}
+	setter, ok := tpm.(platformKeyStoreSetter)
+	if !ok {
+		return nil, ErrPlatformKeyStoreNotAttachable
+	}
+	pks, err := NewPlatformKeyStore(logger, tpm, backend, tpm.Config(), "")
+	if err != nil {
+		return nil, err
+	}
+	setter.SetPlatformKeyStore(pks)
 	return pks, nil
 }
 

@@ -36,6 +36,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -3680,8 +3681,8 @@ func TestInitializePINManager_BadPath(t *testing.T) {
 
 	err := s.initializePINManager()
 	require.Error(t, err)
-	var storageErr *ErrStorageCreate
-	assert.True(t, errors.As(err, &storageErr))
+	var loadErr *pinselect.StrategyLoadError
+	assert.True(t, errors.As(err, &loadErr), "the unreadable strategy record is reported, got %v", err)
 }
 
 // ============================================================================
