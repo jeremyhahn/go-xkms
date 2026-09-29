@@ -651,6 +651,15 @@ func generateKeyPair(algorithm string, size int) (crypto.PrivateKey, error) {
 		if size < client.RSAKeySize2048 {
 			size = client.RSAKeySize2048
 		}
+		// rsa.GenerateKey cannot be cancelled and its cost grows with the
+		// cube of the modulus size, so an oversized --key-size pins this
+		// CLI process's CPU core for minutes to hours; refused rather than
+		// clamped, since a size this far outside the documented range
+		// (2048/3072/4096) is more likely a mistake than an operator intent
+		// this command should silently reinterpret (go-xkms#1260).
+		if size > client.RSAKeySize4096 {
+			return nil, ErrRSAKeySizeTooLarge
+		}
 		return rsa.GenerateKey(rand.Reader, size)
 	case client.AlgorithmECDSA.Equals(algorithm) || strings.EqualFold(algorithm, "ec"):
 		var curve elliptic.Curve

@@ -2810,6 +2810,18 @@ func TestCertGenerateKeyPair_RSA(t *testing.T) {
 	}
 }
 
+// TestCertGenerateKeyPair_RSA_RefusesOversizedKey proves generateKeyPair
+// refuses a modulus above the 4096-bit ceiling before rsa.GenerateKey ever
+// runs. rsa.GenerateKey cannot be cancelled and its cost grows with the
+// cube of the modulus size, so an unbounded --key-size would otherwise pin
+// this CLI process's CPU core for minutes to hours (go-xkms#1260).
+func TestCertGenerateKeyPair_RSA_RefusesOversizedKey(t *testing.T) {
+	_, err := generateKeyPair("rsa", 65536)
+	if !errors.Is(err, ErrRSAKeySizeTooLarge) {
+		t.Fatalf("generateKeyPair(rsa, 65536) error = %v, want ErrRSAKeySizeTooLarge", err)
+	}
+}
+
 func TestCertGenerateKeyPair_Ed25519(t *testing.T) {
 	key, err := generateKeyPair("ed25519", 0)
 	if err != nil {

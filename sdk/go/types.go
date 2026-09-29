@@ -317,6 +317,8 @@ const (
 // RSA key size constants.
 const (
 	RSAKeySize2048 = types.RSAKeySize2048
+	RSAKeySize3072 = types.RSAKeySize3072
+	RSAKeySize4096 = types.RSAKeySize4096
 )
 
 // Store type constants.

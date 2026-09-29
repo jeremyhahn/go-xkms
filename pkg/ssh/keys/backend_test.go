@@ -195,6 +195,12 @@ func TestGenerateOnBackend_Errors(t *testing.T) {
 	if _, err := GenerateOnBackend(ctx, p, "tpm2", GenerateOptions{Algorithm: AlgorithmRSA, RSABits: 1024}, scope.User, "a", "k"); err == nil {
 		t.Fatal("expected error for under-minimum RSA bits")
 	}
+	// go-xkms#1260: refused here, before the backend's GenerateKey is ever
+	// called, so an oversized request never reaches a backend that might not
+	// enforce its own ceiling.
+	if _, err := GenerateOnBackend(ctx, p, "tpm2", GenerateOptions{Algorithm: AlgorithmRSA, RSABits: 65536}, scope.User, "a", "k"); err == nil {
+		t.Fatal("expected error for over-maximum RSA bits")
+	}
 
 	// Backend generation failure surfaces as KeyMaterialError.
 	p.genErr = errors.New("hardware unavailable")
