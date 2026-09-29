@@ -796,7 +796,8 @@ func (s *Server) registerRoutes(r chi.Router) {
 	}
 
 	// SSH: authentication + tenant enforcement; each route additionally
-	// carries the blanket ssh:use permission via the standard decorator.
+	// carries its own ssh:read, ssh:write or ssh:delete permission via the
+	// standard decorator (go-xkms#1230).
 	if specs := byGroup[GroupSSH]; len(specs) > 0 {
 		r.Group(func(g chi.Router) {
 			g.Use(s.AuthenticationMiddleware())

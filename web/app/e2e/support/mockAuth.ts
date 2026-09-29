@@ -55,7 +55,7 @@ export const ALL_PERMISSIONS: Record<string, boolean> = {
   'seal:seal': true,
   'pin:read': true,
   'piv:read': true,
-  'ssh:use': true,
+  'ssh:read': true,
   'passwords:read': true,
   'users:list': true,
   'users:read': true,

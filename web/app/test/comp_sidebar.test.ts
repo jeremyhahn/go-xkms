@@ -92,12 +92,12 @@ describe("Sidebar RBAC and capability gating", () => {
   });
 
   it("requires BOTH gates to pass for an item that carries a permission and a capability", async () => {
-    // SSH requires capability "ssh" AND permission ssh:use. Capability alone
+    // SSH requires capability "ssh" AND permission ssh:read. Capability alone
     // must not be enough to show it. Barrier is granted so the section itself
     // still renders and this isn't confounded with "whole section hidden".
     meMock.mockResolvedValue({
       subject: "u1",
-      permissions: { "seal:status": true }, // ssh:use intentionally missing
+      permissions: { "seal:status": true }, // ssh:read intentionally missing
       capabilities: { ssh: true },
     });
     await loadSession();

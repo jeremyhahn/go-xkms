@@ -236,6 +236,5 @@ matching the MCP `ssh.*` methods (`pkg/api/mcp/authz.go:321-341`) and the
 gRPC `qrdb.v1.permission` options. Signing is `ssh:write` on every
 transport (`pkg/api/rest/routes.go:493`). Until go-xkms#1230 every REST route
 carried the blanket `ssh:use`, so a grant meant for signing also deleted keys
-and added `authorized_keys` entries. `ssh:use` is still declared but gates
-no route; retiring it is tracked by go-xkms#1232. See [`api.md`](api.md) for
+and added `authorized_keys` entries. The blanket `ssh:use` is retired. See [`api.md`](api.md) for
 the per-route table.

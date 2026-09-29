@@ -82,17 +82,6 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// permission it refines.
 		qrdbsdk.Permission(auth.ResourceKeys + ":" + auth.ActionUpdate),
 
-		// ssh:use gates no route since go-xkms#1230: SSH signing is ssh:write
-		// on every transport, and the other SSH routes gate on ssh:read,
-		// ssh:write or ssh:delete. Retiring the declaration is go-xkms#1232. Those
-		// siblings are ScopeSelf in qrdb, as is piv:use — the same "use a key
-		// whose material never leaves the device" action in the other
-		// hardware family. A signing permission that reached less far than
-		// the permissions that create and read the key would deny calls
-		// qrdb's own declarations admit. Which SSH asset a request reaches is
-		// bound to the caller by pkg/ssh/tenancy, not by this scope.
-		qrdbsdk.Permission(auth.ResourceSSH + ":" + auth.ActionUse),
-
 		// bootstrap:read reports the trust-bootstrap listener's own public
 		// keys (go-xkms#632). The listener is process-wide, not per-tenant,
 		// so it holds the same reach as seal:status: a tenant-local Admin

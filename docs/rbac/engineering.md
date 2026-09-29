@@ -199,7 +199,6 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		"keys:read",    // PKCS#11 object-state + seal-store reads (system-barrier state)
 		"keys:write",   // the mutating half of the same two stores
 		"keys:update",  // one compare-and-swap route on the PKCS#11 state store
-		"ssh:use",      // declared; no route gates on it since go-xkms#1230 (retirement: go-xkms#1232)
 		"bootstrap:read", // the trust-bootstrap listener's own public keys (go-xkms#632)
 	}
 }
