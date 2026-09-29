@@ -31,7 +31,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -697,8 +696,14 @@ func createJWSRequestForService(t *testing.T, service *handlers.RestService, key
 	return req
 }
 
-// extractSerialFromURL extracts the numeric serial number from a certificate URL.
-// Expected format: https://host/acme/cert/<serial>
+// extractSerialFromURL extracts the certificate DAO entity ID from a
+// certificate URL. Expected format: https://host/acme/cert/<hex-serial>
+// (entities.ACMECertificate.Serial is the issued certificate's full serial
+// number, hex-encoded -- see pkg/acme/server/handlers/certificate.go's
+// CertificateHandler doc comment -- never a decimal number, so this must
+// mirror CertificateHandler's own lookup: normalize the hex serial exactly
+// as NormalizeSerial does, then hash it into the DAO's uint64 key via
+// entities.StringToEntityID, rather than parsing the URL segment as decimal.
 func extractSerialFromURL(t *testing.T, certURL string) uint64 {
 	t.Helper()
 
@@ -707,11 +712,10 @@ func extractSerialFromURL(t *testing.T, certURL string) uint64 {
 		t.Fatalf("Invalid certificate URL format: %s", certURL)
 	}
 
-	serialStr := parts[len(parts)-1]
-	serialNum, err := strconv.ParseUint(serialStr, 10, 64)
+	serial, err := entities.NormalizeSerial(parts[len(parts)-1])
 	require.NoError(t, err, "Failed to parse serial number from URL: %s", certURL)
 
-	return serialNum
+	return entities.StringToEntityID(serial)
 }
 
 // parseCertificateChain decodes all PEM CERTIFICATE blocks from pemData and

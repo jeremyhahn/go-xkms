@@ -5,50 +5,48 @@
 # device-attest-01, enroll-01 and permanent-identifier end-to-end tests under
 # test/integration/acme-tpm have a real server to dial at ACME_SERVER_URL.
 #
-# storage.backend is "file", NOT "qrdb" -- this is the one load-bearing
-# difference from an earlier version of this file that copied
-# configs/xkmsd-integration.yaml's storage/protocols shape verbatim and
-# failed to boot:
+# storage.backend is "qrdb" with barrier.strategy "none" (go-xkms#1125),
+# matching test/integration/acmeadmin/xkmsd.yaml's pattern -- the ONE fixture
+# in this repository that already boots an ACME-enabled xkmsd unattended.
+# This is load-bearing for two independent reasons:
 #
-#   ERROR Failed to create server error="failed to initialize qrdb storage:
-#   failed to create embedded qrdb node: qrdb node: sealed window: qrdb node:
-#   sealed-window listener refused to bind \"0.0.0.0\": while the barrier is
-#   sealed ..."
+#  1. Since go-xkms#1091 (cmd/xkmsd/admin.go's finalizeAdminModule),
+#     EVERY xkmsd boot -- ACME-enabled or not -- requires
+#     server.Server.QRDBClient() to be non-nil, and refuses a
+#     disabled-authorizer fallback (ErrAdminQRDBClientRequired): the ACME
+#     admin surface's RBAC gate has no "authorization is optional" mode. A
+#     non-qrdb storage.backend never publishes that client, so this lane
+#     failed to start at all with "failed to finalize admin ServiceModule":
+#     "acme: resolve qrdb client for admin authorization" once that
+#     requirement landed -- storage.backend "qrdb" is what publishes it.
+#  2. storage.backend "qrdb" flips the qrdb node's OWN barrier on
+#     (pkg/server/embedded_node.go ResolveNodeSeal / BarrierConfig.NodeFlipWired).
+#     An earlier version of this file paired that with barrier.strategy
+#     "passphrase", which does NOT auto-unseal at construction (only "none"
+#     and a provisioned "tpm2" do), so xkmsd blocked boot behind a pre-boot
+#     "sealed-window" listener until an operator ran `xkmsctl barrier
+#     unseal` against it -- and pkg/server/sealed_window.go refuses to even
+#     open that listener on a non-loopback Server.Host (0.0.0.0 here):
 #
-# storage.backend "qrdb" flips the qrdb node's OWN barrier on
-# (pkg/server/embedded_node.go ResolveNodeSeal / BarrierConfig.NodeFlipWired);
-# for strategy "passphrase" that barrier does NOT auto-unseal at construction
-# (only "none" and a provisioned "tpm2" do -- see the doc comment on
-# cmd/xkmsd/init_node.go's unsealDurableInitNode), so xkmsd blocks boot behind
-# a pre-boot "sealed-window" listener until an operator runs `xkmsctl barrier
-# unseal` against it -- and pkg/server/sealed_window.go refuses to even open
-# that listener on a non-loopback Server.Host (0.0.0.0 here), which is the
-# exact error above. No script or compose fixture in this repository drives
-# that ceremony today, including configs/xkmsd-integration.yaml's own
-# consumer (.devcontainer's xkms-server): its "KNOWN GAP (go-xkms#653)"
-# comment documents this exact sealed-behind-the-ceremony posture as
-# ACCEPTED, not as something that resolves itself unattended.
+#       ERROR Failed to create server error="failed to initialize qrdb
+#       storage: failed to create embedded qrdb node: qrdb node: sealed
+#       window: qrdb node: sealed-window listener refused to bind
+#       \"0.0.0.0\": while the barrier is sealed ..."
 #
-# The fixture that actually boots unattended with barrier.strategy
-# "passphrase" is test/integration/api/config.test.yaml, and the mechanism is
-# precisely storage.backend "file": ResolveNodeSeal only flips the qrdb node's
-# barrier on when storage.backend is "qrdb" (storageBackendIsQRDB), so a
-# "file" backend never constructs the embedded qrdb node or its sealed-window
-# listener at all. Its own comment: "storage.backend is 'file' below, so
-# xkmsd's ComplianceGaps gate does not require auto-unseal here, but the
-# barrier itself stays sealed until an unseal ceremony runs against it" --
-# i.e. the daemon still starts and serves; only the barrier subsystem itself
-# stays inert, which nothing this lane exercises (ACME's CA/keystore read
-# through the "software" backend and the generic storage.Backend interface,
-# neither of which is barrier-gated for a non-qrdb deployment).
+#     barrier.strategy "none" auto-unseals unattended at construction
+#     (pkg/config/config.go's BarrierConfig.NodeFlipWired lists it alongside
+#     passphrase/shamir/tpm2, so it still counts as the qrdb node's own
+#     barrier for the ComplianceGaps gate), so serveSealedWindow is a
+#     documented no-op and boot never blocks on it -- exactly
+#     test/integration/acmeadmin/xkmsd.yaml's barrier.strategy comment.
 #
-# One consequence of "file" (or the default "pebble"): pkg/config/config.go's
-# Validate() refuses rest/grpc/quic/mcp ("network protocols") on anything but
-# storage.backend "qrdb" (NetworkServing() -- "the embedded qrdb node is the
-# unified API server"). This lane does not need any of those: the ACME
-# listener below is its own dedicated net.Listener, wired directly in
-# cmd/xkmsd/acme.go independent of protocols.*. So every main protocol is off
-# except protocols.unix, kept on solely because at least one protocol must be
+# pkg/config/config.go's Validate() only requires storage.backend "qrdb" when
+# a network protocol (rest/grpc/quic/mcp) is enabled (NetworkServing --
+# "the embedded qrdb node is the unified API server"); it does not require
+# the reverse. This lane still needs none of those: the ACME listener below
+# is its own dedicated net.Listener, wired directly in cmd/xkmsd/acme.go
+# independent of protocols.*. So every main protocol stays off except
+# protocols.unix, kept on solely because at least one protocol must be
 # enabled.
 protocols:
   unix: true
@@ -79,20 +77,18 @@ auth:
   enabled: true
   type: "composite"
 
-# Matches test/integration/api/config.test.yaml exactly: enabled, strategy
-# "passphrase", no inline secret. barrier.passphrase is a removed field
-# (pkg/config/load.go: "there is no config-sourced boot-time unseal secret
-# any more") -- Load() fails closed if it is present. Leaving the barrier
-# sealed is fine here; see the storage.backend comment above for why.
+# "none": auto-unseals unattended at startup -- see the storage.backend
+# comment above for why this, and not "passphrase"/"shamir", is required
+# here. Matches test/integration/acmeadmin/xkmsd.yaml's barrier.strategy.
 barrier:
   enabled: true
-  strategy: "passphrase"
+  strategy: "none"
 
 ratelimit:
   enabled: false
 
 storage:
-  backend: "file"
+  backend: "qrdb"
   path: "/data/storage"
 
 default_backend: "software"
@@ -178,6 +174,11 @@ acme:
     # available challenge; dns-01/tls-alpn-01 would need DNS/ALPN
     # infrastructure this lane doesn't stand up.
     http01: true
+    # The test runner that answers enroll-01/http-01 challenges sits on the
+    # compose network at a private address (172.28.90.10). The challenge
+    # validation client refuses reserved and private targets by default
+    # (go-xkms#1172), so this lab lane opts in; production leaves it false.
+    allow_private_targets: true
   enrollment:
     # The challenge client hostname the test runner registers as its
     # permanent-identifier (CHALLENGE_CLIENT_HOSTNAME) is a docker-compose

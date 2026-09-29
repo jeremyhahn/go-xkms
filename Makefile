@@ -1672,7 +1672,7 @@ coverage-xkmsctl:
 # lane used to be represented here by integration-test-pkcs11-conformance alone,
 # which left the C ABI and the whole OpenSSL/OpenSSH interop surface out of every
 # default run -- the exact surface real callers reach the module through.
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-module-all integration-test-tpm2 integration-test-acme-tpm integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
+integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-run-images
@@ -2243,6 +2243,9 @@ integration-test-tpm2:
 	@echo "$(GREEN)✓ TPM2 integration tests complete$(RESET)"
 
 .PHONY: integration-test-acme-tpm
+# Not in the integration-test aggregate yet: its device-attest-01 tests need
+# the challenge wired (go-xkms#737, pending an owner ruling on #828). Run it
+# on its own; add it to the aggregate when #737 lands.
 ## integration-test-acme-tpm: Run the ACME+TPM integration suite (device-attest-01, enroll-01, permanent-identifier end-to-end)
 # test/integration/acme-tpm (build tags `integration tpm2`) dials swtpm
 # directly AND a real ACME server (xkmsd with its embedded ACME listener
