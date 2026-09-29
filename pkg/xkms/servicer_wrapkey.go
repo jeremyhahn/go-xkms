@@ -22,8 +22,6 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -486,92 +484,6 @@ func unwrapAESKeyWrapPad(ctx context.Context, b Backend, attrs *types.KeyAttribu
 	return plaintext, nil
 }
 
-// sealedWrapKeyGuardDomain separates the identities of wrapping keys whose
-// material a backend will not release from every other input the AES-GCM nonce
-// guard is given, so a key named this way can never collide with a key claimed
-// by its own bytes.
-const sealedWrapKeyGuardDomain = "go-xkms/xkms sealed wrapping key\x00"
-
-// gcmWrapKeyIdentity returns the bytes identifying a wrapping key to the
-// AES-GCM nonce guard, together with a function that releases them.
-//
-// The identity is the key's own material wherever the backend will release it.
-// NIST SP 800-38D section 8.2 constrains the (key, IV) PAIR, and the same AES
-// key stored under two common names, in two backends, or reached through two
-// service instances is one key to GCM: an identity taken from the name would
-// report those wraps as unrelated and let the second one through, which is the
-// whole failure this guard exists to catch. The material is wiped as soon as
-// the claim is made -- the guard keeps only an HMAC of it under a per-process
-// salt -- so it lives no longer here than it already does in wrapAESKeyWrap.
-//
-// A backend that seals its key material cannot offer bytes to key on: every
-// HSM, TPM and cloud-KMS backend answers types.SymmetricKey.Raw with
-// backend.ErrNotSupported. For exactly the same reason it cannot be aliased
-// either -- material that never leaves the device cannot also be present under
-// a second name -- so those keys are identified by attrs.ID(), which names the
-// store, the key type and the common name, and the wrap proceeds.
-//
-// Any OTHER failure to read the material is not that case: it means the key
-// this wrap names could not be resolved, and it is returned rather than
-// quietly degraded, because an identity chosen after an unexplained failure is
-// an identity nobody can reason about.
-func gcmWrapKeyIdentity(ctx context.Context, b Backend, attrs *types.KeyAttributes) ([]byte, func(), error) {
-	raw, err := rawSymmetricWrappingKey(ctx, b, attrs)
-	switch {
-	case err == nil && len(raw) > 0:
-		return raw, func() { secure.Wipe(raw) }, nil
-	case err == nil:
-		// A backend that answers with empty material has named no key. Keying
-		// on it would collapse every such key onto one guard entry.
-		return nil, nil, &ErrKeyOperation{
-			Operation: "aes-gcm wrap",
-			KeyID:     attrs.CN,
-			Err:       ErrOperationFailed,
-		}
-	case errors.Is(err, backend.ErrNotSupported):
-		return []byte(sealedWrapKeyGuardDomain + attrs.ID()), func() {}, nil
-	default:
-		return nil, nil, err
-	}
-}
-
-// guardGCMWrapNonce claims the (wrapping key, nonce) pair an AES-GCM wrap is
-// about to consume, and refuses the wrap when that pair was already consumed
-// anywhere in this process.
-//
-// The plaintext of a key wrap is key material, which is what makes NIST SP
-// 800-38D section 8.2 a disclosure rule here rather than a confidentiality
-// one: two wraps under one (KEK, IV) reuse the keystream, so ct_a XOR ct_b XOR
-// pt_a yields pt_b and anyone holding both blobs recovers BOTH wrapped keys.
-// The repeated GHASH subkey H makes forging tags on further blobs under that
-// KEK feasible on top of it.
-//
-// PKCS#11 v3.2 section 5.18.3 lets a C_WrapKey caller choose the IV in
-// CK_GCM_PARAMS.pIv, and the caller-supplied value reaches the provider
-// verbatim (checkCallerIV only establishes that it is the right length), so
-// this claim is what stands between a caller that repeats one and that
-// outcome. It is deliberately independent of any tracking a particular
-// provider does: types.AEADSafetyTracker is optional, per backend instance and
-// keyed by key id, so it sees neither a second instance of the same backend
-// nor one key material reachable under two ids.
-func guardGCMWrapNonce(ctx context.Context, b Backend, attrs *types.KeyAttributes, nonce []byte) error {
-	guard, err := aead.SharedGCMNonceGuard()
-	if err != nil {
-		return &ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: attrs.CN, Err: err}
-	}
-
-	identity, release, err := gcmWrapKeyIdentity(ctx, b, attrs)
-	if err != nil {
-		return err
-	}
-	defer release()
-
-	if err := guard.Use(identity, nonce); err != nil {
-		return &ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: attrs.CN, Err: err}
-	}
-	return nil
-}
-
 // wrapAESGCM wraps keyMaterial under an AES key using the key's own
 // SymmetricEncrypter (the same AEAD path the generic Encrypt RPC uses),
 // rather than reading its raw bytes: CKM_AES_GCM is an AEAD construction,
@@ -604,7 +516,7 @@ func wrapAESGCM(ctx context.Context, b Backend, attrs *types.KeyAttributes, para
 	// caller's corrected retry with that same IV would then be refused as a
 	// reuse of a wrap that never happened.
 	if len(params.iv) > 0 {
-		if err := guardGCMWrapNonce(ctx, b, attrs, params.iv); err != nil {
+		if err := claimAEADNonce(ctx, b, attrs, gcmWrapOperation, params.iv); err != nil {
 			return nil, err
 		}
 	}
@@ -619,11 +531,11 @@ func wrapAESGCM(ctx context.Context, b Backend, attrs *types.KeyAttributes, para
 
 	encrypted, err := encrypter.Encrypt(keyMaterial, opts)
 	if err != nil {
-		return nil, &ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: attrs.CN, Err: err}
+		return nil, &ErrKeyOperation{Operation: gcmWrapOperation, KeyID: attrs.CN, Err: err}
 	}
 	if len(encrypted.Nonce) != aesGCMNonceSize || len(encrypted.Tag) != tagSize {
 		return nil, &ErrKeyOperation{
-			Operation: "aes-gcm wrap",
+			Operation: gcmWrapOperation,
 			KeyID:     attrs.CN,
 			Err:       ErrOperationFailed,
 		}
@@ -636,7 +548,7 @@ func wrapAESGCM(ctx context.Context, b Backend, attrs *types.KeyAttributes, para
 	// the encryption has already happened by then, so the one thing still worth
 	// preventing is the second ciphertext under that pair reaching anybody.
 	if len(params.iv) == 0 {
-		if err := guardGCMWrapNonce(ctx, b, attrs, encrypted.Nonce); err != nil {
+		if err := claimAEADNonce(ctx, b, attrs, gcmWrapOperation, encrypted.Nonce); err != nil {
 			return nil, err
 		}
 	}

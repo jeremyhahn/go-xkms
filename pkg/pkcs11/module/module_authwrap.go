@@ -64,7 +64,7 @@
 //
 // AES-GCM is performed in this file rather than through CryptoManager, so the
 // reuse check CryptoManager applies to C_Encrypt does not cover it. Every wrap
-// here consults the process-wide aead.SharedGCMNonceGuard instead, keyed by
+// here consults the process-wide aead.SharedAEADNonceGuard instead, keyed by
 // the wrapping key's own material, before it seals. Two wraps under one
 // (key, IV) leak the XOR of their plaintexts (NIST SP 800-38D section 8.2),
 // and the plaintext of a key wrap is key material, so the pair is refused with
@@ -202,7 +202,7 @@ func generateGCMNonce() ([]byte, error) {
 // path answers for the same condition and the accurate description: the IV in
 // the mechanism parameter is the field the caller has to change.
 func guardGCMNonce(keyMaterial, nonce []byte) error {
-	guard, err := aead.SharedGCMNonceGuard()
+	guard, err := aead.SharedAEADNonceGuard()
 	if err != nil {
 		return NewPKCS11ErrorFull(CKR_RANDOM_NO_RNG,
 			"failed to initialize the AES-GCM IV reuse guard", err)
