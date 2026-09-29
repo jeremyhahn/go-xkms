@@ -1175,6 +1175,16 @@ fresh counter window every `NonceLifetime` (`nonceEpochPrefix`,
 outstanding from the previous window; that is the wall-clock lifetime
 substitute for a scheme with no per-nonce timestamp to expire.
 
+The current epoch and the time it began (`RestService.nonceEpoch`, a
+`nonceEpochRecord{epoch, at}` pair) are swapped as one unit through a single
+`atomic.Pointer[nonceEpochRecord]`, never as two independent fields: pairing
+them separately let a reader observe a just-rotated epoch alongside the
+retired epoch's start time, compute a stale age for the current epoch, and
+trigger a second rotation under load (`nonceRotateMu` serializes the actual
+construction, but its double-checked re-check needs the epoch and its
+timestamp to change together to stay sound). Only `rotateNonceEpoch` ever
+writes `nonceEpoch`, under `nonceRotateMu`; reads never block.
+
 Multi-node caveat: nonces from different xkmsd processes only validate on
 each other when every node is configured with the same
 `handlers.Params.NonceKey` (there is no `pkg/config` field for it yet — see
