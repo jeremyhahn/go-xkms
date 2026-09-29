@@ -893,7 +893,7 @@ Aliases: fido
 | `--interactive` | bool | false | Enable interactive mode (prompt for touch/PIN) |
 | `--name` | string | xKey (go-xkms) | Device name visible to OS |
 | `--notify` | string | dialog | Notification type: dialog (interactive), passive (desktop notification), log (log-only), or none |
-| `--notify-command` | string |  | Custom notification command (overrides built-in notifications) |
+| `--notify-command` | string |  | Custom notification command (overrides built-in notifications). Split into argv on whitespace (quote with ' or " to include a space in one argument); run exactly as given, never through a shell, and never modified. Request data (operation, RP ID, RP name, user name) reaches the command only via the XKEY_OPERATION/XKEY_RP_ID/XKEY_RP_NAME/XKEY_USER_NAME environment variables, for example: sh -c 'notify-send "Touch required" "$XKEY_RP_ID"' |
 | `--password-store` | string |  | Path to static password store (default: ~/.xkey/data/staticpw, the same store `xkey password` uses) |
 | `--phone-device` | string |  | Specific phone name or address to use (default: use default paired phone) |
 | `--pin` | bool | true | Enable PIN support (required for FIDO 2.1 credential management) |
@@ -1022,7 +1022,7 @@ Usage: `xkey fido2 start [flags]`
 | `--interactive` | bool | false | Enable interactive mode (prompt for touch/PIN) |
 | `--name` | string | xKey (go-xkms) | Device name visible to OS |
 | `--notify` | string | dialog | Notification type: dialog (interactive), passive (desktop notification), log (log-only), or none |
-| `--notify-command` | string |  | Custom notification command (overrides built-in notifications) |
+| `--notify-command` | string |  | Custom notification command (overrides built-in notifications). Split into argv on whitespace (quote with ' or " to include a space in one argument); run exactly as given, never through a shell, and never modified. Request data (operation, RP ID, RP name, user name) reaches the command only via the XKEY_OPERATION/XKEY_RP_ID/XKEY_RP_NAME/XKEY_USER_NAME environment variables, for example: sh -c 'notify-send "Touch required" "$XKEY_RP_ID"' |
 | `--password-store` | string |  | Path to static password store (default: ~/.xkey/data/staticpw, the same store `xkey password` uses) |
 | `--phone-device` | string |  | Specific phone name or address to use (default: use default paired phone) |
 | `--pin` | bool | true | Enable PIN support (required for FIDO 2.1 credential management) |

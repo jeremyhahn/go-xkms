@@ -26,6 +26,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/stats"
 )
@@ -129,18 +130,7 @@ func (s *Server) Start() error {
 		return &AgentError{Operation: "start_server", Err: err}
 	}
 
-	var grpcOpts []grpc.ServerOption
-	if tlsConfig != nil {
-		grpcOpts = append(grpcOpts, grpc.Creds(credentials.NewTLS(tlsConfig)))
-	}
-
-	// Track agents per RPC (interceptor) and release them when their
-	// connection closes (stats handler).
-	grpcOpts = append(grpcOpts,
-		grpc.UnaryInterceptor(s.trackingUnaryInterceptor),
-		grpc.StatsHandler(connTracker{server: s}))
-
-	grpcServer := grpc.NewServer(grpcOpts...)
+	grpcServer := grpc.NewServer(s.grpcServerOptions(tlsConfig)...)
 
 	s.mu.Lock()
 	s.listener = listener
@@ -366,6 +356,48 @@ func (t connTracker) HandleConn(ctx context.Context, cs stats.ConnStats) {
 	}
 	tag, _ := ctx.Value(connTagKey{}).(*connTag)
 	t.server.connectionClosed(tag)
+}
+
+// grpcServerOptions builds the gRPC server options this listener starts
+// with. It bounds four previously-unbounded resources on a listener that
+// accepts connections directly from the network (go-xkms#1263): message
+// size (MaxRecvMsgSize/MaxSendMsgSize), the number of concurrent streams a
+// single connection may open (MaxConcurrentStreams), how long a connection
+// may take to complete its handshake (ConnectionTimeout), and how
+// frequently a peer may send keepalive pings without an active RPC before
+// the server tears the connection down as abusive
+// (KeepaliveEnforcementPolicy). Values mirror the same option set
+// pkg/api/unix/grpc_server.go applies to the Unix-socket listener. s.config
+// is expected to already carry defaulted values -- Config.Validate() (or
+// DefaultConfig()) is the single owner of that defaulting, the same
+// contract every other Config field in this package already follows -- so
+// the two listeners share one hardening posture even though xkey cannot
+// import pkg/* directly (see xkey/CLAUDE.md) and therefore cannot share the
+// option-building code itself.
+func (s *Server) grpcServerOptions(tlsConfig *tls.Config) []grpc.ServerOption {
+	opts := []grpc.ServerOption{
+		grpc.MaxRecvMsgSize(s.config.MaxRecvMsgSize),
+		grpc.MaxSendMsgSize(s.config.MaxSendMsgSize),
+		grpc.ConnectionTimeout(s.config.ConnectionTimeout),
+		grpc.MaxConcurrentStreams(s.config.MaxConcurrentStreams),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime: keepaliveMinPingInterval,
+			// Agent connections are long-lived with bursty RPC traffic
+			// (see agentIdleTimeout); a legitimate agent may hold the
+			// connection open with only keepalive pings between bursts,
+			// so pings without an active stream are permitted as long as
+			// they respect MinTime.
+			PermitWithoutStream: true,
+		}),
+		// Track agents per RPC (interceptor) and release them when their
+		// connection closes (stats handler).
+		grpc.UnaryInterceptor(s.trackingUnaryInterceptor),
+		grpc.StatsHandler(connTracker{server: s}),
+	}
+	if tlsConfig != nil {
+		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsConfig)))
+	}
+	return opts
 }
 
 // buildTLSConfig creates a TLS configuration for the server. Returns nil

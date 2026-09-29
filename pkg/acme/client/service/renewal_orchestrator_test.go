@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -88,6 +89,39 @@ func TestRenewalOrchestrator_StopWhenNotRunning(t *testing.T) {
 	err := ro.Stop()
 	require.NoError(t, err)
 	assert.False(t, ro.Running())
+}
+
+// TestRenewalOrchestrator_ConcurrentStop is a regression test for #1271: Stop
+// used to gate the close(ro.stopChan) call on running.Load(), so two
+// goroutines calling Stop() at the same time could both observe running ==
+// true and both reach close(ro.stopChan), panicking with "close of closed
+// channel". Stop now gates the close on running.CompareAndSwap(true, false),
+// so only one caller ever closes the channel. Run with -race; on the old
+// Load()-gated code this reliably panics within a handful of iterations.
+func TestRenewalOrchestrator_ConcurrentStop(t *testing.T) {
+	cfg := DefaultConfig()
+	am := NewAccountManager(cfg, testLogger())
+	deployer := NewDeployer(testLogger())
+	cm := NewCertificateManager(cfg, am, deployer, testLogger())
+
+	for i := 0; i < 20; i++ {
+		ro := NewRenewalOrchestrator(cfg, cm, testLogger())
+
+		require.NoError(t, ro.Start(context.Background()))
+
+		const concurrentStops = 8
+		var wg sync.WaitGroup
+		wg.Add(concurrentStops)
+		for g := 0; g < concurrentStops; g++ {
+			go func() {
+				defer wg.Done()
+				assert.NoError(t, ro.Stop())
+			}()
+		}
+		wg.Wait()
+
+		assert.False(t, ro.Running())
+	}
 }
 
 // TestRenewalOrchestrator_StopOnContextCancel verifies the orchestrator stops

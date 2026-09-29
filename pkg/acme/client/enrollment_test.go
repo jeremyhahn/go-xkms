@@ -44,6 +44,7 @@ import (
 	"golang.org/x/crypto/acme"
 
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
@@ -5548,6 +5549,22 @@ func TestStartEnrollServer_RealHandlers(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
+
+	t.Run("activation_endpoint_oversized_body_refused", func(t *testing.T) {
+		// One byte over the cap is enough to trigger http.MaxBytesReader;
+		// the body need not be valid JSON since the size check runs first
+		// (go-xkms#1263).
+		oversized := bytes.Repeat([]byte("a"), int(acmeserver.MaxRequestBodySize)+1)
+		resp, err := http.Post(
+			baseURL+"/.well-known/acme-activation/"+token,
+			"application/json",
+			bytes.NewReader(oversized),
+		)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+	})
 }
 
 // TestStartEnrollServer_ActivationTPMError tests TPM activation error handling
@@ -5730,6 +5747,22 @@ func TestStartEndorseServer_RealHandlers(t *testing.T) {
 		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("activation_endpoint_oversized_body_refused", func(t *testing.T) {
+		// One byte over the cap is enough to trigger http.MaxBytesReader;
+		// the body need not be valid JSON since the size check runs first
+		// (go-xkms#1263).
+		oversized := bytes.Repeat([]byte("a"), int(acmeserver.MaxRequestBodySize)+1)
+		resp, err := http.Post(
+			baseURL+"/.well-known/acme-activation/"+token,
+			"application/json",
+			bytes.NewReader(oversized),
+		)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
 	})
 }
 

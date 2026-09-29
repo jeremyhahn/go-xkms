@@ -42,6 +42,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/urlsafety"
 )
 
 // Default OIDC configuration values.
@@ -78,7 +79,23 @@ var (
 	ErrOIDCIncompleteEndpoints   = errors.New("oidc: incomplete manual endpoint configuration")
 	ErrOIDCNoAuthCode            = errors.New("oidc: no authorization code received")
 	ErrOIDCMissingProviderArg    = errors.New("oidc: specify provider name or use --all")
+	ErrOIDCInvalidLaunchURL      = errors.New("oidc: authorization URL failed launch validation")
 )
+
+// openLaunchURL validates url before handing it to the system browser
+// opener (github.com/pkg/browser). It is the one place every "xkey oidc"
+// subcommand launches a URL through, so authorization URLs -- built around
+// an authorization_endpoint that comes from the identity provider, whether
+// through discovery or a manually configured endpoint -- can never reach
+// the OS launcher with a scheme capable of running code or reading local
+// files (go-xkms#1275).
+func openLaunchURL(rawURL string) error {
+	validated, err := urlsafety.ValidateLaunchURL(rawURL)
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrOIDCInvalidLaunchURL, Cause: err}
+	}
+	return browser.OpenURL(validated.String())
+}
 
 // OIDCExecPayload is the JSON structure passed to exec scripts.
 type OIDCExecPayload struct {
@@ -633,7 +650,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintln(out, "Waiting for authorization callback...")
 	} else {
 		_, _ = fmt.Fprintln(out, "Opening browser for authentication...")
-		if err := browser.OpenURL(authURL); err != nil {
+		if err := openLaunchURL(authURL); err != nil {
 			_, _ = fmt.Fprintf(out, "Failed to open browser: %v\n", err)
 			_, _ = fmt.Fprintln(out, "Please open the following URL manually:")
 			_, _ = fmt.Fprintln(out)

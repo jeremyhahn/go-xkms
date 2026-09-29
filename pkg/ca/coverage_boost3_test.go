@@ -47,7 +47,7 @@ func TestOCSPCacheHit(t *testing.T) {
 	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
 
 	key := "ocsp:123"
-	resp.cacheResponse(key, []byte("data"))
+	resp.cacheResponse(key, []byte("data"), time.Now().Add(time.Hour))
 	got := resp.getCachedResponse(key)
 	assert.Equal(t, []byte("data"), got)
 }
@@ -61,7 +61,7 @@ func TestOCSPCacheExpired(t *testing.T) {
 	resp := NewOCSPResponder(ca, cfg)
 
 	key := "ocsp:expired"
-	resp.cacheResponse(key, []byte("stale"))
+	resp.cacheResponse(key, []byte("stale"), time.Now().Add(time.Hour))
 	// Sleep is not needed; CacheTTL is 1ns so the entry is already expired
 	time.Sleep(time.Millisecond)
 	got := resp.getCachedResponse(key)
@@ -72,8 +72,8 @@ func TestOCSPClearCache(t *testing.T) {
 	ca := setupTestCA(t)
 	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
 
-	resp.cacheResponse("k1", []byte("v1"))
-	resp.cacheResponse("k2", []byte("v2"))
+	resp.cacheResponse("k1", []byte("v1"), time.Now().Add(time.Hour))
+	resp.cacheResponse("k2", []byte("v2"), time.Now().Add(time.Hour))
 	resp.ClearCache()
 	assert.Nil(t, resp.getCachedResponse("k1"))
 	assert.Nil(t, resp.getCachedResponse("k2"))

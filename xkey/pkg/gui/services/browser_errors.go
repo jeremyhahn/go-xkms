@@ -20,6 +20,11 @@ var (
 	// ErrBrowserEmptyURL indicates an empty URL was provided to OpenURL.
 	ErrBrowserEmptyURL = errors.New("browser_service: URL cannot be empty")
 
+	// ErrBrowserInvalidURL indicates the URL provided to OpenURL failed
+	// launch validation (disallowed scheme, missing host, a leading '-',
+	// or a control character). See pkg/urlsafety.ValidateLaunchURL.
+	ErrBrowserInvalidURL = errors.New("browser_service: URL failed launch validation")
+
 	// ErrBrowserLaunchFailed indicates the browser process failed to start.
 	ErrBrowserLaunchFailed = errors.New("browser_service: failed to launch browser")
 
