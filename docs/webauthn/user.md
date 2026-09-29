@@ -116,6 +116,7 @@ xkmsctl user get alice
 | 413 | request body over 1 MiB | a ceremony body is a few KiB; check the client |
 | 403 `registration_refused` on registration begin | the account already has a passkey, or sign-up is closed and there is no such account; the server does not say which | sign in and add the passkey from your session, or ask an administrator to provision the account |
 | 409 `credential_exists` on registration finish | that authenticator's credential is already registered | use a different authenticator, or remove the old registration first |
+| a user with a working passkey gets 401 at login finish, or 403 `registration_refused` enrolling one | the account is not `active` (pending, suspended, locked, disabled), or its permitted auth methods exclude `webauthn`; the server log says "ceremony refused for account not in good standing" with the reason | re-activate the account, or add `webauthn` to its auth methods |
 | login begin succeeds for an email with no account | intentional: the server answers with decoy options so it cannot be used to discover accounts | check the email; the ceremony will fail at the authenticator or at finish |
 | worked, then failed after restoring a backup of the key | the signature counter went backwards | this is the clone check firing; investigate rather than bypass |
 
