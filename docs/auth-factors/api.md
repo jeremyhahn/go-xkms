@@ -44,6 +44,17 @@ A response carries **no public key**. Verification uses only the key in the
 stored challenge. Key material placed in a response's metadata
 (`public_key_pem`, `public_key_der`, `cose_public_key`) is ignored, and a
 challenge without the enrolled key is refused.
+### PIV factor signature verification
+
+The `piv` factor's `Verify` (`pkg/factor/piv/factor.go`) accepts every
+algorithm its `Enroll` can produce — `rsa2048`, `rsa4096`, `ecdsap256`,
+`ecdsap384`, `ed25519` — dispatching by the enrolled key's type:
+
+| Algorithm | Signature format |
+|---|---|
+| ECDSA (P-256, P-384) | ASN.1 DER `(r, s)` over SHA-256(nonce) |
+| RSA (2048 bits or larger) | PKCS#1 v1.5 over SHA-256(nonce); moduli under 2048 bits are refused |
+| Ed25519 | raw signature over the raw nonce — Ed25519 hashes its own input and does not accept a pre-hashed digest for standard (non-Ed25519ph) signing |
 
 ## The authentication surface that consumes them
 

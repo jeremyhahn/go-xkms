@@ -36,7 +36,9 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -49,6 +51,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -216,12 +219,15 @@ func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnro
 	}, nil
 }
 
-// Verify checks that response.Value is a DER-encoded ECDSA signature over
-// SHA-256 of the challenge nonce, produced by the key in the enrolled
-// certificate. The certificate is read from
+// Verify checks response.Value against the challenge nonce using the key in
+// the enrolled certificate. The certificate is read from
 // challenge.MethodData["enrolled_cert_pem"] — never from the response — so an
 // attacker cannot pass verification by signing with a key of their own and
-// presenting it alongside the signature.
+// presenting it alongside the signature. The signature format follows the
+// enrolled key's algorithm (see verifySignature):
+//   - ECDSA: ASN.1 DER (r,s) over SHA-256(nonce)
+//   - RSA:   PKCS#1 v1.5 over SHA-256(nonce), modulus >= 2048 bits
+//   - Ed25519: raw signature over the raw nonce
 func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChallenge, response *qrdbsdk.AuthFactorResponse) error {
 	if challenge == nil {
 		return &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "challenge must not be nil"}
@@ -243,16 +249,19 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 	if err != nil {
 		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "parse enrolled certificate: " + err.Error()}
 	}
-	ecPub, ok := pub.(*ecdsa.PublicKey)
-	if !ok {
-		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "enrolled public key is not ECDSA"}
-	}
-	return verifyECDSA(ecPub, challenge.Nonce, response.Value)
+	return verifySignature(pub, challenge.Nonce, response.Value)
 }
 
 // SignNonce signs a nonce using a fresh signer obtained from the configured
 // PIVKeyGenerator. Exposed so test/custodian-side code can produce a
 // signature without re-implementing the signer lookup.
+//
+// ECDSA and RSA sign the SHA-256 digest of the nonce (hashed externally,
+// since hardware backends such as TPM2/PKCS#11 often require the pre-hashed
+// digest rather than the raw message; RSA defaults to PKCS#1 v1.5 for a
+// crypto.SHA256 opts value, matching verifySignature). Ed25519 signs the raw
+// nonce instead: Go's ed25519.Sign refuses a pre-hashed digest for standard
+// (non-Ed25519ph) signing, and standard Ed25519 is the PIV convention.
 func (f *Factor) SignNonce(_ context.Context, slot pivcert.PIVSlot, nonce []byte) ([]byte, error) {
 	if f.cfg.Generator == nil {
 		return nil, &GeneratorUnattachedError{}
@@ -262,9 +271,9 @@ func (f *Factor) SignNonce(_ context.Context, slot pivcert.PIVSlot, nonce []byte
 	if err != nil {
 		return nil, err
 	}
-	// Hash externally: hardware backends (TPM2/PKCS#11) often require the
-	// pre-hashed digest. SHA-256 matches ecdsap256 and is the conventional
-	// default for the software/PIV path.
+	if _, ok := signer.Public().(ed25519.PublicKey); ok {
+		return signer.Sign(rand.Reader, nonce, crypto.Hash(0))
+	}
 	digest := sha256.Sum256(nonce)
 	return signer.Sign(rand.Reader, digest[:], crypto.SHA256)
 }
@@ -323,6 +332,41 @@ func parsePublicKeyFromPEM(data []byte) (any, error) {
 		return x509.ParsePKIXPublicKey(block.Bytes)
 	default:
 		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "piv: unexpected PEM block type " + block.Type}
+	}
+}
+
+// verifySignature verifies sig over nonce against pub, dispatching on the
+// enrolled key's algorithm to match how SignNonce produced it:
+//   - ECDSA: ASN.1 DER (r,s) over SHA-256(nonce) (verifyECDSA)
+//   - RSA:   PKCS#1 v1.5 over SHA-256(nonce). PIV cards perform RSA as a raw
+//     sign operation over a caller-supplied SHA-256 digest, so PKCS#1 v1.5
+//     with SHA-256 is the PIV-standard choice here. The modulus must be at
+//     least 2048 bits (types.ValidateRSAKeySize); NIST SP 800-131A Rev. 2 and
+//     the CA/Browser Forum Baseline Requirements both retire smaller moduli.
+//   - Ed25519: the raw signature over the raw nonce. Ed25519 hashes its own
+//     input internally and does not accept a pre-hashed digest for standard
+//     (non-Ed25519ph) signing, so it is the one algorithm here that verifies
+//     against the nonce directly rather than its SHA-256 digest.
+func verifySignature(pub crypto.PublicKey, nonce, sig []byte) error {
+	switch key := pub.(type) {
+	case *ecdsa.PublicKey:
+		return verifyECDSA(key, nonce, sig)
+	case *rsa.PublicKey:
+		if err := types.ValidateRSAKeySize(key.N.BitLen()); err != nil {
+			return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: err.Error()}
+		}
+		digest := sha256.Sum256(nonce)
+		if err := rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], sig); err != nil {
+			return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "rsa signature invalid: " + err.Error()}
+		}
+		return nil
+	case ed25519.PublicKey:
+		if !ed25519.Verify(key, nonce, sig) {
+			return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "ed25519 signature invalid"}
+		}
+		return nil
+	default:
+		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "unsupported public key type"}
 	}
 }
 
