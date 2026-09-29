@@ -24,6 +24,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/urlsafety"
 )
 
 // BrowserSystem is the default browser selection that delegates to the
@@ -187,6 +189,17 @@ func (s *BrowserService) OpenURL(url string) error {
 	if url == "" {
 		return ErrBrowserEmptyURL
 	}
+
+	// Only http and https may reach a launcher: xdg-open, macOS "open", and
+	// Windows rundll32/FileProtocolHandler all hand an unrecognized scheme
+	// (javascript:, file:, ms-msdt:, search-ms:, ...) straight to whatever
+	// program or OS handler is registered for it (go-xkms#1275). The
+	// normalized form is what actually gets executed below.
+	validated, err := urlsafety.ValidateLaunchURL(url)
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrBrowserInvalidURL, Cause: err}
+	}
+	url = validated.String()
 
 	ctx := s.ctx
 	if ctx == nil {

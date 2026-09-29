@@ -237,6 +237,48 @@ func TestBrowserService_OpenURL_EmptyURL(t *testing.T) {
 	assert.ErrorIs(t, err, ErrBrowserEmptyURL)
 }
 
+func TestBrowserService_OpenURL_InvalidURL_DoesNotExec(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "javascript scheme", url: "javascript:alert(document.cookie)"},
+		{name: "file scheme", url: "file:///etc/passwd"},
+		{name: "windows ms-msdt handler", url: "ms-msdt:/id PCWDiagnostic"},
+		{name: "windows search-ms handler", url: "search-ms:query=x"},
+		{name: "data scheme", url: "data:text/html,<script>alert(1)</script>"},
+		{name: "leading dash", url: "-x"},
+		{name: "leading double-dash flag", url: "--user-data-dir=/tmp/evil"},
+		{name: "no host", url: "https:///path"},
+		{name: "control character", url: "https://example.com/\x00"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "browser.json")
+
+			svc, err := NewBrowserService(configPath, testLogger())
+			require.NoError(t, err)
+			svc.SetContext(context.Background())
+
+			var recorded [][]string
+			var mu sync.Mutex
+			svc.execCommand = fakeExecCommand(&recorded, &mu)
+
+			err = svc.OpenURL(tt.url)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrBrowserInvalidURL)
+
+			// The validator must run before any subprocess is created: a
+			// rejected URL never reaches execCommand.
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Empty(t, recorded)
+		})
+	}
+}
+
 func TestBrowserService_OpenURL_SystemBrowser(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "browser.json")
