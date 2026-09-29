@@ -16,6 +16,7 @@
 package pkcs11
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -671,57 +672,137 @@ func TestNewEmbeddedTransport_NotInitialized(t *testing.T) {
 	}
 }
 
-// TestGetImportParams covers the unexported helper WrapKeyByID and
-// UnwrapKeyByID share to resolve an existing key's wrapping parameters, kept
-// separate from those callers' own ceremony because the ceremony -- wrap
-// under a public key, unwrap on the other side -- distracts from what this
-// function alone is responsible for: resolving Backend+KeyID to the
-// backend's ImportParameters for that specific key.
-func TestGetImportParams(t *testing.T) {
-	newDeriveTestTransport(t) // brings up the process-global xkms service.
+// wrapAESKW is the PKCS#11 CKM_AES_KEY_WRAP algorithm name
+// (types.WrapAESKW), used directly as a literal because the sdk/go
+// re-export of the key-wrap algorithm constants
+// (sdk/go/types.go) does not yet carry it -- unlike WrapRSAOAEPSHA256,
+// which is re-exported as xkms.WrappingAlgorithmRSAES_OAEP_SHA_256 and used
+// below unchanged.
+const wrapAESKW = "AES_KW"
+
+// TestEmbeddedTransport_WrapUnwrapKeyByID_AESKW_RoundTrip proves WrapKeyByID
+// and UnwrapKeyByID -- the PKCS#11 C_WrapKey/C_UnwrapKey primitives -- wrap a
+// resident target key directly under a resident wrapping key using RFC 3394
+// AES Key Wrap and recover the identical material, rather than routing
+// through the unrelated key-IMPORT ceremony (xkms.ExportKey/WrapKey, which
+// always wraps under a freshly generated ephemeral key pair and can never
+// produce a blob CKM_AES_KEY_WRAP peers expect).
+func TestEmbeddedTransport_WrapUnwrapKeyByID_AESKW_RoundTrip(t *testing.T) {
+	tr := newDeriveTestTransport(t)
 	ctx := context.Background()
 
-	tr := EmbeddedTransport{}
+	wrappingKey := newSymmetricKey(t, "wrap-kek-aeskw", true)
+	targetKey := newSymmetricKey(t, "wrap-target-aeskw", true)
+	wantMaterial := exportedKeyMaterial(t, targetKey)
+
+	wrapResp, err := tr.WrapKeyByID(ctx, &transport.WrapKeyByIDRequest{
+		WrappingKeyBackend: deriveBackend, WrappingKeyID: wrappingKey.CN,
+		TargetKeyBackend: deriveBackend, TargetKeyID: targetKey.CN,
+		Algorithm: wrapAESKW,
+	})
+	if err != nil {
+		t.Fatalf("WrapKeyByID() error = %v", err)
+	}
+	if wrapResp.Algorithm != wrapAESKW {
+		t.Errorf("WrapKeyByID() Algorithm = %q, want %q", wrapResp.Algorithm, wrapAESKW)
+	}
+	if bytes.Equal(wrapResp.WrappedKey, wantMaterial) {
+		t.Fatal("WrapKeyByID() returned the plaintext key material unwrapped")
+	}
+
+	const unwrappedKeyID = "unwrapped-target-aeskw"
+	unwrapResp, err := tr.UnwrapKeyByID(ctx, &transport.UnwrapKeyByIDRequest{
+		WrappedKey:           wrapResp.WrappedKey,
+		UnwrappingKeyBackend: deriveBackend, UnwrappingKeyID: wrappingKey.CN,
+		Algorithm:        wrapAESKW,
+		TargetKeyBackend: deriveBackend, TargetKeyID: unwrappedKeyID,
+		TargetKeyType: "AES", TargetExportable: true,
+	})
+	if err != nil {
+		t.Fatalf("UnwrapKeyByID() error = %v", err)
+	}
+	if !unwrapResp.Success {
+		t.Fatal("UnwrapKeyByID() Success = false, want true")
+	}
+	if unwrapResp.KeyID != unwrappedKeyID {
+		t.Errorf("UnwrapKeyByID() KeyID = %q, want %q", unwrapResp.KeyID, unwrappedKeyID)
+	}
+
+	exportResp, err := tr.ExportKeyMaterial(ctx, &transport.ExportKeyMaterialRequest{
+		Backend: deriveBackend, KeyID: unwrappedKeyID,
+	})
+	if err != nil {
+		t.Fatalf("ExportKeyMaterial() of the unwrapped key error = %v", err)
+	}
+	if !bytes.Equal(exportResp.KeyMaterial, wantMaterial) {
+		t.Errorf("unwrapped key material = %x, want %x", exportResp.KeyMaterial, wantMaterial)
+	}
+}
+
+// TestEmbeddedTransport_WrapUnwrapKeyByID_RSAOAEP_RoundTrip proves the same
+// ceremony with an asymmetric wrapping key, RSA-OAEP-SHA-256
+// (CKM_RSA_PKCS_OAEP): the wrapping key is a resident RSA key pair -- wrap
+// encrypts under its public half, unwrap decrypts with its own
+// crypto.Decrypter -- never a freshly generated ephemeral pair.
+func TestEmbeddedTransport_WrapUnwrapKeyByID_RSAOAEP_RoundTrip(t *testing.T) {
+	tr := newDeriveTestTransport(t)
+	ctx := context.Background()
+
 	if _, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-		KeyID: "wrapping-key", Backend: deriveBackend, KeyType: "RSA", KeySize: 2048,
+		KeyID: "wrap-kek-oaep", Backend: deriveBackend, KeyType: "RSA", KeySize: 2048,
 	}); err != nil {
 		t.Fatalf("GenerateKey(RSA) error = %v", err)
 	}
+	targetKey := newSymmetricKey(t, "wrap-target-oaep", true)
+	wantMaterial := exportedKeyMaterial(t, targetKey)
 
-	t.Run("success", func(t *testing.T) {
-		params, err := getImportParams(ctx, deriveBackend, "wrapping-key", xkms.WrappingAlgorithmRSAES_OAEP_SHA_256)
-		if err != nil {
-			t.Fatalf("getImportParams() error = %v", err)
-		}
-		if params.WrappingPublicKey == nil {
-			t.Error("expected a non-nil wrapping public key")
-		}
+	wrapResp, err := tr.WrapKeyByID(ctx, &transport.WrapKeyByIDRequest{
+		WrappingKeyBackend: deriveBackend, WrappingKeyID: "wrap-kek-oaep",
+		TargetKeyBackend: deriveBackend, TargetKeyID: targetKey.CN,
+		Algorithm: string(xkms.WrappingAlgorithmRSAES_OAEP_SHA_256),
 	})
+	if err != nil {
+		t.Fatalf("WrapKeyByID() error = %v", err)
+	}
 
-	t.Run("backend not found", func(t *testing.T) {
-		_, err := getImportParams(ctx, "does-not-exist", "wrapping-key", xkms.WrappingAlgorithmRSAES_OAEP_SHA_256)
-		if !errors.Is(err, ErrBackendNotFound) {
-			t.Fatalf("getImportParams() error = %v, want ErrBackendNotFound", err)
-		}
+	const unwrappedKeyID = "unwrapped-target-oaep"
+	unwrapResp, err := tr.UnwrapKeyByID(ctx, &transport.UnwrapKeyByIDRequest{
+		WrappedKey:           wrapResp.WrappedKey,
+		UnwrappingKeyBackend: deriveBackend, UnwrappingKeyID: "wrap-kek-oaep",
+		Algorithm:        string(xkms.WrappingAlgorithmRSAES_OAEP_SHA_256),
+		TargetKeyBackend: deriveBackend, TargetKeyID: unwrappedKeyID,
+		TargetKeyType: "AES", TargetExportable: true,
 	})
+	if err != nil {
+		t.Fatalf("UnwrapKeyByID() error = %v", err)
+	}
+	if !unwrapResp.Success {
+		t.Fatal("UnwrapKeyByID() Success = false, want true")
+	}
 
-	t.Run("key not found", func(t *testing.T) {
-		_, err := getImportParams(ctx, deriveBackend, "no-such-key", xkms.WrappingAlgorithmRSAES_OAEP_SHA_256)
-		if !errors.Is(err, ErrKeyNotFound) {
-			t.Fatalf("getImportParams() error = %v, want ErrKeyNotFound", err)
-		}
+	exportResp, err := tr.ExportKeyMaterial(ctx, &transport.ExportKeyMaterialRequest{
+		Backend: deriveBackend, KeyID: unwrappedKeyID,
 	})
+	if err != nil {
+		t.Fatalf("ExportKeyMaterial() of the unwrapped key error = %v", err)
+	}
+	if !bytes.Equal(exportResp.KeyMaterial, wantMaterial) {
+		t.Errorf("unwrapped key material = %x, want %x", exportResp.KeyMaterial, wantMaterial)
+	}
 }
 
 // TestEmbeddedTransport_WrapUnwrapKeyByID_ErrorPaths covers the request
-// validation and first-hop failures of the wrap/unwrap-by-ID ceremony.
-// Exercising a full wrap/unwrap round trip requires reconstructing a
-// backend.ImportParameters from the wire-marshaled public key
-// GetImportParameters returns, which is a second ceremony in its own right;
-// these paths are the ones reachable without it.
+// validation and first-hop failures of the wrap/unwrap-by-ID ceremony: a nil
+// request, an unresolvable target or wrapping/unwrapping key, and an
+// algorithm the service does not implement. Every failure is reported as the
+// package's ErrWrappingFailed sentinel, with the underlying cause from
+// pkg/xkms attached and still reachable through errors.Is/errors.As.
 func TestEmbeddedTransport_WrapUnwrapKeyByID_ErrorPaths(t *testing.T) {
 	tr := newDeriveTestTransport(t)
 	ctx := context.Background()
+
+	wrappingKey := newSymmetricKey(t, "wrap-error-kek", true)
+	targetKey := newSymmetricKey(t, "wrap-error-target", true)
 
 	t.Run("wrap nil request", func(t *testing.T) {
 		if _, err := tr.WrapKeyByID(ctx, nil); !errors.Is(err, ErrNilRequest) {
@@ -731,8 +812,31 @@ func TestEmbeddedTransport_WrapUnwrapKeyByID_ErrorPaths(t *testing.T) {
 
 	t.Run("wrap target key not found", func(t *testing.T) {
 		_, err := tr.WrapKeyByID(ctx, &transport.WrapKeyByIDRequest{
-			WrappingKeyBackend: deriveBackend, WrappingKeyID: "no-such-wrapping-key",
+			WrappingKeyBackend: deriveBackend, WrappingKeyID: wrappingKey.CN,
 			TargetKeyBackend: deriveBackend, TargetKeyID: "no-such-target-key",
+			Algorithm: wrapAESKW,
+		})
+		if !errors.Is(err, ErrWrappingFailed) {
+			t.Fatalf("WrapKeyByID() error = %v, want ErrWrappingFailed", err)
+		}
+	})
+
+	t.Run("wrap unknown wrapping key", func(t *testing.T) {
+		_, err := tr.WrapKeyByID(ctx, &transport.WrapKeyByIDRequest{
+			WrappingKeyBackend: deriveBackend, WrappingKeyID: "no-such-wrapping-key",
+			TargetKeyBackend: deriveBackend, TargetKeyID: targetKey.CN,
+			Algorithm: wrapAESKW,
+		})
+		if !errors.Is(err, ErrWrappingFailed) {
+			t.Fatalf("WrapKeyByID() error = %v, want ErrWrappingFailed", err)
+		}
+	})
+
+	t.Run("wrap unsupported algorithm", func(t *testing.T) {
+		_, err := tr.WrapKeyByID(ctx, &transport.WrapKeyByIDRequest{
+			WrappingKeyBackend: deriveBackend, WrappingKeyID: wrappingKey.CN,
+			TargetKeyBackend: deriveBackend, TargetKeyID: targetKey.CN,
+			Algorithm: "NOT-A-REAL-WRAP-ALGORITHM",
 		})
 		if !errors.Is(err, ErrWrappingFailed) {
 			t.Fatalf("WrapKeyByID() error = %v, want ErrWrappingFailed", err)
@@ -748,7 +852,21 @@ func TestEmbeddedTransport_WrapUnwrapKeyByID_ErrorPaths(t *testing.T) {
 	t.Run("unwrap unwrapping key not found", func(t *testing.T) {
 		_, err := tr.UnwrapKeyByID(ctx, &transport.UnwrapKeyByIDRequest{
 			UnwrappingKeyBackend: deriveBackend, UnwrappingKeyID: "no-such-unwrapping-key",
-			WrappedKey: []byte("opaque"), Algorithm: string(xkms.WrappingAlgorithmRSAES_OAEP_SHA_256),
+			WrappedKey: []byte("opaque"), Algorithm: wrapAESKW,
+			TargetKeyBackend: deriveBackend, TargetKeyID: "unwrap-error-target",
+			TargetKeyType: "AES",
+		})
+		if !errors.Is(err, ErrWrappingFailed) {
+			t.Fatalf("UnwrapKeyByID() error = %v, want ErrWrappingFailed", err)
+		}
+	})
+
+	t.Run("unwrap unsupported algorithm", func(t *testing.T) {
+		_, err := tr.UnwrapKeyByID(ctx, &transport.UnwrapKeyByIDRequest{
+			UnwrappingKeyBackend: deriveBackend, UnwrappingKeyID: wrappingKey.CN,
+			WrappedKey: []byte("opaque"), Algorithm: "NOT-A-REAL-WRAP-ALGORITHM",
+			TargetKeyBackend: deriveBackend, TargetKeyID: "unwrap-error-target",
+			TargetKeyType: "AES",
 		})
 		if !errors.Is(err, ErrWrappingFailed) {
 			t.Fatalf("UnwrapKeyByID() error = %v, want ErrWrappingFailed", err)

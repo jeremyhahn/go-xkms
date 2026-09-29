@@ -1908,6 +1908,34 @@ func UnwrapKey(ctx context.Context, backendName string, wrapped *backend.Wrapped
 	return importExportBackend.UnwrapKey(ctx, wrapped, params)
 }
 
+// WrapKeyByID wraps a server-side target key with a server-side wrapping key,
+// both identified by key ID and backend, delegating to the initialized
+// XKMSService singleton. See XKMSService.WrapKeyByID (servicer_key.go) for
+// the operation itself; this is the process-singleton entry point used by
+// in-process callers such as the embedded PKCS#11 transport.
+func WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDRequest) (*transport.WrapKeyByIDResponse, error) {
+	s, err := Get()
+	if err != nil {
+		return nil, err
+	}
+
+	return s.WrapKeyByID(ctx, req)
+}
+
+// UnwrapKeyByID unwraps key material with a server-side unwrapping key and
+// imports the result as a new key, delegating to the initialized XKMSService
+// singleton. See XKMSService.UnwrapKeyByID (servicer_key.go) for the
+// operation itself; this is the process-singleton entry point used by
+// in-process callers such as the embedded PKCS#11 transport.
+func UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyByIDRequest) (*transport.UnwrapKeyByIDResponse, error) {
+	s, err := Get()
+	if err != nil {
+		return nil, err
+	}
+
+	return s.UnwrapKeyByID(ctx, req)
+}
+
 // ImportKey imports externally generated key material into a backend.
 func ImportKey(ctx context.Context, backendName string, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	if err := validateTenantAccess(attrs); err != nil {

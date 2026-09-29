@@ -426,77 +426,45 @@ func (t *EmbeddedTransport) DeriveKeyECDH(ctx context.Context, req *transport.De
 	}, nil
 }
 
-// WrapKeyByID wraps a target key using a wrapping key, both identified by key IDs.
+// WrapKeyByID wraps a target key using a wrapping key, both identified by key
+// IDs -- the PKCS#11 C_WrapKey primitive. It delegates to the XKMSService
+// singleton's WrapKeyByID (pkg/xkms/servicer_key.go), which encrypts the
+// target key material directly under the wrapping key named by
+// req.WrappingKeyID. This is deliberately independent of the key-IMPORT
+// ceremony (xkms.ExportKey / xkms.WrapKey / xkms.GetImportParameters), which
+// serves an unrelated feature and always wraps under a freshly generated
+// ephemeral key pair rather than the caller's own designated wrapping key.
 func (t *EmbeddedTransport) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDRequest) (*transport.WrapKeyByIDResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
 
-	// Export the target key material (unwrapped) for wrapping.
-	//
-	// xkms.ExportKey's kid accepts exactly two shapes: a bare name with no
-	// colon at all, or the full "backend:type:algo:keyname" with all three
-	// colons present (validation.ValidateKeyReference). "backend:keyname"
-	// (one colon) is neither and is rejected outright, so the separator is
-	// the three-colon backend-only shorthand ":::keyname" documented there,
-	// not a single ":".
-	targetBackend := req.TargetKeyBackend
-	if targetBackend == "" {
-		targetBackend = req.WrappingKeyBackend
-	}
-	targetKID := targetBackend + ":::" + req.TargetKeyID
-
-	exported, err := xkms.ExportKey(ctx, targetKID, xkms.WrappingAlgorithm(""))
-	if err != nil {
-		return nil, &DetailError{Err: ErrWrappingFailed, Detail: fmt.Sprintf(": failed to export target key: %v", err)}
-	}
-
-	// Get the import parameters from the wrapping key's backend.
-	wrappingAlg := xkms.WrappingAlgorithm(req.Algorithm)
-	params, err := getImportParams(ctx, req.WrappingKeyBackend, req.WrappingKeyID, wrappingAlg)
+	resp, err := xkms.WrapKeyByID(ctx, req)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrWrappingFailed, Cause: err}
 	}
 
-	// Wrap using the wrapping key's backend.
-	wrapped, err := xkms.WrapKey(ctx, req.WrappingKeyBackend, exported.WrappedKey, params)
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrWrappingFailed, Cause: err}
-	}
-
-	return &transport.WrapKeyByIDResponse{
-		WrappedKey: wrapped.WrappedKey,
-		Algorithm:  string(wrapped.Algorithm),
-	}, nil
+	return resp, nil
 }
 
-// UnwrapKeyByID unwraps key material and imports it as a new key.
+// UnwrapKeyByID unwraps key material and imports it as a new key -- the
+// PKCS#11 C_UnwrapKey primitive. It delegates to the XKMSService singleton's
+// UnwrapKeyByID (pkg/xkms/servicer_key.go), which decrypts the wrapped
+// material directly with the unwrapping key named by req.UnwrappingKeyID and
+// imports the recovered plaintext into req.TargetKeyBackend. See
+// WrapKeyByID's doc comment for why this does not route through the
+// key-IMPORT ceremony.
 func (t *EmbeddedTransport) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyByIDRequest) (*transport.UnwrapKeyByIDResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
 
-	unwrappingAlg := xkms.WrappingAlgorithm(req.Algorithm)
-	params, err := getImportParams(ctx, req.UnwrappingKeyBackend, req.UnwrappingKeyID, unwrappingAlg)
+	resp, err := xkms.UnwrapKeyByID(ctx, req)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrWrappingFailed, Cause: err}
 	}
 
-	wrapped := &xkms.WrappedKeyMaterial{
-		WrappedKey: req.WrappedKey,
-		Algorithm:  unwrappingAlg,
-	}
-
-	keyMaterial, err := xkms.UnwrapKey(ctx, req.UnwrappingKeyBackend, wrapped, params)
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrWrappingFailed, Cause: err}
-	}
-
-	return &transport.UnwrapKeyByIDResponse{
-		KeyID:   req.TargetKeyID,
-		Success: true,
-		Message: fmt.Sprintf("unwrapped %d bytes", len(keyMaterial)),
-	}, nil
+	return resp, nil
 }
 
 // ExportKeyMaterial exports raw symmetric key bytes for extractable keys.
@@ -855,24 +823,4 @@ func verifySignature(pubKey crypto.PublicKey, data, signature []byte, hashName s
 	default:
 		return false
 	}
-}
-
-// getImportParams retrieves import parameters from a backend for key wrapping operations.
-func getImportParams(ctx context.Context, backendName, keyID string, alg xkms.WrappingAlgorithm) (*xkms.ImportParameters, error) {
-	ks, err := xkms.GetBackend(backendName)
-	if err != nil {
-		return nil, &DetailError{Err: ErrBackendNotFound, Detail: fmt.Sprintf(": %s", backendName)}
-	}
-
-	ieBackend, ok := ks.KeyProvider().(xkms.ImportExportBackend)
-	if !ok {
-		return nil, &MessageError{Msg: fmt.Sprintf("backend %s does not support import/export", backendName)}
-	}
-
-	attrs, err := findKeyAttributes(ctx, ks, keyID)
-	if err != nil {
-		return nil, &DetailError{Err: ErrKeyNotFound, Detail: fmt.Sprintf(": %s", keyID)}
-	}
-
-	return ieBackend.GetImportParameters(ctx, attrs, alg)
 }
