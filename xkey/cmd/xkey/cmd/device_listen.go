@@ -116,15 +116,7 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(deviceListenCmd)
 
-	// Listen command flags
-	deviceListenCmd.Flags().String("device", "", "Specific paired device to accept connections from")
-	deviceListenCmd.Flags().String("name", "", "Advertised device name (default: hostname)")
-	deviceListenCmd.Flags().Duration("timeout", 0, "Listen timeout (0 for indefinite)")
-	deviceListenCmd.Flags().String("attestation-mode", "auto", "Attestation mode: auto, tpm2, software")
-	deviceListenCmd.Flags().String("tpm-device", "", "TPM2 device path (default: /dev/tpmrm0)")
-	deviceListenCmd.Flags().Bool("tpm-enrollment", false, "Serve TCG-CSR-IDEVID device enrollment from this host's TPM")
-	deviceListenCmd.Flags().String("tpm-pcr-bank", "", "PCR bank for the platform policy digest (default: SHA-256); set only if this TPM's SHA-256 bank is not allocated")
-	addDeviceBarrierFlags(deviceListenCmd)
+	registerDeviceListenFlags(deviceListenCmd)
 }
 
 // runDeviceListen executes the phone listen command.
@@ -563,8 +555,9 @@ func listenPIVStorageProvider(cmd *cobra.Command, logger *slog.Logger) pairing.P
 // a second, differently-wired implementation that only forwards ping,
 // attestation, and TPM enrollment. cmd is whichever cobra.Command the caller
 // is running under; its --barrier-password/--barrier-password-file flags
-// (registered by addDeviceBarrierFlags on "xkey device listen", and directly
-// on fido2Cmd) are read the same way regardless of which command owns them.
+// (registered by registerDeviceListenFlags on "xkey device listen", and
+// directly on fido2Cmd) are read the same way regardless of which command
+// owns them.
 //
 // The OATH store and sync service are opened through the exact constructors
 // "xkey oath" (openOATHStore, oath.go) and "xkey device sync"

@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
@@ -125,13 +124,7 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(deviceAttestCmd)
 
-	deviceAttestCmd.Flags().String("device", "", "Specific paired device to use")
-	deviceAttestCmd.Flags().Bool("no-verify", false, "Skip certificate chain verification")
-	deviceAttestCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout (includes biometric wait)")
-
-	_ = viper.BindPFlag("device.attest.device", deviceAttestCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.attest.no-verify", deviceAttestCmd.Flags().Lookup("no-verify"))
-	_ = viper.BindPFlag("device.attest.timeout", deviceAttestCmd.Flags().Lookup("timeout"))
+	registerDeviceAttestFlags(deviceAttestCmd)
 }
 
 // runDeviceAttest executes the phone attestation command.

@@ -29,7 +29,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // PIV phone sync errors.
@@ -137,34 +136,10 @@ func init() {
 	PIVCmd.AddCommand(pivDevicePullCertCmd)
 	PIVCmd.AddCommand(pivDeviceGenerateKeyCmd)
 
-	// Phone-list flags
-	pivDeviceListCmd.Flags().String("device", "", "Paired device name")
-	pivDeviceListCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-
-	// Phone-push-cert flags
-	pivDevicePushCertCmd.Flags().String("device", "", "Paired device name")
-	pivDevicePushCertCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-
-	// Phone-pull-cert flags
-	pivDevicePullCertCmd.Flags().String("device", "", "Paired device name")
-	pivDevicePullCertCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	pivDevicePullCertCmd.Flags().String("output", "", "Output file path (default: stdout)")
-
-	// Phone-generate flags
-	pivDeviceGenerateKeyCmd.Flags().String("device", "", "Paired device name")
-	pivDeviceGenerateKeyCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	pivDeviceGenerateKeyCmd.Flags().StringP("algorithm", "a", "ECDSA-P256",
-		"Key algorithm (ECDSA-P256, ECDSA-P384, RSA-2048)")
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("piv.phone_list.device", pivDeviceListCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("piv.phone_list.timeout", pivDeviceListCmd.Flags().Lookup("timeout"))
-	_ = viper.BindPFlag("piv.phone_push_cert.device", pivDevicePushCertCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("piv.phone_push_cert.timeout", pivDevicePushCertCmd.Flags().Lookup("timeout"))
-	_ = viper.BindPFlag("piv.phone_pull_cert.device", pivDevicePullCertCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("piv.phone_pull_cert.timeout", pivDevicePullCertCmd.Flags().Lookup("timeout"))
-	_ = viper.BindPFlag("piv.phone_generate.device", pivDeviceGenerateKeyCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("piv.phone_generate.timeout", pivDeviceGenerateKeyCmd.Flags().Lookup("timeout"))
+	registerPIVDeviceListFlags(pivDeviceListCmd)
+	registerPIVDevicePushCertFlags(pivDevicePushCertCmd)
+	registerPIVDevicePullCertFlags(pivDevicePullCertCmd)
+	registerPIVDeviceGenerateKeyFlags(pivDeviceGenerateKeyCmd)
 }
 
 // runPIVDeviceList lists PIV slot contents on a paired phone.

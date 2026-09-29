@@ -74,16 +74,7 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(devicePairCmd)
 
-	// Pairing flags. --device and --force are per-invocation choices with no
-	// config-file meaning and are read directly off the flag; --timeout is
-	// shared with `device scan` and resolves through resolveDeviceScanTimeout
-	// (device.go), so device.scan_timeout applies here too (go-xkms#1071).
-	devicePairCmd.Flags().String("device", "", "Specific device name or address to pair")
-	devicePairCmd.Flags().Duration("timeout", defaultDeviceScanTimeout,
-		"Scan timeout duration (default: device.scan_timeout, 30s)")
-	devicePairCmd.Flags().Bool("force", false, "Force re-pairing even if already paired")
-	addSOPINFlags(devicePairCmd)
-	addDeviceBarrierFlags(devicePairCmd)
+	registerDevicePairFlags(devicePairCmd)
 }
 
 // pairingTransport is what runDevicePair needs from a transport: discovery,
