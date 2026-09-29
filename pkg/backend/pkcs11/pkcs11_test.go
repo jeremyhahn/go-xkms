@@ -714,11 +714,7 @@ func TestBackend_GenerateRSAWithSize(t *testing.T) {
 			keySize: 0,
 			wantErr: ErrNotInitialized,
 		},
-		{
-			name:    "invalid key size (too small)",
-			keySize: 256,
-			wantErr: ErrNotInitialized,
-		},
+
 		{
 			name:    "2048 bit key",
 			keySize: 2048,
@@ -738,6 +734,19 @@ func TestBackend_GenerateRSAWithSize(t *testing.T) {
 				t.Errorf("GenerateRSAWithSize() error = %v, want %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestBackend_GenerateRSAWithSize_RefusesBelowFloor verifies a size below
+// the 2048-bit floor is refused with the typed error before the token is
+// touched, not silently raised to 2048 (go-xkms#1204).
+func TestBackend_GenerateRSAWithSize_RefusesBelowFloor(t *testing.T) {
+	b := &Backend{}
+	attrs := &types.KeyAttributes{CN: "test-rsa", KeyAlgorithm: x509.RSA}
+	_, err := b.GenerateRSAWithSize(attrs, 256)
+	var sizeErr *types.RSAKeySizeError
+	if !errors.As(err, &sizeErr) {
+		t.Fatalf("GenerateRSAWithSize(256) error = %v, want *types.RSAKeySizeError", err)
 	}
 }
 

@@ -474,21 +474,30 @@ func TestBackend_GenerateRSAWithSize_KeySizes(t *testing.T) {
 	}
 
 	// Test key size normalization logic
+	// Zero defaults to 2048; anything else below the floor is refused before
+	// the token is touched (go-xkms#1204).
 	tests := []struct {
-		name    string
-		keySize int
-		note    string
+		name        string
+		keySize     int
+		wantSizeErr bool
 	}{
-		{"zero defaults to 2048", 0, "zero value"},
-		{"negative defaults to 2048", -1, "negative value"},
-		{"too small defaults to 2048", 256, "below minimum"},
-		{"valid 2048", 2048, "standard size"},
-		{"valid 4096", 4096, "large key"},
+		{"zero defaults to 2048", 0, false},
+		{"negative is refused", -1, true},
+		{"too small is refused", 256, true},
+		{"valid 2048", 2048, false},
+		{"valid 4096", 4096, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := b.GenerateRSAWithSize(attrs, tt.keySize)
+			if tt.wantSizeErr {
+				var sizeErr *types.RSAKeySizeError
+				if !errors.As(err, &sizeErr) {
+					t.Errorf("GenerateRSAWithSize() error = %v, want *types.RSAKeySizeError", err)
+				}
+				return
+			}
 			if err != ErrNotInitialized {
 				t.Errorf("GenerateRSAWithSize() error = %v, want %v", err, ErrNotInitialized)
 			}
