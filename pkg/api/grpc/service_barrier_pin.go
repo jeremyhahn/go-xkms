@@ -16,58 +16,35 @@ package grpc
 import (
 	"context"
 	"errors"
-	"time"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // Typed errors for barrier and PIN gRPC operations.
 var (
-	// ErrBarrierNotConfigured is returned when the barrier has not been
-	// configured via SetBarrier.
+	// ErrBarrierNotConfigured is returned when no XKMSService is composed to
+	// serve the barrier RPCs.
 	ErrBarrierNotConfigured = errors.New("grpc: barrier not configured")
 
-	// ErrPINManagerNotConfigured is returned when the PIN manager has not
-	// been configured via SetPINManager.
+	// ErrPINManagerNotConfigured is returned when no XKMSService is composed
+	// to serve the PIN RPCs.
 	ErrPINManagerNotConfigured = errors.New("grpc: PIN manager not configured")
 )
 
-// Package-level barrier and PIN backend references, set via their
-// respective setter functions.
-var (
-	barrier    *seal.Barrier
-	pinManager qrdbsdk.PINBackend
-)
-
-// SetBarrier configures the barrier for the gRPC service.
-// This must be called before any barrier RPCs can be used.
-func SetBarrier(b *seal.Barrier) {
-	barrier = b
-}
-
-// GetBarrier returns the configured barrier, or nil if not set.
-func GetBarrier() *seal.Barrier {
-	return barrier
-}
-
-// SetPINManager configures the PIN backend for the gRPC service.
-// This must be called before any PIN RPCs can be used.
-func SetPINManager(pm qrdbsdk.PINBackend) {
-	pinManager = pm
-}
-
-// GetPINManager returns the configured PIN backend, or nil if not set.
-func GetPINManager() qrdbsdk.PINBackend {
-	return pinManager
-}
+// The system-barrier and PIN RPCs delegate to the XKMSService: the barrier
+// and the PIN backend are platform-global, and the service's
+// requirePlatformScope is what refuses a tenant-scoped caller (go-xkms#1227).
+// The RBAC gate cannot: a tenant-local Admin's self-scoped seal:* and pin:*
+// grants resolve against its own tenant. No RPC here reaches the barrier or
+// the PIN backend any other way.
 
 // mapBarrierError converts a barrier domain error to the appropriate gRPC
 // status error, classifying it through apierrors.BarrierSentinelClasses --
@@ -105,242 +82,203 @@ func mapPINError(err error, operation string) error {
 // BarrierInitialize generates a root key, seals it with the best available
 // strategy, and transitions the barrier to unsealed state.
 func (s *Service) BarrierInitialize(ctx context.Context, req *pb.BarrierInitializeRequest) (*emptypb.Empty, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionBootstrap, "initialize"); err != nil {
 		return nil, err
 	}
-
-	creds, err := seal.CredentialsFor([]byte(req.GetSecret()))
-	if err != nil {
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+	if err := s.xkmsService.BarrierInitialize(ctx, &transport.BarrierInitializeRequest{Secret: req.GetSecret()}); err != nil {
 		return nil, mapBarrierError(err, "barrier initialize")
 	}
-	defer creds.Secret.Destroy()
-	if err := barrier.Initialize(ctx, creds); err != nil {
-		return nil, mapBarrierError(err, "barrier initialize")
-	}
-
 	return &emptypb.Empty{}, nil
 }
 
 // BarrierUnseal loads and unseals the root key, deriving the data encryption
 // key to enable storage operations.
 func (s *Service) BarrierUnseal(ctx context.Context, req *pb.BarrierUnsealRequest) (*emptypb.Empty, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionUnseal, "unseal"); err != nil {
 		return nil, err
 	}
-
-	creds, err := seal.CredentialsFor([]byte(req.GetSecret()))
-	if err != nil {
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+	if err := s.xkmsService.BarrierUnseal(ctx, &transport.BarrierUnsealRequest{Secret: req.GetSecret()}); err != nil {
 		return nil, mapBarrierError(err, "barrier unseal")
 	}
-	defer creds.Secret.Destroy()
-	if err := barrier.Unseal(ctx, creds); err != nil {
-		return nil, mapBarrierError(err, "barrier unseal")
-	}
-
 	return &emptypb.Empty{}, nil
 }
 
 // BarrierSeal transitions the barrier to sealed state and zeros the DEK.
 func (s *Service) BarrierSeal(ctx context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionSeal, "seal"); err != nil {
 		return nil, err
 	}
-
-	if err := barrier.Seal(); err != nil {
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+	if err := s.xkmsService.BarrierSeal(ctx); err != nil {
 		return nil, mapBarrierError(err, "barrier seal")
 	}
-
 	return &emptypb.Empty{}, nil
 }
 
 // BarrierStatus returns the current state of the barrier including whether
 // it is sealed, which strategy is active, and hardware backing status.
 func (s *Service) BarrierStatus(ctx context.Context, _ *emptypb.Empty) (*pb.BarrierStatusResponse, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionStatus, "status"); err != nil {
 		return nil, err
 	}
-
-	bs := barrier.Status()
-
-	var initializedAt string
-	if !bs.InitializedAt.IsZero() {
-		initializedAt = bs.InitializedAt.Format(time.RFC3339)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
 	}
-
+	resp, err := s.xkmsService.BarrierStatus(ctx)
+	if err != nil {
+		return nil, mapBarrierError(err, "barrier status")
+	}
 	return &pb.BarrierStatusResponse{
-		Sealed:         bs.Sealed,
-		Strategy:       string(bs.Strategy),
-		HardwareBacked: bs.HardwareBacked,
-		InitializedAt:  initializedAt,
+		Sealed:         resp.Sealed,
+		Strategy:       resp.Strategy,
+		HardwareBacked: resp.HardwareBacked,
+		InitializedAt:  resp.InitializedAt,
 	}, nil
 }
 
 // ==================== PIN Operations ====================
 
+// pinService returns the composed XKMSService, or the Unavailable status a
+// PIN RPC answers when none is composed.
+func (s *Service) pinService() (*xkms.XKMSService, error) {
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrPINManagerNotConfigured.Error())
+	}
+	return s.xkmsService, nil
+}
+
 // SetSOPIN sets the Security Officer PIN.
 func (s *Service) SetSOPIN(ctx context.Context, req *pb.SetSOPINRequest) (*emptypb.Empty, error) {
-	if pinManager == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionWrite, "so-pin"); err != nil {
 		return nil, err
 	}
-
-	if err := pinManager.SetSOPIN(req.GetCurrentSoPin(), req.GetNewSoPin()); err != nil {
+	svc, err := s.pinService()
+	if err != nil {
+		return nil, err
+	}
+	if err := svc.SetSOPIN(ctx, &transport.SetSOPINRequest{CurrentSOPIN: req.GetCurrentSoPin(), NewSOPIN: req.GetNewSoPin()}); err != nil {
 		return nil, mapPINError(err, "set SO PIN")
 	}
-
 	return &emptypb.Empty{}, nil
 }
 
 // SetUserPIN sets the user PIN. Requires SO PIN authorization.
 func (s *Service) SetUserPIN(ctx context.Context, req *pb.SetUserPINRequest) (*emptypb.Empty, error) {
-	if pinManager == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionWrite, "user-pin"); err != nil {
 		return nil, err
 	}
-
-	if err := pinManager.SetUserPIN(req.GetSoPin(), req.GetNewUserPin()); err != nil {
+	svc, err := s.pinService()
+	if err != nil {
+		return nil, err
+	}
+	if err := svc.SetUserPIN(ctx, &transport.SetUserPINRequest{SOPIN: req.GetSoPin(), NewUserPIN: req.GetNewUserPin()}); err != nil {
 		return nil, mapPINError(err, "set user PIN")
 	}
-
 	return &emptypb.Empty{}, nil
 }
 
 // ChangeSOPIN changes the Security Officer PIN.
 func (s *Service) ChangeSOPIN(ctx context.Context, req *pb.ChangeSOPINRequest) (*emptypb.Empty, error) {
-	if pinManager == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionWrite, "so-pin"); err != nil {
 		return nil, err
 	}
-
-	if err := pinManager.ChangeSOPIN(req.GetCurrentSoPin(), req.GetNewSoPin()); err != nil {
+	svc, err := s.pinService()
+	if err != nil {
+		return nil, err
+	}
+	if err := svc.ChangeSOPIN(ctx, &transport.ChangeSOPINRequest{CurrentSOPIN: req.GetCurrentSoPin(), NewSOPIN: req.GetNewSoPin()}); err != nil {
 		return nil, mapPINError(err, "change SO PIN")
 	}
-
 	return &emptypb.Empty{}, nil
 }
 
 // ChangeUserPIN changes the user PIN.
 func (s *Service) ChangeUserPIN(ctx context.Context, req *pb.ChangeUserPINRequest) (*emptypb.Empty, error) {
-	if pinManager == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionWrite, "user-pin"); err != nil {
 		return nil, err
 	}
-
-	if err := pinManager.ChangeUserPIN(req.GetCurrentUserPin(), req.GetNewUserPin()); err != nil {
+	svc, err := s.pinService()
+	if err != nil {
+		return nil, err
+	}
+	if err := svc.ChangeUserPIN(ctx, &transport.ChangeUserPINRequest{CurrentUserPIN: req.GetCurrentUserPin(), NewUserPIN: req.GetNewUserPin()}); err != nil {
 		return nil, mapPINError(err, "change user PIN")
 	}
-
 	return &emptypb.Empty{}, nil
 }
 
 // VerifySOPIN verifies the provided Security Officer PIN.
 func (s *Service) VerifySOPIN(ctx context.Context, req *pb.VerifySOPINRequest) (*emptypb.Empty, error) {
-	if pinManager == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionRead, "so-pin"); err != nil {
 		return nil, err
 	}
-
-	if err := pinManager.VerifySOPIN(req.GetSoPin()); err != nil {
+	svc, err := s.pinService()
+	if err != nil {
+		return nil, err
+	}
+	if err := svc.VerifySOPIN(ctx, &transport.VerifySOPINRequest{SOPIN: req.GetSoPin()}); err != nil {
 		return nil, mapPINError(err, "verify SO PIN")
 	}
-
 	return &emptypb.Empty{}, nil
 }
 
 // VerifyUserPIN verifies the provided user PIN.
 func (s *Service) VerifyUserPIN(ctx context.Context, req *pb.VerifyUserPINRequest) (*emptypb.Empty, error) {
-	if pinManager == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionRead, "user-pin"); err != nil {
 		return nil, err
 	}
-
-	if err := pinManager.VerifyUserPIN(req.GetUserPin()); err != nil {
+	svc, err := s.pinService()
+	if err != nil {
+		return nil, err
+	}
+	if err := svc.VerifyUserPIN(ctx, &transport.VerifyUserPINRequest{UserPIN: req.GetUserPin()}); err != nil {
 		return nil, mapPINError(err, "verify user PIN")
 	}
-
 	return &emptypb.Empty{}, nil
 }
 
-// GetLockoutStatus returns the current PIN lockout status. When the backend
-// does not track lockout (returns nil), a zero-valued response is returned
-// indicating no lockout is active.
+// GetLockoutStatus returns the current PIN lockout status. A backend that does
+// not track lockout reports a zero-valued status: no lockout is active.
 func (s *Service) GetLockoutStatus(ctx context.Context, _ *emptypb.Empty) (*pb.LockoutStatusResponse, error) {
-	if pinManager == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionRead, "lockout-status"); err != nil {
 		return nil, err
 	}
-
-	ls := pinManager.GetLockoutStatus()
-	if ls == nil {
-		// Backend does not track lockout (e.g., SoftwareBackend). Return
-		// a zero-valued response indicating no lockout is active.
-		return &pb.LockoutStatusResponse{}, nil
+	svc, err := s.pinService()
+	if err != nil {
+		return nil, err
 	}
-
-	var lockoutUntil string
-	if !ls.LockoutUntil.IsZero() {
-		lockoutUntil = ls.LockoutUntil.Format(time.RFC3339)
+	ls, err := svc.GetLockoutStatus(ctx)
+	if err != nil {
+		return nil, mapPINError(err, "get lockout status")
 	}
-
 	return &pb.LockoutStatusResponse{
 		FailedAttempts:  int32(ls.FailedAttempts), // #nosec G115 - Failed attempts fits in int32
 		MaxAttempts:     int32(ls.MaxAttempts),    // #nosec G115 - Max attempts fits in int32
 		IsLocked:        ls.IsLocked,
-		LockoutUntil:    lockoutUntil,
+		LockoutUntil:    ls.LockoutUntil,
 		RecoverySeconds: int32(ls.RecoverySeconds), // #nosec G115 - Recovery seconds fits in int32
 	}, nil
 }
 
 // ResetLockout resets the PIN lockout counter using SO PIN authorization.
 func (s *Service) ResetLockout(ctx context.Context, req *pb.ResetLockoutRequest) (*emptypb.Empty, error) {
-	if pinManager == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionWrite, "lockout-reset"); err != nil {
 		return nil, err
 	}
-
-	if err := pinManager.ResetLockout(req.GetSoPin()); err != nil {
+	svc, err := s.pinService()
+	if err != nil {
+		return nil, err
+	}
+	if err := svc.ResetLockout(ctx, &transport.ResetLockoutRequest{SOPIN: req.GetSoPin()}); err != nil {
 		return nil, mapPINError(err, "reset lockout")
 	}
-
 	return &emptypb.Empty{}, nil
 }

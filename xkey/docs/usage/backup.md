@@ -29,8 +29,10 @@ Generated encryption key (save this):
   9f2c...<64 hex chars>
 ```
 
-`contents` and `restore` accept the backup password or `--key <hex>` (the 32
-raw bytes); a password takes precedence.
+`contents` and `restore` accept the backup password or a raw key (the 32 hex
+bytes) supplied through `--key-stdin` or the `XKEY_BACKUP_KEY` environment
+variable, the same convention as the password; a password takes precedence.
+There is no `--key` value flag either.
 
 A password is stretched with Argon2id (t=3, m=64 MiB, p=4) under a fresh
 32-byte random salt, or PBKDF2-SHA256 when the Go FIPS 140 module is
@@ -90,7 +92,7 @@ before go-xkms#936.
 | Wrong password/key, tampered header or ciphertext, or truncated file | Fails with `backup: decryption failed` |
 | Version 1 file (unsalted SHA-256 password key) | Fails with `backup: decryption failed: unsalted version 1 backup format is no longer supported; re-create the backup` (`backup.ErrLegacyBackupFormat`); never migrated |
 | KDF parameters in the file altered | Fails with `backup: decryption failed: the backup's key-derivation record is invalid or has been altered`, before any key is derived |
-| Password given for a random-key backup | Fails with `backup: decryption failed: backup was sealed with a raw key; supply it with --key` |
+| Password given for a random-key backup | Fails with `backup: decryption failed: backup was sealed with a raw key; supply it with --key-stdin or XKEY_BACKUP_KEY` |
 | Backup holds a category the CLI cannot write | Restores the rest, then exits with `backup: restore incomplete` |
 
 Entries that already exist in a target store are reported per category as
@@ -119,7 +121,7 @@ A `.xkb` file is the JSON encoding of the backup envelope:
 }
 ```
 
-`kdf` is absent for a backup sealed with a random or `--key` key. The
+`kdf` is absent for a backup sealed with a random or `--key-stdin`/`XKEY_BACKUP_KEY` key. The
 ciphertext is the archive — manifest, certificates, credentials, and
 passwords — serialized to JSON and sealed with XChaCha20-Poly1305 under the
 password-derived or supplied key (`pkg/backup/service.go:437-460`). The

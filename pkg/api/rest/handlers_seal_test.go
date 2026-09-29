@@ -892,9 +892,9 @@ func TestUnsealHandlerEdgeCases(t *testing.T) {
 		assert.Equal(t, []byte("cipher"), capturedSealed.Ciphertext)
 		assert.Equal(t, []byte("nonce"), capturedSealed.Nonce)
 		assert.Equal(t, []byte("tag"), capturedSealed.Tag)
-		// KeyID uses attrs.ID() format which includes all components
-		// Now the handler looks up the key so we get the full ID with StoreType and KeyType
-		assert.Equal(t, "software:signing:my-key:unknown", capturedSealed.KeyID)
+		// The service resolves the key and hands its attributes to the
+		// backend; the sealed data carries no key ID of its own.
+		assert.Empty(t, capturedSealed.KeyID)
 		require.NotNil(t, capturedOpts)
 		assert.Equal(t, []byte("aad"), capturedOpts.AAD)
 		require.NotNil(t, capturedOpts.KeyAttributes)

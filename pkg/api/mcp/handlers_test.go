@@ -35,6 +35,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1088,7 +1089,7 @@ func TestHandler_Certificates(t *testing.T) {
 
 		_, err := server.handleSaveCert(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid certificate PEM")
+		assert.ErrorIs(t, err, xkms.ErrInvalidEncodingPEM)
 	})
 
 	t.Run("fails saveCert with invalid params", func(t *testing.T) {
@@ -1363,7 +1364,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 
 		_, err := server.handleSaveCertChain(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid certificate PEM")
+		assert.ErrorIs(t, err, xkms.ErrInvalidEncodingPEM)
 	})
 
 	t.Run("saveCertChain fails with invalid params", func(t *testing.T) {
@@ -1498,7 +1499,9 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 
 		_, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "key not found")
+		var keyErr *KeyOpError
+		require.ErrorAs(t, err, &keyErr)
+		assert.Equal(t, sdkssh.JSONRPCCodeNotFound, keyErr.Code, "a missing certificate is Not found")
 	})
 }
 
@@ -1980,7 +1983,10 @@ func TestHandler_WrapKey(t *testing.T) {
 
 		_, err := server.handleWrapKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to parse public key")
+		// WrapKey now routes through the service layer, which parses the DER
+		// itself and reports "...wrapping public key", not the MCP-local
+		// wrapper's former "failed to parse public key".
+		assert.Contains(t, err.Error(), "failed to parse wrapping public key")
 	})
 }
 
@@ -3542,7 +3548,7 @@ func TestHandler_SaveCert_CorruptCertificate(t *testing.T) {
 
 		_, err := server.handleSaveCert(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to parse certificate")
+		assert.ErrorIs(t, err, xkms.ErrInvalidCertificate)
 	})
 
 	t.Run("fails with wrong PEM type", func(t *testing.T) {
@@ -3567,7 +3573,7 @@ func TestHandler_SaveCert_CorruptCertificate(t *testing.T) {
 
 		_, err := server.handleSaveCert(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid certificate PEM")
+		assert.ErrorIs(t, err, xkms.ErrInvalidEncodingPEM)
 	})
 }
 
@@ -3593,7 +3599,32 @@ func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 	// half, which is what makes a key wrapped under an RSA KEK work; this
 	// transport now gets that behaviour instead of its own refusal, matching
 	// REST and gRPC.
+	t.Run("refuses the PKCS#1 v1.5 fallback unless legacy wrap is enabled", func(t *testing.T) {
+		previous := types.AllowLegacyKeyWrap()
+		types.SetAllowLegacyKeyWrap(false)
+		t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
+		paramsJSON, _ := json.Marshal(EncryptParams{
+			KeyID:     "test-rsa-not-sym",
+			Backend:   "software",
+			Plaintext: []byte("secret data"),
+		})
+		_, err := server.handleEncrypt(context.Background(), &JSONRPCRequest{
+			JSONRPC: "2.0",
+			Method:  "xkms.encrypt",
+			Params:  paramsJSON,
+			ID:      1,
+		})
+		require.Error(t, err)
+	})
+
 	t.Run("falls back to asymmetric encryption for an RSA key", func(t *testing.T) {
+		// PKCS#1 v1.5 encryption is legacy and refused by default
+		// (go-xkms#1205); this case opts in to exercise the fallback.
+		previous := types.AllowLegacyKeyWrap()
+		types.SetAllowLegacyKeyWrap(true)
+		t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
 		params := EncryptParams{
 			KeyID:     "test-rsa-not-sym",
 			Backend:   "software",

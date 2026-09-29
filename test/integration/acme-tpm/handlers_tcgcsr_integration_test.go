@@ -31,17 +31,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/mux"
+	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
@@ -137,19 +138,27 @@ func TestFinalizeTCGCSR_Success(t *testing.T) {
 	iakCert := parsedCerts[0]
 	idevidCert := parsedCerts[1]
 
-	// Both IAK and IDevID certificates have the same Common Name (device identifier)
-	// They are distinguished by their X.509 extensions (IAK has tcg-kp-AIKCertificate)
+	// The IAK and IDevID certificates are issued for the same device but are
+	// NOT the same Common Name: pkg/ca prefixes the IAK's with "iak-" so two
+	// certificates under the same issuing hierarchy never share a Subject
+	// (confirmed against the actual issued certificates, not assumed).
 	expectedCN := fmt.Sprintf("TEST-MODEL-%s", deviceID)
-	assert.Equal(t, expectedCN, iakCert.Subject.CommonName, "IAK cert should have device identifier CN")
+	assert.Equal(t, "iak-"+expectedCN, iakCert.Subject.CommonName, "IAK cert should have device identifier CN")
 	assert.Equal(t, expectedCN, idevidCert.Subject.CommonName, "IDevID cert should have device identifier CN")
 
 	t.Logf("IAK Certificate: CN=%s", iakCert.Subject.CommonName)
 	t.Logf("IDevID Certificate: CN=%s", idevidCert.Subject.CommonName)
 
-	// Verify IAK has the AIK Certificate marker extension (OID 2.23.133.8.3)
+	// Verify IAK has the AIK Certificate marker extension (tcg-kp-AIKCertificate,
+	// OID 2.23.133.8.3). This purpose lives inside the standard extKeyUsage
+	// extension's SEQUENCE OF OIDs (as UnknownExtKeyUsage, since Go's x509
+	// package has no named constant for it) -- it is not a standalone
+	// extension of its own, so iakCert.Extensions never contains an entry
+	// whose Id equals it. attestation_integration_test.go's "IAK Certificate
+	// Has TCG AIK Marker" subtest checks the right field; this mirrors it.
 	hasAIKMarker := false
-	for _, ext := range iakCert.Extensions {
-		if ext.Id.String() == "2.23.133.8.3" {
+	for _, oid := range iakCert.UnknownExtKeyUsage {
+		if oid.Equal(ca.OIDTCGKpAIKCertificate) {
 			hasAIKMarker = true
 			break
 		}
@@ -438,9 +447,17 @@ func newTestCA(t *testing.T) (ca.TCGCA, func()) {
 	certStorageBackend, err := xkmssdk.NewMemoryBackend()
 	require.NoError(t, err)
 
-	// PKCS#8 provider wraps key storage.
+	// PKCS#8 provider wraps key storage. AllowPlaintextKeys is the documented
+	// test-fixture escape hatch (pkg/keyprovider/pkcs8/errors.go:
+	// ErrPlaintextKeyNotAllowed) for exactly this shape: an in-memory CA root
+	// key with no per-key password, matching the same fixture idiom used by
+	// pkg/keyprovider/pkcs8/pkcs8_test.go, test/integration/pkcs8, and
+	// test/integration/tpm2/capture_helper.go. Production CA key material
+	// still goes through the unmodified pkcs8 validation — this only opts in
+	// the throwaway keys this in-process test CA generates and discards.
 	pkcs8Backend, err := xkmssdk.NewPKCS8Backend(&xkmssdk.PKCS8BackendConfig{
-		KeyStorage: keyStorageBackend,
+		KeyStorage:         keyStorageBackend,
+		AllowPlaintextKeys: true,
 	})
 	require.NoError(t, err)
 
@@ -503,6 +520,17 @@ func newTestCA(t *testing.T) (ca.TCGCA, func()) {
 		},
 		Config: &ca.CAConfig{
 			DefaultCertValidityDays: ca.DefaultCertValidityDays,
+			// The device-attestation tests present an EK certificate signed
+			// by swtpmTestEKIssuer (see swtpm_helper_test.go's
+			// generateEKCertificate); without a configured trust anchor,
+			// pkg/ca/tcg_ek_trust.go's ekRootPool refuses every EK
+			// certificate with ErrTCGEKCertUntrusted ("no ek trust anchors
+			// configured") — there is deliberately no "skip the check" path.
+			TCGConfig: &ca.TCGConfig{
+				TrustAnchors: &truststore.Config{
+					ExternalRootPaths: []string{writeSwtpmTestEKRootPEM(t)},
+				},
+			},
 		},
 		KeyStore:  keyStore,
 		CertStore: certStore,
@@ -511,6 +539,12 @@ func newTestCA(t *testing.T) (ca.TCGCA, func()) {
 			return keyStore, nil
 		},
 		RevocationStore: xkmsstorage.NewMemory(),
+		// pkg/ca/attestation.go's local-attestation import (exercised by
+		// TestCAImportLocalAttestation*) persists evidence through the
+		// object store and refuses with ErrObjectStoreRequired when none is
+		// configured; objmemory.New() is the same in-memory implementation
+		// pkg/ca's own tests use (e.g. coverage_boost10_test.go).
+		ObjectStore: objmemory.New(),
 	}
 
 	ctx := context.Background()
@@ -662,8 +696,14 @@ func createJWSRequestForService(t *testing.T, service *handlers.RestService, key
 	return req
 }
 
-// extractSerialFromURL extracts the numeric serial number from a certificate URL.
-// Expected format: https://host/acme/cert/<serial>
+// extractSerialFromURL extracts the certificate DAO entity ID from a
+// certificate URL. Expected format: https://host/acme/cert/<hex-serial>
+// (entities.ACMECertificate.Serial is the issued certificate's full serial
+// number, hex-encoded -- see pkg/acme/server/handlers/certificate.go's
+// CertificateHandler doc comment -- never a decimal number, so this must
+// mirror CertificateHandler's own lookup: normalize the hex serial exactly
+// as NormalizeSerial does, then hash it into the DAO's uint64 key via
+// entities.StringToEntityID, rather than parsing the URL segment as decimal.
 func extractSerialFromURL(t *testing.T, certURL string) uint64 {
 	t.Helper()
 
@@ -672,11 +712,10 @@ func extractSerialFromURL(t *testing.T, certURL string) uint64 {
 		t.Fatalf("Invalid certificate URL format: %s", certURL)
 	}
 
-	serialStr := parts[len(parts)-1]
-	serialNum, err := strconv.ParseUint(serialStr, 10, 64)
+	serial, err := entities.NormalizeSerial(parts[len(parts)-1])
 	require.NoError(t, err, "Failed to parse serial number from URL: %s", certURL)
 
-	return serialNum
+	return entities.StringToEntityID(serial)
 }
 
 // parseCertificateChain decodes all PEM CERTIFICATE blocks from pemData and

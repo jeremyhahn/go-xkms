@@ -1756,34 +1756,7 @@ func TestCopyKey_Success(t *testing.T) {
 		},
 	}
 
-	copyKey(cfg, printer, "test-key", "test-key-copy", "pkcs11", "tls", "rsa", 2048, "", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
-
-	output := buf.String()
-	if !strings.Contains(output, "Successfully copied") {
-		t.Errorf("copyKey output should contain success message, got: %s", output)
-	}
-}
-
-func TestCopyKey_WithKeyAlgorithm(t *testing.T) {
-	mockClient := &mockKeyClient{
-		copyKeyResp: &client.CopyKeyResponse{
-			KeyID:   "test-key-copy",
-			Success: true,
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	// Test with key algorithm (should take precedence)
-	copyKey(cfg, printer, "test-key", "test-key-copy", "pkcs11", "", "ecdsa", 0, "P-256", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	copyKey(cfg, printer, "test-key", "test-key-copy", "pkcs11", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 
 	output := buf.String()
 	if !strings.Contains(output, "Successfully copied") {
@@ -1805,7 +1778,7 @@ func TestCopyKey_ClientCreateError(t *testing.T) {
 		},
 	}
 
-	copyKey(cfg, printer, "test-key", "test-key-copy", "pkcs11", "tls", "rsa", 2048, "", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	copyKey(cfg, printer, "test-key", "test-key-copy", "pkcs11", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 }
 
 func TestCopyKey_ConnectError(t *testing.T) {
@@ -1828,7 +1801,7 @@ func TestCopyKey_ConnectError(t *testing.T) {
 		},
 	}
 
-	copyKey(cfg, printer, "test-key", "test-key-copy", "pkcs11", "tls", "rsa", 2048, "", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	copyKey(cfg, printer, "test-key", "test-key-copy", "pkcs11", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 }
 
 func TestCopyKey_CopyError(t *testing.T) {
@@ -1849,7 +1822,7 @@ func TestCopyKey_CopyError(t *testing.T) {
 		},
 	}
 
-	copyKey(cfg, printer, "test-key", "test-key-copy", "pkcs11", "tls", "rsa", 2048, "", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	copyKey(cfg, printer, "test-key", "test-key-copy", "pkcs11", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 }
 
 // Test getImportParams function
@@ -2731,16 +2704,22 @@ func TestKeyCopyCmd_HasFlags(t *testing.T) {
 	expectedFlags := []string{
 		"dest-backend",
 		"dest-keydir",
-		"key-type",
-		"key-algorithm",
-		"key-size",
-		"curve",
 		"algorithm",
 	}
 
 	for _, flag := range expectedFlags {
 		if flags.Lookup(flag) == nil {
 			t.Errorf("expected flag %q not found on keyCopyCmd", flag)
+		}
+	}
+
+	// The copy takes its algorithm, size, curve, hash and partition from the
+	// source key (XKMSService.CopyKey); these flags were removed rather than
+	// left as dead input the service always ignored (go-xkms#1223).
+	removedFlags := []string{"key-type", "key-algorithm", "key-size", "curve"}
+	for _, flag := range removedFlags {
+		if flags.Lookup(flag) != nil {
+			t.Errorf("flag %q should have been removed from keyCopyCmd", flag)
 		}
 	}
 }

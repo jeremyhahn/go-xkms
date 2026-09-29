@@ -68,7 +68,9 @@ func IsNotFoundError(err error) bool {
 		errors.Is(err, ErrTenantNotFound) ||
 		errors.Is(err, ErrTenantRootCANotFound) ||
 		errors.Is(err, ErrTenantIntCANotFound) ||
-		errors.Is(err, ErrEABNotFound)
+		errors.Is(err, ErrEABNotFound) ||
+		errors.Is(err, ErrRoleNotFound) ||
+		errors.Is(err, ErrUserNotFound)
 }
 
 // IsValidationError returns true if the error is a validation error.
@@ -541,4 +543,14 @@ var (
 	ErrInvalidKeyAlgorithm      = errors.New("admin: invalid key algorithm")
 	ErrNoSigningCAAvailable     = errors.New("admin: no signing CA available for tenant")
 	ErrRBACNotAvailable         = errors.New("admin: RBAC service not available")
+
+	// ErrRoleNotFound is returned by the tenant role operations when the
+	// role does not exist or does not belong to the tenant the request
+	// names; the two are deliberately indistinguishable.
+	ErrRoleNotFound = errors.New("admin: role not found")
+
+	// ErrUserNotFound is returned by the tenant user operations when the
+	// user does not exist or does not belong to the tenant the request
+	// names; the two are deliberately indistinguishable.
+	ErrUserNotFound = errors.New("admin: user not found")
 )

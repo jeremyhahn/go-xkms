@@ -140,11 +140,24 @@ func requestWithRoles(tc routeCase, roles ...string) *http.Request {
 	}
 	// The tenant routes address tenant "t1"; scoping the caller there keeps the
 	// tenant-scope check out of the way so the assertion is purely about the
-	// permission gate. withUser publishes both the AuthenticatedUser the
-	// handlers read and the canonical identity the gate reads, exactly as the
-	// auth middleware does.
-	user := &AuthenticatedUser{UserID: "test-subject", TenantID: "t1", Roles: roles}
+	// permission gate. The platform-only routes are reached from the system
+	// tenant for the same reason. withUser publishes both the AuthenticatedUser
+	// the handlers read and the canonical identity the gate reads, exactly as
+	// the auth middleware does.
+	tenantID := "t1"
+	if platformOnlyRoutes[tc.name] {
+		tenantID = qrdbsdk.SystemTenantID
+	}
+	user := &AuthenticatedUser{UserID: "test-subject", TenantID: tenantID, Roles: roles}
 	return req.WithContext(withUser(req.Context(), user))
+}
+
+// platformOnlyRoutes are the routes a tenant-scoped caller is refused whatever
+// it holds (PlatformScopeError): creating a tenant, and reading the audit
+// trail, which records no tenant to confine it by.
+var platformOnlyRoutes = map[string]bool{
+	"create tenant":   true,
+	"list audit logs": true,
 }
 
 // TestACMEAdminRoutes_RequestExactPermission verifies every ACME admin REST

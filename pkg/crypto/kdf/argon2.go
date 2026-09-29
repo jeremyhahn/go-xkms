@@ -22,11 +22,20 @@ const (
 	// MinArgon2SaltLength is the minimum recommended salt length in bytes
 	MinArgon2SaltLength = 16
 
-	// MinArgon2Memory is the minimum memory cost in KiB
-	MinArgon2Memory = 8 * 1024 // 8 MiB
+	// MinArgon2Memory is the minimum memory cost in KiB: 19 MiB, the OWASP
+	// Password Storage Cheat Sheet's first Argon2id recommendation (paired
+	// with MinArgon2Time, m=19456 (19 MiB), t=2, p=1). The previous floor,
+	// 8 MiB at t=1, was below every OWASP-listed option and cheap enough to
+	// leave password hashes within reach of GPU/ASIC cracking. Every caller
+	// in this codebase (pkg/crypto/kdf.DefaultParams, the password hasher's
+	// defaultArgon2* constants) already runs at 64 MiB / t=3 / p=4, so this
+	// floor governs the API surface -- a request supplying its own
+	// parameters -- not any built-in default.
+	MinArgon2Memory = 19 * 1024 // 19 MiB
 
-	// MinArgon2Time is the minimum time cost
-	MinArgon2Time = 1
+	// MinArgon2Time is the minimum time cost, paired with MinArgon2Memory
+	// per the OWASP recommendation above.
+	MinArgon2Time = 2
 
 	// MinArgon2Threads is the minimum number of threads
 	MinArgon2Threads = 1

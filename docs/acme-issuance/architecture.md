@@ -168,6 +168,15 @@ through ACME against an existing node's directory.
   requesting account's URI and the challenge type that actually validated
   each identifier, so a record's `accounturi`/`validationmethods` parameters
   are enforced against reality, not merely parsed.
+- **The admin plane's tenant boundary is enforced by its service, not its
+  permission gate.** qrdb's gate binds the caller's own tenant as the
+  target, so it admits a tenant administrator's request whichever tenant it
+  names. The admin service therefore binds every tenant, role, user,
+  account and certificate a request names to the caller's tenant, answers a
+  foreign one exactly as a missing one, reserves tenant creation and the
+  (tenant-less) audit trail to the platform, and binds the caller's tenant
+  into every qrdb call so qrdb enforces it too (go-xkms#1225; see
+  [`engineering.md`](engineering.md#invariants)).
 - **Rate limits are enforcement, not advice, per client.**
   `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` is
   mounted on the whole ACME surface by both ACME server compositions

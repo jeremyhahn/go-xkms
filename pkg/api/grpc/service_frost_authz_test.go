@@ -37,7 +37,7 @@ import (
 )
 
 // frostBackendKeyStore is a test xkms.Backend whose KeyProvider() returns a
-// real *frost.FrostBackend, which is how (*Service).getFrostBackend resolves
+// real *frost.FrostBackend, which is how the xkms service resolves
 // the FROST provider out of the registered backends.
 type frostBackendKeyStore struct {
 	*xkmsmocks.MockKeyStore

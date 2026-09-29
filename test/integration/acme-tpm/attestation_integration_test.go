@@ -227,12 +227,14 @@ func TestPCRValidationHook_WithRealTPMData(t *testing.T) {
 		require.NoError(t, err)
 
 		// Pack ProdCaData
-		prodCaData := &xkmssdk.ProdCaData{
-			Quoted:    quote.Quoted,
-			Signature: quote.Signature,
-			Nonce:     quote.Nonce,
-			PCRs:      quote.PCRs,
-		}
+		// NewProdCaData (not a bare struct literal) is required here: it is
+		// the only place that stamps Version = xkmssdk.ProdCaDataVersion and
+		// the four *Sz fields. A hand-built &xkmssdk.ProdCaData{} leaves
+		// Version at its zero value, which xkmssdk.UnpackProdCaData rejects
+		// outright as ErrInvalidProdCaData ("tpm: invalid ProdCaData
+		// structure") before it ever looks at the payload.
+		prodCaData, err := xkmssdk.NewProdCaData(&quote)
+		require.NoError(t, err)
 		packedProdCaData, err := xkmssdk.PackProdCaData(prodCaData)
 		require.NoError(t, err)
 
@@ -279,12 +281,14 @@ func TestPCRValidationHook_WithRealTPMData(t *testing.T) {
 		require.NoError(t, err)
 
 		// Pack ProdCaData
-		prodCaData := &xkmssdk.ProdCaData{
-			Quoted:    quote.Quoted,
-			Signature: quote.Signature,
-			Nonce:     quote.Nonce,
-			PCRs:      quote.PCRs,
-		}
+		// NewProdCaData (not a bare struct literal) is required here: it is
+		// the only place that stamps Version = xkmssdk.ProdCaDataVersion and
+		// the four *Sz fields. A hand-built &xkmssdk.ProdCaData{} leaves
+		// Version at its zero value, which xkmssdk.UnpackProdCaData rejects
+		// outright as ErrInvalidProdCaData ("tpm: invalid ProdCaData
+		// structure") before it ever looks at the payload.
+		prodCaData, err := xkmssdk.NewProdCaData(&quote)
+		require.NoError(t, err)
 		packedProdCaData, err := xkmssdk.PackProdCaData(prodCaData)
 		require.NoError(t, err)
 
@@ -361,12 +365,14 @@ func TestDeviceProfileValidation_WithRealTPMData(t *testing.T) {
 		quote, err := tpmModule.Quote(pcrs, nonce)
 		require.NoError(t, err)
 
-		prodCaData := &xkmssdk.ProdCaData{
-			Quoted:    quote.Quoted,
-			Signature: quote.Signature,
-			Nonce:     quote.Nonce,
-			PCRs:      quote.PCRs,
-		}
+		// NewProdCaData (not a bare struct literal) is required here: it is
+		// the only place that stamps Version = xkmssdk.ProdCaDataVersion and
+		// the four *Sz fields. A hand-built &xkmssdk.ProdCaData{} leaves
+		// Version at its zero value, which xkmssdk.UnpackProdCaData rejects
+		// outright as ErrInvalidProdCaData ("tpm: invalid ProdCaData
+		// structure") before it ever looks at the payload.
+		prodCaData, err := xkmssdk.NewProdCaData(&quote)
+		require.NoError(t, err)
 		packedProdCaData, err := xkmssdk.PackProdCaData(prodCaData)
 		require.NoError(t, err)
 
@@ -524,11 +530,15 @@ func TestAttestationSignTCGCSRIDevID_CertificateExtensions(t *testing.T) {
 	})
 
 	t.Run("Certificates Have TCG Policy Identifiers", func(t *testing.T) {
-		// Check IAK policies
+		// Check IAK policies. pkg/ca/profiles.go's
+		// NewTCGInitialAttestationKeyProfile stamps tcgAttestationPolicies()
+		// on the IAK -- Residency + Restricted, never Fixed, which is
+		// reserved for the IDevID identity key (tcgIdentityPolicies) and
+		// which the spec says MUST NOT combine with Restricted.
 		assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMResidency),
 			"IAK should have VerifiedTPMResidency policy")
-		assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMFixed),
-			"IAK should have VerifiedTPMFixed policy")
+		assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMRestricted),
+			"IAK should have VerifiedTPMRestricted policy")
 
 		// Check IDevID policies
 		assert.True(t, hasPolicyIdentifier(idevidCert, ca.OIDTCGVerifiedTPMResidency),
@@ -541,8 +551,14 @@ func TestAttestationSignTCGCSRIDevID_CertificateExtensions(t *testing.T) {
 		hasTPMModelIAK := false
 		hasTPMModelIDevID := false
 
+		// pkg/ca/tcg.go writes the TCG-CSR-IDEVID's ProdModel field under
+		// tcg-at-platformModel (2.23.133.2.5, CreatePlatformModelExtension),
+		// never tcg-at-tpmModel (2.23.133.2.2): the two are different TCG
+		// attributes (the platform/device the TPM is embedded in, vs. the
+		// TPM chip's own model), and only the platform one is wired into
+		// certificate issuance.
 		for _, ext := range iakCert.Extensions {
-			if ext.Id.Equal(ca.OIDTCGAttributeTPMModel) {
+			if ext.Id.Equal(ca.OIDTCGAttributePlatformModel) {
 				hasTPMModelIAK = true
 				var model string
 				_, err := asn1.Unmarshal(ext.Value, &model)
@@ -553,7 +569,7 @@ func TestAttestationSignTCGCSRIDevID_CertificateExtensions(t *testing.T) {
 		}
 
 		for _, ext := range idevidCert.Extensions {
-			if ext.Id.Equal(ca.OIDTCGAttributeTPMModel) {
+			if ext.Id.Equal(ca.OIDTCGAttributePlatformModel) {
 				hasTPMModelIDevID = true
 			}
 		}
@@ -563,9 +579,17 @@ func TestAttestationSignTCGCSRIDevID_CertificateExtensions(t *testing.T) {
 	})
 
 	t.Run("IDevID Has Permanent Identifier", func(t *testing.T) {
+		// The RFC 4043 permanentIdentifier is an otherName GeneralName
+		// inside the subjectAltName extension (pkg/ca/tcg.go), not a
+		// standalone extension under OIDPermanentIdentifier's own Id --
+		// ca.ParseOtherNames decodes the SAN extension's otherName entries,
+		// the same helper pkg/ca's own tcg_conformance_test.go uses.
+		others, err := ca.ParseOtherNames(idevidCert.Extensions)
+		require.NoError(t, err, "decode subjectAltName otherNames")
+
 		hasPermanentID := false
-		for _, ext := range idevidCert.Extensions {
-			if ext.Id.Equal(ca.OIDPermanentIdentifier) {
+		for _, other := range others {
+			if other.TypeID.Equal(ca.OIDPermanentIdentifier) {
 				hasPermanentID = true
 				t.Log("IDevID has Permanent Identifier extension")
 				break

@@ -12,8 +12,8 @@ the store's location and its session state have different authorities.
 | Flag | Default | Description |
 |---|---|---|
 | `--name` | (required) | Password name/identifier |
-| `--password` | | The password to store |
-| `--generate` | `false` | Generate a random password (mutually exclusive with `--password`; one is required) |
+| `--password-stdin` | `false` | Read the password from standard input (mutually exclusive with `--generate`; one source is required) |
+| `--generate` | `false` | Generate a random password (mutually exclusive with the password value; one is required) |
 | `--length` | `32` | Generated password length (8–128) |
 | `--charset` | `all` | `all` or `alphanumeric` |
 | `--notes` | | Optional notes |
@@ -22,9 +22,13 @@ the store's location and its session state have different authorities.
 | `--url` | | Website URL, used by the browser extension for domain matching |
 | `--store` | `~/.xkey/data/staticpw` (resolved via `featureDataDir`, `datadir.go`, go-xkms#929) | Path to the password store |
 
+There is no `--password` value flag: a value on the command line is visible
+to every other process on the host via `ps`. The password comes from
+`--password-stdin` or the `XKEY_STATIC_PASSWORD` environment variable.
+
 ```bash
-xkey password add --name "DatabaseProd" --password "s3cretP@ss!"
-xkey password add --name "GitHubWork" --password "tok_abc123" \
+xkey password add --name "DatabaseProd" --password-stdin < password.txt
+XKEY_STATIC_PASSWORD="tok_abc123" xkey password add --name "GitHubWork" \
   --title "GitHub (Work)" --username "jdoe" --url "https://github.com"
 xkey password add --name "ServiceAccount" --generate
 xkey password add --name "WiFi" --generate --length 64 --charset alphanumeric --notes "Office WiFi"
@@ -93,10 +97,15 @@ Acts on an `xkmsd` server's session; requires `--xkmsd-url`. In
 
 | Flag | Default | Description |
 |---|---|---|
-| `--pin` | | User PIN (required; no interactive prompt in this verb) |
+| `--pin-stdin` | `false` | Read the User PIN from standard input (required; no interactive prompt in this verb) |
+
+There is no `--pin` value flag: a value on the command line is visible to
+every other process on the host via `ps`. The PIN comes from `--pin-stdin`
+or the `XKEY_PIN` environment variable.
 
 ```bash
-xkey password unlock --pin "1234"
+echo 1234 | xkey password unlock --pin-stdin
+XKEY_PIN=1234 xkey password unlock
 ```
 
 ## `xkey password lock`

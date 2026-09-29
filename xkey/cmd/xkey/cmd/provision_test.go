@@ -87,7 +87,8 @@ type provisionSecrets struct {
 	// the one stdin stream a test process has.
 	soPIN string
 
-	// barrierPassword is delivered via the --barrier-password flag.
+	// barrierPassword is delivered via the XKEY_BARRIER_PASSWORD environment
+	// variable. There is no "--barrier-password" value flag (go-xkms#1209).
 	barrierPassword string
 	omitBarrier     bool
 }
@@ -95,7 +96,7 @@ type provisionSecrets struct {
 // runProvisionCmd drives the real CLI end to end: root command, real flag
 // parsing, and the three secrets delivered through the same paths an
 // operator would use -- --pin-stdin (mocked via stdinReader), XKEY_SO_PIN,
-// and --barrier-password. Only one secret may ever come from stdin in a
+// and XKEY_BARRIER_PASSWORD. Only one secret may ever come from stdin in a
 // real invocation; this helper keeps that true here too by never routing
 // more than the user PIN through stdinReader.
 func runProvisionCmd(t *testing.T, secrets provisionSecrets, args ...string) (string, error) {
@@ -109,6 +110,9 @@ func runProvisionCmd(t *testing.T, secrets provisionSecrets, args ...string) (st
 	t.Cleanup(func() { stdinReader = previousReader })
 
 	t.Setenv("XKEY_SO_PIN", secrets.soPIN)
+	if !secrets.omitBarrier {
+		t.Setenv("XKEY_BARRIER_PASSWORD", secrets.barrierPassword)
+	}
 
 	var buf bytes.Buffer
 	RootCmd.SetOut(&buf)
@@ -122,9 +126,6 @@ func runProvisionCmd(t *testing.T, secrets provisionSecrets, args ...string) (st
 	full := append([]string{"provision"}, args...)
 	if !secrets.omitUser {
 		full = append(full, "--pin-stdin")
-	}
-	if !secrets.omitBarrier {
-		full = append(full, "--barrier-password", secrets.barrierPassword)
 	}
 	RootCmd.SetArgs(full)
 

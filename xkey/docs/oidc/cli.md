@@ -13,7 +13,7 @@ this document is the flag reference.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--token-store <path>` | `~/.xkey/tokens.json` | Sets the path every derived artifact (provider config, PID files, logs) is rooted under. Also, when explicitly set, the token content itself is written to exactly this path as a plain file, bypassing barrier auto-detection (matches `xkey oath --store`). Left at its default, the token content instead follows the barrier decision below, independently of this path. |
-| `--barrier-password <pw>` | | Barrier password. Visible in `ps`; prefer one of the next two for anything scripted. |
+| `--barrier-password-stdin` | `false` | Read the barrier password from standard input. There is no `--barrier-password` value flag; a value on the command line is visible in `ps`. |
 | `--barrier-password-file <path>` | | Read the barrier password from the first line of this file. |
 
 Environment: `XKEY_BARRIER_PASSWORD` is read when neither barrier flag is

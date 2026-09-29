@@ -1,6 +1,6 @@
 # FROST Threshold Signing — Architecture
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1231)
 
 ## The problem
 
@@ -32,78 +32,96 @@ instead:
 
 ## Two independent surfaces, not one
 
-The single most important architectural fact about this feature is that the
-CLI and the network API are **not the same code path**, and only one of them
-is reachable in a stock deployment today.
+The CLI and the network API are **not the same code path**.
 
 ```
 xkmsctl frost <verb>                      REST /frost/*, gRPC Frost*, MCP frost.*
         |                                          |
         v                                          v
-client.NewFrostBackend(...)               HandlerContext.getFrostBackend()
-(sdk/go/frost.go type aliases over        (pkg/api/rest/handlers_frost.go:816)
- pkg/keyprovider/frost, embedded          walks s.keyProviders for a backend
- in the xkmsctl process)                  whose Type() == types.BackendTypeFrost
+client.NewFrostBackend(...)               XKMSService.Frost* (pkg/xkms/servicer_frost.go)
+(sdk/go/frost.go type aliases over        resolves the caller's tenant from the
+ pkg/keyprovider/frost, embedded          identity on ctx, then the registered
+ in the xkmsctl process)                  *frost.FrostBackend
         |                                          |
         v                                          v
-<key-dir>/frost/{public,secrets}          xkmsd's backend registry
-(local files on the operator's                  |
- machine, per xkmsctl(1) invocation)      NOTHING REGISTERS ONE — see below
+<key-dir>/frost/{public,secrets}          xkmsd's "frost" backend, registered by
+(local files, untenanted)                 pkg/server/backend_frost.go when
+                                          backends.frost.enabled is set
 ```
 
 ### The CLI path is local-only, every subcommand
 
 `xkmsctl frost keygen|import|list|info|delete|round1|round2|aggregate|verify`
-all call `createFrostBackend` (`cmd/xkmsctl/frost.go:1104`), which builds a
+all call `createFrostBackend` (`cmd/xkmsctl/frost.go:1146`), which builds a
 `frost.Config` from two directories under `--key-dir` —
 `<key-dir>/frost/public` (group public key, verification shares, metadata)
 and `<key-dir>/frost/secrets` (this operator's secret share, via a
 `pkcs8`-backed file secret store) — and opens a fresh `frost.FrostBackend`
 in the `xkmsctl` process itself. None of these subcommands call the SDK's
-network transports; `--server`/`--transport` (which every other `xkmsctl`
-command group honors) has no effect on `xkmsctl frost`. This matches
-`test/integration/api/frost_parity_test.go`, whose "all protocols" keygen
-test invariably passes `--transport embedded` — there is no other transport
-to exercise for that verb.
+network transports; `--server`/`--transport` has no effect on
+`xkmsctl frost`. The CLI names keys by bare key ID, so every key it writes is
+an untenanted (platform) key — see "Tenancy" below.
 
-### The network API path requires a daemon-side FROST backend that nothing wires up
+### The network API path goes through the service layer
 
-REST (`/frost/keys`, `/frost/keys/import`, `/frost/keys/{id}`,
-`/frost/keys/{id}/nonces`, `/frost/keys/{id}/sign`, `/frost/aggregate`,
-`/frost/verify` — `pkg/api/rest/routes.go:164-172`), gRPC
-(`pkg/api/grpc/service_frost.go`, nine RPCs), and MCP (`ssh`-style dotted
-methods `frost.generateKey`, `frost.importKey`, `frost.listKeys`,
-`frost.getKey`, `frost.deleteKey`, `frost.generateNonces`,
-`frost.signRound`, `frost.aggregate`, `frost.verify` —
-`pkg/api/mcp/handlers_frost.go:776-800`) are all real, fully implemented
-handlers. Every one of them calls a `getFrostBackend()` helper
-(`pkg/api/rest/handlers_frost.go:816`, `pkg/api/grpc/service_frost.go:600`)
-that scans the daemon's registered backends for one whose `Type()` is
-`types.BackendTypeFrost` and fails with "no FROST backend configured" if it
-finds none.
+REST (`pkg/api/rest/routes.go:174-182`), gRPC
+(`pkg/api/grpc/service_frost.go`, nine RPCs) and MCP (nine `frost.*` methods,
+`pkg/api/mcp/handlers_frost.go:575`) are thin adapters: each decodes its wire
+format, authorizes, and calls the matching `XKMSService` method
+(`FrostGenerateKey`, `FrostImportKey`, `FrostListKeys`, `FrostGetKey`,
+`FrostDeleteKey`, `FrostGenerateNonces`, `FrostSignRound`, `FrostAggregate`,
+`FrostVerify` — `pkg/xkms/servicer_frost.go:253-620`). The service resolves
+the registered `*frost.FrostBackend` (`frostBackend`,
+`pkg/xkms/servicer_frost.go:173`) and fails with `ErrFrostNotConfigured`
+(`servicer_frost.go:47`) when none is registered. `xkmsd` registers one only
+when `backends.frost.enabled` is set (`pkg/server/backend_frost.go:41-45`,
+called from `pkg/server/server.go:1122`).
 
-**As shipped, nothing registers one.** `pkg/xkms/register_frost.go` (also
-`//go:build frost`) registers a `newFROSTKeyProvider` factory under
-`xkms.BackendFROST` for the generic `xkms.AutoInitialize`/library-embedding
-path, and it accepts `threshold`/`total`/`participant_id` config keys — but
-`pkg/config.BackendsConfig` (`pkg/config/config.go`) has no `Frost` field,
-`configs/xkmsd.yaml` has no `backends.frost:` section, and `pkg/server` has
-no `backend_frost.go` calling that factory the way `backend_pkcs11.go`,
-`backend_tpm2.go`, `backend_awskms.go`, etc. call theirs. The REST/gRPC/MCP
-handler unit tests that exercise a live FROST backend
-(`pkg/api/rest/handlers_frost_real_test.go`) construct one by hand — a fake
-`xkms.Backend` wrapping `frost.NewBackend(...)` injected directly into the
-`HandlerContext`'s registry, bypassing `pkg/server` entirely — which is
-exactly what an operator cannot do from `xkmsd.yaml`.
+## Tenancy (go-xkms#1231)
 
-Net effect: **`xkmsctl frost` is a real, working, local threshold-signing
-tool today; the REST/gRPC/MCP FROST surface is implemented but has no
-supported path to make it answer anything but "no FROST backend configured"
-on a stock `xkmsd`.** Wiring `backends.frost` into `pkg/config` and
-`pkg/server`, or building on the SDK's `sdk/go/frost.go` type aliases (which
-are compile-time re-exports of the embedded library, not a remote client —
-there is no `POST /frost/...` call anywhere under `sdk/go/`), is unstarted
-work, not a documented gap in an otherwise-wired feature.
+A FROST key belongs to the tenant of the identity that generated or imported
+it. The service takes that tenant from the authenticated identity on the
+context (`frostTenant`, `pkg/xkms/servicer_frost.go:193`, over
+`scopedTenantIDFromContext`, `pkg/xkms/servicer_password.go:93`, and
+`tenantScopes`, `pkg/xkms/servicer_helpers.go:65`) — never from the request —
+exactly as the key lifecycle RPCs do (go-xkms#1218).
+
+- **Namespaced storage.** A key is stored under its *storage key ID*: the key
+  ID alone for a platform key, `{tenantID}:{keyID}` for a tenant's key
+  (`frost.StorageKeyID`, `pkg/keyprovider/frost/tenant.go:46`). Neither half
+  may contain `:`, `/` or `..` (`validation.ValidateKeyID`,
+  `storage.ValidateTenantID`), so two tenants' keys can never collide, and a
+  key ID is unique only within its tenant. The tenant is also stamped in the
+  key's metadata (`KeyMetadata.TenantID`,
+  `pkg/keyprovider/frost/storage.go:65`) and reported by `ListKeys`
+  (`pkg/keyprovider/frost/backend.go:329`), so the generic tenant-scoped
+  backend view (`TenantScopedBackend.ListKeys`) sees a tenant's FROST keys
+  too.
+- **Every key-naming operation resolves inside the caller's tenant.** Get,
+  delete, Round 1, Round 2, aggregate and verify all address the caller's own
+  namespace (`frostKeyAttrs`, `pkg/xkms/servicer_frost.go:207`). Another
+  tenant's key is not there: the answer is the bare `ErrKeyNotFound`
+  (`frostKeyError`, `servicer_frost.go:231`) — byte for byte the answer a key
+  no tenant holds gets, on every transport.
+- **Import writes only into the caller's tenant.** `FrostImportKey` stamps the
+  caller's tenant (`FrostBackend.ImportKeyPackage`,
+  `pkg/keyprovider/frost/backend.go:493`), so importing a package under
+  another tenant's key ID creates the caller's own key rather than replacing
+  the other tenant's share.
+- **Listing is the caller's tenant only.** A platform-scoped caller — no
+  identity, or the system tenant — lists every tenant's FROST keys, as
+  `ListKeys` lets it list every key, and addresses by ID only platform
+  (untenanted) keys: a bare key ID names the platform namespace.
+- **No migration.** A key written before this change has no tenant in its
+  metadata and sits at its bare key ID, so it is a platform key: invisible to
+  every tenant and reachable only by a platform-scoped caller.
+
+Rejected alternative: stamping the tenant in metadata while keeping the bare
+key ID as the storage path. A second tenant creating a key ID the first
+already uses would then be refused with "already exists", an existence
+oracle across tenants, and every lookup would need a metadata read to decide
+ownership. Namespacing the path makes the lookup O(1) and the refusal
+indistinguishable from a miss.
 
 ## Package layout
 
@@ -113,7 +131,8 @@ work, not a documented gap in an otherwise-wired feature.
 | `pkg/xkms/register_frost.go` | Registers `types.BackendType("frost")` with the generic backend-factory registry (`xkms.AutoInitialize`/library embedding only — not `xkmsd`) |
 | `sdk/go/frost.go` | Type aliases (`FrostBackend`, `FrostConfig`, …) and constructors re-exported for `xkmsctl` and other SDK consumers — no network client |
 | `cmd/xkmsctl/frost.go` | The `xkmsctl frost` command tree, entirely local |
-| `pkg/api/rest/handlers_frost.go`, `pkg/api/grpc/service_frost.go`, `pkg/api/mcp/handlers_frost.go` | Network handlers over a daemon-registered `FrostBackend` — see above for why none exists by default |
+| `pkg/xkms/servicer_frost.go` | The FROST service layer: tenant resolution, validation, error translation |
+| `pkg/api/rest/handlers_frost.go`, `pkg/api/grpc/service_frost.go`, `pkg/api/mcp/handlers_frost.go` | Thin transport adapters over the `XKMSService` FROST methods |
 
 ## Key storage split: public vs. secret
 

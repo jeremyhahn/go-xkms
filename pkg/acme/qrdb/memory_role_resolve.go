@@ -23,10 +23,11 @@ import (
 // GetRoleByName retrieves a role by its tenant-scoped name. When the request
 // carries a TenantID, only roles in that tenant are considered; otherwise the
 // first role matching the name is returned. A nil request, or a name with no
-// match, yields errRoleNotFound to mirror the other lookup methods.
+// match, yields the typed role miss (roleNotFound) the other lookup methods
+// return.
 func (c *memoryRoleClient) GetRoleByName(_ context.Context, req *db.GetRoleByNameRequest) (*db.Role, error) {
 	if req == nil {
-		return nil, errRoleNotFound
+		return nil, roleNotFound("")
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -39,7 +40,7 @@ func (c *memoryRoleClient) GetRoleByName(_ context.Context, req *db.GetRoleByNam
 		}
 		return r, nil
 	}
-	return nil, errRoleNotFound
+	return nil, roleNotFound(req.Name)
 }
 
 // ResolvePermissions returns the sorted, deduplicated union of permissions

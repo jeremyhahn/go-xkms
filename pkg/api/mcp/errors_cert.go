@@ -18,35 +18,9 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
-
-// certOperationError wraps an error from a certificate-storage operation
-// (SaveCert, DeleteCert, ListCerts, CertExists, SaveCertChain, GetCertChain)
-// as a *KeyOpError carrying ErrCodeInternalError, mirroring
-// pkg/api/grpc/service.go's handlers for the same six RPCs, which all report
-// codes.Internal unconditionally. Certificate storage carries no sentinel
-// vocabulary for gRPC to classify there, so unlike the import/export, PIV
-// and barrier families (go-xkms#912, pkg/api/apierrors) there is no gRPC
-// table for this package to share -- gRPC's own classification for these six
-// RPCs is already just "the request was well-formed, so any failure here is
-// this server's fault." This still improves on the previous behaviour: an
-// unclassified error left the *KeyOpError envelope entirely, so
-// pkg/apimodule's dispatcher (module_mcp.go) could not select even this
-// floor and reported "xkms: internal error" with no detail at all.
-func certOperationError(msg string, err error) error {
-	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: msg, Err: err}}
-}
-
-// getCertError wraps an error from GetCert as Not found
-// (sdkssh.JSONRPCCodeNotFound), mirroring pkg/api/grpc/service.go's GetCert,
-// which reports codes.NotFound for any failure regardless of cause: the only
-// way this RPC fails is that the named key has no stored certificate.
-func getCertError(msg string, err error) error {
-	return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: &errs.Wrapped{Msg: msg, Err: err}}
-}
 
 // mapCAError converts an error from a pkg/ca-backed CA operation
 // (GetCABundle, GetCACertificate, SignCSR, IssueCertificate,

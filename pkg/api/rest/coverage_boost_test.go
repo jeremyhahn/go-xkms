@@ -707,15 +707,10 @@ func TestGetTLSCertificateHandler_WithChain(t *testing.T) {
 	require.NoError(t, err)
 	cert := generateTestCertificate(t, ecKey)
 
-	// Build a TLS certificate with a chain (cert + intermediate).
-	ks.GetTLSCertificateFunc = func(_ string, _ *types.KeyAttributes) (tls.Certificate, error) {
-		return tls.Certificate{
-			Certificate: [][]byte{cert.Raw, cert.Raw}, // leaf + fake intermediate
-			PrivateKey:  ecKey,
-			Leaf:        cert,
-		}, nil
-	}
-	ks.SetKey("chain-tls", ecKey)
+	// The bundle is the stored leaf and the stored chain above it: the chain
+	// is stored leaf first, and the leaf is not repeated in chain_pem.
+	ks.SetCert("chain-tls", cert)
+	ks.SetCertChain("chain-tls", []*x509.Certificate{cert, cert}) // leaf + fake intermediate
 
 	ctx := newTestHandlerContext()
 	router := createRouterWithHandler(http.MethodGet, "/api/v1/keys/{id}/tls-cert", ctx.GetTLSCertificateHandler)
@@ -747,10 +742,10 @@ func TestGetTLSCertificateHandler_GetTLSCertError(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
-func TestGetTLSCertificateHandler_ListKeysError(t *testing.T) {
+func TestGetTLSCertificateHandler_CertStoreError(t *testing.T) {
 	ks := setupTestService(t, "test-backend")
-	ks.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
-		return nil, errors.New("list error")
+	ks.GetCertFunc = func(string) (*x509.Certificate, error) {
+		return nil, errors.New("cert store failure")
 	}
 
 	ctx := newTestHandlerContext()

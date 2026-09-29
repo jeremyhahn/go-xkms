@@ -18,6 +18,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -969,6 +970,55 @@ func TestOIDCAuthenticator_WrongSigningKey(t *testing.T) {
 	_, err = auth.AuthenticateHTTP(req)
 	if err == nil {
 		t.Error("expected error for token signed with different key")
+	}
+}
+
+// TestOIDCAuthenticator_RejectsHS256AlgorithmConfusion is the failure test
+// for the crypto audit's JWT algorithm-pinning finding. Without
+// jwt.WithValidMethods, a validator that resolves publicKey from the JWKS
+// and hands it straight to jwt.Parse's key function is vulnerable to
+// algorithm confusion: an attacker crafts a token with alg: HS256 and signs
+// it with the server's own EC public key bytes as the HMAC secret, so the
+// key function returns those same bytes and jwt-go treats them as a valid
+// HMAC key. validateIDToken must refuse this before the signature is even
+// checked, because ES256 is the only family valid for an *ecdsa.PublicKey.
+func TestOIDCAuthenticator_RejectsHS256AlgorithmConfusion(t *testing.T) {
+	mock := newMockOIDCProvider(t)
+	defer mock.close()
+
+	ctx := context.Background()
+	auth, err := NewOIDCAuthenticator(ctx, &OIDCConfig{
+		Issuer:   mock.issuer,
+		ClientID: "test-client",
+	})
+	if err != nil {
+		t.Fatalf("failed to create authenticator: %v", err)
+	}
+
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(mock.publicKey)
+	if err != nil {
+		t.Fatalf("failed to marshal public key: %v", err)
+	}
+
+	claims := jwt.MapClaims{
+		"sub": "user123",
+		"aud": "test-client",
+		"iss": mock.issuer,
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token.Header["kid"] = mock.kid
+
+	tokenString, err := token.SignedString(pubKeyBytes)
+	if err != nil {
+		t.Fatalf("failed to sign HS256 token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+
+	if _, err := auth.AuthenticateHTTP(req); err == nil {
+		t.Fatal("expected the HS256 algorithm-confusion token to be refused")
 	}
 }
 

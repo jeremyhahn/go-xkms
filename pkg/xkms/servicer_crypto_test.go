@@ -1326,7 +1326,45 @@ func TestEncrypt_UnrecognizedMode_TypedErrorNotGCMFallback(t *testing.T) {
 // default): if Encrypt's new branch used a different scheme than Decrypt
 // expects, this round trip would fail even though Encrypt itself reported
 // success.
+// TestEncrypt_RSA_PKCS1v15_Refused_Default is the failure test for the
+// crypto audit's PKCS#1 v1.5 Encrypt finding: Encrypt's asymmetric fallback
+// must refuse to run PKCS#1 v1.5 unless the operator has opted into
+// crypto.allow_legacy_key_wrap. Without a symmetric backend and with no
+// legacy opt-in, a caller who used to get a Bleichenbacher-oracle-shaped
+// ciphertext back now gets a typed refusal that names EncryptAsym instead.
+func TestEncrypt_RSA_PKCS1v15_Refused_Default(t *testing.T) {
+	previous := types.AllowLegacyKeyWrap()
+	types.SetAllowLegacyKeyWrap(false)
+	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
+	software, _ := setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	_, err = software.GenerateRSA(context.Background(), &types.KeyAttributes{
+		CN:            "encrypt-rsa-pkcs1v15-refused",
+		KeyAlgorithm:  x509.RSA,
+		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+	})
+	require.NoError(t, err)
+
+	_, err = svc.Encrypt(context.Background(), &transport.EncryptRequest{
+		Backend:   "software",
+		KeyID:     "encrypt-rsa-pkcs1v15-refused",
+		Plaintext: []byte("must not be PKCS#1 v1.5 encrypted"),
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrLegacyWrapDisabled))
+}
+
+// TestEncrypt_RSA_PKCS1v15_RoundTrip is the success test: with
+// crypto.allow_legacy_key_wrap enabled, Encrypt's asymmetric fallback still
+// performs PKCS#1 v1.5 and Decrypt still reads it back.
 func TestEncrypt_RSA_PKCS1v15_RoundTrip(t *testing.T) {
+	if !allowLegacyWrap(t) {
+		return
+	}
+
 	software, _ := setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
@@ -1370,6 +1408,10 @@ func TestEncrypt_RSA_PKCS1v15_RoundTrip(t *testing.T) {
 // rather than silently truncating it. A 2048-bit (256-byte) RSA key can
 // carry at most 256-11=245 bytes under PKCS#1 v1.5.
 func TestEncrypt_RSA_PlaintextTooLarge(t *testing.T) {
+	if !allowLegacyWrap(t) {
+		return
+	}
+
 	software, _ := setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)

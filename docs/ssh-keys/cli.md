@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — CLI
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 `xkmsctl ssh` (`cmd/xkmsctl/ssh.go`) needs no build tag. It honors the global
 `--server` / `--transport` / `--tls-ca` flags every command group shares
@@ -12,6 +12,14 @@ URL to reach a remote `xkmsd`.
 Every subcommand takes `--scope` (default `user`) and `--owner` (default
 `default`) (`cmd/xkmsctl/ssh.go:219-220`) except `authorized-keys emit`,
 which is a pure local formatting helper with no identity coordinates.
+
+Against `xkmsd`, a caller signed in to a tenant may name only an owner it
+owns: its tenant ID for `--scope tenant`, its own subject for `--scope user`
+and `--scope service` (`pkg/ssh/tenancy/client.go:170-182`). Any other owner
+answers as a missing asset and creates nothing, so a tenant user passes its
+own `--owner` rather than the default. A system-tenant caller may name any
+owner. See [`architecture.md`](architecture.md) §"Owner binding and tenant
+partitions".
 
 ## `xkmsctl ssh keys`
 

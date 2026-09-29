@@ -1,6 +1,6 @@
 # RBAC — User Guide
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1115)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1115, #1228, #1230, #1231)
 
 ## What RBAC controls
 
@@ -112,11 +112,22 @@ it.
 
 A tenant's Admin manages keys, users and audit for that tenant only. Naming
 another tenant in a request does not widen that. Naming another tenant's key
-reads as "key not found", and listing keys shows only your own tenant's. PKCS#11 token-state calls that
+reads as "key not found", and listing keys shows only your own tenant's. The
+same holds for FROST threshold keys and their signing rounds, and for stored
+certificates and sealing: another tenant's certificate reads as not found,
+and data sealed by another tenant does not unseal for you. PKCS#11 token-state calls that
 name another tenant are refused. An audit query that names another tenant, or
 none, returns only your own tenant's events. Reading every tenant's audit
 events takes a platform (system-tenant) identity whose role holds
 `audit:read:cross`. The built-in Admin role has it and Auditor does not.
+
+SSH keys, known-hosts pins and authorized_keys entries follow the same rule,
+per owner: in a tenant you reach `--scope tenant` assets of your own tenant
+and `--scope user`/`service` assets of your own subject, and nothing else —
+not even another user's in your tenant. Anything else reads as "not found",
+and creating a key or authorizing a login under someone else's owner creates
+nothing. See [`../ssh-keys/user.md`](../ssh-keys/user.md) §"Scoping keys to a
+tenant, user, or service".
 
 ## Where to go next
 

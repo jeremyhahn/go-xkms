@@ -202,7 +202,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 		}
 	}
 	xkmsModule, err := apimodule.NewModule(
-		func() *xkms.XKMSService { return s.xkmsServiceRef() },
+		func() *xkms.XKMSService { return s.XKMSService() },
 		moduleOpts...,
 	)
 	if err != nil {

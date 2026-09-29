@@ -17,6 +17,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -41,11 +43,50 @@ var keyOpSentinelStatus = []struct {
 	// failed.
 	{xkms.ErrWeakOAEPHash, http.StatusBadRequest},
 	{xkms.ErrInvalidHashFunction, http.StatusBadRequest},
+	// A malformed certificate, an empty chain, or sealed data missing its
+	// payload is a fault in the request (go-xkms#1228).
+	{xkms.ErrInvalidEncodingPEM, http.StatusBadRequest},
+	{xkms.ErrInvalidCertificate, http.StatusBadRequest},
+	{xkms.ErrEmptyChain, http.StatusBadRequest},
+	{xkms.ErrInvalidSealedData, http.StatusBadRequest},
+	{xkms.ErrNilData, http.StatusBadRequest},
 	{xkms.ErrOperationNotSupported, http.StatusNotImplemented},
 	{xkms.ErrExportKeyMaterialFailed, http.StatusPreconditionFailed},
 	{xkms.ErrBackendNotFound, http.StatusNotFound},
 	{xkms.ErrKeyNotFound, http.StatusNotFound},
+	{xkms.ErrCertNotFound, http.StatusNotFound},
+	{xkms.ErrCertChainNotFound, http.StatusNotFound},
 	{xkms.ErrNotInitialized, http.StatusServiceUnavailable},
+
+	// WrapKey, UnwrapKey, GetImportParameters and ImportKey now route through
+	// the service layer (go-xkms#1216) rather than calling
+	// backend.ImportBackend / backend.ExportBackend directly, so a
+	// backend-layer capability or policy sentinel reaches here wrapped in the
+	// service's own xkms.ErrOperationWrap. These mirror the same sentinels
+	// mapErrorToStatusCode classifies for the handlers that still call the
+	// backend methods directly (ExportKey, CopyKey), so both paths report the
+	// same capability boundary under the same status code regardless of which
+	// one a given RPC happens to take.
+	{backend.ErrExportNotSupported, http.StatusNotImplemented},
+	{backend.ErrImportNotSupported, http.StatusNotImplemented},
+	{backend.ErrAsymmetricKeyExportNotAllowed, http.StatusBadRequest},
+	{backend.ErrKeyNotExportable, http.StatusForbidden},
+
+	// A caller-supplied nonce against a backend whose remote encryption
+	// service manages its own nonces (AWS KMS, GCP KMS, Vault Transit, the
+	// paired phone) is a malformed request, not a capability the backend
+	// categorically lacks (go-xkms#1223).
+	{backend.ErrCallerNonceNotSupported, http.StatusBadRequest},
+
+	// aead.ErrNonceReuse and aead.ErrNonceTrackerFull reach here wrapped in
+	// pkg/xkms's ErrKeyOperation from Encrypt's and WrapKeyByID's AEAD nonce
+	// guard. A reused nonce is the caller's request repeating a value that
+	// must never repeat -- 409, matching gRPC's codes.AlreadyExists and
+	// apierrors.AEADSentinelClasses' ClassAlreadyExists -- and a full guard
+	// is a resource limit reached, not a permanent refusal -- 503, matching
+	// codes.ResourceExhausted (go-xkms#1223).
+	{aead.ErrNonceReuse, http.StatusConflict},
+	{aead.ErrNonceTrackerFull, http.StatusServiceUnavailable},
 }
 
 // mapKeyOpError converts an error returned by the xkms service layer's key
@@ -72,6 +113,16 @@ func mapKeyOpError(w http.ResponseWriter, err error) {
 	var role *xkms.ErrRoleLookup
 	if errors.As(err, &role) {
 		writeError(w, role, http.StatusNotFound)
+		return
+	}
+
+	// A key or certificate ID that does not parse -- including one naming
+	// another tenant's namespace ("tenant-b/web") -- is malformed input. It
+	// is matched before ErrValidation, which the parse failure may wrap, so
+	// the response names the key ID as the field at fault.
+	var keyID *xkms.ErrKeyIDParse
+	if errors.As(err, &keyID) {
+		writeError(w, keyID, http.StatusBadRequest)
 		return
 	}
 

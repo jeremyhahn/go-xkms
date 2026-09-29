@@ -29,6 +29,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -174,7 +175,7 @@ func TestSaveCert_InvalidPEM(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "invalid certificate PEM")
+	assert.Contains(t, st.Message(), "invalid PEM encoding")
 }
 
 func TestSaveCert_SuccessPath(t *testing.T) {
@@ -249,7 +250,7 @@ func TestDeleteCert_NotFoundError(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.NotFound, st.Code())
 }
 
 func TestCertExists_FoundPath(t *testing.T) {
@@ -756,7 +757,7 @@ func TestRotateKey_SuccessPath(t *testing.T) {
 
 func TestGetLockoutStatus_NilFromBackend(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	resp, err := svc.GetLockoutStatus(ctx, &emptypb.Empty{})
@@ -770,7 +771,7 @@ func TestGetLockoutStatus_NilFromBackend(t *testing.T) {
 
 func TestSetUserPIN_PINManagerErrorPath(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.SetSOPIN(ctx, &pb.SetSOPINRequest{
@@ -788,7 +789,7 @@ func TestSetUserPIN_PINManagerErrorPath(t *testing.T) {
 
 func TestChangeUserPIN_ErrorPath(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.ChangeUserPIN(ctx, &pb.ChangeUserPINRequest{
@@ -799,9 +800,7 @@ func TestChangeUserPIN_ErrorPath(t *testing.T) {
 }
 
 func TestResetLockout_NotConfiguredPath(t *testing.T) {
-	SetPINManager(nil)
-	defer SetPINManager(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.ResetLockout(ctx, &pb.ResetLockoutRequest{
@@ -810,7 +809,7 @@ func TestResetLockout_NotConfiguredPath(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 // mockPINBackendWithLockout implements PINBackend with active lockout tracking.
@@ -842,10 +841,9 @@ func (m *mockPINBackendWithLockout) ResetLockout(_ string) error { return nil }
 
 func TestGetLockoutStatus_WithActiveLockout(t *testing.T) {
 	mock := &mockPINBackendWithLockout{}
-	SetPINManager(mock)
-	t.Cleanup(func() { SetPINManager(nil) })
+	useTestPINManager(t, mock)
 
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	resp, err := svc.GetLockoutStatus(ctx, &emptypb.Empty{})
@@ -855,22 +853,6 @@ func TestGetLockoutStatus_WithActiveLockout(t *testing.T) {
 	assert.Equal(t, int32(10), resp.MaxAttempts)
 	assert.Equal(t, int32(300), resp.RecoverySeconds)
 	assert.NotEmpty(t, resp.LockoutUntil)
-}
-
-// ===================== parseCertFromPEM edge cases =====================
-
-func TestParseCertFromPEM_InvalidDER(t *testing.T) {
-	invalidPEM := string(pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: []byte("not-a-real-certificate"),
-	}))
-	_, err := parseCertFromPEM(invalidPEM)
-	require.Error(t, err)
-}
-
-func TestParseCertFromPEM_NoPEMBlock(t *testing.T) {
-	_, err := parseCertFromPEM("just a regular string with no PEM")
-	require.Error(t, err)
 }
 
 // ===================== GenerateKey Ed25519 and symmetric =====================
@@ -1187,7 +1169,7 @@ func TestGrpcPageRequest_EdgeCases(t *testing.T) {
 
 func TestBarrierSeal_NotInitializedPath(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Barrier is not initialized, sealing should still work (idempotent seal)
@@ -2850,7 +2832,10 @@ func TestGetKey_BackendNotFound(t *testing.T) {
 
 // ===================== No backends available paths =====================
 
-func TestSaveCert_NoBackendsAvailable(t *testing.T) {
+// The certificate RPCs are adapters over the xkms service; without one they
+// report Unavailable, as every other service-backed RPC does.
+
+func TestSaveCert_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2862,11 +2847,11 @@ func TestSaveCert_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
-	assert.Contains(t, st.Message(), "no backends available")
+	assert.Equal(t, codes.Unavailable, st.Code())
+	assert.Contains(t, st.Message(), xkms.ErrNotInitialized.Error())
 }
 
-func TestGetCert_NoBackendsAvailable(t *testing.T) {
+func TestGetCert_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2876,10 +2861,10 @@ func TestGetCert_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
-func TestDeleteCert_NoBackendsAvailable(t *testing.T) {
+func TestDeleteCert_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2889,10 +2874,10 @@ func TestDeleteCert_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
-func TestListCerts_NoBackendsAvailable(t *testing.T) {
+func TestListCerts_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2900,10 +2885,10 @@ func TestListCerts_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
-func TestCertExists_NoBackendsAvailable(t *testing.T) {
+func TestCertExists_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2913,10 +2898,10 @@ func TestCertExists_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
-func TestSaveCertChain_NoBackendsAvailable(t *testing.T) {
+func TestSaveCertChain_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2928,10 +2913,10 @@ func TestSaveCertChain_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
-func TestGetCertChain_NoBackendsAvailable(t *testing.T) {
+func TestGetCertChain_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2941,7 +2926,7 @@ func TestGetCertChain_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestWrapKey_NoBackendsAvailable(t *testing.T) {
@@ -3121,6 +3106,13 @@ func TestAuthzDeny_PINMethods(t *testing.T) {
 // instead of AEAD. The distinguishing evidence is the shape of the result —
 // a single RSA modulus-sized block with none of the AEAD fields set.
 func TestEncrypt_WithAsymmetricKey(t *testing.T) {
+	// Encrypt's asymmetric fallback is PKCS#1 v1.5 and is refused unless
+	// crypto.allow_legacy_key_wrap is set (pkg/xkms/servicer_crypto.go
+	// Encrypt); this test's whole premise is exercising that construction.
+	previous := types.AllowLegacyKeyWrap()
+	types.SetAllowLegacyKeyWrap(true)
+	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
 	svc := setupServiceTest(t)
 	defer xkms.Reset()
 
@@ -3138,11 +3130,11 @@ func TestEncrypt_WithAsymmetricKey(t *testing.T) {
 		Plaintext: []byte("data"),
 	})
 	if fips140.Enforced() {
-		// This RPC's asymmetric fallback deliberately mirrors PKCS#11's
-		// CKM_RSA_PKCS mechanism -- raw PKCS#1 v1.5 encryption, no OAEP
-		// digest involved -- for the local-fallback KEK-wrap path (see
-		// servicer_crypto.go's Encrypt). rsa.EncryptPKCS1v15 refuses that
-		// construction outright under GODEBUG=fips140=only.
+		// SetAllowLegacyKeyWrap(true) above is a deliberate no-op under
+		// GODEBUG=fips140=only (pkg/types/wrappolicy.go), so the service
+		// layer's crypto.allow_legacy_key_wrap gate still refuses PKCS#1
+		// v1.5 in this mode, before rsa.EncryptPKCS1v15 (which also refuses
+		// it under FIPS) is ever reached.
 		require.Error(t, err)
 		return
 	}
@@ -3504,7 +3496,7 @@ func TestImportKey_UnsupportedTypeWithRealBackend(t *testing.T) {
 
 func TestBarrierStatus_WithInitializedAt(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Initialize to set InitializedAt

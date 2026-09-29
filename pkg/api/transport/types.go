@@ -688,15 +688,19 @@ type UnwrapKeyResponse struct {
 }
 
 // CopyKeyRequest contains parameters for copying a key.
+//
+// It names the source key, the destination, and the wrapping algorithm, and
+// nothing about the key itself: the copy takes its algorithm, size, curve,
+// hash and partition from the source key (XKMSService.CopyKey). It used to
+// also carry KeyType, KeySize and Curve, which the service ignored outright;
+// they were removed rather than left as dead input every transport had to
+// keep threading through (go-xkms#1223).
 type CopyKeyRequest struct {
 	SourceBackend string `json:"source_backend"`
 	SourceKeyID   string `json:"source_key_id"`
 	DestBackend   string `json:"dest_backend"`
 	DestKeyID     string `json:"dest_key_id"`
 	Algorithm     string `json:"algorithm"`
-	KeyType       string `json:"key_type,omitempty"`
-	KeySize       int    `json:"key_size,omitempty"`
-	Curve         string `json:"curve,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }

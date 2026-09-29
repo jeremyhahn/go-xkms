@@ -41,12 +41,18 @@ import (
 // mockACMEServer creates a mock ACME server for testing
 type mockACMEServer struct {
 	*httptest.Server
-	t             *testing.T
-	nonce         string
-	orderStatus   string
-	authzStatus   string
-	chalStatus    string
-	certDER       []byte
+	t           *testing.T
+	nonce       string
+	orderStatus string
+	authzStatus string
+	chalStatus  string
+	certDER     []byte
+	// certDER2, when set, is appended after certDER as a second PEM block
+	// in handleCert's response, so a test can exercise a finalize response
+	// that carries both the IAK and IDevID certificates EnrollDevice
+	// requires. Left nil, handleCert's response is unchanged: a single
+	// certificate, as every existing caller of this mock expects.
+	certDER2      []byte
 	_             string // placeholder to maintain struct alignment
 	orderCount    int
 	authzCount    int
@@ -271,6 +277,12 @@ func (m *mockACMEServer) handleCert(w http.ResponseWriter, r *http.Request) {
 		Type:  "CERTIFICATE",
 		Bytes: m.certDER,
 	})
+	if m.certDER2 != nil {
+		certPEM = append(certPEM, pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: m.certDER2,
+		})...)
+	}
 
 	_, _ = w.Write(certPEM)
 }

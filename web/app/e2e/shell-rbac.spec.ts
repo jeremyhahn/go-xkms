@@ -80,7 +80,7 @@ test.describe('Authenticated shell', () => {
 
   test('hides an item gated on BOTH capability and permission when only the permission is granted', async ({ page }) => {
     await installDefaultApiMocks(page);
-    // "SSH" requires capability:"ssh" AND permission "ssh:use". Deny only the
+    // "SSH" requires capability:"ssh" AND permission "ssh:read". Deny only the
     // capability — the item must still disappear (both gates are AND'd).
     const capabilities = { ...ALL_CAPABILITIES, ssh: false };
     await seedAuthenticated(page, defaultAuthMe({ capabilities }));

@@ -229,6 +229,24 @@ func TestVaultSymmetricEncrypterEncrypt_RejectsNonDefaultTagSize(t *testing.T) {
 	}
 }
 
+// TestVaultSymmetricEncrypterEncrypt_RejectsCallerNonce proves Encrypt
+// refuses a caller-supplied nonce rather than silently dropping it: Vault
+// Transit's encrypt endpoint manages nonce generation server-side and
+// exposes no parameter to override it (go-xkms#1223).
+func TestVaultSymmetricEncrypterEncrypt_RejectsCallerNonce(t *testing.T) {
+	b, double := newVaultTestBackend(t)
+	_ = double
+	e := &vaultSymmetricEncrypter{
+		backend: b,
+		keyName: "nonce-test",
+		attrs:   &types.KeyAttributes{CN: "nonce-test", SymmetricAlgorithm: types.SymmetricAES256GCM},
+	}
+	_, err := e.Encrypt([]byte("plaintext"), &types.EncryptOptions{Nonce: []byte("123456789012")})
+	if !errors.Is(err, backend.ErrCallerNonceNotSupported) {
+		t.Errorf("Encrypt() error = %v, want backend.ErrCallerNonceNotSupported", err)
+	}
+}
+
 // TestVaultSymmetricEncrypterDecrypt_RejectsNonDefaultTagSize mirrors
 // TestVaultSymmetricEncrypterEncrypt_RejectsNonDefaultTagSize for Decrypt.
 func TestVaultSymmetricEncrypterDecrypt_RejectsNonDefaultTagSize(t *testing.T) {

@@ -14,22 +14,35 @@
 package rest
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // PolicyHandlers provides HTTP handlers for PCR policy management.
+//
+// Every handler delegates to the XKMSService's Policy* methods and never to
+// the policy manager itself: PCR policies bind the platform's sealed secrets
+// to its measured boot state, and the service's requirePlatformScope is what
+// refuses a tenant-scoped caller (go-xkms#1227). The routes' policy:* grants
+// cannot, because a tenant-local Admin's self-scoped grants resolve against
+// its own tenant.
 type PolicyHandlers struct {
-	manager *policy.Manager
+	servicer xkms.PolicyServicer
 }
 
-// NewPolicyHandlers creates a new PolicyHandlers instance.
-func NewPolicyHandlers(manager *policy.Manager) *PolicyHandlers {
-	return &PolicyHandlers{manager: manager}
+// NewPolicyHandlers creates a new PolicyHandlers instance over the
+// XKMSService's PCR policy operations.
+func NewPolicyHandlers(servicer xkms.PolicyServicer) *PolicyHandlers {
+	return &PolicyHandlers{servicer: servicer}
 }
 
 // --- Request types ---
@@ -117,35 +130,27 @@ func (h *PolicyHandlers) CreatePolicyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	def, err := h.manager.CreatePolicy(req.Name, req.Bank, req.PCRIndices)
+	created, err := h.servicer.PolicyCreate(r.Context(), &transport.PolicyCreateRequest{
+		Name: req.Name,
+		Bank: req.Bank,
+		PCRs: req.PCRIndices,
+	})
 	if err != nil {
-		switch {
-		case errors.Is(err, policy.ErrInvalidName):
-			policyWriteJSONError(w, "Policy name must not be empty", http.StatusBadRequest)
-		case errors.Is(err, policy.ErrInvalidBank):
-			policyWriteJSONError(w, "PCR bank must not be empty", http.StatusBadRequest)
-		case errors.Is(err, policy.ErrUnsupportedBank):
-			policyWriteJSONError(w, "Unsupported PCR bank algorithm", http.StatusBadRequest)
-		case errors.Is(err, policy.ErrNoPCRsSelected):
-			policyWriteJSONError(w, "At least one PCR index is required", http.StatusBadRequest)
-		case errors.Is(err, policy.ErrPCRIndexOutOfRange):
-			policyWriteJSONError(w, "PCR index out of range (must be 0-23)", http.StatusBadRequest)
-		case errors.Is(err, policy.ErrDuplicatePCRIndex):
-			policyWriteJSONError(w, "Duplicate PCR index", http.StatusBadRequest)
-		case errors.Is(err, policy.ErrPolicyExists):
-			policyWriteJSONError(w, "Policy with this name already exists", http.StatusConflict)
-		default:
-			policyWriteJSONError(w, "Failed to create policy", http.StatusInternalServerError)
-		}
+		policyWriteServiceError(w, err, "Failed to create policy")
+		return
+	}
+	values, err := pcrValuesFromHex(created.Values)
+	if err != nil {
+		policyWriteJSONError(w, "Failed to create policy", http.StatusInternalServerError)
 		return
 	}
 
 	resp := PolicyCreateResponse{
-		Name:       def.Name,
-		Bank:       def.Bank,
-		PCRIndices: def.PCRIndices,
-		PCRValues:  def.PCRValues,
-		CreatedAt:  def.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		Name:       created.Name,
+		Bank:       created.Bank,
+		PCRIndices: created.PCRs,
+		PCRValues:  values,
+		CreatedAt:  created.CreatedAt,
 		Message:    "Policy created successfully",
 	}
 
@@ -155,20 +160,20 @@ func (h *PolicyHandlers) CreatePolicyHandler(w http.ResponseWriter, r *http.Requ
 // ListPoliciesHandler handles GET /api/v1/policies requests.
 // It returns all stored PCR policy definitions.
 func (h *PolicyHandlers) ListPoliciesHandler(w http.ResponseWriter, r *http.Request) {
-	defs, err := h.manager.ListPolicies()
+	list, err := h.servicer.PolicyList(r.Context())
 	if err != nil {
-		policyWriteJSONError(w, "Failed to list policies", http.StatusInternalServerError)
+		policyWriteServiceError(w, err, "Failed to list policies")
 		return
 	}
 
-	infos := make([]PolicyInfo, len(defs))
-	for i, def := range defs {
+	infos := make([]PolicyInfo, len(list.Policies))
+	for i, def := range list.Policies {
 		infos[i] = PolicyInfo{
 			Name:       def.Name,
 			Bank:       def.Bank,
-			PCRIndices: def.PCRIndices,
-			CreatedAt:  def.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			UpdatedAt:  def.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			PCRIndices: def.PCRs,
+			CreatedAt:  def.CreatedAt,
+			UpdatedAt:  def.UpdatedAt,
 		}
 	}
 
@@ -189,12 +194,13 @@ func (h *PolicyHandlers) GetPolicyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	def, err := h.manager.GetPolicy(name)
+	def, err := h.servicer.PolicyGet(r.Context(), &transport.PolicyGetRequest{Name: name})
 	if err != nil {
-		if errors.Is(err, policy.ErrPolicyNotFound) {
-			policyWriteJSONError(w, "Policy not found", http.StatusNotFound)
-			return
-		}
+		policyWriteServiceError(w, err, "Failed to get policy")
+		return
+	}
+	values, err := pcrValuesFromHex(def.Values)
+	if err != nil {
 		policyWriteJSONError(w, "Failed to get policy", http.StatusInternalServerError)
 		return
 	}
@@ -202,10 +208,10 @@ func (h *PolicyHandlers) GetPolicyHandler(w http.ResponseWriter, r *http.Request
 	resp := PolicyGetResponse{
 		Name:       def.Name,
 		Bank:       def.Bank,
-		PCRIndices: def.PCRIndices,
-		PCRValues:  def.PCRValues,
-		CreatedAt:  def.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:  def.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		PCRIndices: def.PCRs,
+		PCRValues:  values,
+		CreatedAt:  def.CreatedAt,
+		UpdatedAt:  def.UpdatedAt,
 	}
 
 	writeJSON(w, resp, http.StatusOK)
@@ -220,12 +226,8 @@ func (h *PolicyHandlers) DeletePolicyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.manager.DeletePolicy(name); err != nil {
-		if errors.Is(err, policy.ErrPolicyNotFound) {
-			policyWriteJSONError(w, "Policy not found", http.StatusNotFound)
-			return
-		}
-		policyWriteJSONError(w, "Failed to delete policy", http.StatusInternalServerError)
+	if err := h.servicer.PolicyDelete(r.Context(), &transport.PolicyDeleteRequest{Name: name}); err != nil {
+		policyWriteServiceError(w, err, "Failed to delete policy")
 		return
 	}
 
@@ -247,21 +249,17 @@ func (h *PolicyHandlers) RefreshPolicyHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	def, err := h.manager.RefreshPolicy(name)
+	def, err := h.servicer.PolicyRefresh(r.Context(), &transport.PolicyRefreshRequest{Name: name})
 	if err != nil {
-		if errors.Is(err, policy.ErrPolicyNotFound) {
-			policyWriteJSONError(w, "Policy not found", http.StatusNotFound)
-			return
-		}
-		policyWriteJSONError(w, "Failed to refresh policy", http.StatusInternalServerError)
+		policyWriteServiceError(w, err, "Failed to refresh policy")
 		return
 	}
 
 	resp := PolicyRefreshResponse{
 		Name:       def.Name,
 		Bank:       def.Bank,
-		PCRIndices: def.PCRIndices,
-		UpdatedAt:  def.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		PCRIndices: def.PCRs,
+		UpdatedAt:  def.UpdatedAt,
 		Message:    "Policy refreshed successfully",
 	}
 
@@ -278,18 +276,15 @@ func (h *PolicyHandlers) VerifyPolicyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	valid, message, err := h.manager.VerifyPolicy(name)
+	verified, err := h.servicer.PolicyVerify(r.Context(), &transport.PolicyVerifyRequest{Name: name})
 	if err != nil {
-		if errors.Is(err, policy.ErrPolicyNotFound) {
-			policyWriteJSONError(w, "Policy not found", http.StatusNotFound)
-			return
-		}
-		policyWriteJSONError(w, "Failed to verify policy", http.StatusInternalServerError)
+		policyWriteServiceError(w, err, "Failed to verify policy")
 		return
 	}
 
+	message := verified.Message
 	if message == "" {
-		if valid {
+		if verified.Valid {
 			message = "Policy verification passed"
 		} else {
 			message = "Policy verification failed: current PCR values do not match"
@@ -298,7 +293,7 @@ func (h *PolicyHandlers) VerifyPolicyHandler(w http.ResponseWriter, r *http.Requ
 
 	resp := PolicyVerifyResponse{
 		Name:    name,
-		Valid:   valid,
+		Valid:   verified.Valid,
 		Message: message,
 	}
 
@@ -315,26 +310,71 @@ func (h *PolicyHandlers) ExportPolicyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	exported, err := h.manager.ExportPolicy(name)
+	exported, err := h.servicer.PolicyExport(r.Context(), &transport.PolicyExportRequest{Name: name})
 	if err != nil {
-		if errors.Is(err, policy.ErrPolicyNotFound) {
-			policyWriteJSONError(w, "Policy not found", http.StatusNotFound)
-			return
-		}
-		if errors.Is(err, policy.ErrExportFailed) {
-			policyWriteJSONError(w, "Failed to export policy", http.StatusInternalServerError)
-			return
-		}
-		policyWriteJSONError(w, "Failed to export policy", http.StatusInternalServerError)
+		policyWriteServiceError(w, err, "Failed to export policy")
 		return
 	}
 
 	resp := PolicyExportResponse{
 		Name:       name,
-		PolicyJSON: exported,
+		PolicyJSON: exported.Data,
 	}
 
 	writeJSON(w, resp, http.StatusOK)
+}
+
+// pcrValuesFromHex decodes the service's hex-encoded PCR values back into the
+// raw-byte map this transport's wire shape carries (see pkg/api/rest/wire's
+// PCR Policy types).
+func pcrValuesFromHex(values map[int]string) (map[int][]byte, error) {
+	decoded := make(map[int][]byte, len(values))
+	for idx, value := range values {
+		raw, err := hex.DecodeString(value)
+		if err != nil {
+			return nil, err
+		}
+		decoded[idx] = raw
+	}
+	return decoded, nil
+}
+
+// policyErrorResponses maps the policy service's sentinels to the status and
+// fixed message each answers with. The tenant binding's refusal
+// (xkms.TenantBindingError, which unwraps to qrdbsdk.ErrTenantMissing)
+// renders its own message -- the unknown-tenant text every transport answers
+// with -- so policyWriteServiceError handles it before this table.
+var policyErrorResponses = []struct {
+	sentinel error
+	status   int
+	message  string
+}{
+	{xkms.ErrNotConfigured, http.StatusServiceUnavailable, "Policy manager not configured"},
+	{policy.ErrPolicyNotFound, http.StatusNotFound, "Policy not found"},
+	{policy.ErrInvalidName, http.StatusBadRequest, "Policy name must not be empty"},
+	{policy.ErrInvalidBank, http.StatusBadRequest, "PCR bank must not be empty"},
+	{policy.ErrUnsupportedBank, http.StatusBadRequest, "Unsupported PCR bank algorithm"},
+	{policy.ErrNoPCRsSelected, http.StatusBadRequest, "At least one PCR index is required"},
+	{policy.ErrPCRIndexOutOfRange, http.StatusBadRequest, "PCR index out of range (must be 0-23)"},
+	{policy.ErrDuplicatePCRIndex, http.StatusBadRequest, "Duplicate PCR index"},
+	{policy.ErrPolicyExists, http.StatusConflict, "Policy with this name already exists"},
+}
+
+// policyWriteServiceError writes the response for an error returned by the
+// policy service. Anything unclassified is a 500 carrying fallback, never the
+// error's own text.
+func policyWriteServiceError(w http.ResponseWriter, err error, fallback string) {
+	if errors.Is(err, qrdbsdk.ErrTenantMissing) {
+		policyWriteJSONError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	for _, entry := range policyErrorResponses {
+		if errors.Is(err, entry.sentinel) {
+			policyWriteJSONError(w, entry.message, entry.status)
+			return
+		}
+	}
+	policyWriteJSONError(w, fallback, http.StatusInternalServerError)
 }
 
 // policyWriteJSONError writes an error response in the standard JSON format.

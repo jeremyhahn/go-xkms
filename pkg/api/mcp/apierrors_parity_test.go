@@ -159,4 +159,21 @@ func TestClassification_MatchesSharedTables(t *testing.T) {
 			})
 		}
 	})
+
+	// aead has no dedicated mapXError function of its own: its two sentinels
+	// are classified inline inside mapKeyOpError (see errors_keyops.go), so
+	// this walks apierrors.AEADSentinelClasses against mapKeyOpError directly
+	// rather than a per-domain wrapper, exactly as go-xkms#1223 added it.
+	t.Run("aead", func(t *testing.T) {
+		for _, entry := range apierrors.AEADSentinelClasses {
+			want, ok := wireExpectationForClass[entry.Class]
+			require.True(t, ok, "no wire expectation for class %v", entry.Class)
+			t.Run(want.name, func(t *testing.T) {
+				err := mapKeyOpError(entry.Sentinel)
+				var keyErr *KeyOpError
+				require.ErrorAs(t, err, &keyErr)
+				assert.Equal(t, want.mcpCode, keyErr.Code)
+			})
+		}
+	})
 }

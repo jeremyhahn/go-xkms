@@ -309,6 +309,51 @@ func TestSessionCrypto_TamperedCiphertext(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrDecryptionFailed))
 }
 
+func TestSessionCrypto_ForgedHighCounterFrame_DoesNotPoisonReplayWindow(t *testing.T) {
+	host, hostPub, err := NewSessionCrypto()
+	require.NoError(t, err)
+
+	ext, extPub, err := NewSessionCrypto()
+	require.NoError(t, err)
+
+	require.NoError(t, host.CompleteHandshake(extPub))
+	require.NoError(t, ext.CompleteHandshake(hostPub))
+
+	// A legitimate frame first, so a later forged frame must beat a real
+	// recvNonce value to matter.
+	nonce1, ct1, err := host.Encrypt([]byte("legitimate message 1"))
+	require.NoError(t, err)
+	_, err = ext.Decrypt(nonce1, ct1)
+	require.NoError(t, err)
+
+	// Forge a frame with a much higher counter but a tag that does not
+	// verify under ext's recvKey (flip a byte of a genuinely-encrypted
+	// ciphertext rather than fabricating bytes, so it exercises GCM
+	// authentication rather than a decode failure).
+	_, forgedCT, err := host.Encrypt([]byte("forged, high counter"))
+	require.NoError(t, err)
+	tampered := make([]byte, len(forgedCT))
+	copy(tampered, forgedCT)
+	tampered[len(tampered)-1] ^= 0xFF
+	forgedNonce := uint64(1_000_000)
+
+	_, err = ext.Decrypt(forgedNonce, tampered)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrDecryptionFailed))
+	assert.False(t, errors.Is(err, ErrReplayDetected))
+
+	// The next legitimate frame, with a nonce well below the forged
+	// counter, must still decrypt: the forged frame must not have
+	// advanced recvNonce.
+	nonce2, ct2, err := host.Encrypt([]byte("legitimate message 2"))
+	require.NoError(t, err)
+	require.Less(t, nonce2, forgedNonce)
+
+	plaintext, err := ext.Decrypt(nonce2, ct2)
+	require.NoError(t, err)
+	assert.Equal(t, "legitimate message 2", string(plaintext))
+}
+
 func TestSessionCrypto_TruncatedCiphertext(t *testing.T) {
 	host, hostPub, err := NewSessionCrypto()
 	require.NoError(t, err)

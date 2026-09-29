@@ -1,36 +1,50 @@
 # Platform Secrets — API
 
-> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1226)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
 
-Routes are `RouteAuthSession` under `/api/v1/platform`, registered on the
-`hasPlatform` predicate.
+REST routes live under `/api/v1/platform` (`pkg/api/rest/routes.go`), carry
+the `keys:*` pairs, and are mounted whenever an `XKMSService` is composed
+(`pkg/api/rest/server.go`, the `platformHandlers` wiring).
 
 ## Capability matrix
 
-| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC | MCP | Embedded (`SealStoreService.`) |
+| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC | MCP | Embedded (`SealStoreServicer.`) |
 |---|---|---|---|---|---|
-| Put secret | `PUT /api/v1/platform/secrets/{name}` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | `SealStorePut` |
-| Get secret | `GET /api/v1/platform/secrets/{name}` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | `SealStoreGet` |
-| Delete secret | `DELETE /api/v1/platform/secrets/{name}` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | `SealStoreDelete` |
-| List secret names | `GET /api/v1/platform/secrets` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | `SealStoreList` |
-| Reseal a secret | `POST /api/v1/platform/secrets/{name}/reseal` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | `SealStoreReseal` |
-| Store status | `GET /api/v1/platform/status` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | `SealStoreStatus` |
+| Put secret | `PUT /api/v1/platform/secrets/{name}` | `SealStorePut` | same as REST | `sealStore.put` | `SealStorePut` |
+| Get secret | `GET /api/v1/platform/secrets/{name}` | `SealStoreGet` | same as REST | `sealStore.get` | `SealStoreGet` |
+| Delete secret | `DELETE /api/v1/platform/secrets/{name}` | `SealStoreDelete` | same as REST | `sealStore.delete` | `SealStoreDelete` |
+| List secret names | `GET /api/v1/platform/secrets` | `SealStoreList` | same as REST | `sealStore.list` | `SealStoreList` |
+| Reseal a secret | `POST /api/v1/platform/secrets/{name}/reseal` | `SealStoreReseal` | same as REST | `sealStore.reseal` | `SealStoreReseal` |
+| Store status | `GET /api/v1/platform/status` | `SealStoreStatus` | same as REST | `sealStore.status` | `SealStoreStatus` |
 
-**This feature exists on REST, QUIC and embedded only.** Twelve gaps across gRPC,
-Unix and MCP — proportionally the weakest transport coverage of any feature in
-this repo. There is no `SealStore*` RPC in `xkmsv1` and no `platform.*` MCP
-method. The USB transport (a seventh, product-specific transport, not part of
-the six above) is the exception: it proxies all six `SealStoreService` methods
-to the phone's embedded xkmsd instance over the Noise-encrypted USB channel
-(`pkg/api/transport/usb/transport.go`), using the servicer's own method names
-verbatim (`SealStorePut`, `SealStoreGet`, ...).
+Every transport reaches the store only through the `XKMSService` methods
+(`pkg/xkms/servicer_seal_store.go`): REST `pkg/api/rest/seal_store_handlers.go`,
+gRPC/Unix `pkg/api/grpc/service_seal_store.go`, MCP
+`pkg/api/mcp/handlers_seal_store.go`. The USB transport (a seventh,
+product-specific transport) proxies the same six methods to the phone's
+embedded xkmsd (`pkg/api/transport/usb/transport.go`).
 
-Recorded as gaps rather than presented as a design choice, because nothing in
-the code argues for the omission — unlike, say, the absence of a Unix-socket
-ACME adapter, which has a reason.
+## Platform scope
+
+The store holds platform-global secrets -- the backend credentials live under
+`credentials/<name>` (`pkg/server/credentials/service.go`) -- so every
+operation is refused to a tenant-scoped caller, including a tenant-local
+Admin whose `keys:*` grants pass the RBAC gate (go-xkms#1226). Each service
+method calls `requirePlatformScope` before touching the store
+(`pkg/xkms/servicer_seal_store.go:40,54,75,89,106,120`). The refusal reads
+exactly as a missing tenant:
+
+| Transport | Answer | Mapping site |
+|---|---|---|
+| REST | `404`, `{"error":"<unknown-tenant message>"}` | `pkg/api/rest/seal_store_handlers.go:268` |
+| gRPC / Unix | `codes.NotFound` | `pkg/api/apierrors/tables.go:39` |
+| MCP | `JSONRPCCodeNotFound` | `pkg/api/apierrors/tables.go:39` |
+
+Only a platform (system-tenant) identity, or an in-process caller with no
+identity, reaches the store.
 
 ## Request and response schemas
 
@@ -55,7 +69,9 @@ substitutes.
 | `ErrSecretNotFound` | 404 |
 | sealed value cannot be opened in the current platform state | **409** |
 | `ErrResealFailed` | 500 |
-| platform store not configured | route absent (404) |
+| tenant-scoped caller (platform scope) | 404 with the unknown-tenant message |
+| no platform store composed on the service | 503 |
+| no `XKMSService` composed | route absent (404) |
 
 The 404-versus-409 distinction is the important one. A TPM-sealed secret that
 will not open because the PCRs changed is **not** a missing secret, and a client

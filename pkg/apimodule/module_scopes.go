@@ -82,15 +82,6 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// permission it refines.
 		qrdbsdk.Permission(auth.ResourceKeys + ":" + auth.ActionUpdate),
 
-		// ssh:use is the blanket gate on the SSH CA route group: every
-		// /xkms/v1/ssh route carries it in addition to its own permission. Its
-		// siblings ssh:read, ssh:write and ssh:delete are ScopeSelf in qrdb,
-		// as is piv:use — the same "use a key whose material never leaves the
-		// device" action in the other hardware family. A blanket gate that
-		// reached less far than the specific permissions behind it would deny
-		// calls qrdb's own declarations admit.
-		qrdbsdk.Permission(auth.ResourceSSH + ":" + auth.ActionUse),
-
 		// bootstrap:read reports the trust-bootstrap listener's own public
 		// keys (go-xkms#632). The listener is process-wide, not per-tenant,
 		// so it holds the same reach as seal:status: a tenant-local Admin

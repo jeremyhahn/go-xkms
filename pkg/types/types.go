@@ -1221,20 +1221,14 @@ type KeyAttributes struct {
 }
 
 // String returns a human-readable representation of the key attributes.
+//
+// It never renders Password or SealData: those are secrets, and this
+// method has no way to know whether its caller is a trusted diagnostic
+// path or an untrusted sink (an error message, a log line, a %v format
+// verb). Callers that need the secret value must read attrs.Password or
+// attrs.SealData directly.
 func (attrs KeyAttributes) String() string {
 	var sb strings.Builder
-
-	var password, sealDataStr string
-	if attrs.Debug && attrs.Password != nil {
-		if p, err := attrs.Password.String(); err == nil {
-			password = p
-		}
-	}
-	if attrs.Debug && attrs.SealData != nil {
-		if s := attrs.SealData.Bytes(); s != nil {
-			sealDataStr = string(s)
-		}
-	}
 
 	sb.WriteString("Key Attributes\n")
 	fmt.Fprintf(&sb, "  Common Name: %s\n", attrs.CN)
@@ -1256,12 +1250,6 @@ func (attrs KeyAttributes) String() string {
 	case attrs.X25519Attributes != nil:
 		sb.WriteString("X25519 Attributes\n")
 		sb.WriteString("  Curve: X25519 (Curve25519)\n")
-	}
-
-	if attrs.Debug {
-		sb.WriteString("Secrets\n")
-		fmt.Fprintf(&sb, "  Password: %s\n", password)
-		fmt.Fprintf(&sb, "  SealData: %s\n", sealDataStr)
 	}
 
 	return sb.String()

@@ -1,15 +1,31 @@
 # FROST Threshold Signing — API
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1231)
 
 Transport model: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped". **Read
-[`architecture.md`](architecture.md) §"Two independent surfaces" first**: every
-endpoint below requires the daemon to have a backend registered whose
-`Type()` is `types.BackendTypeFrost`, and nothing in `xkmsd`'s standard
-configuration path (`pkg/config`, `pkg/server`) can produce one today. All
-handlers are real and fully implemented; what is missing is the daemon-side
-wiring to reach them, not the handlers themselves.
+[`architecture.md`](architecture.md) §"Two independent surfaces" and
+§"Tenancy" first**: every endpoint below is a thin adapter over an
+`XKMSService` FROST method (`pkg/xkms/servicer_frost.go`) and requires the
+daemon to have a FROST backend registered (`backends.frost.enabled`,
+`pkg/server/backend_frost.go:41`).
+
+## Tenancy
+
+Every endpoint acts inside the caller's tenant, taken from the authenticated
+identity — no request carries a tenant (go-xkms#1231):
+
+- `key_id`/`{id}` names a key in the caller's tenant. Another tenant's key is
+  answered exactly as a key no tenant holds: REST `404`, gRPC `NotFound`, MCP
+  `JSONRPCCodeNotFound`, with the same message.
+- A listing holds only the caller's tenant's keys, and its total counts only
+  those. A platform-scoped caller lists every tenant's keys.
+- Generating or importing a key creates it in the caller's tenant. A key ID
+  is unique only within a tenant, so another tenant's use of the same ID
+  neither blocks nor is replaced by the call.
+- Verify answers `404`/`NotFound` for a key the caller's tenant does not
+  hold, and `200 {"valid": false}` only for a signature that does not verify
+  against the caller's own key.
 
 All three surfaces below require `-tags frost`; without it, REST returns
 `501 Not Implemented` with `"FROST support not compiled - rebuild with
@@ -22,7 +38,7 @@ error (`pkg/api/rest/handlers_frost_stub.go`,
 | Capability | REST | gRPC | MCP | Embedded (`sdk/go` type re-export) |
 |---|---|---|---|---|
 | Generate key | `POST /api/v1/frost/keys` | `FrostGenerateKey` | `frost.generateKey` | `frost.NewBackend(...).GenerateKey` |
-| Import key package | `POST /api/v1/frost/keys/import` | `FrostImportKey` | `frost.importKey` | — (no importer type is re-exported; use `frost.NewKeyStore(...).StoreKeyPackage`) |
+| Import key package | `POST /api/v1/frost/keys/import` | `FrostImportKey` | `frost.importKey` | `(*FrostBackend).ImportKeyPackage` |
 | List keys | `GET /api/v1/frost/keys` | `FrostListKeys` | `frost.listKeys` | `(*FrostBackend).ListKeys` |
 | Get key | `GET /api/v1/frost/keys/{id}` | `FrostGetKey` | `frost.getKey` | `(*FrostBackend).GetKey` |
 | Delete key | `DELETE /api/v1/frost/keys/{id}` | `FrostDeleteKey` | `frost.deleteKey` | `(*FrostBackend).DeleteKey` |
@@ -40,13 +56,13 @@ client against the wire types documented here.
 
 Permission: every REST route uses `auth.ResourceKeys` with the action that
 matches its verb (`create`/`import`/`list`/`get`/`delete`/`sign`/`verify` —
-`pkg/api/rest/routes.go:164-172`), the same resource as every other key
+`pkg/api/rest/routes.go:174-182`), the same resource as every other key
 operation — there is no FROST-specific permission.
 
 ## REST (`pkg/api/rest/handlers_frost.go`)
 
 Base path: `/api/v1/frost` (the generic `perm(...)` route helper prefixes
-`/api/v1`, unlike SSH's `/xkms/v1/ssh` — see `pkg/api/rest/routes.go:104-172`).
+`/api/v1`, unlike SSH's `/xkms/v1/ssh` — see `pkg/api/rest/routes.go:174-182`).
 
 | Method | Path |
 |---|---|
@@ -110,13 +126,15 @@ Nine RPCs on `KeystoreService`: `FrostGenerateKey`, `FrostImportKey`,
 `FrostListKeys`, `FrostGetKey`, `FrostDeleteKey`, `FrostGenerateNonces`,
 `FrostSignRound`, `FrostAggregate`, `FrostVerify`. Each has its own
 `pb.Frost*Request`/`pb.Frost*Response` message pair (not shared with the REST
-JSON DTOs, though the field sets are the same shape). Every handler starts
-with `s.getFrostBackend()` (`service_frost.go:600`).
+JSON DTOs, though the field sets are the same shape). Every RPC authorizes,
+then calls the matching `XKMSService` method and maps its error through
+`mapKeyOpError` (`pkg/api/grpc/service_frost.go:84-382`). With no xkms
+service injected, every RPC answers `Unavailable`.
 
 ## MCP (`pkg/api/mcp/handlers_frost.go`)
 
 Nine dotted methods, dispatched by a `switch` in `routeFrostMethods`
-(`pkg/api/mcp/handlers_frost.go:773-800` — unlike the SSH methods, which are
+(`pkg/api/mcp/handlers_frost.go:575` — unlike the SSH methods, which are
 dispatched through the map in `server.go`): `frost.generateKey`,
 `frost.importKey`, `frost.listKeys`, `frost.getKey`, `frost.deleteKey`,
 `frost.generateNonces`, `frost.signRound`, `frost.aggregate`,
@@ -129,4 +147,6 @@ shared `transport.PageRequestFromQuery` implementation every REST list
 endpoint uses; see [`../key-management/api.md`](../key-management/api.md)
 §"Pagination" for the `page` / `page_size` / `sort_field` / `sort_order`
 query parameters and the **400** an invalid one gets. With no `page`
-parameter every FROST key on this node is returned.
+parameter every FROST key the caller's tenant holds is returned, ordered by
+key ID. gRPC `FrostListKeys` pages by `offset`/`limit` (default 100) over the
+same ordered list.

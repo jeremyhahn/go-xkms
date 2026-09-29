@@ -652,7 +652,20 @@ func buildACMERouter(svc handlers.RestServicer, directoryPath string, rateLimitM
 	r.HandleFunc(directoryPath+"/orders/{id:[0-9]+}", svc.OrdersListHandler).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/authz/{id:[0-9]+}", svc.AuthorizationHandler).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/challenge/{id:[0-9]+}", svc.ChallengeHandler).Methods(http.MethodPost)
-	r.HandleFunc(directoryPath+"/cert/{id:[0-9]+}", svc.CertificateHandler).Methods(http.MethodPost)
+	// The certificate ID is the issued certificate's full serial number,
+	// hex-encoded (entities.ACMECertificate.Serial, entities.NormalizeSerial,
+	// pkg/acme/server/handlers/certificate.go's CertificateHandler doc
+	// comment) -- NOT a decimal DAO/account/order ID like every other route
+	// above. A serial containing a-f (the overwhelming majority: 128-bit
+	// random serials are hex digits, not just 0-9) never matched the old
+	// "[0-9]+" pattern, so gorilla mux answered a literal, un-routed 404
+	// ("404 page not found") for the client's very next request after a
+	// successful finalize -- CertificateHandler's own hex-aware parsing and
+	// its unit tests (certificate_test.go, driven directly against the
+	// handler) never exercised the route pattern, so this shipped
+	// unnoticed until an end-to-end lane fetched a real certificate over
+	// the network (go-xkms#1125).
+	r.HandleFunc(directoryPath+"/cert/{id:[0-9a-fA-F]+}", svc.CertificateHandler).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/revoke-cert", svc.RevokeCertHandler).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/key-change", svc.KeyChangeHandler).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/ca-bundle", svc.CABundleHandler).Methods(http.MethodGet, http.MethodHead)

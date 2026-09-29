@@ -60,14 +60,39 @@ var (
 	ErrBarrierStoreTPMUnavailable = errors.New("barrier: TPM device required for tpm2-strategy barrier")
 )
 
-// addBarrierPasswordFlags registers --barrier-password and
+// ErrBarrierPasswordStdinEmpty indicates --barrier-password-stdin was given
+// but standard input carried no password.
+var ErrBarrierPasswordStdinEmpty = errors.New("barrier: --barrier-password-stdin was given but standard input carried no password")
+
+// ErrBarrierPasswordStdinRead indicates standard input could not be read for
+// --barrier-password-stdin.
+var ErrBarrierPasswordStdinRead = errors.New("barrier: failed to read the barrier password from standard input")
+
+// barrierPasswordSource is the one way a barrier password enters the CLI as
+// a value the process itself resolves (as opposed to the interactive
+// terminal prompt every caller of resolveBarrierPassword also offers as a
+// last resort). It follows the PIN convention (pin_input.go): standard input
+// or the environment, never a "--barrier-password" value flag -- a value on
+// the command line is visible to every other process on the host via 'ps'
+// (go-xkms#1209). Every CLI command that may open a barrier-backed store
+// shares this one source (oath, backup, device oath-sync, fido2, extension
+// serve, secret-service, the device commands) so an operator learns it once.
+var barrierPasswordSource = pinSource{
+	label:      "barrier password",
+	stdinFlag:  "barrier-password-stdin",
+	envVar:     "XKEY_BARRIER_PASSWORD",
+	stdinEmpty: ErrBarrierPasswordStdinEmpty,
+	stdinRead:  ErrBarrierPasswordStdinRead,
+}
+
+// addBarrierPasswordFlags registers --barrier-password-stdin and
 // --barrier-password-file on cmd. Every CLI command that may open a
 // barrier-backed store shares these two flag names (oath, backup, device
 // oath-sync, fido2, extension serve) so XKEY_BARRIER_PASSWORD and an
 // interactive prompt -- both handled by resolveBarrierPassword -- work
 // identically everywhere.
 func addBarrierPasswordFlags(cmd *cobra.Command) {
-	cmd.Flags().String("barrier-password", "", "Barrier password (for barrier-encrypted storage)")
+	barrierPasswordSource.addFlags(cmd)
 	cmd.Flags().String("barrier-password-file", "", "Read barrier password from file (first line)")
 }
 

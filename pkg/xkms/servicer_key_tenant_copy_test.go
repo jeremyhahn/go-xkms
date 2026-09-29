@@ -302,3 +302,59 @@ func TestCopyKeyExportToUnsupportedLeavesDestinationUntouched(t *testing.T) {
 	assert.False(t, imported,
 		"the destination must never receive an import when the source cannot re-wrap for it")
 }
+
+// TestCopyKeyRefusesSubFloorRSASource proves CopyKey re-validates the copied
+// key's RSA modulus against the RSAKeySize2048 floor before ever touching
+// export or import: a source whose stored attributes carry a sub-2048 RSA
+// size -- generated before the floor existed, or imported from a backend that
+// never enforced it -- is refused with a client-facing validation error
+// rather than propagated to a new backend under a new name (go-xkms#1223).
+// #1220 tried the source attributes' own Validate() for this and broke
+// copies of keys with a store type or backend that Validate requires but a
+// copy's reconstructed attributes don't carry; this checks
+// types.ValidateRSAKeySize directly instead.
+func TestCopyKeyRefusesSubFloorRSASource(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	srcKP := newBoostIEKeyProvider()
+	srcStore := newMockKeyStore("hw-source")
+	srcStore.backend = srcKP
+
+	dstKP := newBoostIEKeyProvider()
+	dstStore := newMockKeyStore("software-dest")
+	dstStore.backend = dstKP
+
+	require.NoError(t, Initialize(&ServiceConfig{
+		Backends: map[string]Backend{
+			"hw-source":     srcStore,
+			"software-dest": dstStore,
+		},
+		DefaultBackend: "software-dest",
+	}))
+	svc, err := Get()
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	boostGenIEKey(t, srcStore, srcKP, &types.KeyAttributes{
+		CN:            "weak-rsa-key",
+		KeyAlgorithm:  x509.RSA,
+		RSAAttributes: &types.RSAAttributes{KeySize: 1024},
+		Exportable:    true,
+	})
+
+	_, err = svc.CopyKey(ctx, &transport.CopyKeyRequest{
+		SourceBackend: "hw-source",
+		SourceKeyID:   "weak-rsa-key",
+		DestBackend:   "software-dest",
+		DestKeyID:     "weak-rsa-key-copy",
+	})
+	require.Error(t, err)
+	var validation *ErrValidation
+	require.ErrorAs(t, err, &validation, "unexpected error: %v", err)
+	assert.True(t, errors.Is(err, ErrInvalidKeyAttributes))
+
+	_, imported := dstKP.importedKeys["weak-rsa-key-copy"]
+	assert.False(t, imported,
+		"the destination must never receive an import of a source key that fails the RSA floor")
+}

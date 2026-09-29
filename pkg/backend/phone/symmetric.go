@@ -212,6 +212,15 @@ func (e *phoneSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 		if err := aead.RequireDefaultTagSize(opts.TagSize, "the paired phone"); err != nil {
 			return nil, err
 		}
+		// The phone's secure hardware generates its own nonce for
+		// local.symmetricEncrypt and the protocol carries no field to
+		// override it. A caller-supplied nonce used to be accepted here and
+		// silently dropped, which let a caller believe its own nonce
+		// discipline governed this encryption when the phone's did instead.
+		// Refused outright rather than ignored.
+		if opts.Nonce != nil {
+			return nil, backend.ErrCallerNonceNotSupported
+		}
 	}
 
 	params := &pairing.LocalSymmetricEncryptParams{

@@ -234,6 +234,37 @@ func TestVaultBackend_SymmetricEncrypter_EncryptDecrypt(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestVaultBackend_SymmetricEncrypter_AllowsNilNonce proves the new
+// caller-nonce refusal (go-xkms#1223) does not reject the ordinary case of
+// an Encrypt call with no explicit nonce.
+func TestVaultBackend_SymmetricEncrypter_AllowsNilNonce(t *testing.T) {
+	config := getTestVaultConfig(t)
+	b, err := NewBackend(config)
+	require.NoError(t, err)
+	defer func() { _ = b.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-encrypt-nil-nonce-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_VAULT,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+	_ = b.DeleteKey(context.Background(), attrs)
+
+	_, err = b.GenerateSymmetricKey(context.Background(), attrs)
+	require.NoError(t, err)
+
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	encrypted, err := encrypter.Encrypt([]byte("Hello, Vault Transit Engine!"), &types.EncryptOptions{})
+	require.NoError(t, err)
+	assert.NotEmpty(t, encrypted.Ciphertext)
+
+	err = b.DeleteKey(context.Background(), attrs)
+	require.NoError(t, err)
+}
+
 func TestVaultBackend_SymmetricEncrypter_WithAAD(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)

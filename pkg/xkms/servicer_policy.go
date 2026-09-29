@@ -22,6 +22,11 @@ import (
 )
 
 // PolicyServicer defines operations for managing PCR policies.
+//
+// PCR policies bind the platform's sealed secrets to its measured boot state,
+// so every method is platform-scoped (requirePlatformScope, go-xkms#1227): a
+// tenant-scoped caller is refused with a *TenantBindingError that reads as
+// not-found.
 type PolicyServicer interface {
 	PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error)
 	PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error)
@@ -34,6 +39,9 @@ type PolicyServicer interface {
 
 // PolicyCreate creates a new PCR policy with the specified parameters.
 func (s *XKMSService) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+	if err := requirePlatformScope(ctx, "policy create", ""); err != nil {
+		return nil, err
+	}
 	if s.policyManager == nil {
 		return nil, ErrNotConfigured
 	}
@@ -55,6 +63,9 @@ func (s *XKMSService) PolicyCreate(ctx context.Context, req *transport.PolicyCre
 
 // PolicyGet retrieves a PCR policy by name.
 func (s *XKMSService) PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+	if err := requirePlatformScope(ctx, "policy get", ""); err != nil {
+		return nil, err
+	}
 	if s.policyManager == nil {
 		return nil, ErrNotConfigured
 	}
@@ -70,6 +81,9 @@ func (s *XKMSService) PolicyGet(ctx context.Context, req *transport.PolicyGetReq
 
 // PolicyList returns all registered PCR policies.
 func (s *XKMSService) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
+	if err := requirePlatformScope(ctx, "policy list", ""); err != nil {
+		return nil, err
+	}
 	if s.policyManager == nil {
 		return nil, ErrNotConfigured
 	}
@@ -89,6 +103,9 @@ func (s *XKMSService) PolicyList(ctx context.Context) (*transport.PolicyListResp
 
 // PolicyDelete deletes a PCR policy by name.
 func (s *XKMSService) PolicyDelete(ctx context.Context, req *transport.PolicyDeleteRequest) error {
+	if err := requirePlatformScope(ctx, "policy delete", ""); err != nil {
+		return err
+	}
 	if s.policyManager == nil {
 		return ErrNotConfigured
 	}
@@ -100,6 +117,9 @@ func (s *XKMSService) PolicyDelete(ctx context.Context, req *transport.PolicyDel
 
 // PolicyRefresh refreshes a PCR policy with current PCR values.
 func (s *XKMSService) PolicyRefresh(ctx context.Context, req *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+	if err := requirePlatformScope(ctx, "policy refresh", ""); err != nil {
+		return nil, err
+	}
 	if s.policyManager == nil {
 		return nil, ErrNotConfigured
 	}
@@ -115,6 +135,9 @@ func (s *XKMSService) PolicyRefresh(ctx context.Context, req *transport.PolicyRe
 
 // PolicyVerify verifies that current PCR values match the policy.
 func (s *XKMSService) PolicyVerify(ctx context.Context, req *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+	if err := requirePlatformScope(ctx, "policy verify", ""); err != nil {
+		return nil, err
+	}
 	if s.policyManager == nil {
 		return nil, ErrNotConfigured
 	}
@@ -134,6 +157,9 @@ func (s *XKMSService) PolicyVerify(ctx context.Context, req *transport.PolicyVer
 
 // PolicyExport exports a PCR policy for external use.
 func (s *XKMSService) PolicyExport(ctx context.Context, req *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+	if err := requirePlatformScope(ctx, "policy export", ""); err != nil {
+		return nil, err
+	}
 	if s.policyManager == nil {
 		return nil, ErrNotConfigured
 	}

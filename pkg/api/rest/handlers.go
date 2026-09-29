@@ -18,11 +18,11 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -32,7 +32,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -44,10 +43,6 @@ type HandlerContext struct {
 	Version string
 	// HealthChecker manages health check probes
 	HealthChecker HealthChecker
-	// Barrier is the optional barrier for seal/unseal lifecycle management
-	Barrier *seal.Barrier
-	// PINManager is the optional PIN backend for SO/User PIN operations
-	PINManager qrdbsdk.PINBackend
 	// xkmsService is the injected XKMS service; replaces package-singleton lookups.
 	xkmsService *xkms.XKMSService
 }
@@ -70,16 +65,6 @@ func NewHandlerContext(version string) *HandlerContext {
 // SetHealthChecker sets the health checker for the handler context.
 func (h *HandlerContext) SetHealthChecker(checker HealthChecker) {
 	h.HealthChecker = checker
-}
-
-// SetBarrier sets the barrier for the handler context.
-func (h *HandlerContext) SetBarrier(barrier *seal.Barrier) {
-	h.Barrier = barrier
-}
-
-// SetPINManager sets the PIN backend for the handler context.
-func (h *HandlerContext) SetPINManager(manager qrdbsdk.PINBackend) {
-	h.PINManager = manager
 }
 
 // SetXKMSService sets the injected XKMS service on the handler context.
@@ -140,24 +125,6 @@ func (h *HandlerContext) backendNames() []string {
 		return nil
 	}
 	return h.xkmsService.BackendNames()
-}
-
-// sealWithBackend seals data using the named backend.
-// Returns xkms.ErrNotInitialized when the service has not been wired.
-func (h *HandlerContext) sealWithBackend(ctx context.Context, backendName string, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
-	if h.xkmsService == nil {
-		return nil, xkms.ErrNotInitialized
-	}
-	return h.xkmsService.SealWithBackend(ctx, backendName, data, opts)
-}
-
-// unsealWithBackend unseals data using the named backend.
-// Returns xkms.ErrNotInitialized when the service has not been wired.
-func (h *HandlerContext) unsealWithBackend(ctx context.Context, backendName string, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
-	if h.xkmsService == nil {
-		return nil, xkms.ErrNotInitialized
-	}
-	return h.xkmsService.UnsealWithBackend(ctx, backendName, sealed, opts)
 }
 
 // canSeal returns true if the named backend supports sealing operations.
@@ -777,6 +744,15 @@ func (h *HandlerContext) EncryptAsymHandler(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, EncryptAsymResponse{Ciphertext: resp.Ciphertext}, http.StatusOK)
 }
 
+// The certificate handlers below are thin adapters over the XKMSService
+// certificate methods, which confine every read, write, listing and delete to
+// the caller's tenant namespace. A certificate another tenant holds, or one
+// the platform holds, answers exactly as one nobody stored, and a key ID that
+// names another namespace ("tenant-b/web") is refused as malformed. These
+// handlers used to call the unscoped backend directly, so any tenant could
+// read, overwrite, list or delete every tenant's certificates and the
+// platform's (go-xkms#1228).
+
 // SaveCertHandler handles POST /api/v1/certs requests.
 func (h *HandlerContext) SaveCertHandler(w http.ResponseWriter, r *http.Request) {
 	var req SaveCertRequest
@@ -797,24 +773,18 @@ func (h *HandlerContext) SaveCertHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ks, err := h.lookupBackend(backendID)
-	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
+	if h.xkmsService == nil {
+		mapKeyOpError(w, xkms.ErrNotInitialized)
 		return
 	}
 
-	// Parse certificate PEM
-	cert, err := encoding.DecodeCertificatePEM([]byte(req.CertificatePEM))
-	if err != nil {
-		log.Printf("Failed to parse certificate: %v", err)
-		writeError(w, &errs.Wrapped{Msg: "invalid certificate PEM", Err: err}, http.StatusBadRequest)
-		return
-	}
-
-	// Save certificate
-	if err := ks.SaveCert(r.Context(), keyID, cert); err != nil {
-		log.Printf("Failed to save certificate: %v", err)
-		handleError(w, err)
+	if err := h.xkmsService.SaveCertificate(r.Context(), &transport.SaveCertificateRequest{
+		Backend:        backendID,
+		KeyID:          keyID,
+		CertificatePEM: req.CertificatePEM,
+		TenantID:       callerTenantID(r.Context()),
+	}); err != nil {
+		mapKeyOpError(w, err)
 		return
 	}
 
@@ -825,73 +795,57 @@ func (h *HandlerContext) SaveCertHandler(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, resp, http.StatusCreated)
 }
 
-// GetCertHandler handles GET /api/v1/certs/{id} requests.
-func (h *HandlerContext) GetCertHandler(w http.ResponseWriter, r *http.Request) {
-	keyID := chi.URLParam(r, "id")
+// certRequestTarget reads the key ID path parameter and the backend query
+// parameter every by-ID certificate handler requires, writing the 400 for
+// whichever is missing. It reports false when the handler must stop.
+func (h *HandlerContext) certRequestTarget(w http.ResponseWriter, r *http.Request) (keyID, backendID string, ok bool) {
+	keyID = chi.URLParam(r, "id")
 	if keyID == "" {
 		writeError(w, ErrMissingKeyID, http.StatusBadRequest)
-		return
+		return "", "", false
 	}
 
-	backendID := r.URL.Query().Get("backend")
+	backendID = r.URL.Query().Get("backend")
 	if backendID == "" {
 		writeError(w, ErrMissingBackend, http.StatusBadRequest)
+		return "", "", false
+	}
+
+	if h.xkmsService == nil {
+		mapKeyOpError(w, xkms.ErrNotInitialized)
+		return "", "", false
+	}
+	return keyID, backendID, true
+}
+
+// GetCertHandler handles GET /api/v1/certs/{id} requests.
+func (h *HandlerContext) GetCertHandler(w http.ResponseWriter, r *http.Request) {
+	keyID, backendID, ok := h.certRequestTarget(w, r)
+	if !ok {
 		return
 	}
 
-	ks, err := h.lookupBackend(backendID)
+	resp, err := h.xkmsService.GetCertificate(r.Context(), backendID, keyID)
 	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
+		mapKeyOpError(w, err)
 		return
 	}
 
-	// Get certificate
-	cert, err := ks.GetCert(r.Context(), keyID)
-	if err != nil {
-		log.Printf("Failed to get certificate: %v", err)
-		handleError(w, err)
-		return
-	}
-
-	// Encode to PEM
-	certPEM, err := encoding.EncodeCertificatePEM(cert)
-	if err != nil {
-		log.Printf("Failed to encode certificate: %v", err)
-		writeError(w, ErrInternalError, http.StatusInternalServerError)
-		return
-	}
-
-	resp := GetCertResponse{
-		KeyID:          keyID,
-		CertificatePEM: string(certPEM),
-	}
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(w, GetCertResponse{
+		KeyID:          resp.KeyID,
+		CertificatePEM: resp.CertificatePEM,
+	}, http.StatusOK)
 }
 
 // DeleteCertHandler handles DELETE /api/v1/certs/{id} requests.
 func (h *HandlerContext) DeleteCertHandler(w http.ResponseWriter, r *http.Request) {
-	keyID := chi.URLParam(r, "id")
-	if keyID == "" {
-		writeError(w, ErrMissingKeyID, http.StatusBadRequest)
+	keyID, backendID, ok := h.certRequestTarget(w, r)
+	if !ok {
 		return
 	}
 
-	backendID := r.URL.Query().Get("backend")
-	if backendID == "" {
-		writeError(w, ErrMissingBackend, http.StatusBadRequest)
-		return
-	}
-
-	ks, err := h.lookupBackend(backendID)
-	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
-		return
-	}
-
-	// Delete certificate
-	if err := ks.DeleteCert(r.Context(), keyID); err != nil {
-		log.Printf("Failed to delete certificate: %v", err)
-		handleError(w, err)
+	if err := h.xkmsService.DeleteCertificate(r.Context(), backendID, keyID); err != nil {
+		mapKeyOpError(w, err)
 		return
 	}
 
@@ -910,67 +864,52 @@ func (h *HandlerContext) ListCertsHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := h.lookupBackend(backendID)
-	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
-		return
-	}
-
-	// List certificates
-	certIDs, err := ks.ListCerts(r.Context())
-	if err != nil {
-		log.Printf("Failed to list certificates: %v", err)
-		handleError(w, err)
-		return
-	}
-
-	// Convert to CertificateInfo objects
-	certs := make([]CertificateInfo, len(certIDs))
-	for i, keyID := range certIDs {
-		certs[i] = CertificateInfo{
-			KeyID: keyID,
-		}
-	}
-
 	pageReq, err := transport.PageRequestFromQuery(r)
 	if err != nil {
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
-	paged, pageResp := transport.ApplyPagination(certs, pageReq)
 
-	resp := ListCertsResponse{
-		Certificates: paged,
-		Pagination:   pageResp,
+	if h.xkmsService == nil {
+		mapKeyOpError(w, xkms.ErrNotInitialized)
+		return
 	}
-	writeJSON(w, resp, http.StatusOK)
+
+	listed, err := h.xkmsService.ListCertificates(r.Context(), backendID, transport.WithPageRequest(pageReq))
+	if err != nil {
+		mapKeyOpError(w, err)
+		return
+	}
+
+	certs := make([]CertificateInfo, 0, len(listed.Certificates))
+	for _, cert := range listed.Certificates {
+		certs = append(certs, CertificateInfo{
+			KeyID:          cert.KeyID,
+			Subject:        cert.Subject,
+			Issuer:         cert.Issuer,
+			NotBefore:      cert.NotBefore,
+			NotAfter:       cert.NotAfter,
+			SerialNumber:   cert.SerialNumber,
+			CertificatePEM: cert.CertificatePEM,
+		})
+	}
+
+	writeJSON(w, ListCertsResponse{
+		Certificates: certs,
+		Pagination:   listed.PageResponse,
+	}, http.StatusOK)
 }
 
 // CertExistsHandler handles HEAD /api/v1/certs/{id} requests.
 func (h *HandlerContext) CertExistsHandler(w http.ResponseWriter, r *http.Request) {
-	keyID := chi.URLParam(r, "id")
-	if keyID == "" {
-		writeError(w, ErrMissingKeyID, http.StatusBadRequest)
+	keyID, backendID, ok := h.certRequestTarget(w, r)
+	if !ok {
 		return
 	}
 
-	backendID := r.URL.Query().Get("backend")
-	if backendID == "" {
-		writeError(w, ErrMissingBackend, http.StatusBadRequest)
-		return
-	}
-
-	ks, err := h.lookupBackend(backendID)
+	exists, err := h.xkmsService.CertificateExists(r.Context(), backendID, keyID)
 	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
-		return
-	}
-
-	// Check if certificate exists
-	exists, err := ks.CertExists(r.Context(), keyID)
-	if err != nil {
-		log.Printf("Failed to check certificate existence: %v", err)
-		handleError(w, err)
+		mapKeyOpError(w, err)
 		return
 	}
 
@@ -983,15 +922,8 @@ func (h *HandlerContext) CertExistsHandler(w http.ResponseWriter, r *http.Reques
 
 // SaveCertChainHandler handles POST /api/v1/certs/{id}/chain requests.
 func (h *HandlerContext) SaveCertChainHandler(w http.ResponseWriter, r *http.Request) {
-	keyID := chi.URLParam(r, "id")
-	if keyID == "" {
-		writeError(w, ErrMissingKeyID, http.StatusBadRequest)
-		return
-	}
-
-	backendID := r.URL.Query().Get("backend")
-	if backendID == "" {
-		writeError(w, ErrMissingBackend, http.StatusBadRequest)
+	keyID, backendID, ok := h.certRequestTarget(w, r)
+	if !ok {
 		return
 	}
 
@@ -1001,28 +933,13 @@ func (h *HandlerContext) SaveCertChainHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	ks, err := h.lookupBackend(backendID)
-	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
-		return
-	}
-
-	// Parse certificate chain
-	chain := make([]*x509.Certificate, 0, len(req.CertChainPEM))
-	for i, certPEM := range req.CertChainPEM {
-		cert, err := encoding.DecodeCertificatePEM([]byte(certPEM))
-		if err != nil {
-			log.Printf("Failed to parse certificate at index %d: %v", i, err)
-			writeError(w, &errs.Wrapped{Msg: fmt.Sprintf("invalid certificate PEM at index %d", i), Err: err}, http.StatusBadRequest)
-			return
-		}
-		chain = append(chain, cert)
-	}
-
-	// Save certificate chain
-	if err := ks.SaveCertChain(r.Context(), keyID, chain); err != nil {
-		log.Printf("Failed to save certificate chain: %v", err)
-		handleError(w, err)
+	if err := h.xkmsService.SaveCertificateChain(r.Context(), &transport.SaveCertificateChainRequest{
+		Backend:  backendID,
+		KeyID:    keyID,
+		ChainPEM: req.CertChainPEM,
+		TenantID: callerTenantID(r.Context()),
+	}); err != nil {
+		mapKeyOpError(w, err)
 		return
 	}
 
@@ -1035,139 +952,50 @@ func (h *HandlerContext) SaveCertChainHandler(w http.ResponseWriter, r *http.Req
 
 // GetCertChainHandler handles GET /api/v1/certs/{id}/chain requests.
 func (h *HandlerContext) GetCertChainHandler(w http.ResponseWriter, r *http.Request) {
-	keyID := chi.URLParam(r, "id")
-	if keyID == "" {
-		writeError(w, ErrMissingKeyID, http.StatusBadRequest)
+	keyID, backendID, ok := h.certRequestTarget(w, r)
+	if !ok {
 		return
 	}
 
-	backendID := r.URL.Query().Get("backend")
-	if backendID == "" {
-		writeError(w, ErrMissingBackend, http.StatusBadRequest)
-		return
-	}
-
-	ks, err := h.lookupBackend(backendID)
+	resp, err := h.xkmsService.GetCertificateChain(r.Context(), backendID, keyID)
 	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
+		mapKeyOpError(w, err)
 		return
 	}
 
-	// Get certificate chain
-	chain, err := ks.GetCertChain(r.Context(), keyID)
-	if err != nil {
-		log.Printf("Failed to get certificate chain: %v", err)
-		handleError(w, err)
-		return
-	}
-
-	// Encode to PEM
-	chainPEM := make([]string, 0, len(chain))
-	for i, cert := range chain {
-		certPEM, err := encoding.EncodeCertificatePEM(cert)
-		if err != nil {
-			log.Printf("Failed to encode certificate at index %d: %v", i, err)
-			writeError(w, ErrInternalError, http.StatusInternalServerError)
-			return
-		}
-		chainPEM = append(chainPEM, string(certPEM))
-	}
-
-	resp := GetCertChainResponse{
-		KeyID:        keyID,
-		CertChainPEM: chainPEM,
-	}
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(w, GetCertChainResponse{
+		KeyID:        resp.KeyID,
+		CertChainPEM: resp.ChainPEM,
+	}, http.StatusOK)
 }
 
-// GetTLSCertificateHandler handles GET /api/v1/tls/{id} requests.
+// GetTLSCertificateHandler handles GET /api/v1/tls/{id} requests. The bundle
+// is the leaf and chain stored in the caller's certificate namespace; the
+// private key never travels on this response (go-xkms#627).
 func (h *HandlerContext) GetTLSCertificateHandler(w http.ResponseWriter, r *http.Request) {
-	keyID := chi.URLParam(r, "id")
-	if keyID == "" {
-		writeError(w, ErrMissingKeyID, http.StatusBadRequest)
+	keyID, backendID, ok := h.certRequestTarget(w, r)
+	if !ok {
 		return
 	}
 
-	backendID := r.URL.Query().Get("backend")
-	if backendID == "" {
-		writeError(w, ErrMissingBackend, http.StatusBadRequest)
-		return
-	}
-
-	ks, err := h.lookupBackend(backendID)
+	resp, err := h.xkmsService.GetTLSCertificate(r.Context(), backendID, keyID)
 	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
+		mapKeyOpError(w, err)
 		return
-	}
-
-	// Find the key
-	keyAttrs, err := ks.ListKeys(r.Context())
-	if err != nil {
-		log.Printf("Failed to list keys: %v", err)
-		handleError(w, err)
-		return
-	}
-
-	var targetAttr *types.KeyAttributes
-	for _, attr := range keyAttrs {
-		if attr.CN == keyID {
-			targetAttr = attr
-			break
-		}
-	}
-
-	if targetAttr == nil {
-		writeError(w, backend.ErrKeyNotFound, http.StatusNotFound)
-		return
-	}
-
-	// Get TLS certificate
-	tlsCert, err := ks.GetTLSCertificate(r.Context(), keyID, targetAttr)
-	if err != nil {
-		log.Printf("Failed to get TLS certificate: %v", err)
-		handleError(w, err)
-		return
-	}
-
-	// Encode certificate to PEM
-	certPEM, err := encoding.EncodeCertificatePEM(tlsCert.Leaf)
-	if err != nil {
-		log.Printf("Failed to encode certificate: %v", err)
-		writeError(w, ErrInternalError, http.StatusInternalServerError)
-		return
-	}
-
-	// Build response (without private key for security)
-	resp := transport.GetTLSCertificateResponse{
-		KeyID:          keyID,
-		CertificatePEM: string(certPEM),
-	}
-
-	// Add chain if present
-	if len(tlsCert.Certificate) > 1 {
-		chainPEM := make([]string, 0, len(tlsCert.Certificate)-1)
-		for _, certDER := range tlsCert.Certificate[1:] {
-			cert, err := x509.ParseCertificate(certDER)
-			if err != nil {
-				log.Printf("Failed to parse certificate in chain: %v", err)
-				continue
-			}
-			certPEM, err := encoding.EncodeCertificatePEM(cert)
-			if err != nil {
-				log.Printf("Failed to encode certificate in chain: %v", err)
-				continue
-			}
-			chainPEM = append(chainPEM, string(certPEM))
-		}
-		if len(chainPEM) > 0 {
-			resp.ChainPEM = chainPEM
-		}
 	}
 
 	writeJSON(w, resp, http.StatusOK)
 }
 
 // GetImportParametersHandler handles POST /api/v1/keys/import-params requests.
+//
+// The ceremony belongs to the service layer, which owns backend resolution
+// (tenant-scoped, per-direction capability assertion), the key-template
+// vocabulary and the RSA floor (go-xkms#1204). This handler used to assert
+// backend.ImportBackend and build its own key attributes, reachable only
+// through the untenanted backend map -- reimplementing what
+// XKMSService.GetImportParameters already does, and bypassing tenant scoping
+// in the process (go-xkms#1216).
 func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *http.Request) {
 	var req GetImportParametersRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1181,7 +1009,9 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Validate backend name
+	// Validate backend name. This stays here, ahead of the service call, for
+	// the same reason GenerateKeyHandler keeps it: a malformed name must fail
+	// closed as 400 rather than fall through to mapKeyOpError's 500 catch-all.
 	if err := validation.ValidateBackendName(req.Backend); err != nil {
 		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
@@ -1207,120 +1037,48 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Get the backend
-	ks, err := h.lookupBackend(req.Backend)
+	resp, err := h.xkmsService.GetImportParameters(r.Context(), &transport.GetImportParametersRequest{
+		Backend:   req.Backend,
+		KeyID:     req.KeyID,
+		Algorithm: req.Algorithm,
+		KeyType:   req.KeyType,
+		KeySize:   req.KeySize,
+		Curve:     req.Curve,
+		TenantID:  callerTenantID(r.Context()),
+	})
 	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
+		mapKeyOpError(w, err)
 		return
 	}
 
-	// Check if the backend supports the import half of the ceremony. This
-	// asserts backend.ImportBackend, not the full ImportExportBackend union: a
-	// backend that cannot export (AWS KMS, by hardware design) must still be
-	// reachable here, since GetImportParameters is unrelated to whether the
-	// same backend can later export a key.
-	importBackend, ok := ks.KeyProvider().(backend.ImportBackend)
-	if !ok {
-		writeError(w, backend.ErrImportNotSupported, http.StatusNotImplemented)
-		return
-	}
+	// The service returns the wrapping public key as DER (transport is
+	// backend-agnostic); this transport's wire response carries PEM, as it
+	// always has.
+	wrappingKeyPEM := pem.EncodeToMemory(&pem.Block{Type: encoding.PEMTypePublicKey, Bytes: resp.WrappingPublicKey})
 
-	// Build key attributes
-	attrs, hashErr := buildKeyAttributes(req.KeyID, req.KeyType, req.KeySize, req.Curve, req.Hash, req.AESKeySize)
-	if hashErr != nil {
-		mapKeyOpError(w, hashErr)
-		return
-	}
-
-	// The service layer's buildKeyAttributes runs this same check
-	// (pkg/xkms/servicer_key.go's validateKeyAttributes) as the last step
-	// before generation or import, enforcing the 2048-bit RSA floor
-	// (go-xkms#1204) among other invariants. This ceremony negotiates the
-	// parameters for a key of the same shape ImportKeyHandler will later be
-	// asked to store, so it must refuse an undersized request just as early
-	// rather than hand back working import parameters for a key the import
-	// step will refuse anyway (go-xkms#1214).
-	if err := attrs.Validate(); err != nil {
-		writeError(w, &errs.Wrapped{Msg: "invalid key attributes", Err: err}, http.StatusBadRequest)
-		return
-	}
-
-	// Parse wrapping algorithm
-	wrappingAlg := backend.WrappingAlgorithm(req.Algorithm)
-
-	// Get import parameters
-	params, err := importBackend.GetImportParameters(r.Context(), attrs, wrappingAlg)
-	if err != nil {
-		log.Printf("Failed to get import parameters: %v", err)
-		handleError(w, err)
-		return
-	}
-
-	// Encode wrapping public key to PEM
-	wrappingKeyPEM, err := encoding.EncodePublicKeyPEM(params.WrappingPublicKey)
-	if err != nil {
-		log.Printf("Failed to encode wrapping public key: %v", err)
-		writeError(w, ErrInternalError, http.StatusInternalServerError)
-		return
-	}
-
-	// Build response
-	resp := GetImportParametersResponse{
+	out := GetImportParametersResponse{
 		WrappingPublicKeyPEM: string(wrappingKeyPEM),
-		Algorithm:            string(params.Algorithm),
-		KeySpec:              params.KeySpec,
+		Algorithm:            resp.Algorithm,
+		KeySpec:              resp.KeySpec,
+		ExpiresAt:            resp.ExpiresAt,
 	}
 
 	// Add import token if present
-	if params.ImportToken != nil {
-		resp.ImportToken = json.RawMessage(params.ImportToken)
+	if resp.ImportToken != nil {
+		out.ImportToken = json.RawMessage(resp.ImportToken)
 	}
 
-	// Add expiration time if set
-	if !params.ExpiresAt.IsZero() {
-		resp.ExpiresAt = params.ExpiresAt.Format(time.RFC3339)
-	}
-
-	writeJSON(w, resp, http.StatusOK)
-}
-
-// resolveImportBackend resolves the named backend and asserts that it
-// implements backend.ImportBackend. It writes the mapped error response and
-// reports false when resolution fails, so callers only need to return.
-//
-// The backend is always named explicitly by the caller and is never inferred:
-// wrapping is backend specific (AWS KMS, GCP KMS and PKCS#11 each define their
-// own wrapping semantics and import tokens), so material wrapped by one
-// backend cannot be unwrapped or imported by another.
-//
-// This asserts backend.ImportBackend, not the full ImportExportBackend union.
-// WrapKey and UnwrapKey are both half of the import ceremony -- wrapping
-// material to hand to ImportKey, and unwrapping material previously produced
-// by WrapKey -- so a backend that cannot export (AWS KMS, by hardware design)
-// must still be reachable through this resolver.
-func (h *HandlerContext) resolveImportBackend(w http.ResponseWriter, name string) (backend.ImportBackend, bool) {
-	if err := validation.ValidateBackendName(name); err != nil {
-		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
-		return nil, false
-	}
-
-	ks, err := h.lookupBackend(name)
-	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
-		return nil, false
-	}
-
-	importBackend, ok := ks.KeyProvider().(backend.ImportBackend)
-	if !ok {
-		writeError(w, backend.ErrImportNotSupported, http.StatusNotImplemented)
-		return nil, false
-	}
-	return importBackend, true
+	writeJSON(w, out, http.StatusOK)
 }
 
 // WrapKeyHandler handles POST /api/v1/keys/wrap requests. The request must
 // name the backend whose wrapping semantics are used; an empty backend is
 // rejected with 400 rather than silently resolved, matching ImportKeyHandler.
+//
+// WrapKey belongs to the service layer, which resolves the named backend's
+// import capability (backend.ImportBackend, never the full union -- see
+// go-xkms#1216) the same way ImportKey does, and carries KeySpec and Metadata
+// through both directions.
 func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) {
 	var req WrapKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1346,6 +1104,15 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Validate backend name ahead of the service call, matching
+	// GetImportParametersHandler and ImportKeyHandler: a malformed name fails
+	// closed as 400 rather than falling through to mapKeyOpError's 500
+	// catch-all.
+	if err := validation.ValidateBackendName(req.Backend); err != nil {
+		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
+		return
+	}
+
 	// Decode wrapping public key from PEM
 	wrappingKey, err := encoding.DecodePublicKeyPEM([]byte(req.WrappingPublicKeyPEM))
 	if err != nil {
@@ -1353,43 +1120,41 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, &errs.Wrapped{Msg: "invalid wrapping public key", Err: err}, http.StatusBadRequest)
 		return
 	}
+	wrappingKeyDER, err := encoding.EncodePublicKeyPKIX(wrappingKey)
+	if err != nil {
+		writeError(w, &errs.Wrapped{Msg: "invalid wrapping public key", Err: err}, http.StatusBadRequest)
+		return
+	}
 
-	// Build import parameters
-	params := &backend.ImportParameters{
-		WrappingPublicKey: wrappingKey,
-		Algorithm:         backend.WrappingAlgorithm(req.Algorithm),
+	resp, err := h.xkmsService.WrapKey(r.Context(), &transport.WrapKeyRequest{
+		Backend:           req.Backend,
+		KeyMaterial:       req.KeyMaterial,
+		Algorithm:         req.Algorithm,
+		WrappingPublicKey: wrappingKeyDER,
 		ImportToken:       req.ImportToken,
 		KeySpec:           req.KeySpec,
-	}
-
-	// Wrap the key material with the caller-named backend.
-	importBackend, ok := h.resolveImportBackend(w, req.Backend)
-	if !ok {
-		return
-	}
-
-	wrapped, err := importBackend.WrapKey(r.Context(), req.KeyMaterial, params)
+		TenantID:          callerTenantID(r.Context()),
+	})
 	if err != nil {
-		log.Printf("Failed to wrap key: %v", err)
-		handleError(w, err)
+		mapKeyOpError(w, err)
 		return
 	}
 
-	// Build response
-	resp := WrapKeyResponse{
-		WrappedKey:  wrapped.WrappedKey,
-		Algorithm:   string(wrapped.Algorithm),
-		ImportToken: wrapped.ImportToken,
-		Metadata:    wrapped.Metadata,
-	}
-
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(w, WrapKeyResponse{
+		WrappedKey:  resp.WrappedKeyMaterial,
+		Algorithm:   resp.Algorithm,
+		ImportToken: resp.ImportToken,
+		Metadata:    resp.Metadata,
+	}, http.StatusOK)
 }
 
 // UnwrapKeyHandler handles POST /api/v1/keys/unwrap requests. The request must
 // name the backend that performs the unwrap -- it has to be the same backend
 // that produced the wrapped material -- so an empty backend is rejected with
 // 400 rather than silently resolved, matching ImportKeyHandler.
+//
+// UnwrapKey belongs to the service layer for the same reason WrapKeyHandler
+// does; see its doc comment.
 func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request) {
 	var req UnwrapKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1415,6 +1180,12 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Validate backend name ahead of the service call; see WrapKeyHandler.
+	if err := validation.ValidateBackendName(req.Backend); err != nil {
+		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
+		return
+	}
+
 	// Decode wrapping public key from PEM
 	wrappingKey, err := encoding.DecodePublicKeyPEM([]byte(req.WrappingPublicKeyPEM))
 	if err != nil {
@@ -1422,45 +1193,42 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 		writeError(w, &errs.Wrapped{Msg: "invalid wrapping public key", Err: err}, http.StatusBadRequest)
 		return
 	}
-
-	// Build wrapped key material
-	wrapped := &backend.WrappedKeyMaterial{
-		WrappedKey:  req.WrappedKey,
-		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),
-		ImportToken: req.ImportToken,
-		Metadata:    req.Metadata,
-	}
-
-	// Build import parameters
-	params := &backend.ImportParameters{
-		WrappingPublicKey: wrappingKey,
-		Algorithm:         backend.WrappingAlgorithm(req.Algorithm),
-		ImportToken:       req.ImportToken,
-		KeySpec:           req.KeySpec,
-	}
-
-	// Unwrap the key material with the caller-named backend.
-	importBackend, ok := h.resolveImportBackend(w, req.Backend)
-	if !ok {
-		return
-	}
-
-	keyMaterial, err := importBackend.UnwrapKey(r.Context(), wrapped, params)
+	wrappingKeyDER, err := encoding.EncodePublicKeyPKIX(wrappingKey)
 	if err != nil {
-		log.Printf("Failed to unwrap key: %v", err)
-		handleError(w, err)
+		writeError(w, &errs.Wrapped{Msg: "invalid wrapping public key", Err: err}, http.StatusBadRequest)
 		return
 	}
 
-	// Build response
-	resp := UnwrapKeyResponse{
-		KeyMaterial: json.RawMessage(keyMaterial),
+	resp, err := h.xkmsService.UnwrapKey(r.Context(), &transport.UnwrapKeyRequest{
+		Backend:            req.Backend,
+		WrappedKeyMaterial: req.WrappedKey,
+		Algorithm:          req.Algorithm,
+		ImportToken:        req.ImportToken,
+		WrappingPublicKey:  wrappingKeyDER,
+		KeySpec:            req.KeySpec,
+		Metadata:           req.Metadata,
+		TenantID:           callerTenantID(r.Context()),
+	})
+	if err != nil {
+		mapKeyOpError(w, err)
+		return
 	}
 
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(w, UnwrapKeyResponse{
+		KeyMaterial: json.RawMessage(resp.KeyMaterial),
+	}, http.StatusOK)
 }
 
 // ImportKeyHandler handles POST /api/v1/keys/import requests.
+//
+// Import belongs to the service layer, which owns backend resolution
+// (tenant-scoped, per-direction capability assertion -- backend.ImportBackend,
+// never the full ImportExportBackend union, so a backend that genuinely
+// cannot export, AWS KMS by hardware design, is never blocked from importing
+// because of that unrelated limitation), the key-template vocabulary, the RSA
+// floor (go-xkms#1204) and the exportability write-once default. This handler
+// used to reimplement all of that reachable only through the untenanted
+// backend map (go-xkms#1216).
 func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request) {
 	var req ImportKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1504,90 +1272,34 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get the backend
-	ks, err := h.lookupBackend(req.Backend)
+	resp, err := h.xkmsService.ImportKey(r.Context(), &transport.ImportKeyRequest{
+		Backend:            req.Backend,
+		KeyID:              req.KeyID,
+		KeyType:            req.KeyType,
+		KeySize:            req.KeySize,
+		Curve:              req.Curve,
+		Hash:               req.Hash,
+		AESKeySize:         req.AESKeySize,
+		WrappedKeyMaterial: req.WrappedKey,
+		Algorithm:          req.Algorithm,
+		ImportToken:        req.ImportToken,
+		Partition:          req.Partition,
+		Metadata:           req.Metadata,
+		Exportable:         req.Exportable,
+		Sensitive:          req.Sensitive,
+		TenantID:           callerTenantID(r.Context()),
+	})
 	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
+		mapKeyOpError(w, err)
 		return
 	}
 
-	// Check if the backend supports the import half of the ceremony. Asserts
-	// backend.ImportBackend, not the full ImportExportBackend union: a
-	// backend that genuinely cannot export (AWS KMS, by hardware design)
-	// must not be blocked from importing because of that unrelated
-	// limitation. Before this assertion was split, a missing export method
-	// on any backend failed this check and every import through this
-	// handler returned "backend does not support import/export operations"
-	// regardless of whether import itself worked.
-	importBackend, ok := ks.KeyProvider().(backend.ImportBackend)
-	if !ok {
-		writeError(w, backend.ErrImportNotSupported, http.StatusNotImplemented)
-		return
-	}
-
-	// Build key attributes
-	attrs, hashErr := buildKeyAttributes(req.KeyID, req.KeyType, req.KeySize, req.Curve, req.Hash, req.AESKeySize)
-	if hashErr != nil {
-		mapKeyOpError(w, hashErr)
-		return
-	}
-
-	// Build wrapped key material
-	// The request decides whether the key may leave again; the write-once
-	// defaults apply only when it says nothing. This path never set the
-	// flag, so every symmetric key imported over REST was stored
-	// non-exportable while the same import over gRPC or MCP was exportable.
-	xkms.ApplyImportExportability(attrs, req.Exportable, req.Sensitive)
-	attrs.Partition = types.Partition(req.Partition)
-
-	// The service layer's buildKeyAttributes runs this same check
-	// (pkg/xkms/servicer_key.go's validateKeyAttributes) as the last step
-	// before generation or import, enforcing the 2048-bit RSA floor
-	// (go-xkms#1204) among other invariants. This path used to call
-	// importBackend.ImportKey directly from attributes that had never been
-	// through it, so an RSA-1024 import reached the backend unchecked while
-	// the same request to GenerateKey was refused (go-xkms#1214).
-	if err := attrs.Validate(); err != nil {
-		writeError(w, &errs.Wrapped{Msg: "invalid key attributes", Err: err}, http.StatusBadRequest)
-		return
-	}
-
-	wrapped := &backend.WrappedKeyMaterial{
-		WrappedKey:  req.WrappedKey,
-		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),
-		ImportToken: req.ImportToken,
-		Metadata:    req.Metadata,
-	}
-
-	// Import the key
-	if err := importBackend.ImportKey(r.Context(), attrs, wrapped); err != nil {
-		log.Printf("Failed to import key: %v", err)
-		handleError(w, err)
-		return
-	}
-
-	// Build response
-	resp := ImportKeyResponse{
-		Success: true,
-		KeyID:   req.KeyID,
-		Message: fmt.Sprintf("Key %s imported successfully", req.KeyID),
-	}
-
-	// Try to get public key for asymmetric keys
-	if req.KeyType != "symmetric" {
-		privKey, err := ks.GetKey(r.Context(), attrs)
-		if err == nil {
-			pubKey := getPublicKey(privKey)
-			if pubKey != nil {
-				pubKeyPEM, err := encoding.EncodePublicKeyPEM(pubKey)
-				if err == nil {
-					resp.PublicKeyPEM = string(pubKeyPEM)
-				}
-			}
-		}
-	}
-
-	writeJSON(w, resp, http.StatusCreated)
+	writeJSON(w, ImportKeyResponse{
+		Success:      resp.Success,
+		KeyID:        resp.KeyID,
+		Message:      fmt.Sprintf("Key %s imported successfully", resp.KeyID),
+		PublicKeyPEM: resp.PublicKeyPEM,
+	}, http.StatusCreated)
 }
 
 // ExportKeyHandler handles POST /api/v1/keys/{id}/export requests.
@@ -1709,6 +1421,13 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 // SealHandler handles POST /api/v1/seal requests.
 // This endpoint seals (encrypts) data using a backend's sealing mechanism.
 // Sealing may include hardware-backed protection (TPM, HSM) or policy-based access control.
+//
+// The seal belongs to the service layer, which resolves the sealing key --
+// the named one, or the caller's default sealing key when none is named --
+// within the caller's tenant. Another tenant's key is a 404 identical to the
+// one a key no tenant holds produces. This handler used to resolve the key
+// over the unscoped backend and sealed under any tenant's key of that name
+// (go-xkms#1228).
 func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 	var req SealRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1716,15 +1435,8 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate required fields
 	if req.Backend == "" {
 		writeError(w, ErrMissingBackend, http.StatusBadRequest)
-		return
-	}
-
-	// Validate backend name
-	if err := validation.ValidateBackendName(req.Backend); err != nil {
-		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -1733,75 +1445,42 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate KeyID if provided
-	if req.KeyID != "" {
-		if err := ValidateKeyID(req.KeyID); err != nil {
-			writeError(w, &errs.Wrapped{Msg: "invalid key ID", Err: err}, http.StatusBadRequest)
-			return
-		}
-	}
-
-	// Build seal options
-	opts := &types.SealOptions{
-		AAD: req.AAD,
-	}
-
-	// If key ID is provided, look up the key to get its actual attributes
-	if req.KeyID != "" {
-		// Get the backend to look up the key
-		ks, err := h.lookupBackend(req.Backend)
-		if err != nil {
-			writeError(w, ErrBackendNotFound, http.StatusNotFound)
-			return
-		}
-
-		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys(r.Context())
-		if err != nil {
-			log.Printf("Failed to list keys: %v", err)
-			handleError(w, err)
-			return
-		}
-
-		var targetAttr *types.KeyAttributes
-		for _, attr := range keyAttrs {
-			if attr.CN == req.KeyID {
-				targetAttr = attr
-				break
-			}
-		}
-
-		if targetAttr == nil {
-			writeError(w, backend.ErrKeyNotFound, http.StatusNotFound)
-			return
-		}
-
-		opts.KeyAttributes = targetAttr
-	}
-
-	// Seal the data using the xkms service
-	sealed, err := h.sealWithBackend(r.Context(), req.Backend, req.Data, opts)
-	if err != nil {
-		log.Printf("Failed to seal data: %v", err)
-		handleError(w, err)
+	if h.xkmsService == nil {
+		mapKeyOpError(w, xkms.ErrNotInitialized)
 		return
 	}
 
-	// Build response
-	resp := SealResponse{
-		Backend:    string(sealed.Backend),
+	sealed, err := h.xkmsService.Seal(r.Context(), &transport.SealRequest{
+		Backend:  req.Backend,
+		KeyID:    req.KeyID,
+		Data:     req.Data,
+		AAD:      req.AAD,
+		TenantID: callerTenantID(r.Context()),
+	})
+	if err != nil {
+		mapKeyOpError(w, err)
+		return
+	}
+
+	writeJSON(w, SealResponse{
+		Backend:    sealed.Backend,
 		Ciphertext: sealed.Ciphertext,
 		Nonce:      sealed.Nonce,
 		Tag:        sealed.Tag,
 		Metadata:   sealed.Metadata,
-	}
-
-	writeJSON(w, resp, http.StatusOK)
+	}, http.StatusOK)
 }
 
 // UnsealHandler handles POST /api/v1/unseal requests.
 // This endpoint unseals (decrypts) data that was previously sealed.
 // The sealed data must have been created by the same backend type.
+//
+// As with SealHandler, the key is resolved within the caller's tenant by the
+// service, so a blob sealed under another tenant's key -- named, or that
+// tenant's default sealing key -- does not unseal here. This handler used to
+// resolve the key over the unscoped backend, so a tenant that held another
+// tenant's blob and knew its key's name recovered the plaintext
+// (go-xkms#1228).
 func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 	var req UnsealRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1809,15 +1488,8 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate required fields
 	if req.Backend == "" {
 		writeError(w, ErrMissingBackend, http.StatusBadRequest)
-		return
-	}
-
-	// Validate backend name
-	if err := validation.ValidateBackendName(req.Backend); err != nil {
-		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
 
@@ -1826,76 +1498,27 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate KeyID if provided
-	if req.KeyID != "" {
-		if err := ValidateKeyID(req.KeyID); err != nil {
-			writeError(w, &errs.Wrapped{Msg: "invalid key ID", Err: err}, http.StatusBadRequest)
-			return
-		}
-	}
-
-	// Get backend to determine backend type
-	ks, err := h.lookupBackend(req.Backend)
-	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
+	if h.xkmsService == nil {
+		mapKeyOpError(w, xkms.ErrNotInitialized)
 		return
 	}
 
-	// Build sealed data structure
-	sealed := &types.SealedData{
-		Backend:    ks.KeyProvider().Type(),
+	resp, err := h.xkmsService.Unseal(r.Context(), &transport.UnsealRequest{
+		Backend:    req.Backend,
+		KeyID:      req.KeyID,
 		Ciphertext: req.Ciphertext,
 		Nonce:      req.Nonce,
 		Tag:        req.Tag,
+		AAD:        req.AAD,
 		Metadata:   req.Metadata,
-	}
-
-	// Build unseal options
-	opts := &types.UnsealOptions{
-		AAD: req.AAD,
-	}
-
-	// If key ID is provided, look up the key to get its actual attributes
-	if req.KeyID != "" {
-		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys(r.Context())
-		if err != nil {
-			log.Printf("Failed to list keys: %v", err)
-			handleError(w, err)
-			return
-		}
-
-		var targetAttr *types.KeyAttributes
-		for _, attr := range keyAttrs {
-			if attr.CN == req.KeyID {
-				targetAttr = attr
-				break
-			}
-		}
-
-		if targetAttr == nil {
-			writeError(w, backend.ErrKeyNotFound, http.StatusNotFound)
-			return
-		}
-
-		opts.KeyAttributes = targetAttr
-		sealed.KeyID = targetAttr.ID() // Use storage format to match what Seal stores
-	}
-
-	// Unseal the data using the xkms service
-	plaintext, err := h.unsealWithBackend(r.Context(), req.Backend, sealed, opts)
+		TenantID:   callerTenantID(r.Context()),
+	})
 	if err != nil {
-		log.Printf("Failed to unseal data: %v", err)
-		handleError(w, err)
+		mapKeyOpError(w, err)
 		return
 	}
 
-	// Build response
-	resp := UnsealResponse{
-		Plaintext: plaintext,
-	}
-
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(w, UnsealResponse{Plaintext: resp.Plaintext}, http.StatusOK)
 }
 
 // CanSealHandler handles GET /api/v1/seal/capability requests.

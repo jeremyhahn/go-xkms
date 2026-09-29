@@ -5,15 +5,19 @@
 ## Store a password
 
 ```bash
-xkey password add --name "DatabaseProd" --password "s3cretP@ss!"
+xkey password add --name "DatabaseProd" --password-stdin < password.txt
 
 # With metadata the browser extension uses for autofill matching
-xkey password add --name "GitHubWork" --password "tok_abc123" \
+XKEY_STATIC_PASSWORD="tok_abc123" xkey password add --name "GitHubWork" \
   --title "GitHub (Work)" --username "jdoe" --url "https://github.com"
 
 # Generate one instead of typing it
 xkey password add --name "ServiceAccount" --generate --length 64
 ```
+
+There is no `--password` value flag: a value on the command line is visible
+to every other process on the host via `ps`. The password comes from
+`--password-stdin` or `XKEY_STATIC_PASSWORD` instead.
 
 ## Retrieve a password
 
@@ -68,7 +72,7 @@ the local store's location:
 # Switch to session mode: one PIN entry unlocks everything until locked
 xkey password access-mode --mode session_based --xkmsd-url https://xkms.example.com
 
-xkey password unlock --pin "1234" --xkmsd-url https://xkms.example.com
+XKEY_PIN="1234" xkey password unlock --xkmsd-url https://xkms.example.com
 xkey password lock --xkmsd-url https://xkms.example.com
 
 # See the session's access mode and lock state

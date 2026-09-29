@@ -84,7 +84,7 @@ sessions with no desktop environment.
 | `--socket` | auto-detect | IPC Unix socket path |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
 | `--log-file` | stderr | Log file path |
-| `--barrier-password` | | Barrier password |
+| `--barrier-password-stdin` | `false` | Read the barrier password from standard input |
 | `--barrier-password-file` | | Read the barrier password from a file (first line) |
 | `--no-barrier` | `false` | Plain file storage, no encryption (testing/development) |
 | `--auto-lock-minutes` | `15` | Inactivity lock timeout (`0` disables) |
@@ -101,7 +101,7 @@ with a typed error naming why a headless process cannot drive it — see
 
 ```bash
 # Production: barrier-encrypted
-xkey extension serve --barrier-password "my-secret"
+echo -n "my-secret" | xkey extension serve --barrier-password-stdin
 XKEY_BARRIER_PASSWORD=secret xkey extension serve
 
 # Honor a sealed enterprise policy

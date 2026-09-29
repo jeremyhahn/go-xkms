@@ -25,6 +25,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
 
 // This file covers pkg/api/grpc/service_frost.go's signing round trip
@@ -214,12 +216,24 @@ func TestFrostDeleteKey_Success(t *testing.T) {
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
-// TestGetFrostBackend_NoBackendConfigured proves a deployment with no FROST
-// backend registered fails closed with Internal (getFrostBackend's own "no
-// FROST backend configured" error) rather than by panicking on a nil
-// backend list.
-func TestGetFrostBackend_NoBackendConfigured(t *testing.T) {
-	svc := NewService(nil, nil, nil)
-	_, err := svc.FrostListKeys(context.Background(), &pb.FrostListKeysRequest{})
+// TestFrostRPCs_NoBackendConfigured proves a deployment with no FROST backend
+// fails closed: Unavailable without an xkms service, as every service-layer
+// RPC does, and Internal (the service's ErrFrostNotConfigured) with a service
+// that registers no FROST backend -- never a panic on a nil backend.
+func TestFrostRPCs_NoBackendConfigured(t *testing.T) {
+	_, err := NewService(nil, nil, nil).FrostListKeys(context.Background(), &pb.FrostListKeysRequest{})
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"software": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "software",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+
+	_, err = NewService(nil, nil, svc).FrostListKeys(context.Background(), &pb.FrostListKeysRequest{})
 	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), xkms.ErrFrostNotConfigured.Error())
 }

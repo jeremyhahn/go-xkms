@@ -1,6 +1,6 @@
 # Certificate Authority — API
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 Transport shapes are described once in
 [`../key-management/api.md`](../key-management/api.md) §"How the six transports
@@ -64,6 +64,52 @@ Storage of a certificate against a keystore key — distinct from issuance.
 | Save chain | `POST /api/v1/certs/{id}/chain` | `SaveCertChain` | same as REST | `xkms.saveCertChain` | `SaveCertificateChain` | `certs:generate` |
 | Get chain | `GET /api/v1/certs/{id}/chain` | `GetCertChain` | same as REST | `xkms.getCertChain` | `GetCertificateChain` | `certs:read` |
 | TLS certificate | `GET /api/v1/tls/{id}` | `GetTLSCertificate` | same as REST | `xkms.getTLSCertificate` | `GetTLSCertificate` | `certs:read` |
+
+#### Certificate storage is tenant-scoped (go-xkms#1228)
+
+Every transport is a thin adapter over the `XKMSService` certificate methods
+(`pkg/xkms/servicer_cert.go:29-284`): REST `SaveCertHandler` through
+`GetTLSCertificateHandler` (`pkg/api/rest/handlers.go:772-1003`), gRPC
+`SaveCert` through `GetTLSCertificate` (`pkg/api/grpc/service.go:751-962`), and
+MCP `handleSaveCert` through `handleGetTLSCertificate`
+(`pkg/api/mcp/handlers.go:766-958`). The service resolves the backend through
+the caller's tenant (`resolveTenantBackend`,
+`pkg/xkms/servicer_helpers.go:98`), which stores a tenant's certificates under
+`{tenant}/{keyID}` (`scopeCertKeyID`, `pkg/xkms/backend_tenant.go:58`). Save
+and SaveChain take the tenant from the request's `TenantID`, which each
+transport fills from the authenticated identity; the other methods read it
+from the identity on the context (`scopedTenantIDFromContext`,
+`pkg/xkms/servicer_password.go:93`).
+
+- A tenant reads, writes, lists and deletes only its own certificates. The
+  platform's certificates (stored unprefixed) and another tenant's are exactly
+  as absent as a certificate nobody stored: the same status and the same
+  body. A save under an ID another owner uses lands in the caller's own
+  namespace and leaves the other certificate untouched.
+- A key ID is validated before use, and validation refuses `/`
+  (`simpleKeyIDPattern`, `pkg/validation/validation.go:48`), so `tenant-b/web`
+  is a malformed ID (`400` / `InvalidArgument` / Invalid params), never a path
+  into tenant B's namespace.
+- `ListCerts` returns the caller's certificates under the IDs it used, sorted,
+  and pages them in the service (`pkg/xkms/servicer_cert.go:156`).
+- A platform-scoped caller (no identity, or the system tenant) operates on
+  the unscoped store and sees every entry, including `tenant/id` ones.
+- `GetTLSCertificate` reads the leaf and the chain from the caller's
+  namespace. It no longer loads the private key to build a bundle that never
+  carries it, and `chain_pem` omits the leaf when the stored chain opens with
+  it (`pkg/xkms/servicer_cert.go:284`).
+
+Wire changes: REST `ListCerts` fills `subject`, `issuer`, `not_before`,
+`not_after`, `serial_number` and `certificate_pem`; a missing certificate is
+`404` / `NotFound` / Not found on every transport, and a malformed PEM is
+`400` / `InvalidArgument` / Invalid params with the service's message
+(`keystore: invalid PEM encoding`, `keystore: invalid certificate: ...`).
+gRPC's certificate RPCs use the default backend rather than whichever
+backend the registry listed first, and report `Unavailable` when no service is
+wired. Verified by `pkg/api/rest/handlers_certseal_crosstenant_test.go`,
+`pkg/api/grpc/service_certseal_crosstenant_test.go`,
+`pkg/api/mcp/handlers_certseal_crosstenant_test.go` and
+`pkg/xkms/servicer_certseal_tenant_test.go`.
 
 ## Missing coverage, recorded
 

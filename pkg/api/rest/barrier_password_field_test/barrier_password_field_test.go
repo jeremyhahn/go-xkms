@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // newTestBarrierHandler wires a HandlerContext backed by a fresh
@@ -51,8 +52,12 @@ func newTestBarrierHandler(t *testing.T) (*rest.HandlerContext, *seal.Barrier) {
 		t.Fatalf("NewBarrier: %v", err)
 	}
 
+	// The barrier handlers reach the barrier only through the XKMSService,
+	// which enforces its platform scope.
+	svc := &xkms.XKMSService{}
+	svc.SetBarrier(barrier)
 	h := rest.NewHandlerContext("test")
-	h.SetBarrier(barrier)
+	h.SetXKMSService(svc)
 	return h, barrier
 }
 

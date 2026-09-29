@@ -21,7 +21,6 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -457,22 +456,8 @@ func TestAuthzDeny_BarrierPINMethods(t *testing.T) {
 	SetBarrierRegistry(reg)
 	defer SetBarrierRegistry(oldReg)
 
-	b, err := seal.NewBarrier(
-		discardLogger(),
-		nil,
-		seal.BarrierConfig{
-			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-		},
-		seal.NewSoftwareStrategy(),
-	)
-	// Only set barrier if creation succeeded
-	if err == nil {
-		oldB := GetBarrier()
-		SetBarrier(b)
-		defer SetBarrier(oldB)
-	}
-
+	// The authorization gate runs before the service is consulted, so no
+	// barrier is composed: a denial must not depend on one being there.
 	tests := []struct {
 		name string
 		fn   func() error

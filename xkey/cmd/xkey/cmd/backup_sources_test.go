@@ -141,6 +141,19 @@ func seedBackupStores(t *testing.T, home string) {
 // commands read. An empty value supplies no password.
 const backupPasswordTestKey = "password"
 
+// backupKeyTestKey is the setBackupFlags key that supplies the backup's raw
+// hex key. There is no --key value flag (go-xkms#1209): the value is routed
+// through XKEY_BACKUP_KEY, one of the two sources "backup restore",
+// "backup contents" and "backup from-device" read. An empty value supplies
+// no key.
+const backupKeyTestKey = "key"
+
+// backupBarrierPasswordTestKey is the setBackupFlags key that supplies the
+// barrier password. There is no --barrier-password value flag
+// (go-xkms#1209): the value is routed through XKEY_BARRIER_PASSWORD, one of
+// the sources resolveBarrierPassword reads.
+const backupBarrierPasswordTestKey = "barrier-password"
+
 // setBackupPassword supplies password to the backup commands through the
 // XKEY_BACKUP_PASSWORD environment source for the rest of the test.
 func setBackupPassword(t *testing.T, password string) {
@@ -148,13 +161,27 @@ func setBackupPassword(t *testing.T, password string) {
 	t.Setenv(backupPasswordSource.envVar, password)
 }
 
+// setBackupKey supplies the raw hex key to the backup commands through the
+// XKEY_BACKUP_KEY environment source for the rest of the test.
+func setBackupKey(t *testing.T, keyHex string) {
+	t.Helper()
+	t.Setenv(backupKeySource.envVar, keyHex)
+}
+
 func setBackupFlags(t *testing.T, cmd *cobra.Command, values map[string]string) {
 	t.Helper()
 
 	previous := make(map[string]string, len(values))
 	for name, value := range values {
-		if name == backupPasswordTestKey {
+		switch name {
+		case backupPasswordTestKey:
 			setBackupPassword(t, value)
+			continue
+		case backupKeyTestKey:
+			setBackupKey(t, value)
+			continue
+		case backupBarrierPasswordTestKey:
+			t.Setenv(barrierPasswordSource.envVar, value)
 			continue
 		}
 		flag := cmd.Flags().Lookup(name)

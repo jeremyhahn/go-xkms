@@ -18,7 +18,7 @@
 3. Run xKey — either the desktop GUI, or headless:
 
    ```bash
-   xkey extension serve --barrier-password "my-secret"
+   echo -n "my-secret" | xkey extension serve --barrier-password-stdin
    ```
 
 ## Pair the extension (first connection only)
@@ -71,7 +71,7 @@ use.
 ## Run headless (server, SSH session, no desktop)
 
 ```bash
-xkey extension serve --barrier-password "my-secret"
+echo -n "my-secret" | xkey extension serve --barrier-password-stdin
 # or, with an already-provisioned TPM-sealed barrier:
 xkey extension serve --tpm-device /dev/tpmrm0
 ```

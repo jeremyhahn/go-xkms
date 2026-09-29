@@ -87,6 +87,25 @@ func getServerURL() string {
 	return url
 }
 
+// trustedRootPEM returns the PEM-encoded contents of ACME_CA_CERT, the same
+// environment variable getTLSConfig reads, for callers that build their own
+// TLS trust store instead of a *tls.Config directly -- notably
+// pkg/acme/client.Config.TrustedRoots (see createTestACMEClient), which
+// takes PEM strings rather than a cert pool. Returns "" when the variable is
+// unset or the file cannot be read, so callers fail the same way
+// getTLSConfig does: an empty trust store, never InsecureSkipVerify.
+func trustedRootPEM() string {
+	caFile := os.Getenv("ACME_CA_CERT")
+	if caFile == "" {
+		return ""
+	}
+	pemBytes, err := os.ReadFile(caFile)
+	if err != nil {
+		return ""
+	}
+	return string(pemBytes)
+}
+
 func getTLSConfig() *tls.Config {
 	caFile := os.Getenv("ACME_CA_CERT")
 	if caFile != "" {
@@ -117,6 +136,17 @@ func fetchNonce(client *http.Client, serverURL string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+
+	// Check the status before the header: a 429 (or any non-2xx) response
+	// carries no Replay-Nonce header either, and reading only the header
+	// turned a rate-limit error into the uninformative "no nonce in
+	// response" -- the same failure text regardless of cause. Surfacing the
+	// status and body here means the next person sees the real problem
+	// document instead of having to re-derive it from server-side logs.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", caerrors.ConnectionFailureError("unexpected status code %d fetching nonce: %s", resp.StatusCode, string(body))
+	}
 
 	nonce := resp.Header.Get("Replay-Nonce")
 	if nonce == "" {

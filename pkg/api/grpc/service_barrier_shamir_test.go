@@ -60,8 +60,8 @@ func setupShamirBarrier(t *testing.T, threshold, total int) (*seal.Barrier, *sha
 	b.SetCeremonyDistributor(dist)
 	b.SetRecoveryDistributor(recoveryDist)
 
-	SetBarrier(b)
-	t.Cleanup(func() { SetBarrier(nil) })
+	testBarrier = b
+	t.Cleanup(func() { testBarrier = nil })
 	return b, dist
 }
 
@@ -91,8 +91,8 @@ func setupCredentialShamirBarrier(t *testing.T, threshold, total int) (*seal.Bar
 	b.SetCeremonyDistributor(dist)
 	b.SetRecoveryDistributor(recoveryDist)
 
-	SetBarrier(b)
-	t.Cleanup(func() { SetBarrier(nil) })
+	testBarrier = b
+	t.Cleanup(func() { testBarrier = nil })
 	return b, dist
 }
 
@@ -100,7 +100,7 @@ func setupCredentialShamirBarrier(t *testing.T, threshold, total int) (*seal.Bar
 
 func TestBarrierInitializeShamir_Success(t *testing.T) {
 	b, dist := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	resp, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -119,7 +119,7 @@ func TestBarrierInitializeShamir_Success(t *testing.T) {
 
 func TestBarrierInitializeShamir_CredentialMode(t *testing.T) {
 	_, dist := setupCredentialShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	resp, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{
@@ -135,21 +135,19 @@ func TestBarrierInitializeShamir_CredentialMode(t *testing.T) {
 }
 
 func TestBarrierInitializeShamir_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierInitializeShamir(context.Background(), &pb.BarrierInitializeShamirRequest{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-	assert.Contains(t, st.Message(), "barrier not configured")
+	assert.Equal(t, codes.Unavailable, st.Code())
+	assert.Contains(t, st.Message(), "subsystem not configured")
 }
 
 func TestBarrierInitializeShamir_AlreadyInitialized(t *testing.T) {
 	_, _ = setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// First init succeeds.
@@ -167,7 +165,7 @@ func TestBarrierInitializeShamir_AlreadyInitialized(t *testing.T) {
 func TestBarrierInitializeShamir_NoShamirConfig(t *testing.T) {
 	// Create a barrier without Shamir config.
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierInitializeShamir(context.Background(), &pb.BarrierInitializeShamirRequest{})
 	require.Error(t, err)
@@ -180,7 +178,7 @@ func TestBarrierInitializeShamir_NoShamirConfig(t *testing.T) {
 
 func TestBarrierUnsealShare_Success(t *testing.T) {
 	b, dist := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Initialize to get shares via the distributor.
@@ -213,9 +211,7 @@ func TestBarrierUnsealShare_Success(t *testing.T) {
 }
 
 func TestBarrierUnsealShare_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierUnsealShare(context.Background(), &pb.BarrierUnsealShareRequest{
 		Share: "some-share",
@@ -223,12 +219,12 @@ func TestBarrierUnsealShare_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestBarrierUnsealShare_DuplicateShare(t *testing.T) {
 	b, dist := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -257,7 +253,7 @@ func TestBarrierUnsealShare_DuplicateShare(t *testing.T) {
 
 func TestBarrierUnsealShare_AlreadyUnsealed(t *testing.T) {
 	_, dist := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -278,7 +274,7 @@ func TestBarrierUnsealShare_AlreadyUnsealed(t *testing.T) {
 
 func TestBarrierUnsealShares_Success(t *testing.T) {
 	b, dist := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -300,9 +296,7 @@ func TestBarrierUnsealShares_Success(t *testing.T) {
 }
 
 func TestBarrierUnsealShares_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierUnsealShares(context.Background(), &pb.BarrierUnsealSharesRequest{
 		Shares: []string{"share1", "share2"},
@@ -310,12 +304,12 @@ func TestBarrierUnsealShares_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestBarrierUnsealShares_InsufficientShares(t *testing.T) {
 	_, dist := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -337,7 +331,7 @@ func TestBarrierUnsealShares_InsufficientShares(t *testing.T) {
 
 func TestBarrierUnsealShares_AlreadyUnsealed(t *testing.T) {
 	_, dist := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -358,7 +352,7 @@ func TestBarrierUnsealShares_AlreadyUnsealed(t *testing.T) {
 
 func TestBarrierRekey_Success(t *testing.T) {
 	_, _ = setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -376,9 +370,7 @@ func TestBarrierRekey_Success(t *testing.T) {
 }
 
 func TestBarrierRekey_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierRekey(context.Background(), &pb.BarrierRekeyRequest{
 		Threshold: 2,
@@ -387,12 +379,12 @@ func TestBarrierRekey_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestBarrierRekey_InvalidThreshold(t *testing.T) {
 	_, _ = setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -411,7 +403,7 @@ func TestBarrierRekey_InvalidThreshold(t *testing.T) {
 
 func TestBarrierRekey_ThresholdExceedsTotal(t *testing.T) {
 	_, _ = setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -430,7 +422,7 @@ func TestBarrierRekey_ThresholdExceedsTotal(t *testing.T) {
 
 func TestBarrierRekey_Sealed(t *testing.T) {
 	b, _ := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -453,7 +445,7 @@ func TestBarrierRekey_Sealed(t *testing.T) {
 
 func TestBarrierRekey_NoShamirStrategy(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Initialize with software strategy.
@@ -475,7 +467,7 @@ func TestBarrierRekey_NoShamirStrategy(t *testing.T) {
 
 func TestBarrierGenerateRecoveryKeys_Success(t *testing.T) {
 	b, _ := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -497,9 +489,7 @@ func TestBarrierGenerateRecoveryKeys_Success(t *testing.T) {
 }
 
 func TestBarrierGenerateRecoveryKeys_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierGenerateRecoveryKeys(context.Background(), &pb.BarrierGenerateRecoveryKeysRequest{
 		Threshold: 2,
@@ -508,12 +498,12 @@ func TestBarrierGenerateRecoveryKeys_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestBarrierGenerateRecoveryKeys_InvalidThreshold(t *testing.T) {
 	_, _ = setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -532,7 +522,7 @@ func TestBarrierGenerateRecoveryKeys_InvalidThreshold(t *testing.T) {
 
 func TestBarrierGenerateRecoveryKeys_ThresholdExceedsTotal(t *testing.T) {
 	_, _ = setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -550,7 +540,7 @@ func TestBarrierGenerateRecoveryKeys_ThresholdExceedsTotal(t *testing.T) {
 
 func TestBarrierGenerateRecoveryKeys_Sealed(t *testing.T) {
 	_, _ = setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Barrier is sealed (not initialized). Recovery keys need an unsealed barrier.
@@ -568,7 +558,7 @@ func TestBarrierGenerateRecoveryKeys_Sealed(t *testing.T) {
 
 func TestBarrierRecoverWithKeys_Success(t *testing.T) {
 	b, _ := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -601,9 +591,7 @@ func TestBarrierRecoverWithKeys_Success(t *testing.T) {
 }
 
 func TestBarrierRecoverWithKeys_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierRecoverWithKeys(context.Background(), &pb.BarrierRecoverWithKeysRequest{
 		Keys: []string{"key1", "key2"},
@@ -611,12 +599,12 @@ func TestBarrierRecoverWithKeys_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestBarrierRecoverWithKeys_NoRecoveryKeys(t *testing.T) {
 	_, _ = setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -637,7 +625,7 @@ func TestBarrierRecoverWithKeys_NoRecoveryKeys(t *testing.T) {
 
 func TestBarrierRecoverWithKeys_AlreadyUnsealed(t *testing.T) {
 	b, _ := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -669,7 +657,7 @@ func TestBarrierRecoverWithKeys_AlreadyUnsealed(t *testing.T) {
 
 func TestBarrierDeleteRecoveryKeys_Success(t *testing.T) {
 	_, _ = setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -689,20 +677,18 @@ func TestBarrierDeleteRecoveryKeys_Success(t *testing.T) {
 }
 
 func TestBarrierDeleteRecoveryKeys_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierDeleteRecoveryKeys(context.Background(), &emptypb.Empty{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestBarrierDeleteRecoveryKeys_Sealed(t *testing.T) {
 	_, _ = setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Barrier is sealed (not initialized). Deleting recovery keys should fail.
@@ -717,7 +703,7 @@ func TestBarrierDeleteRecoveryKeys_Sealed(t *testing.T) {
 
 func TestBarrierGenerateRootToken_Success(t *testing.T) {
 	_, dist := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -734,9 +720,7 @@ func TestBarrierGenerateRootToken_Success(t *testing.T) {
 }
 
 func TestBarrierGenerateRootToken_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierGenerateRootToken(context.Background(), &pb.BarrierGenerateRootTokenRequest{
 		Shares: []string{"share1", "share2"},
@@ -744,12 +728,12 @@ func TestBarrierGenerateRootToken_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestBarrierGenerateRootToken_InsufficientShares(t *testing.T) {
 	_, dist := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -768,7 +752,7 @@ func TestBarrierGenerateRootToken_InsufficientShares(t *testing.T) {
 
 func TestBarrierGenerateRootToken_InvalidShares(t *testing.T) {
 	_, _ = setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -783,7 +767,7 @@ func TestBarrierGenerateRootToken_InvalidShares(t *testing.T) {
 
 func TestBarrierGenerateRootToken_UniqueTokens(t *testing.T) {
 	_, dist := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
@@ -806,7 +790,7 @@ func TestBarrierGenerateRootToken_UniqueTokens(t *testing.T) {
 
 func TestBarrierGenerateRootToken_CredentialMode(t *testing.T) {
 	_, dist := setupCredentialShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{
@@ -909,7 +893,7 @@ func TestBarrierErrorMapping_ShamirErrors(t *testing.T) {
 
 func TestBarrierShamir_FullLifecycle(t *testing.T) {
 	b, dist := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// 1. Initialize with Shamir; shares go to the ceremony distributor.
@@ -979,7 +963,7 @@ func TestBarrierShamir_FullLifecycle(t *testing.T) {
 
 func TestBarrierShamir_RecoveryKeyLifecycle(t *testing.T) {
 	b, _ := setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Initialize.

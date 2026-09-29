@@ -23,6 +23,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"math/big"
 	"sync/atomic"
 	"testing"
@@ -37,6 +38,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // providerOnly narrows a key provider to types.KeyProvider, so the backend
@@ -113,8 +115,9 @@ func TestGetImportParameters_RunsAgainstTheNamedBackend(t *testing.T) {
 
 	_, err = server.handleGetImportParameters(context.Background(),
 		rpc(t, "xkms.getImportParameters", GetImportParametersParams{KeyID: "routed", Backend: "second", Algorithm: "RSAES_OAEP_SHA_256"}))
-	require.Error(t, err, "the named backend has no import/export capability")
-	assert.Contains(t, err.Error(), "does not support import/export")
+	require.Error(t, err, "the named backend has no import capability")
+	assert.Contains(t, err.Error(), backend.ErrImportNotSupported.Error(),
+		"the refusal names the missing import half")
 	assert.False(t, errors.Is(err, ErrInvalidBackend), "a registered backend is not an invalid one")
 }
 
@@ -162,16 +165,16 @@ func TestGetTLSCertificate_LooksTheKeyUpInTheNamedBackend(t *testing.T) {
 	tlsResult, ok := result.(transport.GetTLSCertificateResponse)
 	require.True(t, ok)
 	assert.Contains(t, tlsResult.CertificatePEM, "BEGIN CERTIFICATE")
-	// "second" is not a store-type keyword. The store type the backend
-	// recorded for the key must reach the retrieval, not StoreUnknown from
-	// parsing the name: a composite backend dispatches the private key on it.
-	assert.Equal(t, types.StoreSoftware, second.tlsStoreType.Load(), "the key's own store type reaches the backend")
-	assert.NotEqual(t, types.ParseStoreType("second"), second.tlsStoreType.Load(), "the name's parse would have been StoreUnknown")
+	// The bundle is read from the certificate store. It carries no private
+	// key, so the private key is never loaded to build it (go-xkms#1228).
+	assert.Nil(t, second.tlsStoreType.Load(), "the private key must not be loaded for a public bundle")
 
 	_, err = server.handleGetTLSCertificate(context.Background(),
 		rpc(t, "xkms.getTLSCertificate", GetTLSCertificateParams{KeyID: "routed-tls"}))
-	require.Error(t, err, "the default backend does not hold the key")
-	assert.Contains(t, err.Error(), "key not found")
+	require.Error(t, err, "the default backend does not hold the certificate")
+	var keyErr *KeyOpError
+	require.ErrorAs(t, err, &keyErr)
+	assert.Equal(t, sdkssh.JSONRPCCodeNotFound, keyErr.Code)
 }
 
 // TestAsymmetricCrypto_ChecksTheKeyInTheNamedBackend proves the key

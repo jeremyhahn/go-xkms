@@ -34,8 +34,9 @@
   // ---- copy ----
   let cDestBackend = $state("");
   let cDestKeyId = $state(untrack(() => `${keyInfo.key_id}-copy`));
-  let cKeySize = $state<number | undefined>(undefined);
-  let cCurve = $state("");
+  // The copy takes its key attributes from the source (go-xkms#1223); the
+  // only choice left is how the material is wrapped in transit.
+  let cAlgorithm = $state<string>(algorithms[0]);
   let cBusy = $state(false);
   let cErr = $state<string | null>(null);
 
@@ -89,10 +90,7 @@
         source_key_id: keyInfo.key_id,
         dest_backend: cDestBackend,
         dest_key_id: cDestKeyId.trim(),
-        key_type: keyInfo.key_type,
-        algorithm: keyInfo.algorithm,
-        ...(cKeySize !== undefined ? { key_size: cKeySize } : {}),
-        ...(cCurve !== "" ? { curve: cCurve } : {}),
+        algorithm: cAlgorithm,
       });
       showToast("success", `Key copied to ${cDestBackend} as "${cDestKeyId}".`);
       onChanged();
@@ -186,20 +184,12 @@
         <span class="label-text">Destination key ID</span>
         <input class="input input-bordered input-sm" bind:value={cDestKeyId} />
       </label>
-      {#if keyInfo.key_type === "rsa" || keyInfo.key_type === "symmetric"}
-        <label class="form-control">
-          <span class="label-text">Key size (bits)</span>
-          <input type="number" class="input input-bordered input-sm" placeholder="source default" bind:value={cKeySize} />
-        </label>
-      {:else if keyInfo.key_type === "ecdsa"}
-        <label class="form-control">
-          <span class="label-text">Curve</span>
-          <select class="select select-bordered select-sm" bind:value={cCurve}>
-            <option value="">Source default</option>
-            <option>P-256</option><option>P-384</option><option>P-521</option>
-          </select>
-        </label>
-      {/if}
+      <label class="form-control">
+        <span class="label-text">Wrapping algorithm</span>
+        <select class="select select-bordered select-sm" bind:value={cAlgorithm}>
+          {#each algorithms as a (a)}<option value={a}>{a}</option>{/each}
+        </select>
+      </label>
     </div>
 
     <button class="btn btn-sm" onclick={doCopy} disabled={cBusy}>

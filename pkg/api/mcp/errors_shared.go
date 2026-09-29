@@ -21,9 +21,10 @@ import (
 
 // classToJSONRPCCode translates apierrors.Class onto this transport's
 // JSON-RPC error code. It is total over every Class the apierrors tables
-// this package reads (ImportExportSentinelClasses, PIVSentinelClasses,
-// BarrierSentinelClasses, PINSentinelClasses, SealStoreSentinelClasses,
-// CustodianSentinelClasses, PolicySentinelClasses) can produce;
+// this package reads (ImportExportSentinelClasses, AEADSentinelClasses,
+// PIVSentinelClasses, BarrierSentinelClasses, PINSentinelClasses,
+// SealStoreSentinelClasses, CustodianSentinelClasses, PolicySentinelClasses)
+// can produce;
 // jsonRPCCodeForClass's ErrCodeInternalError floor exists only for a Class a
 // future apierrors table introduces without a row here.
 //

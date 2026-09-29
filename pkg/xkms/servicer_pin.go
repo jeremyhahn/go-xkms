@@ -21,6 +21,12 @@ import (
 )
 
 // PINServicer defines operations for managing Security Officer and User PINs.
+//
+// The PINs guard the platform's own token, so every method is
+// platform-scoped (requirePlatformScope, go-xkms#1227): a tenant-scoped caller
+// is refused with a *TenantBindingError that reads as not-found, before the
+// PIN backend is touched -- a refused attempt does not even count toward the
+// lockout.
 type PINServicer interface {
 	SetSOPIN(ctx context.Context, req *transport.SetSOPINRequest) error
 	SetUserPIN(ctx context.Context, req *transport.SetUserPINRequest) error
@@ -34,6 +40,9 @@ type PINServicer interface {
 
 // SetSOPIN sets the Security Officer PIN.
 func (s *XKMSService) SetSOPIN(ctx context.Context, req *transport.SetSOPINRequest) error {
+	if err := requirePlatformScope(ctx, "set SO PIN", ""); err != nil {
+		return err
+	}
 	if s.pinManager == nil {
 		return ErrNotConfigured
 	}
@@ -42,6 +51,9 @@ func (s *XKMSService) SetSOPIN(ctx context.Context, req *transport.SetSOPINReque
 
 // SetUserPIN sets the User PIN using the Security Officer PIN for authorization.
 func (s *XKMSService) SetUserPIN(ctx context.Context, req *transport.SetUserPINRequest) error {
+	if err := requirePlatformScope(ctx, "set user PIN", ""); err != nil {
+		return err
+	}
 	if s.pinManager == nil {
 		return ErrNotConfigured
 	}
@@ -50,6 +62,9 @@ func (s *XKMSService) SetUserPIN(ctx context.Context, req *transport.SetUserPINR
 
 // ChangeSOPIN changes the Security Officer PIN.
 func (s *XKMSService) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPINRequest) error {
+	if err := requirePlatformScope(ctx, "change SO PIN", ""); err != nil {
+		return err
+	}
 	if s.pinManager == nil {
 		return ErrNotConfigured
 	}
@@ -58,6 +73,9 @@ func (s *XKMSService) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPI
 
 // ChangeUserPIN changes the User PIN.
 func (s *XKMSService) ChangeUserPIN(ctx context.Context, req *transport.ChangeUserPINRequest) error {
+	if err := requirePlatformScope(ctx, "change user PIN", ""); err != nil {
+		return err
+	}
 	if s.pinManager == nil {
 		return ErrNotConfigured
 	}
@@ -66,6 +84,9 @@ func (s *XKMSService) ChangeUserPIN(ctx context.Context, req *transport.ChangeUs
 
 // VerifySOPIN verifies the Security Officer PIN.
 func (s *XKMSService) VerifySOPIN(ctx context.Context, req *transport.VerifySOPINRequest) error {
+	if err := requirePlatformScope(ctx, "verify SO PIN", ""); err != nil {
+		return err
+	}
 	if s.pinManager == nil {
 		return ErrNotConfigured
 	}
@@ -74,6 +95,9 @@ func (s *XKMSService) VerifySOPIN(ctx context.Context, req *transport.VerifySOPI
 
 // VerifyUserPIN verifies the User PIN.
 func (s *XKMSService) VerifyUserPIN(ctx context.Context, req *transport.VerifyUserPINRequest) error {
+	if err := requirePlatformScope(ctx, "verify user PIN", ""); err != nil {
+		return err
+	}
 	if s.pinManager == nil {
 		return ErrNotConfigured
 	}
@@ -82,10 +106,18 @@ func (s *XKMSService) VerifyUserPIN(ctx context.Context, req *transport.VerifyUs
 
 // GetLockoutStatus returns the current PIN lockout status.
 func (s *XKMSService) GetLockoutStatus(ctx context.Context) (*transport.LockoutStatusResponse, error) {
+	if err := requirePlatformScope(ctx, "PIN lockout status", ""); err != nil {
+		return nil, err
+	}
 	if s.pinManager == nil {
 		return nil, ErrNotConfigured
 	}
 	status := s.pinManager.GetLockoutStatus()
+	if status == nil {
+		// A backend that does not track lockout (the software backend)
+		// reports none: no failed attempts, nothing locked.
+		return &transport.LockoutStatusResponse{}, nil
+	}
 	var lockoutUntil string
 	if !status.LockoutUntil.IsZero() {
 		lockoutUntil = status.LockoutUntil.Format(time.RFC3339)
@@ -101,6 +133,9 @@ func (s *XKMSService) GetLockoutStatus(ctx context.Context) (*transport.LockoutS
 
 // ResetLockout resets the PIN lockout counter using the Security Officer PIN.
 func (s *XKMSService) ResetLockout(ctx context.Context, req *transport.ResetLockoutRequest) error {
+	if err := requirePlatformScope(ctx, "reset PIN lockout", ""); err != nil {
+		return err
+	}
 	if s.pinManager == nil {
 		return ErrNotConfigured
 	}

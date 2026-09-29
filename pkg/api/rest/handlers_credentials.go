@@ -15,28 +15,31 @@ package rest
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/server/credentials"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// credentialServicer defines the operations required by the credential
-// management handlers. This interface decouples the REST layer from the
-// concrete credentials.Service implementation, allowing any type that
-// satisfies these methods (including XKMSService) to be used.
+// credentialServicer is the slice of the XKMSService the credential
+// management handlers need. The handlers never reach the credential service
+// directly: submitted credentials are the platform's backend credentials, and
+// the service's requirePlatformScope is what refuses a tenant-scoped caller
+// (go-xkms#1226).
 type credentialServicer interface {
-	// SubmitCredential submits a credential value for the named credential.
-	SubmitCredential(ctx context.Context, name string, value []byte) error
+	// SubmitCredential submits a base64-encoded credential value for the
+	// named credential.
+	SubmitCredential(ctx context.Context, req *transport.CredentialSubmitRequest) (*transport.CredentialSubmitResponse, error)
 
-	// Strategy returns the configured credential strategy name.
-	Strategy() string
-
-	// AutoUnsealAvailable reports whether automatic unsealing is available.
-	AutoUnsealAvailable() bool
+	// GetCredentialStrategy reports the configured credential strategy and
+	// whether automatic unsealing is available.
+	GetCredentialStrategy(ctx context.Context) (*transport.CredentialStrategyResponse, error)
 
 	// ListCredentials returns the names of the stored credentials. Values
 	// are never returned.
@@ -80,6 +83,11 @@ var credentialErrorStatusMap = map[error]int{
 	credentials.ErrCredentialNotFound:         http.StatusNotFound,
 	credentials.ErrCredentialAlreadySubmitted: http.StatusConflict,
 	credentials.ErrInvalidStrategy:            http.StatusBadRequest,
+	xkms.ErrInvalidEncoding:                   http.StatusBadRequest,
+	xkms.ErrNotConfigured:                     http.StatusServiceUnavailable,
+	// The platform-scope refusal (xkms.TenantBindingError) unwraps to
+	// go-qrdb's unknown-tenant sentinel and answers as a genuine miss.
+	qrdbsdk.ErrTenantMissing: http.StatusNotFound,
 }
 
 // CredentialHandlers provides HTTP handlers for the credential management API.
@@ -88,9 +96,8 @@ type CredentialHandlers struct {
 	logger      *slog.Logger
 }
 
-// NewCredentialHandlers creates a new CredentialHandlers instance. The
-// credService parameter accepts any type satisfying the credentialServicer
-// interface, including *credentials.Service and *xkms.XKMSService.
+// NewCredentialHandlers creates a new CredentialHandlers instance over the
+// XKMSService's credential operations.
 func NewCredentialHandlers(credService credentialServicer, logger *slog.Logger) *CredentialHandlers {
 	if logger == nil {
 		logger = slog.Default()
@@ -119,13 +126,8 @@ func (h *CredentialHandlers) HandleSubmit(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	value, err := base64.StdEncoding.DecodeString(req.Value)
+	submitted, err := h.credService.SubmitCredential(r.Context(), &transport.CredentialSubmitRequest{Name: req.Name, Value: req.Value})
 	if err != nil {
-		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-		return
-	}
-
-	if err := h.credService.SubmitCredential(r.Context(), req.Name, value); err != nil {
 		h.logger.Warn("credential submission failed",
 			slog.String("name", req.Name),
 			slog.String("error", err.Error()))
@@ -139,7 +141,7 @@ func (h *CredentialHandlers) HandleSubmit(w http.ResponseWriter, r *http.Request
 		slog.String("name", req.Name))
 
 	resp := CredentialSubmitResponse{
-		Status: "accepted",
+		Status: submitted.Status,
 	}
 	writeJSON(w, resp, http.StatusOK)
 }
@@ -147,9 +149,14 @@ func (h *CredentialHandlers) HandleSubmit(w http.ResponseWriter, r *http.Request
 // HandleGetStrategy returns the configured credential strategy.
 // GET /api/v1/credentials/strategy
 func (h *CredentialHandlers) HandleGetStrategy(w http.ResponseWriter, r *http.Request) {
+	strategy, err := h.credService.GetCredentialStrategy(r.Context())
+	if err != nil {
+		writeError(w, err, mapCredentialError(err))
+		return
+	}
 	resp := CredentialStrategyResponse{
-		Strategy:   h.credService.Strategy(),
-		AutoUnseal: h.credService.AutoUnsealAvailable(),
+		Strategy:   strategy.Strategy,
+		AutoUnseal: strategy.AutoUnseal,
 	}
 	writeJSON(w, resp, http.StatusOK)
 }

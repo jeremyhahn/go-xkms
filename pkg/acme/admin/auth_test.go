@@ -176,7 +176,8 @@ func TestRequireTenant_SameTenant(t *testing.T) {
 }
 
 // TestRequireTenant_DifferentTenant verifies a tenant-scoped identity is
-// confined to its own tenant, whatever role it holds.
+// confined to its own tenant, whatever role it holds, and that the refusal
+// reads exactly like a missing tenant.
 func TestRequireTenant_DifferentTenant(t *testing.T) {
 	handler := RequireTenant(func(r *http.Request) string { return "tenant-xyz" })(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -185,7 +186,10 @@ func TestRequireTenant_DifferentTenant(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, tenantScopedRequest("tenant-abc", "admin"))
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	missing := httptest.NewRecorder()
+	writeTenantNotFound(missing)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, missing.Body.String(), w.Body.String())
 }
 
 // TestRequireTenant_SystemTenantReachesAnyTenant verifies qrdb's system-tenant

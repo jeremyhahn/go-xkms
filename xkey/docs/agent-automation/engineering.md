@@ -13,7 +13,7 @@ the presence handler an authenticator is constructed with.
 |---|---|---|
 | `--require-touch` | `true` | presence requirement after a verified PIN; false lets the PIN stand in for the touch |
 | `--pin` | `true` | PIN support; the client sends the PIN with each ceremony |
-| `--set-pin` | `""` | set the initial PIN (needs `--pin`) |
+| `--set-pin-stdin` | `false` | read the initial PIN to establish from standard input (needs `--pin`) |
 | `--interactive` | `false` | terminal prompts instead of the socket handler |
 | `--timeout` | `30s` | how long a presence request waits |
 | `--notify` | `dialog` | `dialog`, `passive`, `log`, `none` |

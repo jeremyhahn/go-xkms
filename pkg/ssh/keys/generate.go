@@ -21,6 +21,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/hex"
 	"encoding/pem"
 	"strings"
 	"time"
@@ -231,14 +232,56 @@ func GenerateOnBackend(ctx context.Context, p BackendProvider, backendID string,
 	}, nil
 }
 
+// maxBackendKeyIDLen bounds the CN backendKeyID produces. 255 matches
+// pkg/validation.ValidateKeyID's own limit on every other xkms key
+// identifier, and stays inside NAME_MAX on every filesystem the software and
+// tpm2 backends' file-per-key storage (pkg/storage.KeyPath,
+// pkg/tpm2/store.storageKey) is deployed on.
+const maxBackendKeyIDLen = 255
+
 // backendKeyID derives a stable, backend-safe CN for a backend-backed SSH
-// key from its (scope, owner, name) identity. The unified xkms key ID
-// format reserves ':' as the backend separator, so the CN is kept
-// colon-free; the scope separator '/' is flattened to '-'.
+// key from its (scope, owner, name) identity.
+//
+// scope.BuildKeyID is called first purely for its validation (non-empty
+// owner/name, a valid scope, no embedded '/') so callers keep seeing the
+// same *scope.ScopeInvalidError / *scope.KeyIDMalformedError they saw
+// before; its "<scope>/<owner>/<name>" result is discarded, because
+// flattening that joined string by replacing '/' with '-' is not injective
+// when owner or name already contains a '-': "user/a-b/c" and "user/a/b-c"
+// both flattened to "ssh-user-a-b-c" (go-xkms#1238), letting one tenant's
+// key silently address, and overwrite, another key's backend CN.
+//
+// Instead, owner and name are hex-encoded independently and joined with
+// '-'. hex.EncodeToString only ever emits [0-9a-f], so a '-' in the result
+// can only be one of the three separators this function writes literally —
+// it can never occur inside a hex-encoded segment — making the join
+// unambiguous (and therefore injective in (scope, owner, name)) regardless
+// of what bytes owner or name contain. This also keeps the CN within the
+// character set every backend's identifier format requires: colon-free (the
+// unified xkms key ID format in types.KeyAttributes.ID reserves ':' as its
+// own separator) and '/'-free (the software and tpm2 backends use the CN
+// directly as a storage key — see pkg/storage.KeyPath and
+// pkg/tpm2/store.storageKey — where an embedded '/' would nest a path
+// instead of naming one key).
+//
+// Returns *BackendKeyIDTooLongError instead of silently truncating or
+// letting an oversized CN fail deep inside a backend when owner and name
+// together push the encoded CN past maxBackendKeyIDLen.
 func backendKeyID(sc scope.Scope, owner, name string) (string, error) {
-	id, err := scope.BuildKeyID(sc, owner, name)
-	if err != nil {
+	if _, err := scope.BuildKeyID(sc, owner, name); err != nil {
 		return "", err
 	}
-	return "ssh-" + strings.ReplaceAll(id, "/", "-"), nil
+	n := len("ssh--") + len(sc) + 1 + hex.EncodedLen(len(owner)) + hex.EncodedLen(len(name))
+	if n > maxBackendKeyIDLen {
+		return "", &BackendKeyIDTooLongError{Length: n, Max: maxBackendKeyIDLen}
+	}
+	var b strings.Builder
+	b.Grow(n)
+	b.WriteString("ssh-")
+	b.WriteString(string(sc))
+	b.WriteByte('-')
+	b.WriteString(hex.EncodeToString([]byte(owner)))
+	b.WriteByte('-')
+	b.WriteString(hex.EncodeToString([]byte(name)))
+	return b.String(), nil
 }

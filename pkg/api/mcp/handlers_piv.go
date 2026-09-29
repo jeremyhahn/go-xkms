@@ -17,8 +17,11 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
+
+// The PIV methods delegate to the XKMSService's PIV methods: the PIV card is
+// the server's own hardware, and the service's requirePlatformScope is what
+// refuses a tenant-scoped caller (go-xkms#1227).
 
 // handleListPIVSlots handles the listPIVSlots method.
 func (s *Server) handleListPIVSlots(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
@@ -27,7 +30,7 @@ func (s *Server) handleListPIVSlots(ctx context.Context, req *JSONRPCRequest) (i
 		return nil, err
 	}
 
-	resp, err := xkms.ListPIVSlots(ctx, &params)
+	resp, err := s.xkmsService.ListPIVSlots(ctx, &params)
 	if err != nil {
 		return nil, mapPIVError(err, "failed to list PIV slots")
 	}
@@ -42,7 +45,7 @@ func (s *Server) handleGetPIVCertificate(ctx context.Context, req *JSONRPCReques
 		return nil, err
 	}
 
-	resp, err := xkms.GetPIVCertificate(ctx, &params)
+	resp, err := s.xkmsService.GetPIVCertificate(ctx, &params)
 	if err != nil {
 		return nil, mapPIVError(err, "failed to get PIV certificate")
 	}
@@ -57,7 +60,7 @@ func (s *Server) handleStorePIVCertificate(ctx context.Context, req *JSONRPCRequ
 		return nil, err
 	}
 
-	if err := xkms.StorePIVCertificate(ctx, &params); err != nil {
+	if err := s.xkmsService.StorePIVCertificate(ctx, &params); err != nil {
 		return nil, mapPIVError(err, "failed to store PIV certificate")
 	}
 
@@ -71,7 +74,7 @@ func (s *Server) handleDeletePIVCertificate(ctx context.Context, req *JSONRPCReq
 		return nil, err
 	}
 
-	if err := xkms.DeletePIVCertificate(ctx, &params); err != nil {
+	if err := s.xkmsService.DeletePIVCertificate(ctx, &params); err != nil {
 		return nil, mapPIVError(err, "failed to delete PIV certificate")
 	}
 
@@ -85,7 +88,7 @@ func (s *Server) handleGeneratePIVKey(ctx context.Context, req *JSONRPCRequest) 
 		return nil, err
 	}
 
-	resp, err := xkms.GeneratePIVKey(ctx, &params)
+	resp, err := s.xkmsService.GeneratePIVKey(ctx, &params)
 	if err != nil {
 		return nil, mapPIVError(err, "failed to generate PIV key")
 	}
@@ -100,7 +103,7 @@ func (s *Server) handleImportPIVCertificate(ctx context.Context, req *JSONRPCReq
 		return nil, err
 	}
 
-	if err := xkms.ImportPIVCertificate(ctx, &params); err != nil {
+	if err := s.xkmsService.ImportPIVCertificate(ctx, &params); err != nil {
 		return nil, mapPIVError(err, "failed to import PIV certificate")
 	}
 
@@ -114,7 +117,7 @@ func (s *Server) handleExportPIVCertificate(ctx context.Context, req *JSONRPCReq
 		return nil, err
 	}
 
-	resp, err := xkms.ExportPIVCertificate(ctx, &params)
+	resp, err := s.xkmsService.ExportPIVCertificate(ctx, &params)
 	if err != nil {
 		return nil, mapPIVError(err, "failed to export PIV certificate")
 	}
@@ -129,7 +132,7 @@ func (s *Server) handleGeneratePIVCSR(ctx context.Context, req *JSONRPCRequest) 
 		return nil, err
 	}
 
-	resp, err := xkms.GeneratePIVCSR(ctx, &params)
+	resp, err := s.xkmsService.GeneratePIVCSR(ctx, &params)
 	if err != nil {
 		return nil, mapPIVError(err, "failed to generate PIV CSR")
 	}

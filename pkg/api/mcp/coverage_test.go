@@ -176,7 +176,10 @@ func TestHandler_UnwrapKey(t *testing.T) {
 
 		_, err = server.handleUnwrapKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to unwrap key")
+		// UnwrapKey now routes through the service layer, which surfaces the
+		// backend's own refusal reason (an empty import token, here) rather
+		// than a generic "failed to unwrap key" wrapper.
+		assert.Contains(t, err.Error(), "import token cannot be empty")
 	})
 }
 
@@ -414,7 +417,7 @@ func TestHandler_SaveCertChain_InvalidPEM(t *testing.T) {
 
 		_, err = server.handleSaveCertChain(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid certificate PEM at index 1")
+		assert.Contains(t, err.Error(), "failed to parse certificate at index 1")
 	})
 
 	t.Run("fails with malformed certificate data", func(t *testing.T) {

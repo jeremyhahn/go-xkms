@@ -1,6 +1,6 @@
 # PIN Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1227)
 
 ## Exported surface
 
@@ -97,6 +97,20 @@ The interface, `PINStrategyID`, `PINLockoutStatus` and `ErrPINNotSet` are
 - **Concurrency.** `UserPINSet()` is backed by an atomic; the backend is safe for
   concurrent verification. Device access is serialised where the device demands
   it.
+- **The PIN surface is platform-scoped and reached only through the service**
+  (go-xkms#1227). Every `XKMSService` PIN method refuses a tenant-scoped
+  caller with `*xkms.TenantBindingError` before the backend is touched
+  (`pkg/xkms/servicer_pin.go:43,54,65,76,87,98,109,136`). REST
+  (`pkg/api/rest/handlers_barrier_pin.go`), gRPC/Unix
+  (`pkg/api/grpc/service_barrier_pin.go`) and MCP (`pkg/api/mcp/handlers_pin.go`)
+  call those methods; none holds the `PINBackend`, and `rest.Config` no longer
+  has a `PINManager` field. The password store's own user-PIN check
+  (`pkg/xkms/servicer_password.go`) calls the backend directly and is not
+  affected: a tenant unlocking its own vault still verifies the PIN.
+- **A backend without lockout tracking reports none.** `GetLockoutStatus`
+  answers a zero-valued status when the backend returns `nil` (the software
+  backend does) (`pkg/xkms/servicer_pin.go:116`); before go-xkms#1227 the REST
+  and MCP paths dereferenced the `nil` and panicked.
 
 ## Error semantics
 

@@ -68,6 +68,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	sshbackend "github.com/jeremyhahn/go-xkms/pkg/ssh/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/tenancy"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
@@ -472,12 +473,16 @@ func (s *Server) SetMetricsListener(l net.Listener) {
 }
 
 // ensureSSHClient lazily builds the shared SSH SDK client used by every
-// transport (REST/gRPC/QUIC/MCP/unix). The client is embedded: SSH metadata
-// (public keys + backend references) lives in the "ssh" storage view, and key
-// generation/signing is delegated to the server's configured crypto backends
-// via a backend provider, so a remote "Backend: tpm2" request mints the key in
-// the TPM and the private key never leaves the device. Returns nil when the
-// XKMSService is unavailable (SSH routes are then not mounted).
+// transport (REST/gRPC/QUIC/MCP/unix). It is the tenant-binding SSH service
+// (pkg/ssh/tenancy): each request's scope and owner are bound to the
+// authenticated caller and served from that caller's tenant partition of the
+// "ssh" storage view, so no request can address another tenant's or another
+// user's SSH assets (go-xkms#1230). Key generation and signing are delegated
+// to the server's configured crypto backends through an unscoped resolver
+// that the service narrows to each partition's tenant, so a remote
+// "Backend: tpm2" request mints the key in the TPM, in the caller's tenant
+// namespace, and the private key never leaves the device. Returns nil when
+// the XKMSService is unavailable (SSH routes are then not mounted).
 func (s *Server) ensureSSHClient() sdkssh.Client {
 	s.sshOnce.Do(func() {
 		if s.xkmsService == nil {
@@ -495,12 +500,7 @@ func (s *Server) ensureSSHClient() sdkssh.Client {
 			}
 			return b.KeyProvider(), nil
 		})
-		provider, err := sshbackend.New(resolver)
-		if err != nil {
-			s.logger.Error("Failed to build SSH backend provider", slog.Any("error", err))
-			return
-		}
-		client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: sshStorage, BackendProvider: provider})
+		client, err := tenancy.New(tenancy.Options{Storage: sshStorage, Resolver: resolver})
 		if err != nil {
 			s.logger.Error("Failed to build SSH client", slog.Any("error", err))
 			return
@@ -844,7 +844,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		// Published under the lock: with the unified API server enabled the
 		// embedded node serves module RPCs concurrently with this
 		// composition, and the module resolver reads the reference through
-		// xkmsServiceRef.
+		// XKMSService.
 		s.mu.Lock()
 		s.xkmsService = svc
 		s.mu.Unlock()
@@ -2811,11 +2811,13 @@ func (s *Server) startUnix() {
 	}
 }
 
-// xkmsServiceRef returns the composed XKMSService reference under the
+// XKMSService returns the composed XKMSService reference under the
 // server lock, or nil while composition is still running. The module's
 // lazy resolvers read through this so the unified server's concurrent RPCs
-// never race the composition-time assignment.
-func (s *Server) xkmsServiceRef() *xkms.XKMSService {
+// never race the composition-time assignment, and the composing binary hands
+// it to the ACME admin plane, whose barrier routes operate the system
+// barrier only through it (go-xkms#1244).
+func (s *Server) XKMSService() *xkms.XKMSService {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.xkmsService
@@ -2870,26 +2872,21 @@ func (s *Server) ModuleRESTServer() *rest.Server {
 // (pkg/apimodule), so both surfaces are built from identical wiring.
 func (s *Server) buildRESTConfig() (*rest.Config, error) {
 	restConfig := &rest.Config{
-		Host:              s.config.Server.Host,
-		Port:              s.config.Server.RESTPort,
-		Backends:          s.backends,
-		Version:           getBuildVersion(),
-		Authenticator:     s.liveAuthenticator,
-		EnableRBAC:        s.config.Auth.EnableRBAC,
-		RBACAuthorizer:    s.rbacAuthorizer,
-		AuditLogger:       s.auditLogger,
-		Barrier:           s.barrier,
-		PINManager:        s.pinManager,
-		PasswordStore:     s.passwordStore,
-		PlatformStore:     s.platformStore,
-		PolicyManager:     s.policyManager,
-		BarrierRegistry:   s.barrierRegistry,
-		CustodianEnabled:  s.qrdbClient != nil,
-		ShareEnabled:      s.qrdbClient != nil,
-		CeremonyService:   s.ceremonyService,
-		CredentialService: s.credentialService,
-		XKMSService:       s.xkmsService,
-		SSHClient:         s.ensureSSHClient(),
+		Host:             s.config.Server.Host,
+		Port:             s.config.Server.RESTPort,
+		Backends:         s.backends,
+		Version:          getBuildVersion(),
+		Authenticator:    s.liveAuthenticator,
+		EnableRBAC:       s.config.Auth.EnableRBAC,
+		RBACAuthorizer:   s.rbacAuthorizer,
+		AuditLogger:      s.auditLogger,
+		PasswordStore:    s.passwordStore,
+		BarrierRegistry:  s.barrierRegistry,
+		CustodianEnabled: s.qrdbClient != nil,
+		ShareEnabled:     s.qrdbClient != nil,
+		CeremonyService:  s.ceremonyService,
+		XKMSService:      s.xkmsService,
+		SSHClient:        s.ensureSSHClient(),
 	}
 
 	// Embedded web UI: serve the compiled SPA (installed via SetUIAssets)

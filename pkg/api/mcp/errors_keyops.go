@@ -16,6 +16,8 @@ package mcp
 import (
 	"errors"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -111,10 +113,21 @@ var keyOpSentinelCodes = []struct {
 	sentinel error
 	code     int
 }{
+	// A malformed certificate, an empty chain, or sealed data missing its
+	// payload is a fault in the request (go-xkms#1228).
+	{xkms.ErrInvalidEncodingPEM, ErrCodeInvalidParams},
+	{xkms.ErrInvalidCertificate, ErrCodeInvalidParams},
+	{xkms.ErrEmptyChain, ErrCodeInvalidParams},
+	{xkms.ErrInvalidSealedData, ErrCodeInvalidParams},
+	{xkms.ErrNilData, ErrCodeInvalidParams},
 	{xkms.ErrOperationNotSupported, ErrCodeMethodNotFound},
+	{xkms.ErrSealingNotSupported, ErrCodeMethodNotFound},
 	{xkms.ErrExportKeyMaterialFailed, ErrCodeInternalError},
 	{xkms.ErrBackendNotFound, sdkssh.JSONRPCCodeNotFound},
 	{xkms.ErrKeyNotFound, sdkssh.JSONRPCCodeNotFound},
+	{xkms.ErrCertNotFound, sdkssh.JSONRPCCodeNotFound},
+	{xkms.ErrCertChainNotFound, sdkssh.JSONRPCCodeNotFound},
+	{storage.ErrNotFound, sdkssh.JSONRPCCodeNotFound},
 	{xkms.ErrNotInitialized, ErrCodeInternalError},
 }
 
@@ -124,7 +137,17 @@ var keyOpSentinelCodes = []struct {
 // key becomes Not found (sdkssh.JSONRPCCodeNotFound, matching gRPC's
 // codes.NotFound for all three); a backend that lacks the requested hardware
 // capability becomes Method not found, MCP's signal for "not implemented by
-// this backend". Anything else is an internal fault.
+// this backend".
+//
+// apierrors.ImportExportSentinelClasses is also consulted, because WrapKey,
+// UnwrapKey, GetImportParameters and ImportKey now route through the service
+// layer (go-xkms#1216) rather than calling backend.ImportBackend /
+// backend.ExportBackend directly, so a backend-layer capability or policy
+// sentinel (backend.ErrKeyNotExportable, for instance) reaches here wrapped
+// in the service's own xkms.ErrOperationWrap rather than being classified by
+// mapImportExportError first. errors.Is/apierrors.ClassOf see through that
+// wrapping either way, so the classification is unchanged by which path the
+// error took. Anything not covered by either table is an internal fault.
 func mapKeyOpError(err error) error {
 	if err == nil {
 		return nil
@@ -144,6 +167,15 @@ func mapKeyOpError(err error) error {
 		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: err}
 	}
 
+	// A key or certificate ID that does not parse -- including one naming
+	// another tenant's namespace ("tenant-b/web") -- is malformed input. It
+	// is matched before ErrValidation, which the parse failure may wrap, so
+	// the message names the key ID as the field at fault.
+	var keyID *xkms.ErrKeyIDParse
+	if errors.As(err, &keyID) {
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: keyID}
+	}
+
 	var validation *xkms.ErrValidation
 	if errors.As(err, &validation) {
 		// The validation error is carried through rather than flattened into
@@ -161,6 +193,22 @@ func mapKeyOpError(err error) error {
 		if errors.Is(err, entry.sentinel) {
 			return classified(entry.code, err)
 		}
+	}
+
+	if class, ok := apierrors.ClassOf(apierrors.ImportExportSentinelClasses, err); ok {
+		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: err}
+	}
+
+	// aead.ErrNonceReuse and aead.ErrNonceTrackerFull reach here wrapped in
+	// pkg/xkms's ErrKeyOperation from Encrypt's and WrapKeyByID's AEAD nonce
+	// guard; see apierrors.AEADSentinelClasses. classified is used rather
+	// than the bare *KeyOpError literal above: ClassResourceExhausted has no
+	// dedicated JSON-RPC code and renders through the same ErrCodeInternalError
+	// floor an unclassified fault does, so Classified is what keeps a nonce
+	// tracker at capacity from being reported with the internal-fault text
+	// ClientError withholds for a genuinely unclassified error.
+	if class, ok := apierrors.ClassOf(apierrors.AEADSentinelClasses, err); ok {
+		return classified(jsonRPCCodeForClass(class), err)
 	}
 
 	return &KeyOpError{Code: ErrCodeInternalError, Err: err}
