@@ -199,6 +199,13 @@ type Config struct {
 	// PasswordStore is the optional static password store
 	PasswordStore *staticpw.BackendStore
 
+	// PasswordStoreManager routes Password Manager entries to per-tenant
+	// stores. Pass the SAME manager the XKMSService was wired with
+	// (pkg/compose Stores.Wire), so CRUD routing and session state share one
+	// instance. When nil and BarrierRegistry is set, NewServer builds one
+	// from BarrierRegistry and PasswordStore.
+	PasswordStoreManager *staticpw.TenantPasswordStoreManager
+
 	// BarrierRegistry is the optional barrier registry for multi-tenant isolation
 	BarrierRegistry *seal.BarrierRegistry
 
@@ -526,8 +533,8 @@ func NewServer(cfg *Config) (*Server, error) {
 	// silent construction because that invariant belongs to staticpw, not to
 	// this wiring.
 	if cfg.PasswordStore != nil {
-		var pwManager *staticpw.TenantPasswordStoreManager
-		if cfg.BarrierRegistry != nil {
+		pwManager := cfg.PasswordStoreManager
+		if pwManager == nil && cfg.BarrierRegistry != nil {
 			var managerErr error
 			pwManager, managerErr = staticpw.NewTenantPasswordStoreManager(cfg.BarrierRegistry, cfg.PasswordStore)
 			if managerErr != nil {

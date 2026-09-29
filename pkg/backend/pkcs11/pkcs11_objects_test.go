@@ -335,7 +335,7 @@ func TestBackend_Signer_ECDSASignatureVerifies(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(t, curve.Params().Name, pub.Curve.Params().Name,
 				"the key must live on the requested curve")
-			assert.True(t, pub.Curve.IsOnCurve(pub.X, pub.Y),
+			assert.True(t, pub.IsOnCurve(pub.X, pub.Y), //nolint:staticcheck // SA1019: on-curve validation of the exported point; crypto/ecdh migration is a separate, behavior-sensitive change
 				"the exported point must lie on the curve")
 
 			digest := sha256.Sum256([]byte("ecdsa payload"))
@@ -471,7 +471,7 @@ func TestBackend_GetDecrypterByID(t *testing.T) {
 	require.True(t, ok)
 
 	plaintext := []byte("decrypter-by-id secret")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext)
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext) //nolint:staticcheck // SA1019: exercises the decrypter's PKCS#1 v1.5 path (nil opts), which the pkcs11 backend supports for real via CKM_RSA_PKCS
 	require.NoError(t, err)
 
 	recovered, err := decrypter.Decrypt(rand.Reader, ciphertext, nil)
@@ -506,7 +506,7 @@ func TestBackend_Decrypter_RSARoundTrip(t *testing.T) {
 	require.True(t, ok)
 
 	plaintext := []byte("hardware-protected plaintext")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext)
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext) //nolint:staticcheck // SA1019: exercises the decrypter's PKCS#1 v1.5 path (nil opts), which the pkcs11 backend supports for real via CKM_RSA_PKCS
 	require.NoError(t, err)
 
 	recovered, err := decrypter.Decrypt(rand.Reader, ciphertext, nil)

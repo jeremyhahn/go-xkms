@@ -729,7 +729,7 @@ func TestNewServer_DuplicateSocket_ReplacesStaleSocket(t *testing.T) {
 	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	require.NoError(t, err)
 	require.NoError(t, syscall.Bind(fd, &syscall.SockaddrUnix{Name: sockPath}))
-	syscall.Close(fd) //nolint:errcheck // test helper; fd cleanup is best-effort
+	syscall.Close(fd) // test helper; fd cleanup is best-effort
 
 	// The socket file should exist on disk (stale — nobody listening).
 	_, statErr := os.Stat(sockPath)

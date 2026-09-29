@@ -72,7 +72,11 @@ func runLock(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if mounted or open
-	if !vol.IsMounted() && !vol.IsOpen() {
+	mounted, err := vol.IsMounted()
+	if err != nil {
+		return &LockError{Operation: "check_mounted", Err: err}
+	}
+	if !mounted && !vol.IsOpen() {
 		return ErrLockNoVolume
 	}
 

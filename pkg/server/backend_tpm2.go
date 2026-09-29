@@ -15,7 +15,12 @@ package server
 
 import (
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
+
+// A TPM's BankPCRReader is the PCR reader PCR policies take.
+var _ policy.PCRReader = (*pkgtpm2.BankPCRReader)(nil)
 
 // tpm2KeyDirSubdir is the fixed subdirectory, under the configured storage
 // path, where the TPM2 backend and the TPM2 node-barrier seal strategy
@@ -110,4 +115,19 @@ func (s *Server) initTPM2Backend() error {
 	s.keyProviders["tpm2"] = tpmBackend
 	s.logger.Info("TPM2 backend initialized", "backend", "tpm2", "device", devicePath)
 	return nil
+}
+
+// tpmPCRReader returns a PCR reader over the TPM the TPM2 backend opened, or
+// nil when xkmsd has no TPM2 backend. It reads through the backend's single
+// TPM open, so policies never open the device a second time.
+func (s *Server) tpmPCRReader() (policy.PCRReader, error) {
+	backend, ok := s.keyProviders["tpm2"].(*tpm2backend.Backend)
+	if !ok {
+		return nil, nil
+	}
+	reader, err := pkgtpm2.NewBankPCRReader(backend.TPM())
+	if err != nil {
+		return nil, err
+	}
+	return reader, nil
 }

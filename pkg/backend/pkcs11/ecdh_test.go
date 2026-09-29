@@ -246,7 +246,7 @@ func TestParsePeerPublicKey_RawFormat(t *testing.T) {
 			require.NoError(t, err)
 
 			// Marshal to uncompressed point
-			rawPoint := elliptic.Marshal(tt.curve, key.PublicKey.X, key.PublicKey.Y)
+			rawPoint := elliptic.Marshal(tt.curve, key.X, key.Y) //nolint:staticcheck // SA1019: builds the uncompressed-point wire format parsePeerPublicKey (pkcs11_ecdh.go) accepts; crypto/ecdh migration is a separate, behavior-sensitive change
 			assert.Len(t, rawPoint, tt.pointSize)
 
 			// Parse the raw point
@@ -589,7 +589,7 @@ func TestDeriveKeyECDH_NilContext(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should handle nil context gracefully (use background)
-	_, err = b.DeriveKeyECDH(nil, attrs, peerPubBytes, types.DefaultKDFParams())
+	_, err = b.DeriveKeyECDH(nil, attrs, peerPubBytes, types.DefaultKDFParams()) //nolint:staticcheck // SA1012: deliberately proving the nil-tolerant contract DeriveKeyECDH documents
 	// Will fail at NotInitialized check, which is expected
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
@@ -978,7 +978,7 @@ func TestGetPublicKeyBytes_RoundTrips(t *testing.T) {
 			pub, ok := parsed.(*ecdsa.PublicKey)
 			require.True(t, ok)
 			assert.Equal(t, curve.Params().Name, pub.Curve.Params().Name)
-			assert.True(t, pub.Curve.IsOnCurve(pub.X, pub.Y), "the exported point must be on the curve")
+			assert.True(t, pub.IsOnCurve(pub.X, pub.Y), "the exported point must be on the curve") //nolint:staticcheck // SA1019: on-curve validation of the parsed point; crypto/ecdh migration is a separate, behavior-sensitive change
 		})
 	}
 }
@@ -1151,7 +1151,7 @@ func TestParsePeerPublicKey_OctetStringWrapped(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	rawPoint := elliptic.Marshal(elliptic.P256(), key.PublicKey.X, key.PublicKey.Y)
+	rawPoint := elliptic.Marshal(elliptic.P256(), key.X, key.Y) //nolint:staticcheck // SA1019: builds the uncompressed-point wire format under test; crypto/ecdh migration is a separate, behavior-sensitive change
 	wrapped, err := asn1.Marshal(rawPoint)
 	require.NoError(t, err)
 

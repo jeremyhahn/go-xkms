@@ -18,8 +18,8 @@ import (
 	"errors"
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	sealedstorage "github.com/jeremyhahn/go-xkms/pkg/storage/sealed"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -70,27 +70,8 @@ func (s *Server) initializePlatformStore() error {
 		return &ErrPlatformStoreBuild{Strategy: strategy, Err: err}
 	}
 
-	id := seal.StrategyID(strategy)
-	platformSealer, err := seal.NewPlatformSealer(
-		s.logger,
-		seal.SealerConfig{PreferenceOrder: []seal.StrategyID{id}},
-		map[seal.StrategyID]types.Sealer{id: sealer},
-	)
-	if err != nil {
-		return &ErrPlatformStoreBuild{Strategy: strategy, Err: err}
-	}
-
-	inner, err := s.createStorage("platform-store")
-	if err != nil {
-		return &ErrStorageCreate{Resource: "platform store storage", Err: err}
-	}
-
-	sealedBackend, err := sealedstorage.New(inner, platformSealer, nil)
-	if err != nil {
-		return &ErrPlatformStoreBuild{Strategy: strategy, Err: err}
-	}
-
-	store, err := seal.NewPlatformStore(sealedBackend, s.logger)
+	store, err := compose.BuildPlatformStore(s.logger, s.createStorage,
+		compose.PlatformSealer{Strategy: seal.StrategyID(strategy), Sealer: sealer})
 	if err != nil {
 		return &ErrPlatformStoreBuild{Strategy: strategy, Err: err}
 	}

@@ -39,6 +39,7 @@ package apimodule
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"google.golang.org/grpc"
@@ -50,7 +51,12 @@ import (
 	grpcapi "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -172,6 +178,85 @@ func WithPIVLogin(opts *rest.PIVLoginOptions) Option {
 	}
 }
 
+// BarrierRegistryResolver returns the host's tenant barrier registry (an
+// embedded qrdb node's BarrierRegistry), or nil when the host has none.
+type BarrierRegistryResolver func() *qrdbsdk.BarrierRegistry
+
+// WithBarrierRegistry wires the host's tenant barrier registry into the
+// module's host composition (pkg/compose). It enables per-tenant Password
+// Manager routing (each tenant's entries behind that tenant's barrier) and
+// the "barrier" credential strategy, and is the barrier WithBarrierRoutes
+// serves. Only consulted when the module self-builds (no WithRESTServer).
+func WithBarrierRegistry(resolve BarrierRegistryResolver) Option {
+	return func(m *Module) {
+		m.resolveBarrierRegistry = resolve
+	}
+}
+
+// WithPINBackend supplies the host's PIN backend (the one its qrdb node was
+// built with, qrdbsdk.WithPINBackend). Its user PIN opens a tenant's
+// Password Manager session (/api/v1/passwords/unlock), so without it tenant
+// password stores stay locked; it also backs the /api/v1/pin/* routes.
+func WithPINBackend(pin qrdbsdk.PINBackend) Option {
+	return func(m *Module) {
+		m.pinBackend = pin
+	}
+}
+
+// WithPlatformSealer enables the platform sealed-secret store
+// (/api/v1/platform/*): records are sealed through sealer, which implements
+// the named seal strategy (tpm2, pkcs11, awskms, gcpkms, azurekv, vault,
+// passphrase). Requires WithQRDBClient for storage.
+func WithPlatformSealer(strategy string, sealer types.Sealer) Option {
+	return func(m *Module) {
+		m.platformSealer = &compose.PlatformSealer{Strategy: seal.StrategyID(strategy), Sealer: sealer}
+	}
+}
+
+// WithCredentialStrategy selects how the backend credential service
+// (/api/v1/credentials/*) seals credentials: "manual" (the default:
+// operator-submitted, held in memory), "barrier" (requires
+// WithBarrierRegistry), or a platform strategy (requires
+// WithPlatformSealer).
+func WithCredentialStrategy(strategy string) Option {
+	return func(m *Module) {
+		m.credentialStrategy = strategy
+	}
+}
+
+// WithCA enables the Certificate Authority (/api/v1/ca/* and the CA RPCs)
+// from cfg, the same identity-hierarchy shape xkmsd's ca config section
+// uses. Each CA key lives in the XKMSService backend named by its store
+// type. The CA loads its persisted hierarchy, or initializes one on first
+// use. Requires WithQRDBClient for storage.
+func WithCA(cfg *ca.MultiIdentityCAConfig) Option {
+	return func(m *Module) {
+		m.caConfig = cfg
+	}
+}
+
+// WithPCRReader enables PCR policies (/api/v1/policies/*): current PCR
+// values come from reader (typically the host's TPM), and definitions
+// persist durably. Requires WithQRDBClient for storage.
+func WithPCRReader(reader policy.PCRReader) Option {
+	return func(m *Module) {
+		m.pcrReader = reader
+	}
+}
+
+// WithBarrierRoutes mounts the barrier route families (barrier, custodian,
+// shares, init ceremony; rest.IsBarrierRoute) on a self-built module and
+// serves them over the host's qrdb node: the barrier routes operate on the
+// system barrier of WithBarrierRegistry's registry, and custodian and share
+// routes on WithQRDBClient's node. Off by default, so a host that owns its
+// barrier keeps those paths. A module bound to a host-supplied REST server
+// (WithRESTServer) always mounts them: that server decides what it serves.
+func WithBarrierRoutes() Option {
+	return func(m *Module) {
+		m.barrierRoutes = true
+	}
+}
+
 // Module is go-xkms's hardware crypto + identity plane as a qrdb
 // ServiceModule. It registers the full KeystoreService gRPC surface into the
 // unified server's gRPC-wire transports (gRPC and unix), the full REST route
@@ -180,6 +265,11 @@ func WithPIVLogin(opts *rest.PIVLoginOptions) Option {
 // absent one, self-builds a working REST surface from the resolved
 // XKMSService and whatever host inputs were configured (WithQRDBClient,
 // WithWebAuthnConfig, WithSessionOptions, WithPIVLogin) — see module_host.go.
+// A self-built module also composes xkms's store-backed features (Password
+// Manager, platform store, credentials, SSH, CA, PCR policies) from the
+// host's dependencies (WithBarrierRegistry, WithPINBackend,
+// WithPlatformSealer, WithCredentialStrategy, WithCA, WithPCRReader) through
+// pkg/compose, the path xkmsd builds them through.
 //
 // Start and Stop are inherited BaseModule no-ops by design: the XKMSService
 // lifecycle (backends, CA, barrier, TPM/PKCS#11 handles) is owned by
@@ -193,6 +283,16 @@ type Module struct {
 	resolveREST       RESTResolver
 	resolveMCP        MCPResolver
 	resolveQRDBClient QRDBClientResolver
+
+	// Host composition inputs (module_host.go): the dependencies the module
+	// builds its store-backed features from when it self-builds.
+	resolveBarrierRegistry BarrierRegistryResolver
+	pinBackend             qrdbsdk.PINBackend
+	platformSealer         *compose.PlatformSealer
+	credentialStrategy     string
+	caConfig               *ca.MultiIdentityCAConfig
+	pcrReader              policy.PCRReader
+	barrierRoutes          bool
 
 	uiPrefix       string
 	uiRedirectRoot bool
@@ -222,6 +322,13 @@ type Module struct {
 	// with no WithRESTServer resolver configured. Lock-free: concurrent
 	// first calls may both construct, and CompareAndSwap keeps exactly one.
 	selfREST atomic.Pointer[rest.Server]
+
+	// stores memoizes the host composition (hostStores). Unlike the
+	// service and REST memos it must be built exactly once -- building the
+	// CA initializes a root on first use -- so construction is serialized
+	// by composeMu; the atomic keeps the steady-state read lock-free.
+	stores    atomic.Pointer[compose.Stores]
+	composeMu sync.Mutex
 }
 
 // Compile-time interface check.
@@ -291,11 +398,18 @@ func (m *Module) keystore() (pb.KeystoreServiceServer, error) {
 		return nil, status.Error(codes.Unavailable,
 			"xkms crypto service is not yet available (server still composing)")
 	}
+	var composed *compose.Stores
+	if m.selfBuilds() {
+		composed = m.hostStores(x)
+	}
 	svc := grpcapi.NewService(nil, nil, x, grpcapi.WithLocalTrust())
-	if m.resolveSSH != nil {
+	switch {
+	case m.resolveSSH != nil:
 		if client := m.resolveSSH(); client != nil {
 			svc.SetSSHClient(client)
 		}
+	case composed != nil && composed.SSH != nil:
+		svc.SetSSHClient(composed.SSH)
 	}
 	// x itself is the CA servicer: it exposes the transport-shaped CA
 	// methods (GetCACertificate, SignCSR, IssueCertificate, ...) the CA RPC

@@ -180,6 +180,62 @@ func TestMigrateExistingData_CopyFailure_PreservesSourceAndStaging(t *testing.T)
 	assert.Equal(t, "top secret", string(staged))
 }
 
+// TestMigrateExistingData_CopyToTempFailure verifies that when staging the
+// source into a temp directory fails, the resulting error still identifies
+// the copy_to_temp step and wraps the underlying copy error, and that the
+// (empty) staging directory is cleaned up.
+func TestMigrateExistingData_CopyToTempFailure(t *testing.T) {
+	// A source directory that does not exist makes copyDirContents fail at
+	// os.ReadDir, deterministically and without requiring any permission
+	// tricks that behave differently when tests run as root.
+	dataDir := filepath.Join(t.TempDir(), "does-not-exist")
+
+	fake := &fakeMigrateVolume{mountPoint: dataDir}
+
+	var out bytes.Buffer
+	err := migrateExistingData(&out, fake, "correct-horse")
+	require.Error(t, err)
+
+	var sealErr *SealError
+	require.ErrorAs(t, err, &sealErr)
+	assert.Equal(t, "copy_to_temp", sealErr.Operation)
+	assert.Empty(t, sealErr.Message, "no cleanup failure occurred, so no staging path should be reported")
+
+	assert.Equal(t, 0, fake.unlockCalls, "migration must never reach Unlock when staging fails")
+}
+
+// TestMigrateExistingData_CopyToTempFailure_CleanupAlsoFails verifies that
+// when staging fails AND the subsequent cleanup of the (partial) staging
+// directory also fails, both errors are joined into the returned error and
+// the staging path is reported, rather than the cleanup failure being
+// silently discarded.
+func TestMigrateExistingData_CopyToTempFailure_CleanupAlsoFails(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "does-not-exist")
+
+	origRemoveAllFn := removeAllFn
+	t.Cleanup(func() { removeAllFn = origRemoveAllFn })
+
+	rmErr := errors.New("staging directory busy")
+	var removedPath string
+	removeAllFn = func(path string) error {
+		removedPath = path
+		return rmErr
+	}
+
+	fake := &fakeMigrateVolume{mountPoint: dataDir}
+
+	var out bytes.Buffer
+	err := migrateExistingData(&out, fake, "correct-horse")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, rmErr, "the cleanup failure must be reachable via errors.Is, not discarded")
+
+	var sealErr *SealError
+	require.ErrorAs(t, err, &sealErr)
+	assert.Equal(t, "copy_to_temp", sealErr.Operation)
+	assert.Contains(t, sealErr.Message, removedPath, "the error must report the staging path left behind")
+	assert.NotEmpty(t, removedPath)
+}
+
 // TestMigrateExistingData_LockFailure_PreservesSourceAndStaging verifies
 // that when the final Lock fails, the plaintext source is never removed
 // and the staged copy is kept and reported. This is the exact scenario

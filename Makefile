@@ -3706,18 +3706,67 @@ space := $(empty) $(empty)
 LINT_TAGS_root := $(subst $(space),$(comma),$(strip $(TEST_TAGS)))
 LINT_TAGS_xkey := ble,pkcs11,usb,codec_json,tpm_simulator,tpm2,awskms,azurekv,gcpkms,vault
 
+# Root-module tag combinations `vet`/`lint` never reached before go-xkms#1348:
+# LINT_TAGS_root only ever carried TEST_TAGS, so every file behind the
+# pkcs11/awskms/azurekv/gcpkms/vault hardware-and-cloud-KMS backend tags, and
+# every file behind raft, was invisible to both go vet and golangci-lint --
+# the same "a tag nobody passes is a directory the toolchain never opens"
+# gap #650/#682 already closed for test/integration and for xkey. Two more
+# passes over root close it here, each matching a tag combination CI already
+# proves compiles rather than a new one invented for lint:
+#   - LINT_TAGS_root_backends is LINT_TAGS_root plus pkcs8, tpm2 and the five
+#     KMS backend tags -- the union of the ci.yml "build" job's matrix
+#     (`pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault,frost`, `go build
+#     ./cmd/...`) and `make race` / the ci.yml "race" job
+#     (`pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,
+#     codec_msgpack,frost`, `go test -race ./...`). Verified locally with
+#     both `go build` and `go vet` under the exact union below (go-xkms#1348)
+#     -- these tags gate disjoint files with no negated counterpart among
+#     them (unlike raft, see below), so there is nothing for the union to
+#     conflict on.
+#   - LINT_TAGS_root_raft is LINT_TAGS_root plus raft, not the build-raft
+#     job's narrower `raft codec_json` leg. raft is a boolean swap
+#     (pkg/daemon/node_cluster.go is `//go:build raft`, node_standalone.go
+#     its `//go:build !raft` counterpart), so linting it under just
+#     `raft,codec_json` (matching build-raft exactly) compiles clean but
+#     reports five spurious `unused` findings: helpers in
+#     pkg/acme/challenges/device-attest-01/tpm_test.go and
+#     pkg/tpm2/tpm.go's intelEKURL are called only from
+#     `tpm_simulator`-tagged test files, so a pass without tpm_simulator
+#     (which build-raft's own leg also lacks) sees the declaration but not
+#     the call site and reports it dead -- an artifact of the lint tag set,
+#     not a real defect. Verified locally (go-xkms#1348): `go build`/`go
+#     vet` both pass under the union below, and it is the set that leaves
+#     the module's `unused` results unchanged from the default pass.
+LINT_TAGS_root_backends := $(LINT_TAGS_root),pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault
+LINT_TAGS_root_raft := $(LINT_TAGS_root),raft
+
+vet_empty :=
+vet_space := $(vet_empty) $(vet_empty)
+vet_comma := ,
+# BUILD_TAGS (codecs plus the go-objstore backends: awss3, minio, gcpstorage,
+# azureblob, glacier, azurearchive) as a comma list. go vet takes one -tags
+# flag and keeps only the last one, so the root passes below pass a single
+# -tags that is the lint tag set unioned with these; appending a second -tags
+# to $(GOVET) used to silently drop BUILD_TAGS (#1348).
+VET_BUILD_TAGS := $(subst $(vet_space),$(vet_comma),$(strip $(BUILD_TAGS)))
+
 .PHONY: vet
-## vet: Run go vet across every module (LINT_MODULES)
+## vet: Run go vet across every module (LINT_MODULES), plus the root module's backend and raft tag sets
 vet:
 	@echo "$(CYAN)$(BOLD)→ Running go vet...$(RESET)"
 	@for m in $(LINT_MODULES); do \
 		case "$$m" in \
 			xkey) tags="$(LINT_TAGS_xkey)" ;; \
-			web/desktop) tags="" ;; \
-			*) tags="$(LINT_TAGS_root)" ;; \
+			web/desktop) tags="$(VET_BUILD_TAGS)" ;; \
+			*) tags="$(LINT_TAGS_root),$(VET_BUILD_TAGS)" ;; \
 		esac; \
 		echo "$(CYAN)  → go vet ($$m)$${tags:+ [tags: $$tags]}$(RESET)"; \
-		( cd "$$m" && $(GOVET) $${tags:+-tags "$$tags"} ./... ) || exit 1; \
+		( cd "$$m" && $(GO) vet $${tags:+-tags "$$tags"} ./... ) || exit 1; \
+	done
+	@for tags in "$(LINT_TAGS_root_backends),$(VET_BUILD_TAGS)" "$(LINT_TAGS_root_raft),$(VET_BUILD_TAGS)"; do \
+		echo "$(CYAN)  → go vet (.) [tags: $$tags]$(RESET)"; \
+		CGO_ENABLED=1 $(GO) vet -tags "$$tags" ./... || exit 1; \
 	done
 	@echo "$(GREEN)✓ Vet checks passed$(RESET)"
 
@@ -3729,7 +3778,7 @@ vet-integration:
 	@echo "$(GREEN)✓ Integration compile gate passed$(RESET)"
 
 .PHONY: lint
-## lint: Run golangci-lint across every module (LINT_MODULES)
+## lint: Run golangci-lint across every module (LINT_MODULES), plus the root module's backend and raft tag sets
 lint:
 	@echo "$(CYAN)$(BOLD)→ Running linters...$(RESET)"
 	@GOLANGCI_LINT_BIN=$$(command -v golangci-lint 2>/dev/null || echo "$$HOME/go/bin/golangci-lint"); \
@@ -3750,7 +3799,14 @@ lint:
 			exit 1; \
 		fi; \
 	done; \
-	echo "$(GREEN)✓ Linting complete ($(LINT_MODULES))$(RESET)"
+	for tags in "$(LINT_TAGS_root_backends)" "$(LINT_TAGS_root_raft)"; do \
+		echo "$(CYAN)  → golangci-lint (.) [tags: $$tags]$(RESET)"; \
+		if ! CGO_ENABLED=1 $$GOLANGCI_LINT_BIN run --build-tags "$$tags"; then \
+			echo "$(RED)$(BOLD)✗ Linting failed (.) [tags: $$tags]$(RESET)"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "$(GREEN)✓ Linting complete ($(LINT_MODULES), plus root backend and raft tag sets)$(RESET)"
 
 # --------------------------------------------------------------------------
 # pkg/secure/analyzer sweep (go-xkms#549)

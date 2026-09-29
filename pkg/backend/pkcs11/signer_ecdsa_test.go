@@ -107,7 +107,7 @@ func TestECDSASigner_SignVerifiesAndIsDEREncoded(t *testing.T) {
 			require.True(t, ok, "Public must return *ecdsa.PublicKey")
 			require.Equal(t, tc.curve.Params().Name, pub.Curve.Params().Name,
 				"the exported key must be on the curve that was requested")
-			require.True(t, tc.curve.IsOnCurve(pub.X, pub.Y), "the exported point must lie on the curve")
+			require.True(t, tc.curve.IsOnCurve(pub.X, pub.Y), "the exported point must lie on the curve") //nolint:staticcheck // SA1019: on-curve validation of the exported point; crypto/ecdh migration is a separate, behavior-sensitive change
 
 			digest := digestFor(t, crypto.SHA256, []byte("ecdsa payload "+tc.name))
 
@@ -287,8 +287,8 @@ func TestExportECDSAPublicKey_MatchesSigningKey(t *testing.T) {
 			require.Equal(t, tc.curve.Params().Name, exported.Curve.Params().Name)
 
 			cached := signer.Public().(*ecdsa.PublicKey)
-			require.Equal(t, 0, cached.X.Cmp(exported.X))
-			require.Equal(t, 0, cached.Y.Cmp(exported.Y))
+			require.Equal(t, 0, cached.X.Cmp(exported.X)) //nolint:staticcheck // SA1019: comparing raw coordinates to prove the cached and freshly-exported public keys agree
+			require.Equal(t, 0, cached.Y.Cmp(exported.Y)) //nolint:staticcheck // SA1019: see X above
 
 			digest := digestFor(t, crypto.SHA256, []byte("export oracle "+tc.name))
 			sig, err := signer.Sign(rand.Reader, digest, crypto.SHA256)
@@ -418,8 +418,8 @@ func TestFindECDSASigner_RoundTrip(t *testing.T) {
 
 	generatedPub := generated.Public().(*ecdsa.PublicKey)
 	foundPub := found.Public().(*ecdsa.PublicKey)
-	require.Equal(t, 0, generatedPub.X.Cmp(foundPub.X))
-	require.Equal(t, 0, generatedPub.Y.Cmp(foundPub.Y))
+	require.Equal(t, 0, generatedPub.X.Cmp(foundPub.X)) //nolint:staticcheck // SA1019: comparing raw coordinates to prove the generated and re-found public keys agree
+	require.Equal(t, 0, generatedPub.Y.Cmp(foundPub.Y)) //nolint:staticcheck // SA1019: see X above
 	require.Equal(t, generatedPub.Curve.Params().Name, foundPub.Curve.Params().Name)
 
 	digest := digestFor(t, crypto.SHA256, []byte("found ecdsa payload"))
@@ -666,7 +666,7 @@ func TestExportECDSAPublicKey_RawPointEncoding(t *testing.T) {
 	hostKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	rawPoint := elliptic.Marshal(elliptic.P256(), hostKey.PublicKey.X, hostKey.PublicKey.Y)
+	rawPoint := elliptic.Marshal(elliptic.P256(), hostKey.X, hostKey.Y) //nolint:staticcheck // SA1019: builds the uncompressed-point wire format under test; crypto/ecdh migration is a separate, behavior-sensitive change
 	require.Equal(t, byte(0x04), rawPoint[0], "the point must be in uncompressed form")
 
 	params, err := asn1.Marshal(oidP256)
@@ -676,8 +676,8 @@ func TestExportECDSAPublicKey_RawPointEncoding(t *testing.T) {
 
 	exported, err := exportECDSAPublicKey(b.pool, handle)
 	require.NoError(t, err, "an unwrapped CKA_EC_POINT must still parse")
-	require.Equal(t, 0, hostKey.PublicKey.X.Cmp(exported.X))
-	require.Equal(t, 0, hostKey.PublicKey.Y.Cmp(exported.Y))
+	require.Equal(t, 0, hostKey.X.Cmp(exported.X)) //nolint:staticcheck // SA1019: comparing raw coordinates to prove the exported point matches the original key
+	require.Equal(t, 0, hostKey.Y.Cmp(exported.Y)) //nolint:staticcheck // SA1019: see X above
 	require.Equal(t, elliptic.P256().Params().Name, exported.Curve.Params().Name)
 }
 
@@ -695,7 +695,7 @@ func TestExportECDSAPublicKey_RawPointWithHeaderLikePrefix(t *testing.T) {
 	rawPoint := decodeHex(t, p256TriggerPoint)
 	require.Equal(t, byte(len(rawPoint)-2), rawPoint[1], "this vector must reproduce the collision")
 
-	wantX, wantY := elliptic.Unmarshal(elliptic.P256(), rawPoint)
+	wantX, wantY := elliptic.Unmarshal(elliptic.P256(), rawPoint) //nolint:staticcheck // SA1019: decodes the test vector's expected coordinates; crypto/ecdh migration is a separate, behavior-sensitive change
 	require.NotNil(t, wantX, "the test vector must be a valid P-256 point")
 
 	params, err := asn1.Marshal(oidP256)
@@ -705,8 +705,8 @@ func TestExportECDSAPublicKey_RawPointWithHeaderLikePrefix(t *testing.T) {
 
 	exported, err := exportECDSAPublicKey(b.pool, handle)
 	require.NoError(t, err, "a bare point whose X starts with len-2 must still export")
-	require.Equal(t, 0, wantX.Cmp(exported.X))
-	require.Equal(t, 0, wantY.Cmp(exported.Y))
+	require.Equal(t, 0, wantX.Cmp(exported.X)) //nolint:staticcheck // SA1019: comparing raw coordinates to prove the exported point matches the test vector
+	require.Equal(t, 0, wantY.Cmp(exported.Y)) //nolint:staticcheck // SA1019: see X above
 }
 
 // TestFindECDSASigner_DeadSession verifies that a session the module no longer

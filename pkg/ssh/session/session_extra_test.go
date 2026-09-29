@@ -126,7 +126,7 @@ func TestRun_NonZeroExitCode(t *testing.T) {
 			return
 		}
 		req.Reply(true, nil)
-		ch.Stderr().Write([]byte("command not found")) //nolint:errcheck
+		ch.Stderr().Write([]byte("command not found"))
 		ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{2}))
 	}
 	srv := newTestServer(t, hostSigner, failHandler)
@@ -473,7 +473,7 @@ func shellServer(ln net.Listener, hostSigner ssh.Signer) error {
 					req.Reply(true, nil)
 				case "shell":
 					req.Reply(true, nil)
-					ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0})) //nolint:errcheck
+					ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 					return
 				default:
 					if req.WantReply {

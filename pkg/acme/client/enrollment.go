@@ -54,8 +54,6 @@ var (
 )
 
 // ekRequest represents the endorsement key request for endorse-01 challenge
-//
-//nolint:unused // Used in tests and future endorse-01 challenge integration
 type ekRequest struct {
 	EKPublicKey  string `json:"ekPublicKey"`
 	EKAttributes string `json:"ekAttributes"`
@@ -688,8 +686,6 @@ func (c *Client) RequestEndorsementKeyCertificate(ctx context.Context, config *E
 }
 
 // setupEndorseChallenge sets up the HTTP server for endorse-01 challenge
-//
-//nolint:unused // Used in tests and future endorse-01 challenge integration
 func (c *Client) setupEndorseChallenge(config *EnrollmentConfig, keyAuth, token string) error {
 	// Get EK certificate from TPM
 	ekCert, err := config.TPMModule.EKCertificate()
@@ -726,8 +722,6 @@ func (c *Client) setupEndorseChallenge(config *EnrollmentConfig, keyAuth, token 
 }
 
 // startEndorseServer starts an HTTP server for endorse-01 challenge handling
-//
-//nolint:unused // Used in tests and future endorse-01 challenge integration
 func (c *Client) startEndorseServer(config *EnrollmentConfig, req ekRequest, token string) {
 	mux := http.NewServeMux()
 

@@ -193,7 +193,10 @@ func (r *TokenResponse) ToTokenData(region string) (*handlers.TokenData, error) 
 	// Convert AWS credentials if present
 	if r.HasCredentials() {
 		creds := r.GetCredentials()
-		expiration, _ := r.GetExpirationTime()
+		expiration, err := r.GetExpirationTime()
+		if err != nil {
+			return nil, err
+		}
 
 		data.AWSCredentials = &handlers.AWSCredentials{
 			AccessKeyID:     creds.AccessKeyID,

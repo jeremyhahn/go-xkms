@@ -251,7 +251,7 @@ func TestRSADecrypt_PKCS1v15(t *testing.T) {
 			rsaPub, ok := decrypter.Public().(*rsa.PublicKey)
 			require.True(t, ok, "Public key should be an RSA public key")
 
-			ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, tt.plaintext)
+			ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, tt.plaintext) //nolint:staticcheck // SA1019: only produces ciphertext bytes for MockKMSClient.DecryptFunc, which returns tt.plaintext unconditionally rather than actually decrypting; the algorithm choice here does not exercise AWS KMS's real (OAEP-only) wire behavior
 			require.NoError(t, err, "Failed to encrypt with PKCS#1 v1.5")
 
 			// Decrypt using Decrypter interface with nil opts (PKCS#1 v1.5)

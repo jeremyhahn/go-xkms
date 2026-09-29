@@ -31,10 +31,11 @@ import (
 // mount state the same way a real volume would: Unlock mounts it, Lock
 // unmounts it.
 type fakeImportDataVolume struct {
-	unlockFn func(passphrase string) error
-	copyFn   func(sourceDir string) error
-	lockFn   func() error
-	mounted  bool
+	unlockFn   func(passphrase string) error
+	copyFn     func(sourceDir string) error
+	lockFn     func() error
+	mounted    bool
+	mountedErr error
 
 	unlockCalls int
 	copyCalls   int
@@ -71,7 +72,7 @@ func (f *fakeImportDataVolume) Lock() error {
 	return nil
 }
 
-func (f *fakeImportDataVolume) IsMounted() bool { return f.mounted }
+func (f *fakeImportDataVolume) IsMounted() (bool, error) { return f.mounted, f.mountedErr }
 
 // TestImportDataToVolume_Success verifies the happy path unlocks, copies
 // and locks the volume exactly once each and leaves it unmounted.
@@ -203,6 +204,28 @@ func TestRemoveTempMount_StillMounted(t *testing.T) {
 	require.NoError(t, err, "the mounted directory's contents must survive")
 	assert.Equal(t, "copied data", string(data))
 	assert.Contains(t, out.String(), "still mounted")
+}
+
+// TestRemoveTempMount_MountCheckError verifies that a failure to determine
+// mount state is treated as "do not delete", the same as a confirmed
+// mount, rather than silently falling through to removal.
+func TestRemoveTempMount_MountCheckError(t *testing.T) {
+	dir := t.TempDir()
+	tmpMount := filepath.Join(dir, "mnt")
+	require.NoError(t, os.MkdirAll(tmpMount, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpMount, "data.txt"), []byte("copied data"), 0600))
+
+	mountErr := errors.New("could not read /proc/mounts")
+	fake := &fakeImportDataVolume{mountedErr: mountErr}
+
+	var out bytes.Buffer
+	removeTempMount(&out, fake, tmpMount)
+
+	assert.DirExists(t, tmpMount, "an unknown mount state must not be treated as unmounted")
+	data, err := os.ReadFile(filepath.Join(tmpMount, "data.txt"))
+	require.NoError(t, err, "the directory's contents must survive")
+	assert.Equal(t, "copied data", string(data))
+	assert.Contains(t, out.String(), mountErr.Error())
 }
 
 // TestImportDataCmd_Help verifies import-data command help output.

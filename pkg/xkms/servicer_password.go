@@ -69,14 +69,16 @@ var (
 // create a tenant store literally named "system" instead of using the system
 // store — the same drift that made the transports reject system identities.
 func (s *XKMSService) resolvePasswordStore(ctx context.Context) (staticpw.Store, error) {
-	if s.passwordStoreManager != nil {
+	passwordStoreManager := s.passwordStoreManager.load()
+	passwordStore := s.passwordStore.load()
+	if passwordStoreManager != nil {
 		identity := auth.GetIdentity(ctx)
 		if !auth.IsCrossTenant(identity) {
-			return s.passwordStoreManager.ResolveScopedStore(identity.TenantID, identity.Subject)
+			return passwordStoreManager.ResolveScopedStore(identity.TenantID, identity.Subject)
 		}
 	}
-	if s.passwordStore != nil {
-		return s.passwordStore, nil
+	if passwordStore != nil {
+		return passwordStore, nil
 	}
 	return nil, ErrNotConfigured
 }
@@ -340,19 +342,21 @@ func (s *XKMSService) PasswordDelete(ctx context.Context, req *transport.Passwor
 // locked. An unsealed tenant barrier is not, on its own, authorization to open
 // the vault.
 func (s *XKMSService) PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error {
+	passwordStoreManager := s.passwordStoreManager.load()
+	passwordStore := s.passwordStore.load()
 	if req == nil {
 		return ErrNilRequest
 	}
-	if s.passwordStoreManager != nil {
+	if passwordStoreManager != nil {
 		tenantID := scopedTenantIDFromContext(ctx)
 		if tenantID != "" {
 			if err := s.verifyPasswordStoreUserPIN(req.UserPIN); err != nil {
 				return err
 			}
-			return s.passwordStoreManager.UnlockTenant(tenantID)
+			return passwordStoreManager.UnlockTenant(tenantID)
 		}
 	}
-	if s.passwordStore == nil {
+	if passwordStore == nil {
 		return ErrNotConfigured
 	}
 	return ErrOperationNotSupported
@@ -367,13 +371,14 @@ func (s *XKMSService) PasswordStoreUnlock(ctx context.Context, req *transport.Pa
 // (ErrPasswordStoreUserPINNotProvisioned) rather than an unlock that proceeds
 // without a credential.
 func (s *XKMSService) verifyPasswordStoreUserPIN(userPIN string) error {
-	if s.pinManager == nil || !s.pinManager.UserPINSet() {
+	pinManager := s.pinManager.load()
+	if pinManager == nil || !pinManager.UserPINSet() {
 		return ErrPasswordStoreUserPINNotProvisioned
 	}
 	if userPIN == "" {
 		return ErrPasswordStoreUserPINRequired
 	}
-	return s.pinManager.VerifyUserPIN(userPIN)
+	return pinManager.VerifyUserPIN(userPIN)
 }
 
 // PasswordStoreLock locks the tenant password store session. It mirrors
@@ -384,13 +389,15 @@ func (s *XKMSService) verifyPasswordStoreUserPIN(userPIN string) error {
 // Locking needs no credential: it only ever removes access, so requiring one
 // would risk leaving a store readable when the caller cannot produce a PIN.
 func (s *XKMSService) PasswordStoreLock(ctx context.Context) error {
-	if s.passwordStoreManager != nil {
+	passwordStoreManager := s.passwordStoreManager.load()
+	passwordStore := s.passwordStore.load()
+	if passwordStoreManager != nil {
 		tenantID := scopedTenantIDFromContext(ctx)
 		if tenantID != "" {
-			return s.passwordStoreManager.LockTenant(tenantID)
+			return passwordStoreManager.LockTenant(tenantID)
 		}
 	}
-	if s.passwordStore == nil {
+	if passwordStore == nil {
 		return ErrNotConfigured
 	}
 	return ErrOperationNotSupported
@@ -401,10 +408,12 @@ func (s *XKMSService) PasswordStoreLock(ctx context.Context) error {
 // TenantID, it returns per-tenant status including barrier seal state.
 // Otherwise, returns system-level status.
 func (s *XKMSService) PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error) {
-	if s.passwordStoreManager != nil {
+	passwordStoreManager := s.passwordStoreManager.load()
+	passwordStore := s.passwordStore.load()
+	if passwordStoreManager != nil {
 		tenantID := scopedTenantIDFromContext(ctx)
 		if tenantID != "" {
-			status, err := s.passwordStoreManager.TenantStoreStatus(tenantID)
+			status, err := passwordStoreManager.TenantStoreStatus(tenantID)
 			if err != nil {
 				return nil, err
 			}
@@ -418,11 +427,11 @@ func (s *XKMSService) PasswordStoreStatus(ctx context.Context) (*transport.Passw
 	}
 
 	// System-level fallback.
-	if s.passwordStore == nil {
+	if passwordStore == nil {
 		return nil, ErrNotConfigured
 	}
 
-	passwords, err := s.passwordStore.List()
+	passwords, err := passwordStore.List()
 	if err != nil {
 		return nil, err
 	}
@@ -448,10 +457,12 @@ var ErrInvalidAccessMode = errors.New("xkms: invalid password store access mode"
 // protected by the system barrier -- so it reports an empty mode.
 // Returns ErrNotConfigured when no password store is wired.
 func (s *XKMSService) PasswordAccessMode(ctx context.Context) (staticpw.AccessMode, error) {
-	if s.passwordStoreManager != nil && scopedTenantIDFromContext(ctx) != "" {
+	passwordStoreManager := s.passwordStoreManager.load()
+	passwordStore := s.passwordStore.load()
+	if passwordStoreManager != nil && scopedTenantIDFromContext(ctx) != "" {
 		return staticpw.AccessSessionBased, nil
 	}
-	if s.passwordStore == nil {
+	if passwordStore == nil {
 		return "", ErrNotConfigured
 	}
 	return "", nil
@@ -498,7 +509,9 @@ func (s *XKMSService) PasswordStoreSetAccessMode(ctx context.Context, req *trans
 
 // PasswordGenerate generates a random password with the specified constraints.
 func (s *XKMSService) PasswordGenerate(ctx context.Context, req *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error) {
-	if s.passwordStore == nil && s.passwordStoreManager == nil {
+	passwordStoreManager := s.passwordStoreManager.load()
+	passwordStore := s.passwordStore.load()
+	if passwordStore == nil && passwordStoreManager == nil {
 		return nil, ErrNotConfigured
 	}
 	if req == nil {

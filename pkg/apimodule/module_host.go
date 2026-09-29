@@ -15,9 +15,23 @@ package apimodule
 
 import (
 	"context"
+	"log/slog"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/compose"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
+
+// HostStoragePrefix is the qrdb key namespace a self-built module persists
+// its stores under in the host's KV, one sub-namespace per feature
+// (xkms/passwords/, xkms/ssh/, xkms/ca/, ...), so they never collide with
+// the host's own keys. It is part of the persisted layout.
+const HostStoragePrefix = "xkms/"
 
 // HostBuildError reports that the module's self-built REST surface
 // (rest.NewHostServer) failed to construct from the host's inputs — e.g.
@@ -48,7 +62,9 @@ func (e *HostBuildError) Unwrap() error { return e.Err }
 // non-listening *rest.Server around the resolved XKMSService
 // (rest.NewHostServer) using whatever host inputs were configured
 // (WithQRDBClient, WithWebAuthnConfig,
-// WithWebAuthnCredentialStoreDecorator, WithSessionOptions, WithPIVLogin),
+// WithWebAuthnCredentialStoreDecorator, WithSessionOptions, WithPIVLogin)
+// and the store-backed features hostStores composed from the host's
+// dependencies,
 // so a host that merely composes the module via NewServiceModule still gets
 // a working REST surface instead of the module's HTTP surface silently not
 // existing.
@@ -71,10 +87,15 @@ func (m *Module) restServer() (*rest.Server, error) {
 		return nil, nil
 	}
 
+	stores := m.hostStores(x)
 	hc := &rest.HostConfig{
-		XKMSService: x,
-		Session:     m.sessionOptions,
-		PIVLogin:    m.pivLogin,
+		XKMSService:          x,
+		Session:              m.sessionOptions,
+		PIVLogin:             m.pivLogin,
+		PasswordStore:        stores.PasswordStore,
+		PasswordStoreManager: stores.PasswordManager,
+		SSHClient:            stores.SSH,
+		ServeBarrier:         m.barrierRoutes,
 	}
 	if m.resolveQRDBClient != nil {
 		hc.QRDBClient = m.resolveQRDBClient()
@@ -92,4 +113,83 @@ func (m *Module) restServer() (*rest.Server, error) {
 		srv = m.selfREST.Load()
 	}
 	return srv, nil
+}
+
+// selfBuilds reports whether the module composes its own surfaces from host
+// inputs (no WithRESTServer). A module bound to a host-supplied REST server
+// (xkmsd) serves what that host composed and never composes stores itself.
+func (m *Module) selfBuilds() bool { return m.resolveREST == nil }
+
+// servesBarrierRoutes reports whether RegisterHTTP mounts the barrier route
+// families (rest.IsBarrierRoute).
+func (m *Module) servesBarrierRoutes() bool { return !m.selfBuilds() || m.barrierRoutes }
+
+// hostStores composes the module's store-backed features from the host's
+// inputs through pkg/compose -- the construction path xkmsd uses -- and
+// wires them into x, exactly once. Every transport's first use (REST
+// self-build, the gRPC keystore) goes through it, so all transports observe
+// one set of stores.
+//
+// A dependency the host did not supply leaves its feature off; compose
+// logs each one with a typed reason and records it in Stores.Disabled.
+func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
+	if st := m.stores.Load(); st != nil {
+		return st
+	}
+	m.composeMu.Lock()
+	defer m.composeMu.Unlock()
+	if st := m.stores.Load(); st != nil {
+		return st
+	}
+
+	deps := compose.Deps{
+		Service:            x,
+		PIN:                m.pinBackend,
+		PlatformSealer:     m.platformSealer,
+		CredentialStrategy: m.credentialStrategy,
+		CA:                 m.caConfig,
+		PCRReader:          m.pcrReader,
+		ServeBarrier:       m.barrierRoutes,
+		Logger:             slog.Default().With("module", ModuleName),
+	}
+	if m.resolveQRDBClient != nil {
+		if client := m.resolveQRDBClient(); client != nil {
+			deps.Storage = hostStorage(client)
+			if m.barrierRoutes {
+				deps.Custodians = client.CustodianGroups()
+				deps.Shares = client.Shares()
+			}
+		}
+	}
+	if m.resolveBarrierRegistry != nil {
+		if inner := m.resolveBarrierRegistry(); inner != nil {
+			deps.BarrierRegistry = seal.WrapBarrierRegistry(inner, inner.SystemBarrier())
+		}
+	}
+
+	// Build fails only for a nil Service, which the callers have already
+	// excluded; every feature failure is recorded in Stores.Disabled.
+	st, err := compose.Build(context.Background(), deps)
+	if err != nil {
+		st = &compose.Stores{Disabled: []error{err}}
+	}
+	st.Wire(x)
+	m.stores.Store(st)
+	return st
+}
+
+// HostStores returns the store-backed features the module composed from
+// its host's inputs, and the typed reason each missing one is off, or nil
+// before the module's first use or when it serves a host-supplied REST
+// server (WithRESTServer).
+func (m *Module) HostStores() *compose.Stores { return m.stores.Load() }
+
+// hostStorage opens each feature's store as a prefixed view of the host's
+// qrdb KV under HostStoragePrefix. The views share one backend and their
+// Close does not close the host's client.
+func hostStorage(client *qrdbsdk.Client) compose.StorageFactory {
+	shared := qrdbstorage.NewBackend(client.KV())
+	return func(name string) (storage.Backend, error) {
+		return storage.NewPrefixBackend(shared, HostStoragePrefix+name+"/")
+	}
 }

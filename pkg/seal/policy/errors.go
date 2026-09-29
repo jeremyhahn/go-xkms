@@ -53,4 +53,12 @@ var (
 
 	// ErrUnsupportedBank is returned when the PCR bank algorithm is not recognized.
 	ErrUnsupportedBank = errors.New("policy: unsupported PCR bank algorithm")
+
+	// ErrNilStorageBackend is returned when a nil storage backend is passed
+	// to NewBackendPolicyStore.
+	ErrNilStorageBackend = errors.New("policy: storage backend must not be nil")
+
+	// ErrNilPolicyDefinition is returned when SavePolicy is given a nil
+	// definition.
+	ErrNilPolicyDefinition = errors.New("policy: policy definition must not be nil")
 )

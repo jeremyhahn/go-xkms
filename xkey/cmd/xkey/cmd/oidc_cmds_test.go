@@ -939,6 +939,61 @@ func TestExecuteOIDCScript_PropagatesFailure(t *testing.T) {
 	assert.Error(t, err, "a failing hook must surface as an error, not be swallowed")
 }
 
+// TestRunAutoRefresh_MalformedIDToken_SkipsExecHook verifies that when the
+// refreshed ID token cannot be parsed, the exec hook for that refresh
+// cycle is skipped and logged, instead of running with empty
+// Subject/Email/Name claims.
+func TestRunAutoRefresh_MalformedIDToken_SkipsExecHook(t *testing.T) {
+	cmd, _, storePath := oidcTestCmd(t)
+	store, err := openOIDCTokenStore(cmd, storePath)
+	require.NoError(t, err)
+
+	seed := mustOIDCStoredToken(t, "", "https://example.okta.com", "client",
+		"seed-access", "seed-refresh", "", time.Now().Add(-time.Minute), nil)
+	defer seed.Destroy()
+	require.NoError(t, store.Save(seed))
+
+	var refreshes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshes.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(OIDCTokenResponse{
+			AccessToken:  "rotated-access",
+			RefreshToken: "rotated-refresh",
+			IDToken:      "not-a-valid-jwt",
+			ExpiresIn:    3600,
+		})
+	}))
+	defer server.Close()
+
+	marker := filepath.Join(t.TempDir(), "exec-ran.txt")
+	execCmd := fmt.Sprintf("echo ran > %q", marker)
+
+	var buf bytes.Buffer
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- runAutoRefresh(server.URL, "client", store, storePath, execCmd, "", 10*time.Millisecond, &buf, oidc.TokenEncodingForm, stop)
+	}()
+
+	require.Eventually(t, func() bool {
+		return refreshes.Load() >= 2
+	}, 5*time.Second, 10*time.Millisecond, "fewer than 2 refresh ticks before the deadline")
+	close(stop)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("runAutoRefresh did not stop after its stop channel closed")
+	}
+
+	assert.Contains(t, buf.String(), "skipping exec hook", "a malformed ID token must be logged and the exec hook skipped; log:\n%s", buf.String())
+
+	_, statErr := os.Stat(marker)
+	assert.True(t, os.IsNotExist(statErr), "the exec hook must never run when the ID token cannot be parsed")
+}
+
 // hostileProviderText carries an OSC 52 clipboard write, a clear-screen
 // CSI, an 8-bit CSI and a NUL between two words; sanitised it reads
 // "deniedend".

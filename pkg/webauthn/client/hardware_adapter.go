@@ -47,11 +47,8 @@ func NewHardwareAdapter(config *fido2.Config, enumerator fido2.HIDDeviceEnumerat
 	if config != nil {
 		cfg = *config
 	}
-	if enumerator == nil {
-		enumerator = fido2.NewDefaultEnumerator()
-	}
 
-	handler, err := fido2.NewHandler(&cfg, enumerator)
+	handler, err := fido2.NewHandler(&cfg, hidEnumerator(enumerator))
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrAuthenticatorNotFound, Cause: err}
 	}
@@ -65,6 +62,15 @@ func NewHardwareAdapter(config *fido2.Config, enumerator fido2.HIDDeviceEnumerat
 	}
 
 	return &HardwareAdapter{handler: handler}, nil
+}
+
+// hidEnumerator returns enumerator, or the platform HID enumerator
+// (fido2.NewDefaultEnumerator) when enumerator is nil.
+func hidEnumerator(enumerator fido2.HIDDeviceEnumerator) fido2.HIDDeviceEnumerator {
+	if enumerator == nil {
+		return fido2.NewDefaultEnumerator()
+	}
+	return enumerator
 }
 
 // Available reports whether the authenticator handle is open.

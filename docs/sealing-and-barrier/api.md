@@ -176,6 +176,16 @@ hold only the service (`pkg/api/rest/policy_handlers.go`). The refusal is
 REST `404` with the unknown-tenant message (`pkg/api/rest/policy_handlers.go:367`),
 gRPC `NotFound` and MCP `JSONRPCCodeNotFound` (`pkg/api/apierrors/tables.go:192`).
 
+The policy manager exists only where a PCR reader is supplied: an embedding
+host passes one with `WithServiceModulePCRReader`
+([`../host-embedding/`](../host-embedding/)); `xkmsd` uses its configured TPM
+(`backends.tpm2.enabled`) through `tpm2.BankPCRReader`
+(`pkg/tpm2/pcr_reader.go`, wired in `pkg/server/backend_tpm2.go`). Without a
+TPM, `xkmsd` logs `xkms feature off feature=policies` with the
+`compose.FeatureDisabledError` reason and the policy routes answer "not
+configured". Definitions persist durably through
+`policy.BackendPolicyStore` (`pkg/seal/policy/backend_store.go`).
+
 ## Tenant barriers
 
 Per-tenant barrier operations live under the tenant routes and are documented in
