@@ -49,6 +49,19 @@ var (
 
 	// ErrTPM2InitFailed indicates TPM2 initialization failed.
 	ErrTPM2InitFailed = errors.New("device: TPM2 initialization failed")
+
+	// ErrDeviceNameAmbiguous indicates more than one paired device shares
+	// the requested name, so listen cannot choose which pinned key to
+	// trust. See pairing.FindPairedDeviceByName.
+	ErrDeviceNameAmbiguous = errors.New("device: more than one paired device has this name; re-pair or remove the duplicate")
+
+	// ErrDevicePinInvalid indicates the paired device record has no usable
+	// pinned Noise static key -- empty or the wrong length -- so the
+	// peripheral would otherwise be built with nothing to pin, silently
+	// accepting a handshake from any phone rather than only the paired one.
+	// Re-pairing the device is the only recovery: there is no partial key to
+	// repair.
+	ErrDevicePinInvalid = errors.New("device: paired device has no valid pinned key; re-pair the device")
 )
 
 // Default TPM2 device path.
@@ -168,16 +181,27 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 		return ErrDeviceNotPaired
 	}
 
-	// Find the target device
+	// Find the target device. Looked up through pairing.FindPairedDeviceByName
+	// directly, not the cmd-local findDeviceByName, so an ambiguous name (more
+	// than one record) is refused instead of resolved by taking the first
+	// match -- the phone's advertised name is untrusted input, and a lookup by
+	// name is how this command picks which pinned key to trust for the whole
+	// listening session (#1307).
 	var targetDevice *PairedDevice
 	switch {
 	case deviceFilter != "":
-		targetDevice = findDeviceByName(cfg, deviceFilter)
+		targetDevice, err = pairing.FindPairedDeviceByName(cfg.Devices, deviceFilter)
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrDeviceNameAmbiguous, Cause: err}
+		}
 		if targetDevice == nil {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceFilter)}
 		}
 	case cfg.DefaultDevice != "":
-		targetDevice = findDeviceByName(cfg, cfg.DefaultDevice)
+		targetDevice, err = pairing.FindPairedDeviceByName(cfg.Devices, cfg.DefaultDevice)
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrDeviceNameAmbiguous, Cause: err}
+		}
 		if targetDevice == nil {
 			return ErrDeviceNoDefaultDevice
 		}
@@ -192,6 +216,17 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 	expectedRemoteStatic, err := base64.StdEncoding.DecodeString(targetDevice.NoisePublicKey)
 	if err != nil {
 		return &WrappedError{Msg: "failed to decode phone public key", Err: err}
+	}
+	// Refused here, before any of the TPM/bridge setup below runs, and again
+	// by NewBLEPeripheral itself: an empty or wrong-length key is a corrupt
+	// paired-device record, and building the peripheral with it would pin
+	// nothing (phone.NewNoiseSession treats a zero-length PeerStaticKey as
+	// "no key to pin," not as an error), silently accepting a handshake from
+	// any phone rather than the one that was paired. The same rule
+	// PhoneKeyBackend applies to an unset ExpectedRemoteStatic (phone.go),
+	// applied here to a stored one that decoded to nothing usable.
+	if len(expectedRemoteStatic) != pairing.NoiseKeySize {
+		return &DetailError{Err: ErrDevicePinInvalid, Detail: fmt.Sprintf(": %s", targetDevice.Name)}
 	}
 
 	// Unseal our local static key (#42). barrier is nil here only because

@@ -40,6 +40,22 @@ var (
 	ErrPeripheralNotRunning     = errors.New("phone: peripheral not running")
 	ErrPeripheralStartFailed    = errors.New("phone: failed to start peripheral")
 	ErrClientDisconnected       = errors.New("phone: client disconnected")
+
+	// ErrPeripheralInvalidPin indicates ExpectedRemoteStatic was supplied but
+	// is not a usable Noise static public key: empty, or a length other than
+	// pairing.NoiseKeySize.
+	//
+	// A caller that means to run unpinned (trust-on-first-connection) leaves
+	// ExpectedRemoteStatic nil, which is unaffected by this check. What this
+	// refuses is a caller that MEANT to pin a key and got nothing usable --
+	// device_listen decoding an empty or corrupt stored NoisePublicKey is
+	// exactly that: base64-decoding "" yields a non-nil, zero-length slice,
+	// which the Noise session's PeerStaticKey treats as "nothing to pin"
+	// rather than as an error, silently downgrading a supposedly pinned
+	// connection to an unpinned one. Refusing it here, at construction,
+	// means every caller gets the same answer instead of each having to
+	// reimplement this check itself.
+	ErrPeripheralInvalidPin = errors.New("phone: expected remote static key must be omitted or exactly NoiseKeySize bytes")
 )
 
 // BLEPeripheralConfig configures the BLE peripheral (server) mode.
@@ -198,6 +214,34 @@ type BLEPeripheral struct {
 	// pointer and the protected private pages, so LocalStaticPublicKey cannot
 	// race AcceptConnection publishing a session or Stop destroying a key.
 	localStaticPublic []byte
+
+	// writeMu guards boundCentral and centralBound.
+	writeMu sync.Mutex
+
+	// boundCentral identifies the central handleWrite accepts control-point
+	// writes from for the current session, and centralBound records whether
+	// a central has bound yet. The GATT server exposes one control point to
+	// every central that is connected, not one per session, so without this a
+	// second central -- accidental or hostile -- could write fragments into
+	// the same incomingData channel and reassembler the legitimate phone's
+	// handshake or request stream is using. handleWrite binds to whichever
+	// central's write arrives first and drops every write reporting a
+	// different one; resetCentralBinding clears it so the next session starts
+	// unbound instead of inheriting the previous one's central.
+	//
+	// This binds correctly wherever bluetooth.Connection identifies the
+	// writer, which tinygo's hci/ninafw/cyw43439 backends do. It does NOT on
+	// the BlueZ D-Bus backend (gatts_linux.go, what every desktop Linux build
+	// of xkey compiles): BlueZ does not tell the GATT application which
+	// central performed a write, so that backend reports Connection(0) for
+	// every write regardless of source, and every central lands in the same
+	// bucket there. Rejecting a second central at the connection layer would
+	// close that gap and is tracked in #1307's follow-up; this is still worth
+	// doing now because it binds correctly on every backend that reports real
+	// per-connection identity, and it is the seam a connection-layer check
+	// would extend rather than replace.
+	boundCentral bluetooth.Connection
+	centralBound bool
 }
 
 // advertiser is the part of bluetooth.Advertisement the peripheral's lifecycle
@@ -230,6 +274,15 @@ var _ advertiser = (*bluetooth.Advertisement)(nil)
 func NewBLEPeripheral(cfg *BLEPeripheralConfig) (*BLEPeripheral, error) {
 	if cfg == nil {
 		cfg = &BLEPeripheralConfig{}
+	}
+
+	// Validated before anything below takes ownership of the caller's key:
+	// a refused construction must not leave a transferred key adopted with
+	// nothing to release it. nil means "run unpinned", left alone below;
+	// anything else must be a usable Noise static public key. See
+	// ErrPeripheralInvalidPin.
+	if cfg.ExpectedRemoteStatic != nil && len(cfg.ExpectedRemoteStatic) != pairing.NoiseKeySize {
+		return nil, ErrPeripheralInvalidPin
 	}
 
 	// A transferred key is adopted as the peripheral's own, and consumed from
@@ -440,7 +493,7 @@ func (p *BLEPeripheral) setupGATTService() error {
 		UUID:   ControlPointUUID,
 		Flags:  bluetooth.CharacteristicWritePermission | bluetooth.CharacteristicWriteWithoutResponsePermission,
 		WriteEvent: func(client bluetooth.Connection, offset int, value []byte) {
-			p.handleWrite(value)
+			p.handleWrite(client, value)
 		},
 	}
 
@@ -477,7 +530,27 @@ func (p *BLEPeripheral) setupGATTService() error {
 }
 
 // handleWrite processes incoming data on the control point characteristic.
-func (p *BLEPeripheral) handleWrite(data []byte) {
+//
+// It binds the session to whichever central client identifies on the first
+// write, and drops every write from a different client rather than queuing
+// it — see boundCentral for why one central's fragments must never reach
+// another's reassembler.
+func (p *BLEPeripheral) handleWrite(client bluetooth.Connection, data []byte) {
+	p.writeMu.Lock()
+	switch {
+	case !p.centralBound:
+		p.boundCentral = client
+		p.centralBound = true
+	case client != p.boundCentral:
+		p.writeMu.Unlock()
+		p.log.Debug("dropping write from unbound central",
+			slog.Int("client", int(client)),
+			slog.Int("bound_client", int(p.boundCentral)),
+		)
+		return
+	}
+	p.writeMu.Unlock()
+
 	p.log.Debug("received data",
 		slog.Int("size", len(data)),
 		slog.String("hex_prefix", hex.EncodeToString(safeSlice(data, 0, 16))),
@@ -488,6 +561,19 @@ func (p *BLEPeripheral) handleWrite(data []byte) {
 	default:
 		p.log.Warn("incoming data buffer full, dropping data")
 	}
+}
+
+// resetCentralBinding clears the central handleWrite is currently bound to.
+//
+// AcceptConnection calls it before waiting on a new connection, so a fresh
+// session does not inherit the previous session's binding, and again when
+// the session ends, so a stale binding cannot outlive it and refuse the next
+// legitimate central's first write.
+func (p *BLEPeripheral) resetCentralBinding() {
+	p.writeMu.Lock()
+	p.centralBound = false
+	p.boundCentral = 0
+	p.writeMu.Unlock()
 }
 
 // registerConnection admits a connection into the drain set, or refuses it
@@ -548,6 +634,12 @@ func (p *BLEPeripheral) AcceptConnection(ctx context.Context) error {
 		return err
 	}
 	defer p.connWG.Done()
+
+	// See boundCentral: a session's control-point writes are bound to
+	// whichever central sends the first one, and that binding must not leak
+	// across sessions in either direction.
+	p.resetCentralBinding()
+	defer p.resetCentralBinding()
 
 	p.log.Info("waiting for phone connection...")
 
