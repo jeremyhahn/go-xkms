@@ -439,7 +439,7 @@ deps:
 	@$(GOMOD) download
 	@$(GOMOD) verify
 	@echo "$(GREEN)✓ Go dependencies installed$(RESET)"
-	@echo "$(YELLOW)Note: For integration tests, ensure SoftHSM and SWTPM are installed:$(RESET)"
+	@echo "$(YELLOW)Note: unit tests need SWTPM (pkg/tpm2/vtpm runs real vTPMs); integration tests also need SoftHSM:$(RESET)"
 	@echo "  - Ubuntu/Debian: sudo apt-get install softhsm2 swtpm swtpm-tools"
 	@echo "  - macOS: brew install softhsm swtpm"
 
