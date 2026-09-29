@@ -111,8 +111,15 @@ type FileAuditLogger struct {
 	closed   atomic.Bool
 	wg       sync.WaitGroup
 	mu       sync.Mutex
-	enabled  bool
-	logPath  string // Store path for potential direct file operations
+	// closeMu guards the closed-check-then-send critical section in Log
+	// against a concurrent Close. Log holds the read lock across the
+	// closed check and the send to buffer (including the synchronous
+	// writeEvent fallback), so a Close that is closing buffer cannot run
+	// concurrently with a Log that is sending on it: Close only closes
+	// buffer while holding the write lock, which excludes every reader.
+	closeMu sync.RWMutex
+	enabled bool
+	logPath string // Store path for potential direct file operations
 }
 
 // NewFileAuditLogger creates a new file-based audit logger
@@ -182,6 +189,9 @@ func NewFileAuditLogger(config *Config) (AuditLogger, error) {
 
 // Log records an audit event
 func (l *FileAuditLogger) Log(ctx context.Context, event *AuditEvent) error {
+	l.closeMu.RLock()
+	defer l.closeMu.RUnlock()
+
 	if l.closed.Load() {
 		return ErrLoggerClosed
 	}
@@ -323,7 +333,13 @@ func (l *FileAuditLogger) drainBufferSync() error {
 
 // Close flushes remaining events and closes the logger
 func (l *FileAuditLogger) Close() error {
+	// Take the write lock before touching closed/buffer: this excludes
+	// every in-flight Log call (each holds the read lock across its
+	// closed-check and send), so no goroutine can be sending on buffer
+	// when it is closed below.
+	l.closeMu.Lock()
 	if !l.closed.CompareAndSwap(false, true) {
+		l.closeMu.Unlock()
 		return nil // Already closed
 	}
 
@@ -332,8 +348,11 @@ func (l *FileAuditLogger) Close() error {
 
 	// Close the buffer channel to signal the processor to stop
 	close(l.buffer)
+	l.closeMu.Unlock()
 
-	// Wait for the processor to finish
+	// Wait for the processor to finish. The processor drains any events
+	// still buffered before it returns, so everything sent prior to
+	// Close is still flushed to disk.
 	l.wg.Wait()
 
 	// Close the writer
