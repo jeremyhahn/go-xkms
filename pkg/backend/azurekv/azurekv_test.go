@@ -569,7 +569,7 @@ func TestClose(t *testing.T) {
 	if err := storage.SaveKey(context.Background(), config.KeyStorage, "test-key", []byte("test data")); err != nil {
 		t.Fatalf("storage.SaveKey() error = %v", err)
 	}
-	if _, err := b.importTokens.Put("import-token-test-key", []byte("wrapping key material")); err != nil {
+	if _, err := b.importTokens.Put("test-handle", newTestSealedRSAKey(t)); err != nil {
 		t.Fatalf("importTokens.Put() error = %v", err)
 	}
 

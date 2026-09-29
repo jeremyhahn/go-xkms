@@ -216,7 +216,7 @@ func TestWrapKey_InvalidInput(t *testing.T) {
 }
 
 // TestUnwrapKey_InvalidInput verifies UnwrapKey rejects malformed callers
-// and corrupt import tokens.
+// and unknown import tokens.
 func TestUnwrapKey_InvalidInput(t *testing.T) {
 	b, _ := testBackend(t)
 
@@ -233,8 +233,8 @@ func TestUnwrapKey_InvalidInput(t *testing.T) {
 			params:  &backend.ImportParameters{},
 		},
 		{
-			name:    "corrupt import token",
-			wrapped: &backend.WrappedKeyMaterial{ImportToken: []byte("not-a-key"), WrappedKey: []byte("x")},
+			name:    "unknown import token",
+			wrapped: &backend.WrappedKeyMaterial{ImportToken: []byte("not-a-handle"), WrappedKey: []byte("x")},
 			params:  &backend.ImportParameters{},
 		},
 	}
@@ -312,13 +312,13 @@ func TestImportKey_RSA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("storage.KeyExists() error = %v", err)
 	}
-	_, peekErr := b.importTokens.Peek("import-token-" + attrs.CN)
+	_, peekErr := b.importTokens.Peek(string(params.ImportToken))
 	hasImportToken := peekErr == nil
 	if !hasMetadata {
 		t.Error("ImportKey() did not store metadata")
 	}
 	if hasImportToken {
-		t.Error("ImportKey() did not clean up the temporary import token")
+		t.Error("ImportKey() did not consume the single-use import token")
 	}
 }
 

@@ -17,6 +17,7 @@ package azurekv
 
 import (
 	"context"
+	"crypto/rsa"
 	"crypto/x509"
 	"errors"
 	"testing"
@@ -37,7 +38,7 @@ import (
 // *importtoken.LimitExceededError instead of growing past the limit.
 func TestGetImportParameters_CapEnforced(t *testing.T) {
 	b, _ := testBackend(t)
-	b.importTokens = importtoken.New[[]byte](time.Hour, 2, func([]byte) {})
+	b.importTokens = importtoken.New[*importtoken.SealedRSAKey](time.Hour, 2, (*importtoken.SealedRSAKey).Destroy)
 
 	for i := 0; i < 2; i++ {
 		attrs := &types.KeyAttributes{
@@ -73,45 +74,38 @@ func TestGetImportParameters_CapEnforced(t *testing.T) {
 // second Put runs the sweep.
 func TestGetImportParameters_ExpiredTokenSwept(t *testing.T) {
 	b, _ := testBackend(t)
-	b.importTokens = importtoken.New[[]byte](time.Nanosecond, importtoken.DefaultMaxTokens, func([]byte) {})
+	b.importTokens = importtoken.New[*importtoken.SealedRSAKey](time.Nanosecond, importtoken.DefaultMaxTokens, (*importtoken.SealedRSAKey).Destroy)
 
 	attrs := &types.KeyAttributes{CN: "expiring", KeyAlgorithm: x509.RSA}
-	if _, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256); err != nil {
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	if err != nil {
 		t.Fatalf("GetImportParameters() unexpected error = %v", err)
 	}
 
 	time.Sleep(time.Millisecond)
 
-	if _, err := b.importTokens.Peek("import-token-expiring"); err == nil {
+	if _, err := b.importTokens.Peek(string(params.ImportToken)); err == nil {
 		t.Error("expired import token should have been swept")
 	}
 }
 
-// TestImportTokens_EvictionZeroizesMaterial verifies eviction wipes the
-// material: the Store's destroy callback (secure.Wipe) is wired in for
-// production use, so Close -- which empties the Store -- leaves no
-// recoverable key bytes behind.
-func TestImportTokens_EvictionZeroizesMaterial(t *testing.T) {
+// TestImportTokens_EvictionDestroysWrappingKey verifies eviction destroys
+// the sealed wrapping key: the Store's destroy callback
+// ((*importtoken.SealedRSAKey).Destroy) is wired in for production use, so
+// a deleted entry's enclave can no longer be opened.
+func TestImportTokens_EvictionDestroysWrappingKey(t *testing.T) {
 	b, _ := testBackend(t)
 
-	secret := []byte("sensitive wrapping key bytes")
-	original := make([]byte, len(secret))
-	copy(original, secret)
-
-	if _, err := b.importTokens.Put("evict-me", secret); err != nil {
+	sealed := newTestSealedRSAKey(t)
+	if _, err := b.importTokens.Put("evict-me", sealed); err != nil {
 		t.Fatalf("Put() unexpected error = %v", err)
 	}
 
 	b.importTokens.Delete("evict-me")
 
-	allZero := true
-	for _, by := range secret {
-		if by != 0 {
-			allZero = false
-			break
-		}
-	}
-	if !allZero {
-		t.Error("Delete() must zeroize the evicted key bytes")
+	err := sealed.Use(func(*rsa.PrivateKey) error { return nil })
+	var unavailable *importtoken.UnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("Use() after Delete: expected *importtoken.UnavailableError, got %T: %v", err, err)
 	}
 }

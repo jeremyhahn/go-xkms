@@ -42,7 +42,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/importtoken"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // KeyVaultClient defines the interface for Azure Key Vault operations.
@@ -153,19 +152,20 @@ type Backend struct {
 	config        *Config
 	client        KeyVaultClient
 	secretsClient SecretsClient // lazily initialized by initSecretsClient; see azurekv_symmetric.go
-	// importTokens holds the transient RSA wrapping-key material generated
-	// by GetImportParameters for the GetImportParameters -> WrapKey ->
-	// ImportKey ceremony. It is deliberately never written through
-	// Config.KeyStorage: it is private key material, not key metadata, and
-	// the ceremony is expected to complete within one process's uptime --
-	// unlike the CN -> key descriptor records above, nothing relies on it
-	// surviving a restart. It is a bounded, TTL-enforced store rather than
-	// a plain map (go-xkms#1261): a caller that requests import parameters
-	// and never completes the ceremony must not be able to grow this
-	// state without limit, and the key bytes it holds must be zeroized
-	// when they are no longer needed rather than left for the garbage
-	// collector.
-	importTokens *importtoken.Store[[]byte]
+	// importTokens holds the sealed ephemeral RSA wrapping keypair for each
+	// in-flight GetImportParameters -> WrapKey -> ImportKey ceremony, keyed
+	// by the random opaque handle returned as ImportParameters.ImportToken.
+	// The wrapping private key lives only here -- it is never handed to the
+	// caller (go-xkms#1340) and never written through Config.KeyStorage: it
+	// is private key material, not key metadata, and the ceremony is
+	// expected to complete within one process's uptime, so unlike the CN ->
+	// key descriptor records above nothing relies on it surviving a
+	// restart. It is a bounded, TTL-enforced, single-use store rather than a
+	// plain map (go-xkms#1261): a caller that requests import parameters and
+	// never completes the ceremony must not be able to grow this state
+	// without limit, and every evicted wrapping key is destroyed rather than
+	// left for the garbage collector.
+	importTokens *importtoken.Store[*importtoken.SealedRSAKey]
 	tracker      types.AEADSafetyTracker
 	mu           sync.RWMutex // guards client/secretsClient initialization
 }
@@ -185,7 +185,7 @@ func NewBackend(config *Config) (*Backend, error) {
 
 	b := &Backend{
 		config:       config,
-		importTokens: importtoken.New[[]byte](0, 0, secure.Wipe),
+		importTokens: importtoken.New[*importtoken.SealedRSAKey](0, 0, (*importtoken.SealedRSAKey).Destroy),
 		tracker:      tracker,
 	}
 
@@ -208,7 +208,7 @@ func NewBackendWithClient(config *Config, client KeyVaultClient) (*Backend, erro
 	b := &Backend{
 		config:       config,
 		client:       client,
-		importTokens: importtoken.New[[]byte](0, 0, secure.Wipe),
+		importTokens: importtoken.New[*importtoken.SealedRSAKey](0, 0, (*importtoken.SealedRSAKey).Destroy),
 		tracker:      tracker,
 	}
 
@@ -428,7 +428,7 @@ func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 // Close releases any resources held by the backend. Config.KeyStorage's
 // lifecycle belongs to the caller that constructed it (it may be shared, or
 // outlive this backend across a restart), so Close never touches it -- only
-// the Azure client handles and the transient importTokens map are released
+// the Azure client handles and the transient importTokens store are released
 // here.
 func (b *Backend) Close() error {
 	b.mu.Lock()
