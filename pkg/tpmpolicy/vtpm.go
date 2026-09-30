@@ -262,15 +262,15 @@ func (s *Service) ensureStatePolicy(ctx context.Context, st *scopeState, scope *
 	if bank == "" {
 		bank = pkgtpm2.PCRBankSHA256
 	}
-	bank, _, pcrs, err := validateSelection(bank, []uint{pcr})
+	branches, err := validateBranches([]Branch{{Conditions: []Condition{{Type: ConditionPCR, Bank: bank, PCRs: []uint{pcr}}}}})
 	if err != nil {
 		return err
 	}
 	_, err = s.createPolicy(ctx, st, scope, CreatePolicyRequest{
-		Name:      VTPMStatePolicy,
-		Bank:      bank,
-		PCRs:      pcrs,
-		OwnerAuth: ownerAuth,
+		Name:        VTPMStatePolicy,
+		Description: "Seals each vTPM's state key to the physical TPM's platform PCR.",
+		Branches:    branches,
+		OwnerAuth:   ownerAuth,
 	})
 	return err
 }

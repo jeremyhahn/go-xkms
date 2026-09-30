@@ -35,20 +35,53 @@ func validBinding() *TPMPolicyBinding {
 }
 
 // TestTPMPolicyBinding_RoundTrip proves every field survives encoding, for
-// both values of the auth-value flag.
+// every valid combination of the auth-value flags, and that new records are
+// written as version 2.
 func TestTPMPolicyBinding_RoundTrip(t *testing.T) {
-	for _, authValue := range []bool{true, false} {
+	for _, flags := range []struct{ branch, condition bool }{
+		{true, false}, {false, false}, {false, true},
+	} {
 		want := validBinding()
-		want.AuthValueBranch = authValue
+		want.AuthValueBranch = flags.branch
+		want.AuthValueCondition = flags.condition
 
 		record, err := want.MarshalBinary()
 		require.NoError(t, err)
 		assert.Equal(t, tpmPolicyBindingMagic, string(record[:4]))
+		assert.Equal(t, TPMPolicyBindingVersion, record[4])
 
 		got, err := UnmarshalTPMPolicyBinding(record)
 		require.NoError(t, err)
 		assert.Equal(t, want, got)
 	}
+}
+
+// v1BindingRecord is a version 1 record as the first writer produced it:
+// scope "tenant-a", policy "boot", index 0x01500010, SHA-256, with an outer
+// auth-value branch.
+var v1BindingRecord = []byte{
+	'X', 'T', 'P', 'B', 0x01,
+	0x01, 0x50, 0x00, 0x10,
+	0x00, 0x0B,
+	0x01,
+	0x00, 0x08, 't', 'e', 'n', 'a', 'n', 't', '-', 'a',
+	0x00, 0x04, 'b', 'o', 'o', 't',
+}
+
+// TestUnmarshalTPMPolicyBinding_ReadsVersion1 proves records written before
+// auth_value conditions existed still decode, as bindings to a policy
+// without one, and that a version 1 record cannot claim the version 2 flag.
+func TestUnmarshalTPMPolicyBinding_ReadsVersion1(t *testing.T) {
+	got, err := UnmarshalTPMPolicyBinding(v1BindingRecord)
+	require.NoError(t, err)
+	assert.Equal(t, validBinding(), got)
+	assert.False(t, got.AuthValueCondition)
+
+	forged := append([]byte(nil), v1BindingRecord...)
+	forged[11] = tpmPolicyBindingFlagAuthValueCondition
+	_, err = UnmarshalTPMPolicyBinding(forged)
+	var formatErr *TPMPolicyBindingFormatError
+	require.ErrorAs(t, err, &formatErr)
 }
 
 // TestTPMPolicyBinding_MarshalRejectsInvalid proves a record that could not
@@ -63,6 +96,7 @@ func TestTPMPolicyBinding_MarshalRejectsInvalid(t *testing.T) {
 		{"empty policy", func(b *TPMPolicyBinding) *TPMPolicyBinding { b.Policy = ""; return b }},
 		{"zero index", func(b *TPMPolicyBinding) *TPMPolicyBinding { b.Index = 0; return b }},
 		{"zero hash", func(b *TPMPolicyBinding) *TPMPolicyBinding { b.HashAlg = 0; return b }},
+		{"both auth value flags", func(b *TPMPolicyBinding) *TPMPolicyBinding { b.AuthValueCondition = true; return b }},
 		{"long scope", func(b *TPMPolicyBinding) *TPMPolicyBinding {
 			b.Scope = strings.Repeat("s", tpmPolicyBindingMaxName+1)
 			return b
@@ -100,6 +134,7 @@ func TestUnmarshalTPMPolicyBinding_RejectsMalformed(t *testing.T) {
 		{"short header", good[:tpmPolicyBindingHeaderLen-1]},
 		{"bad magic", corrupt(func(b []byte) []byte { b[0] = 'Y'; return b })},
 		{"unknown flag", corrupt(func(b []byte) []byte { b[11] = 0x80; return b })},
+		{"both auth value flags", corrupt(func(b []byte) []byte { b[11] = 0x03; return b })},
 		{"truncated", good[:len(good)-1]},
 		{"trailing bytes", append(append([]byte(nil), good...), 0)},
 		{"zero scope length", corrupt(func(b []byte) []byte { b[12], b[13] = 0, 0; return b })},

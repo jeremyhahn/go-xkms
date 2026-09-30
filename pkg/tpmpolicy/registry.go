@@ -247,6 +247,7 @@ func (r *Registry) CreatePolicy(ctx context.Context, tenant string, p *Policy) e
 	if err != nil {
 		return err
 	}
+	p.syncLegacyView()
 	data, err := json.Marshal(p)
 	if err != nil {
 		return &StoreError{Op: "encode", Key: k, Err: err}
@@ -261,8 +262,8 @@ func (r *Registry) CreatePolicy(ctx context.Context, tenant string, p *Policy) e
 	return nil
 }
 
-// UpdatePolicy replaces an existing named policy's record (a new approval
-// or re-captured PCR values). The name must already exist.
+// UpdatePolicy replaces an existing named policy's record (new approvals,
+// re-captured PCR values or a new description). The name must already exist.
 func (r *Registry) UpdatePolicy(ctx context.Context, tenant string, p *Policy) error {
 	if p == nil {
 		return ErrNilPolicy
@@ -274,6 +275,7 @@ func (r *Registry) UpdatePolicy(ctx context.Context, tenant string, p *Policy) e
 	if err != nil {
 		return err
 	}
+	p.syncLegacyView()
 	return r.putJSON(ctx, k, p)
 }
 
@@ -294,6 +296,7 @@ func (r *Registry) Policy(ctx context.Context, tenant, name string) (*Policy, er
 	if !found {
 		return nil, ErrPolicyNotFound
 	}
+	p.syncLegacyView()
 	return &p, nil
 }
 
@@ -309,6 +312,7 @@ func (r *Registry) ListPolicies(ctx context.Context, tenant string) ([]*Policy, 
 		if err := json.Unmarshal(v, &p); err != nil {
 			return &StoreError{Op: "decode", Key: k, Err: err}
 		}
+		p.syncLegacyView()
 		out = append(out, &p)
 		return nil
 	})

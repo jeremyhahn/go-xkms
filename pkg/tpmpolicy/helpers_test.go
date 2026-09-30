@@ -239,14 +239,32 @@ func extendPCR(t *testing.T, tpm transport.TPM) {
 	require.NoError(t, err)
 }
 
-// replayResolver answers every approval request with one fixed approval, as
-// an attacker replaying a stored copy would.
+// replayResolver answers every approval request with fixed approvals, as an
+// attacker replaying a stored copy would.
 type replayResolver struct {
 	*Service
-	approval *pkgtpm2.PolicyApproval
+	approvals []*pkgtpm2.PolicyApproval
 }
 
-// Approval returns the replayed approval.
-func (r replayResolver) Approval(string, string) (*pkgtpm2.PolicyApproval, error) {
-	return r.approval, nil
+// Approvals returns the replayed approvals.
+func (r replayResolver) Approvals(string, string) ([]*pkgtpm2.PolicyApproval, error) {
+	return r.approvals, nil
+}
+
+// pcrBranch is a branch of one pcr condition over testPCR.
+func pcrBranch() Branch {
+	return Branch{Conditions: []Condition{{Type: ConditionPCR, Bank: "sha256", PCRs: []uint{testPCR}}}}
+}
+
+// authValueBranch is a branch of one auth_value condition.
+func authValueBranch() Branch {
+	return Branch{Conditions: []Condition{{Type: ConditionAuthValue}}}
+}
+
+// createComposite creates a policy of branches in tenant's scope.
+func (f *fixture) createComposite(tenant, name string, branches ...Branch) *Policy {
+	f.t.Helper()
+	p, err := f.svc.CreatePolicy(f.ctx, tenant, CreatePolicyRequest{Name: name, Branches: branches})
+	require.NoError(f.t, err)
+	return p
 }

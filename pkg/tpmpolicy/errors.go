@@ -76,8 +76,28 @@ var (
 	// policy is updated.
 	ErrPolicyRevoked = errors.New("tpmpolicy: the policy's approval has been revoked")
 
-	// ErrEmptyPCRSelection is returned for a policy that selects no PCR.
-	ErrEmptyPCRSelection = errors.New("tpmpolicy: a policy must select at least one PCR")
+	// ErrEmptyPCRSelection is returned for a pcr condition that selects no
+	// PCR.
+	ErrEmptyPCRSelection = errors.New("tpmpolicy: a pcr condition must select at least one PCR")
+
+	// ErrEmptyLocalitySelection is returned for a locality condition that
+	// allows no locality.
+	ErrEmptyLocalitySelection = errors.New("tpmpolicy: a locality condition must allow at least one locality")
+
+	// ErrNoBranches is returned for a policy without branches.
+	ErrNoBranches = errors.New("tpmpolicy: a policy must have at least one branch")
+
+	// ErrEmptyBranch is returned for a branch without conditions.
+	ErrEmptyBranch = errors.New("tpmpolicy: a policy branch must have at least one condition")
+
+	// ErrAmbiguousPolicyRequest is returned for a CreatePolicyRequest that
+	// sets both Branches and the deprecated Bank and PCRs.
+	ErrAmbiguousPolicyRequest = errors.New("tpmpolicy: a policy request sets both branches and a bank or PCR selection")
+
+	// ErrPCRValuesSupplied is returned for a condition that carries PCR
+	// values or a PCR digest: they are captured from the TPM, never
+	// supplied.
+	ErrPCRValuesSupplied = errors.New("tpmpolicy: PCR values are captured from the TPM and cannot be supplied")
 
 	// ErrMalformedSecrets is returned when a scope's unsealed secrets do not
 	// have the sealed layout.
@@ -188,6 +208,80 @@ func (e *InvalidPCRError) Error() string {
 		return fmt.Sprintf("tpmpolicy: PCR %d is selected more than once", e.PCR)
 	}
 	return fmt.Sprintf("tpmpolicy: invalid PCR %d (want 0 through %d)", e.PCR, maxPCR)
+}
+
+// InvalidLocalityError reports a locality above 4, or allowed twice.
+type InvalidLocalityError struct {
+	Locality  uint
+	Duplicate bool
+}
+
+// Error implements the error interface.
+func (e *InvalidLocalityError) Error() string {
+	if e.Duplicate {
+		return fmt.Sprintf("tpmpolicy: locality %d is allowed more than once", e.Locality)
+	}
+	return fmt.Sprintf("tpmpolicy: invalid locality %d (want 0 through %d)", e.Locality, maxLocality)
+}
+
+// UnknownConditionTypeError reports a condition type other than pcr,
+// auth_value or locality.
+type UnknownConditionTypeError struct {
+	Type ConditionType
+}
+
+// Error implements the error interface.
+func (e *UnknownConditionTypeError) Error() string {
+	return fmt.Sprintf("tpmpolicy: unknown condition type %q (want pcr, auth_value or locality)", e.Type)
+}
+
+// DuplicateConditionError reports a branch with two conditions of one type.
+type DuplicateConditionError struct {
+	Type ConditionType
+}
+
+// Error implements the error interface.
+func (e *DuplicateConditionError) Error() string {
+	return fmt.Sprintf("tpmpolicy: a branch has more than one %s condition", e.Type)
+}
+
+// ConditionOperandError reports a condition carrying an operand of another
+// condition type.
+type ConditionOperandError struct {
+	Type    ConditionType
+	Operand string
+}
+
+// Error implements the error interface.
+func (e *ConditionOperandError) Error() string {
+	return fmt.Sprintf("tpmpolicy: a %s condition takes no %s", e.Type, e.Operand)
+}
+
+// InvalidBranchError reports why branch Branch (counted from 0) of a policy
+// request is invalid.
+type InvalidBranchError struct {
+	Branch int
+	Err    error
+}
+
+// Error implements the error interface.
+func (e *InvalidBranchError) Error() string {
+	return fmt.Sprintf("tpmpolicy: branch %d: %v", e.Branch, e.Err)
+}
+
+// Unwrap returns the reason.
+func (e *InvalidBranchError) Unwrap() error { return e.Err }
+
+// DescriptionTooLongError reports a policy description longer than Max
+// bytes.
+type DescriptionTooLongError struct {
+	Length int
+	Max    int
+}
+
+// Error implements the error interface.
+func (e *DescriptionTooLongError) Error() string {
+	return fmt.Sprintf("tpmpolicy: description is %d bytes (at most %d)", e.Length, e.Max)
 }
 
 // PCRBankUnavailableError reports that the TPM did not return the selected

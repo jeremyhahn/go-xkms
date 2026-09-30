@@ -270,8 +270,10 @@ func TestService_ModeNoneRefusesRegistryOperations(t *testing.T) {
 }
 
 // TestService_ResolverReadsTheRegistry proves the PolicyBindingResolver
-// answers from the stored policy and scope, refuses a revoked policy, and
-// refuses an approval by an authority the scope does not record.
+// answers from the stored policy and scope -- one approval per branch, in
+// branch order, carrying the branch's conditions -- reports the policy's
+// auth_value condition, refuses a revoked policy, and refuses an approval by
+// an authority the scope does not record.
 func TestService_ResolverReadsTheRegistry(t *testing.T) {
 	svc, registry := newOfflineService(t)
 	ctx := context.Background()
@@ -287,41 +289,61 @@ func TestService_ResolverReadsTheRegistry(t *testing.T) {
 		Tenant: "acme", Mode: ModeShared, Counter: 0x01500001, Epoch: 5,
 		Authority: Authority{Generation: 1, Public: []byte{0x00, 0x23}},
 	}))
+	pcr := pcrBranch()
+	pcr.Conditions[0].PCRDigest = []byte{9}
+	locality := Branch{Conditions: []Condition{{Type: ConditionAuthValue}, {Type: ConditionLocality, Localities: []uint{0, 3}}}}
 	policy := &Policy{
-		Name: "boot", Bank: "sha256", PCRs: []uint{23}, PCRDigest: []byte{9},
-		Index: 0x01500002, PolicyRef: pkgtpm2.PolicyRef("acme", "boot"),
-		Approval: &Approval{Epoch: 5, AuthorityGeneration: 1, Signature: signature},
+		Name:      "boot",
+		Branches:  []Branch{pcr, locality},
+		Index:     0x01500002,
+		PolicyRef: pkgtpm2.PolicyRef("acme", "boot"),
+		Approvals: []*Approval{
+			{Epoch: 5, AuthorityGeneration: 1, Signature: signature},
+			{Epoch: 5, AuthorityGeneration: 1, Signature: signature},
+		},
 	}
 	require.NoError(t, registry.CreatePolicy(ctx, "acme", policy))
 
-	index, alg, err := svc.PolicyIndex("acme", "boot")
+	info, err := svc.PolicyIndex("acme", "boot")
 	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMHandle(0x01500002), index)
-	assert.Equal(t, tpm2.TPMAlgSHA256, alg)
+	assert.Equal(t, pkgtpm2.PolicyIndexInfo{Index: 0x01500002, HashAlg: tpm2.TPMAlgSHA256, AuthValueCondition: true}, info)
 
-	approval, err := svc.Approval("acme", "boot")
+	approvals, err := svc.Approvals("acme", "boot")
 	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMHandle(0x01500001), approval.Counter)
-	assert.Equal(t, uint64(5), approval.Epoch)
-	assert.Equal(t, policy.PolicyRef, approval.PolicyRef)
-	assert.Equal(t, tpm2.TPMAlgECDSA, approval.Signature.SigAlg)
+	require.Len(t, approvals, 2)
+	for _, approval := range approvals {
+		assert.Equal(t, tpm2.TPMHandle(0x01500001), approval.Counter)
+		assert.Equal(t, uint64(5), approval.Epoch)
+		assert.Equal(t, policy.PolicyRef, approval.PolicyRef)
+		assert.Equal(t, tpm2.TPMAlgECDSA, approval.Signature.SigAlg)
+	}
+	require.Len(t, approvals[0].Branch.Conditions, 1)
+	assert.Equal(t, pkgtpm2.PolicyConditionPCR, approvals[0].Branch.Conditions[0].Type)
+	assert.Equal(t, []byte{9}, approvals[0].Branch.Conditions[0].PCRDigest)
+	assert.True(t, approvals[1].Branch.HasAuthValue())
+	assert.True(t, approvals[1].Branch.Conditions[1].Locality.TPMLocThree)
 
-	policy.Approval.AuthorityGeneration = 7
+	policy.Approvals[1].AuthorityGeneration = 7
 	require.NoError(t, registry.UpdatePolicy(ctx, "acme", policy))
 	var unknown *UnknownAuthorityError
-	_, err = svc.Approval("acme", "boot")
+	_, err = svc.Approvals("acme", "boot")
 	require.ErrorAs(t, err, &unknown)
 
-	policy.Approval.AuthorityGeneration = 1
-	policy.Approval.Signature = []byte{0xff}
+	policy.Approvals[1].AuthorityGeneration = 1
+	policy.Approvals[1].Signature = []byte{0xff}
 	require.NoError(t, registry.UpdatePolicy(ctx, "acme", policy))
 	var storeErr *StoreError
-	_, err = svc.Approval("acme", "boot")
+	_, err = svc.Approvals("acme", "boot")
 	require.ErrorAs(t, err, &storeErr)
 
-	policy.Approval = nil
+	policy.Approvals[1] = nil
 	require.NoError(t, registry.UpdatePolicy(ctx, "acme", policy))
-	_, err = svc.Approval("acme", "boot")
+	_, err = svc.Approvals("acme", "boot")
+	require.ErrorIs(t, err, ErrPolicyRevoked, "a policy missing any branch approval is revoked")
+
+	policy.revoke()
+	require.NoError(t, registry.UpdatePolicy(ctx, "acme", policy))
+	_, err = svc.Approvals("acme", "boot")
 	require.ErrorIs(t, err, ErrPolicyRevoked)
 }
 
@@ -342,12 +364,19 @@ func TestErrorMessages(t *testing.T) {
 		&StoreError{Op: "get", Key: "k", Err: cause},
 		&PolicyInUseError{Policy: "boot", Objects: []string{"key/a"}},
 		&ScopeInUseError{Tenant: "acme", Objects: []string{"key/a"}},
+		&InvalidLocalityError{Locality: 5},
+		&InvalidLocalityError{Locality: 1, Duplicate: true},
+		&UnknownConditionTypeError{Type: "time"},
+		&DuplicateConditionError{Type: ConditionPCR},
+		&ConditionOperandError{Type: ConditionAuthValue, Operand: "bank"},
+		&InvalidBranchError{Branch: 1, Err: ErrEmptyBranch},
+		&DescriptionTooLongError{Length: 5000, Max: maxDescription},
 	} {
 		assert.Contains(t, err.Error(), "tpmpolicy:")
 	}
 	for _, err := range []error{
 		&TPMError{Err: cause}, &SecretsError{Err: cause}, &VTPMError{Err: cause},
-		&InvalidTenantError{Err: cause}, &StoreError{Err: cause},
+		&InvalidTenantError{Err: cause}, &StoreError{Err: cause}, &InvalidBranchError{Err: cause},
 	} {
 		assert.ErrorIs(t, err, cause)
 	}

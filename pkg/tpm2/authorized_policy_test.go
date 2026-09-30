@@ -80,34 +80,125 @@ func TestAuthorizedPolicyDigests_RejectInvalidInput(t *testing.T) {
 	_, err = AuthorizeDigest(tpm2.TPMAlgNull, testName(1), PolicyRef("s", "p"))
 	require.ErrorIs(t, err, ErrPolicyDigestCompute)
 
-	sel := PolicyPCRSelection(tpm2.TPMAlgSHA256, 23)
-	_, err = ApprovedPolicyDigest(tpm2.TPMAlgSHA256, sel, nil, testName(1), 1)
-	require.ErrorIs(t, err, ErrPolicyDigestCompute)
-	_, err = ApprovedPolicyDigest(tpm2.TPMAlgSHA256, tpm2.TPMLPCRSelection{}, make([]byte, 32), testName(1), 1)
-	require.ErrorIs(t, err, ErrPolicyDigestCompute)
-	_, err = ApprovedPolicyDigest(tpm2.TPMAlgSHA256, sel, make([]byte, 32), tpm2.TPM2BName{}, 1)
+	_, err = ApprovedPolicyDigest(tpm2.TPMAlgSHA256, pcrBranch(make([]byte, 32)), tpm2.TPM2BName{}, 1)
 	require.ErrorIs(t, err, ErrPolicyDigestCompute)
 
 	_, err = ApprovalDigest(tpm2.TPMAlgNull, make([]byte, 32), PolicyRef("s", "p"))
 	require.ErrorIs(t, err, ErrPolicyDigestCompute)
 }
 
+// pcrBranch is a branch of one PCR condition over PCR 23 with digest.
+func pcrBranch(digest []byte) PolicyBranch {
+	return PolicyBranch{Conditions: []PolicyCondition{{
+		Type:         PolicyConditionPCR,
+		PCRSelection: PolicyPCRSelection(tpm2.TPMAlgSHA256, 23),
+		PCRDigest:    digest,
+	}}}
+}
+
 // TestApprovedPolicyDigest_BindsEpochAndPCRs proves the approved digest
 // changes with the epoch and with the PCR value, which is what makes an
 // approval specific to one platform state at one epoch.
 func TestApprovedPolicyDigest_BindsEpochAndPCRs(t *testing.T) {
-	sel := PolicyPCRSelection(tpm2.TPMAlgSHA256, 23)
 	pcr := make([]byte, 32)
-	base, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256, sel, pcr, testName(1), 1)
+	base, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256, pcrBranch(pcr), testName(1), 1)
 	require.NoError(t, err)
 
-	nextEpoch, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256, sel, pcr, testName(1), 2)
+	nextEpoch, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256, pcrBranch(pcr), testName(1), 2)
 	require.NoError(t, err)
 	assert.NotEqual(t, base, nextEpoch)
 
-	otherPCR, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256, sel, append([]byte{1}, pcr[1:]...), testName(1), 1)
+	otherPCR, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256, pcrBranch(append([]byte{1}, pcr[1:]...)), testName(1), 1)
 	require.NoError(t, err)
 	assert.NotEqual(t, base, otherPCR)
+}
+
+// TestApprovedPolicyDigest_CanonicalOrder proves a branch's digest does not
+// depend on the order its conditions are listed in, that it runs them as
+// PolicyLocality, PolicyPCR, PolicyAuthValue, and that each condition changes
+// the digest.
+func TestApprovedPolicyDigest_CanonicalOrder(t *testing.T) {
+	locality, err := PolicyLocalitySelection(0, 3)
+	require.NoError(t, err)
+	pcr := pcrBranch(make([]byte, 32)).Conditions[0]
+	loc := PolicyCondition{Type: PolicyConditionLocality, Locality: locality}
+	auth := PolicyCondition{Type: PolicyConditionAuthValue}
+
+	listed, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256,
+		PolicyBranch{Conditions: []PolicyCondition{auth, pcr, loc}}, testName(1), 1)
+	require.NoError(t, err)
+	canonical, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256,
+		PolicyBranch{Conditions: []PolicyCondition{loc, pcr, auth}}, testName(1), 1)
+	require.NoError(t, err)
+	assert.Equal(t, canonical, listed)
+
+	want, err := trialDigest(tpm2.TPMAlgSHA256,
+		policyLocality{Locality: locality},
+		tpm2.PolicyPCR{PcrDigest: tpm2.TPM2BDigest{Buffer: pcr.PCRDigest}, Pcrs: pcr.PCRSelection},
+		tpm2.PolicyAuthValue{},
+		tpm2.PolicyNV{
+			NVIndex:   tpm2.NamedHandle{Name: testName(1)},
+			OperandB:  tpm2.TPM2BOperand{Buffer: epochOperand(1)},
+			Operation: tpm2.TPMEOEq,
+		})
+	require.NoError(t, err)
+	assert.Equal(t, want, canonical)
+
+	withoutAuth, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256,
+		PolicyBranch{Conditions: []PolicyCondition{loc, pcr}}, testName(1), 1)
+	require.NoError(t, err)
+	assert.NotEqual(t, canonical, withoutAuth)
+}
+
+// TestApprovedPolicyDigest_RejectsInvalidBranch proves a branch that cannot
+// be asserted is refused: no conditions, an unknown type, a PCR condition
+// without its operands, and a locality condition allowing nothing.
+func TestApprovedPolicyDigest_RejectsInvalidBranch(t *testing.T) {
+	for name, branch := range map[string]PolicyBranch{
+		"empty":            {},
+		"unknown type":     {Conditions: []PolicyCondition{{Type: 99}}},
+		"pcr no digest":    pcrBranch(nil),
+		"pcr no selection": {Conditions: []PolicyCondition{{Type: PolicyConditionPCR, PCRDigest: make([]byte, 32)}}},
+		"no locality":      {Conditions: []PolicyCondition{{Type: PolicyConditionLocality}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256, branch, testName(1), 1)
+			require.ErrorIs(t, err, ErrInvalidPolicyBranch)
+		})
+	}
+}
+
+// TestPolicyBranch_HasAuthValue proves only a branch with an auth_value
+// condition requires the object's password.
+func TestPolicyBranch_HasAuthValue(t *testing.T) {
+	assert.False(t, pcrBranch(make([]byte, 32)).HasAuthValue())
+	assert.True(t, PolicyBranch{Conditions: []PolicyCondition{{Type: PolicyConditionAuthValue}}}.HasAuthValue())
+}
+
+// TestPolicyLocalitySelection proves localities map to their TPMA_LOCALITY
+// bits and that extended localities and an empty set are refused.
+func TestPolicyLocalitySelection(t *testing.T) {
+	got, err := PolicyLocalitySelection(0, 2, 4)
+	require.NoError(t, err)
+	assert.Equal(t, uint8(0b10101), localityBits(got))
+	assert.True(t, got.TPMLocZero)
+	assert.True(t, got.TPMLocFour)
+	assert.False(t, got.TPMLocOne)
+
+	_, err = PolicyLocalitySelection(5)
+	require.ErrorIs(t, err, ErrInvalidPolicyLocality)
+	_, err = PolicyLocalitySelection()
+	require.ErrorIs(t, err, ErrInvalidPolicyLocality)
+}
+
+// TestIsBranchRefusal proves only a branch's own refusals move the session
+// on to the next branch.
+func TestIsBranchRefusal(t *testing.T) {
+	assert.True(t, isBranchRefusal(&PolicyPCRMismatchError{Err: tpm2.TPMRCValue}))
+	assert.True(t, isBranchRefusal(&PolicyLocalityMismatchError{}))
+	assert.True(t, isBranchRefusal(&PolicyApprovalRevokedError{Err: tpm2.TPMRCPolicy}))
+	assert.False(t, isBranchRefusal(tpm2.TPMRCValue))
+	assert.False(t, isBranchRefusal(ErrPolicyApprovalMismatch))
 }
 
 // TestApprovalDigest_Definition pins aHash = H(approvedPolicy || policyRef).
@@ -181,6 +272,19 @@ func TestPolicyErrors_UnwrapResponseCode(t *testing.T) {
 	revoked := &PolicyApprovalRevokedError{Scope: "system", Policy: "boot", Epoch: 3, Err: tpm2.TPMRCPolicy}
 	assert.ErrorIs(t, revoked, tpm2.TPMRCPolicy)
 	assert.Contains(t, revoked.Error(), "epoch 3")
+
+	allowed, err := PolicyLocalitySelection(3)
+	require.NoError(t, err)
+	locality := &PolicyLocalityMismatchError{Scope: "system", Policy: "boot", Branch: 1, Allowed: allowed}
+	assert.Contains(t, locality.Error(), "0x08")
+	missing := &PolicyAuthValueMissingError{Scope: "system", Policy: "boot", Branch: 2}
+	assert.Contains(t, missing.Error(), "branch 2")
+
+	refused := &PolicyBranchesRefusedError{Scope: "system", Policy: "boot", Branches: []error{pcrErr, locality, missing}}
+	assert.ErrorIs(t, refused, tpm2.TPMRCValue)
+	var asLocality *PolicyLocalityMismatchError
+	assert.ErrorAs(t, refused, &asLocality)
+	assert.Contains(t, refused.Error(), "branch 2")
 }
 
 // TestSetPolicyBindingResolver_Clear proves a nil resolver clears it.
@@ -202,8 +306,8 @@ func TestSetPolicyBindingResolver_Clear(t *testing.T) {
 
 type nopResolver struct{}
 
-func (nopResolver) PolicyIndex(string, string) (tpm2.TPMHandle, tpm2.TPMAlgID, error) {
-	return 0, 0, nil
+func (nopResolver) PolicyIndex(string, string) (PolicyIndexInfo, error) {
+	return PolicyIndexInfo{}, nil
 }
 
-func (nopResolver) Approval(string, string) (*PolicyApproval, error) { return nil, nil }
+func (nopResolver) Approvals(string, string) ([]*PolicyApproval, error) { return nil, nil }

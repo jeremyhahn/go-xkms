@@ -72,14 +72,20 @@ func decodeScopeSecrets(plain []byte) (*scopeSecrets, error) {
 	return secrets, nil
 }
 
-// randomSecret returns a fresh random secret with no zero byte.
+// randomSecret returns a fresh random secret with no zero byte. Excluding
+// one value of 256 per byte leaves 255.8 bits of entropy.
 //
-// Auth values must not contain one: go-tpm (v0.9.8) derives an HMAC
-// session's key by trimming the auth value at the first zero byte it meets
-// scanning from the end, without stopping at the first non-zero byte, so an
-// auth value with an interior zero byte never authorizes (TPM_RC_BAD_AUTH),
-// and the TPM itself strips trailing zeros. Excluding one value of 256 per
-// byte leaves 255.8 bits of entropy.
+// This works around a go-tpm v0.9.8 defect, deliberately kept rather than
+// fixed upstream (owner ruling). An HMAC session's key is sessionKey ||
+// authValue with trailing zero octets removed (TPM 2.0 Part 1, section
+// 19.6.8), and go-tpm computes it in tpm2.hmacKeyFromAuthValue
+// (tpm2/sessions.go). Its loop scans the auth value from the end for a
+// non-zero octet but has no break, so it trims at ANY zero octet it passes --
+// an interior one included -- instead of only the trailing run. The TPM
+// trims only the trailing zeros, so for an auth value holding a zero octet
+// the two HMAC keys differ and every command authorized with it fails with
+// TPM_RC_BAD_AUTH. Generated auth values therefore contain no zero octet.
+// Remove this restriction only once the go-tpm in go.mod trims correctly.
 func randomSecret() ([]byte, error) {
 	out := make([]byte, 0, secretSize)
 	buf := make([]byte, secretSize)

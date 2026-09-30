@@ -25,14 +25,20 @@ import (
 //
 //	offset  size  field
 //	     0     4  magic ("XTPB")
-//	     4     1  version (currently 1)
+//	     4     1  version (currently 2)
 //	     5     4  policy NV index handle, big endian
 //	     9     2  policy hash TPM_ALG_ID, big endian
-//	    11     1  flags (bit 0: the authPolicy has a PolicyAuthValue branch)
+//	    11     1  flags
+//	                bit 0: the authPolicy has an outer PolicyAuthValue branch
+//	                bit 1: the policy has an auth_value condition (version 2)
 //	    12     2  scope length, big endian
 //	    14     n  scope (UTF-8)
 //	  14+n     2  policy name length, big endian
 //	  16+n     m  policy name (UTF-8)
+//
+// Version 1 records have the same layout without flag bit 1; they decode as
+// bindings to a policy without an auth_value condition, which is all version
+// 1 could express.
 //
 // The record carries no secret and is not integrity protected. It only tells
 // the session code which authorization path to build. A forged record cannot
@@ -40,7 +46,10 @@ import (
 // sealed into the object's TPM-protected public area.
 const (
 	// TPMPolicyBindingVersion is the version written into new binding records.
-	TPMPolicyBindingVersion uint8 = 1
+	TPMPolicyBindingVersion uint8 = 2
+
+	// tpmPolicyBindingVersion1 is the first version, still read.
+	tpmPolicyBindingVersion1 uint8 = 1
 
 	tpmPolicyBindingMagic     = "XTPB"
 	tpmPolicyBindingHeaderLen = 14
@@ -52,11 +61,22 @@ const (
 	// tpmPolicyBindingFlagAuthValue marks a binding whose authPolicy is
 	// PolicyOR(PolicyAuthorizeNV, PolicyAuthValue).
 	tpmPolicyBindingFlagAuthValue uint8 = 0x01
+
+	// tpmPolicyBindingFlagAuthValueCondition marks a binding to a policy
+	// with an auth_value condition (version 2).
+	tpmPolicyBindingFlagAuthValueCondition uint8 = 0x02
 )
+
+// tpmPolicyBindingFlags is the set of flags each readable version defines.
+var tpmPolicyBindingFlags = map[uint8]uint8{
+	tpmPolicyBindingVersion1: tpmPolicyBindingFlagAuthValue,
+	TPMPolicyBindingVersion:  tpmPolicyBindingFlagAuthValue | tpmPolicyBindingFlagAuthValueCondition,
+}
 
 // TPMPolicyBinding records that an object was created under a named,
 // authorized TPM policy: which policy, in which scope, through which NV
-// index, and whether its authPolicy also carries a PolicyAuthValue branch.
+// index, whether its authPolicy also carries a PolicyAuthValue branch, and
+// whether the policy has an auth_value condition.
 type TPMPolicyBinding struct {
 	// Scope is the tenant the policy belongs to ("system" for the platform).
 	Scope string
@@ -74,6 +94,11 @@ type TPMPolicyBinding struct {
 	// PolicyOR(PolicyAuthorizeNV, PolicyAuthValue) rather than
 	// PolicyAuthorizeNV alone.
 	AuthValueBranch bool
+
+	// AuthValueCondition reports whether the policy has an auth_value
+	// condition, so the object's password counts only inside the policy's
+	// branches. It excludes AuthValueBranch.
+	AuthValueCondition bool
 }
 
 // validate reports the first reason b cannot be encoded.
@@ -93,6 +118,8 @@ func (b *TPMPolicyBinding) validate() error {
 		return &TPMPolicyBindingFormatError{Reason: "zero NV index"}
 	case b.HashAlg == 0:
 		return &TPMPolicyBindingFormatError{Reason: "zero hash algorithm"}
+	case b.AuthValueBranch && b.AuthValueCondition:
+		return &TPMPolicyBindingFormatError{Reason: "an outer auth value branch on a policy with an auth_value condition"}
 	}
 	return nil
 }
@@ -112,6 +139,9 @@ func (b *TPMPolicyBinding) MarshalBinary() ([]byte, error) {
 	if b.AuthValueBranch {
 		flags |= tpmPolicyBindingFlagAuthValue
 	}
+	if b.AuthValueCondition {
+		flags |= tpmPolicyBindingFlagAuthValueCondition
+	}
 	out = append(out, flags)
 	out = binary.BigEndian.AppendUint16(out, uint16(len(b.Scope))) // #nosec G115 -- bounded by validate
 	out = append(out, b.Scope...)
@@ -121,8 +151,9 @@ func (b *TPMPolicyBinding) MarshalBinary() ([]byte, error) {
 }
 
 // UnmarshalTPMPolicyBinding decodes a binding record written by MarshalBinary.
-// A record that is truncated, carries unknown flags or trailing bytes, or was
-// written by an unknown version is refused: an object whose binding cannot be
+// Version 1 and 2 records are read. A record that is truncated, carries flags
+// its version does not define or trailing bytes, or was written by an unknown
+// version is refused: an object whose binding cannot be
 // read must fail loudly rather than be authorized along a guessed path.
 func UnmarshalTPMPolicyBinding(data []byte) (*TPMPolicyBinding, error) {
 	if len(data) < tpmPolicyBindingHeaderLen {
@@ -133,11 +164,12 @@ func UnmarshalTPMPolicyBinding(data []byte) (*TPMPolicyBinding, error) {
 	if string(data[0:4]) != tpmPolicyBindingMagic {
 		return nil, &TPMPolicyBindingFormatError{Reason: "bad magic"}
 	}
-	if data[4] != TPMPolicyBindingVersion {
+	known, ok := tpmPolicyBindingFlags[data[4]]
+	if !ok {
 		return nil, &TPMPolicyBindingVersionError{Version: data[4]}
 	}
 	flags := data[11]
-	if flags&^tpmPolicyBindingFlagAuthValue != 0 {
+	if flags&^known != 0 {
 		return nil, &TPMPolicyBindingFormatError{Reason: "unknown flags: " + strconv.Itoa(int(flags))}
 	}
 
@@ -154,11 +186,12 @@ func UnmarshalTPMPolicyBinding(data []byte) (*TPMPolicyBinding, error) {
 	}
 
 	binding := &TPMPolicyBinding{
-		Scope:           scope,
-		Policy:          policy,
-		Index:           binary.BigEndian.Uint32(data[5:9]),
-		HashAlg:         binary.BigEndian.Uint16(data[9:11]),
-		AuthValueBranch: flags&tpmPolicyBindingFlagAuthValue != 0,
+		Scope:              scope,
+		Policy:             policy,
+		Index:              binary.BigEndian.Uint32(data[5:9]),
+		HashAlg:            binary.BigEndian.Uint16(data[9:11]),
+		AuthValueBranch:    flags&tpmPolicyBindingFlagAuthValue != 0,
+		AuthValueCondition: flags&tpmPolicyBindingFlagAuthValueCondition != 0,
 	}
 	if err := binding.validate(); err != nil {
 		return nil, err

@@ -15,14 +15,18 @@
 // and sealed objects share, the registry of which object uses which policy,
 // and each tenant's TPM scope (tpm.mode none, shared or vtpm).
 //
-// An object bound to a named policy carries
-// PolicyOR(PolicyAuthorizeNV(the policy's NV index), PolicyAuthValue) as its
-// authPolicy. The index holds PolicyAuthorize(the scope's authority,
-// policyRef), and the authority signs approvals of PolicyPCR(the policy's
-// captured PCRs) plus PolicyNV(the scope's counter == epoch). Updating a
-// policy re-captures its PCRs and re-signs it; revoking bumps the counter;
-// rotating the authority rewrites the indices. None of these re-keys an
-// object. See docs/tpm-policies/architecture.md.
+// A named policy is an OR of branches, each an AND of conditions: pcr (a PCR
+// selection whose values are captured live), auth_value (the object's
+// password) and locality (the TPM localities a command may come from). An
+// object bound to a named policy carries PolicyAuthorizeNV(the policy's NV
+// index) as its authPolicy -- OR PolicyAuthValue when the object has a
+// password and the policy has no auth_value condition. The index holds
+// PolicyAuthorize(the scope's authority, policyRef), and the authority signs
+// one approval per branch: the branch's assertions plus PolicyNV(the scope's
+// counter == epoch). Updating a policy re-captures its PCRs and re-signs
+// every branch; revoking bumps the counter; rotating the authority rewrites
+// the indices. None of these re-keys an object. See
+// docs/tpm-policies/architecture.md.
 package tpmpolicy
 
 import (
@@ -130,8 +134,8 @@ type Scope struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// Approval is the authority's signed approval of a policy's PCR state at an
-// epoch.
+// Approval is the authority's signed approval of one policy branch, with
+// the values it captured, at an epoch.
 type Approval struct {
 	Epoch               uint64    `json:"epoch"`
 	AuthorityGeneration uint64    `json:"authority_generation"`
@@ -139,19 +143,61 @@ type Approval struct {
 	ApprovedAt          time.Time `json:"approved_at"`
 }
 
-// Policy is a named, reusable TPM policy: a PCR selection and the values
-// captured from the TPM, bound to an NV index objects authorize through.
+// ConditionType is the kind of a policy branch condition.
+type ConditionType string
+
+const (
+	// ConditionPCR requires the selected PCRs to hold the values captured
+	// when the policy was created or last updated.
+	ConditionPCR ConditionType = "pcr"
+
+	// ConditionAuthValue requires the object's password.
+	ConditionAuthValue ConditionType = "auth_value"
+
+	// ConditionLocality requires the command to come from one of the
+	// allowed TPM localities.
+	ConditionLocality ConditionType = "locality"
+)
+
+// Condition is one condition of a policy branch. Only the fields of its Type
+// are set.
+type Condition struct {
+	Type ConditionType `json:"type"`
+
+	// Bank is a pcr condition's PCR bank ("sha256", ...) and PCRs its
+	// selected indices, ascending.
+	Bank string `json:"bank,omitempty"`
+	PCRs []uint `json:"pcrs,omitempty"`
+
+	// PCRValues are a pcr condition's values, captured from the TPM when
+	// the policy was created or last updated, and PCRDigest the PolicyPCR
+	// digest over them. A caller never supplies them.
+	PCRValues map[uint][]byte `json:"pcr_values,omitempty"`
+	PCRDigest []byte          `json:"pcr_digest,omitempty"`
+
+	// Localities are a locality condition's allowed localities, 0 through
+	// 4, ascending.
+	Localities []uint `json:"localities,omitempty"`
+}
+
+// Branch is one branch of a policy: the AND of its conditions. It has at most
+// one condition of each type.
+type Branch struct {
+	Conditions []Condition `json:"conditions"`
+}
+
+// Policy is a named, reusable TPM policy: an OR of branches, bound to an NV
+// index objects authorize through. Its structure never changes after
+// creation; an update only re-captures the values of its pcr conditions.
 type Policy struct {
 	Name string `json:"name"`
 
-	// Bank is the PCR bank ("sha256", ...) and PCRs the selected indices.
-	Bank string `json:"bank"`
-	PCRs []uint `json:"pcrs"`
+	// Description is free text, settable at creation and at any time after.
+	Description string `json:"description,omitempty"`
 
-	// PCRValues are the values captured when the policy was created or last
-	// updated, and PCRDigest the PolicyPCR digest over them.
-	PCRValues map[uint][]byte `json:"pcr_values"`
-	PCRDigest []byte          `json:"pcr_digest"`
+	// Branches are the policy's branches, tried in order when an object is
+	// used.
+	Branches []Branch `json:"branches"`
 
 	// Index is the policy's NV index and IndexName its TPM Name, which
 	// every object bound to the policy commits to.
@@ -161,9 +207,10 @@ type Policy struct {
 	// PolicyRef binds approvals to this policy and no other.
 	PolicyRef []byte `json:"policy_ref"`
 
-	// Approval is the current approval; nil after a revoke until the next
-	// update.
-	Approval *Approval `json:"approval,omitempty"`
+	// Approvals are the current approvals, index-aligned with Branches. A
+	// nil entry is a revoked branch; a revoke clears every entry until the
+	// next update.
+	Approvals []*Approval `json:"approvals,omitempty"`
 
 	// AutoUnseal marks the policy barrier auto-unseal uses; at most one
 	// policy per scope carries it.
@@ -171,6 +218,69 @@ type Policy struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// Bank, PCRs, PCRValues and PCRDigest are the first pcr condition of
+	// the policy, and Approval its first branch's approval. They are a
+	// read-only view kept for callers of the single-branch model, derived
+	// from Branches and Approvals whenever the registry stores or loads the
+	// policy; they are never stored, and setting them has no effect.
+	//
+	// Deprecated: use Branches and Approvals.
+	Bank      string          `json:"-"`
+	PCRs      []uint          `json:"-"`
+	PCRValues map[uint][]byte `json:"-"`
+	PCRDigest []byte          `json:"-"`
+	Approval  *Approval       `json:"-"`
+}
+
+// approved reports whether every branch holds an approval. Approvals are
+// written and revoked for every branch at once, so a policy is either
+// approved in full or revoked.
+func (p *Policy) approved() bool {
+	if len(p.Branches) == 0 || len(p.Approvals) != len(p.Branches) {
+		return false
+	}
+	for _, a := range p.Approvals {
+		if a == nil {
+			return false
+		}
+	}
+	return true
+}
+
+// revoke clears every branch's approval.
+func (p *Policy) revoke() {
+	p.Approvals = make([]*Approval, len(p.Branches))
+}
+
+// hasAuthValueCondition reports whether any branch requires the object's
+// password.
+func (p *Policy) hasAuthValueCondition() bool {
+	for _, b := range p.Branches {
+		for _, c := range b.Conditions {
+			if c.Type == ConditionAuthValue {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// syncLegacyView derives the deprecated single-branch fields from Branches
+// and Approvals.
+func (p *Policy) syncLegacyView() {
+	p.Bank, p.PCRs, p.PCRValues, p.PCRDigest, p.Approval = "", nil, nil, nil, nil
+	if p.approved() {
+		p.Approval = p.Approvals[0]
+	}
+	for _, b := range p.Branches {
+		for _, c := range b.Conditions {
+			if c.Type == ConditionPCR {
+				p.Bank, p.PCRs, p.PCRValues, p.PCRDigest = c.Bank, c.PCRs, c.PCRValues, c.PCRDigest
+				return
+			}
+		}
+	}
 }
 
 // Assignment records the policy an object was created under.
@@ -185,16 +295,27 @@ type Assignment struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// CreatePolicyRequest describes a named policy to create. The PCR values are
+// CreatePolicyRequest describes a named policy to create. PCR values are
 // never supplied by the caller: they are read from the scope's TPM.
 type CreatePolicyRequest struct {
 	// Name is the policy's name, unique within the scope.
 	Name string
 
-	// Bank is the PCR bank: sha1, sha256, sha384 or sha512.
-	Bank string
+	// Description is free text.
+	Description string
 
-	// PCRs are the selected PCR indices, 0 through 23, without duplicates.
+	// Branches are the policy's branches: at least one, each with at least
+	// one condition and at most one of each type. A pcr condition names a
+	// bank (sha1, sha256, sha384 or sha512) and PCRs 0 through 23 without
+	// duplicates; a locality condition names localities 0 through 4 without
+	// duplicates; an auth_value condition names nothing.
+	Branches []Branch
+
+	// Bank and PCRs describe a policy of one branch holding one pcr
+	// condition, and are refused together with Branches.
+	//
+	// Deprecated: use Branches.
+	Bank string
 	PCRs []uint
 
 	// AutoUnseal marks the policy barrier auto-unseal uses, clearing the
@@ -207,6 +328,20 @@ type CreatePolicyRequest struct {
 	OwnerAuth []byte
 }
 
+// BranchVerification compares one branch's captured PCR values with the
+// live ones.
+type BranchVerification struct {
+	// Match reports whether the branch's pcr condition, if it has one,
+	// still holds its captured values, and Mismatched lists the PCRs that do
+	// not, ascending.
+	Match      bool
+	Mismatched []uint
+
+	// Approved reports whether the branch holds an approval at the scope
+	// counter's current value, so it can be satisfied.
+	Approved bool
+}
+
 // Verification compares a policy's captured PCR values with the live ones.
 // It is an advisory, read-only check: the TPM itself enforces the policy
 // when an object is used.
@@ -214,12 +349,20 @@ type Verification struct {
 	// Policy is the verified policy's name.
 	Policy string
 
-	// Match reports whether every selected PCR still holds its captured
-	// value, and Mismatched lists those that do not, ascending.
-	Match      bool
+	// Branches reports each branch, index-aligned with the policy's.
+	Branches []BranchVerification
+
+	// Match reports whether every branch matches.
+	Match bool
+
+	// Mismatched lists the PCRs of any branch that do not match, ascending
+	// and without duplicates.
+	//
+	// Deprecated: use Branches, which says which branch and bank each PCR
+	// belongs to.
 	Mismatched []uint
 
-	// Approved reports whether the policy has an approval at the scope
-	// counter's current value, so its approved branch can be satisfied.
+	// Approved reports whether every branch holds an approval at the scope
+	// counter's current value.
 	Approved bool
 }

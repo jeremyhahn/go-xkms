@@ -14,13 +14,10 @@
 package tpmpolicy
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"log/slog"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -185,86 +182,23 @@ func checkPolicyName(name string) error {
 	return validName(name)
 }
 
-// validateSelection normalizes a PCR bank and selection: the bank must be
-// sha1, sha256, sha384 or sha512 and the PCRs a non-empty set of indices 0
-// through 23. It returns the lower-case bank, its algorithm and the PCRs in
-// ascending order.
-func validateSelection(bank string, pcrs []uint) (string, tpm2.TPMAlgID, []uint, error) {
-	bank = strings.ToLower(bank)
-	alg, err := pkgtpm2.ParsePCRBankAlgID(bank)
-	if err != nil {
-		return "", 0, nil, &InvalidPCRBankError{Bank: bank}
-	}
-	if len(pcrs) == 0 {
-		return "", 0, nil, ErrEmptyPCRSelection
-	}
-	sorted := slices.Clone(pcrs)
-	slices.Sort(sorted)
-	for i, pcr := range sorted {
-		if pcr > maxPCR {
-			return "", 0, nil, &InvalidPCRError{PCR: pcr}
-		}
-		if i > 0 && sorted[i-1] == pcr {
-			return "", 0, nil, &InvalidPCRError{PCR: pcr, Duplicate: true}
-		}
-	}
-	return bank, alg, sorted, nil
-}
-
-// readPCRs reads the live values of pcrs in bank from t.
-func readPCRs(t *pkgtpm2.TPM2, scope, bank string, pcrs []uint) (map[uint][]byte, error) {
-	banks, err := t.ReadPCRs(pcrs)
-	if err != nil {
-		return nil, &TPMError{Scope: scope, Op: "read PCRs", Err: err}
-	}
-	for _, b := range banks {
-		if !strings.EqualFold(b.Algorithm, bank) {
-			continue
-		}
-		values := make(map[uint][]byte, len(b.PCRs))
-		for _, pcr := range b.PCRs {
-			values[uint(pcr.ID)] = pcr.Value
-		}
-		if len(values) == len(pcrs) {
-			return values, nil
-		}
-	}
-	return nil, &PCRBankUnavailableError{Bank: bank}
-}
-
-// pcrDigest returns the TPM2_PolicyPCR pcrDigest operand of values: the
-// session's hash (policyHashAlg) over the selected values concatenated in
-// ascending PCR order (TCG TPM 2.0 Part 3, section 23.7). It is the session
-// hash, not the bank's, whichever bank the values come from.
-func pcrDigest(pcrs []uint, values map[uint][]byte) []byte {
-	h := sha256.New()
-	for _, pcr := range pcrs {
-		h.Write(values[pcr])
-	}
-	return h.Sum(nil)
-}
-
-// capture reads p's PCRs from the scope's TPM into p.PCRValues and
-// p.PCRDigest. The values are never supplied by a caller.
-func (s *Service) capture(st *scopeState, p *Policy) error {
-	values, err := readPCRs(st.tpm.TPM, st.name, p.Bank, p.PCRs)
-	if err != nil {
-		return err
-	}
-	p.PCRValues = values
-	p.PCRDigest = pcrDigest(p.PCRs, values)
-	return nil
-}
-
-// CreatePolicy creates a named policy over the live PCR values of the
-// scope's TPM: it defines and writes the policy's NV index to name the
-// scope's authority, and signs its first approval at the scope's current
-// epoch. With AutoUnseal, the mark moves to this policy.
+// CreatePolicy creates a named policy whose pcr conditions capture the live
+// PCR values of the scope's TPM: it defines and writes the policy's NV index
+// to name the scope's authority, and signs the first approval of every
+// branch at the scope's current epoch. With AutoUnseal, the mark moves to
+// this policy.
 func (s *Service) CreatePolicy(ctx context.Context, tenant string, req CreatePolicyRequest) (*Policy, error) {
 	if err := checkPolicyName(req.Name); err != nil {
 		return nil, err
 	}
-	bank, _, pcrs, err := validateSelection(req.Bank, req.PCRs)
+	if err := validateDescription(req.Description); err != nil {
+		return nil, err
+	}
+	requested, err := req.branches()
+	if err != nil {
+		return nil, err
+	}
+	branches, err := validateBranches(requested)
 	if err != nil {
 		return nil, err
 	}
@@ -277,12 +211,12 @@ func (s *Service) CreatePolicy(ctx context.Context, tenant string, req CreatePol
 	if err != nil {
 		return nil, err
 	}
-	req.Bank, req.PCRs = bank, pcrs
+	req.Branches, req.Bank, req.PCRs = branches, "", nil
 	return s.createPolicy(ctx, st, scope, req)
 }
 
-// createPolicy creates a validated policy in an open scope. The caller holds
-// st.mu.
+// createPolicy creates a policy from validated req.Branches in an open
+// scope. The caller holds st.mu.
 func (s *Service) createPolicy(ctx context.Context, st *scopeState, scope *Scope, req CreatePolicyRequest) (_ *Policy, err error) {
 	_, err = s.registry.Policy(ctx, st.name, req.Name)
 	switch {
@@ -294,15 +228,15 @@ func (s *Service) createPolicy(ctx context.Context, st *scopeState, scope *Scope
 
 	now := s.clock()
 	p := &Policy{
-		Name:       req.Name,
-		Bank:       req.Bank,
-		PCRs:       req.PCRs,
-		PolicyRef:  pkgtpm2.PolicyRef(st.name, req.Name),
-		AutoUnseal: req.AutoUnseal,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		Name:        req.Name,
+		Description: req.Description,
+		Branches:    req.Branches,
+		PolicyRef:   pkgtpm2.PolicyRef(st.name, req.Name),
+		AutoUnseal:  req.AutoUnseal,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
-	if err := s.capture(st, p); err != nil {
+	if err := capture(st.tpm.TPM, st.name, p); err != nil {
 		return nil, err
 	}
 
@@ -322,7 +256,7 @@ func (s *Service) createPolicy(ctx context.Context, st *scopeState, scope *Scope
 	if p.IndexName, err = s.writePolicyIndex(st, p, &scope.Authority); err != nil {
 		return nil, err
 	}
-	if p.Approval, err = s.approve(st, scope, p, &scope.Authority, scope.Epoch); err != nil {
+	if p.Approvals, err = s.approve(st, scope, p, &scope.Authority, scope.Epoch); err != nil {
 		return nil, err
 	}
 	if err := s.registry.CreatePolicy(ctx, st.name, p); err != nil {
@@ -350,53 +284,58 @@ func (s *Service) writePolicyIndex(st *scopeState, p *Policy, authority *Authori
 	return name.Buffer, nil
 }
 
-// approve signs, with authority, an approval of p's captured PCR state at
-// epoch of the scope's counter.
-func (s *Service) approve(st *scopeState, scope *Scope, p *Policy, authority *Authority, epoch uint64) (*Approval, error) {
+// approve signs, with authority, an approval of every branch of p, with
+// the values it captured, at epoch of the scope's counter. The approvals are
+// index-aligned with p.Branches.
+func (s *Service) approve(st *scopeState, scope *Scope, p *Policy, authority *Authority, epoch uint64) ([]*Approval, error) {
 	t := st.tpm.TPM
-	bankAlg, err := pkgtpm2.ParsePCRBankAlgID(p.Bank)
-	if err != nil {
-		return nil, &InvalidPCRBankError{Bank: p.Bank}
-	}
 	counterName, err := t.NVIndexName(tpm2.TPMHandle(scope.Counter))
 	if err != nil {
 		return nil, &TPMError{Scope: st.name, Op: "read counter name", Err: err}
-	}
-	approved, err := pkgtpm2.ApprovedPolicyDigest(policyHashAlg,
-		pkgtpm2.PolicyPCRSelection(bankAlg, p.PCRs...), p.PCRDigest, counterName, epoch)
-	if err != nil {
-		return nil, &TPMError{Scope: st.name, Op: "approved policy digest", Err: err}
 	}
 	public := tpm2.BytesAs2B[tpm2.TPMTPublic](authority.Public)
 	pub, err := public.Contents()
 	if err != nil {
 		return nil, &TPMError{Scope: st.name, Op: "decode policy authority", Err: err}
 	}
-	aHash, err := pkgtpm2.ApprovalDigest(pub.NameAlg, approved, p.PolicyRef)
-	if err != nil {
-		return nil, &TPMError{Scope: st.name, Op: "approval digest", Err: err}
-	}
 	attrs, err := s.authorityAttrs(st, authority.CN)
 	if err != nil {
 		return nil, err
 	}
-	signature, err := t.SignApproval(attrs, st.tpm.Keys, aHash)
-	if err != nil {
-		return nil, &TPMError{Scope: st.name, Op: "sign approval", Err: err}
+
+	approvals := make([]*Approval, 0, len(p.Branches))
+	for _, b := range p.Branches {
+		branch, err := tpmBranch(b)
+		if err != nil {
+			return nil, err
+		}
+		approved, err := pkgtpm2.ApprovedPolicyDigest(policyHashAlg, branch, counterName, epoch)
+		if err != nil {
+			return nil, &TPMError{Scope: st.name, Op: "approved policy digest", Err: err}
+		}
+		aHash, err := pkgtpm2.ApprovalDigest(pub.NameAlg, approved, p.PolicyRef)
+		if err != nil {
+			return nil, &TPMError{Scope: st.name, Op: "approval digest", Err: err}
+		}
+		signature, err := t.SignApproval(attrs, st.tpm.Keys, aHash)
+		if err != nil {
+			return nil, &TPMError{Scope: st.name, Op: "sign approval", Err: err}
+		}
+		approvals = append(approvals, &Approval{
+			Epoch:               epoch,
+			AuthorityGeneration: authority.Generation,
+			Signature:           tpm2.Marshal(*signature),
+			ApprovedAt:          s.clock(),
+		})
 	}
-	return &Approval{
-		Epoch:               epoch,
-		AuthorityGeneration: authority.Generation,
-		Signature:           tpm2.Marshal(*signature),
-		ApprovedAt:          s.clock(),
-	}, nil
+	return approvals, nil
 }
 
 // resignAll re-signs, at epoch and with the scope's current authority, every
-// policy of the scope that has an approval, stores them, and records epoch on
-// the scope. changed, when set, replaces the stored policy of its name and is
-// approved even if it was revoked; it is returned as stored. The caller holds
-// st.mu.
+// branch of every policy of the scope that is approved, stores them, and
+// records epoch on the scope. changed, when set, replaces the stored policy
+// of its name and is approved even if it was revoked; it is returned as
+// stored. The caller holds st.mu.
 func (s *Service) resignAll(ctx context.Context, st *scopeState, scope *Scope, epoch uint64, changed *Policy) (*Policy, error) {
 	policies, err := s.registry.ListPolicies(ctx, st.name)
 	if err != nil {
@@ -406,10 +345,10 @@ func (s *Service) resignAll(ctx context.Context, st *scopeState, scope *Scope, e
 	for _, p := range policies {
 		if changed != nil && p.Name == changed.Name {
 			p = changed
-		} else if p.Approval == nil {
+		} else if !p.approved() {
 			continue
 		}
-		if p.Approval, err = s.approve(st, scope, p, &scope.Authority, epoch); err != nil {
+		if p.Approvals, err = s.approve(st, scope, p, &scope.Authority, epoch); err != nil {
 			return nil, err
 		}
 		p.UpdatedAt = now
@@ -457,18 +396,19 @@ func (s *Service) lockPolicy(ctx context.Context, tenant, name string) (*scopeSt
 	return st, scope, p, unlock, nil
 }
 
-// UpdatePolicy re-captures the policy's PCR values from the scope's TPM,
-// moves the scope's counter to its next epoch, and re-signs every policy of
-// the scope at it: the others keep their values, a revoked one stays
-// revoked, and this one is approved again even if it was revoked. No object
-// is re-keyed.
+// UpdatePolicy re-captures the PCR values of every pcr condition of the
+// policy from the scope's TPM, moves the scope's counter to its next epoch,
+// and re-signs every branch of every policy of the scope at it: the others
+// keep their values, a revoked one stays revoked, and this one is approved
+// again even if it was revoked. The policy's branches never change, and no
+// object is re-keyed.
 func (s *Service) UpdatePolicy(ctx context.Context, tenant, name string) (*Policy, error) {
 	st, scope, p, unlock, err := s.lockPolicy(ctx, tenant, name)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	if err := s.capture(st, p); err != nil {
+	if err := capture(st.tpm.TPM, st.name, p); err != nil {
 		return nil, err
 	}
 	epoch, err := s.incrementCounter(st, scope)
@@ -478,22 +418,23 @@ func (s *Service) UpdatePolicy(ctx context.Context, tenant, name string) (*Polic
 	return s.resignAll(ctx, st, scope, epoch, p)
 }
 
-// RevokePolicy withdraws the policy's approval: the scope's counter moves to
-// its next epoch and every other policy is re-signed at it. The policy's
-// objects then answer only to their password branch until it is updated.
-// Revoking a revoked policy changes nothing.
+// RevokePolicy withdraws the approval of every branch of the policy: the
+// scope's counter moves to its next epoch and every other policy is
+// re-signed at it. The policy's objects then answer only to their outer
+// password branch, when they have one, until it is updated. Revoking a
+// revoked policy changes nothing.
 func (s *Service) RevokePolicy(ctx context.Context, tenant, name string) (*Policy, error) {
 	st, scope, p, unlock, err := s.lockPolicy(ctx, tenant, name)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	if p.Approval == nil {
+	if !p.approved() {
 		return p, nil
 	}
 	// The revocation is stored before the counter moves, so a crash in
 	// between cannot let reconcile re-sign the revoked policy.
-	p.Approval = nil
+	p.revoke()
 	p.UpdatedAt = s.clock()
 	if err := s.registry.UpdatePolicy(ctx, st.name, p); err != nil {
 		return nil, err
@@ -508,32 +449,58 @@ func (s *Service) RevokePolicy(ctx context.Context, tenant, name string) (*Polic
 	return p, nil
 }
 
-// VerifyPolicy compares the policy's captured PCR values with the live ones
-// and reports whether it holds an approval at the counter's current value.
-// It is an advisory check; the TPM enforces the policy on use.
+// VerifyPolicy compares, branch by branch, the captured PCR values of the
+// policy with the live ones and reports whether each branch holds an
+// approval at the counter's current value. It is an advisory check; the TPM
+// enforces the policy on use.
 func (s *Service) VerifyPolicy(ctx context.Context, tenant, name string) (*Verification, error) {
 	st, scope, p, unlock, err := s.lockPolicy(ctx, tenant, name)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	live, err := readPCRs(st.tpm.TPM, st.name, p.Bank, p.PCRs)
-	if err != nil {
-		return nil, err
-	}
-	v := &Verification{Policy: p.Name}
-	for _, pcr := range p.PCRs {
-		if !bytes.Equal(live[pcr], p.PCRValues[pcr]) {
-			v.Mismatched = append(v.Mismatched, pcr)
-		}
-	}
-	v.Match = len(v.Mismatched) == 0
 	counter, err := st.tpm.TPM.ReadCounter(tpm2.TPMHandle(scope.Counter))
 	if err != nil {
 		return nil, &TPMError{Scope: st.name, Op: "read counter", Err: err}
 	}
-	v.Approved = p.Approval != nil && p.Approval.Epoch == counter
+	v := &Verification{
+		Policy:   p.Name,
+		Branches: make([]BranchVerification, len(p.Branches)),
+		Match:    true,
+		Approved: true,
+	}
+	for i, b := range p.Branches {
+		bv, err := verifyBranch(st.tpm.TPM, st.name, b)
+		if err != nil {
+			return nil, err
+		}
+		bv.Approved = i < len(p.Approvals) && p.Approvals[i] != nil && p.Approvals[i].Epoch == counter
+		v.Branches[i] = bv
+		v.Match = v.Match && bv.Match
+		v.Approved = v.Approved && bv.Approved
+		v.Mismatched = append(v.Mismatched, bv.Mismatched...)
+	}
+	slices.Sort(v.Mismatched)
+	v.Mismatched = slices.Compact(v.Mismatched)
 	return v, nil
+}
+
+// SetDescription replaces the policy's description.
+func (s *Service) SetDescription(ctx context.Context, tenant, name, description string) (*Policy, error) {
+	if err := validateDescription(description); err != nil {
+		return nil, err
+	}
+	st, _, p, unlock, err := s.lockPolicy(ctx, tenant, name)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	p.Description = description
+	p.UpdatedAt = s.clock()
+	if err := s.registry.UpdatePolicy(ctx, st.name, p); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // DeletePolicy deletes the policy and undefines its NV index. It refuses
@@ -658,8 +625,8 @@ func (s *Service) RotateAuthority(ctx context.Context, tenant string) (*Scope, e
 }
 
 // finishRotation completes the rotation to scope.Rotating: it rewrites every
-// policy index to name the new authority, re-signs every current approval
-// with it, records it as the scope's authority, and deletes the old one. Each
+// policy index to name the new authority, re-signs every branch of every
+// approved policy with it, records it as the scope's authority, and deletes the old one. Each
 // step is safe to repeat. The caller holds st.mu.
 func (s *Service) finishRotation(ctx context.Context, st *scopeState, scope *Scope) error {
 	next := scope.Rotating
@@ -672,8 +639,8 @@ func (s *Service) finishRotation(ctx context.Context, st *scopeState, scope *Sco
 		if p.IndexName, err = s.writePolicyIndex(st, p, next); err != nil {
 			return err
 		}
-		if p.Approval != nil {
-			if p.Approval, err = s.approve(st, scope, p, next, scope.Epoch); err != nil {
+		if p.approved() {
+			if p.Approvals, err = s.approve(st, scope, p, next, scope.Epoch); err != nil {
 				return err
 			}
 		}
@@ -696,22 +663,28 @@ func (s *Service) finishRotation(ctx context.Context, st *scopeState, scope *Sco
 }
 
 // PolicyIndex implements pkgtpm2.PolicyBindingResolver: the NV index objects
-// bound to the named policy follow, and its hash algorithm.
-func (s *Service) PolicyIndex(scope, name string) (tpm2.TPMHandle, tpm2.TPMAlgID, error) {
+// bound to the named policy follow, its hash algorithm, and whether it has an
+// auth_value condition.
+func (s *Service) PolicyIndex(scope, name string) (pkgtpm2.PolicyIndexInfo, error) {
 	if err := checkPolicyName(name); err != nil {
-		return 0, 0, err
+		return pkgtpm2.PolicyIndexInfo{}, err
 	}
 	p, err := s.registry.Policy(context.Background(), scope, name)
 	if err != nil {
-		return 0, 0, err
+		return pkgtpm2.PolicyIndexInfo{}, err
 	}
-	return tpm2.TPMHandle(p.Index), policyHashAlg, nil
+	return pkgtpm2.PolicyIndexInfo{
+		Index:              tpm2.TPMHandle(p.Index),
+		HashAlg:            policyHashAlg,
+		AuthValueCondition: p.hasAuthValueCondition(),
+	}, nil
 }
 
-// Approval implements pkgtpm2.PolicyBindingResolver: the named policy's
-// current approval, or ErrPolicyRevoked when it has none. A key used with
-// its password takes its password branch and never asks for an approval.
-func (s *Service) Approval(scope, name string) (*pkgtpm2.PolicyApproval, error) {
+// Approvals implements pkgtpm2.PolicyBindingResolver: the current approval
+// of every branch of the named policy, in branch order, or ErrPolicyRevoked
+// when it has none. A key used through its outer password branch never asks
+// for them.
+func (s *Service) Approvals(scope, name string) ([]*pkgtpm2.PolicyApproval, error) {
 	if err := checkPolicyName(name); err != nil {
 		return nil, err
 	}
@@ -724,32 +697,39 @@ func (s *Service) Approval(scope, name string) (*pkgtpm2.PolicyApproval, error) 
 	if err != nil {
 		return nil, err
 	}
-	if p.Approval == nil {
+	if !p.approved() {
 		return nil, ErrPolicyRevoked
 	}
-	return policyApproval(sc, p)
+	approvals := make([]*pkgtpm2.PolicyApproval, len(p.Branches))
+	for i := range p.Branches {
+		if approvals[i], err = policyApproval(sc, p, i); err != nil {
+			return nil, err
+		}
+	}
+	return approvals, nil
 }
 
-// policyApproval builds the session-ready form of p's stored approval.
-func policyApproval(scope *Scope, p *Policy) (*pkgtpm2.PolicyApproval, error) {
-	authority, err := scope.authority(p.Approval.AuthorityGeneration)
+// policyApproval builds the session-ready form of the stored approval of
+// branch i of p.
+func policyApproval(scope *Scope, p *Policy, i int) (*pkgtpm2.PolicyApproval, error) {
+	approval := p.Approvals[i]
+	authority, err := scope.authority(approval.AuthorityGeneration)
 	if err != nil {
 		return nil, err
 	}
-	bankAlg, err := pkgtpm2.ParsePCRBankAlgID(p.Bank)
+	branch, err := tpmBranch(p.Branches[i])
 	if err != nil {
-		return nil, &InvalidPCRBankError{Bank: p.Bank}
+		return nil, err
 	}
-	signature, err := tpm2.Unmarshal[tpm2.TPMTSignature](p.Approval.Signature)
+	signature, err := tpm2.Unmarshal[tpm2.TPMTSignature](approval.Signature)
 	if err != nil {
 		return nil, &StoreError{Op: "decode", Key: p.Name, Err: err}
 	}
 	return &pkgtpm2.PolicyApproval{
 		HashAlg:         policyHashAlg,
-		PCRSelection:    pkgtpm2.PolicyPCRSelection(bankAlg, p.PCRs...),
-		PCRDigest:       p.PCRDigest,
+		Branch:          branch,
 		Counter:         tpm2.TPMHandle(scope.Counter),
-		Epoch:           p.Approval.Epoch,
+		Epoch:           approval.Epoch,
 		PolicyRef:       p.PolicyRef,
 		AuthorityPublic: tpm2.BytesAs2B[tpm2.TPMTPublic](authority.Public),
 		Signature:       *signature,

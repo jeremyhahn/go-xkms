@@ -40,51 +40,69 @@ var errUnknownTestPolicy = errors.New("test resolver: unknown policy")
 // testPolicyResolver is an in-memory PolicyBindingResolver: the registry the
 // real policy service keeps, reduced to what the TPM consults.
 type testPolicyResolver struct {
-	mu        sync.Mutex
-	indices   map[string]tpm2.TPMHandle
-	hashAlg   tpm2.TPMAlgID
-	approvals map[string]*PolicyApproval
-	requested []string
+	mu                  sync.Mutex
+	indices             map[string]tpm2.TPMHandle
+	authValueConditions map[string]bool
+	hashAlg             tpm2.TPMAlgID
+	approvals           map[string][]*PolicyApproval
+	requested           []string
 }
 
 func newTestPolicyResolver() *testPolicyResolver {
 	return &testPolicyResolver{
-		indices:   make(map[string]tpm2.TPMHandle),
-		hashAlg:   tpm2.TPMAlgSHA256,
-		approvals: make(map[string]*PolicyApproval),
+		indices:             make(map[string]tpm2.TPMHandle),
+		authValueConditions: make(map[string]bool),
+		hashAlg:             tpm2.TPMAlgSHA256,
+		approvals:           make(map[string][]*PolicyApproval),
 	}
 }
 
-func (r *testPolicyResolver) PolicyIndex(scope, name string) (tpm2.TPMHandle, tpm2.TPMAlgID, error) {
+func (r *testPolicyResolver) PolicyIndex(scope, name string) (PolicyIndexInfo, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.requested = append(r.requested, scope+"/"+name)
 	index, ok := r.indices[scope+"/"+name]
 	if !ok {
-		return 0, 0, errUnknownTestPolicy
+		return PolicyIndexInfo{}, errUnknownTestPolicy
 	}
-	return index, r.hashAlg, nil
+	return PolicyIndexInfo{
+		Index:              index,
+		HashAlg:            r.hashAlg,
+		AuthValueCondition: r.authValueConditions[scope+"/"+name],
+	}, nil
 }
 
-func (r *testPolicyResolver) Approval(scope, name string) (*PolicyApproval, error) {
+func (r *testPolicyResolver) Approvals(scope, name string) ([]*PolicyApproval, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	approval, ok := r.approvals[scope+"/"+name]
+	approvals, ok := r.approvals[scope+"/"+name]
 	if !ok {
 		return nil, errUnknownTestPolicy
 	}
-	return approval, nil
+	return approvals, nil
 }
 
-func (r *testPolicyResolver) setApproval(scope, name string, approval *PolicyApproval) {
+func (r *testPolicyResolver) setApprovals(scope, name string, approvals []*PolicyApproval) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.approvals[scope+"/"+name] = approval
+	r.approvals[scope+"/"+name] = approvals
 }
 
+// branchSpec describes one branch of the fixture's policy: a pcr condition
+// approves the live value of testPolicyPCR, and localities, when set, is a
+// locality condition.
+type branchSpec struct {
+	pcr        bool
+	authValue  bool
+	localities []uint
+}
+
+// pcrOnly is the single-branch policy every pre-composite test used.
+var pcrOnly = []branchSpec{{pcr: true}}
+
 // policyFixture is a provisioned simulator with one named policy, "boot" in
-// the system scope, bound to an authority under the Platform SRK and approved
-// at the counter's current epoch for the live value of testPolicyPCR.
+// the system scope, bound to an authority under the Platform SRK and with
+// every branch approved at the counter's current epoch.
 type policyFixture struct {
 	h         *simHarness
 	srk       *types.KeyAttributes
@@ -92,15 +110,24 @@ type policyFixture struct {
 	counter   tpm2.TPMHandle
 	index     tpm2.TPMHandle
 	authority *types.KeyAttributes
+	branches  []branchSpec
 }
 
+// newPolicyFixture builds the fixture with a single pcr branch.
 func newPolicyFixture(t *testing.T) *policyFixture {
+	t.Helper()
+	return newCompositePolicyFixture(t, pcrOnly...)
+}
+
+// newCompositePolicyFixture builds the fixture with the given branches.
+func newCompositePolicyFixture(t *testing.T, branches ...branchSpec) *policyFixture {
 	t.Helper()
 	h := newSimHarness(t, nil)
 	f := &policyFixture{
 		h:        h,
 		srk:      createPlatformPolicySRK(t, h, mustPassword([]byte("platform-srk-pin"))),
 		resolver: newTestPolicyResolver(),
+		branches: branches,
 	}
 
 	var err error
@@ -117,9 +144,13 @@ func newPolicyFixture(t *testing.T) *policyFixture {
 	f.authority = f.createAuthority(t, "policy-authority-1")
 	f.pointIndexAt(t, f.authority)
 
-	f.resolver.indices[SystemPolicyScope+"/"+testPolicyName] = f.index
+	key := SystemPolicyScope + "/" + testPolicyName
+	f.resolver.indices[key] = f.index
+	for _, b := range branches {
+		f.resolver.authValueConditions[key] = f.resolver.authValueConditions[key] || b.authValue
+	}
 	h.TPM.SetPolicyBindingResolver(f.resolver)
-	f.resolver.setApproval(SystemPolicyScope, testPolicyName, f.approve(t, f.authority))
+	f.resolver.setApprovals(SystemPolicyScope, testPolicyName, f.approve(t, f.authority))
 	return f
 }
 
@@ -190,9 +221,33 @@ func (f *policyFixture) livePCRDigest(t *testing.T) []byte {
 	return nil
 }
 
-// approve signs, with authority, an approval of the live value of
-// testPolicyPCR at the counter's current epoch.
-func (f *policyFixture) approve(t *testing.T, authority *types.KeyAttributes) *PolicyApproval {
+// branch builds the PolicyBranch of spec over the live PCRs. The conditions
+// are listed auth value first, the reverse of canonical order, so every test
+// also proves the order they are listed in does not matter.
+func (f *policyFixture) branch(t *testing.T, spec branchSpec) PolicyBranch {
+	t.Helper()
+	var b PolicyBranch
+	if spec.authValue {
+		b.Conditions = append(b.Conditions, PolicyCondition{Type: PolicyConditionAuthValue})
+	}
+	if spec.pcr {
+		b.Conditions = append(b.Conditions, PolicyCondition{
+			Type:         PolicyConditionPCR,
+			PCRSelection: PolicyPCRSelection(tpm2.TPMAlgSHA256, testPolicyPCR),
+			PCRDigest:    f.livePCRDigest(t),
+		})
+	}
+	if len(spec.localities) > 0 {
+		locality, err := PolicyLocalitySelection(spec.localities...)
+		require.NoError(t, err)
+		b.Conditions = append(b.Conditions, PolicyCondition{Type: PolicyConditionLocality, Locality: locality})
+	}
+	return b
+}
+
+// approve signs, with authority, an approval of every branch of the fixture's
+// policy over the live PCRs at the counter's current epoch.
+func (f *policyFixture) approve(t *testing.T, authority *types.KeyAttributes) []*PolicyApproval {
 	t.Helper()
 	tpm := f.h.TPM
 
@@ -200,31 +255,39 @@ func (f *policyFixture) approve(t *testing.T, authority *types.KeyAttributes) *P
 	require.NoError(t, err)
 	counterName, err := tpm.NVIndexName(f.counter)
 	require.NoError(t, err)
-
-	selection := PolicyPCRSelection(tpm2.TPMAlgSHA256, testPolicyPCR)
-	pcrDigest := f.livePCRDigest(t)
-	approved, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256, selection, pcrDigest, counterName, epoch)
-	require.NoError(t, err)
-
-	ref := PolicyRef(SystemPolicyScope, testPolicyName)
-	aHash, err := ApprovalDigest(tpm2.TPMAlgSHA256, approved, ref)
-	require.NoError(t, err)
-	signature, err := tpm.SignApproval(authority, f.h.Backend, aHash)
-	require.NoError(t, err)
 	_, public, err := tpm.AuthorityName(authority, f.h.Backend)
 	require.NoError(t, err)
+	ref := PolicyRef(SystemPolicyScope, testPolicyName)
 
-	return &PolicyApproval{
-		HashAlg:         tpm2.TPMAlgSHA256,
-		PCRSelection:    selection,
-		PCRDigest:       pcrDigest,
-		Counter:         f.counter,
-		Epoch:           epoch,
-		PolicyRef:       ref,
-		AuthorityPublic: public,
-		Signature:       *signature,
-		Index:           f.index,
+	approvals := make([]*PolicyApproval, 0, len(f.branches))
+	for _, spec := range f.branches {
+		branch := f.branch(t, spec)
+		approved, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256, branch, counterName, epoch)
+		require.NoError(t, err)
+		aHash, err := ApprovalDigest(tpm2.TPMAlgSHA256, approved, ref)
+		require.NoError(t, err)
+		signature, err := tpm.SignApproval(authority, f.h.Backend, aHash)
+		require.NoError(t, err)
+		approvals = append(approvals, &PolicyApproval{
+			HashAlg:         tpm2.TPMAlgSHA256,
+			Branch:          branch,
+			Counter:         f.counter,
+			Epoch:           epoch,
+			PolicyRef:       ref,
+			AuthorityPublic: public,
+			Signature:       *signature,
+			Index:           f.index,
+		})
 	}
+	return approvals
+}
+
+// currentApprovals returns the approvals the resolver holds.
+func (f *policyFixture) currentApprovals(t *testing.T) []*PolicyApproval {
+	t.Helper()
+	approvals, err := f.resolver.Approvals(SystemPolicyScope, testPolicyName)
+	require.NoError(t, err)
+	return approvals
 }
 
 // extendPolicyPCR moves testPolicyPCR: the platform state the approval
@@ -241,15 +304,15 @@ func (f *policyFixture) extendPolicyPCR(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// update re-approves the live PCR value at the next epoch, as a policy update
-// does, and returns the new approval.
-func (f *policyFixture) update(t *testing.T, authority *types.KeyAttributes) *PolicyApproval {
+// update re-approves every branch over the live PCRs at the next epoch, as a
+// policy update does, and returns the new approvals.
+func (f *policyFixture) update(t *testing.T, authority *types.KeyAttributes) []*PolicyApproval {
 	t.Helper()
 	_, err := f.h.TPM.IncrementCounter(f.counter, policyWriteAuth)
 	require.NoError(t, err)
-	approval := f.approve(t, authority)
-	f.resolver.setApproval(SystemPolicyScope, testPolicyName, approval)
-	return approval
+	approvals := f.approve(t, authority)
+	f.resolver.setApprovals(SystemPolicyScope, testPolicyName, approvals)
+	return approvals
 }
 
 // sign signs a fixed digest with key and verifies the signature against the
@@ -288,16 +351,23 @@ func withoutPassword(key *types.KeyAttributes) *types.KeyAttributes {
 	return &c
 }
 
+// withPassword returns a copy of key that presents password.
+func withPassword(key *types.KeyAttributes, password string) *types.KeyAttributes {
+	c := *key
+	c.Password = mustPassword([]byte(password))
+	return &c
+}
+
 // TestAuthorizedPolicy_DigestsMatchLiveSession proves every trial digest the
 // package computes is the digest a real session reaches at the same step:
-// ApprovedPolicyDigest after PolicyPCR+PolicyNV, AuthorizeDigest (the index
-// content) after PolicyAuthorize, and AuthorizedObjectPolicy's branch and OR
-// digests after PolicyAuthorizeNV and PolicyOR.
+// ApprovedPolicyDigest after a composite branch's assertions (listed out of
+// canonical order) and PolicyNV, AuthorizeDigest (the index content) after
+// PolicyAuthorize, and AuthorizedObjectPolicy's branch and OR digests after
+// PolicyAuthorizeNV and PolicyOR.
 func TestAuthorizedPolicy_DigestsMatchLiveSession(t *testing.T) {
-	f := newPolicyFixture(t)
+	f := newCompositePolicyFixture(t, branchSpec{pcr: true, authValue: true, localities: []uint{0, 2}})
 	tpm := f.h.TPM
-	approval, err := f.resolver.Approval(SystemPolicyScope, testPolicyName)
-	require.NoError(t, err)
+	approval := f.currentApprovals(t)[0]
 
 	session, closer, err := tpm2.PolicySession(tpm.transport, tpm2.TPMAlgSHA256, sessionNonceSize)
 	require.NoError(t, err)
@@ -308,16 +378,11 @@ func TestAuthorizedPolicy_DigestsMatchLiveSession(t *testing.T) {
 		return rsp.PolicyDigest.Buffer
 	}
 
-	_, err = tpm2.PolicyPCR{
-		PolicySession: session.Handle(),
-		PcrDigest:     tpm2.TPM2BDigest{Buffer: approval.PCRDigest},
-		Pcrs:          approval.PCRSelection,
-	}.Execute(tpm.transport)
-	require.NoError(t, err)
+	require.NoError(t, tpm.assertBranch(session, approval.Branch, branchRef{}))
 	counterName, err := tpm.NVIndexName(f.counter)
 	require.NoError(t, err)
 	require.NoError(t, tpm.policyNVEpoch(session, f.counter, counterName, approval.Epoch))
-	approved, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256, approval.PCRSelection, approval.PCRDigest, counterName, approval.Epoch)
+	approved, err := ApprovedPolicyDigest(tpm2.TPMAlgSHA256, approval.Branch, counterName, approval.Epoch)
 	require.NoError(t, err)
 	assert.Equal(t, approved, sessionDigest(), "ApprovedPolicyDigest")
 
@@ -390,58 +455,230 @@ func TestAuthorizedPolicy_PCRChangeRefusesApprovedBranch(t *testing.T) {
 	require.ErrorAs(t, err, &mismatch)
 	assert.Equal(t, testPolicyName, mismatch.Policy)
 	assert.ErrorIs(t, err, tpm2.TPMRCValue)
+	var refused *PolicyBranchesRefusedError
+	require.ErrorAs(t, err, &refused)
+	assert.Len(t, refused.Branches, 1)
 
 	require.NoError(t, f.sign(withPassword))
+}
+
+// TestAuthorizedPolicy_CompositeAND proves a policy of one branch requiring
+// both the PCR state and the object's password is enforced as an AND: the
+// key signs only with its password while the PCR holds. Its password alone
+// does not sign, which proves the object got no outer PolicyAuthValue branch
+// that would bypass the PCR condition, and the PCR alone does not sign.
+func TestAuthorizedPolicy_CompositeAND(t *testing.T) {
+	f := newCompositePolicyFixture(t, branchSpec{pcr: true, authValue: true})
+	key := f.createBoundKey(t, "and-key", mustPassword([]byte("and-key-pin")))
+
+	binding, err := f.h.TPM.loadPolicyBinding(key, f.h.Backend)
+	require.NoError(t, err)
+	assert.False(t, binding.AuthValueBranch, "no outer password branch")
+	assert.True(t, binding.AuthValueCondition)
+
+	require.NoError(t, f.sign(key), "password and PCR")
+
+	err = f.sign(withoutPassword(key))
+	var missing *PolicyAuthValueMissingError
+	require.ErrorAs(t, err, &missing, "the PCR alone does not sign")
+	assert.Equal(t, 0, missing.Branch)
+
+	require.Error(t, f.sign(withPassword(key, "wrong-pin")), "a wrong password does not sign")
+
+	f.extendPolicyPCR(t)
+	var mismatch *PolicyPCRMismatchError
+	require.ErrorAs(t, f.sign(key), &mismatch, "the password alone does not sign")
+}
+
+// TestAuthorizedPolicy_CompositeOR proves a policy of a pcr branch OR a
+// password branch: the key signs without a password while the PCR holds,
+// with its password once the PCR has moved, and never with a wrong one.
+func TestAuthorizedPolicy_CompositeOR(t *testing.T) {
+	f := newCompositePolicyFixture(t, branchSpec{pcr: true}, branchSpec{authValue: true})
+	key := f.createBoundKey(t, "or-key", mustPassword([]byte("or-key-pin")))
+
+	require.NoError(t, f.sign(withoutPassword(key)), "the PCR branch, no password")
+
+	f.extendPolicyPCR(t)
+	err := f.sign(withoutPassword(key))
+	var refused *PolicyBranchesRefusedError
+	require.ErrorAs(t, err, &refused)
+	require.Len(t, refused.Branches, 2)
+	var mismatch *PolicyPCRMismatchError
+	require.ErrorAs(t, refused.Branches[0], &mismatch)
+	var missing *PolicyAuthValueMissingError
+	require.ErrorAs(t, refused.Branches[1], &missing)
+	assert.Equal(t, 1, missing.Branch)
+
+	require.NoError(t, f.sign(key), "the password branch after the PCR moved")
+	err = f.sign(withPassword(key, "wrong-pin"))
+	require.Error(t, err, "a wrong password does not sign")
+	assert.ErrorIs(t, err, tpm2.TPMRCAuthFail)
+}
+
+// TestAuthorizedPolicy_Locality proves a locality condition allowing the
+// command locality (0) signs, one allowing only locality 3 is refused with
+// the locality error and moves on to the next branch.
+func TestAuthorizedPolicy_Locality(t *testing.T) {
+	t.Run("allowed", func(t *testing.T) {
+		f := newCompositePolicyFixture(t, branchSpec{localities: []uint{0}})
+		require.NoError(t, f.sign(f.createBoundKey(t, "locality-0", nil)))
+	})
+	t.Run("refused", func(t *testing.T) {
+		f := newCompositePolicyFixture(t, branchSpec{localities: []uint{3}})
+		err := f.sign(f.createBoundKey(t, "locality-3", nil))
+		var mismatch *PolicyLocalityMismatchError
+		require.ErrorAs(t, err, &mismatch)
+		assert.Equal(t, uint8(commandLocality), mismatch.Locality)
+		assert.True(t, mismatch.Allowed.TPMLocThree)
+	})
+	t.Run("next branch", func(t *testing.T) {
+		f := newCompositePolicyFixture(t, branchSpec{localities: []uint{3}}, branchSpec{pcr: true, localities: []uint{0, 1}})
+		require.NoError(t, f.sign(f.createBoundKey(t, "locality-or", nil)))
+	})
+}
+
+// TestPolicyLocality_TPMEnforcesAtUse proves the TPM2_PolicyLocality command
+// this package sends reaches its trial digest, and that the TPM itself
+// refuses a session restricted to another locality when it authorizes a
+// command (TPM_RC_LOCALITY) -- the session code's own check only chooses a
+// branch.
+func TestPolicyLocality_TPMEnforcesAtUse(t *testing.T) {
+	h := newSimHarness(t, nil)
+	for _, tc := range []struct {
+		locality uint
+		want     error
+	}{
+		{locality: 0},
+		{locality: 3, want: tpm2.TPMRCLocality},
+	} {
+		allowed, err := PolicyLocalitySelection(tc.locality)
+		require.NoError(t, err)
+		authPolicy, err := trialDigest(tpm2.TPMAlgSHA256, policyLocality{Locality: allowed})
+		require.NoError(t, err)
+		key, err := tpm2.CreatePrimary{
+			PrimaryHandle: tpm2.AuthHandle{Handle: tpm2.TPMRHNull, Auth: tpm2.PasswordAuth(nil)},
+			InPublic:      tpm2.New2B(policySigningTemplate(authPolicy)),
+		}.Execute(h.TPM.transport)
+		require.NoError(t, err)
+
+		session, closer, err := tpm2.PolicySession(h.TPM.transport, tpm2.TPMAlgSHA256, sessionNonceSize)
+		require.NoError(t, err)
+		require.NoError(t, policyLocality{PolicySession: session.Handle(), Locality: allowed}.Execute(h.TPM.transport))
+		digest, err := tpm2.PolicyGetDigest{PolicySession: session.Handle()}.Execute(h.TPM.transport)
+		require.NoError(t, err)
+		assert.Equal(t, authPolicy, digest.PolicyDigest.Buffer)
+
+		message := sha256.Sum256([]byte("locality"))
+		_, err = tpm2.Sign{
+			KeyHandle: tpm2.AuthHandle{Handle: key.ObjectHandle, Name: key.Name, Auth: session},
+			Digest:    tpm2.TPM2BDigest{Buffer: message[:]},
+			InScheme: tpm2.TPMTSigScheme{
+				Scheme:  tpm2.TPMAlgECDSA,
+				Details: tpm2.NewTPMUSigScheme(tpm2.TPMAlgECDSA, &tpm2.TPMSSchemeHash{HashAlg: tpm2.TPMAlgSHA256}),
+			},
+			Validation: tpm2.TPMTTKHashCheck{Tag: tpm2.TPMSTHashCheck, Hierarchy: tpm2.TPMRHNull},
+		}.Execute(h.TPM.transport)
+		if tc.want == nil {
+			require.NoError(t, err)
+		} else {
+			require.ErrorIs(t, err, tc.want)
+		}
+		require.NoError(t, closer())
+		h.TPM.Flush(key.ObjectHandle)
+	}
+}
+
+// policySigningTemplate is an ECDSA P-256 signing key usable only through
+// authPolicy.
+func policySigningTemplate(authPolicy []byte) tpm2.TPMTPublic {
+	return tpm2.TPMTPublic{
+		Type:    tpm2.TPMAlgECC,
+		NameAlg: tpm2.TPMAlgSHA256,
+		ObjectAttributes: tpm2.TPMAObject{
+			FixedTPM:            true,
+			FixedParent:         true,
+			SensitiveDataOrigin: true,
+			SignEncrypt:         true,
+		},
+		AuthPolicy: tpm2.TPM2BDigest{Buffer: authPolicy},
+		Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgECC, &tpm2.TPMSECCParms{
+			CurveID: tpm2.TPMECCNistP256,
+			Scheme: tpm2.TPMTECCScheme{
+				Scheme:  tpm2.TPMAlgECDSA,
+				Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgECDSA, &tpm2.TPMSSigSchemeECDSA{HashAlg: tpm2.TPMAlgSHA256}),
+			},
+		}),
+		Unique: tpm2.NewTPMUPublicID(tpm2.TPMAlgECC, &tpm2.TPMSECCPoint{}),
+	}
+}
+
+// TestAuthorizedPolicy_CompositeRequiresObjectPassword proves an object
+// without a password cannot be bound to a policy with an auth_value
+// condition, which an empty password would satisfy.
+func TestAuthorizedPolicy_CompositeRequiresObjectPassword(t *testing.T) {
+	f := newCompositePolicyFixture(t, branchSpec{pcr: true}, branchSpec{authValue: true})
+	_, err := f.h.TPM.CreateECDSA(f.withPolicy(f.keyAttrs("no-password", nil)), f.h.Backend, false)
+	require.ErrorIs(t, err, ErrPolicyAuthValueRequired)
 }
 
 // TestAuthorizedPolicy_UpdateReapprovesWithoutRekey proves a policy update --
-// the next epoch, approving the new PCR value -- restores the approved branch
-// of the very same key blobs.
+// the next epoch, re-approving every branch over the new PCR value --
+// restores the very same key blobs through each branch.
 func TestAuthorizedPolicy_UpdateReapprovesWithoutRekey(t *testing.T) {
-	f := newPolicyFixture(t)
-	noPassword := f.createBoundKey(t, "update-no-password", nil)
-	withPassword := f.createBoundKey(t, "update-with-password", mustPassword([]byte("bound-key-pin")))
-	privBefore := f.mustBlob(noPassword, store.FSEXT_PRIVATE_BLOB)
-	pubBefore := f.mustBlob(noPassword, store.FSEXT_PUBLIC_BLOB)
+	f := newCompositePolicyFixture(t, branchSpec{pcr: true}, branchSpec{pcr: true, authValue: true})
+	key := f.createBoundKey(t, "update-key", mustPassword([]byte("bound-key-pin")))
+	privBefore := f.mustBlob(key, store.FSEXT_PRIVATE_BLOB)
+	pubBefore := f.mustBlob(key, store.FSEXT_PUBLIC_BLOB)
 
 	f.extendPolicyPCR(t)
-	require.Error(t, f.sign(noPassword))
+	require.Error(t, f.sign(withoutPassword(key)))
+	require.Error(t, f.sign(key))
 
-	approval := f.update(t, f.authority)
-	assert.Equal(t, uint64(2), approval.Epoch, "DefineCounterIndex leaves the counter at 1, the update moves it to 2")
+	approvals := f.update(t, f.authority)
+	require.Len(t, approvals, 2)
+	for _, approval := range approvals {
+		assert.Equal(t, uint64(2), approval.Epoch, "DefineCounterIndex leaves the counter at 1, the update moves it to 2")
+	}
 
-	require.NoError(t, f.sign(noPassword))
-	require.NoError(t, f.sign(withPassword))
-	require.NoError(t, f.sign(withoutPassword(withPassword)))
-	assert.Equal(t, privBefore, f.mustBlob(noPassword, store.FSEXT_PRIVATE_BLOB), "no re-key")
-	assert.Equal(t, pubBefore, f.mustBlob(noPassword, store.FSEXT_PUBLIC_BLOB), "no re-key")
+	require.NoError(t, f.sign(withoutPassword(key)), "branch 0 re-approved")
+	f.resolver.setApprovals(SystemPolicyScope, testPolicyName, approvals[1:])
+	require.NoError(t, f.sign(key), "branch 1 re-approved")
+	assert.Equal(t, privBefore, f.mustBlob(key, store.FSEXT_PRIVATE_BLOB), "no re-key")
+	assert.Equal(t, pubBefore, f.mustBlob(key, store.FSEXT_PUBLIC_BLOB), "no re-key")
 }
 
-// TestAuthorizedPolicy_ReplayOfSupersededApprovalRefused proves an approval
-// from an earlier epoch is refused by the TPM (TPM2_PolicyNV) even when the
-// PCR value it approved still holds, and is reported as revoked.
+// TestAuthorizedPolicy_ReplayOfSupersededApprovalRefused proves approvals
+// from an earlier epoch are refused by the TPM (TPM2_PolicyNV), branch by
+// branch, even when the PCR value they approved still holds, and are reported
+// as revoked.
 func TestAuthorizedPolicy_ReplayOfSupersededApprovalRefused(t *testing.T) {
-	f := newPolicyFixture(t)
+	f := newCompositePolicyFixture(t, branchSpec{pcr: true}, branchSpec{localities: []uint{0}})
 	key := f.createBoundKey(t, "replay-no-password", nil)
 
-	old, err := f.resolver.Approval(SystemPolicyScope, testPolicyName)
-	require.NoError(t, err)
+	old := f.currentApprovals(t)
 	f.update(t, f.authority)
 	require.NoError(t, f.sign(key))
 
-	f.resolver.setApproval(SystemPolicyScope, testPolicyName, old)
-	err = f.sign(key)
-	var revoked *PolicyApprovalRevokedError
-	require.ErrorAs(t, err, &revoked)
-	assert.Equal(t, old.Epoch, revoked.Epoch)
-	assert.ErrorIs(t, err, tpm2.TPMRCPolicy)
+	f.resolver.setApprovals(SystemPolicyScope, testPolicyName, old)
+	err := f.sign(key)
+	var refused *PolicyBranchesRefusedError
+	require.ErrorAs(t, err, &refused)
+	require.Len(t, refused.Branches, 2)
+	for i, branchErr := range refused.Branches {
+		var revoked *PolicyApprovalRevokedError
+		require.ErrorAs(t, branchErr, &revoked)
+		assert.Equal(t, old[i].Epoch, revoked.Epoch)
+		assert.Equal(t, i, revoked.Branch)
+		assert.ErrorIs(t, branchErr, tpm2.TPMRCPolicy)
+	}
 }
 
 // TestAuthorizedPolicy_AuthorityRotation proves rewriting the policy index
-// moves every bound key to a new authority without re-keying, and that an
-// approval signed by the old authority no longer authorizes them.
+// moves every bound key to a new authority without re-keying, and that
+// approvals signed by the old authority no longer authorize them.
 func TestAuthorizedPolicy_AuthorityRotation(t *testing.T) {
-	f := newPolicyFixture(t)
+	f := newCompositePolicyFixture(t, branchSpec{localities: []uint{3}}, branchSpec{pcr: true})
 	key := f.createBoundKey(t, "rotation-no-password", nil)
 	require.NoError(t, f.sign(key))
 
@@ -450,10 +687,10 @@ func TestAuthorizedPolicy_AuthorityRotation(t *testing.T) {
 	oldAuthority := f.update(t, f.authority)
 	newAuthority := f.approve(t, authority2)
 
-	f.resolver.setApproval(SystemPolicyScope, testPolicyName, newAuthority)
+	f.resolver.setApprovals(SystemPolicyScope, testPolicyName, newAuthority)
 	require.NoError(t, f.sign(key))
 
-	f.resolver.setApproval(SystemPolicyScope, testPolicyName, oldAuthority)
+	f.resolver.setApprovals(SystemPolicyScope, testPolicyName, oldAuthority)
 	err := f.sign(key)
 	require.Error(t, err, "an approval by the replaced authority must not authorize the key")
 	assert.ErrorIs(t, err, tpm2.TPMRCValue, "TPM2_PolicyAuthorizeNV refuses a digest the index does not hold")
@@ -501,6 +738,10 @@ func TestAuthorizedPolicy_BindingRecordLifecycle(t *testing.T) {
 		HashAlg:         uint16(tpm2.TPMAlgSHA256),
 		AuthValueBranch: true,
 	}, binding)
+
+	record, err := f.h.Backend.Get(key, store.FSEXT_TPM_POLICY)
+	require.NoError(t, err)
+	assert.Equal(t, store.TPMPolicyBindingVersion, record[4], "new records are version 2")
 
 	require.NoError(t, f.h.Backend.Save(key, []byte("XTPB-garbage"), store.FSEXT_TPM_POLICY, true))
 	var formatErr *store.TPMPolicyBindingFormatError

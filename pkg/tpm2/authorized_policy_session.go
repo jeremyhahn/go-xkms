@@ -42,9 +42,13 @@ func keyAuthValue(keyAttrs *types.KeyAttributes) []byte {
 // namedPolicyBinding resolves the named policy keyAttrs.TPMPolicy for a new
 // object whose name algorithm is nameAlg, and applies it to template: the
 // authPolicy of AuthorizedObjectPolicy, and USERWITHAUTH cleared so the
-// policy is the only way to use the object (its password, when it has one, is
-// the policy's PolicyAuthValue branch). It returns the binding to record
-// beside the object's blobs, or nil when the key names no authorized policy.
+// policy is the only way to use the object. The object gets the outer
+// PolicyAuthValue branch only when it has a password and the policy has no
+// auth_value condition: a policy that has one decides where the password
+// counts. An object without a password is refused a policy with an
+// auth_value condition, which an empty password would satisfy. It returns the
+// binding to record beside the object's blobs, or nil when the key names no
+// authorized policy.
 func (tpm *TPM2) namedPolicyBinding(
 	keyAttrs *types.KeyAttributes,
 	template *tpm2.TPMTPublic) (*store.TPMPolicyBinding, error) {
@@ -57,27 +61,31 @@ func (tpm *TPM2) namedPolicyBinding(
 		return nil, err
 	}
 	scope := policyScope(keyAttrs)
-	index, hashAlg, err := resolver.PolicyIndex(scope, keyAttrs.TPMPolicy)
+	info, err := resolver.PolicyIndex(scope, keyAttrs.TPMPolicy)
 	if err != nil {
 		return nil, err
 	}
-	if hashAlg != template.NameAlg {
+	if info.HashAlg != template.NameAlg {
 		return nil, &errs.Detail{
 			Err:    ErrPolicyHashMismatch,
-			Detail: fmt.Sprintf("policy 0x%x, object 0x%x", hashAlg, template.NameAlg),
+			Detail: fmt.Sprintf("policy 0x%x, object 0x%x", info.HashAlg, template.NameAlg),
 		}
 	}
+	hasPassword := keyAuthValue(keyAttrs) != nil
+	if info.AuthValueCondition && !hasPassword {
+		return nil, &errs.Detail{Err: ErrPolicyAuthValueRequired, Detail: keyAttrs.TPMPolicy}
+	}
 
-	pub, indexName, err := tpm.nvPublic(index)
+	pub, indexName, err := tpm.nvPublic(info.Index)
 	if err != nil {
 		return nil, err
 	}
 	if !pub.Attributes.Written {
-		return nil, &errs.Detail{Err: ErrPolicyIndexUnwritten, Detail: fmt.Sprintf("0x%08x", index)}
+		return nil, &errs.Detail{Err: ErrPolicyIndexUnwritten, Detail: fmt.Sprintf("0x%08x", info.Index)}
 	}
 
-	withAuthValue := keyAuthValue(keyAttrs) != nil
-	authPolicy, _, err := AuthorizedObjectPolicy(hashAlg, indexName, withAuthValue)
+	withAuthValue := hasPassword && !info.AuthValueCondition
+	authPolicy, _, err := AuthorizedObjectPolicy(info.HashAlg, indexName, withAuthValue)
 	if err != nil {
 		return nil, err
 	}
@@ -88,15 +96,17 @@ func (tpm *TPM2) namedPolicyBinding(
 		slog.String("cn", keyAttrs.CN),
 		slog.String("scope", scope),
 		slog.String("policy", keyAttrs.TPMPolicy),
-		slog.String("index", fmt.Sprintf("0x%08x", index)),
-		slog.Bool("auth_value_branch", withAuthValue))
+		slog.String("index", fmt.Sprintf("0x%08x", info.Index)),
+		slog.Bool("auth_value_branch", withAuthValue),
+		slog.Bool("auth_value_condition", info.AuthValueCondition))
 
 	return &store.TPMPolicyBinding{
-		Scope:           scope,
-		Policy:          keyAttrs.TPMPolicy,
-		Index:           uint32(index),
-		HashAlg:         uint16(hashAlg),
-		AuthValueBranch: withAuthValue,
+		Scope:              scope,
+		Policy:             keyAttrs.TPMPolicy,
+		Index:              uint32(info.Index),
+		HashAlg:            uint16(info.HashAlg),
+		AuthValueBranch:    withAuthValue,
+		AuthValueCondition: info.AuthValueCondition,
 	}, nil
 }
 
@@ -154,11 +164,11 @@ func (tpm *TPM2) loadPolicyBinding(
 // authorizedPolicySession builds the policy session that satisfies the
 // authPolicy of an object bound to a named policy (see AuthorizedObjectPolicy).
 //
-// A key with a password and a PolicyAuthValue branch takes that branch:
-// PolicyAuthValue, then PolicyOR, in a salted session carrying the password.
-// It needs no approval, so it keeps working while the policy is revoked or the
-// platform state has moved. Every other key takes the approved branch (see
-// approvedPolicySession).
+// A key with a password and an outer PolicyAuthValue branch takes that
+// branch: PolicyAuthValue, then PolicyOR, in a salted session carrying the
+// password. It needs no approval, so it keeps working while the policy is
+// revoked or the platform state has moved. Every other key redeems one of the
+// policy's branch approvals (see approvedPolicySession).
 func (tpm *TPM2) authorizedPolicySession(
 	keyAttrs *types.KeyAttributes,
 	binding *store.TPMPolicyBinding) (tpm2.Session, func() error, error) {
@@ -174,7 +184,8 @@ func (tpm *TPM2) authorizedPolicySession(
 		return nil, noopCloser, err
 	}
 
-	if auth := keyAuthValue(keyAttrs); auth != nil && binding.AuthValueBranch {
+	auth := keyAuthValue(keyAttrs)
+	if auth != nil && binding.AuthValueBranch {
 		session, closer, err := tpm.startPolicySession(hashAlg, auth)
 		if err != nil {
 			return nil, noopCloser, err
@@ -190,7 +201,7 @@ func (tpm *TPM2) authorizedPolicySession(
 		return session, closer, nil
 	}
 
-	session, closer, err := tpm.approvedPolicySession(binding, index, indexName)
+	session, closer, err := tpm.approvedPolicySession(binding, index, auth)
 	if err != nil {
 		return nil, noopCloser, err
 	}
@@ -203,10 +214,78 @@ func (tpm *TPM2) authorizedPolicySession(
 	return session, closer, nil
 }
 
-// approvedPolicySession redeems the current approval of the policy binding
-// names, in a fresh policy session that carries no secret:
+// approvedPolicySession redeems the first branch approval of the policy
+// binding names that the TPM accepts, trying them in branch order. auth is
+// the object's password, or nil.
 //
-//  1. PolicyPCR(selection, pcrDigest)    fails once the platform state moves
+//   - A branch with an auth_value condition is tried only when auth is set,
+//     so the dictionary-attack counter is never spent on a guess.
+//   - A branch the TPM refuses at PolicyLocality, PolicyPCR or PolicyNV moves
+//     on to the next. Each attempt gets a fresh session: a failed assertion
+//     leaves a session unusable.
+//   - Any other failure is returned at once: it is not a property of the
+//     branch, and the next branch would meet it too.
+//
+// When no branch succeeds, *PolicyBranchesRefusedError carries every
+// branch's refusal.
+func (tpm *TPM2) approvedPolicySession(
+	binding *store.TPMPolicyBinding,
+	index tpm2.TPMHandle,
+	auth []byte) (tpm2.Session, func() error, error) {
+
+	resolver, err := tpm.policyBindingResolver()
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	approvals, err := resolver.Approvals(binding.Scope, binding.Policy)
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	if len(approvals) == 0 {
+		return nil, noopCloser, &errs.Detail{Err: ErrInvalidPolicyApproval, Detail: "no branch approvals"}
+	}
+	hashAlg := tpm2.TPMAlgID(binding.HashAlg)
+	refusals := make([]error, 0, len(approvals))
+	for i, approval := range approvals {
+		if err := validateApproval(approval, binding, hashAlg); err != nil {
+			return nil, noopCloser, err
+		}
+		ref := branchRef{scope: binding.Scope, policy: binding.Policy, branch: i}
+		var branchAuth []byte
+		if approval.Branch.HasAuthValue() {
+			if auth == nil {
+				refusals = append(refusals, &PolicyAuthValueMissingError{Scope: ref.scope, Policy: ref.policy, Branch: i})
+				continue
+			}
+			branchAuth = auth
+		}
+		session, closer, err := tpm.redeemApproval(approval, index, branchAuth, ref)
+		if err == nil {
+			return session, closer, nil
+		}
+		if !isBranchRefusal(err) {
+			return nil, noopCloser, err
+		}
+		refusals = append(refusals, err)
+	}
+	return nil, noopCloser, &PolicyBranchesRefusedError{Scope: binding.Scope, Policy: binding.Policy, Branches: refusals}
+}
+
+// isBranchRefusal reports whether err is the TPM refusing one branch --
+// its locality, its PCRs, or its epoch -- rather than a failure the next
+// branch would meet too.
+func isBranchRefusal(err error) bool {
+	var locality *PolicyLocalityMismatchError
+	var pcr *PolicyPCRMismatchError
+	var revoked *PolicyApprovalRevokedError
+	return errors.As(err, &locality) || errors.As(err, &pcr) || errors.As(err, &revoked)
+}
+
+// redeemApproval redeems one branch approval in a fresh policy session. The
+// session carries auth, the object's password, only for a branch with an
+// auth_value condition:
+//
+//  1. the branch's assertions            locality, PCRs, auth value
 //  2. PolicyNV(counter == epoch)         fails once the approval is superseded
 //  3. PolicyGetDigest == approvedPolicy  the approval describes this session
 //  4. VerifySignature(authority, aHash)  yields the ticket
@@ -215,30 +294,21 @@ func (tpm *TPM2) authorizedPolicySession(
 //
 // Steps 1, 2, 5 and 6 are enforced by the TPM; step 3 only turns a
 // mismatched approval into ErrPolicyApprovalMismatch instead of a ticket
-// failure.
-func (tpm *TPM2) approvedPolicySession(
-	binding *store.TPMPolicyBinding,
+// failure. PolicyAuthorize and PolicyAuthorizeNV replace the session digest
+// but keep what the branch's assertions require of the command -- the
+// locality, and the auth value in the session HMAC -- so the TPM checks them
+// when the object is used.
+func (tpm *TPM2) redeemApproval(
+	approval *PolicyApproval,
 	index tpm2.TPMHandle,
-	indexName tpm2.TPM2BName) (tpm2.Session, func() error, error) {
-
-	resolver, err := tpm.policyBindingResolver()
-	if err != nil {
-		return nil, noopCloser, err
-	}
-	approval, err := resolver.Approval(binding.Scope, binding.Policy)
-	if err != nil {
-		return nil, noopCloser, err
-	}
-	hashAlg := tpm2.TPMAlgID(binding.HashAlg)
-	if err := validateApproval(approval, binding, hashAlg); err != nil {
-		return nil, noopCloser, err
-	}
+	auth []byte,
+	ref branchRef) (tpm2.Session, func() error, error) {
 
 	counterName, err := tpm.NVIndexName(approval.Counter)
 	if err != nil {
 		return nil, noopCloser, err
 	}
-	approved, err := ApprovedPolicyDigest(hashAlg, approval.PCRSelection, approval.PCRDigest, counterName, approval.Epoch)
+	approved, err := ApprovedPolicyDigest(approval.HashAlg, approval.Branch, counterName, approval.Epoch)
 	if err != nil {
 		return nil, noopCloser, err
 	}
@@ -251,7 +321,7 @@ func (tpm *TPM2) approvedPolicySession(
 		return nil, noopCloser, err
 	}
 
-	session, closer, err := tpm.startPolicySession(hashAlg, nil)
+	session, closer, err := tpm.startPolicySession(approval.HashAlg, auth)
 	if err != nil {
 		return nil, noopCloser, err
 	}
@@ -260,20 +330,13 @@ func (tpm *TPM2) approvedPolicySession(
 		return nil, noopCloser, err
 	}
 
-	if _, err := (tpm2.PolicyPCR{
-		PolicySession: session.Handle(),
-		PcrDigest:     tpm2.TPM2BDigest{Buffer: approval.PCRDigest},
-		Pcrs:          approval.PCRSelection,
-	}).Execute(tpm.transport); err != nil {
-		if errors.Is(err, tpm2.TPMRCValue) {
-			err = &PolicyPCRMismatchError{Scope: binding.Scope, Policy: binding.Policy, Err: err}
-		}
+	if err := tpm.assertBranch(session, approval.Branch, ref); err != nil {
 		return fail(err)
 	}
 
 	if err := tpm.policyNVEpoch(session, approval.Counter, counterName, approval.Epoch); err != nil {
 		if errors.Is(err, tpm2.TPMRCPolicy) {
-			err = &PolicyApprovalRevokedError{Scope: binding.Scope, Policy: binding.Policy, Epoch: approval.Epoch, Err: err}
+			err = &PolicyApprovalRevokedError{Scope: ref.scope, Policy: ref.policy, Branch: ref.branch, Epoch: approval.Epoch, Err: err}
 		}
 		return fail(err)
 	}

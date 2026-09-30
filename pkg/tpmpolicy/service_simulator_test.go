@@ -133,7 +133,7 @@ func TestService_UpdatePolicyReapprovesWithoutRekey(t *testing.T) {
 	a := f.createKey("acme", "signer-a", "boot", nil)
 	b := f.createKey("acme", "signer-b", "boot", nil)
 	privBefore, pubBefore := f.blobs("acme", a)
-	original, err := f.svc.Approval("acme", "boot")
+	original, err := f.svc.Approvals("acme", "boot")
 	require.NoError(t, err)
 
 	extendPCR(t, f.tpm.Transport())
@@ -149,21 +149,21 @@ func TestService_UpdatePolicyReapprovesWithoutRekey(t *testing.T) {
 	assert.Equal(t, privBefore, privAfter, "no re-key")
 	assert.Equal(t, pubBefore, pubAfter, "no re-key")
 
-	f.tpm.SetPolicyBindingResolver(replayResolver{Service: f.svc, approval: original})
+	f.tpm.SetPolicyBindingResolver(replayResolver{Service: f.svc, approvals: original})
 	require.Error(t, f.sign("acme", a), "the pre-update approval no longer authorizes the key")
 
 	// A second update without a PCR change isolates the counter: the
 	// replayed approval describes the live PCRs and is refused only because
 	// its epoch has been superseded.
 	f.tpm.SetPolicyBindingResolver(f.svc)
-	current, err := f.svc.Approval("acme", "boot")
+	current, err := f.svc.Approvals("acme", "boot")
 	require.NoError(t, err)
 	_, err = f.svc.UpdatePolicy(f.ctx, "acme", "boot")
 	require.NoError(t, err)
-	f.tpm.SetPolicyBindingResolver(replayResolver{Service: f.svc, approval: current})
+	f.tpm.SetPolicyBindingResolver(replayResolver{Service: f.svc, approvals: current})
 	var revoked *pkgtpm2.PolicyApprovalRevokedError
 	require.ErrorAs(t, f.sign("acme", a), &revoked)
-	assert.Equal(t, current.Epoch, revoked.Epoch)
+	assert.Equal(t, current[0].Epoch, revoked.Epoch)
 	f.tpm.SetPolicyBindingResolver(f.svc)
 	require.NoError(t, f.sign("acme", a))
 }
@@ -235,7 +235,7 @@ func TestService_RotateAuthority(t *testing.T) {
 	f.createPolicy("acme", "boot")
 	key := f.createKey("acme", "signer", "boot", nil)
 	privBefore, pubBefore := f.blobs("acme", key)
-	old, err := f.svc.Approval("acme", "boot")
+	old, err := f.svc.Approvals("acme", "boot")
 	require.NoError(t, err)
 	before, err := f.registry.Scope(f.ctx, "acme")
 	require.NoError(t, err)
@@ -256,7 +256,7 @@ func TestService_RotateAuthority(t *testing.T) {
 	_, err = st.Keys.Get(&types.KeyAttributes{CN: before.Authority.CN}, store.FSEXT_PUBLIC_BLOB)
 	require.ErrorIs(t, err, storage.ErrNotFound, "the old authority is deleted")
 
-	f.tpm.SetPolicyBindingResolver(replayResolver{Service: f.svc, approval: old})
+	f.tpm.SetPolicyBindingResolver(replayResolver{Service: f.svc, approvals: old})
 	err = f.sign("acme", key)
 	require.ErrorIs(t, err, tpm2.TPMRCValue, "TPM2_PolicyAuthorizeNV refuses the old authority")
 	var mismatch *pkgtpm2.PolicyPCRMismatchError
@@ -433,13 +433,19 @@ func TestService_VerifyPolicy(t *testing.T) {
 
 	v, err := f.svc.VerifyPolicy(f.ctx, "acme", "boot")
 	require.NoError(t, err)
-	assert.Equal(t, &Verification{Policy: "boot", Match: true, Approved: true}, v)
+	assert.Equal(t, &Verification{
+		Policy:   "boot",
+		Branches: []BranchVerification{{Match: true, Approved: true}},
+		Match:    true,
+		Approved: true,
+	}, v)
 
 	extendPCR(t, f.tpm.Transport())
 	v, err = f.svc.VerifyPolicy(f.ctx, "acme", "boot")
 	require.NoError(t, err)
 	assert.False(t, v.Match)
 	assert.Equal(t, []uint{testPCR}, v.Mismatched)
+	assert.Equal(t, []uint{testPCR}, v.Branches[0].Mismatched)
 	assert.True(t, v.Approved)
 }
 
@@ -541,9 +547,9 @@ func TestService_PolicyErrors(t *testing.T) {
 			require.ErrorIs(t, err, tc.want)
 			require.ErrorIs(t, f.svc.DeletePolicy(f.ctx, "acme", tc.name, nil), tc.want)
 			require.ErrorIs(t, f.svc.SetAutoUnseal(f.ctx, "acme", tc.name, true), tc.want)
-			_, _, err = f.svc.PolicyIndex("acme", tc.name)
+			_, err = f.svc.PolicyIndex("acme", tc.name)
 			require.ErrorIs(t, err, tc.want)
-			_, err = f.svc.Approval("acme", tc.name)
+			_, err = f.svc.Approvals("acme", tc.name)
 			require.ErrorIs(t, err, tc.want)
 		})
 	}
@@ -562,7 +568,7 @@ func TestService_PolicyErrors(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, platform)
 
-	_, err = f.svc.Approval("nobody", "boot")
+	_, err = f.svc.Approvals("nobody", "boot")
 	require.ErrorIs(t, err, ErrScopeNotFound)
 	_, err = f.svc.RotateAuthority(f.ctx, "a/b")
 	require.ErrorAs(t, err, &badTenant)
@@ -612,4 +618,194 @@ func TestService_OpenFailures(t *testing.T) {
 	_, err = f.svc.ScopeTPM(f.ctx, "initech")
 	require.ErrorAs(t, err, &tpmErr)
 	assert.Equal(t, "load storage key", tpmErr.Op)
+}
+
+// withPIN returns a copy of key that presents pin as its password.
+func withPIN(t *testing.T, key *types.KeyAttributes, pin string) *types.KeyAttributes {
+	t.Helper()
+	c := *key
+	c.Password = mustPassword(t, []byte(pin))
+	return &c
+}
+
+// TestService_CompositeAND proves a policy whose one branch requires both the
+// PCR state and the object's password signs only when both hold: the
+// password alone (after the PCR moved) and the PCR alone (no password) are
+// refused, so the object got no outer password branch. A key without a
+// password cannot be bound to it at all.
+func TestService_CompositeAND(t *testing.T) {
+	f := newSimFixture(t)
+	f.createComposite("acme", "pcr-and-pin", Branch{Conditions: []Condition{
+		{Type: ConditionPCR, Bank: "sha256", PCRs: []uint{testPCR}},
+		{Type: ConditionAuthValue},
+	}})
+	key := f.createKey("acme", "and-key", "pcr-and-pin", []byte("and-pin"))
+
+	require.NoError(t, f.sign("acme", key), "password and PCR")
+	var missing *pkgtpm2.PolicyAuthValueMissingError
+	require.ErrorAs(t, f.sign("acme", withoutPassword(key)), &missing, "the PCR alone")
+	require.Error(t, f.sign("acme", withPIN(t, key, "wrong-pin")), "a wrong password")
+
+	extendPCR(t, f.tpm.Transport())
+	var mismatch *pkgtpm2.PolicyPCRMismatchError
+	require.ErrorAs(t, f.sign("acme", key), &mismatch, "the password alone")
+
+	st := f.scopeTPM("acme")
+	defer f.closeScopeTPM(st)
+	_, err := st.TPM.CreateECDSA(&types.KeyAttributes{
+		CN:                 "and-key-no-pin",
+		Hash:               key.Hash,
+		KeyAlgorithm:       key.KeyAlgorithm,
+		KeyType:            key.KeyType,
+		Parent:             st.Parent,
+		SignatureAlgorithm: key.SignatureAlgorithm,
+		StoreType:          key.StoreType,
+		TenantID:           "acme",
+		TPMPolicy:          "pcr-and-pin",
+		ECCAttributes:      key.ECCAttributes,
+		TPMAttributes:      &types.TPMAttributes{Hierarchy: tpm2.TPMRHOwner},
+	}, st.Keys, false)
+	require.ErrorIs(t, err, pkgtpm2.ErrPolicyAuthValueRequired)
+}
+
+// TestService_CompositeOR proves a policy of a pcr branch OR a password
+// branch: the key signs without its password while the PCR holds, with it
+// once the PCR has moved, and never with a wrong one.
+func TestService_CompositeOR(t *testing.T) {
+	f := newSimFixture(t)
+	p := f.createComposite("acme", "pcr-or-pin", pcrBranch(), authValueBranch())
+	require.Len(t, p.Approvals, 2)
+	key := f.createKey("acme", "or-key", "pcr-or-pin", []byte("or-pin"))
+
+	require.NoError(t, f.sign("acme", withoutPassword(key)), "the pcr branch")
+
+	extendPCR(t, f.tpm.Transport())
+	var refused *pkgtpm2.PolicyBranchesRefusedError
+	require.ErrorAs(t, f.sign("acme", withoutPassword(key)), &refused)
+	assert.Len(t, refused.Branches, 2)
+	require.NoError(t, f.sign("acme", key), "the password branch")
+	require.ErrorIs(t, f.sign("acme", withPIN(t, key, "wrong-pin")), tpm2.TPMRCAuthFail)
+}
+
+// TestService_LocalityBranches proves a locality condition allowing the
+// command locality signs, and one allowing only locality 3 is refused with
+// the locality error.
+func TestService_LocalityBranches(t *testing.T) {
+	f := newSimFixture(t)
+	f.createComposite("acme", "locality-0", Branch{Conditions: []Condition{{Type: ConditionLocality, Localities: []uint{0}}}})
+	f.createComposite("acme", "locality-3", Branch{Conditions: []Condition{{Type: ConditionLocality, Localities: []uint{3}}}})
+
+	require.NoError(t, f.sign("acme", f.createKey("acme", "key-0", "locality-0", nil)))
+	var mismatch *pkgtpm2.PolicyLocalityMismatchError
+	require.ErrorAs(t, f.sign("acme", f.createKey("acme", "key-3", "locality-3", nil)), &mismatch)
+	assert.Equal(t, "locality-3", mismatch.Policy)
+}
+
+// TestService_CompositeLifecycle proves an update re-captures every pcr
+// condition and re-approves every branch without re-keying, a revoke
+// withdraws every branch, a rotation re-signs every branch, and a replayed
+// set of superseded branch approvals is refused by the TPM.
+func TestService_CompositeLifecycle(t *testing.T) {
+	f := newSimFixture(t)
+	created := f.createComposite("acme", "boot", pcrBranch(), Branch{Conditions: []Condition{
+		{Type: ConditionPCR, Bank: "sha256", PCRs: []uint{0, testPCR}},
+		{Type: ConditionAuthValue},
+	}})
+	key := f.createKey("acme", "signer", "boot", []byte("signer-pin"))
+	privBefore, pubBefore := f.blobs("acme", key)
+	original, err := f.svc.Approvals("acme", "boot")
+	require.NoError(t, err)
+	require.Len(t, original, 2)
+
+	extendPCR(t, f.tpm.Transport())
+	require.Error(t, f.sign("acme", withoutPassword(key)))
+	require.Error(t, f.sign("acme", key))
+
+	updated, err := f.svc.UpdatePolicy(f.ctx, "acme", "boot")
+	require.NoError(t, err)
+	require.Len(t, updated.Approvals, 2)
+	for i := range updated.Branches {
+		assert.Equal(t, created.Approvals[i].Epoch+1, updated.Approvals[i].Epoch)
+		assert.NotEqual(t, created.Branches[i].Conditions[0].PCRValues[testPCR],
+			updated.Branches[i].Conditions[0].PCRValues[testPCR], "branch %d re-captured", i)
+	}
+	assert.Equal(t, created.Branches[1].Conditions[0].PCRs, updated.Branches[1].Conditions[0].PCRs, "the structure never changes")
+	require.NoError(t, f.sign("acme", withoutPassword(key)))
+	require.NoError(t, f.sign("acme", key))
+	privAfter, pubAfter := f.blobs("acme", key)
+	assert.Equal(t, privBefore, privAfter, "no re-key")
+	assert.Equal(t, pubBefore, pubAfter, "no re-key")
+
+	f.tpm.SetPolicyBindingResolver(replayResolver{Service: f.svc, approvals: original})
+	var refused *pkgtpm2.PolicyBranchesRefusedError
+	require.ErrorAs(t, f.sign("acme", key), &refused, "the pre-update approvals no longer authorize the key")
+	f.tpm.SetPolicyBindingResolver(f.svc)
+
+	revoked, err := f.svc.RevokePolicy(f.ctx, "acme", "boot")
+	require.NoError(t, err)
+	assert.Equal(t, []*Approval{nil, nil}, revoked.Approvals)
+	require.ErrorIs(t, f.sign("acme", key), ErrPolicyRevoked, "no outer password branch survives a revoke")
+	v, err := f.svc.VerifyPolicy(f.ctx, "acme", "boot")
+	require.NoError(t, err)
+	assert.False(t, v.Approved)
+	assert.False(t, v.Branches[0].Approved)
+
+	_, err = f.svc.UpdatePolicy(f.ctx, "acme", "boot")
+	require.NoError(t, err)
+	scope, err := f.svc.RotateAuthority(f.ctx, "acme")
+	require.NoError(t, err)
+	rotated, err := f.svc.Policy(f.ctx, "acme", "boot")
+	require.NoError(t, err)
+	for _, a := range rotated.Approvals {
+		assert.Equal(t, scope.Authority.Generation, a.AuthorityGeneration)
+	}
+	require.NoError(t, f.sign("acme", withoutPassword(key)))
+	require.NoError(t, f.sign("acme", key))
+}
+
+// TestService_VerifyPolicyPerBranch proves verification reports each
+// branch's own mismatched PCRs.
+func TestService_VerifyPolicyPerBranch(t *testing.T) {
+	f := newSimFixture(t)
+	f.createComposite("acme", "boot", pcrBranch(), Branch{Conditions: []Condition{
+		{Type: ConditionPCR, Bank: "sha256", PCRs: []uint{0}},
+		{Type: ConditionLocality, Localities: []uint{0}},
+	}}, authValueBranch())
+
+	extendPCR(t, f.tpm.Transport())
+	v, err := f.svc.VerifyPolicy(f.ctx, "acme", "boot")
+	require.NoError(t, err)
+	assert.Equal(t, []BranchVerification{
+		{Match: false, Mismatched: []uint{testPCR}, Approved: true},
+		{Match: true, Approved: true},
+		{Match: true, Approved: true},
+	}, v.Branches)
+	assert.False(t, v.Match)
+	assert.Equal(t, []uint{testPCR}, v.Mismatched)
+	assert.True(t, v.Approved)
+}
+
+// TestService_Description proves a description is set at creation, replaced
+// by SetDescription, stored, and left alone by an update.
+func TestService_Description(t *testing.T) {
+	f := newSimFixture(t)
+	p, err := f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{
+		Name: "boot", Description: "firmware state", Branches: []Branch{pcrBranch()},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "firmware state", p.Description)
+
+	updated, err := f.svc.SetDescription(f.ctx, "acme", "boot", "firmware and boot loader")
+	require.NoError(t, err)
+	assert.Equal(t, "firmware and boot loader", updated.Description)
+	assert.Equal(t, p.Approvals[0].Epoch, updated.Approvals[0].Epoch, "a description change signs nothing")
+
+	_, err = f.svc.UpdatePolicy(f.ctx, "acme", "boot")
+	require.NoError(t, err)
+	stored, err := f.svc.Policy(f.ctx, "acme", "boot")
+	require.NoError(t, err)
+	assert.Equal(t, "firmware and boot loader", stored.Description)
+
+	_, err = f.svc.SetDescription(f.ctx, "acme", "missing", "x")
+	require.ErrorIs(t, err, ErrPolicyNotFound)
 }

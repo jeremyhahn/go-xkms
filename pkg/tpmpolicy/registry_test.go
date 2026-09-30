@@ -33,7 +33,11 @@ func newTestRegistry(t *testing.T) (*Registry, storage.Backend) {
 }
 
 func testPolicy(name string) *Policy {
-	return &Policy{Name: name, Bank: "sha256", PCRs: []uint{7}, Index: 0x01500010}
+	return &Policy{
+		Name:     name,
+		Branches: []Branch{{Conditions: []Condition{{Type: ConditionPCR, Bank: "sha256", PCRs: []uint{7}}}}},
+		Index:    0x01500010,
+	}
 }
 
 // TestRegistry_TracksObjectsAndPoliciesBothWays is the registry's reason to
@@ -137,11 +141,13 @@ func TestRegistry_PolicyLifecycle(t *testing.T) {
 	assert.ErrorIs(t, r.DeletePolicy(ctx, "", PlatformPolicy), ErrReservedPolicy)
 
 	updated := testPolicy("alpha")
-	updated.Approval = &Approval{Epoch: 2}
+	updated.Approvals = []*Approval{{Epoch: 2}}
 	require.NoError(t, r.UpdatePolicy(ctx, "", updated))
 	got, err := r.Policy(ctx, "system", "alpha")
 	require.NoError(t, err, "the empty tenant is the system scope")
-	assert.Equal(t, uint64(2), got.Approval.Epoch)
+	assert.Equal(t, uint64(2), got.Approvals[0].Epoch)
+	assert.Same(t, got.Approvals[0], got.Approval, "the deprecated view is derived on load")
+	assert.Equal(t, []uint{7}, got.PCRs)
 	assert.ErrorIs(t, r.UpdatePolicy(ctx, "", testPolicy("missing")), ErrPolicyNotFound)
 
 	list, err := r.ListPolicies(ctx, "")

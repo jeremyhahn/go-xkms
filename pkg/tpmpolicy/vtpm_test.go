@@ -94,7 +94,15 @@ func TestService_VTPMMode(t *testing.T) {
 
 	statePolicy, err := f.svc.Policy(f.ctx, "", VTPMStatePolicy)
 	require.NoError(t, err)
-	assert.Equal(t, []uint{pkgtpm2.DefaultPlatformPCR}, statePolicy.PCRs)
+	require.Len(t, statePolicy.Branches, 1)
+	assert.Equal(t, []Condition{{
+		Type:      ConditionPCR,
+		Bank:      pkgtpm2.PCRBankSHA256,
+		PCRs:      []uint{pkgtpm2.DefaultPlatformPCR},
+		PCRValues: statePolicy.Branches[0].Conditions[0].PCRValues,
+		PCRDigest: statePolicy.Branches[0].Conditions[0].PCRDigest,
+	}}, statePolicy.Branches[0].Conditions)
+	assert.NotEmpty(t, statePolicy.Description)
 	objects, err := f.svc.ObjectsOf(f.ctx, "", VTPMStatePolicy)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"sealed/vtpm-state-acme"}, objects)

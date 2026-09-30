@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -28,17 +29,27 @@ import (
 //
 // An object created under the named policy P of scope S carries
 //
-//	authPolicy = PolicyAuthorizeNV(index(P))                     (no auth value)
+//	authPolicy = PolicyAuthorizeNV(index(P))                     (no outer password branch)
 //	authPolicy = PolicyOR(PolicyAuthorizeNV(index(P)),
-//	                      PolicyAuthValue)                       (with auth value)
+//	                      PolicyAuthValue)                       (outer password branch)
 //
-// index(P) holds PolicyAuthorize(authority(S), PolicyRef(S, P)), so the object
-// follows whichever authority the index names, and the authority's signed
-// approvals decide which platform state satisfies it:
+// The outer password branch exists only when the object has an auth value
+// and P has no auth_value condition of its own. index(P) holds
+// PolicyAuthorize(authority(S), PolicyRef(S, P)), so the object follows
+// whichever authority the index names, and the authority's signed approvals
+// decide what satisfies it.
 //
-//	approvedPolicy = PolicyPCR(selection, pcrDigest) -> PolicyNV(counter(S) == epoch)
-//	aHash          = H(approvedPolicy || PolicyRef(S, P))
-//	signature      = Sign(authority(S), aHash)
+// P is an OR of branches, each an AND of conditions. The authority signs one
+// approval per branch, all for the same policyRef:
+//
+//	approvedPolicy_i = assertions(branch_i) -> PolicyNV(counter(S) == epoch)
+//	aHash_i          = H(approvedPolicy_i || PolicyRef(S, P))
+//	signature_i      = Sign(authority(S), aHash_i)
+//
+// assertions(branch) runs the branch's conditions in the canonical order of
+// PolicyConditionType: PolicyLocality, then PolicyPCR, then PolicyAuthValue.
+// TPM2_PolicyAuthorize accepts any approval the authority signed for the
+// reference, so the OR needs no PolicyOR inside the approved policy.
 //
 // Neither the PCR values nor the authority are part of the object's
 // authPolicy, so a policy update (new PCR values, next epoch) and an authority
@@ -106,21 +117,43 @@ var (
 	// ErrInvalidAuthoritySignature is returned when the authority's signature
 	// cannot be converted into a TPMT_SIGNATURE.
 	ErrInvalidAuthoritySignature = errors.New("tpm2: invalid policy authority signature")
+
+	// ErrInvalidPolicyBranch is returned for a policy branch with no
+	// conditions, a condition of an unknown type, or a condition missing the
+	// operand its type needs.
+	ErrInvalidPolicyBranch = errors.New("tpm2: invalid policy branch")
+
+	// ErrInvalidPolicyLocality is returned for a locality outside 0 through
+	// 4, the localities TPM2_PolicyLocality selects with its low bits.
+	ErrInvalidPolicyLocality = errors.New("tpm2: invalid policy locality")
+
+	// ErrPolicyAuthValueRequired is returned when an object without an auth
+	// value would be bound to a policy with an auth_value condition: an
+	// empty auth value satisfies TPM2_PolicyAuthValue, so the condition
+	// would protect nothing.
+	ErrPolicyAuthValueRequired = errors.New("tpm2: the policy requires the object's auth value, and the object has none")
 )
 
+// commandLocality is the locality xkms sends every TPM command at. Linux
+// gives user space locality 0 only (through /dev/tpm0 and /dev/tpmrm0), and
+// swtpm and the in-process simulator default to it; xkms never selects
+// another.
+const commandLocality = 0
+
 // PolicyPCRMismatchError reports that TPM2_PolicyPCR refused the approved PCR
-// values: the platform state has changed since the policy was approved. Err
-// is the TPM response code, unchanged.
+// values of a policy branch: the platform state has changed since the policy
+// was approved. Err is the TPM response code, unchanged.
 type PolicyPCRMismatchError struct {
 	Scope  string
 	Policy string
+	Branch int
 	Err    error
 }
 
 // Error describes the mismatch.
 func (e *PolicyPCRMismatchError) Error() string {
-	return fmt.Sprintf("tpm2: live PCRs do not match the approved values of policy %q in scope %q: %v",
-		e.Policy, e.Scope, e.Err)
+	return fmt.Sprintf("tpm2: live PCRs do not match the approved values of branch %d of policy %q in scope %q: %v",
+		e.Branch, e.Policy, e.Scope, e.Err)
 }
 
 // Unwrap returns the TPM response code.
@@ -132,29 +165,86 @@ func (e *PolicyPCRMismatchError) Unwrap() error { return e.Err }
 type PolicyApprovalRevokedError struct {
 	Scope  string
 	Policy string
+	Branch int
 	Epoch  uint64
 	Err    error
 }
 
 // Error describes the revocation.
 func (e *PolicyApprovalRevokedError) Error() string {
-	return fmt.Sprintf("tpm2: the approval of policy %q in scope %q at epoch %d is no longer current: %v",
-		e.Policy, e.Scope, e.Epoch, e.Err)
+	return fmt.Sprintf("tpm2: the approval of branch %d of policy %q in scope %q at epoch %d is no longer current: %v",
+		e.Branch, e.Policy, e.Scope, e.Epoch, e.Err)
 }
 
 // Unwrap returns the TPM response code.
 func (e *PolicyApprovalRevokedError) Unwrap() error { return e.Err }
 
-// PolicyApproval is an authority's signed approval of one platform state for
-// one named policy, and everything a policy session needs to redeem it.
+// PolicyLocalityMismatchError reports that a policy branch allows none of
+// the localities commands are sent at. The TPM checks a TPM2_PolicyLocality
+// assertion only when the session authorizes a command, so the session code
+// compares the branch with its own command locality to move on to the next
+// branch; the TPM still refuses the command (TPM_RC_LOCALITY) if it is used.
+type PolicyLocalityMismatchError struct {
+	Scope    string
+	Policy   string
+	Branch   int
+	Locality uint8
+	Allowed  tpm2.TPMALocality
+}
+
+// Error describes the mismatch.
+func (e *PolicyLocalityMismatchError) Error() string {
+	return fmt.Sprintf("tpm2: branch %d of policy %q in scope %q does not allow locality %d (allowed TPMA_LOCALITY 0x%02x)",
+		e.Branch, e.Policy, e.Scope, e.Locality, localityBits(e.Allowed))
+}
+
+// PolicyAuthValueMissingError reports that a policy branch with an
+// auth_value condition was not tried because the caller supplied no
+// password: trying it would only spend the dictionary-attack counter.
+type PolicyAuthValueMissingError struct {
+	Scope  string
+	Policy string
+	Branch int
+}
+
+// Error describes the skipped branch.
+func (e *PolicyAuthValueMissingError) Error() string {
+	return fmt.Sprintf("tpm2: branch %d of policy %q in scope %q requires the object's password, and none was supplied",
+		e.Branch, e.Policy, e.Scope)
+}
+
+// PolicyBranchesRefusedError reports that no branch of a named policy
+// authorized the session. Branches holds each branch's refusal in branch
+// order: *PolicyLocalityMismatchError, *PolicyPCRMismatchError,
+// *PolicyApprovalRevokedError or *PolicyAuthValueMissingError.
+type PolicyBranchesRefusedError struct {
+	Scope    string
+	Policy   string
+	Branches []error
+}
+
+// Error lists every branch's refusal.
+func (e *PolicyBranchesRefusedError) Error() string {
+	reasons := make([]string, len(e.Branches))
+	for i, err := range e.Branches {
+		reasons[i] = err.Error()
+	}
+	return fmt.Sprintf("tpm2: no branch of policy %q in scope %q authorizes the session: %s",
+		e.Policy, e.Scope, strings.Join(reasons, "; "))
+}
+
+// Unwrap returns the branch refusals, so errors.As finds each one.
+func (e *PolicyBranchesRefusedError) Unwrap() []error { return e.Branches }
+
+// PolicyApproval is an authority's signed approval of one branch of one named
+// policy, and everything a policy session needs to redeem it.
 type PolicyApproval struct {
 	// HashAlg is the policy session's hash algorithm.
 	HashAlg tpm2.TPMAlgID
 
-	// PCRSelection and PCRDigest are the TPM2_PolicyPCR operands of the
-	// approved platform state.
-	PCRSelection tpm2.TPMLPCRSelection
-	PCRDigest    []byte
+	// Branch is the approved branch: the conditions the session asserts,
+	// with the operands (such as the PCR values) that were approved.
+	Branch PolicyBranch
 
 	// Counter is the scope's revocation counter NV index and Epoch the value
 	// TPM2_PolicyNV requires it to hold.
@@ -175,13 +265,32 @@ type PolicyApproval struct {
 	Index tpm2.TPMHandle
 }
 
+// PolicyIndexInfo describes what a new object bound to a named policy commits
+// to.
+type PolicyIndexInfo struct {
+	// Index is the policy's NV index, which the object's
+	// PolicyAuthorizeNV branch names.
+	Index tpm2.TPMHandle
+
+	// HashAlg is the hash of the policy's digests; it must equal the
+	// object's name algorithm.
+	HashAlg tpm2.TPMAlgID
+
+	// AuthValueCondition reports whether any branch of the policy has an
+	// auth_value condition. Such a policy decides where the object's
+	// password counts, so the object gets no outer PolicyAuthValue branch.
+	AuthValueCondition bool
+}
+
 // PolicyBindingResolver supplies the TPM with the state of named policies,
 // which lives outside it: the policy registry.
 type PolicyBindingResolver interface {
-	// PolicyIndex returns the NV index and hash alg a named policy binds objects to.
-	PolicyIndex(scope, name string) (tpm2.TPMHandle, tpm2.TPMAlgID, error)
-	// Approval returns the current approval for a named policy.
-	Approval(scope, name string) (*PolicyApproval, error)
+	// PolicyIndex returns what an object bound to a named policy commits to.
+	PolicyIndex(scope, name string) (PolicyIndexInfo, error)
+
+	// Approvals returns the current approval of every branch of a named
+	// policy, in branch order.
+	Approvals(scope, name string) ([]*PolicyApproval, error)
 }
 
 // SetPolicyBindingResolver sets the resolver that key creation and key use
@@ -276,36 +385,33 @@ func epochOperand(epoch uint64) []byte {
 	return binary.BigEndian.AppendUint64(nil, epoch)
 }
 
-// ApprovedPolicyDigest returns the digest an authority approves: TPM2_PolicyPCR
-// over pcrSel and pcrDigest, then TPM2_PolicyNV requiring the counter index
-// whose Name is counterName to equal epoch (offset 0, TPM_EO_EQ).
+// ApprovedPolicyDigest returns the digest an authority approves for one
+// branch: the branch's assertions in canonical order, then TPM2_PolicyNV
+// requiring the counter index whose Name is counterName to equal epoch
+// (offset 0, TPM_EO_EQ).
 //
 // counterName must be the counter's Name as it is once written (its first
 // increment sets TPMA_NV_WRITTEN, which is part of the Name).
 func ApprovedPolicyDigest(
 	hashAlg tpm2.TPMAlgID,
-	pcrSel tpm2.TPMLPCRSelection,
-	pcrDigest []byte,
+	branch PolicyBranch,
 	counterName tpm2.TPM2BName,
 	epoch uint64) ([]byte, error) {
 
-	if len(pcrSel.PCRSelections) == 0 || len(pcrDigest) == 0 {
-		return nil, &errs.Detail{Err: ErrPolicyDigestCompute, Detail: "empty PCR selection or digest"}
-	}
 	if len(counterName.Buffer) == 0 {
 		return nil, &errs.Detail{Err: ErrPolicyDigestCompute, Detail: "empty counter name"}
 	}
-	return trialDigest(hashAlg,
-		tpm2.PolicyPCR{
-			PcrDigest: tpm2.TPM2BDigest{Buffer: pcrDigest},
-			Pcrs:      pcrSel,
-		},
-		tpm2.PolicyNV{
-			NVIndex:   tpm2.NamedHandle{Name: counterName},
-			OperandB:  tpm2.TPM2BOperand{Buffer: epochOperand(epoch)},
-			Offset:    0,
-			Operation: tpm2.TPMEOEq,
-		})
+	cmds, err := branch.trialCommands()
+	if err != nil {
+		return nil, err
+	}
+	cmds = append(cmds, tpm2.PolicyNV{
+		NVIndex:   tpm2.NamedHandle{Name: counterName},
+		OperandB:  tpm2.TPM2BOperand{Buffer: epochOperand(epoch)},
+		Offset:    0,
+		Operation: tpm2.TPMEOEq,
+	})
+	return trialDigest(hashAlg, cmds...)
 }
 
 // ApprovalDigest returns aHash = H(approvedPolicy || policyRef), the digest
@@ -330,7 +436,9 @@ func ApprovalDigest(hashAlg tpm2.TPMAlgID, approvedPolicy, policyRef []byte) ([]
 // Branch 1 is TPM2_PolicyAuthorizeNV(index). With withAuthValue, branch 2 is
 // TPM2_PolicyAuthValue and authPolicy is their PolicyOR. Without it,
 // authPolicy is branch 1 alone: an object with no auth value must not get a
-// branch an empty password satisfies.
+// branch an empty password satisfies, and an object whose policy has an
+// auth_value condition must not get a password branch that bypasses the
+// policy's other conditions.
 func AuthorizedObjectPolicy(
 	hashAlg tpm2.TPMAlgID,
 	indexName tpm2.TPM2BName,
