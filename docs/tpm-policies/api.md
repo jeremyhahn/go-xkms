@@ -21,7 +21,7 @@ every transport calls.
 
 | Operation | REST | gRPC / Unix (`KeystoreService.`) | MCP tool | Permission |
 |---|---|---|---|---|
-| Create a policy (captures live PCRs) | `POST /api/v1/tpm/policies` | `TPMPolicyCreate` | `tpm.policy.create` | `tpm_policy:create` |
+| Create a policy of branches (captures live PCRs) | `POST /api/v1/tpm/policies` | `TPMPolicyCreate` | `tpm.policy.create` | `tpm_policy:create` |
 | List policies | `GET /api/v1/tpm/policies[?tenant_id=]` | `TPMPolicyList` | `tpm.policy.list` | `tpm_policy:list` |
 | Get a policy | `GET /api/v1/tpm/policies/{name}[?tenant_id=]` | `TPMPolicyGet` | `tpm.policy.get` | `tpm_policy:get` |
 | Update (re-capture, re-approve) | `POST /api/v1/tpm/policies/{name}/update` | `TPMPolicyUpdate` | `tpm.policy.update` | `tpm_policy:update` |
@@ -30,6 +30,7 @@ every transport calls.
 | Delete (refused while assigned) | `DELETE /api/v1/tpm/policies/{name}` | `TPMPolicyDelete` | `tpm.policy.delete` | `tpm_policy:delete` |
 | Objects bound to a policy | `GET /api/v1/tpm/policies/{name}/objects` | `TPMPolicyObjects` | `tpm.policy.objects` | `tpm_policy:get` |
 | Set or clear auto-unseal | `POST /api/v1/tpm/policies/{name}/auto-unseal` | `TPMPolicySetAutoUnseal` | `tpm.policy.autoUnseal` | `tpm_policy:update` |
+| Set the description | `POST /api/v1/tpm/policies/{name}/description` | `TPMPolicySetDescription` | `tpm.policy.setDescription` | `tpm_policy:update` |
 | Policy of a key or sealed object | `GET /api/v1/keys/{id}/tpm-policy[?kind=sealed]` | `TPMObjectPolicy` | `tpm.object.policy` | `tpm_policy:get` |
 | Rotate the policy authority | `POST /api/v1/tpm/authority/rotate` | `TPMPolicyRotateAuthority` | `tpm.authority.rotate` | `tpm_policy:rotate` |
 | Get a tenant's TPM mode | `GET /api/v1/tenants/{tenantID}/tpm` | `GetTenantTPMMode` | `xkms.getTenantTPMMode` | `tenants:read` |
@@ -90,6 +91,21 @@ takes a tenant, which only a system caller may set to another tenant.
 | Disable every non-current version | `POST /api/v1/keys/{id}/versions/disable-all?backend=` | `DisableAllKeyVersions` | `xkms.disableAllKeyVersions` | `keys:rotate` |
 | Rotate every key of a tenant | `POST /api/v1/keys/rotate-all` (`{"tenant_id"}`) | `RotateScopeKeys` | `xkms.rotateScopeKeys` | `keys:rotate` |
 
+- **Rotate-all results.** Each `KeyRotationResult` has a `state` --
+  `rotated` (with `key_version`), `skipped` (with `reason`) or `failed` (with
+  `error`) -- and the response counts `rotated`, `skipped` and `failed`. A
+  skipped key is left alone on purpose and does not fail the call: a TPM2
+  PIV slot key (`piv-<slot>`), a TPM2 sealed object `Seal` named
+  (`xkms-sealing-key-tpm2-<uuid>`), the barrier's seal wrapping key
+  (`xkms-barrier-seal`) -- each named exactly by its owner, so a new version
+  would never be used -- and a key with a certificate ("has a certificate;
+  re-issue after rotating it explicitly"). gRPC: `KeyRotationResult.state` =
+  5, `reason` = 6; `RotateScopeKeysResponse.skipped` = 5.
+- **Rotating a certified key.** `RotateKey` rotates a key with a certificate
+  and reports `certificate_reissue_required: true` (gRPC
+  `RotateKeyResponse.certificate_reissue_required` = 7): the certificate still
+  certifies the previous version.
+
 - The permissions reuse the key vocabulary: listing reads like listing keys,
   enabling and disabling versions is rotation lifecycle, and retiring
   destroys key material like deleting a key.
@@ -131,16 +147,51 @@ sealed blobs keep their standard formats.
 
 ## Request bodies
 
-`pkg/api/transport/types.go`: `TPMPolicy`, `TPMPolicyCreateRequest`,
+`pkg/api/transport/types.go`: `TPMPolicy`, `TPMPolicyBranch`,
+`TPMPolicyCondition`, `TPMPolicyCreateRequest`, `TPMPolicyDescriptionRequest`,
 `TPMPolicyRequest`, `TPMPolicyListRequest`/`Response`,
 `TPMPolicyDeleteRequest`, `TPMPolicyVerifyResponse`,
-`TPMPolicyObjectsResponse`, `TPMPolicyAutoUnsealRequest`,
-`TPMObjectPolicyRequest`/`Response`, `TPMAuthorityRotateRequest`/`Response`,
-`TenantTPMModeResponse`, `SetTenantTPMModeRequest`,
-`TenantVTPMStatusResponse`. PCR values and digests are hex; timestamps are
-RFC 3339. `owner_auth` is the physical TPM's owner-hierarchy authorization
-(base64 in JSON), used only to define and undefine NV indices; it is never
-logged or echoed. REST `DELETE` takes `owner_auth` in an optional body.
+`TPMPolicyBranchVerification`, `TPMPolicyObjectsResponse`,
+`TPMPolicyAutoUnsealRequest`, `TPMObjectPolicyRequest`/`Response`,
+`TPMAuthorityRotateRequest`/`Response`, `TenantTPMModeResponse`,
+`SetTenantTPMModeRequest`, `TenantVTPMStatusResponse`. PCR values and digests
+are hex; timestamps are RFC 3339. `owner_auth` is the physical TPM's
+owner-hierarchy authorization (base64 in JSON), used only to define and
+undefine NV indices; it is never logged or echoed. REST `DELETE` takes
+`owner_auth` in an optional body.
+
+A policy is an OR of branches, each an AND of conditions. A create request
+carries branches only; `pcr_values` and `pcr_digest` are captured from the
+TPM, and a request carrying them is refused (`tpmpolicy.ErrPCRValuesSupplied`).
+
+```json
+POST /api/v1/tpm/policies
+{"name": "boot-or-pin", "description": "firmware, or the password",
+ "branches": [
+   {"conditions": [{"type": "pcr", "bank": "sha256", "pcrs": [0, 7]},
+                   {"type": "locality", "localities": [0]}]},
+   {"conditions": [{"type": "auth_value"}]}]}
+
+POST /api/v1/tpm/policies/boot-or-pin/description
+{"description": "firmware and Secure Boot, or the password"}
+```
+
+A policy reports `description`, `branches` (each with its conditions,
+captured `pcr_values`/`pcr_digest` and `approved`) and `approved` (every
+branch approved). Verify reports `match` and `approved` for the policy and,
+per branch, `branches[i].match`, `.mismatched` and `.approved`.
+
+gRPC (`xkms.v1`, pre-v1, one wire format; removed numbers are reserved):
+
+| Message | Fields |
+|---|---|
+| `TPMPolicyCondition` (new) | `type` = 1, `bank` = 2, `pcrs` = 3, `pcr_values` = 4, `pcr_digest` = 5, `localities` = 6 |
+| `TPMPolicyBranch` (new) | `conditions` = 1, `approved` = 2 |
+| `TPMPolicy` | `description` = 14, `branches` = 15; `bank`, `pcrs`, `pcr_values`, `pcr_digest` (3-6) removed |
+| `TPMPolicyCreateRequest` | `description` = 7, `branches` = 8; `bank`, `pcrs` (3-4) removed |
+| `TPMPolicyDescriptionRequest` (new) | `tenant_id` = 1, `name` = 2, `description` = 3 |
+| `TPMPolicyBranchVerification` (new) | `match` = 1, `mismatched` = 2, `approved` = 3 |
+| `TPMPolicyVerifyResponse` | `branches` = 5; `mismatched` (3) removed |
 
 ## Errors
 
@@ -153,7 +204,7 @@ each transport's key-operation mapper:
 | `tpmpolicy.ErrPolicyNotFound`, `ErrScopeNotFound`, `ErrNotAssigned`, tenant binding | NotFound | `NotFound` | 404 | not found |
 | `tpmpolicy.ErrPolicyExists` | AlreadyExists | `AlreadyExists` | 409 | duplicate |
 | `*tpmpolicy.PolicyInUseError` (lists the objects), `*ScopeInUseError`, `*PCRBankUnavailableError`, `ErrTPMModeNone`, `ErrVTPMUnavailable`, `ErrNotVTPMMode`, `ErrPolicyRevoked` | FailedPrecondition | `FailedPrecondition` | 409 | internal error code (message kept) |
-| `*InvalidNameError`, `*InvalidModeError`, `*InvalidTenantError`, `*InvalidPCRBankError`, `*InvalidPCRError`, `ErrReservedPolicy`, `ErrEmptyPCRSelection`, `ErrSystemScopeMode`, `*xkms.InvalidTPMObjectKindError`, `*xkms.ErrKeyIDParse`, `xkms.ErrTPMPolicyNotSupported`, `tpm2.ErrReservedObject` | InvalidArgument | `InvalidArgument` | 400 | invalid params |
+| `*InvalidNameError`, `*InvalidModeError`, `*InvalidTenantError`, `*InvalidPCRBankError`, `*InvalidPCRError`, `*InvalidLocalityError`, `*UnknownConditionTypeError`, `*DuplicateConditionError`, `*ConditionOperandError`, `*DescriptionTooLongError`, `ErrReservedPolicy`, `ErrEmptyPCRSelection`, `ErrEmptyLocalitySelection`, `ErrNoBranches`, `ErrEmptyBranch`, `ErrPCRValuesSupplied`, `ErrSystemScopeMode`, `pkg/tpm2.ErrPolicyAuthValueRequired` (a key or sealed object without a password bound to a policy with an `auth_value` condition), `*xkms.InvalidTPMObjectKindError`, `*xkms.ErrKeyIDParse`, `xkms.ErrTPMPolicyNotSupported`, `tpm2.ErrReservedObject` | InvalidArgument | `InvalidArgument` | 400 | invalid params |
 | `tpm2.ErrSymmetricKeysUnsupported`, `tpm2.ErrTenantImportUnsupported` | Unimplemented | `Unimplemented` | 501 | method not found |
 | `xkms.ErrNotConfigured` (no TPM2 backend) | Unavailable | `Unavailable` | 503 | service unavailable |
 

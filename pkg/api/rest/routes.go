@@ -402,6 +402,7 @@ func Routes() []RouteSpec {
 	permIf("POST", "/tpm/policies/{name}/verify", auth.ResourceTPMPolicy, auth.ActionVerify, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.VerifyPolicyHandler })
 	permIf("GET", "/tpm/policies/{name}/objects", auth.ResourceTPMPolicy, auth.ActionGet, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.ObjectsHandler })
 	permIf("POST", "/tpm/policies/{name}/auto-unseal", auth.ResourceTPMPolicy, auth.ActionUpdate, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.AutoUnsealHandler })
+	permIf("POST", "/tpm/policies/{name}/description", auth.ResourceTPMPolicy, auth.ActionUpdate, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.DescriptionHandler })
 	permIf("POST", "/tpm/authority/rotate", auth.ResourceTPMPolicy, auth.ActionRotate, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.RotateAuthorityHandler })
 	permIf("GET", "/keys/{id}/tpm-policy", auth.ResourceTPMPolicy, auth.ActionGet, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.ObjectPolicyHandler })
 	permIf("GET", "/tenants/{tenantID}/tpm", auth.ResourceTenants, auth.ActionRead, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.GetTenantModeHandler })

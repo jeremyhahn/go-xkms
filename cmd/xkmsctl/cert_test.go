@@ -3142,6 +3142,10 @@ func (m *mockCertClient) TPMPolicySetAutoUnseal(context.Context, *transport.TPMP
 	return nil, nil
 }
 
+func (m *mockCertClient) TPMPolicySetDescription(context.Context, *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	return nil, nil
+}
+
 func (m *mockCertClient) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	return nil, nil
 }

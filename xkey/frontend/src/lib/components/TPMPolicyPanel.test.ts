@@ -11,7 +11,8 @@ import TPMPolicyPanel from './TPMPolicyPanel.svelte';
 
 const platform = { name: 'platform', builtin: true, approved: true, auto_unseal: false, object_count: 3 };
 const boot = {
-  name: 'boot', builtin: false, bank: 'sha256', pcrs: [0, 7], approved: true,
+  name: 'boot', builtin: false, description: 'firmware and Secure Boot', approved: true,
+  branches: [{ conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7] }], approved: true }],
   auto_unseal: false, object_count: 2, index: 0x01500000,
 };
 
@@ -22,12 +23,22 @@ function installMock(mode: 'local' | 'server', policies = [platform, boot]) {
     CreatePolicy: vi.fn().mockResolvedValue({ ...boot, name: 'new' }),
     UpdatePolicy: vi.fn().mockResolvedValue(boot),
     RevokePolicy: vi.fn().mockResolvedValue({ ...boot, approved: false }),
-    VerifyPolicy: vi.fn().mockResolvedValue({ name: 'boot', match: false, mismatched: [7], approved: true }),
+    VerifyPolicy: vi.fn().mockResolvedValue({
+      name: 'boot', match: false, approved: true,
+      branches: [{ match: false, mismatched: [7], approved: true }, { match: true, approved: false }],
+    }),
+    SetDescription: vi.fn().mockResolvedValue({ ...boot, description: 'kernel' }),
     DeletePolicy: vi.fn().mockResolvedValue(undefined),
     PolicyObjects: vi.fn().mockResolvedValue(['key/signer', 'sealed/xkey-sealed-1']),
     SetAutoUnseal: vi.fn().mockResolvedValue({ ...boot, auto_unseal: true }),
     RotateAuthority: vi.fn().mockResolvedValue({ generation: 2, authority_name: '000b', epoch: 1 }),
-    GetPolicy: vi.fn().mockResolvedValue({ ...boot, pcr_values: { 7: 'bb', 0: 'aa' }, epoch: 3, authority_generation: 1 }),
+    GetPolicy: vi.fn().mockResolvedValue({
+      ...boot, epoch: 3, authority_generation: 1,
+      branches: [
+        { conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7], pcr_values: { 7: 'bb', 0: 'aa' } }], approved: true },
+        { conditions: [{ type: 'auth_value' }], approved: true },
+      ],
+    }),
   };
   const barrier = {
     EnableAutoUnseal: vi.fn().mockResolvedValue(undefined),
@@ -59,7 +70,8 @@ describe('TPMPolicyPanel', () => {
     expect(within(platformRow).queryByText('Delete')).toBeNull();
 
     const bootRow = view.getByTestId('policy-row-boot');
-    expect(within(bootRow).getByText('sha256: 0, 7')).toBeInTheDocument();
+    expect(within(bootRow).getByText('sha256 PCR 0, 7')).toBeInTheDocument();
+    expect(within(bootRow).getByText('firmware and Secure Boot')).toBeInTheDocument();
     expect(within(bootRow).getByLabelText('Objects bound to boot')).toHaveTextContent('2');
     expect(view.getByTestId('policy-mode')).toHaveTextContent('Local TPM (system scope)');
   });
@@ -71,7 +83,7 @@ describe('TPMPolicyPanel', () => {
     await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('No TPM policy service'));
   });
 
-  it('creates a policy over the selected PCRs', async () => {
+  it('creates a one-branch policy over the selected PCRs in simple mode', async () => {
     const { tpm, view } = await renderLoaded();
     await fireEvent.click(view.getByText('Create Policy'));
     const nameInput = document.getElementById('policy-name') as HTMLInputElement;
@@ -79,8 +91,62 @@ describe('TPMPolicyPanel', () => {
     await fireEvent.change(document.getElementById('policy-bank') as HTMLSelectElement, { target: { value: 'sha384' } });
     await fireEvent.click(view.getByLabelText('PCR 7'));
     await fireEvent.click(view.getByLabelText('PCR 0'));
+    await fireEvent.input(document.getElementById('policy-description') as HTMLInputElement, { target: { value: 'kernel PCRs' } });
     await fireEvent.click(view.getByText('Create'));
-    await waitFor(() => expect(tpm.CreatePolicy).toHaveBeenCalledWith('kernel', 'sha384', [0, 7], false, ''));
+    await waitFor(() => expect(tpm.CreatePolicy).toHaveBeenCalledWith(
+      'kernel', 'kernel PCRs', [{ conditions: [{ type: 'pcr', bank: 'sha384', pcrs: [0, 7] }] }], false, '',
+    ));
+  });
+
+  it('creates a composite policy in advanced mode', async () => {
+    const { tpm, view } = await renderLoaded();
+    await fireEvent.click(view.getByText('Create Policy'));
+    await fireEvent.input(document.getElementById('policy-name') as HTMLInputElement, { target: { value: 'strict' } });
+    await fireEvent.click(view.getByRole('tab', { name: 'Advanced' }));
+    await fireEvent.click(view.getByLabelText('Branch 1 locality condition'));
+    await fireEvent.click(view.getByText('Add branch'));
+    await fireEvent.click(view.getByLabelText('Branch 2 PCR condition'));
+    await fireEvent.click(view.getByLabelText('Branch 2 password condition'));
+    await fireEvent.click(view.getByText('Create'));
+    await waitFor(() => expect(tpm.CreatePolicy).toHaveBeenCalledWith('strict', '', [
+      { conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7] }, { type: 'locality', localities: [0] }] },
+      { conditions: [{ type: 'auth_value' }] },
+    ], false, ''));
+  });
+
+  it('refuses an advanced branch without conditions, and removes a branch', async () => {
+    const { tpm, view } = await renderLoaded();
+    await fireEvent.click(view.getByText('Create Policy'));
+    await fireEvent.input(document.getElementById('policy-name') as HTMLInputElement, { target: { value: 'strict' } });
+    await fireEvent.click(view.getByRole('tab', { name: 'Advanced' }));
+    await fireEvent.click(view.getByText('Add branch'));
+    await fireEvent.click(view.getByLabelText('Branch 2 PCR condition'));
+    await fireEvent.click(view.getByText('Create'));
+    await waitFor(() => expect(view.getByText('Branch 2: Choose at least one condition.')).toBeInTheDocument());
+    expect(tpm.CreatePolicy).not.toHaveBeenCalled();
+
+    await fireEvent.click(view.getByText('Remove branch 2'));
+    expect(view.queryByTestId('branch-2')).toBeNull();
+    await fireEvent.click(view.getByText('Create'));
+    await waitFor(() => expect(tpm.CreatePolicy).toHaveBeenCalledOnce());
+  });
+
+  it('sets a policy description', async () => {
+    const { tpm, view } = await renderLoaded();
+    await fireEvent.click(within(view.getByTestId('policy-row-boot')).getByText('Describe'));
+    const input = document.getElementById('policy-describe') as HTMLInputElement;
+    expect(input.value).toBe('firmware and Secure Boot');
+    await fireEvent.input(input, { target: { value: 'kernel' } });
+    await fireEvent.click(view.getByText('Save'));
+    await waitFor(() => expect(tpm.SetDescription).toHaveBeenCalledWith('boot', 'kernel'));
+  });
+
+  it('shows a refused description in its dialog', async () => {
+    const { tpm, view } = await renderLoaded();
+    tpm.SetDescription.mockRejectedValue(new Error('tpmpolicy: description too long'));
+    await fireEvent.click(within(view.getByTestId('policy-row-boot')).getByText('Describe'));
+    await fireEvent.click(view.getByText('Save'));
+    await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('description too long'));
   });
 
   it('refuses to create a policy without PCRs', async () => {
@@ -102,10 +168,11 @@ describe('TPMPolicyPanel', () => {
     expect(tpm.DeletePolicy).toHaveBeenCalledWith('boot', '');
   });
 
-  it('shows the verification result', async () => {
+  it('shows the verification result of each branch', async () => {
     const { tpm, view } = await renderLoaded();
     await fireEvent.click(within(view.getByTestId('policy-row-boot')).getByText('Verify'));
-    await waitFor(() => expect(view.getByTestId('verify-result')).toHaveTextContent('PCRs changed since capture: 7'));
+    await waitFor(() => expect(view.getByTestId('verify-result')).toHaveTextContent('Branch 1: PCRs changed: 7; approval current'));
+    expect(view.getByTestId('verify-result')).toHaveTextContent('Branch 2: PCRs match; approval not current');
     expect(tpm.VerifyPolicy).toHaveBeenCalledWith('boot');
   });
 
@@ -151,12 +218,14 @@ describe('TPMPolicyPanel', () => {
 });
 
 describe('TPMPolicyPanel details', () => {
-  it('shows the PCR values the policy captured', async () => {
+  it('shows each branch and the PCR values it captured', async () => {
     const { tpm, view } = await renderLoaded();
     await fireEvent.click(view.getByLabelText('Details of boot'));
     const detailsView = await waitFor(() => view.getByTestId('policy-details'));
     expect(tpm.GetPolicy).toHaveBeenCalledWith('boot');
     expect(detailsView).toHaveTextContent('approved at epoch 3');
+    expect(detailsView).toHaveTextContent('Branch 1: sha256 PCR 0, 7');
+    expect(detailsView).toHaveTextContent('Branch 2: password');
     const rows = detailsView.querySelectorAll('tbody tr');
     expect(rows[0]).toHaveTextContent('0aa');
     expect(rows[1]).toHaveTextContent('7bb');

@@ -8,6 +8,7 @@
   import { callBackend, isWailsAvailable } from '$lib/api/backend';
   import { addNotification } from '$lib/stores/notifications';
   import type { RemoteBackendInfo, GenerateKeyParams, GenerateKeyResult, SupportedKeyTypes, TPMPolicyInfo } from '$lib/api/backend';
+  import { policySummary } from '$lib/utils/tpmPolicy';
 
   export let open = false;
   export let backends: RemoteBackendInfo[] = [];
@@ -172,7 +173,7 @@
             <select class="form-select" id="gen-tpm-policy" bind:value={tpmPolicy}>
               <option value="platform">Platform (built-in): platform PCR or password</option>
               {#each tpmPolicies as policy (policy.name)}
-                <option value={policy.name}>{policy.name}: {policy.bank} PCR {(policy.pcrs ?? []).join(', ')}</option>
+                <option value={policy.name}>{policy.name}: {policySummary(policy)}</option>
               {/each}
             </select>
           </div>

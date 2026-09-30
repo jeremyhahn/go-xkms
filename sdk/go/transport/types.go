@@ -224,9 +224,20 @@ const (
 	KeyVersionRetired  = pkgtransport.KeyVersionRetired
 )
 
+// Key rotation result states.
+const (
+	KeyRotationRotated = pkgtransport.KeyRotationRotated
+	KeyRotationSkipped = pkgtransport.KeyRotationSkipped
+	KeyRotationFailed  = pkgtransport.KeyRotationFailed
+)
+
 // TPM policy types.
 type TPMPolicy = pkgtransport.TPMPolicy
+type TPMPolicyBranch = pkgtransport.TPMPolicyBranch
+type TPMPolicyCondition = pkgtransport.TPMPolicyCondition
 type TPMPolicyCreateRequest = pkgtransport.TPMPolicyCreateRequest
+type TPMPolicyDescriptionRequest = pkgtransport.TPMPolicyDescriptionRequest
+type TPMPolicyBranchVerification = pkgtransport.TPMPolicyBranchVerification
 type TPMPolicyRequest = pkgtransport.TPMPolicyRequest
 type TPMPolicyListRequest = pkgtransport.TPMPolicyListRequest
 type TPMPolicyListResponse = pkgtransport.TPMPolicyListResponse
@@ -246,6 +257,39 @@ type TenantVTPMStatusResponse = pkgtransport.TenantVTPMStatusResponse
 const (
 	TPMObjectKindKey    = pkgtransport.TPMObjectKindKey
 	TPMObjectKindSealed = pkgtransport.TPMObjectKindSealed
+)
+
+// TPM policy condition types and the bank a branch spec's pcr condition
+// selects when it names none.
+const (
+	TPMPolicyConditionPCR       = pkgtransport.TPMPolicyConditionPCR
+	TPMPolicyConditionAuthValue = pkgtransport.TPMPolicyConditionAuthValue
+	TPMPolicyConditionLocality  = pkgtransport.TPMPolicyConditionLocality
+	DefaultTPMPolicyBank        = pkgtransport.DefaultTPMPolicyBank
+)
+
+// TPMPolicyBranchSpecError reports the condition of a branch spec that could
+// not be parsed.
+type TPMPolicyBranchSpecError = pkgtransport.TPMPolicyBranchSpecError
+
+// TPM policy branch helpers and branch spec errors.
+var (
+	// TPMPolicyPCRBranch returns a branch holding one pcr condition.
+	TPMPolicyPCRBranch = pkgtransport.TPMPolicyPCRBranch
+
+	// ParseTPMPolicyBranch parses a branch spec such as
+	// "pcr=sha256:0,7;auth_value;locality=0".
+	ParseTPMPolicyBranch = pkgtransport.ParseTPMPolicyBranch
+
+	ErrTPMPolicyBranchEmpty      = pkgtransport.ErrTPMPolicyBranchEmpty
+	ErrTPMPolicyConditionUnknown = pkgtransport.ErrTPMPolicyConditionUnknown
+	ErrTPMPolicyConditionValue   = pkgtransport.ErrTPMPolicyConditionValue
+	ErrTPMPolicyNoSelection      = pkgtransport.ErrTPMPolicyNoSelection
+	ErrTPMPolicyPCRsAndBranches  = pkgtransport.ErrTPMPolicyPCRsAndBranches
+
+	// TPMPolicyBranches returns the parsed branch specs, or the one pcr
+	// branch of a PCR selection.
+	TPMPolicyBranches = pkgtransport.TPMPolicyBranches
 )
 
 // Audit types.

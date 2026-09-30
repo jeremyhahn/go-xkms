@@ -97,16 +97,15 @@ The Overview tab displays detailed TPM capabilities and information:
 
 The Policies tab provides comprehensive policy lifecycle management:
 
-**Basic Operations:**
-- **Create Policy**: Define new PCR-based or password-based policies
-- **View PCR Values**: Display current PCR register values associated with a policy
-- **Refresh Policy**: Re-read current PCR values and update the policy
-- **Delete Policy**: Remove policies from the system
-
-**Export Functionality:**
-- **Export Policy**: Export policies to tpm2-tools compatible JSON format
-  - Includes: policy name, PCR bank (sha256/sha384), PCR selections, PCR digests, timestamps
-  - Compatible with standard TPM tooling for backup and migration
+**Basic Operations** (see [TPM policies](../tpm-policies/user.md)):
+- **Create Policy**: one PCR selection (Simple), or branches combining PCR
+  values, the object password and TPM localities (Advanced), with an
+  optional description
+- **Describe**: change a policy's description
+- **Details**: each branch and the PCR values it captured
+- **Verify / Update / Revoke**: compare each branch with the live PCRs,
+  re-capture and re-approve, or withdraw the approval
+- **Delete Policy**: refused while keys or sealed objects are bound to it
 
 **Key Association:**
 - **Assign Policy to Key**: Associate policies with persistent key handles (0x81xxxxxx format)

@@ -236,6 +236,7 @@ var goldenRESTPermissions = map[string]string{
 	"POST /api/v1/tpm/policies/{name}/verify":                    "tpm_policy:verify",
 	"GET /api/v1/tpm/policies/{name}/objects":                    "tpm_policy:get",
 	"POST /api/v1/tpm/policies/{name}/auto-unseal":               "tpm_policy:update",
+	"POST /api/v1/tpm/policies/{name}/description":               "tpm_policy:update",
 	"POST /api/v1/tpm/authority/rotate":                          "tpm_policy:rotate",
 	"GET /api/v1/keys/{id}/tpm-policy":                           "tpm_policy:get",
 	"GET /api/v1/tenants/{tenantID}/tpm":                         "tenants:read",

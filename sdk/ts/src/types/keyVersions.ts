@@ -59,13 +59,23 @@ export interface AllKeyVersionsResponse {
   count: number;
 }
 
+/**
+ * A key rotation result's state (pkg/api/transport KeyRotation*): rotated,
+ * skipped on purpose (reason says why: another subsystem names the key
+ * exactly, or it has a certificate), or failed (error says why).
+ */
+export type KeyRotationState = 'rotated' | 'skipped' | 'failed';
+
 /** Mirrors pkg/api/transport KeyRotationResult. */
 export interface KeyRotationResult {
   backend: string;
   key_id: string;
-  /** The new current version; absent when the rotation failed. */
+  state: KeyRotationState;
+  /** The new current version; absent unless rotated. */
   key_version?: number;
-  /** Why the key was not rotated; absent on success. */
+  /** Why a skipped key was left alone. */
+  reason?: string;
+  /** Why the key was not rotated; absent unless failed. */
   error?: string;
 }
 
@@ -74,5 +84,6 @@ export interface RotateScopeKeysResponse {
   tenant_id: string;
   results: KeyRotationResult[];
   rotated: number;
+  skipped: number;
   failed: number;
 }

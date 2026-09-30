@@ -38,7 +38,7 @@ func TestTPMPolicy_CallsTheTool(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "boot", p.Name)
 	assert.Equal(t, "acme", p.TenantID)
-	assert.Equal(t, []uint{7}, p.PCRs)
+	assert.Equal(t, []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{7})}, p.Branches)
 	assert.True(t, p.Approved)
 
 	st, err := tr.TenantVTPMStatus(ctx, "globex")

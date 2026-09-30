@@ -254,7 +254,7 @@ var collectionRouteCases = []collectionRouteCase{
 		method: http.MethodPost,
 		base:   "/api/v1/tpm/policies",
 		call: func(ctx context.Context, tr *Transport) error {
-			_, err := tr.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "p", Bank: "sha256", PCRs: []uint{0}})
+			_, err := tr.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "p", Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{0})}})
 			return err
 		},
 	},

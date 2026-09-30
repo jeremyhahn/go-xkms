@@ -5,7 +5,7 @@ import BarrierAutoUnsealPanel from './BarrierAutoUnsealPanel.svelte';
 
 const policies = [
   { name: 'platform', builtin: true, approved: true, auto_unseal: false, object_count: 0 },
-  { name: 'boot', builtin: false, bank: 'sha256', pcrs: [0, 7], approved: true, auto_unseal: false, object_count: 0 },
+  { name: 'boot', builtin: false, branches: [{ conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7] }] }], approved: true, auto_unseal: false, object_count: 0 },
 ];
 
 function installMock(status: Record<string, unknown>) {

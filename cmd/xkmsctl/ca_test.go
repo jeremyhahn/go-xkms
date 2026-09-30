@@ -488,6 +488,10 @@ func (m *mockCAClient) TPMPolicySetAutoUnseal(context.Context, *transport.TPMPol
 	return nil, nil
 }
 
+func (m *mockCAClient) TPMPolicySetDescription(context.Context, *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	return nil, nil
+}
+
 func (m *mockCAClient) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	return nil, nil
 }

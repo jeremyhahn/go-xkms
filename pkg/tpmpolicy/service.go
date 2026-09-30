@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"slices"
 	"sync"
 	"time"
 
@@ -194,11 +193,7 @@ func (s *Service) CreatePolicy(ctx context.Context, tenant string, req CreatePol
 	if err := validateDescription(req.Description); err != nil {
 		return nil, err
 	}
-	requested, err := req.branches()
-	if err != nil {
-		return nil, err
-	}
-	branches, err := validateBranches(requested)
+	branches, err := validateBranches(req.Branches)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +206,7 @@ func (s *Service) CreatePolicy(ctx context.Context, tenant string, req CreatePol
 	if err != nil {
 		return nil, err
 	}
-	req.Branches, req.Bank, req.PCRs = branches, "", nil
+	req.Branches = branches
 	return s.createPolicy(ctx, st, scope, req)
 }
 
@@ -478,10 +473,7 @@ func (s *Service) VerifyPolicy(ctx context.Context, tenant, name string) (*Verif
 		v.Branches[i] = bv
 		v.Match = v.Match && bv.Match
 		v.Approved = v.Approved && bv.Approved
-		v.Mismatched = append(v.Mismatched, bv.Mismatched...)
 	}
-	slices.Sort(v.Mismatched)
-	v.Mismatched = slices.Compact(v.Mismatched)
 	return v, nil
 }
 

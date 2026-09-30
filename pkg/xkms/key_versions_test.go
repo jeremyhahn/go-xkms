@@ -16,11 +16,14 @@ package xkms
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"sync"
 	"testing"
 
@@ -29,6 +32,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -469,6 +473,7 @@ func TestRotateScopeKeys_RotatesOnlyTheTargetTenant(t *testing.T) {
 	assert.Equal(t, "acme", resp.TenantID)
 	assert.Equal(t, 2, resp.Rotated)
 	assert.Zero(t, resp.Failed)
+	assert.Zero(t, resp.Skipped)
 	versions := map[string]uint32{}
 	for _, r := range resp.Results {
 		versions[r.KeyID] = r.KeyVersion
@@ -490,6 +495,135 @@ func TestRotateScopeKeys_RotatesOnlyTheTargetTenant(t *testing.T) {
 
 	_, err = svc.RotateScopeKeys(context.Background(), nil)
 	assert.ErrorIs(t, err, ErrNilRequest)
+}
+
+// saveCert stores a self-signed certificate for the software backend's key
+// under certID, the reference a caller saved it with.
+func saveCert(t *testing.T, svc *XKMSService, certID string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	b, err := svc.LookupBackend("software")
+	require.NoError(t, err)
+	require.NoError(t, b.SaveCert(context.Background(), certID, selfSignedCertForKey(t, key, certID, 1)))
+}
+
+// TestRotateScopeKeys_SkipsPinnedAndCertifiedKeys proves a scope rotation
+// rotates ordinary keys, and skips -- with the reason, not as a failure --
+// the barrier's seal wrapping key, which the barrier names exactly, and keys
+// with a certificate, whether it was saved under the bare name or a full key
+// ID.
+func TestRotateScopeKeys_SkipsPinnedAndCertifiedKeys(t *testing.T) {
+	svc := setupDeriveService(t)
+	genKey(t, svc, "", "plain", "ecdsa", 0)
+	genKey(t, svc, "", seal.SealKeyCN, "ecdsa", 0)
+	genKey(t, svc, "", "tls", "ecdsa", 0)
+	genKey(t, svc, "", "web", "ecdsa", 0)
+	saveCert(t, svc, "tls")
+	saveCert(t, svc, "software:signing:ecdsa:web")
+
+	resp, err := svc.RotateScopeKeys(context.Background(), &transport.RotateScopeKeysRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, resp.Rotated)
+	assert.Equal(t, 3, resp.Skipped)
+	assert.Zero(t, resp.Failed)
+	byKey := map[string]transport.KeyRotationResult{}
+	for _, r := range resp.Results {
+		byKey[r.KeyID] = r
+	}
+	assert.Equal(t, transport.KeyRotationResult{Backend: "software", KeyID: "plain", State: transport.KeyRotationRotated, KeyVersion: 2}, byKey["plain"])
+	assert.Equal(t, transport.KeyRotationResult{Backend: "software", KeyID: seal.SealKeyCN, State: transport.KeyRotationSkipped, Reason: SkipReasonBarrierSealKey}, byKey[seal.SealKeyCN])
+	assert.Equal(t, SkipReasonCertificate, byKey["tls"].Reason)
+	assert.Equal(t, SkipReasonCertificate, byKey["web"].Reason)
+
+	got, err := svc.GetKey(context.Background(), "software", "tls")
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), got.KeyVersion, "a skipped key keeps its version")
+}
+
+// TestRotateScopeKeys_CertificateListingFails proves a backend whose
+// certificates cannot be listed is reported as failed and none of its keys
+// is rotated, since a certified key could not be told apart.
+func TestRotateScopeKeys_CertificateListingFails(t *testing.T) {
+	store := newMockKeyStore("mock")
+	store.listCertsErr = errors.New("certificate store offline")
+	_, err := store.GenerateECDSA(context.Background(), &types.KeyAttributes{CN: "k"})
+	require.NoError(t, err)
+	svc := setupDeriveService(t)
+	svc.backends["mock"] = store
+
+	resp, err := svc.RotateScopeKeys(context.Background(), &transport.RotateScopeKeysRequest{})
+	require.NoError(t, err)
+	var failed []transport.KeyRotationResult
+	for _, r := range resp.Results {
+		if r.Backend == "mock" {
+			failed = append(failed, r)
+		}
+	}
+	require.Len(t, failed, 1)
+	assert.Equal(t, transport.KeyRotationFailed, failed[0].State)
+	assert.Contains(t, failed[0].Error, "certificate store offline")
+	assert.Equal(t, 1, resp.Failed)
+}
+
+// TestPinnedKeyReason proves the exact-name rules: PIV slot keys and the
+// TPM2 sealed objects Seal names are pinned on a TPM2 backend only, the
+// barrier's seal wrapping key on any backend, and every other key is not.
+func TestPinnedKeyReason(t *testing.T) {
+	tpm := newMockKeyStoreWithSealer("tpm2", types.BackendTypeTPM2)
+	software := newMockKeyStoreWithSealer("software", types.BackendTypeSoftware)
+	sealed, err := newTPMSealedObjectName()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		b      Backend
+		keyID  string
+		reason string
+	}{
+		{"PIV slot on TPM2", tpm, PivSlotCN("9a"), SkipReasonPIVSlot},
+		{"retired PIV slot on TPM2", tpm, "piv-95", SkipReasonPIVSlot},
+		{"TPM2 sealed object", tpm, sealed, SkipReasonTPMSealedObject},
+		{"barrier seal key on TPM2", tpm, seal.SealKeyCN, SkipReasonBarrierSealKey},
+		{"barrier seal key on software", software, seal.SealKeyCN, SkipReasonBarrierSealKey},
+		{"PIV name off TPM2", software, "piv-9a", ""},
+		{"not a slot", tpm, "piv-xyz", ""},
+		{"ordinary key", tpm, "signer", ""},
+		{"key-based default sealing key", software, "xkms-sealing-key-software", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason, pinned := pinnedKeyReason(tt.b, tt.keyID)
+			assert.Equal(t, tt.reason != "", pinned)
+			assert.Equal(t, tt.reason, reason)
+		})
+	}
+}
+
+// TestRotateKey_ReportsCertificateReissue proves rotating a key with a
+// certificate succeeds and says the certificate must be re-issued, a key
+// without one does not, and a failure to list certificates leaves the key
+// unrotated.
+func TestRotateKey_ReportsCertificateReissue(t *testing.T) {
+	svc := setupDeriveService(t)
+	genKey(t, svc, "", "tls", "ecdsa", 0)
+	genKey(t, svc, "", "plain", "ecdsa", 0)
+	saveCert(t, svc, "tls")
+
+	resp, err := svc.RotateKey(context.Background(), &transport.RotateKeyRequest{Backend: "software", KeyID: "tls"})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(2), resp.KeyVersion)
+	assert.True(t, resp.CertificateReissueRequired)
+
+	resp, err = svc.RotateKey(context.Background(), &transport.RotateKeyRequest{Backend: "software", KeyID: "plain"})
+	require.NoError(t, err)
+	assert.False(t, resp.CertificateReissueRequired)
+
+	store := newMockKeyStore("mock")
+	store.listCertsErr = errors.New("certificate store offline")
+	svc.backends["mock"] = store
+	_, err = svc.RotateKey(context.Background(), &transport.RotateKeyRequest{Backend: "mock", KeyID: "k"})
+	assert.ErrorContains(t, err, "certificate store offline")
 }
 
 // TestSeal_RecordsAndUsesTheSealingKeyVersion proves a seal under a named key

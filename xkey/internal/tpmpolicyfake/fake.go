@@ -37,8 +37,11 @@ var (
 	// ErrNameRequired is returned for a request without a policy name.
 	ErrNameRequired = errors.New("tpmpolicyfake: policy name is required")
 
-	// ErrNoPCRs is returned for a policy that selects no PCR.
-	ErrNoPCRs = errors.New("tpmpolicyfake: a policy must select at least one PCR")
+	// ErrNoBranches is returned for a policy without a branch.
+	ErrNoBranches = errors.New("tpmpolicyfake: a policy must have at least one branch")
+
+	// ErrNoPCRs is returned for a pcr condition that selects no PCR.
+	ErrNoPCRs = errors.New("tpmpolicyfake: a pcr condition must select at least one PCR")
 
 	// ErrKeyIDRequired is returned for an object request without a key ID.
 	ErrKeyIDRequired = errors.New("tpmpolicyfake: key ID is required")
@@ -116,11 +119,28 @@ func (f *Fake) policy(tenant, name string) (*transport.TPMPolicy, error) {
 	return p, nil
 }
 
-// capture sets p's values to the live PCRs. The caller holds f.mu.
+// capture sets the values of p's pcr conditions to the live PCRs. The
+// caller holds f.mu.
 func (f *Fake) capture(p *transport.TPMPolicy) {
-	p.PCRValues = make(map[uint]string, len(p.PCRs))
-	for _, pcr := range p.PCRs {
-		p.PCRValues[pcr] = f.pcrs[pcr]
+	for i := range p.Branches {
+		for j := range p.Branches[i].Conditions {
+			c := &p.Branches[i].Conditions[j]
+			if c.Type != transport.TPMPolicyConditionPCR {
+				continue
+			}
+			c.PCRValues = make(map[uint]string, len(c.PCRs))
+			for _, pcr := range c.PCRs {
+				c.PCRValues[pcr] = f.pcrs[pcr]
+			}
+		}
+	}
+}
+
+// approve sets the approval of p and of every branch of it.
+func approve(p *transport.TPMPolicy, approved bool) {
+	p.Approved = approved
+	for i := range p.Branches {
+		p.Branches[i].Approved = approved
 	}
 }
 
@@ -138,26 +158,61 @@ func (f *Fake) bump(tenant string) {
 // copyOf returns a copy of p, so callers cannot change the fake's state.
 func copyOf(p *transport.TPMPolicy) *transport.TPMPolicy {
 	out := *p
-	out.PCRs = append([]uint(nil), p.PCRs...)
-	out.PCRValues = make(map[uint]string, len(p.PCRValues))
-	for k, v := range p.PCRValues {
-		out.PCRValues[k] = v
-	}
+	out.Branches = copyBranches(p.Branches)
 	return &out
 }
 
-// TPMPolicyCreate creates a named policy over the live PCR values.
+// copyBranches returns a deep copy of branches.
+func copyBranches(branches []transport.TPMPolicyBranch) []transport.TPMPolicyBranch {
+	out := make([]transport.TPMPolicyBranch, len(branches))
+	for i, b := range branches {
+		out[i] = transport.TPMPolicyBranch{Conditions: make([]transport.TPMPolicyCondition, len(b.Conditions)), Approved: b.Approved}
+		for j, c := range b.Conditions {
+			c.PCRs = append([]uint(nil), c.PCRs...)
+			c.Localities = append([]uint(nil), c.Localities...)
+			if c.PCRValues != nil {
+				values := make(map[uint]string, len(c.PCRValues))
+				for k, v := range c.PCRValues {
+					values[k] = v
+				}
+				c.PCRValues = values
+			}
+			out[i].Conditions[j] = c
+		}
+	}
+	return out
+}
+
+// validateBranches refuses a request without a branch, or with a pcr
+// condition that selects no PCR.
+func validateBranches(branches []transport.TPMPolicyBranch) error {
+	if len(branches) == 0 {
+		return ErrNoBranches
+	}
+	for _, b := range branches {
+		for _, c := range b.Conditions {
+			if c.Type == transport.TPMPolicyConditionPCR && len(c.PCRs) == 0 {
+				return ErrNoPCRs
+			}
+		}
+	}
+	return nil
+}
+
+// TPMPolicyCreate creates a named policy of the request's branches over the
+// live PCR values.
 func (f *Fake) TPMPolicyCreate(_ context.Context, req *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.init()
-	switch {
-	case req.Name == "":
+	switch req.Name {
+	case "":
 		return nil, ErrNameRequired
-	case req.Name == xkms.TPMPolicyPlatform:
+	case xkms.TPMPolicyPlatform:
 		return nil, xkms.ErrTPMPolicyReserved
-	case len(req.PCRs) == 0:
-		return nil, ErrNoPCRs
+	}
+	if err := validateBranches(req.Branches); err != nil {
+		return nil, err
 	}
 	sc := scope(req.TenantID)
 	if _, exists := f.policies[sc][req.Name]; exists {
@@ -169,14 +224,14 @@ func (f *Fake) TPMPolicyCreate(_ context.Context, req *transport.TPMPolicyCreate
 	p := &transport.TPMPolicy{
 		Name:                req.Name,
 		TenantID:            req.TenantID,
-		Bank:                req.Bank,
-		PCRs:                append([]uint(nil), req.PCRs...),
+		Description:         req.Description,
+		Branches:            copyBranches(req.Branches),
 		Index:               uint32(0x01500000 + len(f.policies[sc])),
-		Approved:            true,
 		Epoch:               f.epoch,
 		AuthorityGeneration: f.generation,
 		CreatedAt:           "2026-01-01T00:00:00Z",
 	}
+	approve(p, true)
 	f.capture(p)
 	f.policies[sc][req.Name] = p
 	if req.AutoUnseal {
@@ -220,7 +275,7 @@ func (f *Fake) TPMPolicyUpdate(_ context.Context, req *transport.TPMPolicyReques
 		return nil, err
 	}
 	f.capture(p)
-	p.Approved = true
+	approve(p, true)
 	p.AuthorityGeneration = f.generation
 	p.UpdatedAt = "2026-01-02T00:00:00Z"
 	f.bump(req.TenantID)
@@ -237,7 +292,7 @@ func (f *Fake) TPMPolicyRevoke(_ context.Context, req *transport.TPMPolicyReques
 		return nil, err
 	}
 	if p.Approved {
-		p.Approved = false
+		approve(p, false)
 		p.Epoch = 0
 		p.AuthorityGeneration = 0
 		f.bump(req.TenantID)
@@ -254,13 +309,21 @@ func (f *Fake) TPMPolicyVerify(_ context.Context, req *transport.TPMPolicyReques
 	if err != nil {
 		return nil, err
 	}
-	resp := &transport.TPMPolicyVerifyResponse{Name: p.Name, Approved: p.Approved && p.Epoch == f.epoch}
-	for _, pcr := range p.PCRs {
-		if p.PCRValues[pcr] != f.pcrs[pcr] {
-			resp.Mismatched = append(resp.Mismatched, pcr)
+	approved := p.Approved && p.Epoch == f.epoch
+	resp := &transport.TPMPolicyVerifyResponse{Name: p.Name, Match: true, Approved: approved}
+	for _, b := range p.Branches {
+		v := transport.TPMPolicyBranchVerification{Approved: approved}
+		for _, c := range b.Conditions {
+			for _, pcr := range c.PCRs {
+				if c.PCRValues[pcr] != f.pcrs[pcr] {
+					v.Mismatched = append(v.Mismatched, pcr)
+				}
+			}
 		}
+		v.Match = len(v.Mismatched) == 0
+		resp.Match = resp.Match && v.Match
+		resp.Branches = append(resp.Branches, v)
 	}
-	resp.Match = len(resp.Mismatched) == 0
 	return resp, nil
 }
 
@@ -333,6 +396,19 @@ func (f *Fake) TPMPolicySetAutoUnseal(_ context.Context, req *transport.TPMPolic
 	} else {
 		p.AutoUnseal = false
 	}
+	return copyOf(p), nil
+}
+
+// TPMPolicySetDescription replaces a policy's description.
+func (f *Fake) TPMPolicySetDescription(_ context.Context, req *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.init()
+	p, err := f.policy(req.TenantID, req.Name)
+	if err != nil {
+		return nil, err
+	}
+	p.Description = req.Description
 	return copyOf(p), nil
 }
 

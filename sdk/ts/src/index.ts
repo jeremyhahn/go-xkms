@@ -97,7 +97,7 @@ export { SharesClient } from './clients/shares.js';
 export { TenantsClient } from './clients/tenants.js';
 export { PasswordsClient } from './clients/passwords.js';
 export { PlatformClient } from './clients/platform.js';
-export { TpmPolicyClient } from './clients/tpmPolicy.js';
+export { TpmPolicyClient, pcrBranch } from './clients/tpmPolicy.js';
 export { InitClient } from './clients/init.js';
 export { CredentialsClient } from './clients/credentials.js';
 export { UsersClient } from './clients/users.js';

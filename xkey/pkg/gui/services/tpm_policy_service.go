@@ -72,6 +72,7 @@ type tpmPolicyBackend interface {
 	TPMPolicyDelete(ctx context.Context, req *transport.TPMPolicyDeleteRequest) error
 	TPMPolicyObjects(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyObjectsResponse, error)
 	TPMPolicySetAutoUnseal(ctx context.Context, req *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error)
+	TPMPolicySetDescription(ctx context.Context, req *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error)
 	TPMObjectPolicy(ctx context.Context, req *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error)
 	TPMPolicyRotateAuthority(ctx context.Context, req *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error)
 }
@@ -88,13 +89,13 @@ type TPMPolicyInfo struct {
 	// object's password), which always exists and cannot be changed.
 	Builtin bool `json:"builtin"`
 
-	// Bank and PCRs are the policy's PCR selection; PCRValues the
-	// hex-encoded values captured from the TPM, keyed by PCR index, and
-	// PCRDigest the hex-encoded PolicyPCR digest over them.
-	Bank      string          `json:"bank,omitempty"`
-	PCRs      []uint          `json:"pcrs,omitempty"`
-	PCRValues map[uint]string `json:"pcr_values,omitempty"`
-	PCRDigest string          `json:"pcr_digest,omitempty"`
+	// Description is the policy's free-text description.
+	Description string `json:"description,omitempty"`
+
+	// Branches are the policy's branches, tried in order: each an AND of
+	// pcr, auth_value and locality conditions, with the values its pcr
+	// conditions captured from the TPM. The built-in policy has none.
+	Branches []transport.TPMPolicyBranch `json:"branches,omitempty"`
 
 	// Index is the policy's NV index.
 	Index uint32 `json:"index,omitempty"`
@@ -118,12 +119,13 @@ type TPMPolicyInfo struct {
 }
 
 // TPMPolicyVerification compares a policy's captured PCR values with the
-// live ones. It is advisory: the TPM itself enforces the policy on use.
+// live ones, branch by branch. It is advisory: the TPM itself enforces the
+// policy on use.
 type TPMPolicyVerification struct {
-	Name       string `json:"name"`
-	Match      bool   `json:"match"`
-	Mismatched []uint `json:"mismatched"`
-	Approved   bool   `json:"approved"`
+	Name     string                                  `json:"name"`
+	Match    bool                                    `json:"match"`
+	Approved bool                                    `json:"approved"`
+	Branches []transport.TPMPolicyBranchVerification `json:"branches"`
 }
 
 // TPMObjectPolicyInfo reports the policy a TPM object was created under.
@@ -156,10 +158,10 @@ type TPMPolicyStatus struct {
 	Scope string `json:"scope"`
 }
 
-// TPMPolicyService manages named TPM policies for the GUI and the CLI: a
-// PCR selection whose values are captured live from the TPM, approved by the
-// scope's TPM-resident authority, that keys and sealed objects reference by
-// name. The operations run on a connected xkmsd when there is one, and
+// TPMPolicyService manages named TPM policies for the GUI and the CLI: an
+// OR of branches of pcr (values captured live from the TPM), auth_value and
+// locality conditions, approved by the scope's TPM-resident authority, that
+// keys and sealed objects reference by name. The operations run on a connected xkmsd when there is one, and
 // otherwise in-process over xKey's own TPM.
 type TPMPolicyService struct {
 	ctx    context.Context
@@ -252,33 +254,41 @@ func requireName(name string) error {
 	return nil
 }
 
-// CreatePolicy creates a named policy over the live values of the PCRs of
-// bank ("sha256" when empty) and returns it. autoUnseal marks it as the
-// policy barrier auto-unseal uses; ownerAuth authorizes defining its NV
-// index when the TPM's owner hierarchy has a password.
-func (s *TPMPolicyService) CreatePolicy(name, bank string, pcrs []uint, autoUnseal bool, ownerAuth string) (retVal *TPMPolicyInfo, retErr error) {
+// CreatePolicy creates a named policy of branches, capturing the values of
+// its pcr conditions from the TPM, and returns it. description is free
+// text; autoUnseal marks it as the policy barrier auto-unseal uses;
+// ownerAuth authorizes defining its NV index when the TPM's owner hierarchy
+// has a password. transport.TPMPolicyPCRBranch builds the common one-branch
+// policy over a PCR selection.
+func (s *TPMPolicyService) CreatePolicy(name, description string, branches []transport.TPMPolicyBranch, autoUnseal bool, ownerAuth string) (retVal *TPMPolicyInfo, retErr error) {
 	defer s.recoverPanic("CreatePolicy", &retErr)
 	if err := requireName(name); err != nil {
 		return nil, err
-	}
-	if bank == "" {
-		bank = "sha256"
 	}
 	b, _, err := s.backend()
 	if err != nil {
 		return nil, err
 	}
 	p, err := b.TPMPolicyCreate(s.context(), &transport.TPMPolicyCreateRequest{
-		Name:       strings.TrimSpace(name),
-		Bank:       bank,
-		PCRs:       pcrs,
-		AutoUnseal: autoUnseal,
-		OwnerAuth:  ownerAuthBytes(ownerAuth),
+		Name:        strings.TrimSpace(name),
+		Description: description,
+		Branches:    branches,
+		AutoUnseal:  autoUnseal,
+		OwnerAuth:   ownerAuthBytes(ownerAuth),
 	})
 	if err != nil {
 		return nil, err
 	}
 	return policyInfo(p, 0), nil
+}
+
+// SetDescription replaces the policy's description; an empty one clears
+// it.
+func (s *TPMPolicyService) SetDescription(name, description string) (retVal *TPMPolicyInfo, retErr error) {
+	defer s.recoverPanic("SetDescription", &retErr)
+	return s.changePolicy(name, func(b tpmPolicyBackend, ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+		return b.TPMPolicySetDescription(ctx, &transport.TPMPolicyDescriptionRequest{Name: req.Name, Description: description})
+	})
 }
 
 // ListPolicies returns the built-in platform policy followed by the named
@@ -371,7 +381,8 @@ func (s *TPMPolicyService) changePolicy(name string,
 }
 
 // VerifyPolicy compares the policy's captured PCR values with the live ones
-// and reports whether its approval is current.
+// and reports, branch by branch, whether each matches and holds a current
+// approval.
 func (s *TPMPolicyService) VerifyPolicy(name string) (retVal *TPMPolicyVerification, retErr error) {
 	defer s.recoverPanic("VerifyPolicy", &retErr)
 	if err := requireName(name); err != nil {
@@ -385,11 +396,11 @@ func (s *TPMPolicyService) VerifyPolicy(name string) (retVal *TPMPolicyVerificat
 	if err != nil {
 		return nil, err
 	}
-	mismatched := v.Mismatched
-	if mismatched == nil {
-		mismatched = []uint{}
+	branches := v.Branches
+	if branches == nil {
+		branches = []transport.TPMPolicyBranchVerification{}
 	}
-	return &TPMPolicyVerification{Name: v.Name, Match: v.Match, Mismatched: mismatched, Approved: v.Approved}, nil
+	return &TPMPolicyVerification{Name: v.Name, Match: v.Match, Approved: v.Approved, Branches: branches}, nil
 }
 
 // DeletePolicy deletes the policy and its NV index. It is refused, listing
@@ -550,10 +561,8 @@ func ownerAuthBytes(ownerAuth string) []byte {
 func policyInfo(p *transport.TPMPolicy, objects int) *TPMPolicyInfo {
 	return &TPMPolicyInfo{
 		Name:                p.Name,
-		Bank:                p.Bank,
-		PCRs:                p.PCRs,
-		PCRValues:           p.PCRValues,
-		PCRDigest:           p.PCRDigest,
+		Description:         p.Description,
+		Branches:            p.Branches,
 		Index:               p.Index,
 		Approved:            p.Approved,
 		Epoch:               p.Epoch,

@@ -743,8 +743,8 @@ service KeystoreService {
   // pkg/apimodule's module_scopes.go declares; tenants:set_tpm_mode is
   // system-scope only.
 
-  // TPMPolicyCreate creates a named policy over the live PCR values of the
-  // tenant's TPM.
+  // TPMPolicyCreate creates a named policy of branches, capturing the
+  // values of its pcr conditions from the tenant's TPM.
   rpc TPMPolicyCreate(TPMPolicyCreateRequest) returns (TPMPolicy) {
     option (qrdb.v1.permission) = "tpm_policy:create";
   }
@@ -787,6 +787,11 @@ service KeystoreService {
 
   // TPMPolicySetAutoUnseal sets or clears a policy's auto-unseal mark.
   rpc TPMPolicySetAutoUnseal(TPMPolicyAutoUnsealRequest) returns (TPMPolicy) {
+    option (qrdb.v1.permission) = "tpm_policy:update";
+  }
+
+  // TPMPolicySetDescription replaces a policy's description.
+  rpc TPMPolicySetDescription(TPMPolicyDescriptionRequest) returns (TPMPolicy) {
     option (qrdb.v1.permission) = "tpm_policy:update";
   }
 
@@ -1285,6 +1290,9 @@ message RotateKeyResponse {
   google.protobuf.Timestamp rotated_at = 5;
   // key_version is the version the rotation created, now current.
   uint32 key_version = 6;
+  // certificate_reissue_required reports that the key has a certificate,
+  // which still certifies the previous version.
+  bool certificate_reissue_required = 7;
 }
 
 // KeyVersionInfo contains information about a key version
@@ -1409,10 +1417,14 @@ message RotateScopeKeysRequest {
 message KeyRotationResult {
   string backend = 1;
   string key_id = 2;
-  // key_version is the new current version; 0 when the rotation failed.
+  // key_version is the new current version; 0 unless rotated.
   uint32 key_version = 3;
-  // error describes why the key was not rotated; empty on success.
+  // error describes why the key was not rotated; empty unless failed.
   string error = 4;
+  // state is "rotated", "skipped" or "failed".
+  string state = 5;
+  // reason says why a skipped key was left alone.
+  string reason = 6;
 }
 
 // RotateScopeKeysResponse reports the rotation of every key of a tenant
@@ -1421,6 +1433,7 @@ message RotateScopeKeysResponse {
   repeated KeyRotationResult results = 2;
   int32 rotated = 3;
   int32 failed = 4;
+  int32 skipped = 5;
 }
 
 // EncryptRequest requests encryption of data (symmetric encryption)
@@ -3612,15 +3625,33 @@ message PasswordStoreSetAccessModeResponse {
 
 // ==================== TPM Policy Operations ====================
 
-// TPMPolicy describes a named TPM policy. pcr_values and pcr_digest are
-// hex-encoded; created_at and updated_at are RFC 3339.
+// TPMPolicyCondition is one condition of a TPM policy branch; only the
+// fields of its type are set. type is "pcr" (bank and pcrs; pcr_values and
+// pcr_digest are hex-encoded, captured from the TPM and never supplied),
+// "auth_value" (the object's password) or "locality" (localities 0-4).
+message TPMPolicyCondition {
+  string type = 1;
+  string bank = 2;
+  repeated uint32 pcrs = 3;
+  map<uint32, string> pcr_values = 4;
+  string pcr_digest = 5;
+  repeated uint32 localities = 6;
+}
+
+// TPMPolicyBranch is one branch of a TPM policy: the AND of its conditions.
+// approved is reported on a policy and has no meaning in a create request.
+message TPMPolicyBranch {
+  repeated TPMPolicyCondition conditions = 1;
+  bool approved = 2;
+}
+
+// TPMPolicy describes a named TPM policy: an OR of branches, tried in order.
+// created_at and updated_at are RFC 3339.
 message TPMPolicy {
+  reserved 3, 4, 5, 6;
+  reserved "bank", "pcrs", "pcr_values", "pcr_digest";
   string name = 1;
   string tenant_id = 2;
-  string bank = 3;
-  repeated uint32 pcrs = 4;
-  map<uint32, string> pcr_values = 5;
-  string pcr_digest = 6;
   uint32 index = 7;
   bool approved = 8;
   uint64 epoch = 9;
@@ -3628,17 +3659,29 @@ message TPMPolicy {
   bool auto_unseal = 11;
   string created_at = 12;
   string updated_at = 13;
+  string description = 14;
+  repeated TPMPolicyBranch branches = 15;
 }
 
-// TPMPolicyCreateRequest creates a named policy over the live PCR values of
-// the tenant's TPM. owner_auth authorizes the physical TPM's owner hierarchy.
+// TPMPolicyCreateRequest creates a named policy of branches, capturing the
+// values of its pcr conditions from the tenant's TPM. owner_auth authorizes
+// the physical TPM's owner hierarchy.
 message TPMPolicyCreateRequest {
+  reserved 3, 4;
+  reserved "bank", "pcrs";
   string tenant_id = 1;
   string name = 2;
-  string bank = 3;
-  repeated uint32 pcrs = 4;
   bool auto_unseal = 5;
   bytes owner_auth = 6;
+  string description = 7;
+  repeated TPMPolicyBranch branches = 8;
+}
+
+// TPMPolicyDescriptionRequest replaces a policy's description.
+message TPMPolicyDescriptionRequest {
+  string tenant_id = 1;
+  string name = 2;
+  string description = 3;
 }
 
 // TPMPolicyRequest names one policy of a tenant.
@@ -3667,13 +3710,23 @@ message TPMPolicyDeleteRequest {
 // TPMPolicyDeleteResponse confirms a policy was deleted.
 message TPMPolicyDeleteResponse {}
 
+// TPMPolicyBranchVerification compares one branch's captured PCR values
+// with the live ones and reports whether its approval is current.
+message TPMPolicyBranchVerification {
+  bool match = 1;
+  repeated uint32 mismatched = 2;
+  bool approved = 3;
+}
+
 // TPMPolicyVerifyResponse compares a policy's captured PCR values with the
-// live ones.
+// live ones, branch by branch.
 message TPMPolicyVerifyResponse {
+  reserved 3;
+  reserved "mismatched";
   string name = 1;
   bool match = 2;
-  repeated uint32 mismatched = 3;
   bool approved = 4;
+  repeated TPMPolicyBranchVerification branches = 5;
 }
 
 // TPMPolicyObjectsResponse lists the "<kind>/<name>" IDs of the objects

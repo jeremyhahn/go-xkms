@@ -110,21 +110,6 @@ func TestValidateBranches_Refusals(t *testing.T) {
 	require.ErrorIs(t, err, ErrEmptyBranch)
 }
 
-// TestCreatePolicyRequest_Branches proves the deprecated Bank and PCRs mean
-// one branch holding one pcr condition, and are refused beside Branches.
-func TestCreatePolicyRequest_Branches(t *testing.T) {
-	got, err := CreatePolicyRequest{Bank: "sha256", PCRs: []uint{7}}.branches()
-	require.NoError(t, err)
-	assert.Equal(t, []Branch{{Conditions: []Condition{{Type: ConditionPCR, Bank: "sha256", PCRs: []uint{7}}}}}, got)
-
-	got, err = CreatePolicyRequest{Branches: []Branch{authValueBranch()}}.branches()
-	require.NoError(t, err)
-	assert.Equal(t, []Branch{authValueBranch()}, got)
-
-	_, err = CreatePolicyRequest{Bank: "sha256", Branches: []Branch{authValueBranch()}}.branches()
-	require.ErrorIs(t, err, ErrAmbiguousPolicyRequest)
-}
-
 // TestTPMBranch_Converts proves stored conditions become the pkg/tpm2
 // conditions their approvals cover, and a corrupt stored record is refused.
 func TestTPMBranch_Converts(t *testing.T) {
@@ -149,33 +134,6 @@ func TestTPMBranch_Converts(t *testing.T) {
 	require.ErrorIs(t, err, pkgtpm2.ErrInvalidPolicyLocality)
 }
 
-// TestPolicy_LegacyView proves the deprecated single-branch fields show the
-// first pcr condition and the first approval, and nothing once revoked or
-// when the policy has no pcr condition.
-func TestPolicy_LegacyView(t *testing.T) {
-	pcr := pcrBranch()
-	pcr.Conditions[0].PCRValues = map[uint][]byte{testPCR: {1}}
-	pcr.Conditions[0].PCRDigest = []byte{2}
-	p := &Policy{
-		Branches:  []Branch{authValueBranch(), pcr},
-		Approvals: []*Approval{{Epoch: 3}, {Epoch: 3}},
-	}
-	p.syncLegacyView()
-	assert.Equal(t, "sha256", p.Bank)
-	assert.Equal(t, []uint{testPCR}, p.PCRs)
-	assert.Equal(t, []byte{2}, p.PCRDigest)
-	assert.Equal(t, uint64(3), p.Approval.Epoch)
-	assert.True(t, p.hasAuthValueCondition())
-
-	p.revoke()
-	p.Branches = []Branch{authValueBranch()}
-	p.Approvals = p.Approvals[:1]
-	p.syncLegacyView()
-	assert.Nil(t, p.Approval)
-	assert.Empty(t, p.Bank)
-	assert.Nil(t, p.PCRs)
-}
-
 // TestPolicy_Approved proves a policy is approved only when every branch
 // holds an approval.
 func TestPolicy_Approved(t *testing.T) {
@@ -185,20 +143,32 @@ func TestPolicy_Approved(t *testing.T) {
 	assert.False(t, (&Policy{Branches: two, Approvals: []*Approval{{}}}).approved())
 	assert.False(t, (&Policy{}).approved())
 	assert.False(t, (&Policy{Branches: []Branch{pcrBranch()}}).hasAuthValueCondition())
+	assert.True(t, (&Policy{Branches: two}).hasAuthValueCondition())
+}
+
+// TestPCRBranch proves the convenience constructor builds one branch
+// holding one pcr condition, which validates as requested.
+func TestPCRBranch(t *testing.T) {
+	b := PCRBranch("SHA256", 7, 0)
+	assert.Equal(t, Branch{Conditions: []Condition{{Type: ConditionPCR, Bank: "SHA256", PCRs: []uint{7, 0}}}}, b)
+	got, err := validateBranches([]Branch{b})
+	require.NoError(t, err)
+	assert.Equal(t, []Branch{PCRBranch("sha256", 0, 7)}, got)
+
+	_, err = validateBranches([]Branch{PCRBranch("sha256")})
+	require.ErrorIs(t, err, ErrEmptyPCRSelection)
 }
 
 // TestService_CreateAndDescriptionValidation proves requests are validated
-// before any TPM or registry work: a bad structure, an ambiguous request and
-// an oversized description are refused, and SetDescription refuses an
-// oversized description and an unknown policy.
+// before any TPM or registry work: a bad structure and an oversized
+// description are refused, and SetDescription refuses an oversized
+// description and the built-in policy.
 func TestService_CreateAndDescriptionValidation(t *testing.T) {
 	svc, _ := newOfflineService(t)
 	ctx := context.Background()
 
 	_, err := svc.CreatePolicy(ctx, "acme", CreatePolicyRequest{Name: "boot"})
 	require.ErrorIs(t, err, ErrNoBranches)
-	_, err = svc.CreatePolicy(ctx, "acme", CreatePolicyRequest{Name: "boot", Bank: "sha256", PCRs: []uint{7}, Branches: []Branch{pcrBranch()}})
-	require.ErrorIs(t, err, ErrAmbiguousPolicyRequest)
 	long := strings.Repeat("d", maxDescription+1)
 	var tooLong *DescriptionTooLongError
 	_, err = svc.CreatePolicy(ctx, "acme", CreatePolicyRequest{Name: "boot", Description: long, Branches: []Branch{pcrBranch()}})

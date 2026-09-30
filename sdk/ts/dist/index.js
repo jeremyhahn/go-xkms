@@ -1353,6 +1353,9 @@ var TenantsClient = class {
 
 // src/clients/tpmPolicy.ts
 var BASE20 = "/api/v1/tpm/policies";
+function pcrBranch(bank, pcrs) {
+  return { conditions: [{ type: "pcr", bank, pcrs }] };
+}
 function policyPath(name, action) {
   const path = `${BASE20}/${encodeURIComponent(name)}`;
   return action ? `${path}/${action}` : path;
@@ -1361,7 +1364,7 @@ var TpmPolicyClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
-  /** POST /api/v1/tpm/policies — captures the tenant's live PCR values. */
+  /** POST /api/v1/tpm/policies — captures the live values of its pcr conditions. */
   create(req) {
     return this.http.request("POST", BASE20, { body: req });
   }
@@ -1414,6 +1417,12 @@ var TpmPolicyClient = class {
   setAutoUnseal(name, enabled, tenantId) {
     return this.http.request("POST", policyPath(name, "auto-unseal"), {
       body: { tenant_id: tenantId, name, enabled }
+    });
+  }
+  /** POST /api/v1/tpm/policies/{name}/description — an empty description clears it. */
+  setDescription(name, description, tenantId) {
+    return this.http.request("POST", policyPath(name, "description"), {
+      body: { tenant_id: tenantId, name, description }
     });
   }
   /** GET /api/v1/keys/{id}/tpm-policy?tenant_id=&kind= — the policy an object was created under. */
@@ -1705,6 +1714,7 @@ export {
   parseCreationOptions,
   parseErrorEnvelope,
   parseRequestOptions,
+  pcrBranch,
   resolveAuthPaths
 };
 //# sourceMappingURL=index.js.map

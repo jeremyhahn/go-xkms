@@ -40,12 +40,26 @@ type TPMPolicyRegistry = tpmpolicy.Registry
 // and key store. The caller closes it after use.
 type TPMScopeTPM = tpmpolicy.ScopeTPM
 
-// TPMPolicyDefinition is a stored named TPM policy: its PCR selection, the
-// captured values and its current approval.
+// TPMPolicyDefinition is a stored named TPM policy: its description, its
+// branches with their captured values, and their current approvals.
 type TPMPolicyDefinition = tpmpolicy.Policy
 
 // TPMPolicyCreateParams describes a named TPM policy to create in-process.
 type TPMPolicyCreateParams = tpmpolicy.CreatePolicyRequest
+
+// TPMPolicyDefinitionBranch is one branch of a stored policy: the AND of its
+// conditions.
+type TPMPolicyDefinitionBranch = tpmpolicy.Branch
+
+// TPMPolicyDefinitionCondition is one condition of a stored policy branch.
+type TPMPolicyDefinitionCondition = tpmpolicy.Condition
+
+// TPMPolicyConditionType is the kind of a stored policy condition.
+type TPMPolicyConditionType = tpmpolicy.ConditionType
+
+// TPMPolicyVerificationBranch compares one branch's captured PCR values
+// with the live ones.
+type TPMPolicyVerificationBranch = tpmpolicy.BranchVerification
 
 // TPMPolicyVerification compares a policy's captured PCR values with the
 // live ones.
@@ -114,6 +128,17 @@ const (
 	// TPMObjectPolicyRequest names.
 	TPMObjectKindKey    = transport.TPMObjectKindKey
 	TPMObjectKindSealed = transport.TPMObjectKindSealed
+
+	// TPMPolicyConditionPCR, TPMPolicyConditionAuthValue and
+	// TPMPolicyConditionLocality are the condition types a policy branch
+	// ANDs together.
+	TPMPolicyConditionPCR       = transport.TPMPolicyConditionPCR
+	TPMPolicyConditionAuthValue = transport.TPMPolicyConditionAuthValue
+	TPMPolicyConditionLocality  = transport.TPMPolicyConditionLocality
+
+	// DefaultTPMPolicyBank is the bank a branch spec's pcr condition
+	// selects when it names none.
+	DefaultTPMPolicyBank = transport.DefaultTPMPolicyBank
 )
 
 var (
@@ -145,6 +170,23 @@ var (
 
 	// TPMPolicyScopeName normalizes a tenant ID to its scope name.
 	TPMPolicyScopeName = tpmpolicy.ScopeName
+
+	// TPMPolicyPCRBranch returns an API branch holding one pcr condition:
+	// the whole of a policy that approves one PCR state.
+	TPMPolicyPCRBranch = transport.TPMPolicyPCRBranch
+
+	// ParseTPMPolicyBranch parses a branch spec, the command-line form of
+	// one policy branch: "pcr=[BANK:]LIST", "auth_value" and
+	// "locality=LIST" joined by ";".
+	ParseTPMPolicyBranch = transport.ParseTPMPolicyBranch
+
+	// TPMPolicyBranches returns the branches a command line describes: the
+	// parsed branch specs, or the one pcr branch of a PCR selection.
+	TPMPolicyBranches = transport.TPMPolicyBranches
+
+	// NewTPMPolicyPCRBranch returns an in-process branch holding one pcr
+	// condition.
+	NewTPMPolicyPCRBranch = tpmpolicy.PCRBranch
 )
 
 // TPM policy service errors.
@@ -158,4 +200,18 @@ var (
 	ErrTPMModeNone          = tpmpolicy.ErrTPMModeNone
 	ErrTPMVTPMUnavailable   = tpmpolicy.ErrVTPMUnavailable
 	ErrTPMNotVTPMMode       = tpmpolicy.ErrNotVTPMMode
+
+	// Policy structure errors.
+	ErrTPMPolicyNoBranches        = tpmpolicy.ErrNoBranches
+	ErrTPMPolicyEmptyBranch       = tpmpolicy.ErrEmptyBranch
+	ErrTPMPolicyEmptyPCRSelection = tpmpolicy.ErrEmptyPCRSelection
+	ErrTPMPolicyEmptyLocalities   = tpmpolicy.ErrEmptyLocalitySelection
+	ErrTPMPolicyPCRValuesSupplied = tpmpolicy.ErrPCRValuesSupplied
+
+	// Branch spec errors (ParseTPMPolicyBranch).
+	ErrTPMPolicyBranchEmpty      = transport.ErrTPMPolicyBranchEmpty
+	ErrTPMPolicyConditionUnknown = transport.ErrTPMPolicyConditionUnknown
+	ErrTPMPolicyConditionValue   = transport.ErrTPMPolicyConditionValue
+	ErrTPMPolicyNoSelection      = transport.ErrTPMPolicyNoSelection
+	ErrTPMPolicyPCRsAndBranches  = transport.ErrTPMPolicyPCRsAndBranches
 )

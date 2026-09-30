@@ -185,6 +185,18 @@ func (h *TPMPolicyHandlers) AutoUnsealHandler(w http.ResponseWriter, r *http.Req
 	respond(w, resp, err, http.StatusOK)
 }
 
+// DescriptionHandler handles POST /api/v1/tpm/policies/{name}/description.
+func (h *TPMPolicyHandlers) DescriptionHandler(w http.ResponseWriter, r *http.Request) {
+	var req transport.TPMPolicyDescriptionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+	req.Name = chi.URLParam(r, "name")
+	resp, err := h.servicer.TPMPolicySetDescription(r.Context(), &req)
+	respond(w, resp, err, http.StatusOK)
+}
+
 // DeletePolicyHandler handles DELETE /api/v1/tpm/policies/{name}. Its
 // optional body carries owner_auth; tenant_id comes from the body or the
 // query.

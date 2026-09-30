@@ -90,10 +90,6 @@ var (
 	// ErrEmptyBranch is returned for a branch without conditions.
 	ErrEmptyBranch = errors.New("tpmpolicy: a policy branch must have at least one condition")
 
-	// ErrAmbiguousPolicyRequest is returned for a CreatePolicyRequest that
-	// sets both Branches and the deprecated Bank and PCRs.
-	ErrAmbiguousPolicyRequest = errors.New("tpmpolicy: a policy request sets both branches and a bank or PCR selection")
-
 	// ErrPCRValuesSupplied is returned for a condition that carries PCR
 	// values or a PCR digest: they are captured from the TPM, never
 	// supplied.

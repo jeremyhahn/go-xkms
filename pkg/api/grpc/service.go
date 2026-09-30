@@ -659,12 +659,13 @@ func (s *Service) RotateKey(ctx context.Context, req *pb.RotateKeyRequest) (*pb.
 	}
 
 	return &pb.RotateKeyResponse{
-		KeyId:        resp.KeyID,
-		Backend:      req.Backend,
-		KeyType:      resp.KeyType,
-		PublicKeyPem: resp.PublicKeyPEM,
-		RotatedAt:    timestamppb.Now(),
-		KeyVersion:   resp.KeyVersion,
+		KeyId:                      resp.KeyID,
+		Backend:                    req.Backend,
+		KeyType:                    resp.KeyType,
+		PublicKeyPem:               resp.PublicKeyPEM,
+		RotatedAt:                  timestamppb.Now(),
+		KeyVersion:                 resp.KeyVersion,
+		CertificateReissueRequired: resp.CertificateReissueRequired,
 	}, nil
 }
 

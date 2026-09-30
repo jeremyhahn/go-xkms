@@ -75,7 +75,8 @@ func TestCLI_TPMPolicy_Lifecycle(t *testing.T) {
 	RunXKeyExpectFailure(t, binary, "", tpmPolicyArgs(device, "policy", "get", "boot")...)
 }
 
-// TestCLI_TPMPolicy_CreateRequiresPCRs refuses a policy with no PCRs.
+// TestCLI_TPMPolicy_CreateRequiresPCRs refuses a policy with neither PCRs
+// nor a branch.
 func TestCLI_TPMPolicy_CreateRequiresPCRs(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
@@ -83,8 +84,8 @@ func TestCLI_TPMPolicy_CreateRequiresPCRs(t *testing.T) {
 	device := swtpmDevicePath(t)
 
 	out := RunXKeyExpectFailure(t, binary, "", tpmPolicyArgs(device, "policy", "create", "boot")...)
-	if !strings.Contains(out, "--pcrs is required") {
-		t.Errorf("expected the missing --pcrs error, got: %s", out)
+	if !strings.Contains(out, "needs a PCR selection or at least one branch") {
+		t.Errorf("expected the missing selection error, got: %s", out)
 	}
 }
 

@@ -1,6 +1,6 @@
 # TPM Policies and TPM Tenancy — Architecture
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 This is the design for named TPM policies that many keys and sealed objects
 share, for a registry that records which keys use which policy, and for
@@ -137,8 +137,9 @@ approval is current". The server makes no software comparison.
 ## Policy-authority lifecycle
 
 1. **Binding record.** Each object stores a binding record beside its blobs
-   (`.tpmpolicy`, format `XTPB` v1): scope, policy, index, hash and whether it
-   has an auth-value branch. The session code reads this record, not the
+   (`.tpmpolicy`, format `XTPB` v2): scope, policy, index, hash, whether it
+   has an outer auth-value branch, and whether the policy has an
+   `auth_value` condition. Version 1 records still decode. The session code reads this record, not the
    caller's attributes.
 2. **Scope creation** runs when a tenant's `tpm.mode` becomes `shared` or
    `vtpm`, and at first boot for `system`. It creates the scope's storage

@@ -53,6 +53,8 @@ type mockKeyStore struct {
 	backend     types.KeyProvider
 	closeError  error
 	listKeysErr error
+	// listCertsErr, when set, is returned by ListCerts.
+	listCertsErr error
 	// storeType overrides Type()'s default of StoreSoftware when set.
 	storeType types.StoreType
 	// generateErr, when set, is returned by GenerateECDSA instead of a key.
@@ -192,6 +194,9 @@ func (m *mockKeyStore) GetCertChain(_ context.Context, keyID string) ([]*x509.Ce
 }
 
 func (m *mockKeyStore) ListCerts(_ context.Context) ([]string, error) {
+	if m.listCertsErr != nil {
+		return nil, m.listCertsErr
+	}
 	certIDs := make([]string, 0, len(m.certs))
 	for id := range m.certs {
 		certIDs = append(certIDs, id)

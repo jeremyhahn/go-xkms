@@ -852,6 +852,13 @@ func (m *mockService) TPMPolicySetAutoUnseal(context.Context, *transport.TPMPoli
 	return &transport.TPMPolicy{}, nil
 }
 
+func (m *mockService) TPMPolicySetDescription(context.Context, *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.TPMPolicy{}, nil
+}
+
 func (m *mockService) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	if m.shouldFail {
 		return nil, errMock

@@ -174,19 +174,24 @@ func TestAllKeyVersionsCmds(t *testing.T) {
 }
 
 // TestKeyRotateAllCmd sends the tenant flag and prints each key's result,
-// exiting non-zero when a key was not rotated.
+// succeeding when keys were only skipped and exiting non-zero when a key
+// failed.
 func TestKeyRotateAllCmd(t *testing.T) {
 	mock := &mockKeyVersionClient{scope: &client.RotateScopeKeysResponse{
-		TenantID: "acme", Rotated: 1,
-		Results: []client.KeyRotationResult{{Backend: "software", KeyID: "k", KeyVersion: 3}},
+		TenantID: "acme", Rotated: 1, Skipped: 1,
+		Results: []client.KeyRotationResult{
+			{Backend: "software", KeyID: "k", State: client.KeyRotationRotated, KeyVersion: 3},
+			{Backend: "software", KeyID: "tls", State: client.KeyRotationSkipped, Reason: "has a certificate; re-issue after rotating it explicitly"},
+		},
 	}}
 	out, code := runKeyVersionCmd(t, mock, "text", keyRotateAllCmd, nil, map[string]string{"tenant": "acme"})
-	assert.Equal(t, -1, code)
+	assert.Equal(t, -1, code, "a skipped key is not a failure")
 	assert.Equal(t, &client.RotateScopeKeysRequest{TenantID: "acme"}, mock.requests["rotate-all"])
-	assert.Contains(t, out, "1 rotated, 0 failed")
+	assert.Contains(t, out, "1 rotated, 1 skipped, 0 failed")
+	assert.Contains(t, out, "has a certificate")
 
 	mock.scope.Failed = 1
-	mock.scope.Results = append(mock.scope.Results, client.KeyRotationResult{Backend: "software", KeyID: "x", Error: "cannot be rotated"})
+	mock.scope.Results = append(mock.scope.Results, client.KeyRotationResult{Backend: "software", KeyID: "x", State: client.KeyRotationFailed, Error: "cannot be rotated"})
 	out, code = runKeyVersionCmd(t, mock, "text", keyRotateAllCmd, nil, nil)
 	assert.NotEqual(t, -1, code, "a partial rotation fails the command")
 	assert.Contains(t, out, "cannot be rotated")
@@ -199,6 +204,12 @@ func TestKeyRotateCmd_ReportsTheNewVersion(t *testing.T) {
 	out, code := runKeyVersionCmd(t, mock, "text", keyRotateCmd, []string{"k"}, nil)
 	assert.Equal(t, -1, code)
 	assert.Contains(t, out, "current version 2")
+	assert.NotContains(t, out, "re-issue")
+
+	mock.rotated.CertificateReissueRequired = true
+	out, code = runKeyVersionCmd(t, mock, "text", keyRotateCmd, []string{"k"}, nil)
+	assert.Equal(t, -1, code, "a certificate to re-issue is a warning, not a failure")
+	assert.Contains(t, out, "re-issue it for version 2")
 
 	mock.err = errTPMRunBoom
 	_, code = runKeyVersionCmd(t, mock, "text", keyRotateCmd, []string{"k"}, nil)

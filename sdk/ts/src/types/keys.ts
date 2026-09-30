@@ -116,6 +116,11 @@ export interface RotateKeyResponse {
   message?: string;
   /** The version the rotation created, now current. */
   key_version?: number;
+  /**
+   * The key has a certificate, which still certifies the previous version:
+   * issue a new one for the new version.
+   */
+  certificate_reissue_required?: boolean;
 }
 
 /** Mirrors pkg/api/rest/types.go EncryptRequest. */

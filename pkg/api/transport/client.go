@@ -453,8 +453,8 @@ type SealStoreService interface {
 // caller may address any tenant through the request's TenantID. The tenant
 // TPM mode and vTPM operations are system-scope only.
 type TPMPolicyService interface {
-	// TPMPolicyCreate creates a named policy over the live PCR values of
-	// the tenant's TPM.
+	// TPMPolicyCreate creates a named policy of branches, capturing the
+	// values of its pcr conditions from the tenant's TPM.
 	TPMPolicyCreate(ctx context.Context, req *TPMPolicyCreateRequest) (*TPMPolicy, error)
 
 	// TPMPolicyGet returns a named policy.
@@ -471,7 +471,7 @@ type TPMPolicyService interface {
 	TPMPolicyRevoke(ctx context.Context, req *TPMPolicyRequest) (*TPMPolicy, error)
 
 	// TPMPolicyVerify compares a policy's captured PCR values with the
-	// live ones.
+	// live ones, branch by branch.
 	TPMPolicyVerify(ctx context.Context, req *TPMPolicyRequest) (*TPMPolicyVerifyResponse, error)
 
 	// TPMPolicyDelete deletes a policy no object is assigned to.
@@ -482,6 +482,9 @@ type TPMPolicyService interface {
 
 	// TPMPolicySetAutoUnseal sets or clears a policy's auto-unseal mark.
 	TPMPolicySetAutoUnseal(ctx context.Context, req *TPMPolicyAutoUnsealRequest) (*TPMPolicy, error)
+
+	// TPMPolicySetDescription replaces a policy's description.
+	TPMPolicySetDescription(ctx context.Context, req *TPMPolicyDescriptionRequest) (*TPMPolicy, error)
 
 	// TPMObjectPolicy returns the policy a TPM key or sealed object was
 	// created under.

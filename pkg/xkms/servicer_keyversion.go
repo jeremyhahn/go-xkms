@@ -16,9 +16,11 @@ package xkms
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -191,6 +193,11 @@ func (s *XKMSService) updateVersions(ctx context.Context, backendName, tenantID,
 // key once however many versions it has -- and reports each key's result. A
 // key that cannot be rotated is reported and the rest are still rotated.
 //
+// Keys a rotation would not serve are skipped, with the reason: keys another
+// subsystem names exactly, so a new version would never be used (see
+// pinnedKeyRules), and keys with a certificate, which would stay on the old
+// version -- rotate those one at a time and re-issue the certificate.
+//
 // A tenant-scoped caller rotates its own tenant; only a system caller may
 // name another, and a system caller naming none rotates the system tenant's
 // own keys. Naming another tenant without system scope is refused with
@@ -208,7 +215,7 @@ func (s *XKMSService) RotateScopeKeys(ctx context.Context, req *transport.Rotate
 	}
 	tenant = recordTenant(tenant)
 
-	resp := &transport.RotateScopeKeysResponse{TenantID: keyversion.TenantSegment(tenant), Results: []transport.KeyRotationResult{}}
+	resp := scopeRotation{&transport.RotateScopeKeysResponse{TenantID: keyversion.TenantSegment(tenant), Results: []transport.KeyRotationResult{}}}
 	for _, name := range s.sortedBackendNames() {
 		base, err := s.LookupBackend(name)
 		if err != nil {
@@ -220,24 +227,128 @@ func (s *XKMSService) RotateScopeKeys(ctx context.Context, req *transport.Rotate
 		}
 		keys, err := b.ListKeys(ctx)
 		if err != nil {
-			resp.Results = append(resp.Results, transport.KeyRotationResult{Backend: name, Error: err.Error()})
-			resp.Failed++
+			resp.add(transport.KeyRotationResult{Backend: name, State: transport.KeyRotationFailed, Error: err.Error()})
+			continue
+		}
+		certified, err := certifiedKeys(ctx, b)
+		if err != nil {
+			resp.add(transport.KeyRotationResult{Backend: name, State: transport.KeyRotationFailed, Error: err.Error()})
 			continue
 		}
 		for _, keyID := range tenantKeyIDs(keys, tenant) {
-			result := transport.KeyRotationResult{Backend: name, KeyID: keyID}
-			rotated, err := s.rotateKey(ctx, b, name, keyID)
-			if err != nil {
-				result.Error = err.Error()
-				resp.Failed++
-			} else {
-				result.KeyVersion = rotated.version
-				resp.Rotated++
-			}
-			resp.Results = append(resp.Results, result)
+			resp.add(s.rotateScopeKey(ctx, b, name, keyID, certified))
 		}
 	}
-	return resp, nil
+	return resp.RotateScopeKeysResponse, nil
+}
+
+// rotateScopeKey rotates one key of RotateScopeKeys, or skips it with the
+// reason when it is pinned by exact name or certified.
+func (s *XKMSService) rotateScopeKey(ctx context.Context, b Backend, backendName, keyID string, certified map[string]struct{}) transport.KeyRotationResult {
+	result := transport.KeyRotationResult{Backend: backendName, KeyID: keyID}
+	if reason, pinned := pinnedKeyReason(b, keyID); pinned {
+		result.State, result.Reason = transport.KeyRotationSkipped, reason
+		return result
+	}
+	if _, ok := certified[keyID]; ok {
+		result.State, result.Reason = transport.KeyRotationSkipped, SkipReasonCertificate
+		return result
+	}
+	rotated, err := s.rotateKey(ctx, b, backendName, keyID)
+	if err != nil {
+		result.State, result.Error = transport.KeyRotationFailed, err.Error()
+		return result
+	}
+	result.State, result.KeyVersion = transport.KeyRotationRotated, rotated.version
+	return result
+}
+
+// scopeRotation accumulates a RotateScopeKeysResponse, counting each result
+// by its state.
+type scopeRotation struct {
+	*transport.RotateScopeKeysResponse
+}
+
+// add records result and counts it.
+func (r scopeRotation) add(result transport.KeyRotationResult) {
+	r.Results = append(r.Results, result)
+	switch result.State {
+	case transport.KeyRotationRotated:
+		r.Rotated++
+	case transport.KeyRotationSkipped:
+		r.Skipped++
+	default:
+		r.Failed++
+	}
+}
+
+// Reasons RotateScopeKeys skips a key.
+const (
+	// SkipReasonPIVSlot is a TPM2 PIV slot key ("piv-<slot>"): the slot
+	// resolves its key by that exact name.
+	SkipReasonPIVSlot = "a PIV slot key: the slot names it exactly, so a new version would never be used"
+
+	// SkipReasonTPMSealedObject is a TPM2 sealed object Seal named
+	// ("xkms-sealing-key-tpm2-<uuid>"): unseal names it exactly, and a
+	// sealed object has no versions.
+	SkipReasonTPMSealedObject = "a TPM2 sealed object: unseal names it exactly, so a new version would never be used"
+
+	// SkipReasonBarrierSealKey is the barrier's seal wrapping key
+	// (seal.SealKeyCN): the barrier and the platform store resolve it by
+	// that exact name.
+	SkipReasonBarrierSealKey = "the barrier's seal wrapping key: it is resolved by exact name, so a new version would never be used"
+
+	// SkipReasonCertificate is a key with a certificate, which a rotation
+	// would silently leave on the old version.
+	SkipReasonCertificate = "has a certificate; re-issue after rotating it explicitly"
+)
+
+// pinnedKeyRule matches keys another subsystem names exactly.
+type pinnedKeyRule struct {
+	// tpm2Only restricts the rule to TPM2 backends.
+	tpm2Only bool
+	match    func(keyID string) bool
+	reason   string
+}
+
+// pinnedKeyRules are the keys RotateScopeKeys never rotates: their owner
+// resolves them by exact name rather than through the key's version record,
+// so a new version would be created and never used.
+var pinnedKeyRules = []pinnedKeyRule{
+	{tpm2Only: true, match: isPIVSlotCN, reason: SkipReasonPIVSlot},
+	{tpm2Only: true, match: func(keyID string) bool {
+		return strings.HasPrefix(keyID, tpmSealedObjectPrefix)
+	}, reason: SkipReasonTPMSealedObject},
+	{match: func(keyID string) bool { return keyID == seal.SealKeyCN }, reason: SkipReasonBarrierSealKey},
+}
+
+// pinnedKeyReason reports whether keyID, a key of b, is pinned by exact name
+// and why.
+func pinnedKeyReason(b Backend, keyID string) (string, bool) {
+	tpm2 := isTPM2Backend(b)
+	for _, rule := range pinnedKeyRules {
+		if (tpm2 || !rule.tpm2Only) && rule.match(keyID) {
+			return rule.reason, true
+		}
+	}
+	return "", false
+}
+
+// certifiedKeys returns the names of b's keys that have a certificate.
+// Certificates are stored under the key reference their caller gave -- the
+// bare name or a "backend:type:algo:name" key ID -- whose last segment is
+// the key's name.
+func certifiedKeys(ctx context.Context, b Backend) (map[string]struct{}, error) {
+	ids, err := b.ListCerts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		name := id[strings.LastIndex(id, ":")+1:]
+		names[keyversion.BaseKeyID(strings.TrimSpace(name))] = struct{}{}
+	}
+	return names, nil
 }
 
 // tenantKeyIDs returns the IDs of tenant's keys among keys, each once and

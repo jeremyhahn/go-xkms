@@ -4,7 +4,7 @@ import {context} from '../models';
 import {services} from '../models';
 import {transport} from '../models';
 
-export function CreatePolicy(arg1:string,arg2:string,arg3:Array<number>,arg4:boolean,arg5:string):Promise<services.TPMPolicyInfo>;
+export function CreatePolicy(arg1:string,arg2:string,arg3:Array<transport.TPMPolicyBranch>,arg4:boolean,arg5:string):Promise<services.TPMPolicyInfo>;
 
 export function DeletePolicy(arg1:string,arg2:string):Promise<void>;
 
@@ -29,6 +29,8 @@ export function SetAutoUnseal(arg1:string,arg2:boolean):Promise<services.TPMPoli
 export function SetClient(arg1:transport.TPMPolicyService):Promise<void>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
+
+export function SetDescription(arg1:string,arg2:string):Promise<services.TPMPolicyInfo>;
 
 export function SetLocal(arg1:services.LocalTPMPolicies):Promise<void>;
 

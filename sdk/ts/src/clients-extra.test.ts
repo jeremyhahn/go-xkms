@@ -33,6 +33,7 @@ import { describe, it, expect } from 'vitest';
 import { createClient } from './client.js';
 import { newFakeFetch } from './testutil.js';
 import { XkmsApiError } from './errors.js';
+import { pcrBranch } from './clients/tpmPolicy.js';
 
 const BASE = 'https://xkms.example.com';
 
@@ -509,10 +510,22 @@ describe('TpmPolicyClient (named TPM policy lifecycle)', () => {
     const fake = newFakeFetch({ body: {} });
     const c = make(fake);
 
-    await c.tpmPolicies.create({ name: 'boot', bank: 'sha256', pcrs: [0, 1, 7], auto_unseal: true });
+    const branches = [
+      pcrBranch('sha256', [0, 1, 7]),
+      { conditions: [{ type: 'auth_value' as const }, { type: 'locality' as const, localities: [0] }] },
+    ];
+    await c.tpmPolicies.create({ name: 'boot', description: 'firmware or PIN', branches, auto_unseal: true });
     expect(fake.calls[0]?.method).toBe('POST');
     expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/tpm/policies`);
-    expect(fake.calls[0]?.body).toEqual({ name: 'boot', bank: 'sha256', pcrs: [0, 1, 7], auto_unseal: true });
+    expect(fake.calls[0]?.body).toEqual({
+      name: 'boot',
+      description: 'firmware or PIN',
+      branches: [
+        { conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 1, 7] }] },
+        { conditions: [{ type: 'auth_value' }, { type: 'locality', localities: [0] }] },
+      ],
+      auto_unseal: true,
+    });
 
     await c.tpmPolicies.get('boot', 't1');
     expect(fake.calls[1]?.method).toBe('GET');
@@ -548,6 +561,25 @@ describe('TpmPolicyClient (named TPM policy lifecycle)', () => {
     await c.tpmPolicies.keyPolicy('db-key', { tenantId: 't1', kind: 'sealed' });
     expect(fake.calls[7]?.method).toBe('GET');
     expect(fake.calls[7]?.url).toBe(`${BASE}/api/v1/keys/db-key/tpm-policy?tenant_id=t1&kind=sealed`);
+
+    fake.respond({ body: { name: 'boot', description: 'firmware', branches: [], index: 1, approved: true, created_at: '' } });
+    const described = await c.tpmPolicies.setDescription('boot', 'firmware', 't1');
+    expect(fake.calls[8]?.method).toBe('POST');
+    expect(fake.calls[8]?.url).toBe(`${BASE}/api/v1/tpm/policies/boot/description`);
+    expect(fake.calls[8]?.body).toEqual({ tenant_id: 't1', name: 'boot', description: 'firmware' });
+    expect(described.description).toBe('firmware');
+  });
+
+  it('surfaces a refused description change as an API error', async () => {
+    const fake = newFakeFetch({ status: 400, body: { error: 'tpmpolicy: description too long' } });
+    const c = make(fake);
+    const err = await c.tpmPolicies.setDescription('boot', 'x'.repeat(5000)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(XkmsApiError);
+    expect((err as XkmsApiError).status).toBe(400);
+  });
+
+  it('builds the one-branch policy over a PCR selection', () => {
+    expect(pcrBranch('sha384', [7])).toEqual({ conditions: [{ type: 'pcr', bank: 'sha384', pcrs: [7] }] });
   });
 
   it('deletes a policy (204, no body) and surfaces a 409 conflict listing its assigned objects', async () => {

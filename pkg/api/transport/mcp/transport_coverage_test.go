@@ -127,7 +127,7 @@ func newCatchAllMCPServer(t *testing.T) (string, func()) {
 			if err := json.Unmarshal(req.Params, &params); err != nil {
 				return jsonrpcResponse{ErrorText: err.Error()}
 			}
-			d, _ := json.Marshal(transport.TPMPolicy{Name: params.Name, TenantID: params.TenantID, Bank: "sha256", PCRs: []uint{7}, Approved: true})
+			d, _ := json.Marshal(transport.TPMPolicy{Name: params.Name, TenantID: params.TenantID, Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{7})}, Approved: true})
 			return jsonrpcResponse{Result: d}
 		case "xkms.tenantVTPMStatus":
 			var params map[string]string

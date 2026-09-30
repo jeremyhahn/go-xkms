@@ -11,6 +11,7 @@
   import Toggle from '$lib/components/Toggle.svelte';
   import { callBackend } from '$lib/api/backend';
   import type { TPMPolicyInfo } from '$lib/api/backend';
+  import { policySummary } from '$lib/utils/tpmPolicy';
 
   /** Effective sealing backend ("tpm2", "software", ...). */
   export let backend = '';
@@ -45,7 +46,7 @@
       <select id="seal-tpm-policy" class="form-select" bind:value={tpmPolicy}>
         <option value="platform">Platform (built-in): platform PCR or password</option>
         {#each namedPolicies as policy (policy.name)}
-          <option value={policy.name}>{policy.name}: {policy.bank} PCR {(policy.pcrs ?? []).join(', ')}</option>
+          <option value={policy.name}>{policy.name}: {policySummary(policy)}</option>
         {/each}
         <option value="">None</option>
       </select>

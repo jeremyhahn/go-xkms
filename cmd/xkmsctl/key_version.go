@@ -210,28 +210,29 @@ func printAllKeyVersions(p *Printer, result any) {
 }
 
 // printRotateScopeKeys prints a scope rotation's results, failing the
-// command when any key was not rotated.
+// command when any key failed. A skipped key is not a failure: it is left
+// alone on purpose, and its reason says why.
 func printRotateScopeKeys(p *Printer, result any) {
 	resp, ok := result.(*client.RotateScopeKeysResponse)
 	if !ok {
 		return
 	}
 	if !printJSONResult(p, result) {
-		p.printf("Tenant %s: %d rotated, %d failed\n", resp.TenantID, resp.Rotated, resp.Failed)
+		p.printf("Tenant %s: %d rotated, %d skipped, %d failed\n", resp.TenantID, resp.Rotated, resp.Skipped, resp.Failed)
 		if len(resp.Results) > 0 {
-			p.printf("%-16s %-32s %-8s %s\n", "BACKEND", "KEY", "VERSION", "ERROR")
-			p.println(repeatString("-", 72))
+			p.printf("%-16s %-32s %-8s %-8s %s\n", "BACKEND", "KEY", "STATE", "VERSION", "DETAIL")
+			p.println(repeatString("-", 80))
 		}
 		for _, r := range resp.Results {
 			version := "-"
 			if r.KeyVersion != 0 {
 				version = strconv.FormatUint(uint64(r.KeyVersion), 10)
 			}
-			p.printf("%-16s %-32s %-8s %s\n", r.Backend, truncateString(orDash(r.KeyID), 32), version, r.Error)
+			p.printf("%-16s %-32s %-8s %-8s %s\n", r.Backend, truncateString(orDash(r.KeyID), 32), r.State, version, r.Reason+r.Error)
 		}
 	}
 	if resp.Failed > 0 {
-		handleError(&WrappedDetailError{Sentinel: ErrRotateScopeKeysPartial, Detail: fmt.Sprintf("%d of %d", resp.Failed, resp.Rotated+resp.Failed)})
+		handleError(&WrappedDetailError{Sentinel: ErrRotateScopeKeysPartial, Detail: fmt.Sprintf("%d of %d", resp.Failed, len(resp.Results))})
 	}
 }
 

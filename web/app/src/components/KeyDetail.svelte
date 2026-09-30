@@ -136,8 +136,14 @@
   async function rotate(): Promise<void> {
     opBusy = true;
     try {
-      await getSDKClient().keys.rotate(keyInfo.key_id, keyInfo.backend);
+      const resp = await getSDKClient().keys.rotate(keyInfo.key_id, keyInfo.backend);
       showToast("success", `Key "${keyInfo.key_id}" rotated.`);
+      if (resp.certificate_reissue_required) {
+        showToast(
+          "warning",
+          `Key "${keyInfo.key_id}" has a certificate, which still certifies the previous version: re-issue it.`,
+        );
+      }
       onChanged();
     } catch (e) {
       showToast("error", e instanceof Error ? e.message : String(e));

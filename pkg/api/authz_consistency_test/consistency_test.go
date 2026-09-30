@@ -265,6 +265,7 @@ var canonicalCapabilities = map[string]capability{
 	"tpmPolicy.delete":         {GRPC: "TPMPolicyDelete", MCP: "tpm.policy.delete", REST: "DELETE /api/v1/tpm/policies/{name}"},
 	"tpmPolicy.objects":        {GRPC: "TPMPolicyObjects", MCP: "tpm.policy.objects", REST: "GET /api/v1/tpm/policies/{name}/objects"},
 	"tpmPolicy.autoUnseal":     {GRPC: "TPMPolicySetAutoUnseal", MCP: "tpm.policy.autoUnseal", REST: "POST /api/v1/tpm/policies/{name}/auto-unseal"},
+	"tpmPolicy.setDescription": {GRPC: "TPMPolicySetDescription", MCP: "tpm.policy.setDescription", REST: "POST /api/v1/tpm/policies/{name}/description"},
 	"tpmPolicy.objectPolicy":   {GRPC: "TPMObjectPolicy", MCP: "tpm.object.policy", REST: "GET /api/v1/keys/{id}/tpm-policy"},
 	"tpmPolicy.rotate":         {GRPC: "TPMPolicyRotateAuthority", MCP: "tpm.authority.rotate", REST: "POST /api/v1/tpm/authority/rotate"},
 	"users.bindCert":           {GRPC: "BindUserCert", MCP: "user.bindCert", REST: "POST /api/v1/users/{username}/cert-bindings"},

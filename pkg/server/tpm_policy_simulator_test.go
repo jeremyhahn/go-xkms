@@ -111,11 +111,12 @@ func TestTPMPolicy_EndToEnd(t *testing.T) {
 	svc := newTPMPolicyServer(t)
 	sys := identityCtx(qrdbsdk.SystemTenantID)
 
-	created, err := svc.TPMPolicyCreate(sys, &transport.TPMPolicyCreateRequest{Name: "boot", Bank: "sha256", PCRs: []uint{policyPCR}})
+	created, err := svc.TPMPolicyCreate(sys, &transport.TPMPolicyCreateRequest{Name: "boot", Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{policyPCR})}})
 	require.NoError(t, err)
 	assert.Equal(t, "boot", created.Name)
 	assert.True(t, created.Approved)
-	assert.Len(t, created.PCRValues, 1)
+	require.Len(t, created.Branches, 1)
+	assert.Len(t, created.Branches[0].Conditions[0].PCRValues, 1)
 
 	pubA := generateTPMKey(t, svc, qrdbsdk.SystemTenantID, "boot-signer-a", "boot")
 	pubB := generateTPMKey(t, svc, qrdbsdk.SystemTenantID, "boot-signer-b", "boot")
@@ -177,7 +178,7 @@ func TestTPMPolicy_TenantsAreIsolated(t *testing.T) {
 	svc := newTPMPolicyServer(t)
 	acme, globex := identityCtx("acme"), identityCtx("globex")
 
-	_, err := svc.TPMPolicyCreate(acme, &transport.TPMPolicyCreateRequest{Name: "acme-boot", Bank: "sha256", PCRs: []uint{policyPCR}})
+	_, err := svc.TPMPolicyCreate(acme, &transport.TPMPolicyCreateRequest{Name: "acme-boot", Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{policyPCR})}})
 	require.NoError(t, err)
 
 	acmePub := generateTPMKey(t, svc, "acme", "signer", "acme-boot")
@@ -247,7 +248,7 @@ func TestTPMPolicy_ModeNoneRefusesTenantKeys(t *testing.T) {
 func TestTPMPolicy_SealsWithoutKeyIDAreDistinctObjects(t *testing.T) {
 	svc := newTPMPolicyServer(t)
 	sys := identityCtx(qrdbsdk.SystemTenantID)
-	_, err := svc.TPMPolicyCreate(sys, &transport.TPMPolicyCreateRequest{Name: "boot", Bank: "sha256", PCRs: []uint{policyPCR}})
+	_, err := svc.TPMPolicyCreate(sys, &transport.TPMPolicyCreateRequest{Name: "boot", Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{policyPCR})}})
 	require.NoError(t, err)
 
 	first, err := svc.Seal(sys, &transport.SealRequest{Backend: "tpm2", Data: []byte("first"), TPMPolicy: "boot"})

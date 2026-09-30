@@ -146,8 +146,7 @@ func TestRegistry_PolicyLifecycle(t *testing.T) {
 	got, err := r.Policy(ctx, "system", "alpha")
 	require.NoError(t, err, "the empty tenant is the system scope")
 	assert.Equal(t, uint64(2), got.Approvals[0].Epoch)
-	assert.Same(t, got.Approvals[0], got.Approval, "the deprecated view is derived on load")
-	assert.Equal(t, []uint{7}, got.PCRs)
+	assert.Equal(t, []uint{7}, got.Branches[0].Conditions[0].PCRs)
 	assert.ErrorIs(t, r.UpdatePolicy(ctx, "", testPolicy("missing")), ErrPolicyNotFound)
 
 	list, err := r.ListPolicies(ctx, "")

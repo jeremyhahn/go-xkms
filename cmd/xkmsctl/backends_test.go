@@ -1018,6 +1018,10 @@ func (m *mockBackendsClient) TPMPolicySetAutoUnseal(context.Context, *transport.
 	return nil, nil
 }
 
+func (m *mockBackendsClient) TPMPolicySetDescription(context.Context, *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	return nil, nil
+}
+
 func (m *mockBackendsClient) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	return nil, nil
 }

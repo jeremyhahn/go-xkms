@@ -87,6 +87,9 @@ func (m *mockTPMClient) TPMPolicyObjects(_ context.Context, req *client.TPMPolic
 func (m *mockTPMClient) TPMPolicySetAutoUnseal(_ context.Context, req *client.TPMPolicyAutoUnsealRequest) (*client.TPMPolicy, error) {
 	return m.policy, m.record("auto", req)
 }
+func (m *mockTPMClient) TPMPolicySetDescription(_ context.Context, req *client.TPMPolicyDescriptionRequest) (*client.TPMPolicy, error) {
+	return m.policy, m.record("describe", req)
+}
 func (m *mockTPMClient) TPMObjectPolicy(_ context.Context, req *client.TPMObjectPolicyRequest) (*client.TPMObjectPolicyResponse, error) {
 	return m.object, m.record("object", req)
 }
@@ -113,14 +116,25 @@ func (m *mockTPMClient) TenantVTPMStop(_ context.Context, tenantID string) (*cli
 // and exit code (-1 when it did not exit).
 func runTPMCmd(t *testing.T, mock *mockTPMClient, cmd *cobra.Command, args []string, flags map[string]string) (string, int) {
 	t.Helper()
+	pairs := make([][2]string, 0, len(flags))
+	for name, value := range flags {
+		pairs = append(pairs, [2]string{name, value})
+	}
+	return runTPMCmdFlags(t, mock, cmd, args, pairs...)
+}
+
+// runTPMCmdFlags is runTPMCmd with flags set in order, so a repeatable flag
+// can be set more than once.
+func runTPMCmdFlags(t *testing.T, mock *mockTPMClient, cmd *cobra.Command, args []string, flags ...[2]string) (string, int) {
+	t.Helper()
 	resetTPMCmdFlags(t, cmd)
 	t.Cleanup(func() { resetTPMCmdFlags(t, cmd) })
 	withGlobalConfig(t, &Config{
 		OutputFormat:  "text",
 		ClientFactory: func(*Config) (client.Client, error) { return mock, nil },
 	})
-	for name, value := range flags {
-		require.NoError(t, cmd.Flags().Set(name, value))
+	for _, flag := range flags {
+		require.NoError(t, cmd.Flags().Set(flag[0], flag[1]))
 	}
 	code := -1
 	out := captureStdout(t, func() {
@@ -141,41 +155,94 @@ func resetTPMCmdFlags(t *testing.T, cmd *cobra.Command) {
 	})
 }
 
-// TestTPMPolicyCreateCmd sends the policy's name, bank, PCRs, tenant and
-// auto-unseal mark, and prints the created policy.
+// pcrBranch is the one pcr branch --pcrs 0,7 describes.
+func pcrBranch() []client.TPMPolicyBranch {
+	return []client.TPMPolicyBranch{client.TPMPolicyPCRBranch("sha256", []uint{0, 7})}
+}
+
+// TestTPMPolicyCreateCmd sends the policy's name, description, the one pcr
+// branch --pcrs describes, tenant and auto-unseal mark, and prints the
+// created policy.
 func TestTPMPolicyCreateCmd(t *testing.T) {
-	mock := &mockTPMClient{policy: &client.TPMPolicy{Name: "boot", Bank: "sha256", PCRs: []uint{0, 7}, Approved: true, PCRValues: map[uint]string{7: "aa"}}}
+	created := &client.TPMPolicy{Name: "boot", Description: "firmware", Approved: true, Branches: []client.TPMPolicyBranch{{
+		Conditions: []client.TPMPolicyCondition{{Type: "pcr", Bank: "sha256", PCRs: []uint{0, 7}, PCRValues: map[uint]string{7: "aa"}}},
+		Approved:   true,
+	}}}
+	mock := &mockTPMClient{policy: created}
 	out, code := runTPMCmd(t, mock, tpmPolicyCreateCmd, []string{"boot"},
-		map[string]string{"pcrs": "0,7", "tenant": "acme", "auto-unseal": "true"})
+		map[string]string{"pcrs": "0,7", "tenant": "acme", "auto-unseal": "true", "description": "firmware"})
 	assert.Equal(t, -1, code)
 	req := mock.requests["create"].(*client.TPMPolicyCreateRequest)
-	assert.Equal(t, &client.TPMPolicyCreateRequest{TenantID: "acme", Name: "boot", Bank: "sha256", PCRs: []uint{0, 7}, AutoUnseal: true}, req)
+	assert.Equal(t, &client.TPMPolicyCreateRequest{TenantID: "acme", Name: "boot", Description: "firmware", Branches: pcrBranch(), AutoUnseal: true}, req)
 	assert.Contains(t, out, "TPM Policy Created")
+	assert.Contains(t, out, "Description: firmware")
+	assert.Contains(t, out, "pcr=sha256:0,7")
 	assert.Contains(t, out, "PCR 7")
 }
 
-// TestTPMPolicyCreateCmd_Refusals exits non-zero without --pcrs, with a
-// negative PCR, or when the server refuses.
+// TestTPMPolicyCreateCmd_Branches sends each --branch as one branch, in
+// order.
+func TestTPMPolicyCreateCmd_Branches(t *testing.T) {
+	mock := &mockTPMClient{policy: &client.TPMPolicy{Name: "strict"}}
+	_, code := runTPMCmdFlags(t, mock, tpmPolicyCreateCmd, []string{"strict"},
+		[2]string{"branch", "pcr=sha384:0,7;auth_value;locality=0"}, [2]string{"branch", "auth_value"})
+	assert.Equal(t, -1, code)
+	req := mock.requests["create"].(*client.TPMPolicyCreateRequest)
+	assert.Equal(t, []client.TPMPolicyBranch{
+		{Conditions: []client.TPMPolicyCondition{
+			{Type: "pcr", Bank: "sha384", PCRs: []uint{0, 7}},
+			{Type: "auth_value"},
+			{Type: "locality", Localities: []uint{0}},
+		}},
+		{Conditions: []client.TPMPolicyCondition{{Type: "auth_value"}}},
+	}, req.Branches)
+}
+
+// TestTPMPolicyCreateCmd_Refusals exits non-zero, sending nothing, without
+// --pcrs or --branch, with a negative PCR, with --pcrs or --bank beside
+// --branch, or with a malformed --branch; and when the server refuses.
 func TestTPMPolicyCreateCmd_Refusals(t *testing.T) {
-	_, code := runTPMCmd(t, &mockTPMClient{}, tpmPolicyCreateCmd, []string{"boot"}, nil)
-	assert.Equal(t, 1, code, "--pcrs is required")
+	for name, flags := range map[string]map[string]string{
+		"no selection":    nil,
+		"negative PCR":    {"pcrs": "-1"},
+		"pcrs and branch": {"pcrs": "7", "branch": "auth_value"},
+		"bank and branch": {"bank": "sha1", "branch": "auth_value"},
+		"bad branch":      {"branch": "time=5"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mock := &mockTPMClient{}
+			_, code := runTPMCmd(t, mock, tpmPolicyCreateCmd, []string{"boot"}, flags)
+			assert.Equal(t, 1, code)
+			assert.Empty(t, mock.requests, "nothing is sent")
+		})
+	}
 
-	mock := &mockTPMClient{}
-	_, code = runTPMCmd(t, mock, tpmPolicyCreateCmd, []string{"boot"}, map[string]string{"pcrs": "-1"})
-	assert.Equal(t, 1, code, "a negative PCR is refused")
-	assert.Empty(t, mock.requests, "nothing is sent")
+	_, code := runTPMCmd(t, &mockTPMClient{err: errTPMRunBoom}, tpmPolicyCreateCmd, []string{"boot"}, map[string]string{"pcrs": "7"})
+	assert.Equal(t, 1, code)
+}
 
-	_, code = runTPMCmd(t, &mockTPMClient{err: errTPMRunBoom}, tpmPolicyCreateCmd, []string{"boot"}, map[string]string{"pcrs": "7"})
+// TestTPMPolicyDescribeCmd sends the name, tenant and text, and exits
+// non-zero on a server error.
+func TestTPMPolicyDescribeCmd(t *testing.T) {
+	mock := &mockTPMClient{policy: &client.TPMPolicy{Name: "boot", Description: "firmware"}}
+	out, code := runTPMCmd(t, mock, tpmPolicyDescribeCmd, []string{"boot", "firmware"}, map[string]string{"tenant": "acme"})
+	assert.Equal(t, -1, code)
+	assert.Equal(t, &client.TPMPolicyDescriptionRequest{TenantID: "acme", Name: "boot", Description: "firmware"}, mock.requests["describe"])
+	assert.Contains(t, out, "Description: firmware")
+
+	_, code = runTPMCmd(t, &mockTPMClient{err: errTPMRunBoom}, tpmPolicyDescribeCmd, []string{"boot", ""}, nil)
 	assert.Equal(t, 1, code)
 }
 
 // TestTPMPolicyListCmd prints a table of policies, or a note when there
 // are none, and exits non-zero on a server error.
 func TestTPMPolicyListCmd(t *testing.T) {
-	mock := &mockTPMClient{list: &client.TPMPolicyListResponse{Policies: []client.TPMPolicy{{Name: "boot", Bank: "sha256", PCRs: []uint{7}}}}}
+	mock := &mockTPMClient{list: &client.TPMPolicyListResponse{Policies: []client.TPMPolicy{{Name: "boot", Description: "firmware", Branches: pcrBranch()}}}}
 	out, code := runTPMCmd(t, mock, tpmPolicyListCmd, nil, map[string]string{"tenant": "acme"})
 	assert.Equal(t, -1, code)
 	assert.Contains(t, out, "boot")
+	assert.Contains(t, out, "pcr=sha256:0,7")
+	assert.Contains(t, out, "firmware")
 	assert.Equal(t, "acme", mock.requests["list"].(*client.TPMPolicyListRequest).TenantID)
 
 	out, _ = runTPMCmd(t, &mockTPMClient{list: &client.TPMPolicyListResponse{}}, tpmPolicyListCmd, nil, nil)
@@ -215,17 +282,21 @@ func TestTPMPolicyNameCmds(t *testing.T) {
 	}
 }
 
-// TestTPMPolicyVerifyCmd succeeds only when the live PCRs match and the
-// policy is approved.
+// TestTPMPolicyVerifyCmd reports each branch and succeeds only when every
+// branch's live PCRs match and it is approved.
 func TestTPMPolicyVerifyCmd(t *testing.T) {
-	out, code := runTPMCmd(t, &mockTPMClient{verification: &client.TPMPolicyVerifyResponse{Name: "boot", Match: true, Approved: true}},
-		tpmPolicyVerifyCmd, []string{"boot"}, nil)
+	out, code := runTPMCmd(t, &mockTPMClient{verification: &client.TPMPolicyVerifyResponse{
+		Name: "boot", Match: true, Approved: true, Branches: []client.TPMPolicyBranchVerification{{Match: true, Approved: true}},
+	}}, tpmPolicyVerifyCmd, []string{"boot"}, nil)
 	assert.Equal(t, -1, code)
+	assert.Contains(t, out, "Branch 0: PCRs match, approved: true")
 	assert.Contains(t, out, "matches the live PCR values")
 
-	_, code = runTPMCmd(t, &mockTPMClient{verification: &client.TPMPolicyVerifyResponse{Name: "boot", Mismatched: []uint{7}, Approved: true}},
-		tpmPolicyVerifyCmd, []string{"boot"}, nil)
+	out, code = runTPMCmd(t, &mockTPMClient{verification: &client.TPMPolicyVerifyResponse{
+		Name: "boot", Approved: true, Branches: []client.TPMPolicyBranchVerification{{Mismatched: []uint{7}, Approved: true}},
+	}}, tpmPolicyVerifyCmd, []string{"boot"}, nil)
 	assert.Equal(t, 1, code, "a PCR mismatch fails the command")
+	assert.Contains(t, out, "PCRs [7] differ")
 
 	_, code = runTPMCmd(t, &mockTPMClient{verification: &client.TPMPolicyVerifyResponse{Name: "boot", Match: true}},
 		tpmPolicyVerifyCmd, []string{"boot"}, nil)
@@ -322,15 +393,16 @@ func TestTenantVTPMCmds(t *testing.T) {
 	}
 }
 
-// TestPCRSelection converts --pcrs, refusing an empty or negative selection.
-func TestPCRSelection(t *testing.T) {
-	got, err := pcrSelection([]int{0, 7})
+// TestPCRIndices converts --pcrs, refusing a negative index.
+func TestPCRIndices(t *testing.T) {
+	got, err := pcrIndices([]int{0, 7})
 	require.NoError(t, err)
 	assert.Equal(t, []uint{0, 7}, got)
 
-	_, err = pcrSelection(nil)
-	assert.ErrorIs(t, err, ErrTPMPolicyPCRsRequired)
-	_, err = pcrSelection([]int{7, -2})
+	got, err = pcrIndices(nil)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+	_, err = pcrIndices([]int{7, -2})
 	assert.ErrorIs(t, err, ErrInvalidTPMPolicyPCR)
 }
 

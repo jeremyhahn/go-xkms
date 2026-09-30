@@ -195,13 +195,16 @@ func RotateScopeKeysResponseToProto(r *transport.RotateScopeKeysResponse) *pb.Ro
 		TenantId: r.TenantID,
 		Results:  make([]*pb.KeyRotationResult, 0, len(r.Results)),
 		Rotated:  int32(min(r.Rotated, math.MaxInt32)), // #nosec G115 -- bounded above
+		Skipped:  int32(min(r.Skipped, math.MaxInt32)), // #nosec G115 -- bounded above
 		Failed:   int32(min(r.Failed, math.MaxInt32)),  // #nosec G115 -- bounded above
 	}
 	for _, result := range r.Results {
 		out.Results = append(out.Results, &pb.KeyRotationResult{
 			Backend:    result.Backend,
 			KeyId:      result.KeyID,
+			State:      result.State,
 			KeyVersion: result.KeyVersion,
+			Reason:     result.Reason,
 			Error:      result.Error,
 		})
 	}
@@ -214,13 +217,16 @@ func RotateScopeKeysResponseFromProto(r *pb.RotateScopeKeysResponse) *transport.
 		TenantID: r.GetTenantId(),
 		Results:  make([]transport.KeyRotationResult, 0, len(r.GetResults())),
 		Rotated:  int(r.GetRotated()),
+		Skipped:  int(r.GetSkipped()),
 		Failed:   int(r.GetFailed()),
 	}
 	for _, result := range r.GetResults() {
 		out.Results = append(out.Results, transport.KeyRotationResult{
 			Backend:    result.GetBackend(),
 			KeyID:      result.GetKeyId(),
+			State:      result.GetState(),
 			KeyVersion: result.GetKeyVersion(),
+			Reason:     result.GetReason(),
 			Error:      result.GetError(),
 		})
 	}

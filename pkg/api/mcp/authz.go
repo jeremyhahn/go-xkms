@@ -326,17 +326,18 @@ var methodPermissions = map[string]permission{
 	// upstream; xkms owns it and scopes it in
 	// pkg/apimodule/module_scopes.go. Mirrors the gRPC TPMPolicy* RPCs'
 	// (qrdb.v1.permission) options one-for-one.
-	"tpm.policy.create":     {auth.ResourceTPMPolicy, auth.ActionCreate},
-	"tpm.policy.get":        {auth.ResourceTPMPolicy, auth.ActionGet},
-	"tpm.policy.list":       {auth.ResourceTPMPolicy, auth.ActionList},
-	"tpm.policy.update":     {auth.ResourceTPMPolicy, auth.ActionUpdate},
-	"tpm.policy.revoke":     {auth.ResourceTPMPolicy, auth.ActionRevoke},
-	"tpm.policy.verify":     {auth.ResourceTPMPolicy, auth.ActionVerify},
-	"tpm.policy.delete":     {auth.ResourceTPMPolicy, auth.ActionDelete},
-	"tpm.policy.objects":    {auth.ResourceTPMPolicy, auth.ActionGet},
-	"tpm.policy.autoUnseal": {auth.ResourceTPMPolicy, auth.ActionUpdate},
-	"tpm.object.policy":     {auth.ResourceTPMPolicy, auth.ActionGet},
-	"tpm.authority.rotate":  {auth.ResourceTPMPolicy, auth.ActionRotate},
+	"tpm.policy.create":         {auth.ResourceTPMPolicy, auth.ActionCreate},
+	"tpm.policy.get":            {auth.ResourceTPMPolicy, auth.ActionGet},
+	"tpm.policy.list":           {auth.ResourceTPMPolicy, auth.ActionList},
+	"tpm.policy.update":         {auth.ResourceTPMPolicy, auth.ActionUpdate},
+	"tpm.policy.revoke":         {auth.ResourceTPMPolicy, auth.ActionRevoke},
+	"tpm.policy.verify":         {auth.ResourceTPMPolicy, auth.ActionVerify},
+	"tpm.policy.delete":         {auth.ResourceTPMPolicy, auth.ActionDelete},
+	"tpm.policy.objects":        {auth.ResourceTPMPolicy, auth.ActionGet},
+	"tpm.policy.autoUnseal":     {auth.ResourceTPMPolicy, auth.ActionUpdate},
+	"tpm.policy.setDescription": {auth.ResourceTPMPolicy, auth.ActionUpdate},
+	"tpm.object.policy":         {auth.ResourceTPMPolicy, auth.ActionGet},
+	"tpm.authority.rotate":      {auth.ResourceTPMPolicy, auth.ActionRotate},
 
 	// A tenant's TPM mode and vTPM (system scope only).
 	"xkms.getTenantTPMMode": {auth.ResourceTenants, auth.ActionRead},

@@ -775,6 +775,11 @@ func (t *Transport) TPMPolicySetAutoUnseal(_ context.Context, _ *transport.TPMPo
 	return nil, ErrNotSupported
 }
 
+// TPMPolicySetDescription replaces a TPM policy's description. It is not available over USB.
+func (t *Transport) TPMPolicySetDescription(_ context.Context, _ *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	return nil, ErrNotSupported
+}
+
 // TPMObjectPolicy returns the TPM policy a key or sealed object was created under. It is not available over USB.
 func (t *Transport) TPMObjectPolicy(_ context.Context, _ *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	return nil, ErrNotSupported

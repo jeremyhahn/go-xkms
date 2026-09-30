@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -214,6 +215,13 @@ var TPMPolicySentinelClasses = []SentinelClass{
 	{tpmpolicy.ErrPolicyExists, ClassAlreadyExists},
 	{tpmpolicy.ErrReservedPolicy, ClassInvalidArgument},
 	{tpmpolicy.ErrEmptyPCRSelection, ClassInvalidArgument},
+	{tpmpolicy.ErrEmptyLocalitySelection, ClassInvalidArgument},
+	{tpmpolicy.ErrNoBranches, ClassInvalidArgument},
+	{tpmpolicy.ErrEmptyBranch, ClassInvalidArgument},
+	{tpmpolicy.ErrPCRValuesSupplied, ClassInvalidArgument},
+	// A key or sealed object without a password cannot be bound to a policy
+	// with an auth_value condition.
+	{pkgtpm2.ErrPolicyAuthValueRequired, ClassInvalidArgument},
 	{tpmpolicy.ErrSystemScopeMode, ClassInvalidArgument},
 	{tpmpolicy.ErrTPMModeNone, ClassFailedPrecondition},
 	{tpmpolicy.ErrVTPMUnavailable, ClassFailedPrecondition},
@@ -252,6 +260,11 @@ var TPMPolicyTypedClasses = []TypedClass{
 	{As[*tpmpolicy.InvalidTenantError], ClassInvalidArgument},
 	{As[*tpmpolicy.InvalidPCRBankError], ClassInvalidArgument},
 	{As[*tpmpolicy.InvalidPCRError], ClassInvalidArgument},
+	{As[*tpmpolicy.InvalidLocalityError], ClassInvalidArgument},
+	{As[*tpmpolicy.UnknownConditionTypeError], ClassInvalidArgument},
+	{As[*tpmpolicy.DuplicateConditionError], ClassInvalidArgument},
+	{As[*tpmpolicy.ConditionOperandError], ClassInvalidArgument},
+	{As[*tpmpolicy.DescriptionTooLongError], ClassInvalidArgument},
 	{As[*xkms.InvalidTPMObjectKindError], ClassInvalidArgument},
 	{As[*xkms.ErrKeyIDParse], ClassInvalidArgument},
 }

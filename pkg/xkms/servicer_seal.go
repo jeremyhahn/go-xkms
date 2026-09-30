@@ -33,6 +33,10 @@ import (
 // newTPMSealedObjectName).
 const sealingKeyCNPrefix = "xkms-sealing-key"
 
+// tpmSealedObjectPrefix begins the name of every TPM2 sealed object Seal
+// names itself (newTPMSealedObjectName).
+var tpmSealedObjectPrefix = fmt.Sprintf("%s-%s-", sealingKeyCNPrefix, types.BackendTypeTPM2)
+
 // defaultSealingKeyAttributes builds KeyAttributes for an auto-generated
 // sealing key on the given backend. The CN is deterministic so the same
 // key is reused across seal/unseal operations.
@@ -149,7 +153,7 @@ func newTPMSealedObjectName() (string, error) {
 	if err != nil {
 		return "", &ErrSealOperation{Operation: "name sealed object", Err: err}
 	}
-	return fmt.Sprintf("%s-%s-%s", sealingKeyCNPrefix, types.BackendTypeTPM2, id), nil
+	return tpmSealedObjectPrefix + id.String(), nil
 }
 
 // tpmSealedObject returns the attributes of the TPM2 sealed object keyID

@@ -1254,6 +1254,10 @@ func (m *mockXKMSService) TPMPolicySetAutoUnseal(context.Context, *transport.TPM
 	return nil, nil
 }
 
+func (m *mockXKMSService) TPMPolicySetDescription(context.Context, *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	return nil, nil
+}
+
 func (m *mockXKMSService) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	return nil, nil
 }

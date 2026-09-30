@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -43,6 +44,16 @@ func TestTPMPolicyClassOf(t *testing.T) {
 		{"invalid tenant", &tpmpolicy.InvalidTenantError{Tenant: ".."}, ClassInvalidArgument},
 		{"invalid bank", &tpmpolicy.InvalidPCRBankError{Bank: "md5"}, ClassInvalidArgument},
 		{"invalid pcr", &tpmpolicy.InvalidPCRError{PCR: 24}, ClassInvalidArgument},
+		{"invalid locality in a branch", &tpmpolicy.InvalidBranchError{Branch: 1, Err: &tpmpolicy.InvalidLocalityError{Locality: 5}}, ClassInvalidArgument},
+		{"unknown condition", &tpmpolicy.UnknownConditionTypeError{Type: "time"}, ClassInvalidArgument},
+		{"duplicate condition", &tpmpolicy.DuplicateConditionError{Type: tpmpolicy.ConditionPCR}, ClassInvalidArgument},
+		{"condition operand", &tpmpolicy.ConditionOperandError{Type: tpmpolicy.ConditionAuthValue, Operand: "bank"}, ClassInvalidArgument},
+		{"description too long", &tpmpolicy.DescriptionTooLongError{Length: 5000, Max: 4096}, ClassInvalidArgument},
+		{"no branches", tpmpolicy.ErrNoBranches, ClassInvalidArgument},
+		{"empty branch", &tpmpolicy.InvalidBranchError{Err: tpmpolicy.ErrEmptyBranch}, ClassInvalidArgument},
+		{"empty localities", tpmpolicy.ErrEmptyLocalitySelection, ClassInvalidArgument},
+		{"supplied PCR values", tpmpolicy.ErrPCRValuesSupplied, ClassInvalidArgument},
+		{"auth value required", fmt.Errorf("create key: %w", pkgtpm2.ErrPolicyAuthValueRequired), ClassInvalidArgument},
 		{"invalid kind", &xkms.InvalidTPMObjectKindError{Kind: "blob"}, ClassInvalidArgument},
 		{"policy not found", tpmpolicy.ErrPolicyNotFound, ClassNotFound},
 		{"not assigned", fmt.Errorf("lookup: %w", tpmpolicy.ErrNotAssigned), ClassNotFound},

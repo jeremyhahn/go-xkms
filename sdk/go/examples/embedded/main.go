@@ -705,6 +705,10 @@ func (m *MockXKMSService) TPMPolicySetAutoUnseal(context.Context, *transport.TPM
 	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
+func (m *MockXKMSService) TPMPolicySetDescription(context.Context, *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	return nil, &mockUnsupportedError{capability: "policy"}
+}
+
 func (m *MockXKMSService) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	return nil, &mockUnsupportedError{capability: "policy"}
 }

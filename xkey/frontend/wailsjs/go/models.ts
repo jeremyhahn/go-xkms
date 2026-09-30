@@ -4758,10 +4758,8 @@ export namespace services {
 	export class TPMPolicyInfo {
 	    name: string;
 	    builtin: boolean;
-	    bank?: string;
-	    pcrs?: number[];
-	    pcr_values?: Record<number, string>;
-	    pcr_digest?: string;
+	    description?: string;
+	    branches?: transport.TPMPolicyBranch[];
 	    index?: number;
 	    approved: boolean;
 	    epoch?: number;
@@ -4779,10 +4777,8 @@ export namespace services {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.builtin = source["builtin"];
-	        this.bank = source["bank"];
-	        this.pcrs = source["pcrs"];
-	        this.pcr_values = source["pcr_values"];
-	        this.pcr_digest = source["pcr_digest"];
+	        this.description = source["description"];
+	        this.branches = this.convertValues(source["branches"], transport.TPMPolicyBranch);
 	        this.index = source["index"];
 	        this.approved = source["approved"];
 	        this.epoch = source["epoch"];
@@ -4792,6 +4788,24 @@ export namespace services {
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class TPMPolicyService {
 	
@@ -4823,8 +4837,8 @@ export namespace services {
 	export class TPMPolicyVerification {
 	    name: string;
 	    match: boolean;
-	    mismatched: number[];
 	    approved: boolean;
+	    branches: transport.TPMPolicyBranchVerification[];
 	
 	    static createFrom(source: any = {}) {
 	        return new TPMPolicyVerification(source);
@@ -4834,9 +4848,27 @@ export namespace services {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.match = source["match"];
-	        this.mismatched = source["mismatched"];
 	        this.approved = source["approved"];
+	        this.branches = this.convertValues(source["branches"], transport.TPMPolicyBranchVerification);
 	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class TPMService {
 	
@@ -5359,6 +5391,76 @@ export namespace transport {
 	        this.total = source["total"];
 	        this.collected = source["collected"];
 	        this.ready = source["ready"];
+	    }
+	}
+	export class TPMPolicyBranch {
+	    conditions: TPMPolicyCondition[];
+	    approved: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TPMPolicyBranch(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.conditions = this.convertValues(source["conditions"], TPMPolicyCondition);
+	        this.approved = source["approved"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class TPMPolicyBranchVerification {
+	    match: boolean;
+	    mismatched?: number[];
+	    approved: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TPMPolicyBranchVerification(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.match = source["match"];
+	        this.mismatched = source["mismatched"];
+	        this.approved = source["approved"];
+	    }
+	}
+	export class TPMPolicyCondition {
+	    type: string;
+	    bank?: string;
+	    pcrs?: number[];
+	    pcr_values?: Record<number, string>;
+	    pcr_digest?: string;
+	    localities?: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TPMPolicyCondition(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.bank = source["bank"];
+	        this.pcrs = source["pcrs"];
+	        this.pcr_values = source["pcr_values"];
+	        this.pcr_digest = source["pcr_digest"];
+	        this.localities = source["localities"];
 	    }
 	}
 

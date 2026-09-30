@@ -1048,8 +1048,7 @@ func (s *SetupWizardService) enableBarrierAutoUnseal(credential, ownerAuth strin
 	}
 	_, err := local.TPMPolicyCreate(context.Background(), &transport.TPMPolicyCreateRequest{
 		Name:      wizardAutoUnsealPolicy,
-		Bank:      wizardAutoUnsealBank,
-		PCRs:      wizardAutoUnsealPCRs,
+		Branches:  []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch(wizardAutoUnsealBank, wizardAutoUnsealPCRs)},
 		OwnerAuth: ownerAuthBytes(ownerAuth),
 	})
 	if err != nil && !errors.Is(err, xkms.ErrTPMPolicyExists) {

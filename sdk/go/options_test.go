@@ -416,6 +416,10 @@ func (m *mockService) TPMPolicySetAutoUnseal(context.Context, *TPMPolicyAutoUnse
 	return nil, nil
 }
 
+func (m *mockService) TPMPolicySetDescription(context.Context, *TPMPolicyDescriptionRequest) (*TPMPolicy, error) {
+	return nil, nil
+}
+
 func (m *mockService) TPMObjectPolicy(context.Context, *TPMObjectPolicyRequest) (*TPMObjectPolicyResponse, error) {
 	return nil, nil
 }

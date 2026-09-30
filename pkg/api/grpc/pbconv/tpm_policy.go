@@ -47,19 +47,79 @@ func uintsFromProto(in []uint32) []uint {
 	return out
 }
 
+// pcrValuesToProto converts hex PCR values keyed by index to their proto
+// form.
+func pcrValuesToProto(in map[uint]string) map[uint32]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[uint32]string, len(in))
+	for pcr, value := range in {
+		out[uint32(pcr)] = value // #nosec G115 -- PCR indices are 0 through 23
+	}
+	return out
+}
+
+// pcrValuesFromProto converts proto PCR values to their transport form.
+func pcrValuesFromProto(in map[uint32]string) map[uint]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[uint]string, len(in))
+	for pcr, value := range in {
+		out[uint(pcr)] = value
+	}
+	return out
+}
+
+// TPMPolicyBranchesToProto converts TPM policy branches to their proto form.
+func TPMPolicyBranchesToProto(in []transport.TPMPolicyBranch) []*pb.TPMPolicyBranch {
+	out := make([]*pb.TPMPolicyBranch, len(in))
+	for i, b := range in {
+		conditions := make([]*pb.TPMPolicyCondition, len(b.Conditions))
+		for j, c := range b.Conditions {
+			conditions[j] = &pb.TPMPolicyCondition{
+				Type:       c.Type,
+				Bank:       c.Bank,
+				Pcrs:       uintsToProto(c.PCRs),
+				PcrValues:  pcrValuesToProto(c.PCRValues),
+				PcrDigest:  c.PCRDigest,
+				Localities: uintsToProto(c.Localities),
+			}
+		}
+		out[i] = &pb.TPMPolicyBranch{Conditions: conditions, Approved: b.Approved}
+	}
+	return out
+}
+
+// TPMPolicyBranchesFromProto converts proto TPM policy branches to their
+// transport form.
+func TPMPolicyBranchesFromProto(in []*pb.TPMPolicyBranch) []transport.TPMPolicyBranch {
+	out := make([]transport.TPMPolicyBranch, len(in))
+	for i, b := range in {
+		conditions := make([]transport.TPMPolicyCondition, len(b.GetConditions()))
+		for j, c := range b.GetConditions() {
+			conditions[j] = transport.TPMPolicyCondition{
+				Type:       c.GetType(),
+				Bank:       c.GetBank(),
+				PCRs:       uintsFromProto(c.GetPcrs()),
+				PCRValues:  pcrValuesFromProto(c.GetPcrValues()),
+				PCRDigest:  c.GetPcrDigest(),
+				Localities: uintsFromProto(c.GetLocalities()),
+			}
+		}
+		out[i] = transport.TPMPolicyBranch{Conditions: conditions, Approved: b.GetApproved()}
+	}
+	return out
+}
+
 // TPMPolicyToProto converts a TPM policy to its proto form.
 func TPMPolicyToProto(p *transport.TPMPolicy) *pb.TPMPolicy {
-	values := make(map[uint32]string, len(p.PCRValues))
-	for pcr, value := range p.PCRValues {
-		values[uint32(pcr)] = value // #nosec G115 -- PCR indices are 0 through 23
-	}
 	return &pb.TPMPolicy{
 		Name:                p.Name,
 		TenantId:            p.TenantID,
-		Bank:                p.Bank,
-		Pcrs:                uintsToProto(p.PCRs),
-		PcrValues:           values,
-		PcrDigest:           p.PCRDigest,
+		Description:         p.Description,
+		Branches:            TPMPolicyBranchesToProto(p.Branches),
 		Index:               p.Index,
 		Approved:            p.Approved,
 		Epoch:               p.Epoch,
@@ -72,17 +132,11 @@ func TPMPolicyToProto(p *transport.TPMPolicy) *pb.TPMPolicy {
 
 // TPMPolicyFromProto converts a proto TPM policy to its transport form.
 func TPMPolicyFromProto(p *pb.TPMPolicy) *transport.TPMPolicy {
-	values := make(map[uint]string, len(p.GetPcrValues()))
-	for pcr, value := range p.GetPcrValues() {
-		values[uint(pcr)] = value
-	}
 	return &transport.TPMPolicy{
 		Name:                p.GetName(),
 		TenantID:            p.GetTenantId(),
-		Bank:                p.GetBank(),
-		PCRs:                uintsFromProto(p.GetPcrs()),
-		PCRValues:           values,
-		PCRDigest:           p.GetPcrDigest(),
+		Description:         p.GetDescription(),
+		Branches:            TPMPolicyBranchesFromProto(p.GetBranches()),
 		Index:               p.GetIndex(),
 		Approved:            p.GetApproved(),
 		Epoch:               p.GetEpoch(),
@@ -96,12 +150,12 @@ func TPMPolicyFromProto(p *pb.TPMPolicy) *transport.TPMPolicy {
 // TPMPolicyCreateRequestToProto converts a create request to its proto form.
 func TPMPolicyCreateRequestToProto(r *transport.TPMPolicyCreateRequest) *pb.TPMPolicyCreateRequest {
 	return &pb.TPMPolicyCreateRequest{
-		TenantId:   r.TenantID,
-		Name:       r.Name,
-		Bank:       r.Bank,
-		Pcrs:       uintsToProto(r.PCRs),
-		AutoUnseal: r.AutoUnseal,
-		OwnerAuth:  r.OwnerAuth,
+		TenantId:    r.TenantID,
+		Name:        r.Name,
+		Description: r.Description,
+		Branches:    TPMPolicyBranchesToProto(r.Branches),
+		AutoUnseal:  r.AutoUnseal,
+		OwnerAuth:   r.OwnerAuth,
 	}
 }
 
@@ -109,13 +163,25 @@ func TPMPolicyCreateRequestToProto(r *transport.TPMPolicyCreateRequest) *pb.TPMP
 // transport form.
 func TPMPolicyCreateRequestFromProto(r *pb.TPMPolicyCreateRequest) *transport.TPMPolicyCreateRequest {
 	return &transport.TPMPolicyCreateRequest{
-		TenantID:   r.GetTenantId(),
-		Name:       r.GetName(),
-		Bank:       r.GetBank(),
-		PCRs:       uintsFromProto(r.GetPcrs()),
-		AutoUnseal: r.GetAutoUnseal(),
-		OwnerAuth:  r.GetOwnerAuth(),
+		TenantID:    r.GetTenantId(),
+		Name:        r.GetName(),
+		Description: r.GetDescription(),
+		Branches:    TPMPolicyBranchesFromProto(r.GetBranches()),
+		AutoUnseal:  r.GetAutoUnseal(),
+		OwnerAuth:   r.GetOwnerAuth(),
 	}
+}
+
+// TPMPolicyDescriptionRequestToProto converts a description change to its
+// proto form.
+func TPMPolicyDescriptionRequestToProto(r *transport.TPMPolicyDescriptionRequest) *pb.TPMPolicyDescriptionRequest {
+	return &pb.TPMPolicyDescriptionRequest{TenantId: r.TenantID, Name: r.Name, Description: r.Description}
+}
+
+// TPMPolicyDescriptionRequestFromProto converts a proto description change
+// to its transport form.
+func TPMPolicyDescriptionRequestFromProto(r *pb.TPMPolicyDescriptionRequest) *transport.TPMPolicyDescriptionRequest {
+	return &transport.TPMPolicyDescriptionRequest{TenantID: r.GetTenantId(), Name: r.GetName(), Description: r.GetDescription()}
 }
 
 // TPMPolicyRequestToProto converts a policy-name request to its proto form.
@@ -161,22 +227,30 @@ func TPMPolicyDeleteRequestFromProto(r *pb.TPMPolicyDeleteRequest) *transport.TP
 
 // TPMPolicyVerifyResponseToProto converts a verification to its proto form.
 func TPMPolicyVerifyResponseToProto(r *transport.TPMPolicyVerifyResponse) *pb.TPMPolicyVerifyResponse {
+	branches := make([]*pb.TPMPolicyBranchVerification, len(r.Branches))
+	for i, b := range r.Branches {
+		branches[i] = &pb.TPMPolicyBranchVerification{Match: b.Match, Mismatched: uintsToProto(b.Mismatched), Approved: b.Approved}
+	}
 	return &pb.TPMPolicyVerifyResponse{
-		Name:       r.Name,
-		Match:      r.Match,
-		Mismatched: uintsToProto(r.Mismatched),
-		Approved:   r.Approved,
+		Name:     r.Name,
+		Match:    r.Match,
+		Approved: r.Approved,
+		Branches: branches,
 	}
 }
 
 // TPMPolicyVerifyResponseFromProto converts a proto verification to its
 // transport form.
 func TPMPolicyVerifyResponseFromProto(r *pb.TPMPolicyVerifyResponse) *transport.TPMPolicyVerifyResponse {
+	branches := make([]transport.TPMPolicyBranchVerification, len(r.GetBranches()))
+	for i, b := range r.GetBranches() {
+		branches[i] = transport.TPMPolicyBranchVerification{Match: b.GetMatch(), Mismatched: uintsFromProto(b.GetMismatched()), Approved: b.GetApproved()}
+	}
 	return &transport.TPMPolicyVerifyResponse{
-		Name:       r.GetName(),
-		Match:      r.GetMatch(),
-		Mismatched: uintsFromProto(r.GetMismatched()),
-		Approved:   r.GetApproved(),
+		Name:     r.GetName(),
+		Match:    r.GetMatch(),
+		Approved: r.GetApproved(),
+		Branches: branches,
 	}
 }
 

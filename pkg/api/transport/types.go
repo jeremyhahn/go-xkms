@@ -645,6 +645,10 @@ type RotateKeyResponse struct {
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
 	// KeyVersion is the version the rotation created, now current.
 	KeyVersion uint32 `json:"key_version,omitempty"`
+	// CertificateReissueRequired reports that the key has a certificate,
+	// which still certifies the previous version: issue a new one for the
+	// new version.
+	CertificateReissueRequired bool `json:"certificate_reissue_required,omitempty"`
 }
 
 // GetImportParametersRequest contains parameters for getting import parameters.
@@ -2058,7 +2062,56 @@ type SealStoreStatusResponse struct {
 // tenant, and empty is the system scope. OwnerAuth is the physical TPM's
 // owner-hierarchy authorization; it is never logged or echoed.
 
-// TPMPolicy describes a named TPM policy.
+// TPM policy condition types: the kinds of condition a branch of a named
+// TPM policy ANDs together.
+const (
+	// TPMPolicyConditionPCR requires the selected PCRs of a bank to hold the
+	// values captured when the policy was created or last updated.
+	TPMPolicyConditionPCR = "pcr"
+
+	// TPMPolicyConditionAuthValue requires the object's password.
+	TPMPolicyConditionAuthValue = "auth_value"
+
+	// TPMPolicyConditionLocality requires the command to come from one of
+	// the allowed TPM localities (0 through 4).
+	TPMPolicyConditionLocality = "locality"
+)
+
+// TPMPolicyCondition is one condition of a TPM policy branch. Only the
+// fields of its Type are set.
+type TPMPolicyCondition struct {
+	// Type is TPMPolicyConditionPCR, TPMPolicyConditionAuthValue or
+	// TPMPolicyConditionLocality.
+	Type string `json:"type"`
+
+	// Bank is a pcr condition's PCR bank (sha1, sha256, sha384, sha512) and
+	// PCRs its selected PCR indices.
+	Bank string `json:"bank,omitempty"`
+	PCRs []uint `json:"pcrs,omitempty"`
+
+	// PCRValues are a pcr condition's hex-encoded values, keyed by PCR
+	// index, captured when the policy was created or last updated, and
+	// PCRDigest the hex-encoded PolicyPCR digest over them. They are
+	// reported, never supplied: a create request carrying them is refused.
+	PCRValues map[uint]string `json:"pcr_values,omitempty"`
+	PCRDigest string          `json:"pcr_digest,omitempty"`
+
+	// Localities are a locality condition's allowed localities, 0 through 4.
+	Localities []uint `json:"localities,omitempty"`
+}
+
+// TPMPolicyBranch is one branch of a TPM policy: the AND of its conditions,
+// at most one of each type.
+type TPMPolicyBranch struct {
+	Conditions []TPMPolicyCondition `json:"conditions"`
+
+	// Approved reports whether the branch holds an approval. It is reported
+	// on a policy and has no meaning in a create request.
+	Approved bool `json:"approved"`
+}
+
+// TPMPolicy describes a named TPM policy: an OR of branches, tried in order
+// when an object bound to it is used.
 type TPMPolicy struct {
 	// Name is the policy's name, unique within its tenant's scope.
 	Name string `json:"name"`
@@ -2067,24 +2120,20 @@ type TPMPolicy struct {
 	// system scope.
 	TenantID string `json:"tenant_id,omitempty"`
 
-	// Bank is the PCR bank (sha1, sha256, sha384, sha512) and PCRs the
-	// selected PCR indices.
-	Bank string `json:"bank"`
-	PCRs []uint `json:"pcrs"`
+	// Description is free text, settable at creation and at any time after.
+	Description string `json:"description,omitempty"`
 
-	// PCRValues are the hex-encoded values captured when the policy was
-	// created or last updated, keyed by PCR index; PCRDigest is the
-	// hex-encoded PolicyPCR digest over them.
-	PCRValues map[uint]string `json:"pcr_values,omitempty"`
-	PCRDigest string          `json:"pcr_digest,omitempty"`
+	// Branches are the policy's branches. Their structure never changes
+	// after creation; an update only re-captures their PCR values.
+	Branches []TPMPolicyBranch `json:"branches"`
 
 	// Index is the policy's NV index, which objects bound to it follow.
 	Index uint32 `json:"index"`
 
-	// Approved reports whether the policy holds an approval; it is false
+	// Approved reports whether every branch holds an approval; it is false
 	// after a revoke until the next update. Epoch is the revocation-counter
-	// value the approval was signed at, and AuthorityGeneration the policy
-	// authority that signed it.
+	// value the approvals were signed at, and AuthorityGeneration the policy
+	// authority that signed them.
 	Approved            bool   `json:"approved"`
 	Epoch               uint64 `json:"epoch,omitempty"`
 	AuthorityGeneration uint64 `json:"authority_generation,omitempty"`
@@ -2097,15 +2146,23 @@ type TPMPolicy struct {
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
-// TPMPolicyCreateRequest creates a named TPM policy over the live PCR values
-// of the tenant's TPM. The values are never supplied by the caller.
+// TPMPolicyCreateRequest creates a named TPM policy of Branches. The values
+// of its pcr conditions are read from the tenant's TPM, never supplied by
+// the caller.
 type TPMPolicyCreateRequest struct {
-	TenantID   string `json:"tenant_id,omitempty"`
-	Name       string `json:"name"`
-	Bank       string `json:"bank"`
-	PCRs       []uint `json:"pcrs"`
-	AutoUnseal bool   `json:"auto_unseal,omitempty"`
-	OwnerAuth  []byte `json:"owner_auth,omitempty"`
+	TenantID    string            `json:"tenant_id,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Branches    []TPMPolicyBranch `json:"branches"`
+	AutoUnseal  bool              `json:"auto_unseal,omitempty"`
+	OwnerAuth   []byte            `json:"owner_auth,omitempty"`
+}
+
+// TPMPolicyDescriptionRequest replaces a TPM policy's description.
+type TPMPolicyDescriptionRequest struct {
+	TenantID    string `json:"tenant_id,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 // TPMPolicyRequest names one TPM policy of a tenant. It is the request of
@@ -2133,19 +2190,33 @@ type TPMPolicyDeleteRequest struct {
 	OwnerAuth []byte `json:"owner_auth,omitempty"`
 }
 
-// TPMPolicyVerifyResponse compares a policy's captured PCR values with the
-// live ones. It is advisory: the TPM itself enforces the policy on use.
-type TPMPolicyVerifyResponse struct {
-	Name string `json:"name"`
-
-	// Match reports whether every selected PCR still holds its captured
-	// value; Mismatched lists those that do not, ascending.
+// TPMPolicyBranchVerification compares one branch's captured PCR values
+// with the live ones.
+type TPMPolicyBranchVerification struct {
+	// Match reports whether the branch's pcr condition, if it has one,
+	// still holds its captured values; Mismatched lists the PCRs that do
+	// not, ascending.
 	Match      bool   `json:"match"`
 	Mismatched []uint `json:"mismatched,omitempty"`
 
-	// Approved reports whether the policy's approval is current, so its
-	// approved branch can be satisfied.
+	// Approved reports whether the branch's approval is current, so the
+	// branch can be satisfied.
 	Approved bool `json:"approved"`
+}
+
+// TPMPolicyVerifyResponse compares a policy's captured PCR values with the
+// live ones, branch by branch. It is advisory: the TPM itself enforces the
+// policy on use.
+type TPMPolicyVerifyResponse struct {
+	Name string `json:"name"`
+
+	// Match and Approved report whether every branch matches and holds a
+	// current approval.
+	Match    bool `json:"match"`
+	Approved bool `json:"approved"`
+
+	// Branches reports each branch, index-aligned with the policy's.
+	Branches []TPMPolicyBranchVerification `json:"branches"`
 }
 
 // TPMPolicyObjectsResponse lists the objects assigned to a policy, as

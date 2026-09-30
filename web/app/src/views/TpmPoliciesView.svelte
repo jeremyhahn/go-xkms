@@ -4,12 +4,21 @@
   import Modal from "$components/Modal.svelte";
   import Alert from "$components/Alert.svelte";
   import StatusBadge from "$components/StatusBadge.svelte";
+  import IndexPicker from "$components/IndexPicker.svelte";
   import { getSDKClient } from "$stores/sdkClient.ts";
   import { showToast } from "$stores/toast.svelte.ts";
-  import type { TPMPolicy, TPMPolicyVerifyResponse } from "@go-xkms/sdk";
-
-  const PCR_INDICES = Array.from({ length: 24 }, (_, i) => i);
-  const BANKS = ["sha256", "sha384", "sha1", "sha512"];
+  import {
+    BANKS,
+    LOCALITIES,
+    PCR_INDICES,
+    describeBranch,
+    draftError,
+    draftToBranch,
+    newBranchDraft,
+    toggleIndex,
+    type BranchDraft,
+  } from "$lib/tpmPolicy.ts";
+  import { pcrBranch, type TPMPolicy, type TPMPolicyVerifyResponse } from "@go-xkms/sdk";
 
   let policies = $state<TPMPolicy[]>([]);
   let objectCounts = $state<Record<string, number>>({});
@@ -17,14 +26,29 @@
   let loading = $state(true);
   let busy = $state(false);
 
+  // The create dialog: simple mode builds one pcr branch from cBank and
+  // cPCRs; advanced mode sends every draft in cBranches as a branch.
   let showCreate = $state(false);
   let cName = $state("");
+  let cDescription = $state("");
+  let cAdvanced = $state(false);
   let cBank = $state("sha256");
   let cPCRs = $state<number[]>([0, 7]);
+  let cBranches = $state<BranchDraft[]>([newBranchDraft()]);
   let cAutoUnseal = $state(false);
   let cErr = $state<string | null>(null);
 
+  const cInvalid = $derived(
+    cName === "" ||
+      (cAdvanced ? cBranches.length === 0 || cBranches.some((b) => draftError(b) !== null) : cPCRs.length === 0),
+  );
+
   let verifyResult = $state<TPMPolicyVerifyResponse | null>(null);
+
+  let describeName = $state<string | null>(null);
+  let describeText = $state("");
+  let describeBusy = $state(false);
+  let describeErr = $state<string | null>(null);
 
   let showObjects = $state(false);
   let objectsName = $state("");
@@ -63,8 +87,19 @@
     }
   }
 
-  function togglePCR(i: number): void {
-    cPCRs = cPCRs.includes(i) ? cPCRs.filter((x) => x !== i) : [...cPCRs, i].sort((a, b) => a - b);
+  function resetCreate(): void {
+    cName = "";
+    cDescription = "";
+    cAdvanced = false;
+    cBank = "sha256";
+    cPCRs = [0, 7];
+    cBranches = [newBranchDraft()];
+    cAutoUnseal = false;
+  }
+
+  /** updateBranch replaces the draft at index i with change applied. */
+  function updateBranch(i: number, change: Partial<BranchDraft>): void {
+    cBranches = cBranches.map((b, j) => (j === i ? { ...b, ...change } : b));
   }
 
   async function create(): Promise<void> {
@@ -73,20 +108,40 @@
     try {
       await getSDKClient().tpmPolicies.create({
         name: cName,
-        bank: cBank,
-        pcrs: cPCRs,
+        description: cDescription,
+        branches: cAdvanced ? cBranches.map(draftToBranch) : [pcrBranch(cBank, cPCRs)],
         auto_unseal: cAutoUnseal,
       });
       showToast("success", `TPM policy "${cName}" created.`);
       showCreate = false;
-      cName = "";
-      cPCRs = [0, 7];
-      cAutoUnseal = false;
+      resetCreate();
       await load();
     } catch (e) {
       cErr = e instanceof Error ? e.message : String(e);
     } finally {
       busy = false;
+    }
+  }
+
+  function openDescribe(p: TPMPolicy): void {
+    describeName = p.name;
+    describeText = p.description ?? "";
+    describeErr = null;
+  }
+
+  async function saveDescription(): Promise<void> {
+    if (describeName === null) return;
+    describeBusy = true;
+    describeErr = null;
+    try {
+      await getSDKClient().tpmPolicies.setDescription(describeName, describeText);
+      showToast("success", `Description of "${describeName}" saved.`);
+      describeName = null;
+      await load();
+    } catch (e) {
+      describeErr = e instanceof Error ? e.message : String(e);
+    } finally {
+      describeBusy = false;
     }
   }
 
@@ -181,7 +236,7 @@
   });
 </script>
 
-<PageHeader title="TPM Policies" subtitle="Named PCR-bank policies bound to keys and sealed objects">
+<PageHeader title="TPM Policies" subtitle="Named policies of PCR, password and locality conditions bound to keys and sealed objects">
   {#snippet actions()}
     <button class="btn btn-sm" onclick={() => (showRotateConfirm = true)}>Rotate authority</button>
     <button class="btn btn-primary btn-sm" onclick={() => (showCreate = true)}>+ Create</button>
@@ -199,8 +254,8 @@
       <thead>
         <tr>
           <th scope="col">Name</th>
-          <th scope="col">Bank</th>
-          <th scope="col">PCRs</th>
+          <th scope="col">Description</th>
+          <th scope="col">Branches</th>
           <th scope="col">Status</th>
           <th scope="col">Auto-unseal</th>
           <th scope="col">Objects</th>
@@ -211,8 +266,21 @@
         {#each policies as p (p.name)}
           <tr>
             <td>{p.name}</td>
-            <td>{p.bank}</td>
-            <td>{p.pcrs.join(", ")}</td>
+            <td>
+              <span class="text-sm">{p.description ?? ""}</span>
+              <button
+                class="btn btn-ghost btn-xs"
+                aria-label={`Edit description of ${p.name}`}
+                onclick={() => openDescribe(p)}
+              >
+                Edit
+              </button>
+            </td>
+            <td class="text-sm">
+              {#each p.branches as b, i (i)}
+                <div>{#if i > 0}<span class="text-base-content/60">or </span>{/if}{describeBranch(b)}</div>
+              {/each}
+            </td>
             <td><StatusBadge label={p.approved ? "approved" : "revoked"} ok={p.approved} /></td>
             <td>
               <button
@@ -254,26 +322,104 @@
       {#if cErr}<Alert kind="error" class="mb-3"><span>{cErr}</span></Alert>{/if}
       <div class="space-y-3">
         <input class="input input-bordered w-full" aria-label="Name" placeholder="Name" bind:value={cName} />
-        <select class="select select-bordered w-full" aria-label="Bank" bind:value={cBank}>
-          {#each BANKS as b (b)}<option value={b}>{b}</option>{/each}
-        </select>
-        <fieldset>
-          <legend class="label-text mb-1">PCRs</legend>
-          <div class="grid grid-cols-6 gap-1">
-            {#each PCR_INDICES as i (i)}
-              <label class="label cursor-pointer justify-start gap-1 p-1">
+        <input
+          class="input input-bordered w-full"
+          aria-label="Description"
+          placeholder="Description"
+          bind:value={cDescription}
+        />
+        <div role="tablist" class="tabs tabs-boxed">
+          <button role="tab" class="tab" class:tab-active={!cAdvanced} aria-selected={!cAdvanced} onclick={() => (cAdvanced = false)}>
+            Simple
+          </button>
+          <button role="tab" class="tab" class:tab-active={cAdvanced} aria-selected={cAdvanced} onclick={() => (cAdvanced = true)}>
+            Advanced
+          </button>
+        </div>
+        {#if !cAdvanced}
+          <p class="text-sm text-base-content/70">Approves the live values of the selected PCRs.</p>
+          <select class="select select-bordered w-full" aria-label="Bank" bind:value={cBank}>
+            {#each BANKS as b (b)}<option value={b}>{b}</option>{/each}
+          </select>
+          <IndexPicker legend="PCRs" label="PCR" indices={PCR_INDICES} selected={cPCRs} onToggle={(i) => (cPCRs = toggleIndex(cPCRs, i))} />
+        {:else}
+          <p class="text-sm text-base-content/70">
+            An object is usable when any branch holds; a branch holds when all of its conditions do.
+          </p>
+          {#each cBranches as b, i (i)}
+            <fieldset class="border border-base-300 rounded p-3 space-y-2">
+              <legend class="font-semibold text-sm px-1">Branch {i + 1}</legend>
+              <label class="label cursor-pointer justify-start gap-2">
                 <input
                   type="checkbox"
                   class="checkbox checkbox-sm"
-                  aria-label={`PCR ${i}`}
-                  checked={cPCRs.includes(i)}
-                  onchange={() => togglePCR(i)}
+                  aria-label={`Branch ${i + 1} PCR condition`}
+                  checked={b.pcr}
+                  onchange={() => updateBranch(i, { pcr: !b.pcr })}
                 />
-                <span class="label-text text-xs">{i}</span>
+                <span class="label-text">PCR values</span>
               </label>
-            {/each}
-          </div>
-        </fieldset>
+              {#if b.pcr}
+                <select
+                  class="select select-bordered select-sm w-full"
+                  aria-label={`Branch ${i + 1} bank`}
+                  value={b.bank}
+                  onchange={(e) => updateBranch(i, { bank: e.currentTarget.value })}
+                >
+                  {#each BANKS as bank (bank)}<option value={bank}>{bank}</option>{/each}
+                </select>
+                <IndexPicker
+                  legend="PCRs"
+                  label={`Branch ${i + 1} PCR`}
+                  indices={PCR_INDICES}
+                  selected={b.pcrs}
+                  onToggle={(pcr) => updateBranch(i, { pcrs: toggleIndex(b.pcrs, pcr) })}
+                />
+              {/if}
+              <label class="label cursor-pointer justify-start gap-2">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm"
+                  aria-label={`Branch ${i + 1} password condition`}
+                  checked={b.authValue}
+                  onchange={() => updateBranch(i, { authValue: !b.authValue })}
+                />
+                <span class="label-text">Object password</span>
+              </label>
+              <label class="label cursor-pointer justify-start gap-2">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm"
+                  aria-label={`Branch ${i + 1} locality condition`}
+                  checked={b.locality}
+                  onchange={() => updateBranch(i, { locality: !b.locality })}
+                />
+                <span class="label-text">TPM locality</span>
+              </label>
+              {#if b.locality}
+                <IndexPicker
+                  legend="Localities"
+                  label={`Branch ${i + 1} locality`}
+                  indices={LOCALITIES}
+                  selected={b.localities}
+                  columns={5}
+                  onToggle={(l) => updateBranch(i, { localities: toggleIndex(b.localities, l) })}
+                />
+              {/if}
+              {#if draftError(b)}<p class="text-xs text-error">{draftError(b)}</p>{/if}
+              {#if cBranches.length > 1}
+                <button
+                  class="btn btn-ghost btn-xs text-error"
+                  aria-label={`Remove branch ${i + 1}`}
+                  onclick={() => (cBranches = cBranches.filter((_, j) => j !== i))}
+                >
+                  Remove branch
+                </button>
+              {/if}
+            </fieldset>
+          {/each}
+          <button class="btn btn-sm" onclick={() => (cBranches = [...cBranches, newBranchDraft()])}>+ Add branch</button>
+        {/if}
         <label class="label cursor-pointer justify-start gap-2">
           <input type="checkbox" class="checkbox" bind:checked={cAutoUnseal} />
           <span class="label-text">Auto-unseal</span>
@@ -281,9 +427,29 @@
       </div>
       <div class="modal-action">
         <button class="btn btn-ghost" onclick={() => (showCreate = false)} disabled={busy}>Cancel</button>
-        <button class="btn btn-primary" onclick={create} disabled={busy || cName === "" || cPCRs.length === 0}>
+        <button class="btn btn-primary" onclick={create} disabled={busy || cInvalid}>
           {#if busy}<span class="loading loading-spinner loading-xs"></span>{/if}
           Create
+        </button>
+      </div>
+  </Modal>
+{/if}
+
+{#if describeName !== null}
+  <Modal open={describeName !== null} onClose={() => (describeName = null)} labelledby="describe-policy-title">
+      <h3 id="describe-policy-title" class="text-lg font-semibold mb-4">Description of "{describeName}"</h3>
+      {#if describeErr}<Alert kind="error" class="mb-3"><span>{describeErr}</span></Alert>{/if}
+      <textarea
+        class="textarea textarea-bordered w-full"
+        aria-label="Policy description"
+        rows="3"
+        bind:value={describeText}
+      ></textarea>
+      <div class="modal-action">
+        <button class="btn btn-ghost" onclick={() => (describeName = null)} disabled={describeBusy}>Cancel</button>
+        <button class="btn btn-primary" onclick={saveDescription} disabled={describeBusy}>
+          {#if describeBusy}<span class="loading loading-spinner loading-xs"></span>{/if}
+          Save
         </button>
       </div>
   </Modal>
@@ -295,11 +461,15 @@
       <div class="space-y-2">
         <StatusBadge label={verifyResult.match ? "PCRs match" : "PCRs mismatched"} ok={verifyResult.match} />
         <StatusBadge label={verifyResult.approved ? "approved" : "revoked"} ok={verifyResult.approved} />
-        {#if verifyResult.mismatched && verifyResult.mismatched.length > 0}
-          <p class="text-sm text-base-content/70">
-            Mismatched PCRs: {verifyResult.mismatched.join(", ")}
-          </p>
-        {/if}
+        <ul class="space-y-1">
+          {#each verifyResult.branches as b, i (i)}
+            <li class="text-sm">
+              Branch {i + 1}:
+              {b.match ? "PCRs match" : `PCRs ${(b.mismatched ?? []).join(", ")} changed`},
+              {b.approved ? "approved" : "not approved"}
+            </li>
+          {/each}
+        </ul>
       </div>
       <div class="modal-action">
         <button class="btn btn-primary" onclick={() => (verifyResult = null)}>Close</button>

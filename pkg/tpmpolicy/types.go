@@ -186,6 +186,12 @@ type Branch struct {
 	Conditions []Condition `json:"conditions"`
 }
 
+// PCRBranch returns a branch holding one pcr condition over pcrs of bank:
+// the whole of a policy that approves one PCR state.
+func PCRBranch(bank string, pcrs ...uint) Branch {
+	return Branch{Conditions: []Condition{{Type: ConditionPCR, Bank: bank, PCRs: pcrs}}}
+}
+
 // Policy is a named, reusable TPM policy: an OR of branches, bound to an NV
 // index objects authorize through. Its structure never changes after
 // creation; an update only re-captures the values of its pcr conditions.
@@ -218,19 +224,6 @@ type Policy struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-
-	// Bank, PCRs, PCRValues and PCRDigest are the first pcr condition of
-	// the policy, and Approval its first branch's approval. They are a
-	// read-only view kept for callers of the single-branch model, derived
-	// from Branches and Approvals whenever the registry stores or loads the
-	// policy; they are never stored, and setting them has no effect.
-	//
-	// Deprecated: use Branches and Approvals.
-	Bank      string          `json:"-"`
-	PCRs      []uint          `json:"-"`
-	PCRValues map[uint][]byte `json:"-"`
-	PCRDigest []byte          `json:"-"`
-	Approval  *Approval       `json:"-"`
 }
 
 // approved reports whether every branch holds an approval. Approvals are
@@ -266,23 +259,6 @@ func (p *Policy) hasAuthValueCondition() bool {
 	return false
 }
 
-// syncLegacyView derives the deprecated single-branch fields from Branches
-// and Approvals.
-func (p *Policy) syncLegacyView() {
-	p.Bank, p.PCRs, p.PCRValues, p.PCRDigest, p.Approval = "", nil, nil, nil, nil
-	if p.approved() {
-		p.Approval = p.Approvals[0]
-	}
-	for _, b := range p.Branches {
-		for _, c := range b.Conditions {
-			if c.Type == ConditionPCR {
-				p.Bank, p.PCRs, p.PCRValues, p.PCRDigest = c.Bank, c.PCRs, c.PCRValues, c.PCRDigest
-				return
-			}
-		}
-	}
-}
-
 // Assignment records the policy an object was created under.
 type Assignment struct {
 	ObjectID string     `json:"object_id"`
@@ -310,13 +286,6 @@ type CreatePolicyRequest struct {
 	// duplicates; a locality condition names localities 0 through 4 without
 	// duplicates; an auth_value condition names nothing.
 	Branches []Branch
-
-	// Bank and PCRs describe a policy of one branch holding one pcr
-	// condition, and are refused together with Branches.
-	//
-	// Deprecated: use Branches.
-	Bank string
-	PCRs []uint
 
 	// AutoUnseal marks the policy barrier auto-unseal uses, clearing the
 	// mark from any other policy of the scope.
@@ -354,13 +323,6 @@ type Verification struct {
 
 	// Match reports whether every branch matches.
 	Match bool
-
-	// Mismatched lists the PCRs of any branch that do not match, ascending
-	// and without duplicates.
-	//
-	// Deprecated: use Branches, which says which branch and bank each PCR
-	// belongs to.
-	Mismatched []uint
 
 	// Approved reports whether every branch holds an approval at the scope
 	// counter's current value.

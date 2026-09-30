@@ -583,16 +583,25 @@ func (s *XKMSService) RotateKey(ctx context.Context, req *transport.RotateKeyReq
 		return nil, err
 	}
 
+	// A certificate stays on the version it certifies, so the caller is told
+	// to re-issue it. The certificates are read before the rotation, so a
+	// failure to read them leaves the key unrotated.
+	certified, err := certifiedKeys(ctx, b)
+	if err != nil {
+		return nil, err
+	}
 	rotated, err := s.rotateKey(ctx, b, backendName, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
+	_, reissue := certified[req.KeyID]
 
 	resp = &transport.RotateKeyResponse{
-		Success:    true,
-		KeyID:      req.KeyID,
-		KeyType:    rotated.attrs.KeyType.String(),
-		KeyVersion: rotated.version,
+		Success:                    true,
+		KeyID:                      req.KeyID,
+		KeyType:                    rotated.attrs.KeyType.String(),
+		KeyVersion:                 rotated.version,
+		CertificateReissueRequired: reissue,
 	}
 	// A rotated symmetric key has no public half to report.
 	if rotated.key != nil {

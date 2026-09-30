@@ -830,6 +830,10 @@ func (n *noopClient) TPMPolicySetAutoUnseal(context.Context, *transport.TPMPolic
 	return nil, nil
 }
 
+func (n *noopClient) TPMPolicySetDescription(context.Context, *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	return nil, nil
+}
+
 func (n *noopClient) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	return nil, nil
 }

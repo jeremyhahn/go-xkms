@@ -91,6 +91,58 @@ job. A nil `svc` is `ErrNotConfigured`.
   the same code. `xkms.ParseTPMObjectKind` is the one object-kind parser
   (`*InvalidTPMObjectKindError`).
 
+## Composite policies
+
+Design: [`architecture.md`](architecture.md), "Composite policies and
+descriptions".
+
+- **Model** (`pkg/tpmpolicy/types.go`). `Policy{Description, Branches,
+  Approvals}`: an OR of `Branch`es, each an AND of `Condition`s --
+  `pcr` (`Bank`, `PCRs`; `PCRValues`/`PCRDigest` captured, never supplied),
+  `auth_value` (no operand) and `locality` (`Localities` 0-4). `Approvals` is
+  index-aligned with `Branches`; they are signed and revoked together.
+  `PCRBranch(bank, pcrs...)` builds the one-branch policy over a PCR
+  selection.
+- **Validation** (`conditions.go`, one `conditionSpec` per type in a map):
+  at least one branch (`ErrNoBranches`), at least one condition per branch
+  (`ErrEmptyBranch`), at most one of each type (`*DuplicateConditionError`),
+  only the operands of the type (`*ConditionOperandError`), known types
+  (`*UnknownConditionTypeError`), banks and PCRs 0-23 (`*InvalidPCRBankError`,
+  `*InvalidPCRError`, `ErrEmptyPCRSelection`), localities 0-4
+  (`*InvalidLocalityError`, `ErrEmptyLocalitySelection`), no supplied values
+  (`ErrPCRValuesSupplied`), descriptions up to 4096 bytes
+  (`*DescriptionTooLongError`). A branch fault is wrapped in
+  `*InvalidBranchError{Branch}`. Everything is checked before the TPM is
+  reached.
+- **Assertion order.** `pkg/tpm2` asserts a branch's conditions in canonical
+  order -- `PolicyLocality`, then `PolicyPCR`, then `PolicyAuthValue` -- then
+  `PolicyNV(counter == epoch)`, whatever order the request lists them in.
+- **Choosing a branch at use** (`pkg/tpm2/authorized_policy_session.go`).
+  Branches are tried in order. A locality condition is checked in software
+  against the locality xkms sends commands at (0), only to skip a branch that
+  cannot hold (`*PolicyLocalityMismatchError`); the TPM enforces it when the
+  session is used. A branch with `auth_value` is tried only when a password
+  was supplied (`*PolicyAuthValueMissingError`). If none succeeds the
+  refusals come back in branch order in `*PolicyBranchesRefusedError`.
+- **Passwords.** An object bound to a policy with an `auth_value` condition
+  must have a password: creating one without is refused with
+  `tpm2.ErrPolicyAuthValueRequired` (invalid argument). Such an object has no
+  outer `PolicyAuthValue` branch, so the password never bypasses the policy.
+- **Binding record** (`pkg/tpm2/store/tpm_policy_binding.go`): `XTPB`
+  version 2 adds flag bit 1, "the policy has an `auth_value` condition".
+  Version 1 records still decode, as bindings without one.
+- **Descriptions** are stored on the policy; `Service.SetDescription`
+  replaces one without touching approvals or the counter.
+- **API mapping** (`pkg/xkms/tenant_tpm_policies.go`): `tpmPolicyToTransport`
+  reports branches with hex values and each branch's `approved`, the policy's
+  `approved` (every branch approved) and the first approval's epoch and
+  generation; `tpmBranchesFromTransport` refuses supplied `pcr_values` or
+  `pcr_digest` before the service sees them. The request shape is branches
+  only: there is no bank/PCRs shortcut on the wire.
+  `transport.TPMPolicyPCRBranch`, `ParseTPMPolicyBranch` and
+  `TPMPolicyBranches` (re-exported by `sdk/go`) are the client-side
+  builders both CLIs share.
+
 ## Key versions
 
 Design: [`architecture.md`](architecture.md), "Key versions".
@@ -150,6 +202,31 @@ Design: [`architecture.md`](architecture.md), "Key versions".
   post-quantum keys are refused (`*xkms.KeyRotationUnsupportedError`). The
   backends' in-place `RotateKey` is no longer called by the service layer;
   the package-level `xkms.RotateKey(kid)` rotates through the same path.
+- **Rotating a scope** (`RotateScopeKeys`). Every key of the tenant, in
+  every backend, once. Each result has a `state`: `rotated`, `failed` (with
+  `error`) or `skipped` (with `reason`), counted in `rotated`, `failed` and
+  `skipped`. A backend whose keys or certificates cannot be listed is one
+  `failed` result and none of its keys is rotated. Skipped
+  (`pinnedKeyRules`, `SkipReason*` in `servicer_keyversion.go`):
+  - on a TPM2 backend, PIV slot keys (`piv-<slot>`, `PivSlotCN`): the slot
+    resolves the key by that name;
+  - on a TPM2 backend, sealed objects `Seal` named
+    (`xkms-sealing-key-tpm2-<uuid>`): unseal names them exactly and they have
+    no versions;
+  - on any backend, the barrier's seal wrapping key (`seal.SealKeyCN`,
+    `xkms-barrier-seal`): the barrier and the platform store resolve it by
+    name;
+  - keys with a certificate (`certifiedKeys`: the last segment of each
+    certificate ID the backend lists): the certificate would stay on the old
+    version. Reason: "has a certificate; re-issue after rotating it
+    explicitly".
+
+  A key-based backend's default sealing key (`xkms-sealing-key-<type>`) is
+  not skipped: `Seal` uses its current version and `Unseal` the recorded one.
+- **Single-key rotation and certificates.** `RotateKey` rotates a key with a
+  certificate and sets `RotateKeyResponse.CertificateReissueRequired`; the
+  certificates are listed before rotating, so a listing failure leaves the key
+  unrotated.
 - **State changes** (`updateVersions`). Under the key's lock; the current
   version cannot be disabled or retired (`*keyversion.CurrentVersionError`);
   a retired version is final (`*keyversion.RetiredVersionError`); retiring
@@ -194,10 +271,17 @@ backends:
 - `pkg/keyversion`: the record rules and the store. `pkg/xkms/key_versions_test.go`
   (software backend): sign/verify across versions, AES-GCM, AES-CBC, external
   RSA-OAEP and PKCS#1 v1.5 decryption after a rotation, disable/enable/retire,
-  delete, the reserved suffix, listing, `RotateScopeKeys` across tenants,
+  delete, the reserved suffix, listing, `RotateScopeKeys` across tenants and
+  its skip rules (`TestRotateScopeKeys_SkipsPinnedAndCertifiedKeys`,
+  `TestPinnedKeyReason`, `TestRotateKey_ReportsCertificateReissue`),
   sealing, derivation, unwrap. `pkg/api/{grpc,rest,mcp}/*key_version*_test.go`
   and `pkg/api/transport/*/transport_key_version_test.go`: every endpoint and
   its error mapping.
+- `pkg/tpmpolicy/conditions_test.go` (validation, conversion) and
+  `service_simulator_test.go` (simulator): composite policies end to end --
+  OR of branches, PCR and password, locality, descriptions, per-branch
+  verification. `pkg/api/transport/tpm_policy_branch_test.go`: the branch
+  spec grammar.
 - `pkg/xkms/servicer_tpm_policy_test.go`, `pkg/xkms/tenant_tpm_policies_test.go`, `pkg/api/{grpc,rest,mcp}/*tpm_policy*_test.go`,
   `pkg/api/grpc/pbconv`, `pkg/api/rest/wire`: binding, system scope, error
   mapping and wire mapping over a TPM-less service

@@ -16,6 +16,7 @@
   import { addNotification } from '$lib/stores/notifications';
   import { callBackend, callBackendVoidWithError } from '$lib/api/backend';
   import type { BarrierAutoUnsealStatus, TPMPolicyInfo } from '$lib/api/backend';
+  import { policySummary } from '$lib/utils/tpmPolicy';
 
   let status: BarrierAutoUnsealStatus | null = null;
   let policies: TPMPolicyInfo[] = [];
@@ -125,7 +126,7 @@
         <label class="text-label-medium" for="barrier-auto-unseal-policy">TPM policy</label>
         <select id="barrier-auto-unseal-policy" class="form-select" bind:value={selectedPolicy}>
           {#each policies as policy (policy.name)}
-            <option value={policy.name}>{policy.name}: {policy.bank} PCR {(policy.pcrs ?? []).join(', ')}</option>
+            <option value={policy.name}>{policy.name}: {policySummary(policy)}</option>
           {/each}
         </select>
         <Input id="barrier-auto-unseal-password" type="password" label="Barrier password" bind:value={password} />

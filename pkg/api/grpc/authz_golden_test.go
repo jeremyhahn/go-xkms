@@ -147,6 +147,7 @@ var goldenRPCPermissions = map[string]string{
 	"TPMPolicyDelete":          "tpm_policy:delete",
 	"TPMPolicyObjects":         "tpm_policy:get",
 	"TPMPolicySetAutoUnseal":   "tpm_policy:update",
+	"TPMPolicySetDescription":  "tpm_policy:update",
 	"TPMObjectPolicy":          "tpm_policy:get",
 	"TPMPolicyRotateAuthority": "tpm_policy:rotate",
 	// A tenant's TPM mode and vTPM (system scope only; tenants:set_tpm_mode

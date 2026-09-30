@@ -75,18 +75,22 @@ func NewTenantTPMPolicies(svc *tpmpolicy.Service, tenant string) (*TenantTPMPoli
 	return &TenantTPMPolicies{svc: svc, tenant: tenant}, nil
 }
 
-// TPMPolicyCreate creates a named TPM policy over the live PCR values of the
-// tenant's TPM.
+// TPMPolicyCreate creates a named TPM policy of the request's branches,
+// capturing the values of its pcr conditions from the tenant's TPM.
 func (t *TenantTPMPolicies) TPMPolicyCreate(ctx context.Context, req *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
+	branches, err := tpmBranchesFromTransport(req.Branches)
+	if err != nil {
+		return nil, err
+	}
 	p, err := t.svc.CreatePolicy(ctx, t.tenant, tpmpolicy.CreatePolicyRequest{
-		Name:       req.Name,
-		Bank:       req.Bank,
-		PCRs:       req.PCRs,
-		AutoUnseal: req.AutoUnseal,
-		OwnerAuth:  req.OwnerAuth,
+		Name:        req.Name,
+		Description: req.Description,
+		Branches:    branches,
+		AutoUnseal:  req.AutoUnseal,
+		OwnerAuth:   req.OwnerAuth,
 	})
 	if err != nil {
 		return nil, err
@@ -143,7 +147,8 @@ func (t *TenantTPMPolicies) TPMPolicyList(ctx context.Context, req *transport.TP
 }
 
 // TPMPolicyVerify compares a policy's captured PCR values with the live ones
-// and reports whether its approval is current.
+// and reports, branch by branch, whether each matches and holds a current
+// approval.
 func (t *TenantTPMPolicies) TPMPolicyVerify(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
@@ -152,12 +157,16 @@ func (t *TenantTPMPolicies) TPMPolicyVerify(ctx context.Context, req *transport.
 	if err != nil {
 		return nil, err
 	}
-	return &transport.TPMPolicyVerifyResponse{
-		Name:       v.Policy,
-		Match:      v.Match,
-		Mismatched: v.Mismatched,
-		Approved:   v.Approved,
-	}, nil
+	resp := &transport.TPMPolicyVerifyResponse{
+		Name:     v.Policy,
+		Match:    v.Match,
+		Approved: v.Approved,
+		Branches: make([]transport.TPMPolicyBranchVerification, len(v.Branches)),
+	}
+	for i, b := range v.Branches {
+		resp.Branches[i] = transport.TPMPolicyBranchVerification{Match: b.Match, Mismatched: b.Mismatched, Approved: b.Approved}
+	}
+	return resp, nil
 }
 
 // TPMPolicyDelete deletes a policy and its NV index. It is refused with
@@ -195,6 +204,19 @@ func (t *TenantTPMPolicies) TPMPolicySetAutoUnseal(ctx context.Context, req *tra
 		return nil, err
 	}
 	p, err := t.svc.Policy(ctx, t.tenant, req.Name)
+	if err != nil {
+		return nil, err
+	}
+	return tpmPolicyToTransport(t.tenant, p), nil
+}
+
+// TPMPolicySetDescription replaces a policy's description and returns the
+// policy as stored.
+func (t *TenantTPMPolicies) TPMPolicySetDescription(ctx context.Context, req *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	p, err := t.svc.SetDescription(ctx, t.tenant, req.Name, req.Description)
 	if err != nil {
 		return nil, err
 	}
@@ -249,29 +271,76 @@ func (t *TenantTPMPolicies) TPMPolicyRotateAuthority(ctx context.Context, req *t
 }
 
 // tpmPolicyToTransport converts a stored policy of tenant to its API form.
+// Approvals are signed for every branch at once, so the first approval's
+// epoch and authority generation are the policy's.
 func tpmPolicyToTransport(tenant string, p *tpmpolicy.Policy) *transport.TPMPolicy {
-	values := make(map[uint]string, len(p.PCRValues))
-	for pcr, value := range p.PCRValues {
-		values[pcr] = hex.EncodeToString(value)
-	}
 	out := &transport.TPMPolicy{
-		Name:       p.Name,
-		TenantID:   tenant,
-		Bank:       p.Bank,
-		PCRs:       p.PCRs,
-		PCRValues:  values,
-		PCRDigest:  hex.EncodeToString(p.PCRDigest),
-		Index:      p.Index,
-		AutoUnseal: p.AutoUnseal,
-		CreatedAt:  formatTPMTime(p.CreatedAt),
-		UpdatedAt:  formatTPMTime(p.UpdatedAt),
+		Name:        p.Name,
+		TenantID:    tenant,
+		Description: p.Description,
+		Branches:    make([]transport.TPMPolicyBranch, len(p.Branches)),
+		Index:       p.Index,
+		Approved:    len(p.Branches) > 0,
+		AutoUnseal:  p.AutoUnseal,
+		CreatedAt:   formatTPMTime(p.CreatedAt),
+		UpdatedAt:   formatTPMTime(p.UpdatedAt),
 	}
-	if p.Approval != nil {
-		out.Approved = true
-		out.Epoch = p.Approval.Epoch
-		out.AuthorityGeneration = p.Approval.AuthorityGeneration
+	for i, b := range p.Branches {
+		approved := i < len(p.Approvals) && p.Approvals[i] != nil
+		out.Branches[i] = tpmBranchToTransport(b, approved)
+		out.Approved = out.Approved && approved
+	}
+	if out.Approved {
+		out.Epoch = p.Approvals[0].Epoch
+		out.AuthorityGeneration = p.Approvals[0].AuthorityGeneration
 	}
 	return out
+}
+
+// tpmBranchToTransport converts a stored branch to its API form.
+func tpmBranchToTransport(b tpmpolicy.Branch, approved bool) transport.TPMPolicyBranch {
+	out := transport.TPMPolicyBranch{Conditions: make([]transport.TPMPolicyCondition, len(b.Conditions)), Approved: approved}
+	for i, c := range b.Conditions {
+		out.Conditions[i] = transport.TPMPolicyCondition{
+			Type:       string(c.Type),
+			Bank:       c.Bank,
+			PCRs:       c.PCRs,
+			PCRDigest:  hex.EncodeToString(c.PCRDigest),
+			Localities: c.Localities,
+		}
+		if len(c.PCRValues) > 0 {
+			values := make(map[uint]string, len(c.PCRValues))
+			for pcr, value := range c.PCRValues {
+				values[pcr] = hex.EncodeToString(value)
+			}
+			out.Conditions[i].PCRValues = values
+		}
+	}
+	return out
+}
+
+// tpmBranchesFromTransport converts requested branches to the policy
+// service's form. PCR values are captured from the TPM, never supplied: a
+// condition carrying any is refused with tpmpolicy.ErrPCRValuesSupplied.
+// The service validates everything else.
+func tpmBranchesFromTransport(branches []transport.TPMPolicyBranch) ([]tpmpolicy.Branch, error) {
+	out := make([]tpmpolicy.Branch, len(branches))
+	for i, b := range branches {
+		conditions := make([]tpmpolicy.Condition, len(b.Conditions))
+		for j, c := range b.Conditions {
+			if len(c.PCRValues) > 0 || c.PCRDigest != "" {
+				return nil, tpmpolicy.ErrPCRValuesSupplied
+			}
+			conditions[j] = tpmpolicy.Condition{
+				Type:       tpmpolicy.ConditionType(c.Type),
+				Bank:       c.Bank,
+				PCRs:       c.PCRs,
+				Localities: c.Localities,
+			}
+		}
+		out[i] = tpmpolicy.Branch{Conditions: conditions}
+	}
+	return out, nil
 }
 
 // formatTPMTime formats a registry timestamp as RFC 3339 in UTC; the zero

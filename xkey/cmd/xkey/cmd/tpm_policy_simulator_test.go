@@ -72,7 +72,7 @@ func TestTPMPolicyCommands_LocalModeLifecycle(t *testing.T) {
 
 	out, err := runTPMPolicyCommand(t, runTPMPolicyCreate, "boot")
 	require.NoError(t, err)
-	assert.Contains(t, out, "PCRs:         23")
+	assert.Contains(t, out, "Branch 0:     pcr=sha256:23 (approved: yes)")
 
 	out, err = runTPMPolicyCommand(t, runTPMPolicyList)
 	require.NoError(t, err)

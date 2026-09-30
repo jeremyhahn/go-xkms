@@ -742,16 +742,35 @@ export interface CertificateDetails {
   extensions: ExtensionInfo[];
 }
 
-/** A named TPM policy (services.TPMPolicyInfo). */
+/** A TPM policy condition type (transport.TPMPolicyCondition). */
+export type TPMPolicyConditionType = 'pcr' | 'auth_value' | 'locality';
+
+/** One condition of a policy branch (transport.TPMPolicyCondition). */
+export interface TPMPolicyCondition {
+  type: TPMPolicyConditionType;
+  bank?: string;
+  pcrs?: number[];
+  /** Hex PCR values captured from the TPM, keyed by PCR index; reported only. */
+  pcr_values?: Record<string, string>;
+  pcr_digest?: string;
+  localities?: number[];
+}
+
+/** One branch of a policy: the AND of its conditions (transport.TPMPolicyBranch). */
+export interface TPMPolicyBranch {
+  conditions: TPMPolicyCondition[];
+  /** Whether the branch holds an approval; reported only. */
+  approved?: boolean;
+}
+
+/** A named TPM policy (services.TPMPolicyInfo): an OR of branches. */
 export interface TPMPolicyInfo {
   name: string;
   /** The built-in platform policy: the platform PCR or the object's password. */
   builtin: boolean;
-  bank?: string;
-  pcrs?: number[];
-  /** Hex PCR values captured from the TPM, keyed by PCR index. */
-  pcr_values?: Record<string, string>;
-  pcr_digest?: string;
+  description?: string;
+  /** The policy's branches, tried in order; the built-in policy has none. */
+  branches?: TPMPolicyBranch[];
   index?: number;
   approved: boolean;
   epoch?: number;
@@ -762,12 +781,19 @@ export interface TPMPolicyInfo {
   updated_at?: string;
 }
 
-/** Live PCRs compared with a policy's captured values (services.TPMPolicyVerification). */
+/** One branch's verification (transport.TPMPolicyBranchVerification). */
+export interface TPMPolicyBranchVerification {
+  match: boolean;
+  mismatched?: number[];
+  approved: boolean;
+}
+
+/** Live PCRs compared with a policy's captured values, per branch (services.TPMPolicyVerification). */
 export interface TPMPolicyVerification {
   name: string;
   match: boolean;
-  mismatched: number[];
   approved: boolean;
+  branches: TPMPolicyBranchVerification[];
 }
 
 /** Where TPM policy operations run (services.TPMPolicyStatus). */

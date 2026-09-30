@@ -143,6 +143,18 @@ func (c TPMPolicyClient) TPMPolicySetAutoUnseal(ctx context.Context, req *transp
 	return TPMPolicyFromProto(resp), nil
 }
 
+// TPMPolicySetDescription replaces a policy's description.
+func (c TPMPolicyClient) TPMPolicySetDescription(ctx context.Context, req *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	resp, err := c.Client.TPMPolicySetDescription(ctx, TPMPolicyDescriptionRequestToProto(req))
+	if err != nil {
+		return nil, err
+	}
+	return TPMPolicyFromProto(resp), nil
+}
+
 // TPMObjectPolicy returns the policy a TPM object was created under.
 func (c TPMPolicyClient) TPMObjectPolicy(ctx context.Context, req *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	if req == nil {

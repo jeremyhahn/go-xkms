@@ -262,7 +262,7 @@ func (s *Service) ensureStatePolicy(ctx context.Context, st *scopeState, scope *
 	if bank == "" {
 		bank = pkgtpm2.PCRBankSHA256
 	}
-	branches, err := validateBranches([]Branch{{Conditions: []Condition{{Type: ConditionPCR, Bank: bank, PCRs: []uint{pcr}}}}})
+	branches, err := validateBranches([]Branch{PCRBranch(bank, pcr)})
 	if err != nil {
 		return err
 	}

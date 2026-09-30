@@ -60,14 +60,25 @@ func runTPMPolicyCommand(t *testing.T, run func(*cobra.Command, []string) error,
 	return out.String(), err
 }
 
-// withTPMPolicyFlags sets the create/auto-unseal flags for a test.
+// withTPMPolicyFlags sets the create/auto-unseal flags for a test, with no
+// --branch and no --description.
 func withTPMPolicyFlags(t *testing.T, pcrs, bank string, autoUnseal, off bool) {
 	t.Helper()
+	withTPMPolicyBranches(t, nil, "")
 	prevPCRs, prevBank, prevAuto, prevOff := tpmPolicyPCRs, tpmPolicyBank, tpmPolicyAutoUnseal, tpmPolicyOff
 	tpmPolicyPCRs, tpmPolicyBank, tpmPolicyAutoUnseal, tpmPolicyOff = pcrs, bank, autoUnseal, off
 	t.Cleanup(func() {
 		tpmPolicyPCRs, tpmPolicyBank, tpmPolicyAutoUnseal, tpmPolicyOff = prevPCRs, prevBank, prevAuto, prevOff
 	})
+}
+
+// withTPMPolicyBranches sets the --branch and --description flags for a
+// test.
+func withTPMPolicyBranches(t *testing.T, specs []string, description string) {
+	t.Helper()
+	prevSpecs, prevDescription := tpmPolicyBranchSpecs, tpmPolicyDescription
+	tpmPolicyBranchSpecs, tpmPolicyDescription = specs, description
+	t.Cleanup(func() { tpmPolicyBranchSpecs, tpmPolicyDescription = prevSpecs, prevDescription })
 }
 
 func TestTPMPolicyCreate_ServerModeCapturesAndRenders(t *testing.T) {
@@ -76,15 +87,46 @@ func TestTPMPolicyCreate_ServerModeCapturesAndRenders(t *testing.T) {
 	out, err := runTPMPolicyCommand(t, runTPMPolicyCreate, "boot")
 	require.NoError(t, err)
 	assert.Contains(t, out, "Name:         boot")
-	assert.Contains(t, out, "PCRs:         7")
+	assert.Contains(t, out, "Branch 0:     pcr=sha256:7 (approved: yes)")
 	assert.Contains(t, out, "aa")
+}
+
+func TestTPMPolicyCreate_CompositeBranchesAndDescription(t *testing.T) {
+	fake := serverTPMPolicies(t)
+	withTPMPolicyFlags(t, "", "", false, false)
+	withTPMPolicyBranches(t, []string{"pcr=sha256:7;locality=0", "auth_value"}, "firmware or PIN")
+	out, err := runTPMPolicyCommand(t, runTPMPolicyCreate, "boot-or-pin")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Description:  firmware or PIN")
+	assert.Contains(t, out, "Branch 0:     pcr=sha256:7;locality=0")
+	assert.Contains(t, out, "Branch 1:     auth_value")
+
+	out, err = runTPMPolicyCommand(t, runTPMPolicyDescribe, "boot-or-pin", "changed")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Description:  changed")
+	p, err := fake.TPMPolicyGet(context.Background(), &xkms.TPMPolicyRequest{Name: "boot-or-pin"})
+	require.NoError(t, err)
+	assert.Equal(t, "changed", p.Description)
+
+	_, err = runTPMPolicyCommand(t, runTPMPolicyDescribe, "missing", "x")
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNotFound)
 }
 
 func TestTPMPolicyCreate_RequiresValidPCRs(t *testing.T) {
 	serverTPMPolicies(t)
 	withTPMPolicyFlags(t, "", "sha256", false, false)
 	_, err := runTPMPolicyCommand(t, runTPMPolicyCreate, "boot")
-	assert.ErrorIs(t, err, ErrTPMPolicyPCRsRequired)
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNoSelection, "--bank alone selects nothing")
+
+	withTPMPolicyFlags(t, "7", "", false, false)
+	withTPMPolicyBranches(t, []string{"auth_value"}, "")
+	_, err = runTPMPolicyCommand(t, runTPMPolicyCreate, "boot")
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyPCRsAndBranches)
+
+	withTPMPolicyFlags(t, "", "", false, false)
+	withTPMPolicyBranches(t, []string{"time=5"}, "")
+	_, err = runTPMPolicyCommand(t, runTPMPolicyCreate, "boot")
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyConditionUnknown)
 
 	withTPMPolicyFlags(t, "7-x", "sha256", false, false)
 	_, err = runTPMPolicyCommand(t, runTPMPolicyCreate, "boot")
@@ -113,7 +155,7 @@ func TestTPMPolicyList_ShowsPlatformAndObjectCounts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "Source: xkmsd")
 	assert.Contains(t, out, "platform PCR or password")
-	assert.Regexp(t, `boot\s+sha256\s+7\s+yes\s+no\s+1`, out)
+	assert.Regexp(t, `boot\s+pcr=sha256:7\s+yes\s+no\s+1`, out)
 
 	withTPMOutputFormat(t, "json")
 	out, err = runTPMPolicyCommand(t, runTPMPolicyList)

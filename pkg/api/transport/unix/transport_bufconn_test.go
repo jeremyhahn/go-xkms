@@ -605,7 +605,7 @@ func (s *mockKeystoreServer) PasswordStoreSetAccessMode(_ context.Context, req *
 // TPMPolicyGet echoes the requested policy, so a client test can see the
 // request's tenant and name arrive.
 func (s *mockKeystoreServer) TPMPolicyGet(_ context.Context, req *pb.TPMPolicyRequest) (*pb.TPMPolicy, error) {
-	return &pb.TPMPolicy{Name: req.GetName(), TenantId: req.GetTenantId(), Bank: "sha256", Pcrs: []uint32{7}, Approved: true}, nil
+	return &pb.TPMPolicy{Name: req.GetName(), TenantId: req.GetTenantId(), Branches: []*pb.TPMPolicyBranch{{Conditions: []*pb.TPMPolicyCondition{{Type: "pcr", Bank: "sha256", Pcrs: []uint32{7}}}}}, Approved: true}, nil
 }
 
 // RetireKeyVersion echoes the retired version.

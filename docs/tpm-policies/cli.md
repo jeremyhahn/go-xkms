@@ -10,12 +10,13 @@ owner-hierarchy authorization, needed only when the owner hierarchy has one;
 
 | Command | Flags | Purpose |
 |---|---|---|
-| `tpm policy create <name>` | `--pcrs` (required), `--bank` (`sha256`), `--auto-unseal`, `--owner-auth`, `--tenant` | Create a policy over the TPM's live PCR values |
+| `tpm policy create <name>` | `--pcrs` and `--bank` (`sha256`), or `--branch` (repeatable); `--description`, `--auto-unseal`, `--owner-auth`, `--tenant` | Create a policy; the values of its pcr conditions are read from the TPM |
+| `tpm policy describe <name> <text>` | `--tenant` | Replace the policy's description (`""` clears it) |
 | `tpm policy list` | `--tenant` | List policies |
-| `tpm policy get <name>` | `--tenant` | Show a policy, its PCR values and approval |
+| `tpm policy get <name>` | `--tenant` | Show a policy, its branches with their PCR values, and approval |
 | `tpm policy update <name>` | `--tenant` | Re-capture and re-approve after an expected platform change |
 | `tpm policy revoke <name>` | `--tenant` | Withdraw the approval |
-| `tpm policy verify <name>` | `--tenant` | Compare with the live PCRs; exits non-zero on a mismatch or no approval |
+| `tpm policy verify <name>` | `--tenant` | Compare each branch with the live PCRs; exits non-zero on a mismatch or no approval |
 | `tpm policy delete <name>` | `--owner-auth`, `--tenant` | Delete a policy; refused while objects use it |
 | `tpm policy objects <name>` | `--tenant` | List the keys and sealed objects bound to it |
 | `tpm policy auto-unseal <name>` | `--disable`, `--tenant` | Mark (or unmark) the policy barrier auto-unseal uses |
@@ -27,8 +28,28 @@ owner-hierarchy authorization, needed only when the owner hierarchy has one;
 | `tenant tpm-mode <id> [none\|shared\|vtpm]` | `--owner-auth` | Show or set a tenant's TPM mode (system only) |
 | `tenant vtpm status\|start\|stop <id>` | | A vtpm-mode tenant's virtual TPM (system only) |
 
+### Branches
+
+`--pcrs 0,7 [--bank sha384]` creates the common policy: one branch holding
+one pcr condition. `--branch` gives a branch explicitly, once per branch,
+branches tried in order; it cannot be combined with `--pcrs` or `--bank`. A
+branch is conditions joined by `;`:
+
+| Condition | Meaning |
+|---|---|
+| `pcr=[BANK:]LIST` | The PCRs in `LIST` of `BANK` (`sha256` when omitted) hold the values captured at create or update |
+| `auth_value` | The object's password is presented |
+| `locality=LIST` | The command comes from one of the TPM localities (0-4) in `LIST` |
+
+`LIST` is comma-separated indices or ranges (`0,7`, `0-7`). A branch has at
+most one condition of each kind. A key or sealed object bound to a policy
+with `auth_value` needs a password.
+
 ```
-xkmsctl tpm policy create boot --pcrs 0,7
+xkmsctl tpm policy create boot --pcrs 0,7 --description "firmware and Secure Boot"
+xkmsctl tpm policy create boot-or-pin --branch 'pcr=sha256:0,7' --branch auth_value
+xkmsctl tpm policy create strict --branch 'pcr=sha256:0,7;auth_value;locality=0'
+xkmsctl tpm policy describe boot "firmware, Secure Boot and the boot loader"
 xkmsctl --backend tpm2 key generate signer --key-type signing --key-algorithm ecdsa --tpm-policy boot
 xkmsctl tpm policy objects boot
 xkmsctl key policy signer
@@ -45,8 +66,8 @@ xkmsctl tenant tpm-mode acme vtpm
 
 | Command | Flags | Purpose |
 |---|---|---|
-| `key rotate <id>` | | Create the key's next version and make it current; prints the new version |
-| `key rotate-all` | `--tenant` | Rotate every key of the caller's tenant (or, for a system caller, `--tenant`); lists each key's result and exits non-zero if any key was not rotated |
+| `key rotate <id>` | | Create the key's next version and make it current; prints the new version, and warns when the key has a certificate to re-issue |
+| `key rotate-all` | `--tenant` | Rotate every key of the caller's tenant (or, for a system caller, `--tenant`); lists each key's state (`rotated`, `skipped` with the reason, `failed` with the error) and exits non-zero if any key failed |
 | `key versions <id>` | | List the versions: number, state, current, created at and by |
 | `key version enable <id> <n>` | | Enable a disabled version |
 | `key version disable <id> <n>` | | Disable a version; refused for the current one |
@@ -80,9 +101,10 @@ and `-o json` apply.
 
 | Command | Flags | Purpose |
 |---|---|---|
-| `xkey tpm policy create <name>` | `--pcrs` (required), `--bank` (`sha256`), `--auto-unseal` | Create a policy over the live PCR values; locally, `--auto-unseal` also seals the barrier password under it |
+| `xkey tpm policy create <name>` | `--pcrs` and `--bank` (`sha256`), or `--branch` (repeatable, the grammar above); `--description`, `--auto-unseal` | Create a policy; locally, `--auto-unseal` also seals the barrier password under it |
+| `xkey tpm policy describe <name> <text>` | | Replace the policy's description |
 | `xkey tpm policy list` | | Policies with their object counts; the built-in `platform` first |
-| `xkey tpm policy get <name>` | | A policy, its captured PCR values and approval |
+| `xkey tpm policy get <name>` | | A policy, its branches with their captured PCR values, and approval |
 | `xkey tpm policy update <name>` | | Re-capture and re-approve (no re-key) |
 | `xkey tpm policy revoke <name>` | | Withdraw the approval |
 | `xkey tpm policy verify <name>` | | Compare with the live PCRs; exits non-zero when not satisfied |
@@ -94,6 +116,7 @@ and `-o json` apply.
 
 ```
 xkey tpm policy create boot --pcrs 0,7
+xkey tpm policy create boot-or-pin --branch 'pcr=0,7' --branch auth_value
 echo "$BARRIER_PASSWORD" | xkey tpm policy auto-unseal boot
 xkey tpm policy verify boot || xkey tpm policy update boot    # after a trusted firmware update
 xkey --xkmsd-url grpcs://kms.example.com:9443 tpm policy list

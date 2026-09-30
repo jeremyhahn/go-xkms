@@ -222,6 +222,21 @@ var pivSlotCNMap = map[string]string{
 	"92": "piv-92", "93": "piv-93", "94": "piv-94", "95": "piv-95",
 }
 
+// pivSlotCNs is the set of common names pivSlotCNMap assigns.
+var pivSlotCNs = func() map[string]struct{} {
+	cns := make(map[string]struct{}, len(pivSlotCNMap))
+	for _, cn := range pivSlotCNMap {
+		cns[cn] = struct{}{}
+	}
+	return cns
+}()
+
+// isPIVSlotCN reports whether cn is the common name of a PIV slot's key.
+func isPIVSlotCN(cn string) bool {
+	_, ok := pivSlotCNs[cn]
+	return ok
+}
+
 // PivSlotCN returns the common name identifier for a PIV slot.
 // Returns "piv-{slot}" for known slots and "piv-{slot}" for unknown slots.
 func PivSlotCN(slot pivcert.PIVSlot) string {

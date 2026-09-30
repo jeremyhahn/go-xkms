@@ -75,10 +75,11 @@ func TestAllKeyVersionsResponses(t *testing.T) {
 // failures included, survives the wire.
 func TestRotateScopeKeysResponse_RoundTrip(t *testing.T) {
 	in := &transport.RotateScopeKeysResponse{
-		TenantID: "acme", Rotated: 1, Failed: 1,
+		TenantID: "acme", Rotated: 1, Skipped: 1, Failed: 1,
 		Results: []transport.KeyRotationResult{
-			{Backend: "software", KeyID: "a", KeyVersion: 2},
-			{Backend: "software", KeyID: "b", Error: "cannot be rotated"},
+			{Backend: "software", KeyID: "a", State: transport.KeyRotationRotated, KeyVersion: 2},
+			{Backend: "software", KeyID: "b", State: transport.KeyRotationFailed, Error: "cannot be rotated"},
+			{Backend: "software", KeyID: "c", State: transport.KeyRotationSkipped, Reason: "has a certificate; re-issue after rotating it explicitly"},
 		},
 	}
 	assert.Equal(t, in, RotateScopeKeysResponseFromProto(RotateScopeKeysResponseToProto(in)))

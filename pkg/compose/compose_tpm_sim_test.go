@@ -54,7 +54,7 @@ func TestBuild_TPMBackendComposesTheTPMPolicyService(t *testing.T) {
 
 	st.Wire(svc)
 	assert.Same(t, st.TPMPolicies, svc.TPMPolicyService())
-	created, err := svc.TPMPolicyCreate(platformCtx(), &transport.TPMPolicyCreateRequest{Name: "boot", Bank: "sha256", PCRs: []uint{23}})
+	created, err := svc.TPMPolicyCreate(platformCtx(), &transport.TPMPolicyCreateRequest{Name: "boot", Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{23})}})
 	require.NoError(t, err)
 	assert.True(t, created.Approved)
 }

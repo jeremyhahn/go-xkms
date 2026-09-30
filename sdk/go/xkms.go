@@ -51,6 +51,14 @@ const (
 	ProtocolEmbedded Protocol = "embedded"
 )
 
+// Key rotation result states: a key a scope rotation rotated, skipped on
+// purpose (KeyRotationResult.Reason says why) or failed to rotate.
+const (
+	KeyRotationRotated = transport.KeyRotationRotated
+	KeyRotationSkipped = transport.KeyRotationSkipped
+	KeyRotationFailed  = transport.KeyRotationFailed
+)
+
 // DefaultUnixSocketPath is the default Unix socket path (relative to current working directory)
 const DefaultUnixSocketPath = "xkms-data/xkms.sock"
 
@@ -510,22 +518,27 @@ type (
 	KeyRotationResult       = transport.KeyRotationResult
 
 	// TPM Policy Operations
-	TPMPolicy                  = transport.TPMPolicy
-	TPMPolicyCreateRequest     = transport.TPMPolicyCreateRequest
-	TPMPolicyRequest           = transport.TPMPolicyRequest
-	TPMPolicyListRequest       = transport.TPMPolicyListRequest
-	TPMPolicyListResponse      = transport.TPMPolicyListResponse
-	TPMPolicyDeleteRequest     = transport.TPMPolicyDeleteRequest
-	TPMPolicyVerifyResponse    = transport.TPMPolicyVerifyResponse
-	TPMPolicyObjectsResponse   = transport.TPMPolicyObjectsResponse
-	TPMPolicyAutoUnsealRequest = transport.TPMPolicyAutoUnsealRequest
-	TPMObjectPolicyRequest     = transport.TPMObjectPolicyRequest
-	TPMObjectPolicyResponse    = transport.TPMObjectPolicyResponse
-	TPMAuthorityRotateRequest  = transport.TPMAuthorityRotateRequest
-	TPMAuthorityRotateResponse = transport.TPMAuthorityRotateResponse
-	TenantTPMModeResponse      = transport.TenantTPMModeResponse
-	SetTenantTPMModeRequest    = transport.SetTenantTPMModeRequest
-	TenantVTPMStatusResponse   = transport.TenantVTPMStatusResponse
+	TPMPolicy                   = transport.TPMPolicy
+	TPMPolicyBranch             = transport.TPMPolicyBranch
+	TPMPolicyCondition          = transport.TPMPolicyCondition
+	TPMPolicyCreateRequest      = transport.TPMPolicyCreateRequest
+	TPMPolicyDescriptionRequest = transport.TPMPolicyDescriptionRequest
+	TPMPolicyBranchVerification = transport.TPMPolicyBranchVerification
+	TPMPolicyBranchSpecError    = transport.TPMPolicyBranchSpecError
+	TPMPolicyRequest            = transport.TPMPolicyRequest
+	TPMPolicyListRequest        = transport.TPMPolicyListRequest
+	TPMPolicyListResponse       = transport.TPMPolicyListResponse
+	TPMPolicyDeleteRequest      = transport.TPMPolicyDeleteRequest
+	TPMPolicyVerifyResponse     = transport.TPMPolicyVerifyResponse
+	TPMPolicyObjectsResponse    = transport.TPMPolicyObjectsResponse
+	TPMPolicyAutoUnsealRequest  = transport.TPMPolicyAutoUnsealRequest
+	TPMObjectPolicyRequest      = transport.TPMObjectPolicyRequest
+	TPMObjectPolicyResponse     = transport.TPMObjectPolicyResponse
+	TPMAuthorityRotateRequest   = transport.TPMAuthorityRotateRequest
+	TPMAuthorityRotateResponse  = transport.TPMAuthorityRotateResponse
+	TenantTPMModeResponse       = transport.TenantTPMModeResponse
+	SetTenantTPMModeRequest     = transport.SetTenantTPMModeRequest
+	TenantVTPMStatusResponse    = transport.TenantVTPMStatusResponse
 
 	// Audit Operations
 	AuditEvent  = transport.AuditEvent

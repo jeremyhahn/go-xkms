@@ -69,6 +69,7 @@ func TestTenantTPMPolicies_NilRequest(t *testing.T) {
 		p.TPMPolicyDelete(ctx, nil),
 		func() error { _, err := p.TPMPolicyObjects(ctx, nil); return err }(),
 		func() error { _, err := p.TPMPolicySetAutoUnseal(ctx, nil); return err }(),
+		func() error { _, err := p.TPMPolicySetDescription(ctx, nil); return err }(),
 		func() error { _, err := p.TPMObjectPolicy(ctx, nil); return err }(),
 		func() error { _, err := p.TPMPolicyRotateAuthority(ctx, nil); return err }(),
 	}

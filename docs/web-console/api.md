@@ -1,6 +1,6 @@
 # Web Console — API
 
-> **Status: NORMATIVE** · Feature: `web-console` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `web-console` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 The console is a REST-only client. It never dials gRPC, QUIC, MCP, or the
 Unix socket, and — despite `sdk/ts` shipping a WebSocket-capable SSH console
@@ -71,7 +71,7 @@ and the console screen.
 | PIV | `/api/v1/piv/slots/*` | `piv` | PIV (slot view only; cert ops via CLI) |
 | SSH keys | `/xkms/v1/ssh/keys*` | `ssh keys` | SSH (list/generate/delete only) |
 | SSH known-hosts / authorized-keys | `/xkms/v1/ssh/known-hosts*`, `/authorized-keys*` | `ssh known-hosts`, `ssh authorized-keys` | CLI-only |
-| TPM Policies | `/api/v1/tpm/*` | `tpm policy` | not yet in the console (the PCR Policies view targeted the removed `/api/v1/policies/*`) |
+| TPM Policies | `/api/v1/tpm/*` | `tpm policy` | TPM Policies (create simple or with branches, description, verify per branch, update, revoke, auto-unseal, objects, delete, rotate authority) |
 | FROST (keys only, not signing rounds) | `/api/v1/frost/keys*`, `/frost/verify` | `frost` | FROST |
 | Audit log | `/api/v1/audit/` | `audit query` | Audit — see the permission-matrix gap above |
 | Users | `/api/v1/users*` | `user`, `admin` | Users |

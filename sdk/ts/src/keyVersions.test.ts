@@ -72,7 +72,7 @@ describe('KeyVersionsClient (keys.versions)', () => {
   });
 
   it('rotateAll sends the tenant only when one is named', async () => {
-    const fake = newFakeFetch({ body: { tenant_id: 'acme', results: [], rotated: 0, failed: 0 } });
+    const fake = newFakeFetch({ body: { tenant_id: 'acme', results: [], rotated: 0, skipped: 0, failed: 0 } });
     const c = make(fake);
     await c.keys.versions.rotateAll('acme');
     await c.keys.versions.rotateAll();
@@ -80,6 +80,25 @@ describe('KeyVersionsClient (keys.versions)', () => {
     expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/keys/rotate-all`);
     expect(fake.calls[0]?.body).toEqual({ tenant_id: 'acme' });
     expect(fake.calls[1]?.body).toEqual({});
+  });
+
+  it('rotateAll reports skipped keys with their reason', async () => {
+    const fake = newFakeFetch({
+      body: {
+        tenant_id: 'acme',
+        results: [
+          { backend: 'software', key_id: 'k', state: 'rotated', key_version: 2 },
+          { backend: 'software', key_id: 'tls', state: 'skipped', reason: 'has a certificate; re-issue after rotating it explicitly' },
+        ],
+        rotated: 1,
+        skipped: 1,
+        failed: 0,
+      },
+    });
+    const resp = await make(fake).keys.versions.rotateAll('acme');
+    expect(resp.skipped).toBe(1);
+    expect(resp.results[1]?.state).toBe('skipped');
+    expect(resp.results[1]?.reason).toContain('certificate');
   });
 
   it('surfaces a current-version refusal as XkmsApiError 409', async () => {

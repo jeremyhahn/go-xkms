@@ -41,7 +41,7 @@ func TestKeyVersions_TPM2TenantKeyRotatesUnderItsPolicy(t *testing.T) {
 	acme := identityCtx("acme")
 	require.NotNil(t, svc.KeyVersionStore(), "xkmsd wires the key-version store")
 
-	_, err := svc.TPMPolicyCreate(acme, &transport.TPMPolicyCreateRequest{Name: "acme-boot", Bank: "sha256", PCRs: []uint{policyPCR}})
+	_, err := svc.TPMPolicyCreate(acme, &transport.TPMPolicyCreateRequest{Name: "acme-boot", Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{policyPCR})}})
 	require.NoError(t, err)
 	pubV1 := generateTPMKey(t, svc, "acme", "signer", "acme-boot")
 

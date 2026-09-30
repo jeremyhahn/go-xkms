@@ -21,18 +21,49 @@
 
 import type { Base64, RFC3339 } from './common.js';
 
-/** Mirrors pkg/api/transport/types.go TPMPolicy. */
+/** TPM policy condition types (pkg/api/transport TPMPolicyCondition*). */
+export type TPMPolicyConditionType = 'pcr' | 'auth_value' | 'locality';
+
+/**
+ * Mirrors pkg/api/transport/types.go TPMPolicyCondition: one condition of a
+ * branch. Only the fields of its type are set.
+ */
+export interface TPMPolicyCondition {
+  type: TPMPolicyConditionType;
+  /** A pcr condition's bank: sha1, sha256, sha384 or sha512. */
+  bank?: string;
+  /** A pcr condition's PCR indices, 0-23. */
+  pcrs?: number[];
+  /**
+   * A pcr condition's hex-encoded values captured at create/update, keyed by
+   * PCR index. Reported only; a create request carrying them is refused.
+   */
+  pcr_values?: Record<string, string>;
+  /** Hex-encoded PolicyPCR digest over pcr_values. Reported only. */
+  pcr_digest?: string;
+  /** A locality condition's allowed localities, 0-4. */
+  localities?: number[];
+}
+
+/**
+ * Mirrors pkg/api/transport/types.go TPMPolicyBranch: the AND of its
+ * conditions, at most one of each type.
+ */
+export interface TPMPolicyBranch {
+  conditions: TPMPolicyCondition[];
+  /** Whether the branch holds an approval; reported on a policy only. */
+  approved?: boolean;
+}
+
+/** Mirrors pkg/api/transport/types.go TPMPolicy: an OR of branches. */
 export interface TPMPolicy {
   name: string;
   /** Empty for the system scope. */
   tenant_id?: string;
-  /** PCR bank: sha1, sha256, sha384 or sha512. */
-  bank: string;
-  pcrs: number[];
-  /** Hex-encoded PCR values captured at create/update, keyed by PCR index. */
-  pcr_values?: Record<string, string>;
-  /** Hex-encoded PolicyPCR digest over pcr_values. */
-  pcr_digest?: string;
+  /** Free text, settable at creation and at any time after. */
+  description?: string;
+  /** The policy's branches, tried in order when an object is used. */
+  branches: TPMPolicyBranch[];
   /** The policy's NV index; objects bound to it follow it. */
   index: number;
   /** False after a revoke until the next update. */
@@ -46,15 +77,16 @@ export interface TPMPolicy {
 }
 
 /**
- * Mirrors pkg/api/transport/types.go TPMPolicyCreateRequest. The PCR values
- * are always captured live from the tenant's TPM; the caller never supplies
- * them.
+ * Mirrors pkg/api/transport/types.go TPMPolicyCreateRequest. The values of
+ * its pcr conditions are always captured live from the tenant's TPM; the
+ * caller never supplies them. pcrBranch (clients/tpmPolicy.ts) builds the
+ * common one-branch policy over a PCR selection.
  */
 export interface TPMPolicyCreateRequest {
   tenant_id?: string;
   name: string;
-  bank: string;
-  pcrs: number[];
+  description?: string;
+  branches: TPMPolicyBranch[];
   auto_unseal?: boolean;
   /** The physical TPM's owner-hierarchy authorization; never logged. */
   owner_auth?: Base64;
@@ -74,18 +106,28 @@ export interface TPMPolicyDeleteRequest {
   owner_auth?: Base64;
 }
 
+/** Mirrors pkg/api/transport/types.go TPMPolicyBranchVerification. */
+export interface TPMPolicyBranchVerification {
+  /** True when the branch's pcr condition, if any, still holds its values. */
+  match: boolean;
+  /** PCR indices that no longer match, ascending. */
+  mismatched?: number[];
+  /** Whether the branch's approval is current. */
+  approved: boolean;
+}
+
 /**
  * Mirrors pkg/api/transport/types.go TPMPolicyVerifyResponse. Advisory: the
  * TPM itself enforces the policy on use.
  */
 export interface TPMPolicyVerifyResponse {
   name: string;
-  /** True when every selected PCR still holds its captured value. */
+  /** True when every branch matches. */
   match: boolean;
-  /** PCR indices that no longer match, ascending. */
-  mismatched?: number[];
-  /** Whether the policy's approval is current. */
+  /** True when every branch's approval is current. */
   approved: boolean;
+  /** Each branch, index-aligned with the policy's. */
+  branches: TPMPolicyBranchVerification[];
 }
 
 /**

@@ -86,7 +86,10 @@ func TestTPMPolicyTools_MapErrors(t *testing.T) {
 		code                         int
 	}{
 		{"unknown object", "acme", "tpm.object.policy", `{"key_id":"missing"}`, sdkssh.JSONRPCCodeNotFound},
-		{"invalid bank", "acme", "tpm.policy.create", `{"name":"boot","bank":"md5","pcrs":[7]}`, ErrCodeInvalidParams},
+		{"invalid bank", "acme", "tpm.policy.create", `{"name":"boot","branches":[{"conditions":[{"type":"pcr","bank":"md5","pcrs":[7]}]}]}`, ErrCodeInvalidParams},
+		{"no branches", "acme", "tpm.policy.create", `{"name":"boot"}`, ErrCodeInvalidParams},
+		{"bad locality", "acme", "tpm.policy.create", `{"name":"boot","branches":[{"conditions":[{"type":"locality","localities":[5]}]}]}`, ErrCodeInvalidParams},
+		{"description on the platform policy", "acme", "tpm.policy.setDescription", `{"name":"platform","description":"d"}`, ErrCodeInvalidParams},
 		{"another tenant", "acme", "tpm.policy.list", `{"tenant_id":"globex"}`, sdkssh.JSONRPCCodeNotFound},
 		{"tenant mode is system scope", "acme", "xkms.getTenantTPMMode", `{"tenant_id":"acme"}`, sdkssh.JSONRPCCodeNotFound},
 		{"missing tenant id", qrdbsdk.SystemTenantID, "xkms.tenantVTPMStatus", `{}`, ErrCodeInvalidParams},

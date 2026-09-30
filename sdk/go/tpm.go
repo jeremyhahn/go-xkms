@@ -527,6 +527,7 @@ var (
 	ErrTPMInvalidPCRBankType          = tpm2.ErrInvalidPCRBankType
 	ErrTPMPolicyInvalidDigest         = tpm2.ErrPolicyInvalidDigest
 	ErrTPMPolicyEmptyPCRs             = tpm2.ErrPolicyEmptyPCRs
+	ErrTPMPolicyAuthValueRequired     = tpm2.ErrPolicyAuthValueRequired
 
 	// Platform key store errors
 	ErrPlatformKeyStoreNilTPM             = tpm2.ErrPlatformKeyStoreNilTPM

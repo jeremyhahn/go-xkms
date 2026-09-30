@@ -477,12 +477,13 @@ func (t *Transport) RotateKey(ctx context.Context, req *transport.RotateKeyReque
 	}
 
 	return &transport.RotateKeyResponse{
-		Success:      true,
-		KeyID:        resp.KeyId,
-		Message:      "Key rotated successfully",
-		PublicKeyPEM: resp.PublicKeyPem,
-		KeyType:      resp.KeyType,
-		KeyVersion:   resp.KeyVersion,
+		Success:                    true,
+		KeyID:                      resp.KeyId,
+		Message:                    "Key rotated successfully",
+		PublicKeyPEM:               resp.PublicKeyPem,
+		KeyType:                    resp.KeyType,
+		KeyVersion:                 resp.KeyVersion,
+		CertificateReissueRequired: resp.CertificateReissueRequired,
 	}, nil
 }
 
@@ -2495,6 +2496,14 @@ func (t *Transport) TPMPolicySetAutoUnseal(ctx context.Context, req *transport.T
 		return nil, ErrNotConnected
 	}
 	return pbconv.TPMPolicyClient{Client: t.client}.TPMPolicySetAutoUnseal(ctx, req)
+}
+
+// TPMPolicySetDescription replaces a TPM policy's description.
+func (t *Transport) TPMPolicySetDescription(ctx context.Context, req *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.TPMPolicyClient{Client: t.client}.TPMPolicySetDescription(ctx, req)
 }
 
 // TPMObjectPolicy returns the TPM policy a key or sealed object was created under.

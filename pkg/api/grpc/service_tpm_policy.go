@@ -183,6 +183,20 @@ func (s *Service) TPMPolicySetAutoUnseal(ctx context.Context, req *pb.TPMPolicyA
 	})
 }
 
+// TPMPolicySetDescription replaces a TPM policy's description.
+func (s *Service) TPMPolicySetDescription(ctx context.Context, req *pb.TPMPolicyDescriptionRequest) (*pb.TPMPolicy, error) {
+	if err := s.authorize(ctx, auth.ResourceTPMPolicy, auth.ActionUpdate, req.GetName()); err != nil {
+		return nil, err
+	}
+	return tpmPolicyCall(s, func(x *xkms.XKMSService) (*pb.TPMPolicy, error) {
+		p, err := x.TPMPolicySetDescription(ctx, pbconv.TPMPolicyDescriptionRequestFromProto(req))
+		if err != nil {
+			return nil, err
+		}
+		return pbconv.TPMPolicyToProto(p), nil
+	})
+}
+
 // TPMObjectPolicy returns the TPM policy a key or sealed object was created
 // under.
 func (s *Service) TPMObjectPolicy(ctx context.Context, req *pb.TPMObjectPolicyRequest) (*pb.TPMObjectPolicyResponse, error) {

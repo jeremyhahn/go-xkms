@@ -155,9 +155,9 @@ func TestLocalTPMPolicies_PolicyLifecycleWithKeys(t *testing.T) {
 	assert.Equal(t, TPMPolicyModeLocal, svc.GetStatus().Mode)
 	assert.Equal(t, "system", svc.GetStatus().Scope)
 
-	created, err := svc.CreatePolicy("boot", "sha256", []uint{simPCR}, false, "")
+	created, err := svc.CreatePolicy("boot", "", pcrBranches(simPCR), false, "")
 	require.NoError(t, err)
-	assert.Len(t, created.PCRValues, 1, "the value is captured from the TPM")
+	assert.Len(t, created.Branches[0].Conditions[0].PCRValues, 1, "the value is captured from the TPM")
 	assert.True(t, created.Approved)
 
 	backend := newSimKeyBackend(t, sim)
@@ -188,14 +188,14 @@ func TestLocalTPMPolicies_PolicyLifecycleWithKeys(t *testing.T) {
 	v, err := svc.VerifyPolicy("boot")
 	require.NoError(t, err)
 	assert.False(t, v.Match)
-	assert.Equal(t, []uint{simPCR}, v.Mismatched)
+	assert.Equal(t, []uint{simPCR}, v.Branches[0].Mismatched)
 	assert.Error(t, signWith(backend, k1), "the TPM enforces the policy on use")
 
 	// Update re-captures and re-approves; the same key works again, with no
 	// re-key.
 	updated, err := svc.UpdatePolicy("boot")
 	require.NoError(t, err)
-	assert.NotEqual(t, created.PCRValues[simPCR], updated.PCRValues[simPCR])
+	assert.NotEqual(t, created.Branches[0].Conditions[0].PCRValues[simPCR], updated.Branches[0].Conditions[0].PCRValues[simPCR])
 	v, err = svc.VerifyPolicy("boot")
 	require.NoError(t, err)
 	assert.True(t, v.Match)
@@ -224,9 +224,9 @@ func TestLocalTPMPolicies_PolicyLifecycleWithKeys(t *testing.T) {
 
 func TestLocalTPMPolicies_AutoUnsealAttribute(t *testing.T) {
 	_, _, svc := openSimLocal(t)
-	_, err := svc.CreatePolicy("first", "sha256", []uint{simPCR}, true, "")
+	_, err := svc.CreatePolicy("first", "", pcrBranches(simPCR), true, "")
 	require.NoError(t, err)
-	_, err = svc.CreatePolicy("second", "sha256", []uint{simPCR}, false, "")
+	_, err = svc.CreatePolicy("second", "", pcrBranches(simPCR), false, "")
 	require.NoError(t, err)
 
 	first, err := svc.GetPolicy("first")
@@ -239,13 +239,13 @@ func TestLocalTPMPolicies_AutoUnsealAttribute(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, first.AutoUnseal, "at most one policy per scope carries auto-unseal")
 
-	_, err = svc.CreatePolicy("first", "sha256", []uint{simPCR}, false, "")
+	_, err = svc.CreatePolicy("first", "", pcrBranches(simPCR), false, "")
 	assert.ErrorIs(t, err, xkms.ErrTPMPolicyExists)
 }
 
 func TestLocalTPMPolicies_SealedObjectFollowsItsPolicy(t *testing.T) {
 	sim, local, svc := openSimLocal(t)
-	_, err := svc.CreatePolicy("boot", "sha256", []uint{simPCR}, false, "")
+	_, err := svc.CreatePolicy("boot", "", pcrBranches(simPCR), false, "")
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -306,7 +306,7 @@ func TestBarrierAutoUnseal_TPMReleasesTheCredentialOnlyUnderThePolicy(t *testing
 	require.NoError(t, err)
 	assert.False(t, ok)
 
-	_, err = svc.CreatePolicy("boot", "sha256", []uint{simPCR}, false, "")
+	_, err = svc.CreatePolicy("boot", "", pcrBranches(simPCR), false, "")
 	require.NoError(t, err)
 	require.NoError(t, auto.EnableAutoUnseal("boot", password))
 
@@ -365,7 +365,7 @@ func TestBarrierAutoUnseal_MovedMarkFailsClosed(t *testing.T) {
 	ctx := context.Background()
 
 	for _, name := range []string{"boot", "other"} {
-		_, err := svc.CreatePolicy(name, "sha256", []uint{simPCR}, false, "")
+		_, err := svc.CreatePolicy(name, "", pcrBranches(simPCR), false, "")
 		require.NoError(t, err)
 	}
 
@@ -393,7 +393,7 @@ func TestBarrierAutoUnseal_WrongCredentialIsReportedAsABarrierFailure(t *testing
 	barrier := newSimPassphraseBarrier(t, "the real password")
 	auto := NewBarrierAutoUnsealService(WithBarrierAutoUnsealLocal(local), WithBarrierAutoUnsealBarrier(barrier),
 		WithBarrierAutoUnsealLogger(simQuietLogger))
-	_, err := svc.CreatePolicy("boot", "sha256", []uint{simPCR}, false, "")
+	_, err := svc.CreatePolicy("boot", "", pcrBranches(simPCR), false, "")
 	require.NoError(t, err)
 	require.NoError(t, auto.EnableAutoUnseal("boot", "not the password"))
 
@@ -414,7 +414,7 @@ func echoSealClient() *sealMockClient {
 
 func TestSealService_LocalBlobUnderNamedPolicyIsRecordedAndForgotten(t *testing.T) {
 	_, _, policies := openSimLocal(t)
-	_, err := policies.CreatePolicy("boot", "sha256", []uint{simPCR}, false, "")
+	_, err := policies.CreatePolicy("boot", "", pcrBranches(simPCR), false, "")
 	require.NoError(t, err)
 
 	seal := NewSealService(t.TempDir())
@@ -442,7 +442,7 @@ func TestSealService_LocalBlobUnderNamedPolicyIsRecordedAndForgotten(t *testing.
 
 func TestSealService_ServerBlobIsNotRecordedLocally(t *testing.T) {
 	_, _, policies := openSimLocal(t)
-	_, err := policies.CreatePolicy("boot", "sha256", []uint{simPCR}, false, "")
+	_, err := policies.CreatePolicy("boot", "", pcrBranches(simPCR), false, "")
 	require.NoError(t, err)
 
 	seal := newSealServiceWithMockClient(t, echoSealClient())
@@ -459,7 +459,7 @@ func TestSealService_ServerBlobIsNotRecordedLocally(t *testing.T) {
 
 func TestKeyService_LocalTPMKeyIsRecordedAndForgotten(t *testing.T) {
 	_, _, policies := openSimLocal(t)
-	_, err := policies.CreatePolicy("boot", "sha256", []uint{simPCR}, false, "")
+	_, err := policies.CreatePolicy("boot", "", pcrBranches(simPCR), false, "")
 	require.NoError(t, err)
 
 	var sent *transport.GenerateKeyRequest
@@ -501,7 +501,7 @@ func TestSetupWizard_EnableBarrierAutoUnsealCreatesThePolicyOnce(t *testing.T) {
 	require.NoError(t, wizard.enableBarrierAutoUnseal("barrier password", ""))
 	p, err := policies.GetPolicy(wizardAutoUnsealPolicy)
 	require.NoError(t, err)
-	assert.Equal(t, wizardAutoUnsealPCRs, p.PCRs)
+	assert.Equal(t, wizardAutoUnsealPCRs, p.Branches[0].Conditions[0].PCRs)
 	assert.True(t, p.AutoUnseal)
 
 	// A re-run reuses the policy instead of failing on it.
@@ -550,7 +550,7 @@ func TestLocalTPMPolicies_SharesTheTPMAccessor(t *testing.T) {
 
 	svc := NewTPMPolicyService()
 	svc.SetLocal(local)
-	_, err = svc.CreatePolicy("boot", "sha256", []uint{simPCR}, false, "")
+	_, err = svc.CreatePolicy("boot", "", pcrBranches(simPCR), false, "")
 	require.NoError(t, err)
 	policies, err := svc.ListPolicies()
 	require.NoError(t, err)

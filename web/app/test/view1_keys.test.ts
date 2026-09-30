@@ -164,7 +164,15 @@ describe("KeysView", () => {
   it("defaults the TPM policy select to platform and omits tpm_policy from the request", async () => {
     list.mockResolvedValue({ keys: [], pagination: { page: 1, page_size: 50, total: 0, has_more: false } });
     tpmPolicyList.mockResolvedValue({
-      policies: [{ name: "high-assurance", bank: "sha256", pcrs: [0, 7], index: 1, approved: true, created_at: "" }],
+      policies: [
+        {
+          name: "high-assurance",
+          branches: [{ conditions: [{ type: "pcr", bank: "sha256", pcrs: [0, 7] }] }],
+          index: 1,
+          approved: true,
+          created_at: "",
+        },
+      ],
     });
     generate.mockResolvedValue({ key_id: "new-ec", key_type: "ecdsa" });
 
@@ -187,7 +195,15 @@ describe("KeysView", () => {
   it("binds the generated key to the selected named TPM policy", async () => {
     list.mockResolvedValue({ keys: [], pagination: { page: 1, page_size: 50, total: 0, has_more: false } });
     tpmPolicyList.mockResolvedValue({
-      policies: [{ name: "high-assurance", bank: "sha256", pcrs: [0, 7], index: 1, approved: true, created_at: "" }],
+      policies: [
+        {
+          name: "high-assurance",
+          branches: [{ conditions: [{ type: "pcr", bank: "sha256", pcrs: [0, 7] }] }],
+          index: 1,
+          approved: true,
+          created_at: "",
+        },
+      ],
     });
     generate.mockResolvedValue({ key_id: "new-ec", key_type: "ecdsa" });
 

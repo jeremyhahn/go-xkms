@@ -1309,9 +1309,8 @@ var (
 
 	// TPM policy errors
 
-	// ErrTPMPolicyPCRsRequired is returned when --pcrs is missing for tpm
-	// policy create.
-	ErrTPMPolicyPCRsRequired = errors.New("--pcrs is required (comma-separated PCR indexes)")
+	// ErrTPMPolicyDescribeFailed is the sentinel error "failed to set TPM policy description".
+	ErrTPMPolicyDescribeFailed = errors.New("failed to set TPM policy description")
 
 	// ErrInvalidTPMPolicyPCR is returned for a negative PCR index.
 	ErrInvalidTPMPolicyPCR = errors.New("invalid PCR index")

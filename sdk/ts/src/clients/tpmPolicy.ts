@@ -17,6 +17,7 @@ import type {
   TPMObjectKind,
   TPMObjectPolicyResponse,
   TPMPolicy,
+  TPMPolicyBranch,
   TPMPolicyCreateRequest,
   TPMPolicyDeleteRequest,
   TPMPolicyListResponse,
@@ -25,6 +26,15 @@ import type {
 } from '../types/tpmPolicy.js';
 
 const BASE = '/api/v1/tpm/policies';
+
+/**
+ * Returns a branch holding one pcr condition over pcrs of bank: the whole of
+ * a policy that approves one PCR state. Mirrors
+ * pkg/api/transport.TPMPolicyPCRBranch.
+ */
+export function pcrBranch(bank: string, pcrs: number[]): TPMPolicyBranch {
+  return { conditions: [{ type: 'pcr', bank, pcrs }] };
+}
 
 function policyPath(name: string, action?: string): string {
   const path = `${BASE}/${encodeURIComponent(name)}`;
@@ -40,7 +50,7 @@ function policyPath(name: string, action?: string): string {
 export class TpmPolicyClient {
   constructor(private readonly http: HttpCore) {}
 
-  /** POST /api/v1/tpm/policies — captures the tenant's live PCR values. */
+  /** POST /api/v1/tpm/policies — captures the live values of its pcr conditions. */
   create(req: TPMPolicyCreateRequest): Promise<TPMPolicy> {
     return this.http.request('POST', BASE, { body: req });
   }
@@ -101,6 +111,13 @@ export class TpmPolicyClient {
   setAutoUnseal(name: string, enabled: boolean, tenantId?: string): Promise<TPMPolicy> {
     return this.http.request('POST', policyPath(name, 'auto-unseal'), {
       body: { tenant_id: tenantId, name, enabled },
+    });
+  }
+
+  /** POST /api/v1/tpm/policies/{name}/description — an empty description clears it. */
+  setDescription(name: string, description: string, tenantId?: string): Promise<TPMPolicy> {
+    return this.http.request('POST', policyPath(name, 'description'), {
+      body: { tenant_id: tenantId, name, description },
     });
   }
 

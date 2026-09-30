@@ -110,6 +110,11 @@ func (s *Server) handleTPMPolicyAutoUnseal(ctx context.Context, req *JSONRPCRequ
 	return tpmPolicyCall(s, ctx, req, "tpm policy auto-unseal", s.xkmsService.TPMPolicySetAutoUnseal)
 }
 
+// handleTPMPolicySetDescription handles tpm.policy.setDescription.
+func (s *Server) handleTPMPolicySetDescription(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	return tpmPolicyCall(s, ctx, req, "tpm policy set description", s.xkmsService.TPMPolicySetDescription)
+}
+
 // handleTPMObjectPolicy handles tpm.object.policy.
 func (s *Server) handleTPMObjectPolicy(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	return tpmPolicyCall(s, ctx, req, "tpm object policy", s.xkmsService.TPMObjectPolicy)

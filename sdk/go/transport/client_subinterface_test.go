@@ -365,6 +365,10 @@ func (s *stubClient) TPMPolicySetAutoUnseal(context.Context, *TPMPolicyAutoUnsea
 	panic("stub")
 }
 
+func (s *stubClient) TPMPolicySetDescription(context.Context, *TPMPolicyDescriptionRequest) (*TPMPolicy, error) {
+	panic("stub")
+}
+
 func (s *stubClient) TPMObjectPolicy(context.Context, *TPMObjectPolicyRequest) (*TPMObjectPolicyResponse, error) {
 	panic("stub")
 }

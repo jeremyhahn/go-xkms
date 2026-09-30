@@ -27,38 +27,75 @@ import (
 func TestFake_CreateCapturesLivePCRs(t *testing.T) {
 	f := &Fake{}
 	f.SetPCR(7, []byte{0xaa})
-	p, err := f.TPMPolicyCreate(context.Background(), &transport.TPMPolicyCreateRequest{Name: "boot", Bank: "sha256", PCRs: []uint{7}})
+	p, err := f.TPMPolicyCreate(context.Background(), &transport.TPMPolicyCreateRequest{
+		Name: "boot", Description: "firmware",
+		Branches: []transport.TPMPolicyBranch{pcrBranch(7), {Conditions: []transport.TPMPolicyCondition{{Type: transport.TPMPolicyConditionAuthValue}}}},
+	})
 	require.NoError(t, err)
-	assert.Equal(t, "aa", p.PCRValues[7])
+	assert.Equal(t, "aa", p.Branches[0].Conditions[0].PCRValues[7])
+	assert.Nil(t, p.Branches[1].Conditions[0].PCRValues, "only a pcr condition captures values")
 	assert.True(t, p.Approved)
+	assert.True(t, p.Branches[0].Approved && p.Branches[1].Approved)
+	assert.Equal(t, "firmware", p.Description)
+}
+
+// pcrBranch is the one pcr branch over pcrs of sha256.
+func pcrBranch(pcrs ...uint) transport.TPMPolicyBranch {
+	return transport.TPMPolicyPCRBranch("sha256", pcrs)
+}
+
+// create creates a one-branch policy named name over pcrs.
+func create(t *testing.T, f *Fake, name string, pcrs ...uint) {
+	t.Helper()
+	_, err := f.TPMPolicyCreate(context.Background(), &transport.TPMPolicyCreateRequest{Name: name, Branches: []transport.TPMPolicyBranch{pcrBranch(pcrs...)}})
+	require.NoError(t, err)
+}
+
+func TestFake_SetDescription(t *testing.T) {
+	f := &Fake{}
+	ctx := context.Background()
+	create(t, f, "boot", 7)
+	p, err := f.TPMPolicySetDescription(ctx, &transport.TPMPolicyDescriptionRequest{Name: "boot", Description: "firmware"})
+	require.NoError(t, err)
+	assert.Equal(t, "firmware", p.Description)
+	got, err := f.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.Equal(t, "firmware", got.Description)
+
+	_, err = f.TPMPolicySetDescription(ctx, &transport.TPMPolicyDescriptionRequest{Name: "missing"})
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNotFound)
+	_, err = f.TPMPolicySetDescription(ctx, &transport.TPMPolicyDescriptionRequest{Name: xkms.TPMPolicyPlatform})
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyReserved)
 }
 
 func TestFake_CreateRefusesBadRequests(t *testing.T) {
 	f := &Fake{}
 	ctx := context.Background()
-	_, err := f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "", PCRs: []uint{7}})
+	branches := []transport.TPMPolicyBranch{pcrBranch(7)}
+	_, err := f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "", Branches: branches})
 	assert.ErrorIs(t, err, ErrNameRequired)
-	_, err = f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: xkms.TPMPolicyPlatform, PCRs: []uint{7}})
+	_, err = f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: xkms.TPMPolicyPlatform, Branches: branches})
 	assert.ErrorIs(t, err, xkms.ErrTPMPolicyReserved)
 	_, err = f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot"})
+	assert.ErrorIs(t, err, ErrNoBranches)
+	_, err = f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", Branches: []transport.TPMPolicyBranch{pcrBranch()}})
 	assert.ErrorIs(t, err, ErrNoPCRs)
-	_, err = f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", PCRs: []uint{7}})
+	_, err = f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", Branches: branches})
 	require.NoError(t, err)
-	_, err = f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", PCRs: []uint{7}})
+	_, err = f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", Branches: branches})
 	assert.ErrorIs(t, err, xkms.ErrTPMPolicyExists)
 }
 
 func TestFake_VerifyDetectsDriftAndUpdateRecaptures(t *testing.T) {
 	f := &Fake{}
 	ctx := context.Background()
-	_, err := f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", PCRs: []uint{0, 7}})
-	require.NoError(t, err)
+	create(t, f, "boot", 0, 7)
 
 	f.SetPCR(7, []byte{0x01})
 	v, err := f.TPMPolicyVerify(ctx, &transport.TPMPolicyRequest{Name: "boot"})
 	require.NoError(t, err)
 	assert.False(t, v.Match)
-	assert.Equal(t, []uint{7}, v.Mismatched)
+	assert.Equal(t, []transport.TPMPolicyBranchVerification{{Mismatched: []uint{7}, Approved: true}}, v.Branches)
 
 	_, err = f.TPMPolicyUpdate(ctx, &transport.TPMPolicyRequest{Name: "boot"})
 	require.NoError(t, err)
@@ -71,8 +108,7 @@ func TestFake_VerifyDetectsDriftAndUpdateRecaptures(t *testing.T) {
 func TestFake_RevokeWithdrawsApprovalAndUnknownPolicyFails(t *testing.T) {
 	f := &Fake{}
 	ctx := context.Background()
-	_, err := f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", PCRs: []uint{7}})
-	require.NoError(t, err)
+	create(t, f, "boot", 7)
 	p, err := f.TPMPolicyRevoke(ctx, &transport.TPMPolicyRequest{Name: "boot"})
 	require.NoError(t, err)
 	assert.False(t, p.Approved)
@@ -84,11 +120,10 @@ func TestFake_RevokeWithdrawsApprovalAndUnknownPolicyFails(t *testing.T) {
 func TestFake_DeleteRefusedWhileAssigned(t *testing.T) {
 	f := &Fake{}
 	ctx := context.Background()
-	_, err := f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", PCRs: []uint{7}})
-	require.NoError(t, err)
+	create(t, f, "boot", 7)
 	f.Assign("", "key", "k1", "boot")
 
-	err = f.TPMPolicyDelete(ctx, &transport.TPMPolicyDeleteRequest{Name: "boot"})
+	err := f.TPMPolicyDelete(ctx, &transport.TPMPolicyDeleteRequest{Name: "boot"})
 	var inUse *xkms.TPMPolicyInUseError
 	require.ErrorAs(t, err, &inUse)
 	assert.Equal(t, []string{"key/k1"}, inUse.Objects)
@@ -102,8 +137,7 @@ func TestFake_AutoUnsealIsExclusive(t *testing.T) {
 	f := &Fake{}
 	ctx := context.Background()
 	for _, name := range []string{"a", "b"} {
-		_, err := f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: name, PCRs: []uint{7}})
-		require.NoError(t, err)
+		create(t, f, name, 7)
 	}
 	_, err := f.TPMPolicySetAutoUnseal(ctx, &transport.TPMPolicyAutoUnsealRequest{Name: "a", Enabled: true})
 	require.NoError(t, err)
@@ -135,8 +169,7 @@ func TestFake_ObjectPolicy(t *testing.T) {
 func TestFake_RotateAuthority(t *testing.T) {
 	f := &Fake{}
 	ctx := context.Background()
-	_, err := f.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", PCRs: []uint{7}})
-	require.NoError(t, err)
+	create(t, f, "boot", 7)
 	resp, err := f.TPMPolicyRotateAuthority(ctx, &transport.TPMAuthorityRotateRequest{})
 	require.NoError(t, err)
 	assert.Equal(t, uint64(2), resp.Generation)

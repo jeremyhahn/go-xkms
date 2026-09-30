@@ -552,12 +552,13 @@ func (h *HandlerContext) RotateKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, RotateKeyResponse{
-		Success:      true,
-		KeyID:        resp.KeyID,
-		KeyType:      resp.KeyType,
-		PublicKeyPEM: resp.PublicKeyPEM,
-		KeyVersion:   resp.KeyVersion,
-		Message:      fmt.Sprintf("Key %s rotated successfully", resp.KeyID),
+		Success:                    true,
+		KeyID:                      resp.KeyID,
+		KeyType:                    resp.KeyType,
+		PublicKeyPEM:               resp.PublicKeyPEM,
+		KeyVersion:                 resp.KeyVersion,
+		Message:                    fmt.Sprintf("Key %s rotated successfully", resp.KeyID),
+		CertificateReissueRequired: resp.CertificateReissueRequired,
 	}, http.StatusOK)
 }
 

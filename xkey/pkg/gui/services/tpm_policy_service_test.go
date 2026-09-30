@@ -60,29 +60,54 @@ func TestTPMPolicyService_UnavailableWithoutABackend(t *testing.T) {
 	svc := NewTPMPolicyService()
 	_, err := svc.ListPolicies()
 	assert.ErrorIs(t, err, ErrTPMPolicyUnavailable)
-	_, err = svc.CreatePolicy("boot", "sha256", []uint{7}, false, "")
+	_, err = svc.CreatePolicy("boot", "", pcrBranches(7), false, "")
 	assert.ErrorIs(t, err, ErrTPMPolicyUnavailable)
 	_, err = svc.RotateAuthority()
 	assert.ErrorIs(t, err, ErrTPMPolicyUnavailable)
 	assert.ErrorIs(t, svc.DeletePolicy("boot", ""), ErrTPMPolicyUnavailable)
 }
 
-func TestTPMPolicyService_CreateDefaultsTheBankAndReturnsCapturedValues(t *testing.T) {
+// pcrBranches is the one pcr branch over pcrs of sha256.
+func pcrBranches(pcrs ...uint) []transport.TPMPolicyBranch {
+	return []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", pcrs)}
+}
+
+func TestTPMPolicyService_CreateReturnsBranchesDescriptionAndCapturedValues(t *testing.T) {
 	svc, _ := newServerTPMPolicies(t)
-	p, err := svc.CreatePolicy("boot", "", []uint{7}, false, "")
+	branches := append(pcrBranches(7), transport.TPMPolicyBranch{Conditions: []transport.TPMPolicyCondition{{Type: transport.TPMPolicyConditionAuthValue}}})
+	p, err := svc.CreatePolicy("boot", "firmware or PIN", branches, false, "")
 	require.NoError(t, err)
 	assert.Equal(t, "boot", p.Name)
-	assert.Equal(t, "sha256", p.Bank)
-	assert.Equal(t, "aa", p.PCRValues[7])
+	assert.Equal(t, "firmware or PIN", p.Description)
+	require.Len(t, p.Branches, 2)
+	assert.Equal(t, "aa", p.Branches[0].Conditions[0].PCRValues[7])
+	assert.Equal(t, "auth_value", p.Branches[1].String())
 	assert.True(t, p.Approved)
 	assert.False(t, p.Builtin)
 }
 
+func TestTPMPolicyService_SetDescription(t *testing.T) {
+	svc, fake := newServerTPMPolicies(t)
+	_, err := svc.CreatePolicy("boot", "", pcrBranches(7), false, "")
+	require.NoError(t, err)
+	fake.Assign("", "key", "k1", "boot")
+
+	p, err := svc.SetDescription("boot", "firmware")
+	require.NoError(t, err)
+	assert.Equal(t, "firmware", p.Description)
+	assert.Equal(t, 1, p.ObjectCount)
+
+	_, err = svc.SetDescription(xkms.TPMPolicyPlatform, "x")
+	assert.ErrorIs(t, err, ErrTPMPolicyBuiltin)
+	_, err = svc.SetDescription("missing", "x")
+	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNotFound)
+}
+
 func TestTPMPolicyService_RejectsMissingAndBuiltinNames(t *testing.T) {
 	svc, _ := newServerTPMPolicies(t)
-	_, err := svc.CreatePolicy(" ", "sha256", []uint{7}, false, "")
+	_, err := svc.CreatePolicy(" ", "", pcrBranches(7), false, "")
 	assert.ErrorIs(t, err, ErrTPMPolicyNameRequired)
-	_, err = svc.CreatePolicy(xkms.TPMPolicyPlatform, "sha256", []uint{7}, false, "")
+	_, err = svc.CreatePolicy(xkms.TPMPolicyPlatform, "", pcrBranches(7), false, "")
 	assert.ErrorIs(t, err, ErrTPMPolicyBuiltin)
 	_, err = svc.UpdatePolicy(xkms.TPMPolicyPlatform)
 	assert.ErrorIs(t, err, ErrTPMPolicyBuiltin)
@@ -101,7 +126,7 @@ func TestTPMPolicyService_RejectsMissingAndBuiltinNames(t *testing.T) {
 
 func TestTPMPolicyService_ListStartsWithThePlatformPolicyAndCountsObjects(t *testing.T) {
 	svc, fake := newServerTPMPolicies(t)
-	_, err := svc.CreatePolicy("boot", "sha256", []uint{7}, false, "")
+	_, err := svc.CreatePolicy("boot", "", pcrBranches(7), false, "")
 	require.NoError(t, err)
 	fake.Assign("", "key", "k1", "boot")
 	fake.Assign("", "key", "k2", "boot")
@@ -125,7 +150,7 @@ func TestTPMPolicyService_GetUnknownPolicyFails(t *testing.T) {
 
 func TestTPMPolicyService_DeleteIsRefusedWhileObjectsAreBound(t *testing.T) {
 	svc, fake := newServerTPMPolicies(t)
-	_, err := svc.CreatePolicy("boot", "sha256", []uint{7}, false, "")
+	_, err := svc.CreatePolicy("boot", "", pcrBranches(7), false, "")
 	require.NoError(t, err)
 	fake.Assign("", "key", "k1", "boot")
 	fake.Assign("", "sealed", "s1", "boot")
@@ -143,7 +168,7 @@ func TestTPMPolicyService_DeleteIsRefusedWhileObjectsAreBound(t *testing.T) {
 
 func TestTPMPolicyService_DeleteUnusedPolicy(t *testing.T) {
 	svc, _ := newServerTPMPolicies(t)
-	_, err := svc.CreatePolicy("boot", "sha256", []uint{7}, false, "")
+	_, err := svc.CreatePolicy("boot", "", pcrBranches(7), false, "")
 	require.NoError(t, err)
 	require.NoError(t, svc.DeletePolicy("boot", ""))
 	_, err = svc.GetPolicy("boot")
@@ -152,22 +177,22 @@ func TestTPMPolicyService_DeleteUnusedPolicy(t *testing.T) {
 
 func TestTPMPolicyService_VerifyUpdateAndRevoke(t *testing.T) {
 	svc, fake := newServerTPMPolicies(t)
-	_, err := svc.CreatePolicy("boot", "sha256", []uint{7}, false, "")
+	_, err := svc.CreatePolicy("boot", "", pcrBranches(7), false, "")
 	require.NoError(t, err)
 
 	fake.SetPCR(7, []byte{0xbb})
 	v, err := svc.VerifyPolicy("boot")
 	require.NoError(t, err)
 	assert.False(t, v.Match)
-	assert.Equal(t, []uint{7}, v.Mismatched)
+	assert.Equal(t, []transport.TPMPolicyBranchVerification{{Mismatched: []uint{7}, Approved: true}}, v.Branches)
 
 	p, err := svc.UpdatePolicy("boot")
 	require.NoError(t, err)
-	assert.Equal(t, "bb", p.PCRValues[7])
+	assert.Equal(t, "bb", p.Branches[0].Conditions[0].PCRValues[7])
 	v, err = svc.VerifyPolicy("boot")
 	require.NoError(t, err)
 	assert.True(t, v.Match)
-	assert.Empty(t, v.Mismatched)
+	assert.Empty(t, v.Branches[0].Mismatched)
 	assert.True(t, v.Approved)
 
 	p, err = svc.RevokePolicy("boot")
@@ -181,7 +206,7 @@ func TestTPMPolicyService_VerifyUpdateAndRevoke(t *testing.T) {
 func TestTPMPolicyService_SetAutoUnsealMarksOnePolicy(t *testing.T) {
 	svc, _ := newServerTPMPolicies(t)
 	for _, name := range []string{"a", "b"} {
-		_, err := svc.CreatePolicy(name, "sha256", []uint{7}, false, "")
+		_, err := svc.CreatePolicy(name, "", pcrBranches(7), false, "")
 		require.NoError(t, err)
 	}
 	p, err := svc.SetAutoUnseal("a", true)
@@ -305,6 +330,9 @@ func (f *failingTPMPolicies) TPMPolicyObjects(context.Context, *transport.TPMPol
 func (f *failingTPMPolicies) TPMPolicySetAutoUnseal(context.Context, *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
 	return nil, f.err
 }
+func (f *failingTPMPolicies) TPMPolicySetDescription(context.Context, *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	return nil, f.err
+}
 func (f *failingTPMPolicies) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	return nil, f.err
 }
@@ -318,7 +346,7 @@ func TestTPMPolicyService_ServerErrorsPropagate(t *testing.T) {
 	svc.SetClient(&failingTPMPolicies{err: errServer})
 
 	calls := map[string]func() error{
-		"CreatePolicy": func() error { _, err := svc.CreatePolicy("boot", "sha256", []uint{7}, false, "owner"); return err },
+		"CreatePolicy": func() error { _, err := svc.CreatePolicy("boot", "", pcrBranches(7), false, "owner"); return err },
 		"ListPolicies": func() error { _, err := svc.ListPolicies(); return err },
 		"GetPolicy":    func() error { _, err := svc.GetPolicy("boot"); return err },
 		"UpdatePolicy": func() error { _, err := svc.UpdatePolicy("boot"); return err },
@@ -331,6 +359,7 @@ func TestTPMPolicyService_ServerErrorsPropagate(t *testing.T) {
 		},
 		"KeyPolicy":       func() error { _, err := svc.KeyPolicy("k1"); return err },
 		"SetAutoUnseal":   func() error { _, err := svc.SetAutoUnseal("boot", true); return err },
+		"SetDescription":  func() error { _, err := svc.SetDescription("boot", "d"); return err },
 		"RotateAuthority": func() error { _, err := svc.RotateAuthority(); return err },
 	}
 	for name, call := range calls {
@@ -356,7 +385,7 @@ func TestTPMPolicyService_ObjectCountErrorsPropagate(t *testing.T) {
 	server := &objectsFailing{err: errObjects}
 	svc := NewTPMPolicyService()
 	svc.SetClient(server)
-	_, err := server.TPMPolicyCreate(context.Background(), &transport.TPMPolicyCreateRequest{Name: "boot", PCRs: []uint{7}})
+	_, err := server.TPMPolicyCreate(context.Background(), &transport.TPMPolicyCreateRequest{Name: "boot", Branches: pcrBranches(7)})
 	require.NoError(t, err)
 
 	_, err = svc.ListPolicies()

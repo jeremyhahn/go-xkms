@@ -1107,6 +1107,14 @@ func (t *Transport) TPMPolicySetAutoUnseal(ctx context.Context, req *transport.T
 	return t.service.TPMPolicySetAutoUnseal(ctx, req)
 }
 
+// TPMPolicySetDescription replaces a TPM policy's description.
+func (t *Transport) TPMPolicySetDescription(ctx context.Context, req *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TPMPolicySetDescription(ctx, req)
+}
+
 // TPMObjectPolicy returns the TPM policy a key or sealed object was created under.
 func (t *Transport) TPMObjectPolicy(ctx context.Context, req *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	if !t.connected {

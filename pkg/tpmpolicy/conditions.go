@@ -129,19 +129,6 @@ func validateDescription(description string) error {
 	return nil
 }
 
-// branches returns the requested branches: Branches, or the one pcr branch
-// the deprecated Bank and PCRs describe.
-func (req CreatePolicyRequest) branches() ([]Branch, error) {
-	legacy := req.Bank != "" || len(req.PCRs) > 0
-	switch {
-	case legacy && len(req.Branches) > 0:
-		return nil, ErrAmbiguousPolicyRequest
-	case legacy:
-		return []Branch{{Conditions: []Condition{{Type: ConditionPCR, Bank: req.Bank, PCRs: req.PCRs}}}}, nil
-	}
-	return req.Branches, nil
-}
-
 // capture reads the live values of every condition of p that captures any
 // from the scope's TPM. The values are never supplied by a caller.
 func capture(t *pkgtpm2.TPM2, scope string, p *Policy) error {

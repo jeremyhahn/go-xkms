@@ -10,7 +10,7 @@ function installMock() {
       TPMPolicyService: {
         ListPolicies: vi.fn().mockResolvedValue([
           { name: 'platform', builtin: true, approved: true, auto_unseal: false, object_count: 0 },
-          { name: 'boot', builtin: false, bank: 'sha256', pcrs: [0, 7], approved: true, auto_unseal: false, object_count: 1 },
+          { name: 'boot', builtin: false, branches: [{ conditions: [{ type: 'pcr', bank: 'sha256', pcrs: [0, 7] }] }], approved: true, auto_unseal: false, object_count: 1 },
         ]),
       },
     },

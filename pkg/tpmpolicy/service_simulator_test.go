@@ -79,10 +79,11 @@ func (f *fixture) unseal(tenant string, sealed *types.KeyAttributes) ([]byte, er
 func TestService_PolicySharedByKeys(t *testing.T) {
 	f := newSimFixture(t)
 	p := f.createPolicy("acme", "boot")
-	assert.NotNil(t, p.Approval)
+	require.Len(t, p.Approvals, 1)
+	assert.NotNil(t, p.Approvals[0])
 	assert.NotZero(t, p.Index)
 	assert.NotEmpty(t, p.IndexName)
-	assert.Len(t, p.PCRValues[testPCR], sha256.Size)
+	assert.Len(t, p.Branches[0].Conditions[0].PCRValues[testPCR], sha256.Size)
 	assert.Equal(t, pkgtpm2.PolicyRef("acme", "boot"), p.PolicyRef)
 
 	a := f.createKey("acme", "signer-a", "boot", nil)
@@ -141,8 +142,8 @@ func TestService_UpdatePolicyReapprovesWithoutRekey(t *testing.T) {
 
 	updated, err := f.svc.UpdatePolicy(f.ctx, "acme", "boot")
 	require.NoError(t, err)
-	assert.Equal(t, created.Approval.Epoch+1, updated.Approval.Epoch)
-	assert.NotEqual(t, created.PCRValues[testPCR], updated.PCRValues[testPCR], "the update re-captures the live PCR")
+	assert.Equal(t, created.Approvals[0].Epoch+1, updated.Approvals[0].Epoch)
+	assert.NotEqual(t, created.Branches[0].Conditions[0].PCRValues[testPCR], updated.Branches[0].Conditions[0].PCRValues[testPCR], "the update re-captures the live PCR")
 	require.NoError(t, f.sign("acme", a))
 	require.NoError(t, f.sign("acme", b))
 	privAfter, pubAfter := f.blobs("acme", a)
@@ -205,7 +206,7 @@ func TestService_RevokeAndRestore(t *testing.T) {
 
 	revoked, err := f.svc.RevokePolicy(f.ctx, "acme", "boot")
 	require.NoError(t, err)
-	assert.Nil(t, revoked.Approval)
+	assert.Equal(t, []*Approval{nil}, revoked.Approvals)
 
 	require.ErrorIs(t, f.sign("acme", noPassword), ErrPolicyRevoked)
 	require.ErrorIs(t, f.sign("acme", withoutPassword(withPassword)), ErrPolicyRevoked)
@@ -214,7 +215,7 @@ func TestService_RevokeAndRestore(t *testing.T) {
 
 	again, err := f.svc.RevokePolicy(f.ctx, "acme", "boot")
 	require.NoError(t, err)
-	assert.Nil(t, again.Approval, "revoking a revoked policy changes nothing")
+	assert.Equal(t, []*Approval{nil}, again.Approvals, "revoking a revoked policy changes nothing")
 
 	v, err := f.svc.VerifyPolicy(f.ctx, "acme", "boot")
 	require.NoError(t, err)
@@ -345,7 +346,7 @@ func TestService_SetMode(t *testing.T) {
 	_, err = f.tpm.NVIndexName(tpm2.TPMHandle(created.Counter))
 	require.Error(t, err, "leaving shared mode undefines the counter")
 
-	_, err = f.svc.CreatePolicy(f.ctx, "initech", CreatePolicyRequest{Name: "boot", Bank: "sha256", PCRs: []uint{testPCR}})
+	_, err = f.svc.CreatePolicy(f.ctx, "initech", CreatePolicyRequest{Name: "boot", Branches: []Branch{PCRBranch("sha256", testPCR)}})
 	require.ErrorIs(t, err, ErrTPMModeNone)
 	_, err = f.svc.ScopeTPM(f.ctx, "initech")
 	require.ErrorIs(t, err, ErrTPMModeNone)
@@ -427,9 +428,9 @@ func TestService_ReconcileFinishesRotation(t *testing.T) {
 // and whether the policy holds a current approval.
 func TestService_VerifyPolicy(t *testing.T) {
 	f := newSimFixture(t)
-	p, err := f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{Name: "boot", Bank: "sha256", PCRs: []uint{testPCR, 0}})
+	p, err := f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{Name: "boot", Branches: []Branch{PCRBranch("sha256", testPCR, 0)}})
 	require.NoError(t, err)
-	assert.Equal(t, []uint{0, testPCR}, p.PCRs, "the selection is stored in ascending order")
+	assert.Equal(t, []uint{0, testPCR}, p.Branches[0].Conditions[0].PCRs, "the selection is stored in ascending order")
 
 	v, err := f.svc.VerifyPolicy(f.ctx, "acme", "boot")
 	require.NoError(t, err)
@@ -444,7 +445,6 @@ func TestService_VerifyPolicy(t *testing.T) {
 	v, err = f.svc.VerifyPolicy(f.ctx, "acme", "boot")
 	require.NoError(t, err)
 	assert.False(t, v.Match)
-	assert.Equal(t, []uint{testPCR}, v.Mismatched)
 	assert.Equal(t, []uint{testPCR}, v.Branches[0].Mismatched)
 	assert.True(t, v.Approved)
 }
@@ -454,10 +454,10 @@ func TestService_VerifyPolicy(t *testing.T) {
 // bank's values, not the bank's own hash.
 func TestService_NonSHA256Bank(t *testing.T) {
 	f := newSimFixture(t)
-	p, err := f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{Name: "legacy", Bank: "SHA1", PCRs: []uint{testPCR}})
+	p, err := f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{Name: "legacy", Branches: []Branch{PCRBranch("SHA1", testPCR)}})
 	require.NoError(t, err)
-	assert.Equal(t, "sha1", p.Bank)
-	assert.Len(t, p.PCRValues[testPCR], 20)
+	assert.Equal(t, "sha1", p.Branches[0].Conditions[0].Bank)
+	assert.Len(t, p.Branches[0].Conditions[0].PCRValues[testPCR], 20)
 
 	key := f.createKey("acme", "signer", "legacy", nil)
 	require.NoError(t, f.sign("acme", key))
@@ -471,7 +471,7 @@ func TestService_AutoUnseal(t *testing.T) {
 	require.ErrorIs(t, err, ErrPolicyNotFound)
 
 	for _, name := range []string{"first", "second"} {
-		_, err := f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{Name: name, Bank: "sha256", PCRs: []uint{testPCR}, AutoUnseal: true})
+		_, err := f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{Name: name, Branches: []Branch{PCRBranch("sha256", testPCR)}, AutoUnseal: true})
 		require.NoError(t, err)
 	}
 	p, err := f.svc.AutoUnsealPolicy(f.ctx, "acme")
@@ -520,12 +520,12 @@ func TestService_PolicyErrors(t *testing.T) {
 	f := newSimFixture(t)
 	f.createPolicy("acme", "boot")
 
-	_, err := f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{Name: "boot", Bank: "sha256", PCRs: []uint{testPCR}})
+	_, err := f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{Name: "boot", Branches: []Branch{PCRBranch("sha256", testPCR)}})
 	require.ErrorIs(t, err, ErrPolicyExists)
 	var badTenant *InvalidTenantError
-	_, err = f.svc.CreatePolicy(f.ctx, "a/b", CreatePolicyRequest{Name: "boot", Bank: "sha256", PCRs: []uint{testPCR}})
+	_, err = f.svc.CreatePolicy(f.ctx, "a/b", CreatePolicyRequest{Name: "boot", Branches: []Branch{PCRBranch("sha256", testPCR)}})
 	require.ErrorAs(t, err, &badTenant)
-	_, err = f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{Name: "x", Bank: "sm3", PCRs: []uint{testPCR}})
+	_, err = f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{Name: "x", Branches: []Branch{PCRBranch("sm3", testPCR)}})
 	var badBank *InvalidPCRBankError
 	require.ErrorAs(t, err, &badBank)
 
@@ -556,7 +556,7 @@ func TestService_PolicyErrors(t *testing.T) {
 	var badName *InvalidNameError
 	_, err = f.svc.UpdatePolicy(f.ctx, "acme", "a/b")
 	require.ErrorAs(t, err, &badName)
-	_, err = f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{Name: PlatformPolicy, Bank: "sha256", PCRs: []uint{testPCR}})
+	_, err = f.svc.CreatePolicy(f.ctx, "acme", CreatePolicyRequest{Name: PlatformPolicy, Branches: []Branch{PCRBranch("sha256", testPCR)}})
 	require.ErrorIs(t, err, ErrReservedPolicy)
 
 	require.ErrorIs(t, f.svc.Assign(f.ctx, "acme", ObjectKey, "k", "missing", nil), ErrPolicyNotFound)
@@ -781,7 +781,6 @@ func TestService_VerifyPolicyPerBranch(t *testing.T) {
 		{Match: true, Approved: true},
 	}, v.Branches)
 	assert.False(t, v.Match)
-	assert.Equal(t, []uint{testPCR}, v.Mismatched)
 	assert.True(t, v.Approved)
 }
 

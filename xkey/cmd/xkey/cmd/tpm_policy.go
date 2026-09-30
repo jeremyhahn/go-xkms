@@ -26,14 +26,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
 
 // TPM policy command errors.
 var (
-	// ErrTPMPolicyPCRsRequired indicates `tpm policy create` without --pcrs.
-	ErrTPMPolicyPCRsRequired = errors.New("tpm policy: --pcrs is required")
-
 	// ErrTPMPolicyNotSatisfied indicates `tpm policy verify` found the live
 	// PCRs differ from the captured ones, or the approval is not current:
 	// objects bound to the policy will not unseal through it.
@@ -49,10 +48,12 @@ var (
 )
 
 var (
-	tpmPolicyPCRs       string
-	tpmPolicyBank       string
-	tpmPolicyAutoUnseal bool
-	tpmPolicyOff        bool
+	tpmPolicyPCRs        string
+	tpmPolicyBank        string
+	tpmPolicyBranchSpecs []string
+	tpmPolicyDescription string
+	tpmPolicyAutoUnseal  bool
+	tpmPolicyOff         bool
 )
 
 // tpmPolicySession is the TPM policy service one command runs on, and what
@@ -125,8 +126,11 @@ var tpmPolicyCmd = &cobra.Command{
 	Short: "Named TPM policies",
 	Long: `Manage named TPM policies.
 
-A named TPM policy is a PCR bank and selection whose values are captured
-live from the TPM and approved by the scope's TPM-resident policy authority.
+A named TPM policy is an OR of branches, each an AND of conditions: pcr (a
+PCR bank and selection whose values are captured live from the TPM),
+auth_value (the object's password) and locality (the TPM localities a
+command may come from). The scope's TPM-resident policy authority approves
+every branch.
 Keys and sealed objects reference one policy by name; the TPM enforces it
 every time they are used. The built-in "platform" policy (the platform PCR,
 or the object's password) always exists and is the default.
@@ -135,7 +139,10 @@ The commands run on the xkmsd server when one is configured (--xkmsd-url,
 XKMSD_URL, or the xkey config), and otherwise on this host's own TPM, with
 the policy registry kept in the xKey data directory (shared with the GUI).`,
 	Example: `  # Create a policy over the firmware and Secure Boot PCRs
-  xkey tpm policy create boot --pcrs 0,7
+  xkey tpm policy create boot --pcrs 0,7 --description "firmware and Secure Boot"
+
+  # PCRs 0 and 7, or the object's password
+  xkey tpm policy create boot-or-pin --branch 'pcr=sha256:0,7' --branch auth_value
 
   # List policies with the number of objects bound to each
   xkey tpm policy list
@@ -152,15 +159,38 @@ the policy registry kept in the xKey data directory (shared with the GUI).`,
 var tpmPolicyCreateCmd = &cobra.Command{
 	Use:   "create <name>",
 	Short: "Create a named policy over the live PCR values",
-	Long: `Create a named policy over the live values of the selected PCRs.
+	Long: `Create a named policy. The values of its pcr conditions are read from
+the TPM, never supplied.
 
-The values are read from the TPM, never supplied. --hierarchy-auth is the
-TPM owner password when the owner hierarchy has one (it authorizes the
-policy's NV index).`,
-	Example: `  xkey tpm policy create boot --pcrs 0,7
-  xkey tpm policy create kernel --pcrs 0-9 --bank sha384`,
+--pcrs (with --bank) creates the common policy of one branch holding one
+pcr condition. --branch, repeatable, gives each branch as conditions joined
+by ";":
+
+  pcr=[BANK:]LIST   the PCRs in LIST of BANK (sha256 when omitted)
+  auth_value        the object's password
+  locality=LIST     the TPM localities (0-4) in LIST
+
+LIST is comma-separated indices or ranges ("0,7" or "0-7"). Branches are
+tried in order when an object is used. --pcrs and --branch are mutually
+exclusive.
+
+--hierarchy-auth is the TPM owner password when the owner hierarchy has one
+(it authorizes the policy's NV index).`,
+	Example: `  xkey tpm policy create boot --pcrs 0,7 --description "firmware and Secure Boot"
+  xkey tpm policy create kernel --pcrs 0-9 --bank sha384
+  xkey tpm policy create strict --branch 'pcr=sha256:0,7;auth_value;locality=0'`,
 	Args: cobra.ExactArgs(1),
 	RunE: runTPMPolicyCreate,
+}
+
+// tpmPolicyDescribeCmd is `xkey tpm policy describe`.
+var tpmPolicyDescribeCmd = &cobra.Command{
+	Use:     "describe <name> <text>",
+	Short:   "Set a policy's description",
+	Long:    `Replace a policy's free-text description; an empty text clears it.`,
+	Example: `  xkey tpm policy describe boot "firmware and Secure Boot state"`,
+	Args:    cobra.ExactArgs(2),
+	RunE:    runTPMPolicyDescribe,
 }
 
 // tpmPolicyListCmd is `xkey tpm policy list`.
@@ -280,13 +310,16 @@ No key or sealed object is re-keyed.`,
 }
 
 func init() {
-	tpmPolicyCreateCmd.Flags().StringVar(&tpmPolicyPCRs, "pcrs", "", "PCR indices, e.g. 0,7 or 0-7 (required)")
-	tpmPolicyCreateCmd.Flags().StringVar(&tpmPolicyBank, "bank", "sha256", "PCR bank: sha1, sha256, sha384 or sha512")
+	tpmPolicyCreateCmd.Flags().StringVar(&tpmPolicyPCRs, "pcrs", "", "PCR indices of a one-branch policy, e.g. 0,7 or 0-7")
+	tpmPolicyCreateCmd.Flags().StringVar(&tpmPolicyBank, "bank", "", "PCR bank of --pcrs: sha1, sha256, sha384 or sha512 (default sha256)")
+	tpmPolicyCreateCmd.Flags().StringArrayVar(&tpmPolicyBranchSpecs, "branch", nil,
+		"A policy branch, e.g. 'pcr=sha256:0,7;auth_value;locality=0' (repeatable)")
+	tpmPolicyCreateCmd.Flags().StringVar(&tpmPolicyDescription, "description", "", "Free-text description of the policy")
 	tpmPolicyCreateCmd.Flags().BoolVar(&tpmPolicyAutoUnseal, "auto-unseal", false,
 		"Also make it the barrier auto-unseal policy (see 'tpm policy auto-unseal')")
 	tpmPolicyAutoUnsealCmd.Flags().BoolVar(&tpmPolicyOff, "off", false, "Clear the auto-unseal policy")
 
-	tpmPolicyCmd.AddCommand(tpmPolicyCreateCmd, tpmPolicyListCmd, tpmPolicyGetCmd, tpmPolicyUpdateCmd,
+	tpmPolicyCmd.AddCommand(tpmPolicyCreateCmd, tpmPolicyDescribeCmd, tpmPolicyListCmd, tpmPolicyGetCmd, tpmPolicyUpdateCmd,
 		tpmPolicyRevokeCmd, tpmPolicyVerifyCmd, tpmPolicyDeleteCmd, tpmPolicyObjectsCmd, tpmPolicyKeyCmd,
 		tpmPolicyAutoUnsealCmd)
 	tpmAuthorityCmd.AddCommand(tpmAuthorityRotateCmd)
@@ -305,10 +338,14 @@ func writeTPMPolicyOutput(out io.Writer, v any, text func(io.Writer) error) erro
 }
 
 func runTPMPolicyCreate(cmd *cobra.Command, args []string) error {
-	if tpmPolicyPCRs == "" {
-		return ErrTPMPolicyPCRsRequired
+	var pcrs []uint
+	if tpmPolicyPCRs != "" {
+		var err error
+		if pcrs, err = parsePCRIndicesForPCRs(tpmPolicyPCRs); err != nil {
+			return err
+		}
 	}
-	pcrs, err := parsePCRIndicesForPCRs(tpmPolicyPCRs)
+	branches, err := xkms.TPMPolicyBranches(tpmPolicyBank, pcrs, tpmPolicyBranchSpecs)
 	if err != nil {
 		return err
 	}
@@ -316,7 +353,7 @@ func runTPMPolicyCreate(cmd *cobra.Command, args []string) error {
 		// Locally the auto-unseal mark comes with the sealed barrier
 		// credential, so it is set by the auto-unseal flow below.
 		markOnCreate := tpmPolicyAutoUnseal && s.local == nil
-		p, err := s.svc.CreatePolicy(args[0], tpmPolicyBank, pcrs, markOnCreate, tpmCfg.hierarchyAuth)
+		p, err := s.svc.CreatePolicy(args[0], tpmPolicyDescription, branches, markOnCreate, tpmCfg.hierarchyAuth)
 		if err != nil {
 			return err
 		}
@@ -329,6 +366,12 @@ func runTPMPolicyCreate(cmd *cobra.Command, args []string) error {
 		return writeTPMPolicyOutput(cmd.OutOrStdout(), p, func(out io.Writer) error {
 			return renderTPMPolicy(out, p)
 		})
+	})
+}
+
+func runTPMPolicyDescribe(cmd *cobra.Command, args []string) error {
+	return runTPMPolicyShow(cmd, args[0], func(svc *services.TPMPolicyService, name string) (*services.TPMPolicyInfo, error) {
+		return svc.SetDescription(name, args[1])
 	})
 }
 
@@ -520,28 +563,38 @@ func renderTPMPolicyList(out io.Writer, status *services.TPMPolicyStatus, polici
 		return err
 	}
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "NAME\tBANK\tPCRS\tAPPROVED\tAUTO-UNSEAL\tOBJECTS"); err != nil {
+	if _, err := fmt.Fprintln(w, "NAME\tBRANCHES\tAPPROVED\tAUTO-UNSEAL\tOBJECTS\tDESCRIPTION"); err != nil {
 		return err
 	}
 	for _, p := range policies {
-		bank, pcrs := p.Bank, formatPCRList(p.PCRs)
+		branches := branchSummary(p.Branches)
 		if p.Builtin {
-			bank, pcrs = "-", "platform PCR or password"
+			branches = "platform PCR or password"
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\n",
-			p.Name, bank, pcrs, yesNo(p.Approved), yesNo(p.AutoUnseal), p.ObjectCount); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n",
+			p.Name, branches, yesNo(p.Approved), yesNo(p.AutoUnseal), p.ObjectCount, p.Description); err != nil {
 			return err
 		}
 	}
 	return w.Flush()
 }
 
+// branchSummary joins branches in spec form with " | ".
+func branchSummary(branches []transport.TPMPolicyBranch) string {
+	parts := make([]string, len(branches))
+	for i, b := range branches {
+		parts[i] = b.String()
+	}
+	return strings.Join(parts, " | ")
+}
+
 // renderTPMPolicy writes one policy in detail.
 func renderTPMPolicy(out io.Writer, p *services.TPMPolicyInfo) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Name:         %s\n", p.Name)
-	fmt.Fprintf(&b, "Bank:         %s\n", p.Bank)
-	fmt.Fprintf(&b, "PCRs:         %s\n", formatPCRList(p.PCRs))
+	if p.Description != "" {
+		fmt.Fprintf(&b, "Description:  %s\n", p.Description)
+	}
 	fmt.Fprintf(&b, "NV index:     0x%08x\n", p.Index)
 	fmt.Fprintf(&b, "Approved:     %s\n", yesNo(p.Approved))
 	if p.Approved {
@@ -549,14 +602,18 @@ func renderTPMPolicy(out io.Writer, p *services.TPMPolicyInfo) error {
 	}
 	fmt.Fprintf(&b, "Auto-unseal:  %s\n", yesNo(p.AutoUnseal))
 	fmt.Fprintf(&b, "Objects:      %d\n", p.ObjectCount)
-	fmt.Fprintf(&b, "PCR digest:   %s\n", p.PCRDigest)
-	pcrs := make([]uint, 0, len(p.PCRValues))
-	for pcr := range p.PCRValues {
-		pcrs = append(pcrs, pcr)
-	}
-	sort.Slice(pcrs, func(i, j int) bool { return pcrs[i] < pcrs[j] })
-	for _, pcr := range pcrs {
-		fmt.Fprintf(&b, "  PCR %-2d      %s\n", pcr, p.PCRValues[pcr])
+	for i, branch := range p.Branches {
+		fmt.Fprintf(&b, "Branch %d:     %s (approved: %s)\n", i, branch.String(), yesNo(branch.Approved))
+		for _, c := range branch.Conditions {
+			pcrs := make([]uint, 0, len(c.PCRValues))
+			for pcr := range c.PCRValues {
+				pcrs = append(pcrs, pcr)
+			}
+			sort.Slice(pcrs, func(i, j int) bool { return pcrs[i] < pcrs[j] })
+			for _, pcr := range pcrs {
+				fmt.Fprintf(&b, "  PCR %-2d      %s\n", pcr, c.PCRValues[pcr])
+			}
+		}
 	}
 	fmt.Fprintf(&b, "Created:      %s\n", p.CreatedAt)
 	if p.UpdatedAt != "" {
@@ -566,17 +623,23 @@ func renderTPMPolicy(out io.Writer, p *services.TPMPolicyInfo) error {
 	return err
 }
 
-// renderTPMPolicyVerification writes a verification result.
+// renderTPMPolicyVerification writes a verification result, one line per
+// branch.
 func renderTPMPolicyVerification(out io.Writer, v *services.TPMPolicyVerification) error {
-	state := "PCRs match the captured values"
-	if !v.Match {
-		state = "PCRs changed: " + formatPCRList(v.Mismatched)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Policy:    %s\n", v.Name)
+	for i, branch := range v.Branches {
+		state := "PCRs match the captured values"
+		if !branch.Match {
+			state = "PCRs changed: " + formatPCRList(branch.Mismatched)
+		}
+		approval := "current"
+		if !branch.Approved {
+			approval = "not current (revoked or out of date)"
+		}
+		fmt.Fprintf(&b, "Branch %d:  %s; approval %s\n", i, state, approval)
 	}
-	approval := "current"
-	if !v.Approved {
-		approval = "not current (revoked or out of date)"
-	}
-	_, err := fmt.Fprintf(out, "Policy:    %s\nPCR state: %s\nApproval:  %s\n", v.Name, state, approval)
+	_, err := io.WriteString(out, b.String())
 	return err
 }
 

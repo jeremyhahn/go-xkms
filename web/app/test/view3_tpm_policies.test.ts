@@ -31,10 +31,22 @@ const setAutoUnseal = vi.fn<(name: string, enabled: boolean) => Promise<TPMPolic
 const objects = vi.fn<(name: string) => Promise<TPMPolicyObjectsResponse>>();
 const del = vi.fn<(name: string) => Promise<void>>();
 const rotateAuthority = vi.fn<() => Promise<TPMAuthorityRotateResponse>>();
+const setDescription = vi.fn<(name: string, description: string) => Promise<TPMPolicy>>();
 
 vi.mock("../src/stores/sdkClient.ts", () => ({
   getSDKClient: () => ({
-    tpmPolicies: { list, create, verify, update, revoke, setAutoUnseal, objects, delete: del, rotateAuthority },
+    tpmPolicies: {
+      list,
+      create,
+      verify,
+      update,
+      revoke,
+      setAutoUnseal,
+      setDescription,
+      objects,
+      delete: del,
+      rotateAuthority,
+    },
   }),
   resetSDKClient: () => {},
 }));
@@ -51,8 +63,7 @@ import TpmPoliciesView from "../src/views/TpmPoliciesView.svelte";
 function policy(over: Partial<TPMPolicy> = {}): TPMPolicy {
   return {
     name: "boot",
-    bank: "sha256",
-    pcrs: [0, 7],
+    branches: [{ conditions: [{ type: "pcr", bank: "sha256", pcrs: [0, 7] }], approved: true }],
     index: 1,
     approved: true,
     created_at: "2026-01-01T00:00:00Z",
@@ -69,15 +80,27 @@ beforeEach(() => {
 });
 
 describe("TpmPoliciesView", () => {
-  it("renders name, bank, PCRs, approval status, auto-unseal and object count once loaded", async () => {
-    list.mockResolvedValue({ policies: [policy({ auto_unseal: true })] });
+  it("renders name, description, branches, approval status, auto-unseal and object count once loaded", async () => {
+    list.mockResolvedValue({
+      policies: [
+        policy({
+          auto_unseal: true,
+          description: "firmware or PIN",
+          branches: [
+            { conditions: [{ type: "pcr", bank: "sha256", pcrs: [0, 7] }, { type: "locality", localities: [0] }] },
+            { conditions: [{ type: "auth_value" }] },
+          ],
+        }),
+      ],
+    });
     objects.mockResolvedValue({ name: "boot", objects: ["key/db-key", "sealed/backup"] });
 
     render(TpmPoliciesView);
 
     expect(await screen.findByText("boot")).toBeInTheDocument();
-    expect(screen.getByText("sha256")).toBeInTheDocument();
-    expect(screen.getByText("0, 7")).toBeInTheDocument();
+    expect(screen.getByText("firmware or PIN")).toBeInTheDocument();
+    expect(screen.getByText("PCR sha256 [0, 7] + locality 0")).toBeInTheDocument();
+    expect(screen.getByText("password")).toBeInTheDocument();
     expect(screen.getByText("approved")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Toggle auto-unseal for boot" })).toHaveTextContent("On");
     await waitFor(() =>
@@ -101,7 +124,7 @@ describe("TpmPoliciesView", () => {
     expect(await screen.findByText("TPM not present")).toBeInTheDocument();
   });
 
-  it("creates a policy with the default bank and PCR selection", async () => {
+  it("creates a policy of one pcr branch with the default bank and PCR selection", async () => {
     list.mockResolvedValue({ policies: [] });
     create.mockResolvedValue(policy());
 
@@ -115,8 +138,8 @@ describe("TpmPoliciesView", () => {
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     expect(create.mock.calls[0]![0]).toEqual({
       name: "boot",
-      bank: "sha256",
-      pcrs: [0, 7],
+      description: "",
+      branches: [{ conditions: [{ type: "pcr", bank: "sha256", pcrs: [0, 7] }] }],
       auto_unseal: false,
     });
   });
@@ -130,6 +153,7 @@ describe("TpmPoliciesView", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "+ Create" }));
     await fireEvent.input(screen.getByPlaceholderText("Name"), { target: { value: "extended" } });
+    await fireEvent.input(screen.getByPlaceholderText("Description"), { target: { value: "kernel" } });
     await fireEvent.change(screen.getByRole("combobox"), { target: { value: "sha384" } });
     // Deselect the default PCR 0, select PCR 14, leave PCR 7 checked.
     await fireEvent.click(screen.getByRole("checkbox", { name: "PCR 0" }));
@@ -140,10 +164,84 @@ describe("TpmPoliciesView", () => {
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     expect(create.mock.calls[0]![0]).toEqual({
       name: "extended",
-      bank: "sha384",
-      pcrs: [7, 14],
+      description: "kernel",
+      branches: [{ conditions: [{ type: "pcr", bank: "sha384", pcrs: [7, 14] }] }],
       auto_unseal: true,
     });
+  });
+
+  it("creates a composite policy in advanced mode: PCRs and locality, or the password", async () => {
+    list.mockResolvedValue({ policies: [] });
+    create.mockResolvedValue(policy());
+
+    render(TpmPoliciesView);
+    await screen.findByText("No TPM policies.");
+
+    await fireEvent.click(screen.getByRole("button", { name: "+ Create" }));
+    await fireEvent.input(screen.getByPlaceholderText("Name"), { target: { value: "strict" } });
+    await fireEvent.click(screen.getByRole("tab", { name: "Advanced", hidden: true }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Branch 1 locality condition", hidden: true }));
+    await fireEvent.click(screen.getByRole("button", { name: "+ Add branch", hidden: true }));
+    // The second branch: the password alone.
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Branch 2 PCR condition", hidden: true }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Branch 2 password condition", hidden: true }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create", hidden: true }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create.mock.calls[0]![0].branches).toEqual([
+      { conditions: [{ type: "pcr", bank: "sha256", pcrs: [0, 7] }, { type: "locality", localities: [0] }] },
+      { conditions: [{ type: "auth_value" }] },
+    ]);
+  });
+
+  it("refuses to create an advanced branch without conditions, and removes a branch", async () => {
+    list.mockResolvedValue({ policies: [] });
+
+    render(TpmPoliciesView);
+    await screen.findByText("No TPM policies.");
+
+    await fireEvent.click(screen.getByRole("button", { name: "+ Create" }));
+    await fireEvent.input(screen.getByPlaceholderText("Name"), { target: { value: "empty" } });
+    await fireEvent.click(screen.getByRole("tab", { name: "Advanced", hidden: true }));
+    await fireEvent.click(screen.getByRole("button", { name: "+ Add branch", hidden: true }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Branch 2 PCR condition", hidden: true }));
+
+    expect(screen.getByText("Choose at least one condition")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create", hidden: true })).toBeDisabled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Remove branch 2", hidden: true }));
+    expect(screen.queryByText("Choose at least one condition")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create", hidden: true })).toBeEnabled();
+  });
+
+  it("edits a policy's description", async () => {
+    list.mockResolvedValue({ policies: [policy({ description: "old" })] });
+    setDescription.mockResolvedValue(policy({ description: "firmware" }));
+
+    render(TpmPoliciesView);
+    await screen.findByText("boot");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Edit description of boot" }));
+    const text = screen.getByRole("textbox", { name: "Policy description", hidden: true });
+    expect(text).toHaveValue("old");
+    await fireEvent.input(text, { target: { value: "firmware" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save", hidden: true }));
+
+    await waitFor(() => expect(setDescription).toHaveBeenCalledWith("boot", "firmware"));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+  });
+
+  it("surfaces a refused description inside its dialog", async () => {
+    list.mockResolvedValue({ policies: [policy()] });
+    setDescription.mockRejectedValue(new Error("description too long"));
+
+    render(TpmPoliciesView);
+    await screen.findByText("boot");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Edit description of boot" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Save", hidden: true }));
+
+    expect(await screen.findByText("description too long")).toBeInTheDocument();
   });
 
   it("surfaces a create failure inside the dialog", async () => {
@@ -160,9 +258,17 @@ describe("TpmPoliciesView", () => {
     expect(await screen.findByText("policy name already exists")).toBeInTheDocument();
   });
 
-  it("verifies a policy and shows the match/mismatched PCRs in a dialog", async () => {
+  it("verifies a policy and shows each branch's result in a dialog", async () => {
     list.mockResolvedValue({ policies: [policy()] });
-    verify.mockResolvedValue({ name: "boot", match: false, mismatched: [7], approved: true });
+    verify.mockResolvedValue({
+      name: "boot",
+      match: false,
+      approved: true,
+      branches: [
+        { match: false, mismatched: [7], approved: true },
+        { match: true, approved: true },
+      ],
+    });
 
     render(TpmPoliciesView);
     await screen.findByText("boot");
@@ -172,7 +278,8 @@ describe("TpmPoliciesView", () => {
     await waitFor(() => expect(verify).toHaveBeenCalledWith("boot"));
     expect(await screen.findByText('Verify "boot"')).toBeInTheDocument();
     expect(screen.getByText("PCRs mismatched")).toBeInTheDocument();
-    expect(screen.getByText("Mismatched PCRs: 7")).toBeInTheDocument();
+    expect(screen.getByText(/Branch 1:\s*PCRs 7 changed,\s*approved/)).toBeInTheDocument();
+    expect(screen.getByText(/Branch 2:\s*PCRs match,\s*approved/)).toBeInTheDocument();
   });
 
   it("re-captures and re-approves a policy via Update, then reloads the list", async () => {

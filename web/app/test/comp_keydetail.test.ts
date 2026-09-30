@@ -206,6 +206,19 @@ describe("KeyDetail", () => {
     await waitFor(() => expect(rotate).toHaveBeenCalledWith("vault-ec", "pkcs11"));
     await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
     expect(toastStore.toasts.some((t) => t.kind === "success")).toBe(true);
+    expect(toastStore.toasts.some((t) => t.kind === "warning")).toBe(false);
+  });
+
+  it("warns that a rotated key's certificate must be re-issued", async () => {
+    await withPermissions({ "keys:rotate": true });
+    rotate.mockResolvedValue({ success: true, key_id: "vault-ec", key_type: "SIGNING", certificate_reissue_required: true });
+    render(KeyDetail, { props: { keyInfo: ecKey, allKeys: [ecKey], onClose: () => {}, onChanged: vi.fn() } });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Rotate" }));
+
+    await waitFor(() =>
+      expect(toastStore.toasts.some((t) => t.kind === "warning" && t.message.includes("re-issue it"))).toBe(true),
+    );
   });
 
   it("shows an error toast, not a crash, when delete fails", async () => {

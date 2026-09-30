@@ -173,6 +173,18 @@ func (s *XKMSService) TPMPolicySetAutoUnseal(ctx context.Context, req *transport
 	return p.TPMPolicySetAutoUnseal(ctx, req)
 }
 
+// TPMPolicySetDescription replaces a policy's description.
+func (s *XKMSService) TPMPolicySetDescription(ctx context.Context, req *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	p, err := s.tenantPolicies(ctx, "tpm policy set description", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	return p.TPMPolicySetDescription(ctx, req)
+}
+
 // TPMObjectPolicy returns the policy the target tenant's TPM key or sealed
 // object was created under. The object is resolved in the caller's tenant
 // only, so another tenant's object is not found.

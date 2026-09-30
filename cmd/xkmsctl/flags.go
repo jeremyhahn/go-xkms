@@ -176,6 +176,21 @@ func (r *flagReader) StringSlice(name string) []string {
 	return v
 }
 
+// StringArray reads the string array flag name, whose values are kept
+// whole, commas included. It returns nil once an earlier read on this
+// reader has failed.
+func (r *flagReader) StringArray(name string) []string {
+	if r.err != nil {
+		return nil
+	}
+	v, err := r.cmd.Flags().GetStringArray(name)
+	if err != nil {
+		r.err = &FlagReadError{Command: r.cmd.CommandPath(), Flag: name, Kind: "stringArray", Cause: err}
+		return nil
+	}
+	return v
+}
+
 // IntSlice reads the []int flag name. It returns nil once an earlier read
 // on this reader has failed.
 func (r *flagReader) IntSlice(name string) []int {

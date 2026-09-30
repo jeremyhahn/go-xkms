@@ -15,6 +15,7 @@ package xkms
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,7 +80,7 @@ func TestTPMPolicy_TenantCannotAddressAnotherTenant(t *testing.T) {
 	ctx := tenantCtx("acme")
 	ops := map[string]func() error{
 		"create": func() error {
-			_, err := svc.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{TenantID: "globex", Name: "boot", Bank: "sha256", PCRs: []uint{7}})
+			_, err := svc.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{TenantID: "globex", Name: "boot", Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{7})}})
 			return err
 		},
 		"get": func() error {
@@ -107,6 +108,10 @@ func TestTPMPolicy_TenantCannotAddressAnotherTenant(t *testing.T) {
 		},
 		"objects": func() error {
 			_, err := svc.TPMPolicyObjects(ctx, &transport.TPMPolicyRequest{TenantID: "globex", Name: "boot"})
+			return err
+		},
+		"describe": func() error {
+			_, err := svc.TPMPolicySetDescription(ctx, &transport.TPMPolicyDescriptionRequest{TenantID: "globex", Name: "boot", Description: "d"})
 			return err
 		},
 		"auto-unseal": func() error {
@@ -217,6 +222,7 @@ func TestTPMPolicy_NilRequest(t *testing.T) {
 		svc.TPMPolicyDelete(ctx, nil),
 		func() error { _, err := svc.TPMPolicyObjects(ctx, nil); return err }(),
 		func() error { _, err := svc.TPMPolicySetAutoUnseal(ctx, nil); return err }(),
+		func() error { _, err := svc.TPMPolicySetDescription(ctx, nil); return err }(),
 		func() error { _, err := svc.TPMObjectPolicy(ctx, nil); return err }(),
 		func() error { _, err := svc.TPMPolicyRotateAuthority(ctx, nil); return err }(),
 	}
@@ -245,25 +251,57 @@ func TestTPMPolicy_TenantListsItsOwnScope(t *testing.T) {
 }
 
 // TestTPMPolicyCreate_ValidatesBeforeTheTPM proves a create request naming
-// the reserved platform policy, an unknown bank or no PCR is refused with a
-// typed error before the TPM is reached.
+// the reserved platform policy or carrying a malformed branch is refused with
+// a typed error before the TPM is reached.
 func TestTPMPolicyCreate_ValidatesBeforeTheTPM(t *testing.T) {
 	svc, _, _ := newTPMPolicyService(t)
 	ctx := tenantCtx("acme")
+	create := func(branches ...transport.TPMPolicyBranch) error {
+		_, err := svc.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", Branches: branches})
+		return err
+	}
 
-	_, err := svc.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: tpmpolicy.PlatformPolicy, Bank: "sha256", PCRs: []uint{7}})
+	_, err := svc.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: tpmpolicy.PlatformPolicy, Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{7})}})
 	require.ErrorIs(t, err, tpmpolicy.ErrReservedPolicy)
 
-	_, err = svc.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", Bank: "md5", PCRs: []uint{7}})
 	var bankErr *tpmpolicy.InvalidPCRBankError
-	require.ErrorAs(t, err, &bankErr)
+	require.ErrorAs(t, create(transport.TPMPolicyPCRBranch("md5", []uint{7})), &bankErr)
+	require.ErrorIs(t, create(transport.TPMPolicyPCRBranch("sha256", nil)), tpmpolicy.ErrEmptyPCRSelection)
+	require.ErrorIs(t, create(), tpmpolicy.ErrNoBranches)
+	require.ErrorIs(t, create(transport.TPMPolicyBranch{}), tpmpolicy.ErrEmptyBranch)
 
-	_, err = svc.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", Bank: "sha256"})
-	require.ErrorIs(t, err, tpmpolicy.ErrEmptyPCRSelection)
+	var localityErr *tpmpolicy.InvalidLocalityError
+	require.ErrorAs(t, create(transport.TPMPolicyBranch{Conditions: []transport.TPMPolicyCondition{
+		{Type: transport.TPMPolicyConditionLocality, Localities: []uint{5}},
+	}}), &localityErr)
+	var unknownErr *tpmpolicy.UnknownConditionTypeError
+	require.ErrorAs(t, create(transport.TPMPolicyBranch{Conditions: []transport.TPMPolicyCondition{{Type: "time"}}}), &unknownErr)
+
+	supplied := transport.TPMPolicyPCRBranch("sha256", []uint{7})
+	supplied.Conditions[0].PCRValues = map[uint]string{7: "00"}
+	require.ErrorIs(t, create(supplied), tpmpolicy.ErrPCRValuesSupplied, "PCR values are captured, never supplied")
+	digest := transport.TPMPolicyPCRBranch("sha256", []uint{7})
+	digest.Conditions[0].PCRDigest = "00"
+	require.ErrorIs(t, create(digest), tpmpolicy.ErrPCRValuesSupplied)
 
 	_, err = svc.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{Name: "bad/name"})
 	var nameErr *tpmpolicy.InvalidNameError
 	require.ErrorAs(t, err, &nameErr)
+}
+
+// TestTPMPolicySetDescription_ValidatesBeforeTheTPM proves a description
+// change naming the reserved platform policy, or longer than the service
+// allows, is refused with a typed error before the TPM is reached.
+func TestTPMPolicySetDescription_ValidatesBeforeTheTPM(t *testing.T) {
+	svc, _, _ := newTPMPolicyService(t)
+	ctx := tenantCtx("acme")
+
+	_, err := svc.TPMPolicySetDescription(ctx, &transport.TPMPolicyDescriptionRequest{Name: tpmpolicy.PlatformPolicy, Description: "d"})
+	require.ErrorIs(t, err, tpmpolicy.ErrReservedPolicy)
+
+	var tooLong *tpmpolicy.DescriptionTooLongError
+	_, err = svc.TPMPolicySetDescription(ctx, &transport.TPMPolicyDescriptionRequest{Name: "boot", Description: strings.Repeat("d", 4097)})
+	require.ErrorAs(t, err, &tooLong)
 }
 
 // TestTPMObjectPolicy_ResolvesInTheCallersTenant proves an object's policy is
@@ -318,34 +356,47 @@ func TestTPMPolicyObjects_ListsAPolicysObjects(t *testing.T) {
 	assert.Equal(t, []string{}, none.Objects)
 }
 
-// TestTPMPolicyToTransport proves a stored policy's API form hex-encodes its
-// values and reports its approval, or its revocation.
+// TestTPMPolicyToTransport proves a stored policy's API form carries its
+// description and branches, hex-encodes its captured values, and reports its
+// approval per branch and overall, or its revocation.
 func TestTPMPolicyToTransport(t *testing.T) {
 	at := time.Date(2026, 9, 29, 12, 0, 0, 0, time.FixedZone("EST", -5*3600))
 	p := &tpmpolicy.Policy{
-		Name:      "boot",
-		Bank:      "sha256",
-		PCRs:      []uint{7},
-		PCRValues: map[uint][]byte{7: {0xDE, 0xAD}},
-		PCRDigest: []byte{0x01},
+		Name:        "boot",
+		Description: "firmware or PIN",
+		Branches: []tpmpolicy.Branch{
+			{Conditions: []tpmpolicy.Condition{
+				{Type: tpmpolicy.ConditionPCR, Bank: "sha256", PCRs: []uint{7}, PCRValues: map[uint][]byte{7: {0xDE, 0xAD}}, PCRDigest: []byte{0x01}},
+				{Type: tpmpolicy.ConditionLocality, Localities: []uint{0}},
+			}},
+			{Conditions: []tpmpolicy.Condition{{Type: tpmpolicy.ConditionAuthValue}}},
+		},
 		Index:     0x01500010,
-		Approval:  &tpmpolicy.Approval{Epoch: 3, AuthorityGeneration: 2},
+		Approvals: []*tpmpolicy.Approval{{Epoch: 3, AuthorityGeneration: 2}, {Epoch: 3, AuthorityGeneration: 2}},
 		CreatedAt: at,
 		UpdatedAt: at,
 	}
 	got := tpmPolicyToTransport("acme", p)
 	assert.Equal(t, "acme", got.TenantID)
-	assert.Equal(t, map[uint]string{7: "dead"}, got.PCRValues)
-	assert.Equal(t, "01", got.PCRDigest)
+	assert.Equal(t, "firmware or PIN", got.Description)
+	assert.Equal(t, []transport.TPMPolicyBranch{
+		{Conditions: []transport.TPMPolicyCondition{
+			{Type: "pcr", Bank: "sha256", PCRs: []uint{7}, PCRValues: map[uint]string{7: "dead"}, PCRDigest: "01"},
+			{Type: "locality", Localities: []uint{0}},
+		}, Approved: true},
+		{Conditions: []transport.TPMPolicyCondition{{Type: "auth_value"}}, Approved: true},
+	}, got.Branches)
 	assert.True(t, got.Approved)
 	assert.Equal(t, uint64(3), got.Epoch)
 	assert.Equal(t, uint64(2), got.AuthorityGeneration)
 	assert.Equal(t, "2026-09-29T17:00:00Z", got.CreatedAt)
 
-	p.Approval = nil
+	p.Approvals = []*tpmpolicy.Approval{nil, nil}
 	revoked := tpmPolicyToTransport("", p)
 	assert.False(t, revoked.Approved)
+	assert.False(t, revoked.Branches[0].Approved)
 	assert.Zero(t, revoked.Epoch)
 
+	assert.False(t, tpmPolicyToTransport("", &tpmpolicy.Policy{Name: "empty"}).Approved, "a policy without branches is not approved")
 	assert.Empty(t, formatTPMTime(time.Time{}))
 }

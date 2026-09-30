@@ -555,10 +555,11 @@ func (s *Server) handleRotateKey(ctx context.Context, req *JSONRPCRequest) (inte
 	}
 
 	return RotateKeyResult{
-		KeyID:        resp.KeyID,
-		PublicKeyPEM: resp.PublicKeyPEM,
-		KeyType:      resp.KeyType,
-		KeyVersion:   resp.KeyVersion,
+		KeyID:                      resp.KeyID,
+		PublicKeyPEM:               resp.PublicKeyPEM,
+		KeyType:                    resp.KeyType,
+		KeyVersion:                 resp.KeyVersion,
+		CertificateReissueRequired: resp.CertificateReissueRequired,
 	}, nil
 }
 

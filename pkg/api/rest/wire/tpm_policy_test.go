@@ -69,9 +69,11 @@ func TestTPMPolicyClient_Routes(t *testing.T) {
 		body   map[string]any
 	}{
 		{"create", func() error {
-			_, err := c.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{TenantID: "acme", Name: "boot", Bank: "sha256", PCRs: []uint{7}})
+			_, err := c.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{TenantID: "acme", Name: "boot", Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{7})}})
 			return err
-		}, http.MethodPost, "/api/v1/tpm/policies", map[string]any{"tenant_id": "acme", "name": "boot", "bank": "sha256", "pcrs": []any{7.0}}},
+		}, http.MethodPost, "/api/v1/tpm/policies", map[string]any{"tenant_id": "acme", "name": "boot", "branches": []any{map[string]any{
+			"conditions": []any{map[string]any{"type": "pcr", "bank": "sha256", "pcrs": []any{7.0}}}, "approved": false,
+		}}}},
 		{"get", func() error {
 			_, err := c.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{TenantID: "acme", Name: "a b"})
 			return err
@@ -96,6 +98,10 @@ func TestTPMPolicyClient_Routes(t *testing.T) {
 			_, err := c.TPMPolicySetAutoUnseal(ctx, &transport.TPMPolicyAutoUnsealRequest{Name: "boot", Enabled: true})
 			return err
 		}, http.MethodPost, "/api/v1/tpm/policies/boot/auto-unseal", map[string]any{"name": "boot", "enabled": true}},
+		{"description", func() error {
+			_, err := c.TPMPolicySetDescription(ctx, &transport.TPMPolicyDescriptionRequest{Name: "boot", Description: "firmware"})
+			return err
+		}, http.MethodPost, "/api/v1/tpm/policies/boot/description", map[string]any{"name": "boot", "description": "firmware"}},
 		{"object policy", func() error {
 			_, err := c.TPMObjectPolicy(ctx, &transport.TPMObjectPolicyRequest{KeyID: "signer", Kind: "sealed"})
 			return err
@@ -131,11 +137,14 @@ func TestTPMPolicyClient_Routes(t *testing.T) {
 // TestTPMPolicyClient_DecodesResponses proves the server's JSON answer is
 // decoded into the method's transport type.
 func TestTPMPolicyClient_DecodesResponses(t *testing.T) {
-	rec := &recordingRequester{response: `{"name":"boot","tenant_id":"acme","pcrs":[7],"approved":true}`}
+	rec := &recordingRequester{response: `{"name":"boot","tenant_id":"acme","description":"d","branches":[{"conditions":[{"type":"pcr","bank":"sha256","pcrs":[7]}],"approved":true}],"approved":true}`}
 	c := TPMPolicyClient{Do: rec.do}
 	p, err := c.TPMPolicyGet(context.Background(), &transport.TPMPolicyRequest{Name: "boot"})
 	require.NoError(t, err)
-	assert.Equal(t, &transport.TPMPolicy{Name: "boot", TenantID: "acme", PCRs: []uint{7}, Approved: true}, p)
+	assert.Equal(t, &transport.TPMPolicy{
+		Name: "boot", TenantID: "acme", Description: "d", Approved: true,
+		Branches: []transport.TPMPolicyBranch{{Conditions: []transport.TPMPolicyCondition{{Type: "pcr", Bank: "sha256", PCRs: []uint{7}}}, Approved: true}},
+	}, p)
 
 	rec.response = `{"policies":[{"name":"boot"}]}`
 	list, err := c.TPMPolicyList(context.Background(), &transport.TPMPolicyListRequest{})
@@ -173,6 +182,7 @@ func TestTPMPolicyClient_Failures(t *testing.T) {
 		c.TPMPolicyDelete(ctx, nil),
 		func() error { _, err := c.TPMPolicyObjects(ctx, nil); return err }(),
 		func() error { _, err := c.TPMPolicySetAutoUnseal(ctx, nil); return err }(),
+		func() error { _, err := c.TPMPolicySetDescription(ctx, nil); return err }(),
 		func() error { _, err := c.TPMObjectPolicy(ctx, nil); return err }(),
 		func() error { _, err := c.TPMPolicyRotateAuthority(ctx, nil); return err }(),
 		func() error { _, err := c.SetTenantTPMMode(ctx, nil); return err }(),

@@ -70,6 +70,34 @@ type baseSDKClient struct {
 	*tpmpolicyfake.Fake
 }
 
+func (b *baseSDKClient) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) EnableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) DisableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) RetireKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) EnableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) DisableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) RotateScopeKeys(context.Context, *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (b *baseSDKClient) Connect(ctx context.Context) error {
 	return errNotImplemented
 }

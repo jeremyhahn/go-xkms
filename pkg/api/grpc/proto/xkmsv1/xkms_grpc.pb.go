@@ -162,6 +162,7 @@ const (
 	KeystoreService_TPMPolicyDelete_FullMethodName             = "/xkms.v1.KeystoreService/TPMPolicyDelete"
 	KeystoreService_TPMPolicyObjects_FullMethodName            = "/xkms.v1.KeystoreService/TPMPolicyObjects"
 	KeystoreService_TPMPolicySetAutoUnseal_FullMethodName      = "/xkms.v1.KeystoreService/TPMPolicySetAutoUnseal"
+	KeystoreService_TPMPolicySetDescription_FullMethodName     = "/xkms.v1.KeystoreService/TPMPolicySetDescription"
 	KeystoreService_TPMObjectPolicy_FullMethodName             = "/xkms.v1.KeystoreService/TPMObjectPolicy"
 	KeystoreService_TPMPolicyRotateAuthority_FullMethodName    = "/xkms.v1.KeystoreService/TPMPolicyRotateAuthority"
 	KeystoreService_GetTenantTPMMode_FullMethodName            = "/xkms.v1.KeystoreService/GetTenantTPMMode"
@@ -531,8 +532,8 @@ type KeystoreServiceClient interface {
 	// password store addressed by the request context. Gated the same as its
 	// PasswordAdd/PasswordUpdate siblings: passwords:write.
 	PasswordStoreSetAccessMode(ctx context.Context, in *PasswordStoreSetAccessModeRequest, opts ...grpc.CallOption) (*PasswordStoreSetAccessModeResponse, error)
-	// TPMPolicyCreate creates a named policy over the live PCR values of the
-	// tenant's TPM.
+	// TPMPolicyCreate creates a named policy of branches, capturing the
+	// values of its pcr conditions from the tenant's TPM.
 	TPMPolicyCreate(ctx context.Context, in *TPMPolicyCreateRequest, opts ...grpc.CallOption) (*TPMPolicy, error)
 	// TPMPolicyGet returns a named policy.
 	TPMPolicyGet(ctx context.Context, in *TPMPolicyRequest, opts ...grpc.CallOption) (*TPMPolicy, error)
@@ -551,6 +552,8 @@ type KeystoreServiceClient interface {
 	TPMPolicyObjects(ctx context.Context, in *TPMPolicyRequest, opts ...grpc.CallOption) (*TPMPolicyObjectsResponse, error)
 	// TPMPolicySetAutoUnseal sets or clears a policy's auto-unseal mark.
 	TPMPolicySetAutoUnseal(ctx context.Context, in *TPMPolicyAutoUnsealRequest, opts ...grpc.CallOption) (*TPMPolicy, error)
+	// TPMPolicySetDescription replaces a policy's description.
+	TPMPolicySetDescription(ctx context.Context, in *TPMPolicyDescriptionRequest, opts ...grpc.CallOption) (*TPMPolicy, error)
 	// TPMObjectPolicy returns the policy a TPM key or sealed object was
 	// created under.
 	TPMObjectPolicy(ctx context.Context, in *TPMObjectPolicyRequest, opts ...grpc.CallOption) (*TPMObjectPolicyResponse, error)
@@ -2036,6 +2039,16 @@ func (c *keystoreServiceClient) TPMPolicySetAutoUnseal(ctx context.Context, in *
 	return out, nil
 }
 
+func (c *keystoreServiceClient) TPMPolicySetDescription(ctx context.Context, in *TPMPolicyDescriptionRequest, opts ...grpc.CallOption) (*TPMPolicy, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TPMPolicy)
+	err := c.cc.Invoke(ctx, KeystoreService_TPMPolicySetDescription_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) TPMObjectPolicy(ctx context.Context, in *TPMObjectPolicyRequest, opts ...grpc.CallOption) (*TPMObjectPolicyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TPMObjectPolicyResponse)
@@ -2817,8 +2830,8 @@ type KeystoreServiceServer interface {
 	// password store addressed by the request context. Gated the same as its
 	// PasswordAdd/PasswordUpdate siblings: passwords:write.
 	PasswordStoreSetAccessMode(context.Context, *PasswordStoreSetAccessModeRequest) (*PasswordStoreSetAccessModeResponse, error)
-	// TPMPolicyCreate creates a named policy over the live PCR values of the
-	// tenant's TPM.
+	// TPMPolicyCreate creates a named policy of branches, capturing the
+	// values of its pcr conditions from the tenant's TPM.
 	TPMPolicyCreate(context.Context, *TPMPolicyCreateRequest) (*TPMPolicy, error)
 	// TPMPolicyGet returns a named policy.
 	TPMPolicyGet(context.Context, *TPMPolicyRequest) (*TPMPolicy, error)
@@ -2837,6 +2850,8 @@ type KeystoreServiceServer interface {
 	TPMPolicyObjects(context.Context, *TPMPolicyRequest) (*TPMPolicyObjectsResponse, error)
 	// TPMPolicySetAutoUnseal sets or clears a policy's auto-unseal mark.
 	TPMPolicySetAutoUnseal(context.Context, *TPMPolicyAutoUnsealRequest) (*TPMPolicy, error)
+	// TPMPolicySetDescription replaces a policy's description.
+	TPMPolicySetDescription(context.Context, *TPMPolicyDescriptionRequest) (*TPMPolicy, error)
 	// TPMObjectPolicy returns the policy a TPM key or sealed object was
 	// created under.
 	TPMObjectPolicy(context.Context, *TPMObjectPolicyRequest) (*TPMObjectPolicyResponse, error)
@@ -3348,6 +3363,9 @@ func (UnimplementedKeystoreServiceServer) TPMPolicyObjects(context.Context, *TPM
 }
 func (UnimplementedKeystoreServiceServer) TPMPolicySetAutoUnseal(context.Context, *TPMPolicyAutoUnsealRequest) (*TPMPolicy, error) {
 	return nil, status.Error(codes.Unimplemented, "method TPMPolicySetAutoUnseal not implemented")
+}
+func (UnimplementedKeystoreServiceServer) TPMPolicySetDescription(context.Context, *TPMPolicyDescriptionRequest) (*TPMPolicy, error) {
+	return nil, status.Error(codes.Unimplemented, "method TPMPolicySetDescription not implemented")
 }
 func (UnimplementedKeystoreServiceServer) TPMObjectPolicy(context.Context, *TPMObjectPolicyRequest) (*TPMObjectPolicyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TPMObjectPolicy not implemented")
@@ -6010,6 +6028,24 @@ func _KeystoreService_TPMPolicySetAutoUnseal_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_TPMPolicySetDescription_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TPMPolicyDescriptionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).TPMPolicySetDescription(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_TPMPolicySetDescription_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).TPMPolicySetDescription(ctx, req.(*TPMPolicyDescriptionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_TPMObjectPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(TPMObjectPolicyRequest)
 	if err := dec(in); err != nil {
@@ -7400,6 +7436,10 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TPMPolicySetAutoUnseal",
 			Handler:    _KeystoreService_TPMPolicySetAutoUnseal_Handler,
+		},
+		{
+			MethodName: "TPMPolicySetDescription",
+			Handler:    _KeystoreService_TPMPolicySetDescription_Handler,
 		},
 		{
 			MethodName: "TPMObjectPolicy",

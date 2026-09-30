@@ -117,7 +117,7 @@ func (f *fixture) restart() {
 // createPolicy creates a SHA-256 policy over testPCR.
 func (f *fixture) createPolicy(tenant, name string) *Policy {
 	f.t.Helper()
-	p, err := f.svc.CreatePolicy(f.ctx, tenant, CreatePolicyRequest{Name: name, Bank: "sha256", PCRs: []uint{testPCR}})
+	p, err := f.svc.CreatePolicy(f.ctx, tenant, CreatePolicyRequest{Name: name, Branches: []Branch{PCRBranch("sha256", testPCR)}})
 	require.NoError(f.t, err)
 	return p
 }
@@ -253,7 +253,7 @@ func (r replayResolver) Approvals(string, string) ([]*pkgtpm2.PolicyApproval, er
 
 // pcrBranch is a branch of one pcr condition over testPCR.
 func pcrBranch() Branch {
-	return Branch{Conditions: []Condition{{Type: ConditionPCR, Bank: "sha256", PCRs: []uint{testPCR}}}}
+	return PCRBranch("sha256", testPCR)
 }
 
 // authValueBranch is a branch of one auth_value condition.

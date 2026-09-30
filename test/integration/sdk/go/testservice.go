@@ -1243,6 +1243,10 @@ func (s *TestXKMSService) TPMPolicySetAutoUnseal(context.Context, *xkms.TPMPolic
 	return nil, ErrNotImplemented
 }
 
+func (s *TestXKMSService) TPMPolicySetDescription(context.Context, *xkms.TPMPolicyDescriptionRequest) (*xkms.TPMPolicy, error) {
+	return nil, ErrNotImplemented
+}
+
 func (s *TestXKMSService) TPMObjectPolicy(context.Context, *xkms.TPMObjectPolicyRequest) (*xkms.TPMObjectPolicyResponse, error) {
 	return nil, ErrNotImplemented
 }

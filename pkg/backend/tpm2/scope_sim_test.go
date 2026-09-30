@@ -80,7 +80,7 @@ func newScopedFixture(t *testing.T) *scopedFixture {
 // createPolicy creates a SHA-256 policy over scopePCR in tenant's scope.
 func (f *scopedFixture) createPolicy(tenant, name string) {
 	f.t.Helper()
-	_, err := f.svc.CreatePolicy(f.ctx, tenant, tpmpolicy.CreatePolicyRequest{Name: name, Bank: "sha256", PCRs: []uint{scopePCR}})
+	_, err := f.svc.CreatePolicy(f.ctx, tenant, tpmpolicy.CreatePolicyRequest{Name: name, Branches: []tpmpolicy.Branch{tpmpolicy.PCRBranch("sha256", scopePCR)}})
 	require.NoError(f.t, err)
 }
 

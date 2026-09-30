@@ -51,7 +51,7 @@ func mockHandler() http.Handler {
 		case strings.HasPrefix(path, "/api/v1/tpm/policies/") && r.Method == http.MethodGet:
 			respond(transport.TPMPolicy{
 				Name: strings.TrimPrefix(path, "/api/v1/tpm/policies/"), TenantID: r.URL.Query().Get("tenant_id"),
-				Bank: "sha256", PCRs: []uint{7}, Approved: true,
+				Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{7})}, Approved: true,
 			})
 		case path == "/api/v1/backends" && r.Method == http.MethodGet:
 			respond(transport.ListBackendsResponse{

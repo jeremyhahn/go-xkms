@@ -35,6 +35,7 @@ func newFlagReaderTestCmd() *cobra.Command {
 	cmd.Flags().Duration("d", 5*time.Second, "")
 	cmd.Flags().StringSlice("ss", []string{"a", "b"}, "")
 	cmd.Flags().IntSlice("is", []int{1, 2}, "")
+	cmd.Flags().StringArray("sa", []string{"a,b"}, "")
 	return cmd
 }
 
@@ -69,6 +70,9 @@ func TestFlagReader_Success(t *testing.T) {
 	if got := fr.IntSlice("is"); len(got) != 2 || got[0] != 1 || got[1] != 2 {
 		t.Errorf("IntSlice: got %v, want [1 2]", got)
 	}
+	if got := fr.StringArray("sa"); len(got) != 1 || got[0] != "a,b" {
+		t.Errorf("StringArray: got %v, want [a,b] whole", got)
+	}
 	if err := fr.Err(); err != nil {
 		t.Fatalf("Err: got %v, want nil", err)
 	}
@@ -89,6 +93,7 @@ func TestFlagReader_UnknownFlagRecordsTypedError(t *testing.T) {
 		{"Duration", func(r *flagReader) any { return r.Duration("missing") }, "duration"},
 		{"StringSlice", func(r *flagReader) any { return r.StringSlice("missing") }, "stringSlice"},
 		{"IntSlice", func(r *flagReader) any { return r.IntSlice("missing") }, "intSlice"},
+		{"StringArray", func(r *flagReader) any { return r.StringArray("missing") }, "stringArray"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

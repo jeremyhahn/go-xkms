@@ -84,11 +84,11 @@ func TestTPMPolicyRPCs_MapErrors(t *testing.T) {
 			return err
 		}, codes.NotFound},
 		{"invalid bank", func() error {
-			_, err := s.TPMPolicyCreate(sys, &pb.TPMPolicyCreateRequest{Name: "boot", Bank: "md5", Pcrs: []uint32{7}})
+			_, err := s.TPMPolicyCreate(sys, &pb.TPMPolicyCreateRequest{Name: "boot", Branches: []*pb.TPMPolicyBranch{{Conditions: []*pb.TPMPolicyCondition{{Type: "pcr", Bank: "md5", Pcrs: []uint32{7}}}}}})
 			return err
 		}, codes.InvalidArgument},
 		{"reserved name", func() error {
-			_, err := s.TPMPolicyCreate(sys, &pb.TPMPolicyCreateRequest{Name: tpmpolicy.PlatformPolicy, Bank: "sha256", Pcrs: []uint32{7}})
+			_, err := s.TPMPolicyCreate(sys, &pb.TPMPolicyCreateRequest{Name: tpmpolicy.PlatformPolicy, Branches: []*pb.TPMPolicyBranch{{Conditions: []*pb.TPMPolicyCondition{{Type: "pcr", Bank: "sha256", Pcrs: []uint32{7}}}}}})
 			return err
 		}, codes.InvalidArgument},
 		{"invalid kind", func() error {

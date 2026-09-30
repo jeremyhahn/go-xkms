@@ -212,6 +212,14 @@ func (c TPMPolicyClient) TPMPolicySetAutoUnseal(ctx context.Context, req *transp
 	return c.policy(ctx, http.MethodPost, TPMPolicyPath(req.Name, "auto-unseal"), req)
 }
 
+// TPMPolicySetDescription replaces a TPM policy's description.
+func (c TPMPolicyClient) TPMPolicySetDescription(ctx context.Context, req *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	return c.policy(ctx, http.MethodPost, TPMPolicyPath(req.Name, "description"), req)
+}
+
 // TPMObjectPolicy returns the TPM policy a key or sealed object was created
 // under.
 func (c TPMPolicyClient) TPMObjectPolicy(ctx context.Context, req *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {

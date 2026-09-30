@@ -167,6 +167,9 @@ type RotateKeyResponse struct {
 	Message      string `json:"message,omitempty"`
 	// KeyVersion is the version the rotation created, now current.
 	KeyVersion uint32 `json:"key_version,omitempty"`
+	// CertificateReissueRequired reports that the key has a certificate,
+	// which still certifies the previous version.
+	CertificateReissueRequired bool `json:"certificate_reissue_required,omitempty"`
 }
 
 // EncryptRequest represents an encryption request (symmetric encryption).

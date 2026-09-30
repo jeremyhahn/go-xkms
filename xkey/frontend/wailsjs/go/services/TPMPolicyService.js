@@ -54,6 +54,10 @@ export function SetContext(arg1) {
   return window['go']['services']['TPMPolicyService']['SetContext'](arg1);
 }
 
+export function SetDescription(arg1, arg2) {
+  return window['go']['services']['TPMPolicyService']['SetDescription'](arg1, arg2);
+}
+
 export function SetLocal(arg1) {
   return window['go']['services']['TPMPolicyService']['SetLocal'](arg1);
 }

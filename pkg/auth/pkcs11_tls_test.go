@@ -497,6 +497,10 @@ func (m *authMockClient) TPMPolicySetAutoUnseal(context.Context, *transport.TPMP
 	return &transport.TPMPolicy{}, nil
 }
 
+func (m *authMockClient) TPMPolicySetDescription(context.Context, *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	return &transport.TPMPolicy{}, nil
+}
+
 func (m *authMockClient) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	return &transport.TPMObjectPolicyResponse{}, nil
 }

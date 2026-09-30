@@ -729,6 +729,12 @@ func rotateKey(cfg *Config, printer *Printer, keyID string) {
 
 	if err := printer.PrintSuccess(fmt.Sprintf("Successfully rotated key: %s (current version %d)", keyID, resp.KeyVersion)); err != nil {
 		handleError(err)
+		return
+	}
+	if resp.CertificateReissueRequired {
+		if err := printer.PrintWarning(fmt.Sprintf("Key %s has a certificate, which still certifies the previous version: re-issue it for version %d", keyID, resp.KeyVersion)); err != nil {
+			handleError(err)
+		}
 	}
 }
 

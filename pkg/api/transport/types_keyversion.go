@@ -120,13 +120,33 @@ type RotateScopeKeysRequest struct {
 	TenantID string `json:"tenant_id,omitempty"`
 }
 
+// Key rotation result states.
+const (
+	// KeyRotationRotated is a key that now has a new current version.
+	KeyRotationRotated = "rotated"
+
+	// KeyRotationSkipped is a key rotate-all left alone on purpose: another
+	// subsystem names it exactly, so a new version would never be used, or
+	// it has a certificate a rotation would silently leave on the old
+	// version. Reason says which.
+	KeyRotationSkipped = "skipped"
+
+	// KeyRotationFailed is a key, or a whole backend, that could not be
+	// rotated. Error says why.
+	KeyRotationFailed = "failed"
+)
+
 // KeyRotationResult is the outcome of rotating one key.
 type KeyRotationResult struct {
 	Backend string `json:"backend"`
 	KeyID   string `json:"key_id"`
-	// KeyVersion is the new current version; zero when the rotation failed.
+	// State is KeyRotationRotated, KeyRotationSkipped or KeyRotationFailed.
+	State string `json:"state"`
+	// KeyVersion is the new current version; zero unless rotated.
 	KeyVersion uint32 `json:"key_version,omitempty"`
-	// Error describes why the key was not rotated; empty on success.
+	// Reason says why a skipped key was left alone.
+	Reason string `json:"reason,omitempty"`
+	// Error describes why the key was not rotated; empty unless failed.
 	Error string `json:"error,omitempty"`
 }
 
@@ -134,7 +154,8 @@ type KeyRotationResult struct {
 type RotateScopeKeysResponse struct {
 	TenantID string              `json:"tenant_id"`
 	Results  []KeyRotationResult `json:"results"`
-	// Rotated and Failed count the results that succeeded and failed.
+	// Rotated, Skipped and Failed count the results in each state.
 	Rotated int `json:"rotated"`
+	Skipped int `json:"skipped"`
 	Failed  int `json:"failed"`
 }

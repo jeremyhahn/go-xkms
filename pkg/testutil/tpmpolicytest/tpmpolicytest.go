@@ -66,7 +66,9 @@ func NewOffline(t *testing.T) (*tpmpolicy.Service, *tpmpolicy.Registry) {
 func Calls(ctx context.Context, svc transport.TPMPolicyService) map[string]func() error {
 	return map[string]func() error{
 		"TPMPolicyCreate": func() error {
-			_, err := svc.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "boot", Bank: "sha256", PCRs: []uint{7}})
+			_, err := svc.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{
+				Name: "boot", Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{7})},
+			})
 			return err
 		},
 		"TPMPolicyGet":  func() error { _, err := svc.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{Name: "boot"}); return err },
@@ -90,6 +92,10 @@ func Calls(ctx context.Context, svc transport.TPMPolicyService) map[string]func(
 		},
 		"TPMPolicySetAutoUnseal": func() error {
 			_, err := svc.TPMPolicySetAutoUnseal(ctx, &transport.TPMPolicyAutoUnsealRequest{Name: "boot", Enabled: true})
+			return err
+		},
+		"TPMPolicySetDescription": func() error {
+			_, err := svc.TPMPolicySetDescription(ctx, &transport.TPMPolicyDescriptionRequest{Name: "boot", Description: "boot chain"})
 			return err
 		},
 		"TPMObjectPolicy": func() error {

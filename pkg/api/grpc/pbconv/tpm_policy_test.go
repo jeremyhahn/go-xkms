@@ -33,12 +33,16 @@ import (
 // samplePolicy is a TPM policy with every field set.
 func samplePolicy() *transport.TPMPolicy {
 	return &transport.TPMPolicy{
-		Name:                "boot",
-		TenantID:            "acme",
-		Bank:                "sha256",
-		PCRs:                []uint{0, 7},
-		PCRValues:           map[uint]string{0: "aa", 7: "bb"},
-		PCRDigest:           "cc",
+		Name:        "boot",
+		TenantID:    "acme",
+		Description: "firmware and Secure Boot",
+		Branches: []transport.TPMPolicyBranch{
+			{Conditions: []transport.TPMPolicyCondition{
+				{Type: "pcr", Bank: "sha256", PCRs: []uint{0, 7}, PCRValues: map[uint]string{0: "aa", 7: "bb"}, PCRDigest: "cc"},
+				{Type: "locality", Localities: []uint{0, 3}},
+			}, Approved: true},
+			{Conditions: []transport.TPMPolicyCondition{{Type: "auth_value"}}, Approved: true},
+		},
 		Index:               0x01500010,
 		Approved:            true,
 		Epoch:               4,
@@ -55,7 +59,10 @@ func TestConversions_RoundTrip(t *testing.T) {
 	p := samplePolicy()
 	assert.Equal(t, p, TPMPolicyFromProto(TPMPolicyToProto(p)))
 
-	create := &transport.TPMPolicyCreateRequest{TenantID: "acme", Name: "boot", Bank: "sha256", PCRs: []uint{7}, AutoUnseal: true, OwnerAuth: []byte("owner")}
+	create := &transport.TPMPolicyCreateRequest{
+		TenantID: "acme", Name: "boot", Description: "d", AutoUnseal: true, OwnerAuth: []byte("owner"),
+		Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{7})},
+	}
 	assert.Equal(t, create, TPMPolicyCreateRequestFromProto(TPMPolicyCreateRequestToProto(create)))
 
 	named := &transport.TPMPolicyRequest{TenantID: "acme", Name: "boot"}
@@ -67,11 +74,17 @@ func TestConversions_RoundTrip(t *testing.T) {
 	del := &transport.TPMPolicyDeleteRequest{TenantID: "acme", Name: "boot", OwnerAuth: []byte("owner")}
 	assert.Equal(t, del, TPMPolicyDeleteRequestFromProto(TPMPolicyDeleteRequestToProto(del)))
 
-	verify := &transport.TPMPolicyVerifyResponse{Name: "boot", Match: false, Mismatched: []uint{7}, Approved: true}
+	verify := &transport.TPMPolicyVerifyResponse{Name: "boot", Match: false, Approved: true, Branches: []transport.TPMPolicyBranchVerification{
+		{Match: false, Mismatched: []uint{7}, Approved: true},
+		{Match: true, Approved: true},
+	}}
 	assert.Equal(t, verify, TPMPolicyVerifyResponseFromProto(TPMPolicyVerifyResponseToProto(verify)))
 
 	objects := &transport.TPMPolicyObjectsResponse{Name: "boot", Objects: []string{"key/a"}}
 	assert.Equal(t, objects, TPMPolicyObjectsResponseFromProto(TPMPolicyObjectsResponseToProto(objects)))
+
+	described := &transport.TPMPolicyDescriptionRequest{TenantID: "acme", Name: "boot", Description: "firmware"}
+	assert.Equal(t, described, TPMPolicyDescriptionRequestFromProto(TPMPolicyDescriptionRequestToProto(described)))
 
 	auto := &transport.TPMPolicyAutoUnsealRequest{TenantID: "acme", Name: "boot", Enabled: true}
 	assert.Equal(t, auto, TPMPolicyAutoUnsealRequestFromProto(TPMPolicyAutoUnsealRequestToProto(auto)))
@@ -103,6 +116,8 @@ func TestConversions_EmptyObjectsAreNotNil(t *testing.T) {
 	assert.Empty(t, got.Objects)
 	assert.Nil(t, uintsToProto(nil))
 	assert.Nil(t, uintsFromProto(nil))
+	assert.Nil(t, pcrValuesToProto(nil))
+	assert.Nil(t, pcrValuesFromProto(nil))
 }
 
 // recordingServer answers every TPM policy RPC with a response derived from
@@ -116,7 +131,7 @@ func (s *recordingServer) record(name string, req any) { s.last[name] = req }
 
 func (s *recordingServer) TPMPolicyCreate(_ context.Context, r *pb.TPMPolicyCreateRequest) (*pb.TPMPolicy, error) {
 	s.record("create", r)
-	return &pb.TPMPolicy{Name: r.GetName(), TenantId: r.GetTenantId(), Pcrs: r.GetPcrs()}, nil
+	return &pb.TPMPolicy{Name: r.GetName(), TenantId: r.GetTenantId(), Description: r.GetDescription(), Branches: r.GetBranches()}, nil
 }
 func (s *recordingServer) TPMPolicyGet(_ context.Context, r *pb.TPMPolicyRequest) (*pb.TPMPolicy, error) {
 	s.record("get", r)
@@ -149,6 +164,10 @@ func (s *recordingServer) TPMPolicyObjects(_ context.Context, r *pb.TPMPolicyReq
 func (s *recordingServer) TPMPolicySetAutoUnseal(_ context.Context, r *pb.TPMPolicyAutoUnsealRequest) (*pb.TPMPolicy, error) {
 	s.record("auto", r)
 	return &pb.TPMPolicy{Name: r.GetName(), AutoUnseal: r.GetEnabled()}, nil
+}
+func (s *recordingServer) TPMPolicySetDescription(_ context.Context, r *pb.TPMPolicyDescriptionRequest) (*pb.TPMPolicy, error) {
+	s.record("description", r)
+	return &pb.TPMPolicy{Name: r.GetName(), Description: r.GetDescription()}, nil
 }
 func (s *recordingServer) TPMObjectPolicy(_ context.Context, r *pb.TPMObjectPolicyRequest) (*pb.TPMObjectPolicyResponse, error) {
 	s.record("object", r)
@@ -207,9 +226,11 @@ func TestTPMPolicyClient_CarriesEveryRequest(t *testing.T) {
 	c, rec := newRecordingClient(t)
 	ctx := context.Background()
 
-	p, err := c.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{TenantID: "acme", Name: "boot", Bank: "sha256", PCRs: []uint{7}, OwnerAuth: []byte("o")})
+	branches := []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{7})}
+	p, err := c.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{TenantID: "acme", Name: "boot", Description: "d", Branches: branches, OwnerAuth: []byte("o")})
 	require.NoError(t, err)
-	assert.Equal(t, []uint{7}, p.PCRs)
+	assert.Equal(t, branches, p.Branches)
+	assert.Equal(t, "d", p.Description)
 	assert.Equal(t, []byte("o"), rec.last["create"].(*pb.TPMPolicyCreateRequest).GetOwnerAuth())
 
 	p, err = c.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{TenantID: "acme", Name: "boot"})
@@ -244,6 +265,10 @@ func TestTPMPolicyClient_CarriesEveryRequest(t *testing.T) {
 	p, err = c.TPMPolicySetAutoUnseal(ctx, &transport.TPMPolicyAutoUnsealRequest{Name: "boot", Enabled: true})
 	require.NoError(t, err)
 	assert.True(t, p.AutoUnseal)
+
+	p, err = c.TPMPolicySetDescription(ctx, &transport.TPMPolicyDescriptionRequest{Name: "boot", Description: "firmware"})
+	require.NoError(t, err)
+	assert.Equal(t, "firmware", p.Description)
 
 	obj, err := c.TPMObjectPolicy(ctx, &transport.TPMObjectPolicyRequest{KeyID: "signer", Kind: "key"})
 	require.NoError(t, err)
@@ -287,6 +312,7 @@ func TestTPMPolicyClient_RefusesNilRequests(t *testing.T) {
 		c.TPMPolicyDelete(ctx, nil),
 		func() error { _, err := c.TPMPolicyObjects(ctx, nil); return err }(),
 		func() error { _, err := c.TPMPolicySetAutoUnseal(ctx, nil); return err }(),
+		func() error { _, err := c.TPMPolicySetDescription(ctx, nil); return err }(),
 		func() error { _, err := c.TPMObjectPolicy(ctx, nil); return err }(),
 		func() error { _, err := c.TPMPolicyRotateAuthority(ctx, nil); return err }(),
 		func() error { _, err := c.SetTenantTPMMode(ctx, nil); return err }(),

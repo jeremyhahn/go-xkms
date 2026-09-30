@@ -327,8 +327,8 @@ func locked[Req, Resp any](ctx context.Context, l *LocalTPMPolicies, req Req,
 	return op(l.policies, ctx, req)
 }
 
-// TPMPolicyCreate creates a named policy over the live PCR values of xKey's
-// TPM.
+// TPMPolicyCreate creates a named policy of the request's branches over the
+// live PCR values of xKey's TPM.
 func (l *LocalTPMPolicies) TPMPolicyCreate(ctx context.Context, req *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicyCreate)
 }
@@ -376,6 +376,11 @@ func (l *LocalTPMPolicies) TPMPolicyObjects(ctx context.Context, req *transport.
 // TPMPolicySetAutoUnseal sets or clears a policy's auto-unseal mark.
 func (l *LocalTPMPolicies) TPMPolicySetAutoUnseal(ctx context.Context, req *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
 	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicySetAutoUnseal)
+}
+
+// TPMPolicySetDescription replaces a policy's description.
+func (l *LocalTPMPolicies) TPMPolicySetDescription(ctx context.Context, req *transport.TPMPolicyDescriptionRequest) (*transport.TPMPolicy, error) {
+	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicySetDescription)
 }
 
 // TPMObjectPolicy returns the policy a local key or sealed object was
