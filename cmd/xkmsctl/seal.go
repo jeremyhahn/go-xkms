@@ -19,6 +19,7 @@ import (
 	"os"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/spf13/cobra"
 )
 
@@ -39,11 +40,19 @@ The result is output as base64-encoded ciphertext.`,
 		keyID := fr.String("key-id")
 		dataFile := fr.String("data-file")
 		aadStr := fr.String("aad")
-		tpm := sealTPMParams{Policy: fr.String("tpm-policy"), Password: fr.String("password")}
+		tpmPolicy := fr.String("tpm-policy")
+		passwordFlag := fr.String("password")
 		if err := fr.Err(); err != nil {
 			handleError(err)
 			return
 		}
+		password, err := sealPassword(passwordFlag)
+		if err != nil {
+			handleError(err)
+			return
+		}
+		defer password.Destroy()
+		tpm := sealTPMParams{Policy: tpmPolicy, Password: password}
 
 		// Get data from args or file
 		var data []byte
@@ -72,8 +81,8 @@ type sealTPMParams struct {
 	// Policy names the TPM policy the sealed object is bound to.
 	Policy string
 
-	// Password is the sealed object's authorization value.
-	Password string
+	// Password is the sealed object's authorization value; nil for none.
+	Password *secure.Secret
 }
 
 // unsealTPMParams are the unseal parameters of a TPM2 sealed object.
@@ -81,8 +90,36 @@ type unsealTPMParams struct {
 	// Public and Private are the sealed object's areas, as seal output them.
 	Public, Private []byte
 
-	// Password is the sealed object's authorization value.
-	Password string
+	// Password is the sealed object's authorization value; nil for none.
+	Password *secure.Secret
+}
+
+// sealPassword seals a --password value into protected memory as soon as it
+// is read, so the authorization value is never held in a struct as a string.
+// An empty value means the object has no password and yields nil.
+func sealPassword(password string) (*secure.Secret, error) {
+	if password == "" {
+		return nil, nil
+	}
+	secret, err := secure.NewSecret([]byte(password))
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrPasswordSealFailed, Err: err}
+	}
+	return secret, nil
+}
+
+// openPassword opens a sealed object's authorization value for the wire
+// request, which carries it as a string. A nil password opens to "".
+func openPassword(password *secure.Secret) (string, error) {
+	if password == nil {
+		return "", nil
+	}
+	buf, err := password.Open()
+	if err != nil {
+		return "", &WrappedError{Sentinel: ErrPasswordOpenFailed, Err: err}
+	}
+	defer buf.Destroy()
+	return string(buf.Bytes()), nil
 }
 
 // sealData seals data using the SDK client (handles both embedded and remote protocols)
@@ -102,6 +139,12 @@ func sealData(cfg *Config, printer *Printer, keyID string, data, aad []byte, tpm
 
 	printVerbose("Connected to xkms service")
 
+	password, err := openPassword(tpm.Password)
+	if err != nil {
+		handleError(err)
+		return
+	}
+
 	// Prepare seal request
 	req := &client.SealRequest{
 		Backend:   cfg.Backend,
@@ -109,7 +152,7 @@ func sealData(cfg *Config, printer *Printer, keyID string, data, aad []byte, tpm
 		Data:      data,
 		AAD:       aad,
 		TPMPolicy: tpm.Policy,
-		Password:  tpm.Password,
+		Password:  password,
 	}
 
 	// Seal the data
@@ -172,11 +215,18 @@ Use --nonce and --tag for algorithms that require them.`,
 		aadStr := fr.String("aad")
 		tpmPublic := fr.String("tpm-public")
 		tpmPrivate := fr.String("tpm-private")
-		password := fr.String("password")
+		passwordFlag := fr.String("password")
 		if err := fr.Err(); err != nil {
 			handleError(err)
 			return
 		}
+
+		password, err := sealPassword(passwordFlag)
+		if err != nil {
+			handleError(err)
+			return
+		}
+		defer password.Destroy()
 
 		tpm, err := decodeUnsealTPMParams(tpmPublic, tpmPrivate, password)
 		if err != nil {
@@ -234,7 +284,7 @@ Use --nonce and --tag for algorithms that require them.`,
 
 // decodeUnsealTPMParams decodes the base64 --tpm-public and --tpm-private
 // areas of a TPM2 sealed object; both or neither must be given.
-func decodeUnsealTPMParams(public, private, password string) (unsealTPMParams, error) {
+func decodeUnsealTPMParams(public, private string, password *secure.Secret) (unsealTPMParams, error) {
 	params := unsealTPMParams{Password: password}
 	if (public == "") != (private == "") {
 		return params, ErrTPMAreasRequired
@@ -269,6 +319,12 @@ func unsealData(cfg *Config, printer *Printer, keyID string, ciphertext, nonce, 
 
 	printVerbose("Connected to xkms service")
 
+	password, err := openPassword(tpm.Password)
+	if err != nil {
+		handleError(err)
+		return
+	}
+
 	// Prepare unseal request
 	req := &client.UnsealRequest{
 		Backend:    cfg.Backend,
@@ -279,7 +335,7 @@ func unsealData(cfg *Config, printer *Printer, keyID string, ciphertext, nonce, 
 		AAD:        aad,
 		TPMPublic:  tpm.Public,
 		TPMPrivate: tpm.Private,
-		Password:   tpm.Password,
+		Password:   password,
 	}
 
 	// Unseal the data
