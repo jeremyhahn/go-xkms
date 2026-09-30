@@ -111,6 +111,13 @@ func mapKeyOpError(w http.ResponseWriter, err error) {
 		return
 	}
 
+	// Key-version errors first: the service reports some of them inside a
+	// role lookup, which would otherwise read as a missing key.
+	if class, ok := apierrors.KeyVersionClassOf(err); ok {
+		writeError(w, err, classToHTTPStatus[class])
+		return
+	}
+
 	var role *xkms.ErrRoleLookup
 	if errors.As(err, &role) {
 		writeError(w, role, http.StatusNotFound)

@@ -33,6 +33,7 @@ type XKMSServicer interface {
 type HealthServicer = pkgtransport.HealthServicer
 type BackendServicer = pkgtransport.BackendServicer
 type KeyServicer = pkgtransport.KeyServicer
+type KeyVersionServicer = pkgtransport.KeyVersionServicer
 type CryptoServicer = pkgtransport.CryptoServicer
 type CertServicer = pkgtransport.CertServicer
 type SealServicer = pkgtransport.SealServicer

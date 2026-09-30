@@ -153,6 +153,14 @@ func mapKeyOpError(err error) error {
 		return nil
 	}
 
+	// Key-version errors first: the service reports some of them inside a
+	// role lookup, which would otherwise read as a missing key. classified
+	// keeps the message of a precondition refusal (disabling the current
+	// version), which JSON-RPC renders through its internal-error code.
+	if class, ok := apierrors.KeyVersionClassOf(err); ok {
+		return classified(jsonRPCCodeForClass(class), err)
+	}
+
 	var role *xkms.ErrRoleLookup
 	if errors.As(err, &role) {
 		// Not found, matching pkg/api/grpc/errors_keyops.go's mapKeyOpError

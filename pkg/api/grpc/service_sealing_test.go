@@ -404,26 +404,25 @@ func TestService_Unseal_WithValidBackend(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("returns error when KeyAttributes not provided", func(t *testing.T) {
-		// The current handler does not populate KeyAttributes from key_id,
-		// so the backend will return an error about missing KeyAttributes.
+	t.Run("returns NotFound when the caller has no default sealing key", func(t *testing.T) {
+		// Without a key_id the unseal uses the caller's default sealing key,
+		// which is only created by a seal; nothing was sealed, so it does
+		// not exist.
 		_, err := service.Unseal(ctx, &pb.UnsealRequest{
 			Backend:    "software",
 			Ciphertext: []byte("some ciphertext data"),
 			Nonce:      []byte("nonce12bytes"),
 		})
-
-		// We expect an Internal error because the handler passes nil KeyAttributes
 		if err == nil {
-			t.Fatal("Expected error when KeyAttributes is missing")
+			t.Fatal("Expected error when the default sealing key does not exist")
 		}
 
 		st, ok := status.FromError(err)
 		if !ok {
 			t.Fatalf("Expected gRPC status error, got: %v", err)
 		}
-		if st.Code() != codes.Internal {
-			t.Errorf("Expected Internal code, got: %v", st.Code())
+		if st.Code() != codes.NotFound {
+			t.Errorf("Expected NotFound code, got: %v", st.Code())
 		}
 	})
 

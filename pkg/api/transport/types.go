@@ -114,6 +114,8 @@ type KeyInfo struct {
 	Curve string `json:"curve,omitempty"`
 	// Partition is the key's storage partition, when it has one.
 	Partition string `json:"partition,omitempty"`
+	// KeyVersion is the key's current version, the one sign and encrypt use.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // ListKeysRequest contains parameters for listing keys.
@@ -198,6 +200,9 @@ type SignRequest struct {
 type SignResponse struct {
 	Signature []byte `json:"signature"`
 	Algorithm string `json:"algorithm,omitempty"`
+	// KeyVersion is the key version that produced the signature: always the
+	// current one. It is metadata beside the signature, never inside it.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // VerifyRequest contains parameters for signature verification.
@@ -234,12 +239,18 @@ type VerifyRequest struct {
 	Context []byte `json:"context,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
+	// KeyVersion optionally names the key version to verify with; it must be
+	// enabled. Zero tries every enabled version, newest first.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // VerifyResponse contains the verification result.
 type VerifyResponse struct {
 	Valid   bool   `json:"valid"`
 	Message string `json:"message,omitempty"`
+	// KeyVersion is the key version the signature verified under; zero when
+	// it did not verify.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // EncryptRequest contains parameters for encryption.
@@ -307,6 +318,10 @@ type EncryptResponse struct {
 	// bytes alone. Empty for CBC and for algorithms with only one
 	// construction (ChaCha20-Poly1305/XChaCha20-Poly1305).
 	GCMNonceMode string `json:"gcm_nonce_mode,omitempty"`
+	// KeyVersion is the key version that produced the ciphertext: always the
+	// current one. Keep it: AES-CBC ciphertext cannot be decrypted without
+	// it once the key has more than one enabled version.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // DecryptRequest contains parameters for decryption.
@@ -348,11 +363,18 @@ type DecryptRequest struct {
 	TagSize int `json:"tag_size,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
+	// KeyVersion optionally names the key version to decrypt with; it must be
+	// enabled. Zero tries every enabled version, newest first, for AEAD and
+	// RSA-OAEP ciphertext, and requires exactly one enabled version for
+	// AES-CBC and RSA PKCS#1 v1.5 ciphertext.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // DecryptResponse contains the decrypted data.
 type DecryptResponse struct {
 	Plaintext []byte `json:"plaintext"`
+	// KeyVersion is the key version that decrypted the ciphertext.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // EncryptAsymRequest contains parameters for asymmetric encryption.
@@ -379,6 +401,9 @@ type EncryptAsymRequest struct {
 // EncryptAsymResponse contains the encrypted data from asymmetric encryption.
 type EncryptAsymResponse struct {
 	Ciphertext []byte `json:"ciphertext"`
+	// KeyVersion is the key version whose public key produced the
+	// ciphertext: always the current one.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // SealRequest contains parameters for sealing data.
@@ -428,6 +453,11 @@ type SealResponse struct {
 	// Metadata contains additional backend-specific data.
 	// Keys should be namespaced (e.g., "tpm:creation_ticket", "aws:encryption_context").
 	Metadata map[string][]byte `json:"metadata,omitempty"`
+
+	// KeyVersion is the version of the sealing key that sealed the data;
+	// zero for a TPM2 sealed object, which is its own object and has no
+	// versions. Pass it back on Unseal.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // UnsealRequest contains parameters for unsealing data.
@@ -459,6 +489,10 @@ type UnsealRequest struct {
 	// Password provides authentication for the sealed object (TPM-specific).
 	// This is the UserAuth value required to unseal.
 	Password string `json:"password,omitempty"`
+
+	// KeyVersion is the sealing key version SealResponse.KeyVersion
+	// reported. Zero tries every enabled version, newest first.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // UnsealResponse contains the unsealed data.
@@ -609,6 +643,8 @@ type RotateKeyResponse struct {
 	KeyType      string `json:"key_type,omitempty"`
 	Message      string `json:"message,omitempty"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
+	// KeyVersion is the version the rotation created, now current.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // GetImportParametersRequest contains parameters for getting import parameters.
@@ -1036,12 +1072,19 @@ type DeriveKeyECDHRequest struct {
 
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
+
+	// KeyVersion optionally names the version of the local key to agree
+	// with; it must be enabled. Zero uses the current version.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // DeriveKeyECDHResponse contains the derived key from ECDH key agreement.
 type DeriveKeyECDHResponse struct {
 	// DerivedKey is the key material derived from ECDH + KDF
 	DerivedKey []byte `json:"derived_key"`
+
+	// KeyVersion is the version of the local key the agreement used.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // WrapKeyByIDRequest contains parameters for wrapping a key using another key.
@@ -1114,6 +1157,10 @@ type WrapKeyByIDResponse struct {
 
 	// Algorithm is the algorithm used for wrapping
 	Algorithm string `json:"algorithm"`
+
+	// WrappingKeyVersion is the version of the wrapping key that wrapped the
+	// key: always the current one. Pass it back on UnwrapKeyByID.
+	WrappingKeyVersion uint32 `json:"wrapping_key_version,omitempty"`
 }
 
 // UnwrapKeyByIDRequest contains parameters for unwrapping key material
@@ -1174,6 +1221,12 @@ type UnwrapKeyByIDRequest struct {
 
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
+
+	// UnwrappingKeyVersion optionally names the unwrapping key's version; it
+	// must be enabled. Zero tries every enabled version, newest first, for
+	// AES-KW, AES-KWP, AES-GCM and RSA-OAEP, and requires exactly one enabled
+	// version for AES-CBC and RSA PKCS#1 v1.5.
+	UnwrappingKeyVersion uint32 `json:"unwrapping_key_version,omitempty"`
 }
 
 // UnwrapKeyByIDResponse contains the result of server-side key unwrap.
@@ -1280,6 +1333,10 @@ type DeriveKeyRequest struct {
 
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
+	// KeyVersion optionally names the version of the stored base key to
+	// derive from; it must be enabled. Zero derives from the current
+	// version. A derivation is only reproducible under the same version.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // DeriveKeyResponse contains the result of key derivation.
@@ -1295,6 +1352,10 @@ type DeriveKeyResponse struct {
 
 	// KeyLength is the actual output key length in bytes
 	KeyLength int `json:"key_length"`
+
+	// KeyVersion is the version of the stored base key the key was derived
+	// from; zero when the derivation used caller-supplied key material.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // CA Operations

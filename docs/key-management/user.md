@@ -78,9 +78,14 @@ Keep the nonce and tag from the output — `key decrypt` needs both, plus the sa
 xkmsctl key rotate signing-key
 ```
 
-The key ID does not change, so nothing referring to it needs updating. Old
-signatures made with the previous material still verify against material you
-retained; plan rotation with that in mind.
+The key ID does not change, so nothing referring to it needs updating.
+Rotation adds a new version and makes it current; the old versions are kept
+and enabled, so old signatures still verify and old ciphertext still
+decrypts. `xkmsctl key versions signing-key` lists them, and `xkmsctl key
+version disable|retire signing-key <n>` takes one out of use. AES-CBC and RSA
+PKCS#1 v1.5 ciphertext needs the `key_version` its encrypt reported once the
+key has more than one enabled version. See
+[`../tpm-policies/user.md`](../tpm-policies/user.md), "Rotating keys".
 
 **Move a key into the service without ever writing it to disk in the clear**
 

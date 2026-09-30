@@ -1,6 +1,6 @@
 # TPM Policies — CLI
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 `xkmsctl` calls the API in [`api.md`](api.md) over any configured transport.
 `--tenant <id>` addresses another tenant's scope (system callers only; the
@@ -38,6 +38,34 @@ xkmsctl tenant tpm-mode acme vtpm
 
 `xkmsctl policy` (the PCR snapshot store) was removed with `pkg/seal/policy`;
 `refresh` and `export` have no successor.
+
+## Key versions
+
+`--backend` names the key's backend, as for every `key` command.
+
+| Command | Flags | Purpose |
+|---|---|---|
+| `key rotate <id>` | | Create the key's next version and make it current; prints the new version |
+| `key rotate-all` | `--tenant` | Rotate every key of the caller's tenant (or, for a system caller, `--tenant`); lists each key's result and exits non-zero if any key was not rotated |
+| `key versions <id>` | | List the versions: number, state, current, created at and by |
+| `key version enable <id> <n>` | | Enable a disabled version |
+| `key version disable <id> <n>` | | Disable a version; refused for the current one |
+| `key version retire <id> <n>` | | Delete a version's key material for good; refused for the current one |
+| `key version enable-all <id>` | | Enable every disabled version |
+| `key version disable-all <id>` | | Disable every version but the current one |
+| `key verify <id> <data> <sig>` | `--key-version` | Verify with that version (default: every enabled version); prints the version that verified |
+| `key decrypt <id> <ct>` | `--key-version` | Decrypt with that version (required for AES-CBC and RSA PKCS#1 v1.5 once a key has several enabled versions) |
+
+`key sign` and `key encrypt` always use the current version; `-o json` (and,
+for `key encrypt`, the text output) reports it as `key_version`. A TPM2 key
+rotates into the same tenant scope and TPM policy.
+
+```
+xkmsctl --backend tpm2 key rotate signer
+xkmsctl --backend tpm2 key versions signer
+xkmsctl --backend tpm2 key version disable signer 1
+xkmsctl key rotate-all --tenant acme
+```
 
 ## xKey
 

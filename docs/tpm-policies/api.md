@@ -1,6 +1,6 @@
 # TPM Policies — API
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 Design: [`architecture.md`](architecture.md). Service: `pkg/tpmpolicy.Service`,
 reached only through `XKMSService` (`pkg/xkms/servicer_tpm_policy.go`), which
@@ -73,6 +73,62 @@ policy is recorded against it (`sealed/<name>`). Other backends are
 unchanged: without a key ID they seal under the caller's default sealing
 key.
 
+## Key versions
+
+Design: [`architecture.md`](architecture.md), "Key versions". Every call acts
+in the caller's tenant, like the other key operations; `rotate-all` alone
+takes a tenant, which only a system caller may set to another tenant.
+
+| Operation | REST | gRPC / Unix (`KeystoreService.`) | MCP tool | Permission |
+|---|---|---|---|---|
+| Rotate a key (new current version) | `POST /api/v1/keys/{id}/rotate?backend=` | `RotateKey` | `xkms.rotateKey` | `keys:rotate` |
+| List a key's versions | `GET /api/v1/keys/{id}/versions?backend=` | `ListKeyVersions` | `xkms.listKeyVersions` | `keys:list` |
+| Enable a version | `POST /api/v1/keys/{id}/versions/{n}/enable?backend=` | `EnableKeyVersion` | `xkms.enableKeyVersion` | `keys:rotate` |
+| Disable a version | `POST /api/v1/keys/{id}/versions/{n}/disable?backend=` | `DisableKeyVersion` | `xkms.disableKeyVersion` | `keys:rotate` |
+| Retire a version (deletes it) | `POST /api/v1/keys/{id}/versions/{n}/retire?backend=` | `RetireKeyVersion` | `xkms.retireKeyVersion` | `keys:delete` |
+| Enable every disabled version | `POST /api/v1/keys/{id}/versions/enable-all?backend=` | `EnableAllKeyVersions` | `xkms.enableAllKeyVersions` | `keys:rotate` |
+| Disable every non-current version | `POST /api/v1/keys/{id}/versions/disable-all?backend=` | `DisableAllKeyVersions` | `xkms.disableAllKeyVersions` | `keys:rotate` |
+| Rotate every key of a tenant | `POST /api/v1/keys/rotate-all` (`{"tenant_id"}`) | `RotateScopeKeys` | `xkms.rotateScopeKeys` | `keys:rotate` |
+
+- The permissions reuse the key vocabulary: listing reads like listing keys,
+  enabling and disabling versions is rotation lifecycle, and retiring
+  destroys key material like deleting a key.
+- The client side is `transport.KeyVersionService`, part of `transport.Client`.
+  The REST and QUIC clients share `wire.KeyVersionClient`; the gRPC and Unix
+  clients share `pbconv.KeyVersionClient`; the embedded transport calls
+  `XKMSService`. The USB transport carries no key operations.
+- Bodies: `pkg/api/transport/types_keyversion.go` -- `KeyVersionInfo`,
+  `ListKeyVersionsRequest`/`Response`, `KeyVersionRequest`,
+  `KeyVersionStateResponse`, `AllKeyVersionsRequest`/`Response`,
+  `RotateScopeKeysRequest`/`Response`, `KeyRotationResult`. The gRPC version
+  messages keep their declared `int32 version`; a negative one is refused as
+  an invalid version.
+
+`key_version` fields (JSON `key_version`, `uint32`, 0 or absent meaning
+"not given"):
+
+| Message | gRPC field | Meaning |
+|---|---|---|
+| `KeyInfo` (list, get) | `key_version` = 9 | The current version |
+| `SignResponse` | `key_version` = 2 | The version that signed (current) |
+| `VerifyRequest` / `VerifyResponse` | 9 / 3 | Verify with that version / the version it verified under |
+| `EncryptResponse` | 6 | The version that encrypted (current) |
+| `DecryptRequest` / `DecryptResponse` | 14 / 2 | Decrypt with that version / the version that decrypted |
+| `EncryptAsymResponse` | 2 | The version whose public key encrypted |
+| `RotateKeyResponse` | 6 | The new current version |
+| `SealResponse` / `UnsealRequest` | 10 / 12 | The sealing key version, recorded beside the ciphertext |
+| `WrapKeyByIDResponse` | `wrapping_key_version` = 3 | The wrapping key version |
+| `UnwrapKeyByIDRequest` | `unwrapping_key_version` = 16 | The unwrapping key version |
+| `DeriveKeyRequest` / `Response` | 19 / 5 | The base key version derived from |
+| `DeriveKeyECDHRequest` / `Response` | 10 / 2 | The local key version agreed with |
+| `KeyVersionInfo` | `current` = 5, `public_key_pem` = 6 | Listing detail |
+| `ListKeyVersionsResponse` | `backend` = 4, `current_version` = 5 | |
+| `Enable`/`DisableKeyVersionResponse` | `changed` = 4 | Whether the state changed |
+| `Enable`/`DisableAllKeyVersionsResponse` | `versions` = 4, `state` = 5 | The versions reached |
+
+Outputs never carry the version inside them: signatures, ciphertext and
+sealed blobs keep their standard formats.
+
 ## Request bodies
 
 `pkg/api/transport/types.go`: `TPMPolicy`, `TPMPolicyCreateRequest`,
@@ -100,3 +156,15 @@ each transport's key-operation mapper:
 | `*InvalidNameError`, `*InvalidModeError`, `*InvalidTenantError`, `*InvalidPCRBankError`, `*InvalidPCRError`, `ErrReservedPolicy`, `ErrEmptyPCRSelection`, `ErrSystemScopeMode`, `*xkms.InvalidTPMObjectKindError`, `*xkms.ErrKeyIDParse`, `xkms.ErrTPMPolicyNotSupported`, `tpm2.ErrReservedObject` | InvalidArgument | `InvalidArgument` | 400 | invalid params |
 | `tpm2.ErrSymmetricKeysUnsupported`, `tpm2.ErrTenantImportUnsupported` | Unimplemented | `Unimplemented` | 501 | method not found |
 | `xkms.ErrNotConfigured` (no TPM2 backend) | Unavailable | `Unavailable` | 503 | service unavailable |
+
+Key-version errors are classified by `apierrors.KeyVersionClassOf`, which
+every transport's key-operation mapper reads first:
+
+| Error | Class | gRPC | REST | MCP |
+|---|---|---|---|---|
+| `*keyversion.KeyVersionRequiredError` (AES-CBC or PKCS#1 v1.5 ciphertext, several enabled versions, no `key_version`), `*keyversion.ReservedKeyIDError`, `*keyversion.InvalidVersionError` | InvalidArgument | `InvalidArgument` | 400 | invalid params |
+| `*keyversion.VersionNotFoundError`, `*xkms.KeyVersionMissingError` | NotFound | `NotFound` | 404 | not found |
+| `*keyversion.CurrentVersionError` (disabling or retiring the current version), `*keyversion.VersionUnavailableError` (a disabled or retired version named), `*keyversion.RetiredVersionError` | FailedPrecondition | `FailedPrecondition` | 409 | internal error code (message kept) |
+| `*xkms.KeyExistsError` (a new key under a rotated key's ID) | AlreadyExists | `AlreadyExists` | 409 | duplicate |
+| `*xkms.KeyRotationUnsupportedError` (X25519, post-quantum) | Unimplemented | `Unimplemented` | 501 | method not found |
+| `xkms.ErrKeyVersionsNotConfigured` (no version store) | Unavailable | `Unavailable` | 503 | service unavailable |

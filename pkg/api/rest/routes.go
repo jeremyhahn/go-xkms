@@ -160,6 +160,16 @@ func Routes() []RouteSpec {
 	permBulk("POST", "/keys/{id}/sign", auth.ResourceKeys, auth.ActionSign, func(s *Server) http.HandlerFunc { return s.handlers.SignHandler })
 	permBulk("POST", "/keys/{id}/verify", auth.ResourceKeys, auth.ActionVerify, func(s *Server) http.HandlerFunc { return s.handlers.VerifyHandler })
 	perm("POST", "/keys/{id}/rotate", auth.ResourceKeys, auth.ActionRotate, func(s *Server) http.HandlerFunc { return s.handlers.RotateKeyHandler })
+	// Key versions: listing reads like listing keys; enabling and disabling
+	// versions is rotation lifecycle management; retiring destroys a
+	// version's key material, as deleting a key does.
+	perm("GET", "/keys/{id}/versions", auth.ResourceKeys, auth.ActionList, func(s *Server) http.HandlerFunc { return s.handlers.ListKeyVersionsHandler })
+	perm("POST", "/keys/{id}/versions/enable-all", auth.ResourceKeys, auth.ActionRotate, func(s *Server) http.HandlerFunc { return s.handlers.EnableAllKeyVersionsHandler })
+	perm("POST", "/keys/{id}/versions/disable-all", auth.ResourceKeys, auth.ActionRotate, func(s *Server) http.HandlerFunc { return s.handlers.DisableAllKeyVersionsHandler })
+	perm("POST", "/keys/{id}/versions/{version}/enable", auth.ResourceKeys, auth.ActionRotate, func(s *Server) http.HandlerFunc { return s.handlers.EnableKeyVersionHandler })
+	perm("POST", "/keys/{id}/versions/{version}/disable", auth.ResourceKeys, auth.ActionRotate, func(s *Server) http.HandlerFunc { return s.handlers.DisableKeyVersionHandler })
+	perm("POST", "/keys/{id}/versions/{version}/retire", auth.ResourceKeys, auth.ActionDelete, func(s *Server) http.HandlerFunc { return s.handlers.RetireKeyVersionHandler })
+	perm("POST", "/keys/rotate-all", auth.ResourceKeys, auth.ActionRotate, func(s *Server) http.HandlerFunc { return s.handlers.RotateScopeKeysHandler })
 	permBulk("POST", "/keys/{id}/encrypt", auth.ResourceKeys, auth.ActionEncrypt, func(s *Server) http.HandlerFunc { return s.handlers.EncryptHandler })
 	permBulk("POST", "/keys/{id}/decrypt", auth.ResourceKeys, auth.ActionDecrypt, func(s *Server) http.HandlerFunc { return s.handlers.DecryptHandler })
 	perm("POST", "/keys/{id}/encrypt-asym", auth.ResourceKeys, auth.ActionEncrypt, func(s *Server) http.HandlerFunc { return s.handlers.EncryptAsymHandler })

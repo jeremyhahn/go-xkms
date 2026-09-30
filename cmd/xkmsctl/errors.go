@@ -977,6 +977,26 @@ var (
 	// ErrRotateKeyFailed is the sentinel error "failed to rotate key".
 	ErrRotateKeyFailed = errors.New("failed to rotate key")
 
+	// ErrRotateScopeKeysFailed is the sentinel error "failed to rotate the
+	// tenant's keys".
+	ErrRotateScopeKeysFailed = errors.New("failed to rotate the tenant's keys")
+
+	// ErrRotateScopeKeysPartial is returned when a scope rotation left some
+	// keys unrotated; the output lists each one's reason.
+	ErrRotateScopeKeysPartial = errors.New("some keys were not rotated")
+
+	// ErrListKeyVersionsFailed is the sentinel error "failed to list key
+	// versions".
+	ErrListKeyVersionsFailed = errors.New("failed to list key versions")
+
+	// ErrChangeKeyVersionFailed is the sentinel error "failed to change the
+	// key version".
+	ErrChangeKeyVersionFailed = errors.New("failed to change the key version")
+
+	// ErrInvalidKeyVersion is returned for a key version argument that is
+	// not a positive integer.
+	ErrInvalidKeyVersion = errors.New("invalid key version: must be a positive integer")
+
 	// ErrSOPINRequired is the sentinel error "--so-pin is required".
 	ErrSOPINRequired = errors.New("--so-pin is required")
 

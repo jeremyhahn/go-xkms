@@ -36,6 +36,7 @@ var (
 	ErrMissingBackend      = errors.New("missing backend parameter")
 	ErrMissingData         = errors.New("missing data")
 	ErrMissingCiphertext   = errors.New("missing ciphertext")
+	ErrInvalidKeyVersion   = errors.New("invalid key version: must be a positive integer")
 	ErrBackendNotFound     = errors.New("backend not found")
 	ErrInternalError       = errors.New("internal server error")
 	ErrUnauthorized        = errors.New("unauthorized")

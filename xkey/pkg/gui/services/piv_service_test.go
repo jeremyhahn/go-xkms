@@ -157,6 +157,37 @@ func (m *mockPIVClient) ImportKey(_ context.Context, _ *transport.ImportKeyReque
 func (m *mockPIVClient) ExportKey(_ context.Context, _ *transport.ExportKeyRequest) (*transport.ExportKeyResponse, error) {
 	return nil, errMockNotImplemented
 }
+
+// The key-version API is not exercised by these tests.
+
+func (m *mockPIVClient) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockPIVClient) EnableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockPIVClient) DisableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockPIVClient) RetireKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockPIVClient) EnableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockPIVClient) DisableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockPIVClient) RotateScopeKeys(context.Context, *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
+	return nil, nil
+}
+
 func (m *mockPIVClient) RotateKey(_ context.Context, _ *transport.RotateKeyRequest) (*transport.RotateKeyResponse, error) {
 	return nil, errMockNotImplemented
 }

@@ -497,6 +497,18 @@ type (
 	RecoverResponse = transport.RecoverResponse
 	EscrowRecord    = transport.EscrowRecord
 
+	// Key Version Operations
+	KeyVersionInfo          = transport.KeyVersionInfo
+	ListKeyVersionsRequest  = transport.ListKeyVersionsRequest
+	ListKeyVersionsResponse = transport.ListKeyVersionsResponse
+	KeyVersionRequest       = transport.KeyVersionRequest
+	KeyVersionStateResponse = transport.KeyVersionStateResponse
+	AllKeyVersionsRequest   = transport.AllKeyVersionsRequest
+	AllKeyVersionsResponse  = transport.AllKeyVersionsResponse
+	RotateScopeKeysRequest  = transport.RotateScopeKeysRequest
+	RotateScopeKeysResponse = transport.RotateScopeKeysResponse
+	KeyRotationResult       = transport.KeyRotationResult
+
 	// TPM Policy Operations
 	TPMPolicy                  = transport.TPMPolicy
 	TPMPolicyCreateRequest     = transport.TPMPolicyCreateRequest

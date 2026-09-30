@@ -243,17 +243,38 @@ func TestHandler_RotateKey_RotatesInNamedBackendNotDefault(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	namedPubAfter := publicKeyIn(t, "tpm2", keyID)
-	defaultPubAfter := publicKeyIn(t, "software", keyID)
-
-	assert.NotEqual(t, namedPubBefore.N, namedPubAfter.N,
-		"the named backend's key must be the one that was replaced")
-	assert.Equal(t, defaultPubBefore.N, defaultPubAfter.N,
+	// Rotation adds version 2 as its own backend key and keeps version 1.
+	namedV2 := publicKeyIn(t, "tpm2", keyID+"--v2")
+	assert.NotEqual(t, namedPubBefore.N, namedV2.N,
+		"the named backend must hold the new version")
+	assert.Equal(t, namedPubBefore.N, publicKeyIn(t, "tpm2", keyID).N,
+		"the named backend's version 1 is kept")
+	assert.Equal(t, defaultPubBefore.N, publicKeyIn(t, "software", keyID).N,
 		"the default backend's key must be left untouched")
+	assert.False(t, holdsKey(t, "software", keyID+"--v2"),
+		"the default backend must gain no version")
 
 	reported := rsaPublicFromPEM(t, result.(RotateKeyResult).PublicKeyPEM)
-	assert.Equal(t, namedPubAfter.N, reported.N,
-		"the reported public key must be the named backend's new key")
+	assert.Equal(t, namedV2.N, reported.N,
+		"the reported public key must be the named backend's new version")
+	assert.Equal(t, uint32(2), result.(RotateKeyResult).KeyVersion)
+}
+
+// holdsKey reports whether the named backend holds a backend key cn.
+func holdsKey(t *testing.T, backendName, cn string) bool {
+	t.Helper()
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	ks, err := svc.LookupBackend(backendName)
+	require.NoError(t, err)
+	attrs, err := ks.ListKeys(context.Background())
+	require.NoError(t, err)
+	for _, a := range attrs {
+		if a.CN == cn {
+			return true
+		}
+	}
+	return false
 }
 
 // TestHandler_RotateKey_UnknownBackendRefused is the bad-input half: an

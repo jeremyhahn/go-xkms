@@ -150,6 +150,8 @@ type GetKeyResult struct {
 	KeyID        string `json:"key_id"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
 	Backend      string `json:"backend"`
+	// KeyVersion is the key's current version, the one sign and encrypt use.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // SignParams represents parameters for signing.
@@ -185,6 +187,9 @@ type SignResult struct {
 	// Algorithm names the key algorithm that produced the signature, as
 	// reported by the service layer.
 	Algorithm string `json:"algorithm,omitempty"`
+	// KeyVersion is the key version that produced the output: always the
+	// current one.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // VerifyParams represents parameters for verification. Its parameters mirror
@@ -208,11 +213,17 @@ type VerifyParams struct {
 	PreHash bool `json:"pre_hash,omitempty"`
 	// Context is the optional EdDSA context string. See SignParams.Context.
 	Context []byte `json:"context,omitempty"`
+	// KeyVersion optionally names the key version to use; it must be
+	// enabled. Zero chooses one; see transport.VerifyRequest.KeyVersion and
+	// transport.DecryptRequest.KeyVersion.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // VerifyResult represents the result of verification
 type VerifyResult struct {
 	Valid bool `json:"valid"`
+	// KeyVersion is the key version that verified or decrypted.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // SubscribeParams represents parameters for event subscription
@@ -237,6 +248,10 @@ type RotateKeyParams struct {
 type RotateKeyResult struct {
 	KeyID        string `json:"key_id"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
+	// KeyType is the rotated key's type, which rotation preserves.
+	KeyType string `json:"key_type,omitempty"`
+	// KeyVersion is the version the rotation created, now current.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // DecryptParams represents parameters for decryption
@@ -273,11 +288,17 @@ type DecryptParams struct {
 	Hash string `json:"hash,omitempty"`
 	// Label is the optional OAEP label. Ignored unless Padding is "oaep".
 	Label []byte `json:"label,omitempty"`
+	// KeyVersion optionally names the key version to use; it must be
+	// enabled. Zero chooses one; see transport.VerifyRequest.KeyVersion and
+	// transport.DecryptRequest.KeyVersion.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // DecryptResult represents the result of decryption
 type DecryptResult struct {
 	Plaintext []byte `json:"plaintext"`
+	// KeyVersion is the key version that verified or decrypted.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // EncryptParams represents parameters for encryption
@@ -319,6 +340,9 @@ type EncryptResult struct {
 	// the matching DecryptParams; Decrypt cannot infer it from the
 	// ciphertext bytes alone.
 	GCMNonceMode string `json:"gcm_nonce_mode,omitempty"`
+	// KeyVersion is the key version that produced the output: always the
+	// current one.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // SaveCertParams represents parameters for saving a certificate
@@ -383,6 +407,8 @@ type KeyInfo struct {
 	Algorithm    string `json:"algorithm,omitempty"`
 	Backend      string `json:"backend"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
+	// KeyVersion is the key's current version, the one sign and encrypt use.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // SaveCertChainParams represents parameters for saving a certificate chain
@@ -583,6 +609,9 @@ type AsymmetricEncryptParams struct {
 // AsymmetricEncryptResult represents the result of asymmetric encryption
 type AsymmetricEncryptResult struct {
 	Ciphertext []byte `json:"ciphertext"`
+	// KeyVersion is the key version that produced the output: always the
+	// current one.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // AsymmetricDecryptParams represents parameters for asymmetric decryption (RSA)
@@ -601,11 +630,17 @@ type AsymmetricDecryptParams struct {
 	Hash string `json:"hash,omitempty"`
 	// Label is the optional OAEP label.
 	Label []byte `json:"label,omitempty"`
+	// KeyVersion optionally names the key version to use; it must be
+	// enabled. Zero chooses one; see transport.VerifyRequest.KeyVersion and
+	// transport.DecryptRequest.KeyVersion.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // AsymmetricDecryptResult represents the result of asymmetric decryption
 type AsymmetricDecryptResult struct {
 	Plaintext []byte `json:"plaintext"`
+	// KeyVersion is the key version that verified or decrypted.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // CopyKeyParams represents parameters for copying a key from one backend to
@@ -656,6 +691,7 @@ type SealResult struct {
 	WrappedDEK []byte            `json:"wrapped_dek,omitempty"` // Wrapped Data Encryption Key (envelope encryption)
 	TPMPublic  []byte            `json:"tpm_public,omitempty"`  // TPM2 sealed object's public area
 	TPMPrivate []byte            `json:"tpm_private,omitempty"` // TPM2 sealed object's private area
+	KeyVersion uint32            `json:"key_version,omitempty"` // Sealing key version; pass it back on unseal
 }
 
 // UnsealParams represents parameters for unsealing data
@@ -676,6 +712,9 @@ type UnsealParams struct {
 	Metadata map[string][]byte `json:"metadata,omitempty"`
 	// Password is the sealed object's authorization value (TPM2).
 	Password string `json:"password,omitempty"`
+	// KeyVersion is the sealing key version the seal reported. Zero tries
+	// every enabled version, newest first.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // UnsealResult represents the result of unsealing data

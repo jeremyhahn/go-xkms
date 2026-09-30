@@ -766,6 +766,34 @@ func (n *noopClient) ListEscrowed(context.Context) ([]transport.EscrowRecord, er
 func (n *noopClient) RevokeEscrow(context.Context, string) error {
 	return nil
 }
+func (n *noopClient) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) EnableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) DisableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) RetireKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) EnableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) DisableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) RotateScopeKeys(context.Context, *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
+	return nil, nil
+}
+
 func (n *noopClient) TPMPolicyCreate(context.Context, *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }

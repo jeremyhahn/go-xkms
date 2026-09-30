@@ -365,7 +365,8 @@ func sign(cfg *Config, printer *Printer, keyID, data, hashAlg string) {
 
 	sigBase64 := base64.StdEncoding.EncodeToString(resp.Signature)
 
-	if err := printer.PrintSignature(sigBase64); err != nil {
+	printVerbose("Signed with key version %d", resp.KeyVersion)
+	if err := printer.PrintSignature(sigBase64, resp.KeyVersion); err != nil {
 		handleError(err)
 	}
 }
@@ -385,6 +386,7 @@ var keyVerifyCmd = &cobra.Command{
 
 		fr := newFlagReader(cmd)
 		hashAlg := fr.String("hash")
+		keyVersion := fr.Uint32("key-version")
 		if err := fr.Err(); err != nil {
 			handleError(err)
 			return
@@ -392,12 +394,13 @@ var keyVerifyCmd = &cobra.Command{
 
 		printVerbose("Verifying signature with key: %s", keyID)
 
-		verify(cfg, printer, keyID, data, signatureBase64, hashAlg)
+		verify(cfg, printer, keyID, data, signatureBase64, hashAlg, keyVersion)
 	},
 }
 
-// verify verifies a signature using the SDK client
-func verify(cfg *Config, printer *Printer, keyID, data, signatureBase64, hashAlg string) {
+// verify verifies a signature using the SDK client. A zero keyVersion tries
+// every enabled version of the key.
+func verify(cfg *Config, printer *Printer, keyID, data, signatureBase64, hashAlg string, keyVersion uint32) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
@@ -420,11 +423,12 @@ func verify(cfg *Config, printer *Printer, keyID, data, signatureBase64, hashAlg
 	}
 
 	req := &client.VerifyRequest{
-		Backend:   cfg.Backend,
-		KeyID:     keyID,
-		Data:      []byte(data),
-		Signature: signature,
-		Hash:      hashAlg,
+		Backend:    cfg.Backend,
+		KeyID:      keyID,
+		Data:       []byte(data),
+		Signature:  signature,
+		Hash:       hashAlg,
+		KeyVersion: keyVersion,
 	}
 
 	resp, err := cl.Verify(ctx, req)
@@ -434,7 +438,7 @@ func verify(cfg *Config, printer *Printer, keyID, data, signatureBase64, hashAlg
 	}
 
 	if resp.Valid {
-		if err := printer.PrintSuccess("Signature is valid"); err != nil {
+		if err := printer.PrintSuccess(fmt.Sprintf("Signature is valid (key version %d)", resp.KeyVersion)); err != nil {
 			handleError(err)
 		}
 	} else {
@@ -508,7 +512,7 @@ func encrypt(cfg *Config, printer *Printer, keyID, plaintext, aad string) {
 		Tag:        resp.Tag,
 	}
 
-	if err := printer.PrintEncryptedData(encrypted); err != nil {
+	if err := printer.PrintEncryptedData(encrypted, resp.KeyVersion); err != nil {
 		handleError(err)
 	}
 }
@@ -529,6 +533,7 @@ var keyDecryptCmd = &cobra.Command{
 		aad := fr.String("aad")
 		nonce := fr.String("nonce")
 		tag := fr.String("tag")
+		keyVersion := fr.Uint32("key-version")
 		if err := fr.Err(); err != nil {
 			handleError(err)
 			return
@@ -536,12 +541,14 @@ var keyDecryptCmd = &cobra.Command{
 
 		printVerbose("Decrypting data with key: %s", keyID)
 
-		decrypt(cfg, printer, keyID, ciphertext, aad, nonce, tag)
+		decrypt(cfg, printer, keyID, ciphertext, aad, nonce, tag, keyVersion)
 	},
 }
 
-// decrypt decrypts data using the SDK client
-func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag string) {
+// decrypt decrypts data using the SDK client. A zero keyVersion lets the
+// server choose: every enabled version for AEAD and RSA-OAEP ciphertext, the
+// one enabled version otherwise.
+func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag string, keyVersion uint32) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
@@ -567,6 +574,7 @@ func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag s
 		Backend:    cfg.Backend,
 		KeyID:      keyID,
 		Ciphertext: ciphertextBytes,
+		KeyVersion: keyVersion,
 	}
 
 	if aad != "" {
@@ -599,6 +607,7 @@ func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag s
 
 	plaintextBase64 := base64.StdEncoding.EncodeToString(resp.Plaintext)
 
+	printVerbose("Decrypted with key version %d", resp.KeyVersion)
 	if err := printer.PrintDecryptedData(plaintextBase64); err != nil {
 		handleError(err)
 	}
@@ -663,7 +672,8 @@ func encryptAsym(cfg *Config, printer *Printer, keyID, plaintext, hashAlg string
 
 	ciphertextBase64 := base64.StdEncoding.EncodeToString(resp.Ciphertext)
 
-	if err := printer.PrintEncryptedAsym(ciphertextBase64); err != nil {
+	printVerbose("Encrypted with key version %d", resp.KeyVersion)
+	if err := printer.PrintEncryptedAsym(ciphertextBase64, resp.KeyVersion); err != nil {
 		handleError(err)
 	}
 }
@@ -672,8 +682,12 @@ func encryptAsym(cfg *Config, printer *Printer, keyID, plaintext, hashAlg string
 var keyRotateCmd = &cobra.Command{
 	Use:   "rotate <key-id>",
 	Short: "Rotate a key",
-	Long:  `Rotate a key by generating a new version and invalidating the old one`,
-	Args:  cobra.ExactArgs(1),
+	Long: `Rotate a key: generate its next version, with the same algorithm and
+attributes, and make it current. Sign and encrypt move to the new version at
+once; every earlier version stays enabled, so signatures and ciphertext it
+produced still verify and decrypt. Disable or retire an old version with
+'xkmsctl key version'.`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		keyID := args[0]
 		cfg := getConfig()
@@ -707,13 +721,13 @@ func rotateKey(cfg *Config, printer *Printer, keyID string) {
 		KeyID:   keyID,
 	}
 
-	_, err = cl.RotateKey(ctx, req)
+	resp, err := cl.RotateKey(ctx, req)
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrRotateKeyFailed, Err: err})
 		return
 	}
 
-	if err := printer.PrintSuccess(fmt.Sprintf("Successfully rotated key: %s", keyID)); err != nil {
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully rotated key: %s (current version %d)", keyID, resp.KeyVersion)); err != nil {
 		handleError(err)
 	}
 }
@@ -1920,6 +1934,7 @@ func init() {
 	keyDecryptCmd.Flags().String("aad", "", "Additional authenticated data (for symmetric decryption)")
 	keyDecryptCmd.Flags().String("nonce", "", "Nonce/IV (base64, required for symmetric decryption)")
 	keyDecryptCmd.Flags().String("tag", "", "Authentication tag (base64, required for symmetric decryption)")
+	keyDecryptCmd.Flags().Uint32("key-version", 0, "Key version the encrypt reported (default: chosen by the server; required for AES-CBC and RSA PKCS#1 v1.5 once a key has several enabled versions)")
 
 	// Flags for import command. --key-type names the ALGORITHM of the material
 	// being imported, not a purpose: the server receives opaque wrapped bytes
@@ -1953,6 +1968,7 @@ func init() {
 
 	// Flags for verify command
 	keyVerifyCmd.Flags().String("hash", "sha256", "Hash algorithm (sha256, sha384, sha512)")
+	keyVerifyCmd.Flags().Uint32("key-version", 0, "Key version to verify with (default: every enabled version, newest first)")
 
 	// Flags for encrypt-asym command
 	keyEncryptAsymCmd.Flags().String("hash", "sha256", "Hash algorithm for OAEP (sha256, sha384, sha512)")

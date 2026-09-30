@@ -55,6 +55,7 @@ func setupRealSoftwareKID(t *testing.T) {
 		Backends:       map[string]Backend{"software": b},
 		DefaultBackend: "software",
 	}))
+	wireKeyVersionStore(t)
 }
 
 // generateKIDTestRSAKey generates a 2048-bit RSA signing key named cn on the
@@ -153,7 +154,9 @@ func TestRotateKeyByKID_PreservesExportable(t *testing.T) {
 	_, err := RotateKey(context.Background(), "software:signing:rsa:kid-rotate-exportable")
 	require.NoError(t, err)
 
-	wrapped, err := ExportKey(context.Background(), "software:signing:rsa:kid-rotate-exportable", backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+	// The rotation created version 2 as its own backend key; it must carry
+	// the key's exportability.
+	wrapped, err := ExportKey(context.Background(), "software:signing:rsa:kid-rotate-exportable--v2", backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 	require.NoError(t, err, "the rotated key must still be exportable")
 	assert.NotEmpty(t, wrapped.WrappedKey)
 }

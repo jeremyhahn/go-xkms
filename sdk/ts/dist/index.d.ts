@@ -1520,6 +1520,90 @@ declare class InitClient {
 }
 
 /**
+ * Key-version DTOs, served under /api/v1/keys/{id}/versions and
+ * /api/v1/keys/rotate-all. Source: pkg/api/transport/types_keyversion.go
+ * (the REST handlers encode the transport types directly).
+ */
+/** A key version's lifecycle state. */
+type KeyVersionState = 'enabled' | 'disabled' | 'retired';
+/** Mirrors pkg/api/transport KeyVersionInfo. */
+interface KeyVersionInfo {
+    version: number;
+    state: KeyVersionState;
+    /** Whether this is the version sign and encrypt use. */
+    current?: boolean;
+    /** RFC 3339 in UTC; absent for version 1 of a key rotated before it was recorded. */
+    created_at?: string;
+    created_by?: string;
+    /** The version's public key, for an asymmetric version that is not retired. */
+    public_key_pem?: string;
+}
+/** Mirrors pkg/api/transport ListKeyVersionsResponse. */
+interface ListKeyVersionsResponse {
+    key_id: string;
+    backend: string;
+    current_version: number;
+    versions: KeyVersionInfo[];
+}
+/** Mirrors pkg/api/transport KeyVersionStateResponse. */
+interface KeyVersionStateResponse {
+    key_id: string;
+    version: number;
+    state: KeyVersionState;
+    /** False when the version already had the state. */
+    changed: boolean;
+}
+/** Mirrors pkg/api/transport AllKeyVersionsResponse. */
+interface AllKeyVersionsResponse {
+    key_id: string;
+    state: KeyVersionState;
+    /** The versions whose state changed, ascending. */
+    versions: number[];
+    count: number;
+}
+/** Mirrors pkg/api/transport KeyRotationResult. */
+interface KeyRotationResult {
+    backend: string;
+    key_id: string;
+    /** The new current version; absent when the rotation failed. */
+    key_version?: number;
+    /** Why the key was not rotated; absent on success. */
+    error?: string;
+}
+/** Mirrors pkg/api/transport RotateScopeKeysResponse. */
+interface RotateScopeKeysResponse {
+    tenant_id: string;
+    results: KeyRotationResult[];
+    rotated: number;
+    failed: number;
+}
+
+/**
+ * Key versions. A version is its own backend key: rotating a key
+ * (`keys.rotate`) creates its next version and makes it current. Every call
+ * acts in the caller's tenant; `rotateAll` alone may name another tenant,
+ * which only a system caller may do.
+ */
+declare class KeyVersionsClient {
+    private readonly http;
+    constructor(http: HttpCore);
+    /** GET /api/v1/keys/{id}/versions?backend= */
+    list(id: string, backend: string): Promise<ListKeyVersionsResponse>;
+    /** POST /api/v1/keys/{id}/versions/{version}/enable?backend= */
+    enable(id: string, version: number, backend: string): Promise<KeyVersionStateResponse>;
+    /** POST /api/v1/keys/{id}/versions/{version}/disable?backend= — the current version cannot be disabled. */
+    disable(id: string, version: number, backend: string): Promise<KeyVersionStateResponse>;
+    /** POST /api/v1/keys/{id}/versions/{version}/retire?backend= — deletes the version's key material for good. */
+    retire(id: string, version: number, backend: string): Promise<KeyVersionStateResponse>;
+    /** POST /api/v1/keys/{id}/versions/enable-all?backend= */
+    enableAll(id: string, backend: string): Promise<AllKeyVersionsResponse>;
+    /** POST /api/v1/keys/{id}/versions/disable-all?backend= — never reaches the current version. */
+    disableAll(id: string, backend: string): Promise<AllKeyVersionsResponse>;
+    /** POST /api/v1/keys/rotate-all — rotates every key of the caller's tenant, or of tenantId (system callers only). */
+    rotateAll(tenantId?: string): Promise<RotateScopeKeysResponse>;
+}
+
+/**
  * Key and crypto-operation DTOs. Sources:
  *  - pkg/api/rest/types.go (the REST-local shapes the handlers decode/encode)
  *  - pkg/api/transport/types.go (the hardware-capability keyops handlers in
@@ -1553,6 +1637,8 @@ interface KeyInfo {
     algorithm: string;
     backend: string;
     public_key_pem?: string;
+    /** The key's current version, the one sign and encrypt use. */
+    key_version?: number;
 }
 /** Mirrors pkg/api/rest/types.go ListKeysResponse. */
 interface ListKeysResponse {
@@ -1579,6 +1665,8 @@ interface SignRequest {
 interface SignResponse {
     signature: Base64;
     algorithm?: string;
+    /** The key version that produced the signature: always the current one. */
+    key_version?: number;
 }
 /** Mirrors pkg/api/rest/types.go VerifyRequest. */
 interface VerifyRequest {
@@ -1589,11 +1677,15 @@ interface VerifyRequest {
     padding?: string;
     salt_length?: number;
     data_is_digest?: boolean;
+    /** Verify with this enabled version; omitted tries every enabled version, newest first. */
+    key_version?: number;
 }
 /** Mirrors pkg/api/rest/types.go VerifyResponse. */
 interface VerifyResponse {
     valid: boolean;
     message?: string;
+    /** The key version the signature verified under; 0 or absent when it did not verify. */
+    key_version?: number;
 }
 /** Mirrors pkg/api/rest/types.go RotateKeyResponse. */
 interface RotateKeyResponse {
@@ -1602,6 +1694,8 @@ interface RotateKeyResponse {
     key_type: string;
     public_key_pem?: string;
     message?: string;
+    /** The version the rotation created, now current. */
+    key_version?: number;
 }
 /** Mirrors pkg/api/rest/types.go EncryptRequest. */
 interface EncryptRequest {
@@ -1619,6 +1713,13 @@ interface EncryptResponse {
     nonce: Base64;
     tag: Base64;
     iv?: Base64;
+    gcm_nonce_mode?: string;
+    /**
+     * The key version that produced the ciphertext: always the current one.
+     * Keep it: AES-CBC ciphertext needs it to decrypt once the key has more
+     * than one enabled version.
+     */
+    key_version?: number;
 }
 /** Mirrors pkg/api/rest/types.go DecryptRequest. */
 interface DecryptRequest {
@@ -1630,10 +1731,25 @@ interface DecryptRequest {
     mode?: string;
     iv?: Base64;
     tag_size?: number;
+    gcm_nonce_mode?: string;
+    /** RSA decryption padding: "" or "pkcs1v15" (default), or "oaep". */
+    padding?: string;
+    /** The OAEP digest. */
+    hash?: string;
+    /** The OAEP label. */
+    label?: Base64;
+    /**
+     * Decrypt with this enabled version. Omitted tries every enabled version,
+     * newest first, for AEAD and RSA-OAEP ciphertext, and requires exactly one
+     * enabled version for AES-CBC and RSA PKCS#1 v1.5 ciphertext.
+     */
+    key_version?: number;
 }
 /** Mirrors pkg/api/rest/types.go DecryptResponse. */
 interface DecryptResponse {
     plaintext: Base64;
+    /** The key version that decrypted the ciphertext. */
+    key_version?: number;
 }
 /** Mirrors pkg/api/rest/types.go EncryptAsymRequest. */
 interface EncryptAsymRequest {
@@ -1644,6 +1760,8 @@ interface EncryptAsymRequest {
 /** Mirrors pkg/api/rest/types.go EncryptAsymResponse. */
 interface EncryptAsymResponse {
     ciphertext: Base64;
+    /** The key version whose public key encrypted: always the current one. */
+    key_version?: number;
 }
 /** Mirrors pkg/api/rest/types.go GetImportParametersRequest. */
 interface GetImportParametersRequest {
@@ -1770,10 +1888,14 @@ interface DeriveKeyECDHRequest {
     kdf_label?: Base64;
     key_length?: number;
     tenant_id?: string;
+    /** Agree with this enabled version of the local key; omitted uses the current one. */
+    key_version?: number;
 }
 /** Mirrors pkg/api/transport/types.go DeriveKeyECDHResponse. */
 interface DeriveKeyECDHResponse {
     derived_key: Base64;
+    /** The version of the local key the agreement used. */
+    key_version?: number;
 }
 /** Mirrors pkg/api/transport/types.go ExportKeyMaterialResponse. */
 interface ExportKeyMaterialResponse {
@@ -1799,6 +1921,8 @@ interface WrapKeyByIDRequest {
 interface WrapKeyByIDResponse {
     wrapped_key: Base64;
     algorithm: string;
+    /** The wrapping key version that wrapped: always the current one. Pass it back on unwrap. */
+    wrapping_key_version?: number;
 }
 /** Mirrors pkg/api/transport/types.go UnwrapKeyByIDRequest. */
 interface UnwrapKeyByIDRequest {
@@ -1818,6 +1942,12 @@ interface UnwrapKeyByIDRequest {
     target_partition?: string;
     target_exportable?: boolean;
     tenant_id?: string;
+    /**
+     * Unwrap with this enabled version. Omitted tries every enabled version for
+     * AES-KW, AES-KWP, AES-GCM and RSA-OAEP, and requires exactly one enabled
+     * version for AES-CBC and RSA PKCS#1 v1.5.
+     */
+    unwrapping_key_version?: number;
 }
 /** Mirrors pkg/api/transport/types.go UnwrapKeyByIDResponse. */
 interface UnwrapKeyByIDResponse {
@@ -1830,6 +1960,8 @@ interface UnwrapKeyByIDResponse {
 /** Key lifecycle and crypto operations. */
 declare class KeysClient {
     private readonly http;
+    /** A key's versions: list, enable, disable, retire, and rotate a whole tenant. */
+    readonly versions: KeyVersionsClient;
     constructor(http: HttpCore);
     /** POST /api/v1/keys */
     generate(req: GenerateKeyRequest): Promise<GenerateKeyResponse>;
@@ -1847,7 +1979,11 @@ declare class KeysClient {
     sign(id: string, req: SignRequest): Promise<SignResponse>;
     /** POST /api/v1/keys/{id}/verify */
     verify(id: string, req: VerifyRequest): Promise<VerifyResponse>;
-    /** POST /api/v1/keys/{id}/rotate?backend= (backend query is required). */
+    /**
+     * POST /api/v1/keys/{id}/rotate?backend= (backend query is required) —
+     * creates the key's next version and makes it current; earlier versions
+     * stay enabled.
+     */
     rotate(id: string, backend: string): Promise<RotateKeyResponse>;
     /** POST /api/v1/keys/{id}/encrypt */
     encrypt(id: string, req: EncryptRequest): Promise<EncryptResponse>;
@@ -2213,6 +2349,9 @@ interface SealResponse {
     nonce?: Base64;
     tag?: Base64;
     metadata?: Record<string, Base64>;
+    key_id?: string;
+    /** The sealing key version; absent for a TPM2 sealed object. Pass it back on unseal. */
+    key_version?: number;
 }
 /** Mirrors pkg/api/rest/types.go UnsealRequest. */
 interface UnsealRequest {
@@ -2223,6 +2362,8 @@ interface UnsealRequest {
     tag?: Base64;
     aad?: Base64;
     metadata?: Record<string, Base64>;
+    /** The sealing key version the seal reported; omitted tries every enabled version. */
+    key_version?: number;
 }
 /** Mirrors pkg/api/rest/types.go UnsealResponse. */
 interface UnsealResponse {
@@ -2904,4 +3045,4 @@ declare class XkmsClient {
 /** createClient constructs an XkmsClient from a config. */
 declare function createClient(config: XkmsClientConfig): XkmsClient;
 
-export { type AddCustodianMemberRequest, type AddCustodianMemberResponse, type AlgorithmInfo, type AlgorithmsResponse, type AssertionCredentialJSON, type AttestKeyRequest, type AttestKeyResponse, type AttestationCredentialJSON, AuditClient, type AuditEvent, type AuditFilter, type AuditPage, AuthClient, type AuthFactorAddRequest, type AuthFactorAddResponse, type AuthFactorGetResponse, type AuthFactorListResponse, type AuthFactorLoginRequest, type AuthFactorLoginResponse, type AuthFactorRecord, type AuthFactorRelabelRequest, type AuthFactorRelabelResponse, type AuthFactorRemoveResponse, type AuthFactorRotateRequest, type AuthFactorRotateResponse, type AuthFactorType, type AuthMeResponse, type AuthPaths, type AuthValidateResponse, type BackendCapabilities, type BackendInfo, BackendsClient, BarrierClient, type BarrierEnableEncryptionRequest, type BarrierEnableEncryptionResponse, type BarrierGenerateRecoveryKeysRequest, type BarrierGenerateRootTokenRequest, type BarrierInitializeRequest, type BarrierInitializeShamirRequest, type BarrierRecoverWithKeysRequest, type BarrierRekeyRequest, type BarrierStatusResponse, type BarrierUnsealRequest, type BarrierUnsealShareRequest, type BarrierUnsealSharesRequest, type Base64, type BindUserCertRequest, CaClient, type CanSealResponse, CapabilitiesClient, type CertificateInfo, CertsClient, type ChangeSOPINRequest, type ChangeUserPINRequest, type ClaimCertBeginRequest, type ClaimCertBeginResponse, type ClaimCertCompleteRequest, type ClaimCertCompleteResponse, type ClaimShareBeginRequest, type ClaimShareBeginResponse, type ClaimShareCompleteRequest, type ClaimShareCompleteResponse, ClusterClient, type ClusterMemberInfo, type ClusterStatusInfo, type ClusterStatusResponse, type CopyKeyRequest, type CopyKeyResponse, type CreateCustodianGroupRequest, type CreateCustodianGroupResponse, type CreateTenantRequest, type CreateUserRequest, type CredentialStrategyResponse, type CredentialSubmitRequest, type CredentialSubmitResponse, CredentialsClient, CustodianClient, type CustodianGroupInfo, type CustodianMemberInfo, DEFAULT_AUTH_PATHS, type DecryptRequest, type DecryptResponse, type DeleteKeyResponse, type DeriveKeyECDHRequest, type DeriveKeyECDHResponse, type DistributeSharesResponse, type EncryptAsymRequest, type EncryptAsymResponse, type EncryptRequest, type EncryptResponse, type EnrollDeviceRequest, type EnrollDeviceResponse, type ErrorEnvelope, type ExportKeyMaterialResponse, type ExportKeyRequest, type ExportKeyResponse, FactorsClient, type FrostAggregateRequest, type FrostAggregateResponse, FrostClient, type FrostCommitment, type FrostDeleteKeyResponse, type FrostGenerateKeyRequest, type FrostGenerateKeyResponse, type FrostGenerateNoncesResponse, type FrostImportKeyRequest, type FrostImportKeyResponse, type FrostKeyInfo, type FrostKeyPackage, type FrostListKeysResponse, type FrostSignRoundRequest, type FrostSignRoundResponse, type FrostSignatureShare, type FrostVerifyRequest, type FrostVerifyResponse, type GenerateCRLRequest, type GenerateCRLResponse, type GenerateKeyRequest, type GenerateKeyResponse, type GeneratePIVCSRRequest, type GeneratePIVCSRResponse, type GeneratePIVKeyRequest, type GeneratePIVKeyResponse, type GetCABundleResponse, type GetCACertificateResponse, type GetCertChainResponse, type GetCertResponse, type GetCustodianGroupResponse, type GetImportParametersRequest, type GetImportParametersResponse, type GetKeyResponse, type GetPIVCertificateResponse, type GetTLSCertificateResponse, HEADER_SESSION_ID, type HealthCheckResponse, type HealthCheckResult, HealthClient, type HealthResponse, type HostKeyMode, HttpCore, type HttpMethod, type HttpResult, type ImportKeyRequest, type ImportKeyResponse, InitClient, type InitStatusResponse, type IsRevokedResponse, type IssueAKCertificateRequest, type IssueAKCertificateResponse, type IssueCertificateRequest, type IssueCertificateResponse, type IssueEKCertificateRequest, type IssueEKCertificateResponse, type KeyInfo, KeysClient, type ListBackendsResponse, type ListCertsResponse, type ListClusterMembersResponse, type ListCustodianGroupsResponse, type ListKeysResponse, type ListPIVSlotsResponse, type ListSharesResponse, type ListTenantsResponse, type ListUserCredentialsResponse, type ListUsersResponse, type LockoutStatusResponse, type PIVSlotStatus, type PageQuery, type PageResponse, type PasswordAddRequest, type PasswordAddResponse, type PasswordDeleteResponse, type PasswordDetailResponse, type PasswordGenerateRequest, type PasswordGenerateResponse, type PasswordInfo, type PasswordListResponse, type PasswordStoreAccessModeRequest, type PasswordStoreAccessModeResponse, type PasswordStoreStatusResponse, type PasswordStoreUnlockRequest, type PasswordUpdateRequest, type PasswordUpdateResponse, PasswordsClient, PinClient, PivClient, PlatformClient, type QueryParams, type QuorumProgress, type RFC3339, type RecoveryKeyResult, type RefreshRequest, type RequestOptions, type ResetLockoutRequest, type RevokeCertificateRequest, type RevokeCertificateResponse, type RootToken, type RotateKeyResponse, type SSHAddAuthorizedKeyRequest, type SSHAddKnownHostRequest, type SSHAuthorizedEntry, type SSHAuthorizedListResponse, type SSHEmitRequest, type SSHEmitResponse, type SSHGenerateKeyRequest, type SSHImportKeyRequest, type SSHKey, type SSHKeyListResponse, type SSHPin, type SSHPinListResponse, type SSHPublicKey, type SSHSignRequest, type SSHSignResponse, type SSHVerifyAuthorizedRequest, type SSHVerifyKnownHostRequest, type SaveCertChainRequest, type SaveCertRequest, SealClient, type SealRequest, type SealResponse, type SealStoreDeleteResponse, type SealStoreGetResponse, type SealStoreListResponse, type SealStorePutRequest, type SealStorePutResponse, type SealStoreResealResponse, type SealStoreStatusResponse, type ServerControl, type SetSOPINRequest, type SetTenantTPMModeRequest, type SetUserPINRequest, type ShamirInitParams, type ShamirInitResult, type ShareCollectionStatusResponse, type ShareStatusResponse, SharesClient, type SignCSRInitRequest, type SignCSRInitResponse, type SignCSRRequest, type SignCSRResponse, type SignRequest, type SignResponse, type SignTCGCSRRequest, type SignTCGCSRResponse, SshClient, type StorePIVCertificateRequest, type SubmitShareRequest, type SuccessResponse, type TPMAuthorityRotateResponse, type TPMObjectKind, type TPMObjectPolicyResponse, type TPMPolicy, type TPMPolicyCreateRequest, type TPMPolicyDeleteRequest, type TPMPolicyListResponse, type TPMPolicyObjectsResponse, type TPMPolicyVerifyResponse, type TenantBarrierInitRequest, type TenantBarrierStatusResponse, type TenantBarrierUnsealRequest, type TenantEntitlements, type TenantInfo, type TenantInfoResponse, type TenantQuotas, type TenantTPMModeResponse, type TenantVTPMStatusResponse, TenantsClient, type TokenProvider, type TokenResponse, TpmPolicyClient, type UnsealRequest, type UnsealResponse, type UnwrapKeyByIDRequest, type UnwrapKeyByIDResponse, type UnwrapKeyRequest, type UnwrapKeyResponse, type UpdateTenantEntitlementsRequest, type UpdateTenantEntitlementsResponse, type UpdateTenantQuotasRequest, type UpdateTenantQuotasResponse, type UpdateUserRequest, type UserCredentialItem, type UserInfo, type UserStatusResponse, UsersClient, type VerifyPINRequest, type VerifyRequest, type VerifyResponse, type WebAuthnAuthResponse, type WebAuthnBeginLoginRequest, type WebAuthnBeginRegistrationRequest, type WebAuthnCeremonyStart, WebAuthnEnvelopeError, type WrapKeyByIDRequest, type WrapKeyByIDResponse, type WrapKeyRequest, type WrapKeyResponse, type WrappedTenantResponse, XkmsApiError, XkmsClient, type XkmsClientConfig, XkmsNetworkError, base64urlToBuffer, bufferToBase64url, buildURL, createClient, encodeAssertionResponse, encodeAttestationResponse, encodeHostKeyResponse, encodePathSegment, encodeResize, isWailsRuntime, parseControl, parseCreationOptions, parseErrorEnvelope, parseRequestOptions, resolveAuthPaths };
+export { type AddCustodianMemberRequest, type AddCustodianMemberResponse, type AlgorithmInfo, type AlgorithmsResponse, type AllKeyVersionsResponse, type AssertionCredentialJSON, type AttestKeyRequest, type AttestKeyResponse, type AttestationCredentialJSON, AuditClient, type AuditEvent, type AuditFilter, type AuditPage, AuthClient, type AuthFactorAddRequest, type AuthFactorAddResponse, type AuthFactorGetResponse, type AuthFactorListResponse, type AuthFactorLoginRequest, type AuthFactorLoginResponse, type AuthFactorRecord, type AuthFactorRelabelRequest, type AuthFactorRelabelResponse, type AuthFactorRemoveResponse, type AuthFactorRotateRequest, type AuthFactorRotateResponse, type AuthFactorType, type AuthMeResponse, type AuthPaths, type AuthValidateResponse, type BackendCapabilities, type BackendInfo, BackendsClient, BarrierClient, type BarrierEnableEncryptionRequest, type BarrierEnableEncryptionResponse, type BarrierGenerateRecoveryKeysRequest, type BarrierGenerateRootTokenRequest, type BarrierInitializeRequest, type BarrierInitializeShamirRequest, type BarrierRecoverWithKeysRequest, type BarrierRekeyRequest, type BarrierStatusResponse, type BarrierUnsealRequest, type BarrierUnsealShareRequest, type BarrierUnsealSharesRequest, type Base64, type BindUserCertRequest, CaClient, type CanSealResponse, CapabilitiesClient, type CertificateInfo, CertsClient, type ChangeSOPINRequest, type ChangeUserPINRequest, type ClaimCertBeginRequest, type ClaimCertBeginResponse, type ClaimCertCompleteRequest, type ClaimCertCompleteResponse, type ClaimShareBeginRequest, type ClaimShareBeginResponse, type ClaimShareCompleteRequest, type ClaimShareCompleteResponse, ClusterClient, type ClusterMemberInfo, type ClusterStatusInfo, type ClusterStatusResponse, type CopyKeyRequest, type CopyKeyResponse, type CreateCustodianGroupRequest, type CreateCustodianGroupResponse, type CreateTenantRequest, type CreateUserRequest, type CredentialStrategyResponse, type CredentialSubmitRequest, type CredentialSubmitResponse, CredentialsClient, CustodianClient, type CustodianGroupInfo, type CustodianMemberInfo, DEFAULT_AUTH_PATHS, type DecryptRequest, type DecryptResponse, type DeleteKeyResponse, type DeriveKeyECDHRequest, type DeriveKeyECDHResponse, type DistributeSharesResponse, type EncryptAsymRequest, type EncryptAsymResponse, type EncryptRequest, type EncryptResponse, type EnrollDeviceRequest, type EnrollDeviceResponse, type ErrorEnvelope, type ExportKeyMaterialResponse, type ExportKeyRequest, type ExportKeyResponse, FactorsClient, type FrostAggregateRequest, type FrostAggregateResponse, FrostClient, type FrostCommitment, type FrostDeleteKeyResponse, type FrostGenerateKeyRequest, type FrostGenerateKeyResponse, type FrostGenerateNoncesResponse, type FrostImportKeyRequest, type FrostImportKeyResponse, type FrostKeyInfo, type FrostKeyPackage, type FrostListKeysResponse, type FrostSignRoundRequest, type FrostSignRoundResponse, type FrostSignatureShare, type FrostVerifyRequest, type FrostVerifyResponse, type GenerateCRLRequest, type GenerateCRLResponse, type GenerateKeyRequest, type GenerateKeyResponse, type GeneratePIVCSRRequest, type GeneratePIVCSRResponse, type GeneratePIVKeyRequest, type GeneratePIVKeyResponse, type GetCABundleResponse, type GetCACertificateResponse, type GetCertChainResponse, type GetCertResponse, type GetCustodianGroupResponse, type GetImportParametersRequest, type GetImportParametersResponse, type GetKeyResponse, type GetPIVCertificateResponse, type GetTLSCertificateResponse, HEADER_SESSION_ID, type HealthCheckResponse, type HealthCheckResult, HealthClient, type HealthResponse, type HostKeyMode, HttpCore, type HttpMethod, type HttpResult, type ImportKeyRequest, type ImportKeyResponse, InitClient, type InitStatusResponse, type IsRevokedResponse, type IssueAKCertificateRequest, type IssueAKCertificateResponse, type IssueCertificateRequest, type IssueCertificateResponse, type IssueEKCertificateRequest, type IssueEKCertificateResponse, type KeyInfo, type KeyRotationResult, type KeyVersionInfo, type KeyVersionState, type KeyVersionStateResponse, KeyVersionsClient, KeysClient, type ListBackendsResponse, type ListCertsResponse, type ListClusterMembersResponse, type ListCustodianGroupsResponse, type ListKeyVersionsResponse, type ListKeysResponse, type ListPIVSlotsResponse, type ListSharesResponse, type ListTenantsResponse, type ListUserCredentialsResponse, type ListUsersResponse, type LockoutStatusResponse, type PIVSlotStatus, type PageQuery, type PageResponse, type PasswordAddRequest, type PasswordAddResponse, type PasswordDeleteResponse, type PasswordDetailResponse, type PasswordGenerateRequest, type PasswordGenerateResponse, type PasswordInfo, type PasswordListResponse, type PasswordStoreAccessModeRequest, type PasswordStoreAccessModeResponse, type PasswordStoreStatusResponse, type PasswordStoreUnlockRequest, type PasswordUpdateRequest, type PasswordUpdateResponse, PasswordsClient, PinClient, PivClient, PlatformClient, type QueryParams, type QuorumProgress, type RFC3339, type RecoveryKeyResult, type RefreshRequest, type RequestOptions, type ResetLockoutRequest, type RevokeCertificateRequest, type RevokeCertificateResponse, type RootToken, type RotateKeyResponse, type RotateScopeKeysResponse, type SSHAddAuthorizedKeyRequest, type SSHAddKnownHostRequest, type SSHAuthorizedEntry, type SSHAuthorizedListResponse, type SSHEmitRequest, type SSHEmitResponse, type SSHGenerateKeyRequest, type SSHImportKeyRequest, type SSHKey, type SSHKeyListResponse, type SSHPin, type SSHPinListResponse, type SSHPublicKey, type SSHSignRequest, type SSHSignResponse, type SSHVerifyAuthorizedRequest, type SSHVerifyKnownHostRequest, type SaveCertChainRequest, type SaveCertRequest, SealClient, type SealRequest, type SealResponse, type SealStoreDeleteResponse, type SealStoreGetResponse, type SealStoreListResponse, type SealStorePutRequest, type SealStorePutResponse, type SealStoreResealResponse, type SealStoreStatusResponse, type ServerControl, type SetSOPINRequest, type SetTenantTPMModeRequest, type SetUserPINRequest, type ShamirInitParams, type ShamirInitResult, type ShareCollectionStatusResponse, type ShareStatusResponse, SharesClient, type SignCSRInitRequest, type SignCSRInitResponse, type SignCSRRequest, type SignCSRResponse, type SignRequest, type SignResponse, type SignTCGCSRRequest, type SignTCGCSRResponse, SshClient, type StorePIVCertificateRequest, type SubmitShareRequest, type SuccessResponse, type TPMAuthorityRotateResponse, type TPMObjectKind, type TPMObjectPolicyResponse, type TPMPolicy, type TPMPolicyCreateRequest, type TPMPolicyDeleteRequest, type TPMPolicyListResponse, type TPMPolicyObjectsResponse, type TPMPolicyVerifyResponse, type TenantBarrierInitRequest, type TenantBarrierStatusResponse, type TenantBarrierUnsealRequest, type TenantEntitlements, type TenantInfo, type TenantInfoResponse, type TenantQuotas, type TenantTPMModeResponse, type TenantVTPMStatusResponse, TenantsClient, type TokenProvider, type TokenResponse, TpmPolicyClient, type UnsealRequest, type UnsealResponse, type UnwrapKeyByIDRequest, type UnwrapKeyByIDResponse, type UnwrapKeyRequest, type UnwrapKeyResponse, type UpdateTenantEntitlementsRequest, type UpdateTenantEntitlementsResponse, type UpdateTenantQuotasRequest, type UpdateTenantQuotasResponse, type UpdateUserRequest, type UserCredentialItem, type UserInfo, type UserStatusResponse, UsersClient, type VerifyPINRequest, type VerifyRequest, type VerifyResponse, type WebAuthnAuthResponse, type WebAuthnBeginLoginRequest, type WebAuthnBeginRegistrationRequest, type WebAuthnCeremonyStart, WebAuthnEnvelopeError, type WrapKeyByIDRequest, type WrapKeyByIDResponse, type WrapKeyRequest, type WrapKeyResponse, type WrappedTenantResponse, XkmsApiError, XkmsClient, type XkmsClientConfig, XkmsNetworkError, base64urlToBuffer, bufferToBase64url, buildURL, createClient, encodeAssertionResponse, encodeAttestationResponse, encodeHostKeyResponse, encodePathSegment, encodeResize, isWailsRuntime, parseControl, parseCreationOptions, parseErrorEnvelope, parseRequestOptions, resolveAuthPaths };

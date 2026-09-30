@@ -608,6 +608,19 @@ func (s *mockKeystoreServer) TPMPolicyGet(_ context.Context, req *pb.TPMPolicyRe
 	return &pb.TPMPolicy{Name: req.GetName(), TenantId: req.GetTenantId(), Bank: "sha256", Pcrs: []uint32{7}, Approved: true}, nil
 }
 
+// RetireKeyVersion echoes the retired version.
+func (s *mockKeystoreServer) RetireKeyVersion(_ context.Context, req *pb.RetireKeyVersionRequest) (*pb.RetireKeyVersionResponse, error) {
+	return &pb.RetireKeyVersionResponse{KeyId: req.GetKeyId(), Version: req.GetVersion(), Status: "retired", Changed: true}, nil
+}
+
+// RotateScopeKeys echoes the requested tenant with one rotated key.
+func (s *mockKeystoreServer) RotateScopeKeys(_ context.Context, req *pb.RotateScopeKeysRequest) (*pb.RotateScopeKeysResponse, error) {
+	return &pb.RotateScopeKeysResponse{
+		TenantId: req.GetTenantId(), Rotated: 1,
+		Results: []*pb.KeyRotationResult{{Backend: "software", KeyId: "signer", KeyVersion: 3}},
+	}, nil
+}
+
 // newBufconnTransport creates an in-memory gRPC server + connected Unix Transport for testing.
 func newBufconnTransport(t *testing.T) (*Transport, func()) {
 	t.Helper()

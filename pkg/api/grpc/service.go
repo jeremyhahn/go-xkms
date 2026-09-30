@@ -21,8 +21,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
-
 	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/pbconv"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -393,6 +391,10 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 		return nil, err
 	}
 
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
+	}
+
 	resp, err := s.xkmsService.GenerateKey(ctx, &transport.GenerateKeyRequest{
 		KeyID:      req.KeyId,
 		Backend:    req.Backend,
@@ -497,14 +499,15 @@ func (s *Service) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetKey
 // time of the response, as it always has.
 func keyInfoToProto(key transport.KeyInfo) *pb.KeyInfo {
 	return &pb.KeyInfo{
-		KeyId:     key.KeyID,
-		Backend:   key.Backend,
-		KeyType:   key.KeyType,
-		Algorithm: key.Algorithm,
-		KeySize:   int32(key.KeySize), // #nosec G115 - RSA key size fits in int32
-		Curve:     key.Curve,
-		Partition: key.Partition,
-		CreatedAt: timestamppb.Now(),
+		KeyId:      key.KeyID,
+		Backend:    key.Backend,
+		KeyType:    key.KeyType,
+		Algorithm:  key.Algorithm,
+		KeySize:    int32(key.KeySize), // #nosec G115 - RSA key size fits in int32
+		Curve:      key.Curve,
+		Partition:  key.Partition,
+		CreatedAt:  timestamppb.Now(),
+		KeyVersion: key.KeyVersion,
 	}
 }
 
@@ -519,6 +522,10 @@ func (s *Service) Sign(ctx context.Context, req *pb.SignRequest) (*pb.SignRespon
 
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionSign, req.KeyId); err != nil {
 		return nil, err
+	}
+
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
 	// The signing itself belongs to the service layer, which owns padding
@@ -540,7 +547,7 @@ func (s *Service) Sign(ctx context.Context, req *pb.SignRequest) (*pb.SignRespon
 		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
-	return &pb.SignResponse{Signature: resp.Signature}, nil
+	return &pb.SignResponse{Signature: resp.Signature, KeyVersion: resp.KeyVersion}, nil
 }
 
 // Verify verifies a signature with the specified key
@@ -559,6 +566,10 @@ func (s *Service) Verify(ctx context.Context, req *pb.VerifyRequest) (*pb.Verify
 		return nil, err
 	}
 
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
+	}
+
 	resp, err := s.xkmsService.Verify(ctx, &transport.VerifyRequest{
 		Backend:      req.Backend,
 		KeyID:        req.KeyId,
@@ -568,6 +579,7 @@ func (s *Service) Verify(ctx context.Context, req *pb.VerifyRequest) (*pb.Verify
 		Padding:      req.Padding,
 		SaltLength:   int(req.SaltLength),
 		DataIsDigest: req.DataIsDigest,
+		KeyVersion:   req.GetKeyVersion(),
 		TenantID:     callerTenantID(ctx),
 	})
 	if err != nil {
@@ -582,7 +594,7 @@ func (s *Service) Verify(ctx context.Context, req *pb.VerifyRequest) (*pb.Verify
 		message = "signature is valid"
 	}
 
-	return &pb.VerifyResponse{Valid: resp.Valid, Message: message}, nil
+	return &pb.VerifyResponse{Valid: resp.Valid, Message: message, KeyVersion: resp.KeyVersion}, nil
 }
 
 // DeleteKey deletes a key from the backend.
@@ -652,6 +664,7 @@ func (s *Service) RotateKey(ctx context.Context, req *pb.RotateKeyRequest) (*pb.
 		KeyType:      resp.KeyType,
 		PublicKeyPem: resp.PublicKeyPEM,
 		RotatedAt:    timestamppb.Now(),
+		KeyVersion:   resp.KeyVersion,
 	}, nil
 }
 
@@ -669,6 +682,10 @@ func (s *Service) Encrypt(ctx context.Context, req *pb.EncryptRequest) (*pb.Encr
 
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionEncrypt, req.KeyId); err != nil {
 		return nil, err
+	}
+
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
 	resp, err := s.xkmsService.Encrypt(ctx, &transport.EncryptRequest{
@@ -692,6 +709,7 @@ func (s *Service) Encrypt(ctx context.Context, req *pb.EncryptRequest) (*pb.Encr
 		Tag:          resp.Tag,
 		Iv:           resp.IV,
 		GcmNonceMode: resp.GCMNonceMode,
+		KeyVersion:   resp.KeyVersion,
 	}, nil
 }
 
@@ -709,6 +727,10 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionDecrypt, req.KeyId); err != nil {
 		return nil, err
+	}
+
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
 	// The decryption belongs to the service layer, which owns the choice
@@ -729,13 +751,14 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 		Hash:           req.Hash,
 		Label:          req.Label,
 		TagSize:        int(req.TagSize),
+		KeyVersion:     req.GetKeyVersion(),
 		TenantID:       callerTenantID(ctx),
 	})
 	if err != nil {
 		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
-	return &pb.DecryptResponse{Plaintext: resp.Plaintext}, nil
+	return &pb.DecryptResponse{Plaintext: resp.Plaintext, KeyVersion: resp.KeyVersion}, nil
 }
 
 // The certificate RPCs below are thin adapters over the XKMSService
@@ -1334,8 +1357,9 @@ func (s *Service) WrapKeyByID(ctx context.Context, req *pb.WrapKeyByIDRequest) (
 	}
 
 	return &pb.WrapKeyByIDResponse{
-		WrappedKey: resp.WrappedKey,
-		Algorithm:  resp.Algorithm,
+		WrappedKey:         resp.WrappedKey,
+		Algorithm:          resp.Algorithm,
+		WrappingKeyVersion: resp.WrappingKeyVersion,
 	}, nil
 }
 
@@ -1372,6 +1396,7 @@ func (s *Service) UnwrapKeyByID(ctx context.Context, req *pb.UnwrapKeyByIDReques
 		TargetCurve:          req.GetTargetCurve(),
 		TargetPartition:      req.GetTargetPartition(),
 		TargetExportable:     req.GetTargetExportable(),
+		UnwrappingKeyVersion: req.GetUnwrappingKeyVersion(),
 		TenantID:             callerTenantID(ctx),
 	})
 	if err != nil {
@@ -1456,6 +1481,10 @@ func (s *Service) EncryptAsym(ctx context.Context, req *pb.EncryptAsymRequest) (
 		return nil, err
 	}
 
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
+	}
+
 	// Validate the backend and the key locally so a misspelled backend and a
 	// missing key keep this transport's NotFound, then let the service layer
 	// own the OAEP construction itself: the digest selection, its weak-hash
@@ -1471,7 +1500,7 @@ func (s *Service) EncryptAsym(ctx context.Context, req *pb.EncryptAsymRequest) (
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
-	if _, err := s.findKeyAttributes(ctx, ks, req.KeyId); err != nil {
+	if _, err := xkms.FindKeyAttributes(ctx, ks, req.KeyId); err != nil {
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
 
@@ -1489,6 +1518,7 @@ func (s *Service) EncryptAsym(ctx context.Context, req *pb.EncryptAsymRequest) (
 
 	return &pb.EncryptAsymResponse{
 		Ciphertext: resp.Ciphertext,
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -1655,6 +1685,7 @@ func (s *Service) DeriveKey(ctx context.Context, req *pb.DeriveKeyRequest) (*pb.
 		StoreResult:      req.GetStoreResult(),
 		DerivedKeyID:     req.GetDerivedKeyId(),
 		DerivedKeyType:   req.GetDerivedKeyType(),
+		KeyVersion:       req.GetKeyVersion(),
 		TenantID:         callerTenantID(ctx),
 	})
 	if err != nil {
@@ -1666,6 +1697,7 @@ func (s *Service) DeriveKey(ctx context.Context, req *pb.DeriveKeyRequest) (*pb.
 		KeyId:      resp.KeyID,
 		Algorithm:  resp.Algorithm,
 		KeyLength:  int32(resp.KeyLength), // #nosec G115 - key length fits in int32
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -1690,6 +1722,7 @@ func (s *Service) DeriveKeyECDH(ctx context.Context, req *pb.DeriveKeyECDHReques
 		KDFInfo:       req.GetKdfInfo(),
 		KDFLabel:      req.GetKdfLabel(),
 		KeyLength:     int(req.GetKeyLength()),
+		KeyVersion:    req.GetKeyVersion(),
 		TenantID:      callerTenantID(ctx),
 	})
 	if err != nil {
@@ -1698,25 +1731,11 @@ func (s *Service) DeriveKeyECDH(ctx context.Context, req *pb.DeriveKeyECDHReques
 
 	return &pb.DeriveKeyECDHResponse{
 		DerivedKey: resp.DerivedKey,
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
 // Helper functions
-
-func (s *Service) findKeyAttributes(ctx context.Context, ks xkms.Backend, keyID string) (*types.KeyAttributes, error) {
-	attrs, err := ks.ListKeys(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, attr := range attrs {
-		if attr.CN == keyID {
-			return attr, nil
-		}
-	}
-
-	return nil, &errs.Message{Msg: fmt.Sprintf("key %s not found", keyID)}
-}
 
 // parseHashAlgorithm resolves a caller-supplied hash algorithm name for this
 // transport. It delegates to xkms.ResolveHash so the wire and the service layer
@@ -1755,8 +1774,8 @@ func (s *Service) lookupBackend(name string) (xkms.Backend, error) {
 // lookupTenantBackend returns the named backend viewed through the tenant of
 // the authenticated caller. It is what every path that resolves a key by
 // COMMON NAME must use, because a common name is unique only within a tenant:
-// findKeyAttributes scans whatever backend it is handed, so handing it an
-// unscoped one lets the scan match another tenant's key.
+// xkms.FindKeyAttributes scans whatever backend it is handed, so handing it
+// an unscoped one lets the scan match another tenant's key.
 //
 // That was not hypothetical. Before go-xkms#221 the key-by-CN paths on this
 // transport called lookupBackend, and a caller holding no key of that name at

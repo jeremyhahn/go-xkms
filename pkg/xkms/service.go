@@ -33,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
+	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
@@ -113,6 +114,7 @@ type XKMSService struct {
 	roles           qrdbtransport.RoleClient
 	platformStore   subsystem[seal.PlatformStore]
 	tpmPolicies     subsystem[*tpmpolicy.Service]
+	keyVersions     subsystem[*keyversion.Store]
 	webauthnService *webauthn.Service
 	custodians      subsystem[qrdbtransport.CustodianGroupClient]
 	shares          subsystem[qrdbtransport.ShareClient]
@@ -1539,8 +1541,16 @@ func GenerateKeyWithBackend(ctx context.Context, backendName string, attrs *type
 	}
 }
 
-// RotateKey rotates (replaces) an existing key with a new one.
-// The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+// RotateKey creates the next version of the key a kid names and makes it
+// current, exactly as XKMSService.RotateKey does: the new version is a new
+// backend key "<keyname>--v<n>" with the key's algorithm and attributes, and
+// every earlier version is kept. It returns the new version's private key
+// (nil for a symmetric key, whose material is not handed out).
+//
+// The kid format is "backend:type:algo:keyname" with optional segments, or
+// just "keyname" (uses defaults). The key is resolved on the unscoped backend,
+// as every kid operation is. It needs the key-version store; without one it
+// returns ErrKeyVersionsNotConfigured.
 func RotateKey(ctx context.Context, kid string) (crypto.PrivateKey, error) {
 	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
@@ -1551,16 +1561,25 @@ func RotateKey(ctx context.Context, kid string) (crypto.PrivateKey, error) {
 		return nil, err
 	}
 
-	// RotateKey's contract is "replace with a newly generated key that has
-	// the same attributes" -- attrs reconstructed from kid alone never has
-	// the real Exportable (or Hash), so honouring that contract requires the
-	// stored record, not the parse (#925).
-	storedAttrs, err := loadStoredKeyAttrs(ctx, b, attrs.CN)
+	svc, err := Get()
 	if err != nil {
 		return nil, err
 	}
+	backendName := attrs.Backend
+	if backendName == "" {
+		backendName = svc.defaultBackendName()
+	}
 
-	return b.RotateKey(ctx, storedAttrs)
+	rotated, err := svc.rotateKey(ctx, b, backendName, attrs.CN)
+	if errors.Is(err, ErrKeyNotFound) {
+		// A kid operation reports a missing key as the backend sentinel,
+		// as loadStoredKeyAttrs does.
+		return nil, backend.ErrKeyNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return rotated.key, nil
 }
 
 // ========================================================================

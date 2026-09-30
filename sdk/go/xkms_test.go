@@ -1190,6 +1190,34 @@ func (m *mockXKMSService) RevokeEscrow(ctx context.Context, escrowID string) err
 
 // Policy methods
 
+func (m *mockXKMSService) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) EnableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) DisableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) RetireKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) EnableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) DisableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) RotateScopeKeys(context.Context, *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
+	return nil, nil
+}
+
 func (m *mockXKMSService) TPMPolicyCreate(context.Context, *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }

@@ -54,6 +54,7 @@ func setupDeriveService(t *testing.T) *XKMSService {
 
 	svc, err := Get()
 	require.NoError(t, err)
+	wireKeyVersionStore(t)
 	return svc
 }
 

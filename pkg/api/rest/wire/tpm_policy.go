@@ -98,7 +98,13 @@ type TPMPolicyClient struct {
 // call performs a request and decodes its JSON response into out, when out
 // is non-nil.
 func (c TPMPolicyClient) call(ctx context.Context, method, path string, body, out any) error {
-	data, err := c.Do(ctx, method, path, body)
+	return callJSON(ctx, c.Do, method, path, body, out)
+}
+
+// callJSON performs a request through do and decodes its JSON response into
+// out, when out is non-nil.
+func callJSON(ctx context.Context, do Requester, method, path string, body, out any) error {
+	data, err := do(ctx, method, path, body)
 	if err != nil {
 		return err
 	}

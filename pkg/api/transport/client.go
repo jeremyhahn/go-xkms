@@ -91,6 +91,41 @@ type KeyService interface {
 	UnwrapKeyByID(ctx context.Context, req *UnwrapKeyByIDRequest) (*UnwrapKeyByIDResponse, error)
 }
 
+// KeyVersionService manages key versions. A version is its own backend key:
+// version 1 is the key as generated, and RotateKey creates the next version
+// and makes it current. Sign and encrypt use the current version; verify and
+// decrypt accept an explicit version (see VerifyRequest.KeyVersion and
+// DecryptRequest.KeyVersion).
+//
+// Every call acts on the caller's own tenant, as the other key operations do.
+type KeyVersionService interface {
+	// ListKeyVersions lists a key's versions and marks the current one.
+	ListKeyVersions(ctx context.Context, req *ListKeyVersionsRequest) (*ListKeyVersionsResponse, error)
+
+	// EnableKeyVersion enables a disabled version. A retired version cannot
+	// be enabled.
+	EnableKeyVersion(ctx context.Context, req *KeyVersionRequest) (*KeyVersionStateResponse, error)
+
+	// DisableKeyVersion disables a version; the current version cannot be
+	// disabled.
+	DisableKeyVersion(ctx context.Context, req *KeyVersionRequest) (*KeyVersionStateResponse, error)
+
+	// RetireKeyVersion deletes a version's key material for good; the
+	// current version cannot be retired.
+	RetireKeyVersion(ctx context.Context, req *KeyVersionRequest) (*KeyVersionStateResponse, error)
+
+	// EnableAllKeyVersions enables every disabled version.
+	EnableAllKeyVersions(ctx context.Context, req *AllKeyVersionsRequest) (*AllKeyVersionsResponse, error)
+
+	// DisableAllKeyVersions disables every enabled version except the
+	// current one.
+	DisableAllKeyVersions(ctx context.Context, req *AllKeyVersionsRequest) (*AllKeyVersionsResponse, error)
+
+	// RotateScopeKeys rotates every key of a tenant and reports each key's
+	// result.
+	RotateScopeKeys(ctx context.Context, req *RotateScopeKeysRequest) (*RotateScopeKeysResponse, error)
+}
+
 // CryptoService provides cryptographic operations.
 type CryptoService interface {
 	// Sign signs data with the specified key.
@@ -636,6 +671,7 @@ type Client interface {
 	ConnectionService
 	BackendService
 	KeyService
+	KeyVersionService
 	CryptoService
 	CertService
 	SealService

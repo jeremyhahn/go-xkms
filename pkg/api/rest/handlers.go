@@ -105,17 +105,15 @@ func (h *HandlerContext) lookupTenantBackend(ctx context.Context, name string) (
 // backend. It exists so the handlers that must keep this transport's 404 for a
 // missing key resolve it one way, rather than each repeating the list-and-scan
 // loop with its own idea of what "not found" means.
+//
+// A key is found when any of its versions is (xkms.FindKeyAttributes), so a
+// rotated key whose version 1 was retired is still found.
 func (h *HandlerContext) findKeyAttributes(ctx context.Context, ks xkms.Backend, keyID string) (*types.KeyAttributes, error) {
-	attrs, err := ks.ListKeys(ctx)
-	if err != nil {
-		return nil, err
+	attrs, err := xkms.FindKeyAttributes(ctx, ks, keyID)
+	if errors.Is(err, xkms.ErrKeyNotFound) {
+		return nil, backend.ErrKeyNotFound
 	}
-	for _, attr := range attrs {
-		if attr.CN == keyID {
-			return attr, nil
-		}
-	}
-	return nil, backend.ErrKeyNotFound
+	return attrs, err
 }
 
 // backendNames returns the names of all registered backends.
@@ -372,6 +370,7 @@ func keyInfoFromTransport(key transport.KeyInfo) KeyInfo {
 		Algorithm:    key.Algorithm,
 		Backend:      key.Backend,
 		PublicKeyPEM: key.PublicKeyPEM,
+		KeyVersion:   key.KeyVersion,
 	}
 }
 
@@ -429,8 +428,9 @@ func (h *HandlerContext) SignHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, SignResponse{
-		Signature: resp.Signature,
-		Algorithm: resp.Algorithm,
+		Signature:  resp.Signature,
+		Algorithm:  resp.Algorithm,
+		KeyVersion: resp.KeyVersion,
 	}, http.StatusOK)
 }
 
@@ -463,6 +463,7 @@ func (h *HandlerContext) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 		Padding:      req.Padding,
 		SaltLength:   req.SaltLength,
 		DataIsDigest: req.DataIsDigest,
+		KeyVersion:   req.KeyVersion,
 		TenantID:     callerTenantID(r.Context()),
 	})
 	if err != nil {
@@ -478,7 +479,7 @@ func (h *HandlerContext) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 		message = "signature is valid"
 	}
 
-	writeJSON(w, VerifyResponse{Valid: resp.Valid, Message: message}, http.StatusOK)
+	writeJSON(w, VerifyResponse{Valid: resp.Valid, Message: message, KeyVersion: resp.KeyVersion}, http.StatusOK)
 }
 
 // DeleteKeyHandler handles DELETE /api/v1/keys/{id} requests.
@@ -555,6 +556,7 @@ func (h *HandlerContext) RotateKeyHandler(w http.ResponseWriter, r *http.Request
 		KeyID:        resp.KeyID,
 		KeyType:      resp.KeyType,
 		PublicKeyPEM: resp.PublicKeyPEM,
+		KeyVersion:   resp.KeyVersion,
 		Message:      fmt.Sprintf("Key %s rotated successfully", resp.KeyID),
 	}, http.StatusOK)
 }
@@ -601,6 +603,7 @@ func (h *HandlerContext) EncryptHandler(w http.ResponseWriter, r *http.Request) 
 		Tag:          resp.Tag,
 		IV:           resp.IV,
 		GCMNonceMode: resp.GCMNonceMode,
+		KeyVersion:   resp.KeyVersion,
 	}, http.StatusOK)
 }
 
@@ -640,8 +643,8 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 			writeError(w, backend.ErrKeyNotFound, http.StatusNotFound)
 			return
 		}
-		log.Printf("Failed to list keys: %v", err)
-		handleError(w, err)
+		log.Printf("Failed to resolve key: %v", err)
+		mapKeyOpError(w, err)
 		return
 	}
 
@@ -672,6 +675,7 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		Padding:        req.Padding,
 		Hash:           req.Hash,
 		Label:          req.Label,
+		KeyVersion:     req.KeyVersion,
 		TenantID:       callerTenantID(r.Context()),
 	})
 	if err != nil {
@@ -679,7 +683,7 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeJSON(w, DecryptResponse{Plaintext: resp.Plaintext}, http.StatusOK)
+	writeJSON(w, DecryptResponse{Plaintext: resp.Plaintext, KeyVersion: resp.KeyVersion}, http.StatusOK)
 }
 
 // EncryptAsymHandler handles POST /api/v1/keys/{id}/encrypt-asym requests.
@@ -724,8 +728,8 @@ func (h *HandlerContext) EncryptAsymHandler(w http.ResponseWriter, r *http.Reque
 			writeError(w, backend.ErrKeyNotFound, http.StatusNotFound)
 			return
 		}
-		log.Printf("Failed to list keys: %v", err)
-		handleError(w, err)
+		log.Printf("Failed to resolve key: %v", err)
+		mapKeyOpError(w, err)
 		return
 	}
 
@@ -742,7 +746,7 @@ func (h *HandlerContext) EncryptAsymHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	writeJSON(w, EncryptAsymResponse{Ciphertext: resp.Ciphertext}, http.StatusOK)
+	writeJSON(w, EncryptAsymResponse{Ciphertext: resp.Ciphertext, KeyVersion: resp.KeyVersion}, http.StatusOK)
 }
 
 // The certificate handlers below are thin adapters over the XKMSService
@@ -1475,6 +1479,7 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 		TPMPrivate: sealed.TPMPrivate,
 		WrappedDEK: sealed.WrappedDEK,
 		KeyID:      sealed.KeyID,
+		KeyVersion: sealed.KeyVersion,
 	}, http.StatusOK)
 }
 
@@ -1522,6 +1527,7 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 		TPMPrivate: req.TPMPrivate,
 		WrappedDEK: req.WrappedDEK,
 		Password:   req.Password,
+		KeyVersion: req.KeyVersion,
 		TenantID:   callerTenantID(r.Context()),
 	})
 	if err != nil {

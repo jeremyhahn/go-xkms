@@ -39,6 +39,7 @@ __export(index_exports, {
   HealthClient: () => HealthClient,
   HttpCore: () => HttpCore,
   InitClient: () => InitClient,
+  KeyVersionsClient: () => KeyVersionsClient,
   KeysClient: () => KeysClient,
   PasswordsClient: () => PasswordsClient,
   PinClient: () => PinClient,
@@ -892,22 +893,66 @@ var InitClient = class {
   }
 };
 
-// src/clients/keys.ts
+// src/clients/keyVersions.ts
 var BASE11 = "/api/v1/keys";
+function versionsPath(id, suffix = "") {
+  return `${BASE11}/${encodeURIComponent(id)}/versions${suffix}`;
+}
+var KeyVersionsClient = class {
+  constructor(http) {
+    __publicField(this, "http", http);
+  }
+  /** GET /api/v1/keys/{id}/versions?backend= */
+  list(id, backend) {
+    return this.http.request("GET", versionsPath(id), { query: { backend } });
+  }
+  /** POST /api/v1/keys/{id}/versions/{version}/enable?backend= */
+  enable(id, version, backend) {
+    return this.http.request("POST", versionsPath(id, `/${version}/enable`), { query: { backend } });
+  }
+  /** POST /api/v1/keys/{id}/versions/{version}/disable?backend= — the current version cannot be disabled. */
+  disable(id, version, backend) {
+    return this.http.request("POST", versionsPath(id, `/${version}/disable`), { query: { backend } });
+  }
+  /** POST /api/v1/keys/{id}/versions/{version}/retire?backend= — deletes the version's key material for good. */
+  retire(id, version, backend) {
+    return this.http.request("POST", versionsPath(id, `/${version}/retire`), { query: { backend } });
+  }
+  /** POST /api/v1/keys/{id}/versions/enable-all?backend= */
+  enableAll(id, backend) {
+    return this.http.request("POST", versionsPath(id, "/enable-all"), { query: { backend } });
+  }
+  /** POST /api/v1/keys/{id}/versions/disable-all?backend= — never reaches the current version. */
+  disableAll(id, backend) {
+    return this.http.request("POST", versionsPath(id, "/disable-all"), { query: { backend } });
+  }
+  /** POST /api/v1/keys/rotate-all — rotates every key of the caller's tenant, or of tenantId (system callers only). */
+  rotateAll(tenantId) {
+    return this.http.request("POST", `${BASE11}/rotate-all`, {
+      body: tenantId ? { tenant_id: tenantId } : {}
+    });
+  }
+};
+
+// src/clients/keys.ts
+var BASE12 = "/api/v1/keys";
 function keyPath(id, suffix = "") {
-  return `${BASE11}/${encodeURIComponent(id)}${suffix}`;
+  return `${BASE12}/${encodeURIComponent(id)}${suffix}`;
 }
 var KeysClient = class {
   constructor(http) {
     __publicField(this, "http", http);
+    /** A key's versions: list, enable, disable, retire, and rotate a whole tenant. */
+    __publicField(this, "versions");
+    this.versions = new KeyVersionsClient(http);
   }
   /** POST /api/v1/keys */
   generate(req) {
-    return this.http.request("POST", BASE11, { body: req });
+    return this.http.request("POST", BASE12, { body: req });
   }
   /** GET /api/v1/keys?backend= */
   list(backend, page) {
-    return this.http.request("GET", BASE11, { query: { backend, ...page } });
+    return this.http.request("GET", BASE12, { query: { backend, ...page } });
   }
   /** GET /api/v1/keys/{id}?backend= */
   get(id, backend) {
@@ -935,7 +980,11 @@ var KeysClient = class {
       query: { backend: req.backend }
     });
   }
-  /** POST /api/v1/keys/{id}/rotate?backend= (backend query is required). */
+  /**
+   * POST /api/v1/keys/{id}/rotate?backend= (backend query is required) —
+   * creates the key's next version and makes it current; earlier versions
+   * stay enabled.
+   */
   rotate(id, backend) {
     return this.http.request("POST", keyPath(id, "/rotate"), { query: { backend } });
   }
@@ -953,19 +1002,19 @@ var KeysClient = class {
   }
   /** POST /api/v1/keys/import-params */
   importParams(req) {
-    return this.http.request("POST", `${BASE11}/import-params`, { body: req });
+    return this.http.request("POST", `${BASE12}/import-params`, { body: req });
   }
   /** POST /api/v1/keys/wrap */
   wrap(req) {
-    return this.http.request("POST", `${BASE11}/wrap`, { body: req });
+    return this.http.request("POST", `${BASE12}/wrap`, { body: req });
   }
   /** POST /api/v1/keys/unwrap */
   unwrap(req) {
-    return this.http.request("POST", `${BASE11}/unwrap`, { body: req });
+    return this.http.request("POST", `${BASE12}/unwrap`, { body: req });
   }
   /** POST /api/v1/keys/import */
   import(req) {
-    return this.http.request("POST", `${BASE11}/import`, { body: req });
+    return this.http.request("POST", `${BASE12}/import`, { body: req });
   }
   /** POST /api/v1/keys/{id}/export */
   export(id, req) {
@@ -976,7 +1025,7 @@ var KeysClient = class {
   }
   /** POST /api/v1/keys/copy */
   copy(req) {
-    return this.http.request("POST", `${BASE11}/copy`, { body: req });
+    return this.http.request("POST", `${BASE12}/copy`, { body: req });
   }
   /** POST /api/v1/attest */
   attest(req) {
@@ -984,7 +1033,7 @@ var KeysClient = class {
   }
   /** POST /api/v1/keys/derive-ecdh */
   deriveECDH(req) {
-    return this.http.request("POST", `${BASE11}/derive-ecdh`, { body: req });
+    return this.http.request("POST", `${BASE12}/derive-ecdh`, { body: req });
   }
   /** POST /api/v1/keys/{id}/export-material?backend= */
   exportMaterial(id, backend) {
@@ -994,106 +1043,106 @@ var KeysClient = class {
   }
   /** POST /api/v1/keys/wrap-by-id */
   wrapById(req) {
-    return this.http.request("POST", `${BASE11}/wrap-by-id`, { body: req });
+    return this.http.request("POST", `${BASE12}/wrap-by-id`, { body: req });
   }
   /** POST /api/v1/keys/unwrap-by-id */
   unwrapById(req) {
-    return this.http.request("POST", `${BASE11}/unwrap-by-id`, { body: req });
+    return this.http.request("POST", `${BASE12}/unwrap-by-id`, { body: req });
   }
 };
 
 // src/clients/passwords.ts
-var BASE12 = "/api/v1/passwords";
+var BASE13 = "/api/v1/passwords";
 var PasswordsClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
   /** POST /api/v1/passwords/ */
   add(req) {
-    return this.http.request("POST", `${BASE12}/`, { body: req });
+    return this.http.request("POST", `${BASE13}/`, { body: req });
   }
   /** GET /api/v1/passwords/?folder=&scope= */
   list(folder, scope) {
-    return this.http.request("GET", `${BASE12}/`, { query: { folder, scope } });
+    return this.http.request("GET", `${BASE13}/`, { query: { folder, scope } });
   }
   /** GET /api/v1/passwords/{id} */
   get(id) {
-    return this.http.request("GET", `${BASE12}/${encodeURIComponent(id)}`);
+    return this.http.request("GET", `${BASE13}/${encodeURIComponent(id)}`);
   }
   /** PUT /api/v1/passwords/{id} */
   update(id, req) {
-    return this.http.request("PUT", `${BASE12}/${encodeURIComponent(id)}`, { body: req });
+    return this.http.request("PUT", `${BASE13}/${encodeURIComponent(id)}`, { body: req });
   }
   /** DELETE /api/v1/passwords/{id} */
   delete(id) {
-    return this.http.request("DELETE", `${BASE12}/${encodeURIComponent(id)}`);
+    return this.http.request("DELETE", `${BASE13}/${encodeURIComponent(id)}`);
   }
   /** POST /api/v1/passwords/unlock */
   unlock(req) {
-    return this.http.request("POST", `${BASE12}/unlock`, { body: req });
+    return this.http.request("POST", `${BASE13}/unlock`, { body: req });
   }
   /** POST /api/v1/passwords/lock */
   lock() {
-    return this.http.request("POST", `${BASE12}/lock`);
+    return this.http.request("POST", `${BASE13}/lock`);
   }
   /** GET /api/v1/passwords/status */
   status() {
-    return this.http.request("GET", `${BASE12}/status`);
+    return this.http.request("GET", `${BASE13}/status`);
   }
   /** POST /api/v1/passwords/access-mode */
   setAccessMode(req) {
-    return this.http.request("POST", `${BASE12}/access-mode`, { body: req });
+    return this.http.request("POST", `${BASE13}/access-mode`, { body: req });
   }
   /** POST /api/v1/passwords/generate */
   generate(req) {
-    return this.http.request("POST", `${BASE12}/generate`, { body: req });
+    return this.http.request("POST", `${BASE13}/generate`, { body: req });
   }
 };
 
 // src/clients/pin.ts
-var BASE13 = "/api/v1/pin";
+var BASE14 = "/api/v1/pin";
 var PinClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
   /** POST /api/v1/pin/so/set */
   setSO(req) {
-    return this.http.request("POST", `${BASE13}/so/set`, { body: req });
+    return this.http.request("POST", `${BASE14}/so/set`, { body: req });
   }
   /** POST /api/v1/pin/user/set */
   setUser(req) {
-    return this.http.request("POST", `${BASE13}/user/set`, { body: req });
+    return this.http.request("POST", `${BASE14}/user/set`, { body: req });
   }
   /** POST /api/v1/pin/so/change */
   changeSO(req) {
-    return this.http.request("POST", `${BASE13}/so/change`, { body: req });
+    return this.http.request("POST", `${BASE14}/so/change`, { body: req });
   }
   /** POST /api/v1/pin/user/change */
   changeUser(req) {
-    return this.http.request("POST", `${BASE13}/user/change`, { body: req });
+    return this.http.request("POST", `${BASE14}/user/change`, { body: req });
   }
   /** POST /api/v1/pin/so/verify */
   verifySO(req) {
-    return this.http.request("POST", `${BASE13}/so/verify`, { body: req });
+    return this.http.request("POST", `${BASE14}/so/verify`, { body: req });
   }
   /** POST /api/v1/pin/user/verify */
   verifyUser(req) {
-    return this.http.request("POST", `${BASE13}/user/verify`, { body: req });
+    return this.http.request("POST", `${BASE14}/user/verify`, { body: req });
   }
   /** GET /api/v1/pin/lockout */
   lockoutStatus() {
-    return this.http.request("GET", `${BASE13}/lockout`);
+    return this.http.request("GET", `${BASE14}/lockout`);
   }
   /** POST /api/v1/pin/lockout/reset */
   resetLockout(req) {
-    return this.http.request("POST", `${BASE13}/lockout/reset`, { body: req });
+    return this.http.request("POST", `${BASE14}/lockout/reset`, { body: req });
   }
 };
 
 // src/clients/piv.ts
-var BASE14 = "/api/v1/piv";
+var BASE15 = "/api/v1/piv";
 function slotPath(slot, suffix) {
-  return `${BASE14}/slots/${encodeURIComponent(slot)}${suffix}`;
+  return `${BASE15}/slots/${encodeURIComponent(slot)}${suffix}`;
 }
 var PivClient = class {
   constructor(http) {
@@ -1101,7 +1150,7 @@ var PivClient = class {
   }
   /** GET /api/v1/piv/slots?backend= */
   listSlots(backend) {
-    return this.http.request("GET", `${BASE14}/slots`, { query: { backend } });
+    return this.http.request("GET", `${BASE15}/slots`, { query: { backend } });
   }
   /** GET /api/v1/piv/slots/{slot}/certificate?backend=&format= */
   getCertificate(slot, backend, format) {
@@ -1140,36 +1189,36 @@ var PivClient = class {
 };
 
 // src/clients/platform.ts
-var BASE15 = "/api/v1/platform";
+var BASE16 = "/api/v1/platform";
 var PlatformClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
   /** PUT /api/v1/platform/secrets/{key} */
   putSecret(key, req) {
-    return this.http.request("PUT", `${BASE15}/secrets/${encodeURIComponent(key)}`, {
+    return this.http.request("PUT", `${BASE16}/secrets/${encodeURIComponent(key)}`, {
       body: req
     });
   }
   /** GET /api/v1/platform/secrets/{key} */
   getSecret(key) {
-    return this.http.request("GET", `${BASE15}/secrets/${encodeURIComponent(key)}`);
+    return this.http.request("GET", `${BASE16}/secrets/${encodeURIComponent(key)}`);
   }
   /** DELETE /api/v1/platform/secrets/{key} */
   deleteSecret(key) {
-    return this.http.request("DELETE", `${BASE15}/secrets/${encodeURIComponent(key)}`);
+    return this.http.request("DELETE", `${BASE16}/secrets/${encodeURIComponent(key)}`);
   }
   /** GET /api/v1/platform/secrets */
   listSecrets() {
-    return this.http.request("GET", `${BASE15}/secrets`);
+    return this.http.request("GET", `${BASE16}/secrets`);
   }
   /** POST /api/v1/platform/secrets/{key}/reseal */
   resealSecret(key) {
-    return this.http.request("POST", `${BASE15}/secrets/${encodeURIComponent(key)}/reseal`);
+    return this.http.request("POST", `${BASE16}/secrets/${encodeURIComponent(key)}/reseal`);
   }
   /** GET /api/v1/platform/status */
   status() {
-    return this.http.request("GET", `${BASE15}/status`);
+    return this.http.request("GET", `${BASE16}/status`);
   }
 };
 
@@ -1193,47 +1242,47 @@ var SealClient = class {
 };
 
 // src/clients/shares.ts
-var BASE16 = "/api/v1/shares";
+var BASE17 = "/api/v1/shares";
 var SharesClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
   /** POST /api/v1/shares/submit */
   submit(req) {
-    return this.http.request("POST", `${BASE16}/submit`, { body: req });
+    return this.http.request("POST", `${BASE17}/submit`, { body: req });
   }
   /** GET /api/v1/shares/ */
   list(page) {
-    return this.http.request("GET", `${BASE16}/`, { query: { ...page } });
+    return this.http.request("GET", `${BASE17}/`, { query: { ...page } });
   }
   /** GET /api/v1/shares/{serverURL}/{groupID}/{shareIndex} (serverURL is path-escaped). */
   get(serverURL, groupId, shareIndex) {
     return this.http.request(
       "GET",
-      `${BASE16}/${encodePathSegment(serverURL)}/${encodePathSegment(groupId)}/${shareIndex}`
+      `${BASE17}/${encodePathSegment(serverURL)}/${encodePathSegment(groupId)}/${shareIndex}`
     );
   }
   /** DELETE /api/v1/shares/{serverURL}/{groupID}/{shareIndex} (204). */
   async delete(serverURL, groupId, shareIndex) {
     await this.http.request(
       "DELETE",
-      `${BASE16}/${encodePathSegment(serverURL)}/${encodePathSegment(groupId)}/${shareIndex}`,
+      `${BASE17}/${encodePathSegment(serverURL)}/${encodePathSegment(groupId)}/${shareIndex}`,
       { parse: "void" }
     );
   }
   /** GET /api/v1/shares/status/{groupID} */
   collectionStatus(groupId) {
-    return this.http.request("GET", `${BASE16}/status/${encodePathSegment(groupId)}`);
+    return this.http.request("GET", `${BASE17}/status/${encodePathSegment(groupId)}`);
   }
 };
 
 // src/clients/ssh.ts
-var BASE17 = "/xkms/v1/ssh";
+var BASE18 = "/xkms/v1/ssh";
 function keyPath2(scope, owner, name, suffix = "") {
-  return `${BASE17}/keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}${suffix}`;
+  return `${BASE18}/keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}${suffix}`;
 }
 function authorizedPath(scope, owner, name) {
-  return `${BASE17}/authorized-keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}`;
+  return `${BASE18}/authorized-keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}`;
 }
 var SshClient = class {
   constructor(http) {
@@ -1244,15 +1293,15 @@ var SshClient = class {
   // ------------------------------------------------------------------
   /** POST /xkms/v1/ssh/keys */
   generateKey(req) {
-    return this.http.request("POST", `${BASE17}/keys`, { body: req });
+    return this.http.request("POST", `${BASE18}/keys`, { body: req });
   }
   /** POST /xkms/v1/ssh/keys/import */
   importKey(req) {
-    return this.http.request("POST", `${BASE17}/keys/import`, { body: req });
+    return this.http.request("POST", `${BASE18}/keys/import`, { body: req });
   }
   /** GET /xkms/v1/ssh/keys?scope=&owner= */
   listKeys(scope, owner) {
-    return this.http.request("GET", `${BASE17}/keys`, { query: { scope, owner } });
+    return this.http.request("GET", `${BASE18}/keys`, { query: { scope, owner } });
   }
   /** GET /xkms/v1/ssh/keys/{scope}/{owner}/{name} */
   getKey(scope, owner, name) {
@@ -1275,18 +1324,18 @@ var SshClient = class {
   // ------------------------------------------------------------------
   /** POST /xkms/v1/ssh/known-hosts (201). */
   async addKnownHost(req) {
-    await this.http.request("POST", `${BASE17}/known-hosts`, {
+    await this.http.request("POST", `${BASE18}/known-hosts`, {
       body: req,
       parse: "void"
     });
   }
   /** GET /xkms/v1/ssh/known-hosts?scope=&owner= */
   listKnownHosts(scope, owner) {
-    return this.http.request("GET", `${BASE17}/known-hosts`, { query: { scope, owner } });
+    return this.http.request("GET", `${BASE18}/known-hosts`, { query: { scope, owner } });
   }
   /** DELETE /xkms/v1/ssh/known-hosts/{host}?scope=&owner= (204). */
   async removeKnownHost(host, scope, owner) {
-    await this.http.request("DELETE", `${BASE17}/known-hosts/${encodePathSegment(host)}`, {
+    await this.http.request("DELETE", `${BASE18}/known-hosts/${encodePathSegment(host)}`, {
       query: { scope, owner },
       parse: "void"
     });
@@ -1299,7 +1348,7 @@ var SshClient = class {
   async verifyKnownHost(host, req) {
     await this.http.request(
       "POST",
-      `${BASE17}/known-hosts/${encodePathSegment(host)}/verify`,
+      `${BASE18}/known-hosts/${encodePathSegment(host)}/verify`,
       { body: req, parse: "void" }
     );
   }
@@ -1308,14 +1357,14 @@ var SshClient = class {
   // ------------------------------------------------------------------
   /** POST /xkms/v1/ssh/authorized-keys (201). */
   async addAuthorizedKey(req) {
-    await this.http.request("POST", `${BASE17}/authorized-keys`, {
+    await this.http.request("POST", `${BASE18}/authorized-keys`, {
       body: req,
       parse: "void"
     });
   }
   /** GET /xkms/v1/ssh/authorized-keys?scope=&owner= */
   listAuthorizedKeys(scope, owner) {
-    return this.http.request("GET", `${BASE17}/authorized-keys`, { query: { scope, owner } });
+    return this.http.request("GET", `${BASE18}/authorized-keys`, { query: { scope, owner } });
   }
   /** GET /xkms/v1/ssh/authorized-keys/{scope}/{owner}/{name} */
   getAuthorizedKey(scope, owner, name) {
@@ -1329,18 +1378,18 @@ var SshClient = class {
   }
   /** POST /xkms/v1/ssh/authorized-keys/emit */
   emitAuthorizedKey(req) {
-    return this.http.request("POST", `${BASE17}/authorized-keys/emit`, { body: req });
+    return this.http.request("POST", `${BASE18}/authorized-keys/emit`, { body: req });
   }
   /** POST /xkms/v1/ssh/authorized-keys/verify — returns the matching entry. */
   verifyAuthorizedKey(req) {
-    return this.http.request("POST", `${BASE17}/authorized-keys/verify`, { body: req });
+    return this.http.request("POST", `${BASE18}/authorized-keys/verify`, { body: req });
   }
 };
 
 // src/clients/tenants.ts
-var BASE18 = "/api/v1/tenants";
+var BASE19 = "/api/v1/tenants";
 function tenantPath(id, suffix = "") {
-  return `${BASE18}/${encodeURIComponent(id)}${suffix}`;
+  return `${BASE19}/${encodeURIComponent(id)}${suffix}`;
 }
 var TenantsClient = class {
   constructor(http) {
@@ -1348,11 +1397,11 @@ var TenantsClient = class {
   }
   /** POST /api/v1/tenants/ */
   create(req) {
-    return this.http.request("POST", `${BASE18}/`, { body: req });
+    return this.http.request("POST", `${BASE19}/`, { body: req });
   }
   /** GET /api/v1/tenants/ */
   list(page) {
-    return this.http.request("GET", `${BASE18}/`, { query: { ...page } });
+    return this.http.request("GET", `${BASE19}/`, { query: { ...page } });
   }
   /** GET /api/v1/tenants/{tenantID} */
   get(tenantId) {
@@ -1411,9 +1460,9 @@ var TenantsClient = class {
 };
 
 // src/clients/tpmPolicy.ts
-var BASE19 = "/api/v1/tpm/policies";
+var BASE20 = "/api/v1/tpm/policies";
 function policyPath(name, action) {
-  const path = `${BASE19}/${encodeURIComponent(name)}`;
+  const path = `${BASE20}/${encodeURIComponent(name)}`;
   return action ? `${path}/${action}` : path;
 }
 var TpmPolicyClient = class {
@@ -1422,11 +1471,11 @@ var TpmPolicyClient = class {
   }
   /** POST /api/v1/tpm/policies — captures the tenant's live PCR values. */
   create(req) {
-    return this.http.request("POST", BASE19, { body: req });
+    return this.http.request("POST", BASE20, { body: req });
   }
   /** GET /api/v1/tpm/policies?tenant_id= */
   list(tenantId) {
-    return this.http.request("GET", BASE19, { query: { tenant_id: tenantId } });
+    return this.http.request("GET", BASE20, { query: { tenant_id: tenantId } });
   }
   /** GET /api/v1/tpm/policies/{name}?tenant_id= */
   get(name, tenantId) {
@@ -1490,9 +1539,9 @@ var TpmPolicyClient = class {
 };
 
 // src/clients/users.ts
-var BASE20 = "/api/v1/users";
+var BASE21 = "/api/v1/users";
 function userPath(username, suffix = "") {
-  return `${BASE20}/${encodeURIComponent(username)}${suffix}`;
+  return `${BASE21}/${encodeURIComponent(username)}${suffix}`;
 }
 var UsersClient = class {
   constructor(http) {
@@ -1500,11 +1549,11 @@ var UsersClient = class {
   }
   /** POST /api/v1/users/ */
   create(req) {
-    return this.http.request("POST", `${BASE20}/`, { body: req });
+    return this.http.request("POST", `${BASE21}/`, { body: req });
   }
   /** GET /api/v1/users/ */
   list() {
-    return this.http.request("GET", `${BASE20}/`);
+    return this.http.request("GET", `${BASE21}/`);
   }
   /** GET /api/v1/users/{username} */
   get(username) {
@@ -1735,6 +1784,7 @@ function encodeAssertionResponse(credential) {
   HealthClient,
   HttpCore,
   InitClient,
+  KeyVersionsClient,
   KeysClient,
   PasswordsClient,
   PinClient,

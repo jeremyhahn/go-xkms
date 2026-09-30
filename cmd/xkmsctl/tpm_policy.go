@@ -91,7 +91,7 @@ Examples:
 			return
 		}
 		cfg := getConfig()
-		runTPMPolicy(cfg, "Creating TPM policy "+args[0], ErrCreateTPMPolicyFailed, func(ctx context.Context, cl client.Client) (any, error) {
+		runClientCall(cfg, "Creating TPM policy "+args[0], ErrCreateTPMPolicyFailed, func(ctx context.Context, cl client.Client) (any, error) {
 			return cl.TPMPolicyCreate(ctx, &client.TPMPolicyCreateRequest{
 				TenantID: tenant, Name: args[0], Bank: bank, PCRs: selection, AutoUnseal: autoUnseal, OwnerAuth: auth,
 			})
@@ -113,7 +113,7 @@ Example:
 		if !ok {
 			return
 		}
-		runTPMPolicy(getConfig(), "Listing TPM policies", ErrListTPMPoliciesFailed, func(ctx context.Context, cl client.Client) (any, error) {
+		runClientCall(getConfig(), "Listing TPM policies", ErrListTPMPoliciesFailed, func(ctx context.Context, cl client.Client) (any, error) {
 			return cl.TPMPolicyList(ctx, &client.TPMPolicyListRequest{TenantID: tenant})
 		}, printTPMPolicyList)
 	},
@@ -134,7 +134,7 @@ func newTPMPolicyNameCmd(use, short, long, verbose string, failure error,
 				return
 			}
 			req := &client.TPMPolicyRequest{TenantID: tenant, Name: args[0]}
-			runTPMPolicy(getConfig(), verbose+" "+args[0], failure, func(ctx context.Context, cl client.Client) (any, error) {
+			runClientCall(getConfig(), verbose+" "+args[0], failure, func(ctx context.Context, cl client.Client) (any, error) {
 				return call(ctx, cl, req)
 			}, show)
 		},
@@ -207,9 +207,9 @@ Example:
 			return
 		}
 		name := args[0]
-		runTPMPolicy(getConfig(), "Deleting TPM policy "+name, ErrDeleteTPMPolicyFailed, func(ctx context.Context, cl client.Client) (any, error) {
+		runClientCall(getConfig(), "Deleting TPM policy "+name, ErrDeleteTPMPolicyFailed, func(ctx context.Context, cl client.Client) (any, error) {
 			return name, cl.TPMPolicyDelete(ctx, &client.TPMPolicyDeleteRequest{TenantID: tenant, Name: name, OwnerAuth: auth})
-		}, func(p *Printer, _ any) { printTPMSuccess(p, fmt.Sprintf("TPM policy %q deleted", name)) })
+		}, func(p *Printer, _ any) { printCallSuccess(p, fmt.Sprintf("TPM policy %q deleted", name)) })
 	},
 }
 
@@ -232,7 +232,7 @@ Examples:
 			handleError(err)
 			return
 		}
-		runTPMPolicy(getConfig(), "Setting auto-unseal on TPM policy "+args[0], ErrTPMPolicyAutoUnsealFailed, func(ctx context.Context, cl client.Client) (any, error) {
+		runClientCall(getConfig(), "Setting auto-unseal on TPM policy "+args[0], ErrTPMPolicyAutoUnsealFailed, func(ctx context.Context, cl client.Client) (any, error) {
 			return cl.TPMPolicySetAutoUnseal(ctx, &client.TPMPolicyAutoUnsealRequest{TenantID: tenant, Name: args[0], Enabled: !disable})
 		}, printTPMPolicyResult("TPM Policy"))
 	},
@@ -260,7 +260,7 @@ Example:
 		if !ok {
 			return
 		}
-		runTPMPolicy(getConfig(), "Rotating the TPM policy authority", ErrRotateTPMAuthorityFailed, func(ctx context.Context, cl client.Client) (any, error) {
+		runClientCall(getConfig(), "Rotating the TPM policy authority", ErrRotateTPMAuthorityFailed, func(ctx context.Context, cl client.Client) (any, error) {
 			return cl.TPMPolicyRotateAuthority(ctx, &client.TPMAuthorityRotateRequest{TenantID: tenant})
 		}, printTPMAuthority)
 	},
@@ -288,7 +288,7 @@ Example:
 		if sealed {
 			kind = client.TPMObjectKindSealed
 		}
-		runTPMPolicy(getConfig(), "Retrieving the TPM policy of "+args[0], ErrTPMObjectPolicyFailed, func(ctx context.Context, cl client.Client) (any, error) {
+		runClientCall(getConfig(), "Retrieving the TPM policy of "+args[0], ErrTPMObjectPolicyFailed, func(ctx context.Context, cl client.Client) (any, error) {
 			return cl.TPMObjectPolicy(ctx, &client.TPMObjectPolicyRequest{TenantID: tenant, KeyID: args[0], Kind: kind})
 		}, printTPMObjectPolicy)
 	},
@@ -336,9 +336,9 @@ func resolveOwnerAuth(value string) ([]byte, error) {
 	return []byte(auth), nil
 }
 
-// runTPMPolicy connects a client, runs call, and prints its result with
+// runClientCall connects a client, runs call, and prints its result with
 // print; a failure is reported wrapped in failure.
-func runTPMPolicy(cfg *Config, verbose string, failure error, call func(context.Context, client.Client) (any, error), show func(*Printer, any)) {
+func runClientCall(cfg *Config, verbose string, failure error, call func(context.Context, client.Client) (any, error), show func(*Printer, any)) {
 	printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 	cl, err := cfg.CreateClient()
 	if err != nil {
@@ -377,8 +377,8 @@ func printJSONResult(p *Printer, result any) bool {
 	return true
 }
 
-// printTPMSuccess prints a success message.
-func printTPMSuccess(p *Printer, message string) {
+// printCallSuccess prints a success message.
+func printCallSuccess(p *Printer, message string) {
 	if err := p.PrintSuccess(message); err != nil {
 		handleError(err)
 	}
@@ -448,7 +448,7 @@ func printTPMPolicyVerification(p *Printer, result any) {
 		return
 	}
 	if !printJSONResult(p, result) && v.Match && v.Approved {
-		printTPMSuccess(p, fmt.Sprintf("TPM policy %q matches the live PCR values and is approved", v.Name))
+		printCallSuccess(p, fmt.Sprintf("TPM policy %q matches the live PCR values and is approved", v.Name))
 	}
 	switch {
 	case !v.Match:
@@ -526,7 +526,7 @@ Examples:
 		}
 		tenantID := args[0]
 		if len(args) == 1 {
-			runTPMPolicy(getConfig(), "Retrieving the TPM mode of tenant "+tenantID, ErrTenantTPMModeFailed, func(ctx context.Context, cl client.Client) (any, error) {
+			runClientCall(getConfig(), "Retrieving the TPM mode of tenant "+tenantID, ErrTenantTPMModeFailed, func(ctx context.Context, cl client.Client) (any, error) {
 				return cl.GetTenantTPMMode(ctx, tenantID)
 			}, printTenantTPMMode)
 			return
@@ -537,7 +537,7 @@ Examples:
 			return
 		}
 		mode := strings.ToLower(args[1])
-		runTPMPolicy(getConfig(), "Setting the TPM mode of tenant "+tenantID+" to "+mode, ErrTenantTPMModeFailed, func(ctx context.Context, cl client.Client) (any, error) {
+		runClientCall(getConfig(), "Setting the TPM mode of tenant "+tenantID+" to "+mode, ErrTenantTPMModeFailed, func(ctx context.Context, cl client.Client) (any, error) {
 			return cl.SetTenantTPMMode(ctx, &client.SetTenantTPMModeRequest{TenantID: tenantID, Mode: mode, OwnerAuth: auth})
 		}, printTenantTPMMode)
 	},
@@ -572,7 +572,7 @@ func newTenantVTPMCmd(use, short, verbose string, call func(context.Context, cli
 		Short: short,
 		Args:  cobra.ExactArgs(1),
 		Run: func(_ *cobra.Command, args []string) {
-			runTPMPolicy(getConfig(), verbose+" "+args[0], ErrTenantVTPMFailed, func(ctx context.Context, cl client.Client) (any, error) {
+			runClientCall(getConfig(), verbose+" "+args[0], ErrTenantVTPMFailed, func(ctx context.Context, cl client.Client) (any, error) {
 				return call(ctx, cl, args[0])
 			}, printTenantVTPMStatus)
 		},

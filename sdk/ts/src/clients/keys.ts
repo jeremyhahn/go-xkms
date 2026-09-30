@@ -12,6 +12,7 @@
 //     Contact licensing@automatethethings.com for commercial licensing options.
 
 import type { HttpCore } from '../http.js';
+import { KeyVersionsClient } from './keyVersions.js';
 import type { PageQuery } from '../types/common.js';
 import type {
   AttestKeyRequest,
@@ -61,7 +62,12 @@ function keyPath(id: string, suffix = ''): string {
 
 /** Key lifecycle and crypto operations. */
 export class KeysClient {
-  constructor(private readonly http: HttpCore) {}
+  /** A key's versions: list, enable, disable, retire, and rotate a whole tenant. */
+  readonly versions: KeyVersionsClient;
+
+  constructor(private readonly http: HttpCore) {
+    this.versions = new KeyVersionsClient(http);
+  }
 
   /** POST /api/v1/keys */
   generate(req: GenerateKeyRequest): Promise<GenerateKeyResponse> {
@@ -103,7 +109,11 @@ export class KeysClient {
     });
   }
 
-  /** POST /api/v1/keys/{id}/rotate?backend= (backend query is required). */
+  /**
+   * POST /api/v1/keys/{id}/rotate?backend= (backend query is required) —
+   * creates the key's next version and makes it current; earlier versions
+   * stay enabled.
+   */
   rotate(id: string, backend: string): Promise<RotateKeyResponse> {
     return this.http.request('POST', keyPath(id, '/rotate'), { query: { backend } });
   }

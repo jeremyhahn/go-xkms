@@ -340,6 +340,7 @@ func twoBackendServer(t *testing.T, keyID string) (*Server, *rsa.PublicKey, *rsa
 		Backends:       map[string]xkms.Backend{"software": defaultKS, "tpm2": namedKS},
 		DefaultBackend: "software",
 	}))
+	wireKeyVersionStore(t)
 
 	svc, err := xkms.Get()
 	require.NoError(t, err)

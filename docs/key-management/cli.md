@@ -99,7 +99,11 @@ xkmsctl key encrypt-asym rsa-transport "hello" --hash sha256
 
 ### `key rotate <key-id>`
 
-`--key-type` (default `tls`). Generates new material under the same ID.
+`--key-type` (default `tls`). Creates the key's next version, with the same
+algorithm and attributes, under the same ID and makes it current; earlier
+versions stay enabled. `key versions`, `key version enable|disable|retire`
+and `key rotate-all` manage versions: see
+[`../tpm-policies/cli.md`](../tpm-policies/cli.md), "Key versions".
 
 ```
 xkmsctl key rotate web-tls --key-type tls

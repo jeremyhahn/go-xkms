@@ -558,7 +558,9 @@ func TestRotateKeyHandler_RotateError(t *testing.T) {
 	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	ks.SetKey("rotate-err", ecKey)
-	ks.RotateKeyFunc = func(_ *types.KeyAttributes) (crypto.PrivateKey, error) {
+	// Rotation generates the next version; a backend that fails to
+	// generate it is an internal fault.
+	ks.GenerateECDSAFunc = func(_ *types.KeyAttributes) (crypto.PrivateKey, error) {
 		return nil, errors.New("rotate error")
 	}
 

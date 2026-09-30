@@ -954,6 +954,34 @@ func (m *mockBackendsClient) RevokeEscrow(ctx context.Context, escrowID string) 
 	return nil
 }
 
+func (m *mockBackendsClient) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) EnableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) DisableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) RetireKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) EnableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) DisableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) RotateScopeKeys(context.Context, *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
+	return nil, nil
+}
+
 func (m *mockBackendsClient) TPMPolicyCreate(context.Context, *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }

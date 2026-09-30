@@ -47,26 +47,26 @@ func newTPMPolicyService(t *testing.T) (*XKMSService, *tpmpolicy.Service, *tpmpo
 // and a cross-tenant caller -- or a context with no identity, the
 // in-process path -- addresses any tenant, "" being the system scope.
 func TestTPMPolicyTarget_BindsTheCallersTenant(t *testing.T) {
-	got, err := tpmPolicyTarget(tenantCtx("acme"), "op", "")
+	got, err := targetTenant(tenantCtx("acme"), "op", "")
 	require.NoError(t, err)
 	assert.Equal(t, "acme", got)
 
-	got, err = tpmPolicyTarget(tenantCtx("acme"), "op", "acme")
+	got, err = targetTenant(tenantCtx("acme"), "op", "acme")
 	require.NoError(t, err)
 	assert.Equal(t, "acme", got)
 
-	_, err = tpmPolicyTarget(tenantCtx("acme"), "op", "globex")
+	_, err = targetTenant(tenantCtx("acme"), "op", "globex")
 	requireBindingRefusal(t, err, "tenant naming another tenant")
 
-	got, err = tpmPolicyTarget(systemCtx(), "op", "globex")
+	got, err = targetTenant(systemCtx(), "op", "globex")
 	require.NoError(t, err)
 	assert.Equal(t, "globex", got)
 
-	got, err = tpmPolicyTarget(systemCtx(), "op", "")
+	got, err = targetTenant(systemCtx(), "op", "")
 	require.NoError(t, err)
 	assert.Empty(t, got, "a system caller naming no tenant acts on the system scope")
 
-	got, err = tpmPolicyTarget(context.Background(), "op", "acme")
+	got, err = targetTenant(context.Background(), "op", "acme")
 	require.NoError(t, err)
 	assert.Equal(t, "acme", got)
 }

@@ -49,6 +49,8 @@ export interface KeyInfo {
   algorithm: string;
   backend: string;
   public_key_pem?: string;
+  /** The key's current version, the one sign and encrypt use. */
+  key_version?: number;
 }
 
 /** Mirrors pkg/api/rest/types.go ListKeysResponse. */
@@ -80,6 +82,8 @@ export interface SignRequest {
 export interface SignResponse {
   signature: Base64;
   algorithm?: string;
+  /** The key version that produced the signature: always the current one. */
+  key_version?: number;
 }
 
 /** Mirrors pkg/api/rest/types.go VerifyRequest. */
@@ -91,12 +95,16 @@ export interface VerifyRequest {
   padding?: string;
   salt_length?: number;
   data_is_digest?: boolean;
+  /** Verify with this enabled version; omitted tries every enabled version, newest first. */
+  key_version?: number;
 }
 
 /** Mirrors pkg/api/rest/types.go VerifyResponse. */
 export interface VerifyResponse {
   valid: boolean;
   message?: string;
+  /** The key version the signature verified under; 0 or absent when it did not verify. */
+  key_version?: number;
 }
 
 /** Mirrors pkg/api/rest/types.go RotateKeyResponse. */
@@ -106,6 +114,8 @@ export interface RotateKeyResponse {
   key_type: string;
   public_key_pem?: string;
   message?: string;
+  /** The version the rotation created, now current. */
+  key_version?: number;
 }
 
 /** Mirrors pkg/api/rest/types.go EncryptRequest. */
@@ -125,6 +135,13 @@ export interface EncryptResponse {
   nonce: Base64;
   tag: Base64;
   iv?: Base64;
+  gcm_nonce_mode?: string;
+  /**
+   * The key version that produced the ciphertext: always the current one.
+   * Keep it: AES-CBC ciphertext needs it to decrypt once the key has more
+   * than one enabled version.
+   */
+  key_version?: number;
 }
 
 /** Mirrors pkg/api/rest/types.go DecryptRequest. */
@@ -137,11 +154,26 @@ export interface DecryptRequest {
   mode?: string;
   iv?: Base64;
   tag_size?: number;
+  gcm_nonce_mode?: string;
+  /** RSA decryption padding: "" or "pkcs1v15" (default), or "oaep". */
+  padding?: string;
+  /** The OAEP digest. */
+  hash?: string;
+  /** The OAEP label. */
+  label?: Base64;
+  /**
+   * Decrypt with this enabled version. Omitted tries every enabled version,
+   * newest first, for AEAD and RSA-OAEP ciphertext, and requires exactly one
+   * enabled version for AES-CBC and RSA PKCS#1 v1.5 ciphertext.
+   */
+  key_version?: number;
 }
 
 /** Mirrors pkg/api/rest/types.go DecryptResponse. */
 export interface DecryptResponse {
   plaintext: Base64;
+  /** The key version that decrypted the ciphertext. */
+  key_version?: number;
 }
 
 /** Mirrors pkg/api/rest/types.go EncryptAsymRequest. */
@@ -154,6 +186,8 @@ export interface EncryptAsymRequest {
 /** Mirrors pkg/api/rest/types.go EncryptAsymResponse. */
 export interface EncryptAsymResponse {
   ciphertext: Base64;
+  /** The key version whose public key encrypted: always the current one. */
+  key_version?: number;
 }
 
 /** Mirrors pkg/api/rest/types.go GetImportParametersRequest. */
@@ -295,11 +329,15 @@ export interface DeriveKeyECDHRequest {
   kdf_label?: Base64;
   key_length?: number;
   tenant_id?: string;
+  /** Agree with this enabled version of the local key; omitted uses the current one. */
+  key_version?: number;
 }
 
 /** Mirrors pkg/api/transport/types.go DeriveKeyECDHResponse. */
 export interface DeriveKeyECDHResponse {
   derived_key: Base64;
+  /** The version of the local key the agreement used. */
+  key_version?: number;
 }
 
 /** Mirrors pkg/api/transport/types.go ExportKeyMaterialResponse. */
@@ -328,6 +366,8 @@ export interface WrapKeyByIDRequest {
 export interface WrapKeyByIDResponse {
   wrapped_key: Base64;
   algorithm: string;
+  /** The wrapping key version that wrapped: always the current one. Pass it back on unwrap. */
+  wrapping_key_version?: number;
 }
 
 /** Mirrors pkg/api/transport/types.go UnwrapKeyByIDRequest. */
@@ -348,6 +388,12 @@ export interface UnwrapKeyByIDRequest {
   target_partition?: string;
   target_exportable?: boolean;
   tenant_id?: string;
+  /**
+   * Unwrap with this enabled version. Omitted tries every enabled version for
+   * AES-KW, AES-KWP, AES-GCM and RSA-OAEP, and requires exactly one enabled
+   * version for AES-CBC and RSA PKCS#1 v1.5.
+   */
+  unwrapping_key_version?: number;
 }
 
 /** Mirrors pkg/api/transport/types.go UnwrapKeyByIDResponse. */

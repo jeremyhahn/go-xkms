@@ -30,6 +30,22 @@ func mockHandler() http.Handler {
 		}
 
 		switch {
+		// --- Key versions ---
+		case strings.HasPrefix(path, "/api/v1/keys/") && strings.HasSuffix(path, "/versions") && r.Method == http.MethodGet:
+			respond(transport.ListKeyVersionsResponse{
+				KeyID:   strings.TrimSuffix(strings.TrimPrefix(path, "/api/v1/keys/"), "/versions"),
+				Backend: r.URL.Query().Get("backend"), CurrentVersion: 2,
+				Versions: []transport.KeyVersionInfo{{Version: 1, State: "disabled"}, {Version: 2, State: "enabled", Current: true}},
+			})
+		case strings.HasPrefix(path, "/api/v1/keys/") && strings.HasSuffix(path, "/retire"):
+			respond(transport.KeyVersionStateResponse{KeyID: "signer", Version: 1, State: "retired", Changed: true})
+		case path == "/api/v1/keys/rotate-all":
+			var req transport.RotateScopeKeysRequest
+			json.NewDecoder(r.Body).Decode(&req)
+			respond(transport.RotateScopeKeysResponse{
+				TenantID: req.TenantID, Rotated: 1,
+				Results: []transport.KeyRotationResult{{Backend: "software", KeyID: "signer", KeyVersion: 3}},
+			})
 		case path == "/health":
 			respond(map[string]string{"status": "healthy", "version": "1.0.0"})
 		case strings.HasPrefix(path, "/api/v1/tpm/policies/") && r.Method == http.MethodGet:

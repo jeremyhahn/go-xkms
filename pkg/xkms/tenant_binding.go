@@ -99,3 +99,22 @@ func requirePlatformScope(ctx context.Context, op, target string) error {
 func visibleToCaller(identity *auth.Identity, tenantID string) bool {
 	return auth.IsCrossTenant(identity) || identity.TenantID == tenantID
 }
+
+// targetTenant resolves the tenant an operation that addresses a tenant acts
+// on -- TPM policy management, RotateScopeKeys. A cross-tenant (system)
+// caller acts on requested, "" being the system scope. A tenant-scoped
+// caller acts on its own tenant: requested may be empty or name that tenant,
+// and naming another is refused with *TenantBindingError.
+func targetTenant(ctx context.Context, op, requested string) (string, error) {
+	identity := auth.GetIdentity(ctx)
+	if auth.IsCrossTenant(identity) {
+		return requested, nil
+	}
+	if requested == "" {
+		return identity.TenantID, nil
+	}
+	if err := bindTenantTarget(ctx, op, requested); err != nil {
+		return "", err
+	}
+	return requested, nil
+}

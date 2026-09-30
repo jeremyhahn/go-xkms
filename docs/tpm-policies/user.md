@@ -1,6 +1,6 @@
 # TPM Policies — User Guide
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 A TPM policy names a platform state — a set of PCRs and their values — that
 many TPM keys and sealed objects share. The TPM refuses to use a key bound to
@@ -25,6 +25,29 @@ Tenants: each tenant has its own policies and keys. The system administrator
 chooses a tenant's TPM mode with `xkmsctl tenant tpm-mode <tenant>
 none|shared|vtpm`; a mode can change only while the tenant has no TPM keys,
 sealed objects or policies.
+
+## Rotating keys
+
+Any key -- a TPM2 key included -- rotates the same way: `xkmsctl key rotate
+<id>` creates a new version with the same algorithm, attributes and, for a TPM2
+key, the same tenant scope and TPM policy, and makes it current. Nothing
+referring to the key changes.
+
+1. Sign and encrypt switch to the new version at once. The response reports
+   it as `key_version`.
+2. Older versions stay enabled, so signatures and ciphertext they produced
+   still verify and decrypt without naming a version. AES-CBC and RSA
+   PKCS#1 v1.5 ciphertext is the exception: once a key has two enabled
+   versions, pass the `key_version` the encrypt reported
+   (`xkmsctl key decrypt ... --key-version 1`). Keep it with the ciphertext.
+3. `xkmsctl key versions <id>` shows every version. When nothing needs an old
+   version any more, disable it (`key version disable <id> <n>`, reversible)
+   or retire it (`key version retire <id> <n>`, which deletes it for good).
+   The current version cannot be disabled or retired.
+4. `xkmsctl key rotate-all` rotates every key of your tenant at once.
+5. Deleting a key deletes all its versions.
+
+A key ID may not end in `--v` followed by digits: that suffix names versions.
 
 ## xKey
 

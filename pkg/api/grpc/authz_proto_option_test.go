@@ -128,17 +128,12 @@ func TestRPCPermissions_ProtoOptionMatchesGoldenTable(t *testing.T) {
 // until deliberately annotated, so this list is the explicit register of that
 // exposure — an RPC cannot silently join it.
 func TestRPCPermissions_UnannotatedRPCsAreTheUngatedOnes(t *testing.T) {
-	// The ungated surface: health/discovery, key-version toggles, secure-ECDH
-	// session RPCs, and the WebAuthn ceremony (which authenticates by
-	// ceremony, not by RBAC permission).
+	// The ungated surface: health/discovery, secure-ECDH session RPCs, and
+	// the WebAuthn ceremony (which authenticates by ceremony, not by RBAC
+	// permission). The key-version RPCs left it when they were implemented.
 	wantUnannotated := map[string]struct{}{
 		"Health":                {},
 		"Algorithms":            {},
-		"ListKeyVersions":       {},
-		"EnableKeyVersion":      {},
-		"DisableKeyVersion":     {},
-		"EnableAllKeyVersions":  {},
-		"DisableAllKeyVersions": {},
 		"DeriveKeyECDHSecure":   {},
 		"GenerateEphemeralECDH": {},
 		"UseResidentKey":        {},

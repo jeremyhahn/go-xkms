@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -267,4 +268,49 @@ func TPMPolicyClassOf(err error) (Class, bool) {
 		}
 	}
 	return ClassOf(TPMPolicySentinelClasses, err)
+}
+
+// KeyVersionTypedClasses classifies the errors of the key-version model
+// (pkg/keyversion, and pkg/xkms's version-aware key operations). Every
+// transport's key-operation mapper reads it through KeyVersionClassOf before
+// its own tables, because the service wraps some of these errors in a
+// role-lookup error that would otherwise read as a missing key:
+//
+//   - A ciphertext that cannot be matched to a version safely, a reserved or
+//     invalid version name, is a fault in the request.
+//   - A version the key does not have, or whose backend key is gone, is not
+//     found.
+//   - Disabling or retiring the current version, using a disabled or retired
+//     one, or changing a retired one conflicts with the key's current state.
+var KeyVersionTypedClasses = []TypedClass{
+	{As[*keyversion.KeyVersionRequiredError], ClassInvalidArgument},
+	{As[*keyversion.ReservedKeyIDError], ClassInvalidArgument},
+	{As[*keyversion.InvalidVersionError], ClassInvalidArgument},
+	{As[*keyversion.InvalidRecordKeyError], ClassInvalidArgument},
+	{As[*keyversion.VersionNotFoundError], ClassNotFound},
+	{As[*xkms.KeyVersionMissingError], ClassNotFound},
+	{As[*keyversion.CurrentVersionError], ClassFailedPrecondition},
+	{As[*keyversion.RetiredVersionError], ClassFailedPrecondition},
+	{As[*keyversion.VersionUnavailableError], ClassFailedPrecondition},
+	{As[*xkms.KeyExistsError], ClassAlreadyExists},
+	{As[*xkms.KeyRotationUnsupportedError], ClassUnimplemented},
+}
+
+// KeyVersionSentinelClasses classifies the key-version model's sentinels.
+var KeyVersionSentinelClasses = []SentinelClass{
+	{xkms.ErrKeyVersionsNotConfigured, ClassUnavailable},
+}
+
+// KeyVersionClassOf classifies an error of the key-version model: its typed
+// errors first, then its sentinels.
+func KeyVersionClassOf(err error) (Class, bool) {
+	if err == nil {
+		return ClassInternal, false
+	}
+	for _, entry := range KeyVersionTypedClasses {
+		if entry.Match(err) {
+			return entry.Class, true
+		}
+	}
+	return ClassOf(KeyVersionSentinelClasses, err)
 }

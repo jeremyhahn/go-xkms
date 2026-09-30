@@ -17,7 +17,6 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 )
@@ -32,29 +31,11 @@ func (s *XKMSService) SetTPMPolicyService(p *tpmpolicy.Service) { s.tpmPolicies.
 // TPMPolicyService returns the wired TPM policy service, or nil.
 func (s *XKMSService) TPMPolicyService() *tpmpolicy.Service { return s.tpmPolicies.load() }
 
-// tpmPolicyTarget resolves the tenant a TPM policy operation acts on. A
-// cross-tenant (system) caller acts on requested, "" being the system scope.
-// A tenant-scoped caller acts on its own tenant: requested may be empty or
-// name that tenant, and naming another is refused with *TenantBindingError.
-func tpmPolicyTarget(ctx context.Context, op, requested string) (string, error) {
-	identity := auth.GetIdentity(ctx)
-	if auth.IsCrossTenant(identity) {
-		return requested, nil
-	}
-	if requested == "" {
-		return identity.TenantID, nil
-	}
-	if err := bindTenantTarget(ctx, op, requested); err != nil {
-		return "", err
-	}
-	return requested, nil
-}
-
 // tenantPolicies resolves the target tenant of op and returns its TPM
 // policy operations. The binding is checked first, so a refused caller
 // learns nothing about the node's configuration.
 func (s *XKMSService) tenantPolicies(ctx context.Context, op, requested string) (*TenantTPMPolicies, error) {
-	tenant, err := tpmPolicyTarget(ctx, op, requested)
+	tenant, err := targetTenant(ctx, op, requested)
 	if err != nil {
 		return nil, err
 	}

@@ -108,6 +108,17 @@ type wrapMechanism struct {
 	legacy bool
 }
 
+// authenticated reports whether a wrong unwrapping key reliably fails the
+// mechanism's own integrity check: AES-KW and AES-KWP (RFC 3394/5649
+// integrity check value), AES-GCM (tag) and RSA-OAEP (padding check). Those
+// may try each enabled version of a rotated key in turn. The legacy
+// mechanisms -- AES-CBC and RSA PKCS#1 v1.5 -- authenticate nothing, so
+// trying keys would return garbage or act as a padding oracle, and they
+// need the caller's key version instead.
+func (m wrapMechanism) authenticated() bool {
+	return !m.legacy
+}
+
 // wrapMechanisms maps each canonical algorithm onto its normalized mechanism.
 // A map rather than a switch, per the project's dispatch convention, and a
 // single table so an algorithm cannot be accepted by wrap but refused by

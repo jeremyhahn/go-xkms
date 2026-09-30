@@ -259,13 +259,23 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"xkms.algorithms": (*Server).handleAlgorithms,
 
 	// XKMS key operations
-	"xkms.listBackends":        (*Server).handleListBackends,
-	"xkms.getBackend":          (*Server).handleGetBackend,
-	"xkms.generateKey":         (*Server).handleGenerateKey,
-	"xkms.getKey":              (*Server).handleGetKey,
-	"xkms.deleteKey":           (*Server).handleDeleteKey,
-	"xkms.listKeys":            (*Server).handleListKeys,
-	"xkms.rotateKey":           (*Server).handleRotateKey,
+	"xkms.listBackends": (*Server).handleListBackends,
+	"xkms.getBackend":   (*Server).handleGetBackend,
+	"xkms.generateKey":  (*Server).handleGenerateKey,
+	"xkms.getKey":       (*Server).handleGetKey,
+	"xkms.deleteKey":    (*Server).handleDeleteKey,
+	"xkms.listKeys":     (*Server).handleListKeys,
+	"xkms.rotateKey":    (*Server).handleRotateKey,
+
+	// Key versions
+	"xkms.listKeyVersions":       (*Server).handleListKeyVersions,
+	"xkms.enableKeyVersion":      (*Server).handleEnableKeyVersion,
+	"xkms.disableKeyVersion":     (*Server).handleDisableKeyVersion,
+	"xkms.retireKeyVersion":      (*Server).handleRetireKeyVersion,
+	"xkms.enableAllKeyVersions":  (*Server).handleEnableAllKeyVersions,
+	"xkms.disableAllKeyVersions": (*Server).handleDisableAllKeyVersions,
+	"xkms.rotateScopeKeys":       (*Server).handleRotateScopeKeys,
+
 	"xkms.sign":                (*Server).handleSign,
 	"xkms.verify":              (*Server).handleVerify,
 	"xkms.encrypt":             (*Server).handleEncrypt,

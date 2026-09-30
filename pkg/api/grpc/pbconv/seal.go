@@ -103,6 +103,7 @@ func SealResponseToProto(r *transport.SealResponse) *pb.SealResponse {
 		TpmPrivate: r.TPMPrivate,
 		WrappedDek: r.WrappedDEK,
 		KeyId:      r.KeyID,
+		KeyVersion: r.KeyVersion,
 	}
 }
 
@@ -122,6 +123,7 @@ func SealResponseFromProto(r *pb.SealResponse) (*transport.SealResponse, error) 
 		WrappedDEK: r.GetWrappedDek(),
 		KeyID:      r.GetKeyId(),
 		Metadata:   metadata,
+		KeyVersion: r.GetKeyVersion(),
 	}, nil
 }
 
@@ -140,6 +142,7 @@ func UnsealRequestToProto(r *transport.UnsealRequest) *pb.UnsealRequest {
 		WrappedDek: r.WrappedDEK,
 		Metadata:   metadataToProto(r.Metadata),
 		Password:   r.Password,
+		KeyVersion: r.KeyVersion,
 	}
 }
 
@@ -163,5 +166,6 @@ func UnsealRequestFromProto(r *pb.UnsealRequest, tenant string) (*transport.Unse
 		Metadata:   metadata,
 		Password:   r.GetPassword(),
 		TenantID:   tenant,
+		KeyVersion: r.GetKeyVersion(),
 	}, nil
 }

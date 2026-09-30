@@ -135,7 +135,12 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
   caller that genuinely needs the secret value reads `attrs.Password` or
   `attrs.SealData` directly.
 - **Rotation preserves the key ID.** Callers keep referring to the same
-  identifier; the backend decides how versions are represented.
+  identifier. Versions are the service layer's, identically on every
+  backend: version `n > 1` of `K` is its own backend key `K--v<n>`, and a
+  version record says which is current. The service never calls a backend's
+  in-place `RotateKey`. See
+  [`../tpm-policies/engineering.md`](../tpm-policies/engineering.md), "Key
+  versions".
 - **Concurrency.** The composite is safe for concurrent use. Ordering across
   distinct keys is not promised; per-key operations serialise where the backend
   requires it (a PKCS#11 session, a TPM context).

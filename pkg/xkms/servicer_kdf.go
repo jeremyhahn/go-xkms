@@ -42,13 +42,13 @@ import (
 // implement types.SymmetricKeyDeriver, and the assertion below turns that into
 // ErrOperationNotSupported naming the backend, rather than a key derived from
 // something that is not the key.
-func (s *XKMSService) deriveBaseKeyMaterial(ctx context.Context, req *transport.DeriveKeyRequest, params *kdf.KDFParams) ([]byte, error) {
+func (s *XKMSService) deriveBaseKeyMaterial(ctx context.Context, req *transport.DeriveKeyRequest, params *kdf.KDFParams) ([]byte, uint32, error) {
 	hasMaterial := len(req.InputKeyMaterial) > 0
 	hasIdentity := req.KeyID != ""
 
 	switch {
 	case hasMaterial && hasIdentity:
-		return nil, &ErrValidation{
+		return nil, 0, &ErrValidation{
 			Sentinel: ErrInvalidKeyAttributes,
 			Detail:   "input_key_material and key_id name two different base keys; supply exactly one",
 		}
@@ -56,15 +56,15 @@ func (s *XKMSService) deriveBaseKeyMaterial(ctx context.Context, req *transport.
 	case hasMaterial:
 		derived, err := types.DeriveFromKeyMaterial(req.InputKeyMaterial, params)
 		if err != nil {
-			return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Detail: "key derivation failed", Err: err}
+			return nil, 0, &ErrOperationWrap{Sentinel: ErrOperationFailed, Detail: "key derivation failed", Err: err}
 		}
-		return derived, nil
+		return derived, 0, nil
 
 	case hasIdentity:
 		return s.deriveFromStoredKey(ctx, req, params)
 
 	default:
-		return nil, &ErrValidation{
+		return nil, 0, &ErrValidation{
 			Sentinel: ErrInvalidKeyAttributes,
 			Detail:   "either input_key_material or key_id is required",
 		}
@@ -75,39 +75,45 @@ func (s *XKMSService) deriveBaseKeyMaterial(ctx context.Context, req *transport.
 //
 // Nothing here ever reads the base key: the backend is handed the key's
 // attributes and the KDF parameters and returns only derived bytes. That is
-// the whole point of the split — see types.SymmetricKeyDeriver.
-func (s *XKMSService) deriveFromStoredKey(ctx context.Context, req *transport.DeriveKeyRequest, params *kdf.KDFParams) ([]byte, error) {
+// the whole point of the split — see types.SymmetricKeyDeriver. The base key
+// is the key's current version, or the enabled version req.KeyVersion names;
+// the version used is returned with the derived bytes.
+func (s *XKMSService) deriveFromStoredKey(ctx context.Context, req *transport.DeriveKeyRequest, params *kdf.KDFParams) ([]byte, uint32, error) {
 	backendName := req.Backend
 	if backendName == "" {
 		backendName = s.defaultBackendName()
 	}
 	if backendName == "" {
-		return nil, requiredField("backend")
+		return nil, 0, requiredField("backend")
 	}
 
 	b, err := s.resolveTenantBackend(backendName, req.TenantID)
 	if err != nil {
-		return nil, roleLookupError("backend", backendName, err)
+		return nil, 0, roleLookupError("backend", backendName, err)
 	}
 
 	deriver, ok := b.KeyProvider().(types.SymmetricKeyDeriver)
 	if !ok {
-		return nil, &ErrBackendUnsupported{
+		return nil, 0, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
 			Backend:  backendName,
 			Detail:   "cannot derive from a stored symmetric key",
 		}
 	}
 
-	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
+	k, err := s.resolveKey(ctx, b, backendName, req.KeyID)
 	if err != nil {
-		return nil, roleLookupError("key", req.KeyID, err)
+		return nil, 0, roleLookupError("key", req.KeyID, err)
+	}
+	version, err := k.use(req.KeyVersion)
+	if err != nil {
+		return nil, 0, roleLookupError("key", req.KeyID, err)
 	}
 
-	derived, err := deriver.DeriveFromSymmetricKey(ctx, attrs, params)
+	derived, err := deriver.DeriveFromSymmetricKey(ctx, version.attrs, params)
 	if err != nil {
-		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Detail: "key derivation failed", Err: err}
+		return nil, 0, &ErrOperationWrap{Sentinel: ErrOperationFailed, Detail: "key derivation failed", Err: err}
 	}
 
-	return derived, nil
+	return derived, version.number, nil
 }

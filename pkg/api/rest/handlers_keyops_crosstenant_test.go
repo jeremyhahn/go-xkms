@@ -77,6 +77,7 @@ func crossTenantHandlerContext(t *testing.T, holders ...string) (*HandlerContext
 	}))
 	svc, err := xkms.Get()
 	require.NoError(t, err)
+	wireKeyVersionStore(t)
 
 	keyOf := map[string]string{crossTenantA: crossTenantAKey, crossTenantB: crossTenantBKey}
 	if len(holders) == 0 {

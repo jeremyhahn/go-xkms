@@ -117,6 +117,7 @@ func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
 	assert.NotNil(t, st.SSH)
 	assert.NotNil(t, st.CA)
 	assert.Nil(t, st.TPMPolicies)
+	assert.NotNil(t, st.KeyVersions)
 	assert.NotNil(t, st.Barrier)
 	assert.NotNil(t, st.Custodians)
 	assert.NotNil(t, st.Shares)
@@ -144,6 +145,13 @@ func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
 	groups, err := svc.ListCustodianGroups(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, groups.Groups, "custody answers from the host's node clients")
+
+	// The key-version store is wired: a key rotates into version 2.
+	_, err = svc.GenerateKey(ctx, &transport.GenerateKeyRequest{Backend: hostdeps.BackendName, KeyID: "composed", Algorithm: "ecdsa"})
+	require.NoError(t, err)
+	rotated, err := svc.RotateKey(ctx, &transport.RotateKeyRequest{Backend: hostdeps.BackendName, KeyID: "composed"})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(2), rotated.KeyVersion)
 }
 
 // TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons proves a
@@ -170,6 +178,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 		FeatureSSH:           "storage",
 		FeatureCA:            "CA configuration",
 		FeatureTPMPolicies:   "TPM2 backend",
+		FeatureKeyVersions:   "storage",
 		FeatureBarrier:       "barrier registry",
 		FeatureCustody:       "custody clients",
 	}, missing)
@@ -180,6 +189,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 	assert.Nil(t, st.SSH)
 	assert.Nil(t, st.CA)
 	assert.Nil(t, st.TPMPolicies)
+	assert.Nil(t, st.KeyVersions)
 	assert.Nil(t, st.Barrier)
 
 	// Wiring an empty composition leaves the service answering "not
@@ -189,6 +199,8 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 	assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	_, err = svc.TPMPolicyList(platformCtx(), &transport.TPMPolicyListRequest{})
 	assert.ErrorIs(t, err, xkms.ErrNotConfigured)
+	_, err = svc.RotateScopeKeys(platformCtx(), &transport.RotateScopeKeysRequest{})
+	assert.ErrorIs(t, err, xkms.ErrNotConfigured, "rotation needs the key-version store")
 	assert.NoError(t, st.Close(), "closing stores without a TPM policy service is a no-op")
 }
 
@@ -258,7 +270,7 @@ func TestBuild_StorageFailureIsABuildErrorPerFeature(t *testing.T) {
 			assert.ErrorIs(t, reason, errStorageDown)
 		}
 	}
-	for _, f := range []Feature{FeaturePasswords, FeaturePlatformStore, FeatureSSH, FeatureCA} {
+	for _, f := range []Feature{FeaturePasswords, FeaturePlatformStore, FeatureSSH, FeatureCA, FeatureKeyVersions} {
 		assert.True(t, failed[f], "%s must fail on storage", f)
 	}
 	// Features with no storage of their own still compose.
@@ -472,4 +484,30 @@ func (shares) ListShares(context.Context) (*qrdbtransport.ListSharesResponse, er
 // yields none, leaving the TPM policy service off in a host composition.
 func TestTPM2Backend_NoneRegistered(t *testing.T) {
 	assert.Nil(t, TPM2Backend(hostdeps.NewService(t)))
+}
+
+// TestBuildKeyVersionStore proves the store is built over the storage its
+// name opens, and that a missing factory and a failing storage are typed
+// errors naming the feature.
+func TestBuildKeyVersionStore(t *testing.T) {
+	var opened []string
+	open := func(name string) (storage.Backend, error) {
+		opened = append(opened, name)
+		return storage.New(), nil
+	}
+	store, err := BuildKeyVersionStore(open)
+	require.NoError(t, err)
+	require.NotNil(t, store)
+	assert.Equal(t, []string{StorageKeyVersions}, opened)
+
+	_, err = BuildKeyVersionStore(nil)
+	var nilDep *NilDependencyError
+	require.ErrorAs(t, err, &nilDep)
+	assert.Equal(t, FeatureKeyVersions, nilDep.Feature)
+
+	_, err = BuildKeyVersionStore(failingStorage)
+	var buildErr *FeatureBuildError
+	require.ErrorAs(t, err, &buildErr)
+	assert.Equal(t, FeatureKeyVersions, buildErr.Feature)
+	assert.ErrorIs(t, err, errStorageDown)
 }

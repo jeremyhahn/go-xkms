@@ -352,6 +352,34 @@ func (m *mockService) RevokeEscrow(ctx context.Context, escrowID string) error {
 
 // Policy methods
 
+func (m *mockService) ListKeyVersions(context.Context, *ListKeyVersionsRequest) (*ListKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) EnableKeyVersion(context.Context, *KeyVersionRequest) (*KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) DisableKeyVersion(context.Context, *KeyVersionRequest) (*KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) RetireKeyVersion(context.Context, *KeyVersionRequest) (*KeyVersionStateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) EnableAllKeyVersions(context.Context, *AllKeyVersionsRequest) (*AllKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) DisableAllKeyVersions(context.Context, *AllKeyVersionsRequest) (*AllKeyVersionsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) RotateScopeKeys(context.Context, *RotateScopeKeysRequest) (*RotateScopeKeysResponse, error) {
+	return nil, nil
+}
+
 func (m *mockService) TPMPolicyCreate(context.Context, *TPMPolicyCreateRequest) (*TPMPolicy, error) {
 	return nil, nil
 }

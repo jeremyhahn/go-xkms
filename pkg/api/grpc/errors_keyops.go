@@ -124,6 +124,12 @@ func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error
 		return translated
 	}
 
+	// Key-version errors first: the service reports some of them inside a
+	// role lookup, which would otherwise read as a missing key.
+	if class, ok := apierrors.KeyVersionClassOf(err); ok {
+		return status.Error(grpcCodeForClass(class), err.Error())
+	}
+
 	var role *xkms.ErrRoleLookup
 	if errors.As(err, &role) {
 		return status.Error(codes.NotFound, role.Error())

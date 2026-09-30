@@ -1944,6 +1944,7 @@ func TestGenerateKeyWithBackend_UnsupportedAlgorithm(t *testing.T) {
 
 func TestRotateKey_Success(t *testing.T) {
 	software, _ := setupExtendedService(t)
+	wireKeyVersionStore(t)
 
 	// Generate initial key
 	attrs := &types.KeyAttributes{CN: "rotate-test-key"}
@@ -1958,6 +1959,7 @@ func TestRotateKey_Success(t *testing.T) {
 
 func TestRotateKey_WithoutBackendPrefix(t *testing.T) {
 	software, _ := setupExtendedService(t)
+	wireKeyVersionStore(t)
 
 	// Generate initial key
 	attrs := &types.KeyAttributes{CN: "rotate-test-key"}

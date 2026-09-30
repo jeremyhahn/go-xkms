@@ -512,6 +512,35 @@ func (s *stubClient) ListUserCredentials(context.Context, string) (*ListUserCred
 	panic("stub")
 }
 
+// KeyVersionService stub.
+func (s *stubClient) ListKeyVersions(context.Context, *ListKeyVersionsRequest) (*ListKeyVersionsResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) EnableKeyVersion(context.Context, *KeyVersionRequest) (*KeyVersionStateResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) DisableKeyVersion(context.Context, *KeyVersionRequest) (*KeyVersionStateResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) RetireKeyVersion(context.Context, *KeyVersionRequest) (*KeyVersionStateResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) EnableAllKeyVersions(context.Context, *AllKeyVersionsRequest) (*AllKeyVersionsResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) DisableAllKeyVersions(context.Context, *AllKeyVersionsRequest) (*AllKeyVersionsResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) RotateScopeKeys(context.Context, *RotateScopeKeysRequest) (*RotateScopeKeysResponse, error) {
+	panic("stub")
+}
+
 // AuditService stub.
 func (s *stubClient) QueryAudit(context.Context, *AuditFilter) (*AuditPage, error) {
 	panic("stub")
@@ -523,6 +552,7 @@ var (
 	_ ConnectionService           = (*stubClient)(nil)
 	_ BackendService              = (*stubClient)(nil)
 	_ KeyService                  = (*stubClient)(nil)
+	_ KeyVersionService           = (*stubClient)(nil)
 	_ CryptoService               = (*stubClient)(nil)
 	_ CertService                 = (*stubClient)(nil)
 	_ SealService                 = (*stubClient)(nil)
@@ -556,6 +586,7 @@ func TestClientComposesAllSubInterfaces(t *testing.T) {
 		{"ConnectionService", func() bool { var v ConnectionService = c; return v != nil }},
 		{"BackendService", func() bool { var v BackendService = c; return v != nil }},
 		{"KeyService", func() bool { var v KeyService = c; return v != nil }},
+		{"KeyVersionService", func() bool { var v KeyVersionService = c; return v != nil }},
 		{"CryptoService", func() bool { var v CryptoService = c; return v != nil }},
 		{"CertService", func() bool { var v CertService = c; return v != nil }},
 		{"SealService", func() bool { var v SealService = c; return v != nil }},

@@ -778,14 +778,16 @@ func TestBoostRotateKey_IEBackend_KeyFound(t *testing.T) {
 		},
 	})
 
-	// mockKeyStore.RotateKey returns "not implemented", so the servicer
-	// wraps it as ErrOperationFailed. This tests the findKeyAttrs+rotate delegation path.
-	_, err = svc.RotateKey(context.Background(), &transport.RotateKeyRequest{
+	// Rotation generates the key's next version as its own backend key;
+	// the backend's in-place RotateKey is never called.
+	wireKeyVersionStore(t)
+	resp, err := svc.RotateKey(context.Background(), &transport.RotateKeyRequest{
 		KeyID:   "rotate-ie",
 		Backend: "ie-backend",
 	})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrOperationFailed))
+	require.NoError(t, err)
+	assert.Equal(t, uint32(2), resp.KeyVersion)
+	assert.Contains(t, resp.PublicKeyPEM, "BEGIN PUBLIC KEY")
 }
 
 // ===========================================================================

@@ -241,6 +241,15 @@ var collectionRouteCases = []collectionRouteCase{
 		},
 	},
 	{
+		name:   "RotateScopeKeys",
+		method: http.MethodPost,
+		base:   "/api/v1/keys/rotate-all",
+		call: func(ctx context.Context, tr *Transport) error {
+			_, err := tr.RotateScopeKeys(ctx, &transport.RotateScopeKeysRequest{TenantID: "acme"})
+			return err
+		},
+	},
+	{
 		name:   "TPMPolicyCreate",
 		method: http.MethodPost,
 		base:   "/api/v1/tpm/policies",

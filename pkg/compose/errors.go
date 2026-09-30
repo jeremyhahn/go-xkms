@@ -53,6 +53,10 @@ const (
 	// scope (pkg/tpmpolicy).
 	FeatureTPMPolicies Feature = "tpm-policies"
 
+	// FeatureKeyVersions is the key-version record store: which versions
+	// each rotated key has and which one is current (pkg/keyversion).
+	FeatureKeyVersions Feature = "key-versions"
+
 	// FeatureBarrier is the system barrier served by the barrier routes.
 	FeatureBarrier Feature = "barrier"
 

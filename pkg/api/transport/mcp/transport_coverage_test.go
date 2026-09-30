@@ -95,6 +95,33 @@ func newCatchAllMCPServer(t *testing.T) (string, func()) {
 		case "sealStore.status":
 			d, _ := json.Marshal(map[string]interface{}{"available": true, "sealer_id": "tpm2", "secret_count": 1, "secret_names": []string{"db-password"}})
 			return jsonrpcResponse{Result: d}
+		case "xkms.listKeyVersions":
+			var params transport.ListKeyVersionsRequest
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return jsonrpcResponse{ErrorText: err.Error()}
+			}
+			d, _ := json.Marshal(transport.ListKeyVersionsResponse{
+				KeyID: params.KeyID, Backend: params.Backend, CurrentVersion: 2,
+				Versions: []transport.KeyVersionInfo{{Version: 1, State: "disabled"}, {Version: 2, State: "enabled", Current: true}},
+			})
+			return jsonrpcResponse{Result: d}
+		case "xkms.retireKeyVersion":
+			var params transport.KeyVersionRequest
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return jsonrpcResponse{ErrorText: err.Error()}
+			}
+			d, _ := json.Marshal(transport.KeyVersionStateResponse{KeyID: params.KeyID, Version: params.Version, State: "retired", Changed: true})
+			return jsonrpcResponse{Result: d}
+		case "xkms.rotateScopeKeys":
+			var params transport.RotateScopeKeysRequest
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return jsonrpcResponse{ErrorText: err.Error()}
+			}
+			d, _ := json.Marshal(transport.RotateScopeKeysResponse{
+				TenantID: params.TenantID, Rotated: 1,
+				Results: []transport.KeyRotationResult{{Backend: "software", KeyID: "signer", KeyVersion: 3}},
+			})
+			return jsonrpcResponse{Result: d}
 		case "tpm.policy.get":
 			var params transport.TPMPolicyRequest
 			if err := json.Unmarshal(req.Params, &params); err != nil {

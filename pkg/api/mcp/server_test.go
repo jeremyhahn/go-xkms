@@ -71,6 +71,7 @@ func setupTestXKMS(t *testing.T) *xkms.XKMSService {
 
 	svc, err := xkms.Get()
 	require.NoError(t, err)
+	wireKeyVersionStore(t)
 	return svc
 }
 

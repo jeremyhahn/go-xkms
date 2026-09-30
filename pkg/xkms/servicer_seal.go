@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/elliptic"
 	"crypto/x509"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -71,7 +72,7 @@ func ensureSealingKey(ctx context.Context, b Backend, attrs *types.KeyAttributes
 }
 
 // sealingKey resolves the key a seal or unseal runs under, within b -- the
-// caller's tenant view of the backend.
+// caller's tenant view of the backend registered as backendName.
 //
 // A key ID names a key the way every other key operation names one: the
 // reference is parsed (a malformed one is ErrKeyIDParse) and its key name is
@@ -81,30 +82,55 @@ func ensureSealingKey(ctx context.Context, b Backend, attrs *types.KeyAttributes
 // The transports used to resolve the name over the unscoped backend, which
 // sealed under -- and unsealed with -- any tenant's key of that name.
 //
-// Without a key ID a key-based backend uses the default sealing key; see
-// defaultSealingKeyAttributes. TPM 2.0 seals a keyed-hash object of its own
-// rather than under a key, which keyID must name; see tpmSealedObject.
-// tpmPolicy names the TPM policy a TPM2 sealed object is bound to, and any
-// other backend refuses one.
-func sealingKey(ctx context.Context, b Backend, keyID, tpmPolicy string) (*types.KeyAttributes, error) {
+// Without a key ID a key-based backend uses the default sealing key of
+// tenant, the caller's tenant ("" for the system tenant); see
+// defaultSealingKeyAttributes. create generates it on first use. It is
+// resolved among tenant's keys only: on the unscoped view a platform caller
+// uses, another tenant's default key has the same name.
+//
+// A key-based backend's sealing key is versioned like any other key, and the
+// versioned key is returned so the caller picks the version: Seal the current
+// one, Unseal the one the sealed data records. TPM 2.0 seals a keyed-hash
+// object of its own rather than under a key, which keyID must name; see
+// tpmSealedObject. That object has no versions, so the versioned key is nil
+// and attrs describe the object. tpmPolicy names the TPM policy a TPM2
+// sealed object is bound to, and any other backend refuses one.
+func (s *XKMSService) sealingKey(ctx context.Context, b Backend, backendName, tenant, keyID, tpmPolicy string, create bool) (*versionedKey, *types.KeyAttributes, error) {
 	if isTPM2Backend(b) {
-		return tpmSealedObject(keyID, tpmPolicy)
+		attrs, err := tpmSealedObject(keyID, tpmPolicy)
+		return nil, attrs, err
 	}
-	kp := b.KeyProvider()
 	if tpmPolicy != "" {
-		return nil, &ErrValidation{Sentinel: ErrTPMPolicyNotSupported, Detail: "tpm_policy is only valid on a TPM2 backend"}
+		return nil, nil, &ErrValidation{Sentinel: ErrTPMPolicyNotSupported, Detail: "tpm_policy is only valid on a TPM2 backend"}
 	}
 	if keyID != "" {
 		parsed, err := ParseKeyIDToAttributes(keyID)
 		if err != nil {
-			return nil, &ErrKeyIDParse{Err: err}
+			return nil, nil, &ErrKeyIDParse{Err: err}
 		}
-		return findKeyAttrs(ctx, b, parsed.CN)
+		k, err := s.resolveKey(ctx, b, backendName, parsed.CN)
+		if err != nil {
+			return nil, nil, err
+		}
+		return k, nil, nil
 	}
+	kp := b.KeyProvider()
 	if kp == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return defaultSealingKeyAttributes(kp.Type()), nil
+	defaults := defaultSealingKeyAttributes(kp.Type())
+	owner := recordTenant(tenant)
+	k, err := s.resolveKeyOf(ctx, b, backendName, defaults.CN, &owner)
+	if errors.Is(err, ErrKeyNotFound) && create {
+		if err := ensureSealingKey(ctx, b, defaults); err != nil {
+			return nil, nil, err
+		}
+		k, err = s.resolveKeyOf(ctx, b, backendName, defaults.CN, &owner)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return k, nil, nil
 }
 
 // isTPM2Backend reports whether b seals TPM 2.0 keyed-hash objects.
@@ -164,6 +190,10 @@ func tpmSealedObject(keyID, tpmPolicy string) (*types.KeyAttributes, error) {
 // the object, and the caller passes it to Unseal. A second seal never
 // replaces an object it did not name.
 //
+// On a key-based backend the sealing key's current version seals, and
+// SealResponse.KeyVersion (types.SealedData.KeyVersion) records it beside the
+// ciphertext; the sealed bytes are unchanged.
+//
 // Implements the SealServicer interface.
 func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*transport.SealResponse, error) {
 	if req == nil {
@@ -174,7 +204,7 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 		return nil, ErrNilData
 	}
 
-	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)
+	b, backendName, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -185,14 +215,17 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 			return nil, err
 		}
 	}
-	attrs, err := sealingKey(ctx, b, keyID, req.TPMPolicy)
+	k, attrs, err := s.sealingKey(ctx, b, backendName, req.TenantID, keyID, req.TPMPolicy, req.KeyID == "")
 	if err != nil {
 		return nil, err
 	}
-	if attrs != nil && req.KeyID == "" && attrs.StoreType != types.StoreTPM2 {
-		if sealErr := ensureSealingKey(ctx, b, attrs); sealErr != nil {
-			return nil, sealErr
+	var version uint32
+	if k != nil {
+		cur, err := k.current()
+		if err != nil {
+			return nil, err
 		}
+		attrs, version = cur.attrs, cur.number
 	}
 
 	opts := &types.SealOptions{
@@ -213,6 +246,7 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 	if err != nil {
 		return nil, &ErrSealOperation{Operation: "seal", Err: err}
 	}
+	sealed.KeyVersion = version
 
 	return &transport.SealResponse{
 		Backend:    string(sealed.Backend),
@@ -224,6 +258,7 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 		WrappedDEK: sealed.WrappedDEK,
 		KeyID:      sealed.KeyID,
 		Metadata:   sealed.Metadata,
+		KeyVersion: sealed.KeyVersion,
 	}, nil
 }
 
@@ -234,6 +269,11 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 // blob sealed under another tenant's key -- named or default -- does not
 // unseal for this caller. A TPM2 unseal must carry the key ID its seal
 // returned (ErrTPMSealedObjectKeyIDRequired otherwise).
+//
+// On a key-based backend the data is unsealed with the sealing key version
+// req.KeyVersion names, which must be enabled; without one every enabled
+// version is tried, newest first, which is safe because every seal
+// construction authenticates its ciphertext.
 //
 // Implements the SealServicer interface.
 func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) (*transport.UnsealResponse, error) {
@@ -247,14 +287,22 @@ func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) 
 		return nil, ErrInvalidSealedData
 	}
 
-	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)
+	b, backendName, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
 
-	attrs, err := sealingKey(ctx, b, req.KeyID, "")
+	k, attrs, err := s.sealingKey(ctx, b, backendName, req.TenantID, req.KeyID, "", false)
 	if err != nil {
 		return nil, err
+	}
+	versions := []keyVersion{{attrs: attrs}}
+	if k != nil {
+		// Every seal construction authenticates its ciphertext, so a blob
+		// that records no version can try each enabled one.
+		if versions, err = k.trialVersions(req.KeyVersion); err != nil {
+			return nil, err
+		}
 	}
 
 	sealed := &types.SealedData{
@@ -266,23 +314,26 @@ func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) 
 		TPMPrivate: req.TPMPrivate,
 		WrappedDEK: req.WrappedDEK,
 		Metadata:   req.Metadata,
+		KeyVersion: req.KeyVersion,
 	}
 
-	opts := &types.UnsealOptions{
-		AAD:           req.AAD,
-		KeyAttributes: attrs,
-	}
-
+	var password types.Password
 	// Map password for TPM sealed object authentication.
 	if req.Password != "" {
 		pw, pwErr := types.NewPasswordFromString(req.Password)
 		if pwErr != nil {
 			return nil, pwErr
 		}
-		opts.Password = pw
+		password = pw
 	}
 
-	plaintext, err := b.Unseal(ctx, sealed, opts)
+	plaintext, _, err := firstSuccess(versions, func(v keyVersion) ([]byte, error) {
+		return b.Unseal(ctx, sealed, &types.UnsealOptions{
+			AAD:           req.AAD,
+			KeyAttributes: v.attrs,
+			Password:      password,
+		})
+	})
 	if err != nil {
 		return nil, &ErrSealOperation{Operation: "unseal", Err: err}
 	}

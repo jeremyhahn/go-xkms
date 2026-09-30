@@ -975,6 +975,64 @@ func (t *Transport) RevokeEscrow(ctx context.Context, escrowID string) error {
 	return t.service.RevokeEscrow(ctx, escrowID)
 }
 
+// Key Version Operations
+
+// ListKeyVersions lists a key's versions.
+func (t *Transport) ListKeyVersions(ctx context.Context, req *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.ListKeyVersions(ctx, req)
+}
+
+// EnableKeyVersion enables a version of a key.
+func (t *Transport) EnableKeyVersion(ctx context.Context, req *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.EnableKeyVersion(ctx, req)
+}
+
+// DisableKeyVersion disables a version of a key.
+func (t *Transport) DisableKeyVersion(ctx context.Context, req *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.DisableKeyVersion(ctx, req)
+}
+
+// RetireKeyVersion retires a version of a key.
+func (t *Transport) RetireKeyVersion(ctx context.Context, req *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.RetireKeyVersion(ctx, req)
+}
+
+// EnableAllKeyVersions enables every disabled version of a key.
+func (t *Transport) EnableAllKeyVersions(ctx context.Context, req *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.EnableAllKeyVersions(ctx, req)
+}
+
+// DisableAllKeyVersions disables every non-current version of a key.
+func (t *Transport) DisableAllKeyVersions(ctx context.Context, req *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.DisableAllKeyVersions(ctx, req)
+}
+
+// RotateScopeKeys rotates every key of a tenant.
+func (t *Transport) RotateScopeKeys(ctx context.Context, req *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.RotateScopeKeys(ctx, req)
+}
+
 // TPM Policy Operations
 
 // TPMPolicyCreate creates a named TPM policy.

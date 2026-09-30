@@ -719,6 +719,9 @@ func (t *Transport) Verify(ctx context.Context, req *transport.VerifyRequest) (*
 	if req.DataIsDigest {
 		body["data_is_digest"] = true
 	}
+	if req.KeyVersion != 0 {
+		body["key_version"] = req.KeyVersion
+	}
 
 	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
@@ -796,6 +799,18 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 		body["gcm_nonce_mode"] = req.GCMNonceMode
 	}
 
+	if req.Padding != "" {
+		body["padding"] = req.Padding
+	}
+	if req.Hash != "" {
+		body["hash"] = req.Hash
+	}
+	if len(req.Label) > 0 {
+		body["label"] = req.Label
+	}
+	if req.KeyVersion != 0 {
+		body["key_version"] = req.KeyVersion
+	}
 	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return nil, err
@@ -1085,6 +1100,9 @@ func (t *Transport) DeriveKey(ctx context.Context, req *transport.DeriveKeyReque
 		body["derived_key_type"] = req.DerivedKeyType
 	}
 
+	if req.KeyVersion != 0 {
+		body["key_version"] = req.KeyVersion
+	}
 	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return nil, err
@@ -2325,6 +2343,67 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 // model is undecided, so Transport does not implement EscrowKey/RecoverKey/
 // ListEscrowed/RevokeEscrow at all. transport.EscrowService is no longer
 // part of transport.Client — see docs/escrow/architecture.md.
+
+// Key Version Operations
+//
+// The key-version API is served by wire.KeyVersionClient, shared with the
+// REST transport, over the REST routes.
+
+// ListKeyVersions lists a key's versions.
+func (t *Transport) ListKeyVersions(ctx context.Context, req *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.KeyVersionClient{Do: t.doRawRequest}.ListKeyVersions(ctx, req)
+}
+
+// EnableKeyVersion enables a version of a key.
+func (t *Transport) EnableKeyVersion(ctx context.Context, req *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.KeyVersionClient{Do: t.doRawRequest}.EnableKeyVersion(ctx, req)
+}
+
+// DisableKeyVersion disables a version of a key.
+func (t *Transport) DisableKeyVersion(ctx context.Context, req *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.KeyVersionClient{Do: t.doRawRequest}.DisableKeyVersion(ctx, req)
+}
+
+// RetireKeyVersion retires a version of a key.
+func (t *Transport) RetireKeyVersion(ctx context.Context, req *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.KeyVersionClient{Do: t.doRawRequest}.RetireKeyVersion(ctx, req)
+}
+
+// EnableAllKeyVersions enables every disabled version of a key.
+func (t *Transport) EnableAllKeyVersions(ctx context.Context, req *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.KeyVersionClient{Do: t.doRawRequest}.EnableAllKeyVersions(ctx, req)
+}
+
+// DisableAllKeyVersions disables every non-current version of a key.
+func (t *Transport) DisableAllKeyVersions(ctx context.Context, req *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.KeyVersionClient{Do: t.doRawRequest}.DisableAllKeyVersions(ctx, req)
+}
+
+// RotateScopeKeys rotates every key of a tenant.
+func (t *Transport) RotateScopeKeys(ctx context.Context, req *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.KeyVersionClient{Do: t.doRawRequest}.RotateScopeKeys(ctx, req)
+}
 
 // TPM Policy Operations
 //

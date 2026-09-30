@@ -2979,6 +2979,13 @@ type SealedData struct {
 	// Metadata contains additional backend-specific data.
 	// Keys should be namespaced (e.g., "tpm:creation_ticket", "aws:encryption_context").
 	Metadata map[string][]byte `json:"metadata,omitempty"`
+
+	// KeyVersion is the version of the sealing key that sealed the data, set
+	// by the xkms service for a seal under a versioned key. It is metadata
+	// beside the ciphertext, never inside it, and Unseal uses that version.
+	// Zero for a TPM2 sealed object, which is its own object and has no
+	// versions, and for data sealed before the key had versions.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // SealingKeyProvider extends KeyProvider with sealing capabilities.

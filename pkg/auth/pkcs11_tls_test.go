@@ -433,6 +433,34 @@ func (m *authMockClient) SealStoreStatus(context.Context) (*transport.SealStoreS
 	return &transport.SealStoreStatusResponse{}, nil
 }
 
+func (m *authMockClient) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
+	return &transport.ListKeyVersionsResponse{}, nil
+}
+
+func (m *authMockClient) EnableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return &transport.KeyVersionStateResponse{}, nil
+}
+
+func (m *authMockClient) DisableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return &transport.KeyVersionStateResponse{}, nil
+}
+
+func (m *authMockClient) RetireKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return &transport.KeyVersionStateResponse{}, nil
+}
+
+func (m *authMockClient) EnableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return &transport.AllKeyVersionsResponse{}, nil
+}
+
+func (m *authMockClient) DisableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return &transport.AllKeyVersionsResponse{}, nil
+}
+
+func (m *authMockClient) RotateScopeKeys(context.Context, *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
+	return &transport.RotateScopeKeysResponse{}, nil
+}
+
 func (m *authMockClient) TPMPolicyCreate(context.Context, *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	return &transport.TPMPolicy{}, nil
 }

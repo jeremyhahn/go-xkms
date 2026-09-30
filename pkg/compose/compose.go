@@ -24,6 +24,7 @@ import (
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
+	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
@@ -43,8 +44,8 @@ type Deps struct {
 	Service *xkms.XKMSService
 
 	// Storage opens the backend each feature persists under. Enables the
-	// Password Manager, SSH, and — together with their own dependency —
-	// the platform store, CA and TPM policies.
+	// Password Manager, SSH, key versions, and — together with their own
+	// dependency — the platform store, CA and TPM policies.
 	Storage StorageFactory
 
 	// BarrierRegistry is the tenant barrier registry. Enables per-tenant
@@ -121,6 +122,9 @@ type Stores struct {
 	// TPMPolicies is the TPM policy service. Its owner closes it at
 	// shutdown.
 	TPMPolicies *tpmpolicy.Service
+
+	// KeyVersions is the key-version record store.
+	KeyVersions *keyversion.Store
 
 	// Barrier is the system barrier the barrier routes operate on.
 	Barrier *seal.Barrier
@@ -207,6 +211,12 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 		})
 	}
 
+	if b.need(FeatureKeyVersions, d.Storage != nil, "storage") {
+		st.KeyVersions = built(b, FeatureKeyVersions, func() (*keyversion.Store, error) {
+			return BuildKeyVersionStore(d.Storage)
+		})
+	}
+
 	if d.ServeBarrier && b.need(FeatureBarrier, systemBarrier != nil, "barrier registry") {
 		st.Barrier = systemBarrier
 		b.logger.Info("xkms feature on", "feature", FeatureBarrier)
@@ -241,6 +251,9 @@ func (st *Stores) Wire(svc *xkms.XKMSService) {
 	}
 	if st.TPMPolicies != nil {
 		svc.SetTPMPolicyService(st.TPMPolicies)
+	}
+	if st.KeyVersions != nil {
+		svc.SetKeyVersionStore(st.KeyVersions)
 	}
 	// ca.TrustedCA does not carry the transport-shaped *Raw methods; the
 	// concrete CA satisfies provider.CA through them (pkg/ca

@@ -159,7 +159,7 @@ func TestPrintEncryptedAsym_TextFormat(t *testing.T) {
 	buf := &bytes.Buffer{}
 	printer := NewPrinter("text", buf)
 
-	err := printer.PrintEncryptedAsym("encrypted-data-here")
+	err := printer.PrintEncryptedAsym("encrypted-data-here", 0)
 	require.NoError(t, err)
 	assert.Equal(t, "encrypted-data-here\n", buf.String())
 }
@@ -168,7 +168,7 @@ func TestPrintEncryptedAsym_TableFormat(t *testing.T) {
 	buf := &bytes.Buffer{}
 	printer := NewPrinter("table", buf)
 
-	err := printer.PrintEncryptedAsym("encrypted-data-here")
+	err := printer.PrintEncryptedAsym("encrypted-data-here", 0)
 	require.NoError(t, err)
 	assert.Equal(t, "encrypted-data-here\n", buf.String())
 }
@@ -177,7 +177,7 @@ func TestPrintEncryptedAsym_UnknownFormat(t *testing.T) {
 	buf := &bytes.Buffer{}
 	printer := NewPrinter("yaml", buf)
 
-	err := printer.PrintEncryptedAsym("data")
+	err := printer.PrintEncryptedAsym("data", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown output format")
 }

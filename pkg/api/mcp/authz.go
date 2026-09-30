@@ -119,11 +119,23 @@ var methodPermissions = map[string]permission{
 	"xkms.getBackend":   {auth.ResourceBackends, auth.ActionRead},
 
 	// Key lifecycle and crypto operations.
-	"xkms.generateKey":         {auth.ResourceKeys, auth.ActionCreate},
-	"xkms.getKey":              {auth.ResourceKeys, auth.ActionGet},
-	"xkms.deleteKey":           {auth.ResourceKeys, auth.ActionDelete},
-	"xkms.listKeys":            {auth.ResourceKeys, auth.ActionList},
-	"xkms.rotateKey":           {auth.ResourceKeys, auth.ActionRotate},
+	"xkms.generateKey": {auth.ResourceKeys, auth.ActionCreate},
+	"xkms.getKey":      {auth.ResourceKeys, auth.ActionGet},
+	"xkms.deleteKey":   {auth.ResourceKeys, auth.ActionDelete},
+	"xkms.listKeys":    {auth.ResourceKeys, auth.ActionList},
+	"xkms.rotateKey":   {auth.ResourceKeys, auth.ActionRotate},
+
+	// Key versions: listing reads like listing keys; enabling and disabling
+	// versions is rotation lifecycle management; retiring destroys a
+	// version's key material, as deleting a key does.
+	"xkms.listKeyVersions":       {auth.ResourceKeys, auth.ActionList},
+	"xkms.enableKeyVersion":      {auth.ResourceKeys, auth.ActionRotate},
+	"xkms.disableKeyVersion":     {auth.ResourceKeys, auth.ActionRotate},
+	"xkms.retireKeyVersion":      {auth.ResourceKeys, auth.ActionDelete},
+	"xkms.enableAllKeyVersions":  {auth.ResourceKeys, auth.ActionRotate},
+	"xkms.disableAllKeyVersions": {auth.ResourceKeys, auth.ActionRotate},
+	"xkms.rotateScopeKeys":       {auth.ResourceKeys, auth.ActionRotate},
+
 	"xkms.sign":                {auth.ResourceKeys, auth.ActionSign},
 	"xkms.verify":              {auth.ResourceKeys, auth.ActionVerify},
 	"xkms.encrypt":             {auth.ResourceKeys, auth.ActionEncrypt},

@@ -38,6 +38,8 @@ const (
 	KeystoreService_DisableKeyVersion_FullMethodName           = "/xkms.v1.KeystoreService/DisableKeyVersion"
 	KeystoreService_EnableAllKeyVersions_FullMethodName        = "/xkms.v1.KeystoreService/EnableAllKeyVersions"
 	KeystoreService_DisableAllKeyVersions_FullMethodName       = "/xkms.v1.KeystoreService/DisableAllKeyVersions"
+	KeystoreService_RetireKeyVersion_FullMethodName            = "/xkms.v1.KeystoreService/RetireKeyVersion"
+	KeystoreService_RotateScopeKeys_FullMethodName             = "/xkms.v1.KeystoreService/RotateScopeKeys"
 	KeystoreService_Encrypt_FullMethodName                     = "/xkms.v1.KeystoreService/Encrypt"
 	KeystoreService_Decrypt_FullMethodName                     = "/xkms.v1.KeystoreService/Decrypt"
 	KeystoreService_EncryptAsym_FullMethodName                 = "/xkms.v1.KeystoreService/EncryptAsym"
@@ -234,16 +236,27 @@ type KeystoreServiceClient interface {
 	DeleteKey(ctx context.Context, in *DeleteKeyRequest, opts ...grpc.CallOption) (*DeleteKeyResponse, error)
 	// RotateKey rotates an existing key
 	RotateKey(ctx context.Context, in *RotateKeyRequest, opts ...grpc.CallOption) (*RotateKeyResponse, error)
-	// ListKeyVersions lists all versions of a key
+	// ListKeyVersions lists every version of a key and marks the current one.
+	// A key that was never rotated lists version 1 alone.
 	ListKeyVersions(ctx context.Context, in *ListKeyVersionsRequest, opts ...grpc.CallOption) (*ListKeyVersionsResponse, error)
-	// EnableKeyVersion enables a specific version of a key
+	// EnableKeyVersion enables a disabled version of a key. A retired version
+	// cannot be enabled.
 	EnableKeyVersion(ctx context.Context, in *EnableKeyVersionRequest, opts ...grpc.CallOption) (*EnableKeyVersionResponse, error)
-	// DisableKeyVersion disables a specific version of a key
+	// DisableKeyVersion disables a version of a key. The current version
+	// cannot be disabled; rotate first.
 	DisableKeyVersion(ctx context.Context, in *DisableKeyVersionRequest, opts ...grpc.CallOption) (*DisableKeyVersionResponse, error)
-	// EnableAllKeyVersions enables all versions of a key
+	// EnableAllKeyVersions enables every disabled version of a key.
 	EnableAllKeyVersions(ctx context.Context, in *EnableAllKeyVersionsRequest, opts ...grpc.CallOption) (*EnableAllKeyVersionsResponse, error)
-	// DisableAllKeyVersions disables all versions of a key
+	// DisableAllKeyVersions disables every enabled version of a key except the
+	// current one.
 	DisableAllKeyVersions(ctx context.Context, in *DisableAllKeyVersionsRequest, opts ...grpc.CallOption) (*DisableAllKeyVersionsResponse, error)
+	// RetireKeyVersion deletes a version's key material for good. The current
+	// version cannot be retired; rotate first.
+	RetireKeyVersion(ctx context.Context, in *RetireKeyVersionRequest, opts ...grpc.CallOption) (*RetireKeyVersionResponse, error)
+	// RotateScopeKeys rotates every key of a tenant and reports each key's
+	// result. A tenant caller rotates its own tenant; only a system caller may
+	// name another in tenant_id.
+	RotateScopeKeys(ctx context.Context, in *RotateScopeKeysRequest, opts ...grpc.CallOption) (*RotateScopeKeysResponse, error)
 	// Encrypt encrypts data with the specified key (symmetric encryption)
 	Encrypt(ctx context.Context, in *EncryptRequest, opts ...grpc.CallOption) (*EncryptResponse, error)
 	// Decrypt decrypts data with the specified key
@@ -777,6 +790,26 @@ func (c *keystoreServiceClient) DisableAllKeyVersions(ctx context.Context, in *D
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DisableAllKeyVersionsResponse)
 	err := c.cc.Invoke(ctx, KeystoreService_DisableAllKeyVersions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) RetireKeyVersion(ctx context.Context, in *RetireKeyVersionRequest, opts ...grpc.CallOption) (*RetireKeyVersionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetireKeyVersionResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_RetireKeyVersion_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) RotateScopeKeys(ctx context.Context, in *RotateScopeKeysRequest, opts ...grpc.CallOption) (*RotateScopeKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RotateScopeKeysResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_RotateScopeKeys_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -2489,16 +2522,27 @@ type KeystoreServiceServer interface {
 	DeleteKey(context.Context, *DeleteKeyRequest) (*DeleteKeyResponse, error)
 	// RotateKey rotates an existing key
 	RotateKey(context.Context, *RotateKeyRequest) (*RotateKeyResponse, error)
-	// ListKeyVersions lists all versions of a key
+	// ListKeyVersions lists every version of a key and marks the current one.
+	// A key that was never rotated lists version 1 alone.
 	ListKeyVersions(context.Context, *ListKeyVersionsRequest) (*ListKeyVersionsResponse, error)
-	// EnableKeyVersion enables a specific version of a key
+	// EnableKeyVersion enables a disabled version of a key. A retired version
+	// cannot be enabled.
 	EnableKeyVersion(context.Context, *EnableKeyVersionRequest) (*EnableKeyVersionResponse, error)
-	// DisableKeyVersion disables a specific version of a key
+	// DisableKeyVersion disables a version of a key. The current version
+	// cannot be disabled; rotate first.
 	DisableKeyVersion(context.Context, *DisableKeyVersionRequest) (*DisableKeyVersionResponse, error)
-	// EnableAllKeyVersions enables all versions of a key
+	// EnableAllKeyVersions enables every disabled version of a key.
 	EnableAllKeyVersions(context.Context, *EnableAllKeyVersionsRequest) (*EnableAllKeyVersionsResponse, error)
-	// DisableAllKeyVersions disables all versions of a key
+	// DisableAllKeyVersions disables every enabled version of a key except the
+	// current one.
 	DisableAllKeyVersions(context.Context, *DisableAllKeyVersionsRequest) (*DisableAllKeyVersionsResponse, error)
+	// RetireKeyVersion deletes a version's key material for good. The current
+	// version cannot be retired; rotate first.
+	RetireKeyVersion(context.Context, *RetireKeyVersionRequest) (*RetireKeyVersionResponse, error)
+	// RotateScopeKeys rotates every key of a tenant and reports each key's
+	// result. A tenant caller rotates its own tenant; only a system caller may
+	// name another in tenant_id.
+	RotateScopeKeys(context.Context, *RotateScopeKeysRequest) (*RotateScopeKeysResponse, error)
 	// Encrypt encrypts data with the specified key (symmetric encryption)
 	Encrypt(context.Context, *EncryptRequest) (*EncryptResponse, error)
 	// Decrypt decrypts data with the specified key
@@ -2932,6 +2976,12 @@ func (UnimplementedKeystoreServiceServer) EnableAllKeyVersions(context.Context, 
 }
 func (UnimplementedKeystoreServiceServer) DisableAllKeyVersions(context.Context, *DisableAllKeyVersionsRequest) (*DisableAllKeyVersionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DisableAllKeyVersions not implemented")
+}
+func (UnimplementedKeystoreServiceServer) RetireKeyVersion(context.Context, *RetireKeyVersionRequest) (*RetireKeyVersionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetireKeyVersion not implemented")
+}
+func (UnimplementedKeystoreServiceServer) RotateScopeKeys(context.Context, *RotateScopeKeysRequest) (*RotateScopeKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RotateScopeKeys not implemented")
 }
 func (UnimplementedKeystoreServiceServer) Encrypt(context.Context, *EncryptRequest) (*EncryptResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Encrypt not implemented")
@@ -3724,6 +3774,42 @@ func _KeystoreService_DisableAllKeyVersions_Handler(srv interface{}, ctx context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(KeystoreServiceServer).DisableAllKeyVersions(ctx, req.(*DisableAllKeyVersionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_RetireKeyVersion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetireKeyVersionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).RetireKeyVersion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_RetireKeyVersion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).RetireKeyVersion(ctx, req.(*RetireKeyVersionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_RotateScopeKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RotateScopeKeysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).RotateScopeKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_RotateScopeKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).RotateScopeKeys(ctx, req.(*RotateScopeKeysRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -6818,6 +6904,14 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DisableAllKeyVersions",
 			Handler:    _KeystoreService_DisableAllKeyVersions_Handler,
+		},
+		{
+			MethodName: "RetireKeyVersion",
+			Handler:    _KeystoreService_RetireKeyVersion_Handler,
+		},
+		{
+			MethodName: "RotateScopeKeys",
+			Handler:    _KeystoreService_RotateScopeKeys_Handler,
 		},
 		{
 			MethodName: "Encrypt",

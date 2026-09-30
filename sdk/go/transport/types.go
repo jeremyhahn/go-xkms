@@ -205,6 +205,25 @@ type SealStoreListResponse = pkgtransport.SealStoreListResponse
 type SealStoreResealRequest = pkgtransport.SealStoreResealRequest
 type SealStoreStatusResponse = pkgtransport.SealStoreStatusResponse
 
+// Key version types.
+type KeyVersionInfo = pkgtransport.KeyVersionInfo
+type ListKeyVersionsRequest = pkgtransport.ListKeyVersionsRequest
+type ListKeyVersionsResponse = pkgtransport.ListKeyVersionsResponse
+type KeyVersionRequest = pkgtransport.KeyVersionRequest
+type KeyVersionStateResponse = pkgtransport.KeyVersionStateResponse
+type AllKeyVersionsRequest = pkgtransport.AllKeyVersionsRequest
+type AllKeyVersionsResponse = pkgtransport.AllKeyVersionsResponse
+type RotateScopeKeysRequest = pkgtransport.RotateScopeKeysRequest
+type RotateScopeKeysResponse = pkgtransport.RotateScopeKeysResponse
+type KeyRotationResult = pkgtransport.KeyRotationResult
+
+// Key version states.
+const (
+	KeyVersionEnabled  = pkgtransport.KeyVersionEnabled
+	KeyVersionDisabled = pkgtransport.KeyVersionDisabled
+	KeyVersionRetired  = pkgtransport.KeyVersionRetired
+)
+
 // TPM policy types.
 type TPMPolicy = pkgtransport.TPMPolicy
 type TPMPolicyCreateRequest = pkgtransport.TPMPolicyCreateRequest

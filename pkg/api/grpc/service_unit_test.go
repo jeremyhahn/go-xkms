@@ -68,6 +68,7 @@ func setupServiceTest(t *testing.T) *Service {
 	if err != nil {
 		t.Fatalf("Failed to get xkms service: %v", err)
 	}
+	wireKeyVersionStore(t)
 	return NewService(nil, nil, svc)
 }
 

@@ -300,6 +300,9 @@ func wrapOperationError(fallback error, detail string, err error) error {
 // unless the request's Hash is the "NONE" sentinel or DataIsDigest is set, in
 // which case the caller-supplied bytes are signed directly (PKCS#11's raw
 // CKM_RSA_PKCS and CKM_RSA_PKCS_PSS contracts respectively).
+//
+// The key's current version signs, and KeyVersion reports it; the signature
+// itself stays in its standard format.
 // Implements the CryptoServicer interface.
 func (s *XKMSService) Sign(ctx context.Context, req *transport.SignRequest) (resp *transport.SignResponse, err error) {
 	start := time.Now()
@@ -313,16 +316,25 @@ func (s *XKMSService) Sign(ctx context.Context, req *transport.SignRequest) (res
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil sign request"}
 	}
 
-	b, _, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
+	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	cur, err := k.current()
 	if err != nil {
 		return nil, err
 	}
 
-	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
+	resp, err = signWith(ctx, k.backend, cur.attrs, req)
 	if err != nil {
 		return nil, err
 	}
+	resp.KeyVersion = cur.number
+	return resp, nil
+}
 
+// signWith signs req's data with the key attrs describes in b. See Sign.
+func signWith(ctx context.Context, b Backend, attrs *types.KeyAttributes, req *transport.SignRequest) (*transport.SignResponse, error) {
 	signer, err := b.Signer(ctx, attrs)
 	if err != nil {
 		return nil, wrapOperationError(ErrSigningFailed, "failed to get signer", err)
@@ -479,6 +491,12 @@ func verifyEd25519Variant(pub ed25519.PublicKey, message, signature []byte, preH
 // unless the request's Hash is the "NONE" sentinel or DataIsDigest is set, in
 // which case the caller-supplied bytes are verified directly (PKCS#11's raw
 // CKM_RSA_PKCS and CKM_RSA_PKCS_PSS contracts respectively).
+//
+// A request naming KeyVersion verifies with that version, which must be
+// enabled. Without one, every enabled version is tried, newest first: a
+// signature check is a public-key operation, and a false accept under the
+// wrong key is cryptographically negligible. KeyVersion in the response names
+// the version the signature verified under.
 // Implements the CryptoServicer interface.
 func (s *XKMSService) Verify(ctx context.Context, req *transport.VerifyRequest) (resp *transport.VerifyResponse, err error) {
 	start := time.Now()
@@ -492,16 +510,35 @@ func (s *XKMSService) Verify(ctx context.Context, req *transport.VerifyRequest) 
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil verify request"}
 	}
 
-	b, _, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
+	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	versions, err := k.trialVersions(req.KeyVersion)
 	if err != nil {
 		return nil, err
 	}
 
-	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
-	if err != nil {
-		return nil, err
+	var first *transport.VerifyResponse
+	for _, v := range versions {
+		result, err := verifyWith(ctx, k.backend, v.attrs, req)
+		if err != nil {
+			return nil, err
+		}
+		if result.Valid {
+			result.KeyVersion = v.number
+			return result, nil
+		}
+		if first == nil {
+			first = result
+		}
 	}
+	return first, nil
+}
 
+// verifyWith verifies req's signature with the key attrs describes in b. See
+// Verify.
+func verifyWith(ctx context.Context, b Backend, attrs *types.KeyAttributes, req *transport.VerifyRequest) (*transport.VerifyResponse, error) {
 	// Get the key and extract public key
 	privKey, err := b.GetKey(ctx, attrs)
 	if err != nil {
@@ -610,6 +647,10 @@ func (s *XKMSService) Verify(ctx context.Context, req *transport.VerifyRequest) 
 // RSA-OAEP has a selectable digest and is served by the dedicated
 // EncryptAsym RPC instead, since EncryptRequest carries no padding/digest
 // field for OAEP's hash algorithm to travel in on.
+//
+// The key's current version encrypts, and KeyVersion reports it; the
+// ciphertext stays in its standard format. A caller keeps KeyVersion to
+// decrypt AES-CBC and RSA PKCS#1 v1.5 ciphertext once the key is rotated.
 // Implements the CryptoServicer interface.
 func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest) (resp *transport.EncryptResponse, err error) {
 	start := time.Now()
@@ -623,16 +664,26 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil encrypt request"}
 	}
 
-	b, _, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
+	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	cur, err := k.current()
 	if err != nil {
 		return nil, err
 	}
 
-	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
+	resp, err = encryptWith(ctx, k.backend, cur.attrs, req)
 	if err != nil {
 		return nil, err
 	}
+	resp.KeyVersion = cur.number
+	return resp, nil
+}
 
+// encryptWith encrypts req's plaintext with the key attrs describes in b. See
+// Encrypt.
+func encryptWith(ctx context.Context, b Backend, attrs *types.KeyAttributes, req *transport.EncryptRequest) (*transport.EncryptResponse, error) {
 	if symBackend, ok := b.KeyProvider().(types.SymmetricKeyProvider); ok {
 		encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 		if err == nil {
@@ -777,6 +828,14 @@ func legacyRSAPKCS1v15Refusal(what, alternative string) error {
 // Decrypt decrypts ciphertext using the specified key.
 // For symmetric keys, uses the SymmetricKeyProvider interface.
 // For asymmetric keys, uses the crypto.Decrypter interface.
+//
+// A request naming KeyVersion decrypts with that version, which must be
+// enabled. Without one the version is chosen per ciphertext kind (see
+// decryptionAuthenticated): AEAD and RSA-OAEP ciphertext tries every enabled
+// version, newest first; AES-CBC and RSA PKCS#1 v1.5 ciphertext uses the one
+// enabled version, and with more than one is refused with
+// *keyversion.KeyVersionRequiredError. KeyVersion in the response names the
+// version that decrypted.
 // Implements the CryptoServicer interface.
 func (s *XKMSService) Decrypt(ctx context.Context, req *transport.DecryptRequest) (resp *transport.DecryptResponse, err error) {
 	start := time.Now()
@@ -790,16 +849,48 @@ func (s *XKMSService) Decrypt(ctx context.Context, req *transport.DecryptRequest
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil decrypt request"}
 	}
 
-	b, _, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
+	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	versions, err := k.selectVersions(req.KeyVersion, decryptionAuthenticated(k.representative(), req))
 	if err != nil {
 		return nil, err
 	}
 
-	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
+	resp, n, err := firstSuccess(versions, func(v keyVersion) (*transport.DecryptResponse, error) {
+		return decryptWith(ctx, k.backend, v.attrs, req)
+	})
 	if err != nil {
 		return nil, err
 	}
+	resp.KeyVersion = n
+	return resp, nil
+}
 
+// decryptionAuthenticated reports whether a wrong key reliably fails the
+// decryption req asks for, so each enabled version may be tried in turn: an
+// AEAD ciphertext (its tag) or an RSA-OAEP one (its padding check). AES-CBC
+// and RSA PKCS#1 v1.5 ciphertext authenticate nothing -- a wrong key decrypts
+// to garbage or passes the padding check by chance, and trying keys one
+// after another is a padding oracle -- so they need the one version the
+// caller names. Only the mode or padding's name is read here; decryptWith
+// validates it, so a refused padding is still reported as itself.
+func decryptionAuthenticated(attrs *types.KeyAttributes, req *transport.DecryptRequest) bool {
+	if attrs.IsSymmetric() {
+		switch types.CipherMode(strings.ToLower(req.Mode)) {
+		case types.CipherModeCBC, types.CipherModeCBCPad:
+			return false
+		default:
+			return true
+		}
+	}
+	return strings.EqualFold(req.Padding, "oaep")
+}
+
+// decryptWith decrypts req's ciphertext with the key attrs describes in b.
+// See Decrypt.
+func decryptWith(ctx context.Context, b Backend, attrs *types.KeyAttributes, req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
 	// Try symmetric decryption first. IV travels on the ciphertext bundle
 	// (types.EncryptedData) and Mode on the options, matching the REST and
 	// QUIC handlers' own conversion (rest.DecryptHandler, quic.handleDecrypt)
@@ -944,7 +1035,9 @@ func asymDecrypterOpts(req *transport.DecryptRequest) (crypto.DecrypterOpts, err
 }
 
 // EncryptAsym encrypts plaintext using an RSA public key with OAEP padding.
-// The key must be an RSA key. Implements the CryptoServicer interface.
+// The key must be an RSA key. The key's current version's public key
+// encrypts, and KeyVersion reports it. Implements the CryptoServicer
+// interface.
 func (s *XKMSService) EncryptAsym(ctx context.Context, req *transport.EncryptAsymRequest) (resp *transport.EncryptAsymResponse, err error) {
 	start := time.Now()
 	metricsBackend := ""
@@ -957,15 +1050,15 @@ func (s *XKMSService) EncryptAsym(ctx context.Context, req *transport.EncryptAsy
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil encrypt-asym request"}
 	}
 
-	b, _, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
+	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
-
-	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
+	cur, err := k.current()
 	if err != nil {
 		return nil, err
 	}
+	b, attrs := k.backend, cur.attrs
 
 	// Get the key and extract the RSA public key
 	privKey, err := b.GetKey(ctx, attrs)
@@ -1016,6 +1109,7 @@ func (s *XKMSService) EncryptAsym(ctx context.Context, req *transport.EncryptAsy
 
 	return &transport.EncryptAsymResponse{
 		Ciphertext: ciphertext,
+		KeyVersion: cur.number,
 	}, nil
 }
 
@@ -1252,7 +1346,7 @@ func (s *XKMSService) DeriveKey(ctx context.Context, req *transport.DeriveKeyReq
 		}
 	}
 
-	derivedKey, err := s.deriveBaseKeyMaterial(ctx, req, params)
+	derivedKey, keyVersion, err := s.deriveBaseKeyMaterial(ctx, req, params)
 	if err != nil {
 		if isBackendCapabilityRefusal(err) {
 			return nil, &ErrOperationWrap{
@@ -1268,6 +1362,7 @@ func (s *XKMSService) DeriveKey(ctx context.Context, req *transport.DeriveKeyReq
 		DerivedKey: derivedKey,
 		Algorithm:  req.Algorithm,
 		KeyLength:  len(derivedKey),
+		KeyVersion: keyVersion,
 	}, nil
 }
 
@@ -1278,6 +1373,10 @@ func (s *XKMSService) DeriveKey(ctx context.Context, req *transport.DeriveKeyReq
 // types.KeyAgreementProvider; backends that do not (software-only providers,
 // most cloud KMS backends) yield ErrOperationNotSupported, which is a genuine
 // capability boundary rather than a missing implementation.
+//
+// The agreement uses the local key's current version, or the enabled version
+// KeyVersion names; the response reports which, since the peer must hold
+// that version's public key for the two sides to agree.
 // Implements the CryptoServicer interface.
 func (s *XKMSService) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKeyECDHRequest) (resp *transport.DeriveKeyECDHResponse, err error) {
 	start := time.Now()
@@ -1330,10 +1429,15 @@ func (s *XKMSService) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKe
 		}
 	}
 
-	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
+	k, err := s.resolveKey(ctx, b, req.Backend, req.KeyID)
 	if err != nil {
 		return nil, roleLookupError("key", req.KeyID, err)
 	}
+	version, err := k.use(req.KeyVersion)
+	if err != nil {
+		return nil, roleLookupError("key", req.KeyID, err)
+	}
+	attrs := version.attrs
 
 	if attrs.KeyAlgorithm != x509.ECDSA {
 		return nil, &ErrValidation{
@@ -1359,6 +1463,7 @@ func (s *XKMSService) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKe
 
 	return &transport.DeriveKeyECDHResponse{
 		DerivedKey: derivedKey,
+		KeyVersion: version.number,
 	}, nil
 }
 
@@ -1402,23 +1507,20 @@ func (s *XKMSService) AttestKey(ctx context.Context, req *transport.AttestKeyReq
 		}
 	}
 
-	attrs, err := b.ListKeys(ctx)
+	// The key's current version is attested.
+	k, err := s.resolveKey(ctx, b, req.Backend, req.KeyID)
+	if errors.Is(err, ErrKeyNotFound) {
+		return nil, &ErrRoleLookup{Role: "key", Name: req.KeyID, Err: ErrKeyNotFound}
+	}
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "list keys", Err: err}
 	}
-
-	var target *types.KeyAttributes
-	for _, attr := range attrs {
-		if attr.CN == req.KeyID {
-			target = attr
-			break
-		}
-	}
-	if target == nil {
-		return nil, &ErrRoleLookup{Role: "key", Name: req.KeyID, Err: ErrKeyNotFound}
+	cur, err := k.current()
+	if err != nil {
+		return nil, &ErrRoleLookup{Role: "key", Name: req.KeyID, Err: err}
 	}
 
-	result, err := attester.AttestKey(ctx, target, req.Nonce)
+	result, err := attester.AttestKey(ctx, cur.attrs, req.Nonce)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrAttestationFailed, Err: err}
 	}

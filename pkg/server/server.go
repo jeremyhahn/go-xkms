@@ -61,6 +61,7 @@ import (
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
@@ -332,6 +333,10 @@ type Server struct {
 	// tpmPolicies is the TPM policy service over the TPM2 key backend; nil
 	// without one. See initTPMPolicyService.
 	tpmPolicies *tpmpolicy.Service
+
+	// keyVersions is the key-version record store. See
+	// initializeKeyVersionStore.
+	keyVersions *keyversion.Store
 
 	// Health checker
 	healthChecker *qrdbsdk.HealthChecker
@@ -772,6 +777,13 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "pkcs11 state store", Err: err}
 	}
 
+	// Initialize the key-version record store
+	if err := s.initializeKeyVersionStore(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "key version store", Err: err}
+	}
+
 	// Initialize the TPM policy service
 	if err := s.initTPMPolicyService(); err != nil {
 		cancel()
@@ -951,6 +963,7 @@ func (s *Server) composedStores() *compose.Stores {
 		Credentials:     s.credentialService,
 		CA:              s.ca,
 		TPMPolicies:     s.tpmPolicies,
+		KeyVersions:     s.keyVersions,
 		Barrier:         s.barrier,
 	}
 	// xkmsd serves share custody over its own node whenever it has one.
@@ -1772,6 +1785,20 @@ func xkmsDefaultEntitlements() *qrdbsdk.Entitlements {
 		AllowSystemManagedBarrier: true,
 		AllowDedicatedWAL:         true,
 	}
+}
+
+// initializeKeyVersionStore builds the key-version record store through
+// compose.BuildKeyVersionStore -- the path an embedding host's module takes
+// -- under the server's configured storage. Every key's rotations are
+// recorded in it, so it is always built.
+func (s *Server) initializeKeyVersionStore() error {
+	store, err := compose.BuildKeyVersionStore(s.createStorage)
+	if err != nil {
+		return &ErrStorageCreate{Resource: "key version storage", Err: err}
+	}
+	s.keyVersions = store
+	s.logger.Info("xkms feature on", "feature", compose.FeatureKeyVersions)
+	return nil
 }
 
 // initializePasswordStore initializes the static password store.

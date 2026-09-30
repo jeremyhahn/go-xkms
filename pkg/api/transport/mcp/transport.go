@@ -1620,6 +1620,95 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 // ListEscrowed/RevokeEscrow at all. transport.EscrowService is no longer
 // part of transport.Client — see docs/escrow/architecture.md.
 
+// Key Version Operations
+//
+// Each method calls the MCP tool of the same operation (xkms.*KeyVersion*,
+// xkms.rotateScopeKeys) with the transport request as its parameters.
+
+// ListKeyVersions lists a key's versions.
+func (t *Transport) ListKeyVersions(ctx context.Context, req *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.ListKeyVersionsResponse
+	if err := t.rpcCall(ctx, "xkms.listKeyVersions", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// EnableKeyVersion enables a version of a key.
+func (t *Transport) EnableKeyVersion(ctx context.Context, req *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.KeyVersionStateResponse
+	if err := t.rpcCall(ctx, "xkms.enableKeyVersion", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DisableKeyVersion disables a version of a key.
+func (t *Transport) DisableKeyVersion(ctx context.Context, req *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.KeyVersionStateResponse
+	if err := t.rpcCall(ctx, "xkms.disableKeyVersion", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// RetireKeyVersion retires a version of a key.
+func (t *Transport) RetireKeyVersion(ctx context.Context, req *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.KeyVersionStateResponse
+	if err := t.rpcCall(ctx, "xkms.retireKeyVersion", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// EnableAllKeyVersions enables every disabled version of a key.
+func (t *Transport) EnableAllKeyVersions(ctx context.Context, req *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.AllKeyVersionsResponse
+	if err := t.rpcCall(ctx, "xkms.enableAllKeyVersions", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DisableAllKeyVersions disables every non-current version of a key.
+func (t *Transport) DisableAllKeyVersions(ctx context.Context, req *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.AllKeyVersionsResponse
+	if err := t.rpcCall(ctx, "xkms.disableAllKeyVersions", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// RotateScopeKeys rotates every key of a tenant.
+func (t *Transport) RotateScopeKeys(ctx context.Context, req *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.RotateScopeKeysResponse
+	if err := t.rpcCall(ctx, "xkms.rotateScopeKeys", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // TPM Policy Operations
 //
 // Each method calls the MCP tool of the same operation (tpm.policy.*,

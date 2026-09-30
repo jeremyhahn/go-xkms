@@ -448,6 +448,9 @@ func TestUnseal_NoKeyID_SoftwareBackend_UsesDefaultSealingKey(t *testing.T) {
 	setupSealableService(t)
 	svc, err := Get()
 	require.NoError(t, err)
+	// The blob was sealed under the default sealing key, which must exist
+	// to unseal it.
+	storeSealingKey(t, "software", defaultSealingKeyAttributes(types.BackendTypeSoftware).CN)
 
 	resp, err := svc.Unseal(context.Background(), &transport.UnsealRequest{
 		Backend:    "software",
@@ -517,6 +520,9 @@ func TestUnseal_AllFieldsPassedToSealedData(t *testing.T) {
 	sealer := setupSealableService(t)
 	svc, err := Get()
 	require.NoError(t, err)
+	// The blob was sealed under the default sealing key, which must exist
+	// to unseal it.
+	storeSealingKey(t, "software", defaultSealingKeyAttributes(types.BackendTypeSoftware).CN)
 
 	metadata := map[string][]byte{
 		"aws:encryption_context": []byte("ctx-val"),
@@ -552,6 +558,9 @@ func TestUnseal_OperationError(t *testing.T) {
 	sealer.unsealErr = errors.New("unseal failed")
 	svc, err := Get()
 	require.NoError(t, err)
+	// The blob was sealed under the default sealing key, which must exist
+	// to unseal it.
+	storeSealingKey(t, "software", defaultSealingKeyAttributes(types.BackendTypeSoftware).CN)
 
 	_, err = svc.Unseal(context.Background(), &transport.UnsealRequest{
 		Backend:    "software",
@@ -567,6 +576,9 @@ func TestUnseal_WithPassword(t *testing.T) {
 	sealer := setupSealableService(t)
 	svc, err := Get()
 	require.NoError(t, err)
+	// The blob was sealed under the default sealing key, which must exist
+	// to unseal it.
+	storeSealingKey(t, "software", defaultSealingKeyAttributes(types.BackendTypeSoftware).CN)
 
 	_, err = svc.Unseal(context.Background(), &transport.UnsealRequest{
 		Backend:    "software",
@@ -584,6 +596,9 @@ func TestUnseal_WithoutPassword(t *testing.T) {
 	sealer := setupSealableService(t)
 	svc, err := Get()
 	require.NoError(t, err)
+	// The blob was sealed under the default sealing key, which must exist
+	// to unseal it.
+	storeSealingKey(t, "software", defaultSealingKeyAttributes(types.BackendTypeSoftware).CN)
 
 	_, err = svc.Unseal(context.Background(), &transport.UnsealRequest{
 		Backend:    "software",
@@ -617,6 +632,9 @@ func TestUnseal_WithAAD(t *testing.T) {
 	sealer := setupSealableService(t)
 	svc, err := Get()
 	require.NoError(t, err)
+	// The blob was sealed under the default sealing key, which must exist
+	// to unseal it.
+	storeSealingKey(t, "software", defaultSealingKeyAttributes(types.BackendTypeSoftware).CN)
 
 	_, err = svc.Unseal(context.Background(), &transport.UnsealRequest{
 		Backend:    "software",
@@ -705,6 +723,9 @@ func TestUnseal_CiphertextWithTPMBlobs_Succeeds(t *testing.T) {
 	sealer := setupSealableService(t)
 	svc, err := Get()
 	require.NoError(t, err)
+	// The blob was sealed under the default sealing key, which must exist
+	// to unseal it.
+	storeSealingKey(t, "software", defaultSealingKeyAttributes(types.BackendTypeSoftware).CN)
 
 	resp, err := svc.Unseal(context.Background(), &transport.UnsealRequest{
 		Backend:    "software",
@@ -946,6 +967,9 @@ func TestUnseal_SoftwareBackend_AutoResolvesKey(t *testing.T) {
 	sealer := setupSealableService(t)
 	svc, err := Get()
 	require.NoError(t, err)
+	// The blob was sealed under the default sealing key, which must exist
+	// to unseal it.
+	storeSealingKey(t, "software", defaultSealingKeyAttributes(types.BackendTypeSoftware).CN)
 
 	// Unseal without a KeyID; the servicer should auto-resolve the
 	// well-known sealing key CN.

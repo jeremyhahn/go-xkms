@@ -740,6 +740,55 @@ func (m *mockService) RevokeEscrow(_ context.Context, _ string) error {
 	return nil
 }
 
+func (m *mockService) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.ListKeyVersionsResponse{}, nil
+}
+
+func (m *mockService) EnableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.KeyVersionStateResponse{}, nil
+}
+
+func (m *mockService) DisableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.KeyVersionStateResponse{}, nil
+}
+
+func (m *mockService) RetireKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.KeyVersionStateResponse{}, nil
+}
+
+func (m *mockService) EnableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.AllKeyVersionsResponse{}, nil
+}
+
+func (m *mockService) DisableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.AllKeyVersionsResponse{}, nil
+}
+
+func (m *mockService) RotateScopeKeys(context.Context, *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.RotateScopeKeysResponse{}, nil
+}
+
 func (m *mockService) TPMPolicyCreate(context.Context, *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	if m.shouldFail {
 		return nil, errMock
@@ -1465,6 +1514,13 @@ func TestAllMethods_NotConnected(t *testing.T) {
 		{"SealStoreList", func() error { _, e := tr.SealStoreList(ctx); return e }},
 		{"SealStoreReseal", func() error { return tr.SealStoreReseal(ctx, &transport.SealStoreResealRequest{}) }},
 		{"SealStoreStatus", func() error { _, e := tr.SealStoreStatus(ctx); return e }},
+		{"ListKeyVersions", func() error { _, e := tr.ListKeyVersions(ctx, &transport.ListKeyVersionsRequest{}); return e }},
+		{"EnableKeyVersion", func() error { _, e := tr.EnableKeyVersion(ctx, &transport.KeyVersionRequest{}); return e }},
+		{"DisableKeyVersion", func() error { _, e := tr.DisableKeyVersion(ctx, &transport.KeyVersionRequest{}); return e }},
+		{"RetireKeyVersion", func() error { _, e := tr.RetireKeyVersion(ctx, &transport.KeyVersionRequest{}); return e }},
+		{"EnableAllKeyVersions", func() error { _, e := tr.EnableAllKeyVersions(ctx, &transport.AllKeyVersionsRequest{}); return e }},
+		{"DisableAllKeyVersions", func() error { _, e := tr.DisableAllKeyVersions(ctx, &transport.AllKeyVersionsRequest{}); return e }},
+		{"RotateScopeKeys", func() error { _, e := tr.RotateScopeKeys(ctx, &transport.RotateScopeKeysRequest{}); return e }},
 		{"TPMPolicyCreate", func() error { _, e := tr.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{}); return e }},
 		{"TPMPolicyGet", func() error { _, e := tr.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{}); return e }},
 		{"TPMPolicyList", func() error { _, e := tr.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{}); return e }},
@@ -1635,6 +1691,13 @@ func TestAllMethods_Connected(t *testing.T) {
 		{"SealStoreList", func() error { _, e := tr.SealStoreList(ctx); return e }},
 		{"SealStoreReseal", func() error { return tr.SealStoreReseal(ctx, &transport.SealStoreResealRequest{}) }},
 		{"SealStoreStatus", func() error { _, e := tr.SealStoreStatus(ctx); return e }},
+		{"ListKeyVersions", func() error { _, e := tr.ListKeyVersions(ctx, &transport.ListKeyVersionsRequest{}); return e }},
+		{"EnableKeyVersion", func() error { _, e := tr.EnableKeyVersion(ctx, &transport.KeyVersionRequest{}); return e }},
+		{"DisableKeyVersion", func() error { _, e := tr.DisableKeyVersion(ctx, &transport.KeyVersionRequest{}); return e }},
+		{"RetireKeyVersion", func() error { _, e := tr.RetireKeyVersion(ctx, &transport.KeyVersionRequest{}); return e }},
+		{"EnableAllKeyVersions", func() error { _, e := tr.EnableAllKeyVersions(ctx, &transport.AllKeyVersionsRequest{}); return e }},
+		{"DisableAllKeyVersions", func() error { _, e := tr.DisableAllKeyVersions(ctx, &transport.AllKeyVersionsRequest{}); return e }},
+		{"RotateScopeKeys", func() error { _, e := tr.RotateScopeKeys(ctx, &transport.RotateScopeKeysRequest{}); return e }},
 		{"TPMPolicyCreate", func() error { _, e := tr.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{}); return e }},
 		{"TPMPolicyGet", func() error { _, e := tr.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{}); return e }},
 		{"TPMPolicyList", func() error { _, e := tr.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{}); return e }},

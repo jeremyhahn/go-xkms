@@ -76,6 +76,7 @@ func crossTenantService(t *testing.T, holders ...string) (*Service, *xkms.XKMSSe
 	}))
 	svc, err := xkms.Get()
 	require.NoError(t, err)
+	wireKeyVersionStore(t)
 
 	keyOf := map[string]string{crossTenantA: crossTenantAKey, crossTenantB: crossTenantBKey}
 	if len(holders) == 0 {

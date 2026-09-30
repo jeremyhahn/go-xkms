@@ -15,6 +15,9 @@ package rest
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -24,6 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -290,6 +294,7 @@ func TestSealHandler(t *testing.T) {
 func TestUnsealHandler(t *testing.T) {
 	t.Run("unseals data successfully with valid request", func(t *testing.T) {
 		ks := setupTestService(t, "test-backend")
+		seedDefaultSealingKey(t, ks)
 
 		expectedPlaintext := []byte("decrypted-secret")
 		ks.UnsealFunc = func(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
@@ -316,6 +321,7 @@ func TestUnsealHandler(t *testing.T) {
 
 	t.Run("unseals data with optional key_id", func(t *testing.T) {
 		ks := setupTestService(t, "test-backend")
+		seedDefaultSealingKey(t, ks)
 
 		// Configure mock to return a key matching the CN
 		ks.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
@@ -346,6 +352,7 @@ func TestUnsealHandler(t *testing.T) {
 
 	t.Run("unseals data with AAD", func(t *testing.T) {
 		ks := setupTestService(t, "test-backend")
+		seedDefaultSealingKey(t, ks)
 
 		var capturedOpts *types.UnsealOptions
 		ks.UnsealFunc = func(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
@@ -369,6 +376,7 @@ func TestUnsealHandler(t *testing.T) {
 
 	t.Run("unseals data with metadata", func(t *testing.T) {
 		ks := setupTestService(t, "test-backend")
+		seedDefaultSealingKey(t, ks)
 
 		var capturedSealed *types.SealedData
 		ks.UnsealFunc = func(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
@@ -544,6 +552,7 @@ func TestUnsealHandler(t *testing.T) {
 
 	t.Run("returns error when unseal operation fails", func(t *testing.T) {
 		ks := setupTestService(t, "test-backend")
+		seedDefaultSealingKey(t, ks)
 
 		ks.UnsealFunc = func(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 			return nil, errors.New("unseal failed: authentication error")
@@ -855,6 +864,7 @@ func TestSealHandlerEdgeCases(t *testing.T) {
 func TestUnsealHandlerEdgeCases(t *testing.T) {
 	t.Run("handles unseal with all optional fields", func(t *testing.T) {
 		ks := setupTestService(t, "test-backend")
+		seedDefaultSealingKey(t, ks)
 
 		// Configure mock to return a key matching the CN
 		ks.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
@@ -903,6 +913,7 @@ func TestUnsealHandlerEdgeCases(t *testing.T) {
 
 	t.Run("handles unseal with minimal fields", func(t *testing.T) {
 		ks := setupTestService(t, "test-backend")
+		seedDefaultSealingKey(t, ks)
 
 		ks.UnsealFunc = func(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 			return []byte("decrypted"), nil
@@ -919,4 +930,14 @@ func TestUnsealHandlerEdgeCases(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
+}
+
+// seedDefaultSealingKey stores the platform's default sealing key in ks, as
+// the seal that produced a blob unsealed without a key ID would have: the
+// unseal resolves that key, and a key that does not exist is not found.
+func seedDefaultSealingKey(t *testing.T, ks *xkmsmocks.MockKeyStore) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	ks.SetKey("xkms-sealing-key-"+string(ks.KeyProvider().Type()), key)
 }

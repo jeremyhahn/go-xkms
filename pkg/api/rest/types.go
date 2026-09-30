@@ -73,6 +73,8 @@ type KeyInfo struct {
 	Algorithm    string `json:"algorithm"`
 	Backend      string `json:"backend"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
+	// KeyVersion is the key's current version, the one sign and encrypt use.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // ListKeysResponse represents the response for listing keys.
@@ -106,6 +108,8 @@ type SignRequest struct {
 type SignResponse struct {
 	Signature []byte `json:"signature"`
 	Algorithm string `json:"algorithm,omitempty"`
+	// KeyVersion is the key version that produced the signature.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // VerifyRequest represents a verification request.
@@ -122,12 +126,17 @@ type VerifyRequest struct {
 	// DataIsDigest states that Data is already the digest and must not be
 	// hashed again. See SignRequest.DataIsDigest.
 	DataIsDigest bool `json:"data_is_digest,omitempty"`
+	// KeyVersion optionally names the key version to verify with; zero tries
+	// every enabled version, newest first.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // VerifyResponse represents the response for a verification operation.
 type VerifyResponse struct {
 	Valid   bool   `json:"valid"`
 	Message string `json:"message,omitempty"`
+	// KeyVersion is the key version the signature verified under.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // DeleteKeyResponse represents the response for key deletion.
@@ -156,6 +165,8 @@ type RotateKeyResponse struct {
 	KeyType      string `json:"key_type"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
 	Message      string `json:"message,omitempty"`
+	// KeyVersion is the version the rotation created, now current.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // EncryptRequest represents an encryption request (symmetric encryption).
@@ -196,6 +207,8 @@ type EncryptResponse struct {
 	// the matching DecryptRequest; Decrypt cannot infer it from the
 	// ciphertext bytes alone.
 	GCMNonceMode string `json:"gcm_nonce_mode,omitempty"`
+	// KeyVersion is the key version that produced the ciphertext.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // DecryptRequest represents a decryption request.
@@ -232,11 +245,16 @@ type DecryptRequest struct {
 	Hash string `json:"hash,omitempty"`
 	// Label is the optional OAEP label. Ignored unless Padding is "oaep".
 	Label []byte `json:"label,omitempty"`
+	// KeyVersion optionally names the key version to decrypt with; see
+	// transport.DecryptRequest.KeyVersion for how zero chooses one.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // DecryptResponse represents the response for a decryption operation.
 type DecryptResponse struct {
 	Plaintext []byte `json:"plaintext"`
+	// KeyVersion is the key version that decrypted the ciphertext.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // EncryptAsymRequest represents an asymmetric encryption request (RSA-OAEP).
@@ -254,6 +272,8 @@ type EncryptAsymRequest struct {
 // EncryptAsymResponse represents the response for an asymmetric encryption operation.
 type EncryptAsymResponse struct {
 	Ciphertext []byte `json:"ciphertext"`
+	// KeyVersion is the key version whose public key encrypted.
+	KeyVersion uint32 `json:"key_version,omitempty"`
 }
 
 // SaveCertRequest represents a request to save a certificate.
@@ -374,6 +394,7 @@ type SealResponse struct {
 	TPMPrivate []byte            `json:"tpm_private,omitempty"` // TPM2 sealed object's private area
 	WrappedDEK []byte            `json:"wrapped_dek,omitempty"` // Envelope-sealing backend's wrapped key
 	KeyID      string            `json:"key_id,omitempty"`      // Key or TPM2 sealed object that sealed
+	KeyVersion uint32            `json:"key_version,omitempty"` // Sealing key version; pass it back on unseal
 }
 
 // UnsealRequest represents a request to unseal data.
@@ -390,6 +411,7 @@ type UnsealRequest struct {
 	TPMPrivate []byte            `json:"tpm_private,omitempty"` // TPM2 sealed object's private area
 	WrappedDEK []byte            `json:"wrapped_dek,omitempty"` // Envelope-sealing backend's wrapped key
 	Password   string            `json:"password,omitempty"`    // Sealed object's authorization value (TPM2)
+	KeyVersion uint32            `json:"key_version,omitempty"` // Sealing key version the seal response reported
 }
 
 // UnsealResponse represents the response from an unseal operation.

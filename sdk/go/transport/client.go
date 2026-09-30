@@ -21,6 +21,7 @@ import (
 type ConnectionService = pkgtransport.ConnectionService
 type BackendService = pkgtransport.BackendService
 type KeyService = pkgtransport.KeyService
+type KeyVersionService = pkgtransport.KeyVersionService
 type CryptoService = pkgtransport.CryptoService
 type CertService = pkgtransport.CertService
 type SealService = pkgtransport.SealService

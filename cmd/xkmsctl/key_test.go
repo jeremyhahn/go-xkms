@@ -908,7 +908,7 @@ func TestVerify_Success(t *testing.T) {
 	}
 
 	sigBase64 := base64.StdEncoding.EncodeToString([]byte("test-signature"))
-	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256")
+	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256", 0)
 
 	output := buf.String()
 	if !strings.Contains(output, "valid") {
@@ -939,7 +939,7 @@ func TestVerify_Invalid(t *testing.T) {
 	}
 
 	sigBase64 := base64.StdEncoding.EncodeToString([]byte("bad-signature"))
-	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256")
+	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256", 0)
 }
 
 func TestVerify_DecodeError(t *testing.T) {
@@ -959,7 +959,7 @@ func TestVerify_DecodeError(t *testing.T) {
 		},
 	}
 
-	verify(cfg, printer, "test-key", "test data", "invalid-base64!!!", "sha256")
+	verify(cfg, printer, "test-key", "test data", "invalid-base64!!!", "sha256", 0)
 }
 
 func TestVerify_ClientCreateError(t *testing.T) {
@@ -977,7 +977,7 @@ func TestVerify_ClientCreateError(t *testing.T) {
 	}
 
 	sigBase64 := base64.StdEncoding.EncodeToString([]byte("test-signature"))
-	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256")
+	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256", 0)
 }
 
 func TestVerify_ConnectError(t *testing.T) {
@@ -1001,7 +1001,7 @@ func TestVerify_ConnectError(t *testing.T) {
 	}
 
 	sigBase64 := base64.StdEncoding.EncodeToString([]byte("test-signature"))
-	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256")
+	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256", 0)
 }
 
 func TestVerify_VerifyError(t *testing.T) {
@@ -1023,7 +1023,7 @@ func TestVerify_VerifyError(t *testing.T) {
 	}
 
 	sigBase64 := base64.StdEncoding.EncodeToString([]byte("test-signature"))
-	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256")
+	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256", 0)
 }
 
 // Test encrypt function
@@ -1164,7 +1164,7 @@ func TestDecrypt_Success(t *testing.T) {
 	}
 
 	ciphertextBase64 := base64.StdEncoding.EncodeToString([]byte("encrypted"))
-	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "", "")
+	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "", "", 0)
 
 	if buf.Len() == 0 {
 		t.Error("decrypt should produce output")
@@ -1191,7 +1191,7 @@ func TestDecrypt_WithAADNonceTag(t *testing.T) {
 	ciphertextBase64 := base64.StdEncoding.EncodeToString([]byte("encrypted"))
 	nonceBase64 := base64.StdEncoding.EncodeToString([]byte("nonce"))
 	tagBase64 := base64.StdEncoding.EncodeToString([]byte("tag"))
-	decrypt(cfg, printer, "test-key", ciphertextBase64, "aad", nonceBase64, tagBase64)
+	decrypt(cfg, printer, "test-key", ciphertextBase64, "aad", nonceBase64, tagBase64, 0)
 
 	if buf.Len() == 0 {
 		t.Error("decrypt with AAD/nonce/tag should produce output")
@@ -1215,7 +1215,7 @@ func TestDecrypt_CiphertextDecodeError(t *testing.T) {
 		},
 	}
 
-	decrypt(cfg, printer, "test-key", "invalid-base64!!!", "", "", "")
+	decrypt(cfg, printer, "test-key", "invalid-base64!!!", "", "", "", 0)
 }
 
 func TestDecrypt_NonceDecodeError(t *testing.T) {
@@ -1236,7 +1236,7 @@ func TestDecrypt_NonceDecodeError(t *testing.T) {
 	}
 
 	ciphertextBase64 := base64.StdEncoding.EncodeToString([]byte("encrypted"))
-	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "invalid-base64!!!", "")
+	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "invalid-base64!!!", "", 0)
 }
 
 func TestDecrypt_TagDecodeError(t *testing.T) {
@@ -1258,7 +1258,7 @@ func TestDecrypt_TagDecodeError(t *testing.T) {
 
 	ciphertextBase64 := base64.StdEncoding.EncodeToString([]byte("encrypted"))
 	nonceBase64 := base64.StdEncoding.EncodeToString([]byte("nonce"))
-	decrypt(cfg, printer, "test-key", ciphertextBase64, "", nonceBase64, "invalid-base64!!!")
+	decrypt(cfg, printer, "test-key", ciphertextBase64, "", nonceBase64, "invalid-base64!!!", 0)
 }
 
 func TestDecrypt_ClientCreateError(t *testing.T) {
@@ -1276,7 +1276,7 @@ func TestDecrypt_ClientCreateError(t *testing.T) {
 	}
 
 	ciphertextBase64 := base64.StdEncoding.EncodeToString([]byte("encrypted"))
-	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "", "")
+	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "", "", 0)
 }
 
 func TestDecrypt_ConnectError(t *testing.T) {
@@ -1300,7 +1300,7 @@ func TestDecrypt_ConnectError(t *testing.T) {
 	}
 
 	ciphertextBase64 := base64.StdEncoding.EncodeToString([]byte("encrypted"))
-	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "", "")
+	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "", "", 0)
 }
 
 func TestDecrypt_DecryptError(t *testing.T) {
@@ -1322,7 +1322,7 @@ func TestDecrypt_DecryptError(t *testing.T) {
 	}
 
 	ciphertextBase64 := base64.StdEncoding.EncodeToString([]byte("encrypted"))
-	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "", "")
+	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "", "", 0)
 }
 
 // Test encryptAsym function
@@ -3001,7 +3001,7 @@ func TestVerify_AllFormats(t *testing.T) {
 			}
 
 			sigBase64 := base64.StdEncoding.EncodeToString([]byte("sig"))
-			verify(cfg, printer, "test-key", "data", sigBase64, "sha256")
+			verify(cfg, printer, "test-key", "data", sigBase64, "sha256", 0)
 
 			if buf.Len() == 0 {
 				t.Errorf("verify with %s format should produce output", format)
@@ -3064,7 +3064,7 @@ func TestDecrypt_AllFormats(t *testing.T) {
 			}
 
 			ciphertextBase64 := base64.StdEncoding.EncodeToString([]byte("ct"))
-			decrypt(cfg, printer, "test-key", ciphertextBase64, "", "", "")
+			decrypt(cfg, printer, "test-key", ciphertextBase64, "", "", "", 0)
 
 			if buf.Len() == 0 {
 				t.Errorf("decrypt with %s format should produce output", format)

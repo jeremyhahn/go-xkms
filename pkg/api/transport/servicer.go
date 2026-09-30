@@ -37,6 +37,7 @@ type XKMSServicer interface {
 	HealthServicer
 	BackendServicer
 	KeyServicer
+	KeyVersionServicer
 	CryptoServicer
 	CertServicer
 	SealServicer
@@ -98,6 +99,12 @@ type KeyServicer interface {
 	UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (*UnwrapKeyResponse, error)
 	WrapKeyByID(ctx context.Context, req *WrapKeyByIDRequest) (*WrapKeyByIDResponse, error)
 	UnwrapKeyByID(ctx context.Context, req *UnwrapKeyByIDRequest) (*UnwrapKeyByIDResponse, error)
+}
+
+// KeyVersionServicer manages key versions. Its method set is
+// KeyVersionService's: every transport calls through it unchanged.
+type KeyVersionServicer interface {
+	KeyVersionService
 }
 
 // CryptoServicer provides cryptographic operations.

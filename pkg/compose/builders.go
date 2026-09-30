@@ -22,6 +22,7 @@ import (
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	sshbackend "github.com/jeremyhahn/go-xkms/pkg/ssh/backend"
@@ -50,6 +51,7 @@ const (
 	StorageCARevocations  = "ca-revocations"
 	StorageTPMPolicies    = "tpm-policies"
 	StorageTPMKeys        = "tpm-keys"
+	StorageKeyVersions    = "key-versions"
 	defaultCredentialMode = credentialspkg.StrategyManual
 )
 
@@ -81,6 +83,26 @@ func BuildPasswordStore(open StorageFactory) (*staticpw.BackendStore, error) {
 		return nil, &FeatureBuildError{Feature: FeaturePasswords, Err: err}
 	}
 	return staticpw.NewStore(backend), nil
+}
+
+// BuildKeyVersionStore builds the key-version record store over the storage
+// StorageKeyVersions names. It is the one construction path of the store:
+// xkmsd and an embedding host's module both build it here, and the
+// XKMSService it is wired into (SetKeyVersionStore) needs it to rotate keys
+// and to change the state of their versions.
+func BuildKeyVersionStore(open StorageFactory) (*keyversion.Store, error) {
+	if open == nil {
+		return nil, &NilDependencyError{Feature: FeatureKeyVersions, Dependency: "storage factory"}
+	}
+	backend, err := open(StorageKeyVersions)
+	if err != nil {
+		return nil, &FeatureBuildError{Feature: FeatureKeyVersions, Err: err}
+	}
+	store, err := keyversion.NewStore(backend)
+	if err != nil {
+		return nil, &FeatureBuildError{Feature: FeatureKeyVersions, Err: err}
+	}
+	return store, nil
 }
 
 // BuildTenantPasswordManager builds the per-tenant Password Manager routing:

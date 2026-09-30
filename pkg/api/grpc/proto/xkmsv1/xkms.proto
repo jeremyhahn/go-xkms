@@ -62,20 +62,47 @@ service KeystoreService {
     option (qrdb.v1.permission) = "keys:rotate";
   }
 
-  // ListKeyVersions lists all versions of a key
-  rpc ListKeyVersions(ListKeyVersionsRequest) returns (ListKeyVersionsResponse);
+  // ListKeyVersions lists every version of a key and marks the current one.
+  // A key that was never rotated lists version 1 alone.
+  rpc ListKeyVersions(ListKeyVersionsRequest) returns (ListKeyVersionsResponse) {
+    option (qrdb.v1.permission) = "keys:list";
+  }
 
-  // EnableKeyVersion enables a specific version of a key
-  rpc EnableKeyVersion(EnableKeyVersionRequest) returns (EnableKeyVersionResponse);
+  // EnableKeyVersion enables a disabled version of a key. A retired version
+  // cannot be enabled.
+  rpc EnableKeyVersion(EnableKeyVersionRequest) returns (EnableKeyVersionResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
 
-  // DisableKeyVersion disables a specific version of a key
-  rpc DisableKeyVersion(DisableKeyVersionRequest) returns (DisableKeyVersionResponse);
+  // DisableKeyVersion disables a version of a key. The current version
+  // cannot be disabled; rotate first.
+  rpc DisableKeyVersion(DisableKeyVersionRequest) returns (DisableKeyVersionResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
 
-  // EnableAllKeyVersions enables all versions of a key
-  rpc EnableAllKeyVersions(EnableAllKeyVersionsRequest) returns (EnableAllKeyVersionsResponse);
+  // EnableAllKeyVersions enables every disabled version of a key.
+  rpc EnableAllKeyVersions(EnableAllKeyVersionsRequest) returns (EnableAllKeyVersionsResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
 
-  // DisableAllKeyVersions disables all versions of a key
-  rpc DisableAllKeyVersions(DisableAllKeyVersionsRequest) returns (DisableAllKeyVersionsResponse);
+  // DisableAllKeyVersions disables every enabled version of a key except the
+  // current one.
+  rpc DisableAllKeyVersions(DisableAllKeyVersionsRequest) returns (DisableAllKeyVersionsResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
+
+  // RetireKeyVersion deletes a version's key material for good. The current
+  // version cannot be retired; rotate first.
+  rpc RetireKeyVersion(RetireKeyVersionRequest) returns (RetireKeyVersionResponse) {
+    option (qrdb.v1.permission) = "keys:delete";
+  }
+
+  // RotateScopeKeys rotates every key of a tenant and reports each key's
+  // result. A tenant caller rotates its own tenant; only a system caller may
+  // name another in tenant_id.
+  rpc RotateScopeKeys(RotateScopeKeysRequest) returns (RotateScopeKeysResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // Encrypt encrypts data with the specified key (symmetric encryption)
   rpc Encrypt(EncryptRequest) returns (EncryptResponse) {
@@ -1145,6 +1172,8 @@ message KeyInfo {
   string curve = 6;
   string partition = 7;
   google.protobuf.Timestamp created_at = 8;
+  // key_version is the key's current version, the one sign and encrypt use.
+  uint32 key_version = 9;
 }
 
 // ListKeysRequest requests a list of keys
@@ -1195,6 +1224,9 @@ message SignRequest {
 // SignResponse contains the signature
 message SignResponse {
   bytes signature = 1;
+  // key_version is the key version that produced the signature: always the
+  // current one. It is metadata beside the signature, never inside it.
+  uint32 key_version = 2;
 }
 
 // VerifyRequest requests signature verification
@@ -1212,12 +1244,18 @@ message VerifyRequest {
   // data_is_digest states that data is already the digest and must not be
   // hashed again. See SignRequest.data_is_digest.
   bool data_is_digest = 8;
+  // key_version optionally names the key version to verify with; it must be
+  // enabled. 0 tries every enabled version, newest first.
+  uint32 key_version = 9;
 }
 
 // VerifyResponse contains verification result
 message VerifyResponse {
   bool valid = 1;
   string message = 2;
+  // key_version is the key version the signature verified under; 0 when it
+  // did not verify.
+  uint32 key_version = 3;
 }
 
 // DeleteKeyRequest requests deletion of a key
@@ -1245,6 +1283,8 @@ message RotateKeyResponse {
   string key_type = 3;
   string public_key_pem = 4;
   google.protobuf.Timestamp rotated_at = 5;
+  // key_version is the version the rotation created, now current.
+  uint32 key_version = 6;
 }
 
 // KeyVersionInfo contains information about a key version
@@ -1253,6 +1293,11 @@ message KeyVersionInfo {
   string status = 2;
   string created_at = 3;
   string created_by = 4;
+  // current reports whether this is the version sign and encrypt use.
+  bool current = 5;
+  // public_key_pem is the version's public key, for an asymmetric version
+  // that has not been retired.
+  string public_key_pem = 6;
 }
 
 // ListKeyVersionsRequest requests listing of key versions
@@ -1266,6 +1311,9 @@ message ListKeyVersionsResponse {
   string key_id = 1;
   repeated KeyVersionInfo versions = 2;
   int32 total = 3;
+  string backend = 4;
+  // current_version is the version sign and encrypt use.
+  int32 current_version = 5;
 }
 
 // EnableKeyVersionRequest requests enabling of a key version
@@ -1280,6 +1328,8 @@ message EnableKeyVersionResponse {
   string key_id = 1;
   int32 version = 2;
   string status = 3;
+  // changed reports whether the state changed.
+  bool changed = 4;
 }
 
 // DisableKeyVersionRequest requests disabling of a key version
@@ -1294,6 +1344,8 @@ message DisableKeyVersionResponse {
   string key_id = 1;
   int32 version = 2;
   string status = 3;
+  // changed reports whether the state changed.
+  bool changed = 4;
 }
 
 // EnableAllKeyVersionsRequest requests enabling of all key versions
@@ -1307,6 +1359,10 @@ message EnableAllKeyVersionsResponse {
   string key_id = 1;
   int32 count = 2;
   string message = 3;
+  // versions lists the versions whose state changed, ascending.
+  repeated int32 versions = 4;
+  // state is the state the versions were set to.
+  string state = 5;
 }
 
 // DisableAllKeyVersionsRequest requests disabling of all key versions
@@ -1320,6 +1376,51 @@ message DisableAllKeyVersionsResponse {
   string key_id = 1;
   int32 count = 2;
   string message = 3;
+  // versions lists the versions whose state changed, ascending.
+  repeated int32 versions = 4;
+  // state is the state the versions were set to.
+  string state = 5;
+}
+
+// RetireKeyVersionRequest requests retiring a key version
+message RetireKeyVersionRequest {
+  string key_id = 1;
+  string backend = 2;
+  int32 version = 3;
+}
+
+// RetireKeyVersionResponse contains the result of retiring a key version
+message RetireKeyVersionResponse {
+  string key_id = 1;
+  int32 version = 2;
+  string status = 3;
+  bool changed = 4;
+}
+
+// RotateScopeKeysRequest names the tenant whose keys to rotate
+message RotateScopeKeysRequest {
+  // tenant_id is the tenant to rotate. A tenant caller may leave it empty or
+  // name its own tenant; only a system caller may name another, and a system
+  // caller naming none rotates the system tenant's own keys.
+  string tenant_id = 1;
+}
+
+// KeyRotationResult is the outcome of rotating one key
+message KeyRotationResult {
+  string backend = 1;
+  string key_id = 2;
+  // key_version is the new current version; 0 when the rotation failed.
+  uint32 key_version = 3;
+  // error describes why the key was not rotated; empty on success.
+  string error = 4;
+}
+
+// RotateScopeKeysResponse reports the rotation of every key of a tenant
+message RotateScopeKeysResponse {
+  string tenant_id = 1;
+  repeated KeyRotationResult results = 2;
+  int32 rotated = 3;
+  int32 failed = 4;
 }
 
 // EncryptRequest requests encryption of data (symmetric encryption)
@@ -1366,6 +1467,10 @@ message EncryptResponse {
   // back unchanged on the matching DecryptRequest; Decrypt cannot infer it
   // from the ciphertext bytes alone.
   string gcm_nonce_mode = 5;
+  // key_version is the key version that produced the ciphertext: always the
+  // current one. Keep it: AES-CBC ciphertext cannot be decrypted without it
+  // once the key has more than one enabled version.
+  uint32 key_version = 6;
 }
 
 // DecryptRequest requests decryption of data
@@ -1399,11 +1504,18 @@ message DecryptRequest {
   // reported. Required, unchanged, to decrypt an AES-GCM ciphertext
   // produced under GODEBUG=fips140=only.
   string gcm_nonce_mode = 13;
+  // key_version optionally names the key version to decrypt with; it must be
+  // enabled. 0 tries every enabled version, newest first, for AEAD and
+  // RSA-OAEP ciphertext, and requires exactly one enabled version for AES-CBC
+  // and RSA PKCS#1 v1.5 ciphertext.
+  uint32 key_version = 14;
 }
 
 // DecryptResponse contains the decrypted data
 message DecryptResponse {
   bytes plaintext = 1;
+  // key_version is the key version that decrypted the ciphertext.
+  uint32 key_version = 2;
 }
 
 // EncryptAsymRequest requests asymmetric encryption (RSA-OAEP)
@@ -1423,6 +1535,9 @@ message EncryptAsymRequest {
 // EncryptAsymResponse contains the asymmetrically encrypted data
 message EncryptAsymResponse {
   bytes ciphertext = 1;
+  // key_version is the key version whose public key produced the
+  // ciphertext: always the current one.
+  uint32 key_version = 2;
 }
 
 // DeriveKeyRequest requests key derivation using the specified algorithm
@@ -1445,6 +1560,9 @@ message DeriveKeyRequest {
   bool store_result = 16;          // Store the derived key in the backend
   string derived_key_id = 17;      // Key ID for stored derived key
   string derived_key_type = 18;    // Type of derived key (AES, HMAC)
+  // key_version optionally names the version of the stored base key to derive
+  // from; it must be enabled. 0 derives from the current version.
+  uint32 key_version = 19;
 }
 
 // DeriveKeyResponse contains the result of key derivation
@@ -1453,6 +1571,9 @@ message DeriveKeyResponse {
   string key_id = 2;               // Key ID of stored derived key (if store_result is true)
   string algorithm = 3;            // Algorithm used
   int32 key_length = 4;            // Actual output key length in bytes
+  // key_version is the version of the stored base key the key was derived
+  // from; 0 when the derivation used caller-supplied key material.
+  uint32 key_version = 5;
 }
 
 // DeriveKeyECDHRequest requests ECDH key agreement and key derivation
@@ -1502,6 +1623,9 @@ message DeriveKeyECDHRequest {
   // non-empty value. An empty label is valid and is the default, so a client
   // that does not set it derives exactly what it did before this field existed.
   bytes kdf_label = 9;
+  // key_version optionally names the version of the local key to agree
+  // with; it must be enabled. 0 uses the current version.
+  uint32 key_version = 10;
 }
 
 // DeriveKeyECDHResponse contains the derived key from ECDH key agreement
@@ -1509,6 +1633,8 @@ message DeriveKeyECDHResponse {
   // derived_key is the key material derived from ECDH + KDF
   // The length matches the requested key_length
   bytes derived_key = 1;
+  // key_version is the version of the local key the agreement used.
+  uint32 key_version = 2;
 }
 
 // =============================================================================
@@ -1965,6 +2091,9 @@ message WrapKeyByIDResponse {
   bytes wrapped_key = 1;
   // Algorithm used for wrapping
   string algorithm = 2;
+  // wrapping_key_version is the version of the wrapping key that wrapped the
+  // key: always the current one. Pass it back on UnwrapKeyByID.
+  uint32 wrapping_key_version = 3;
 }
 
 // UnwrapKeyByIDRequest unwraps key material and imports it as a new key.
@@ -2003,6 +2132,11 @@ message UnwrapKeyByIDRequest {
   int32 tag_bits = 14;
   // CK_RSA_PKCS_OAEP_PARAMS.pSourceData. Must equal the label the wrap used.
   bytes oaep_label = 15;
+  // unwrapping_key_version optionally names the unwrapping key's version; it
+  // must be enabled. 0 tries every enabled version, newest first, for AES-KW,
+  // AES-KWP, AES-GCM and RSA-OAEP, and requires exactly one enabled version
+  // for AES-CBC and RSA PKCS#1 v1.5.
+  uint32 unwrapping_key_version = 16;
 }
 
 // UnwrapKeyByIDResponse contains the result of the unwrap operation
@@ -2131,6 +2265,9 @@ message SealResponse {
   bytes wrapped_dek = 8;
   // The key (or TPM2 sealed object) that performed the sealing.
   string key_id = 9;
+  // key_version is the version of the sealing key that sealed the data; 0 for
+  // a TPM2 sealed object, which has no versions. Pass it back on Unseal.
+  uint32 key_version = 10;
 }
 
 // UnsealRequest requests unsealing (decryption) of previously sealed data:
@@ -2149,6 +2286,9 @@ message UnsealRequest {
   map<string, string> metadata = 10;
   // The sealed object's authorization value (TPM2).
   string password = 11;
+  // key_version is the sealing key version SealResponse.key_version
+  // reported. 0 tries every enabled version, newest first.
+  uint32 key_version = 12;
 }
 
 // UnsealResponse contains the unsealed (decrypted) data

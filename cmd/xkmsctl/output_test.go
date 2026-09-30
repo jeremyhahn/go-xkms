@@ -465,7 +465,7 @@ func TestPrintSignature_JSON(t *testing.T) {
 	buf := &bytes.Buffer{}
 	printer := NewPrinter("json", buf)
 
-	err := printer.PrintSignature("dGVzdC1zaWduYXR1cmU=")
+	err := printer.PrintSignature("dGVzdC1zaWduYXR1cmU=", 0)
 	if err != nil {
 		t.Fatalf("PrintSignature failed: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestPrintSignature_Text(t *testing.T) {
 	buf := &bytes.Buffer{}
 	printer := NewPrinter("text", buf)
 
-	err := printer.PrintSignature("base64sig")
+	err := printer.PrintSignature("base64sig", 0)
 	if err != nil {
 		t.Fatalf("PrintSignature failed: %v", err)
 	}
@@ -533,7 +533,7 @@ func TestPrintEncryptedData_JSON(t *testing.T) {
 		Algorithm:  "AES-256-GCM",
 	}
 
-	err := printer.PrintEncryptedData(data)
+	err := printer.PrintEncryptedData(data, 0)
 	if err != nil {
 		t.Fatalf("PrintEncryptedData failed: %v", err)
 	}
@@ -559,7 +559,7 @@ func TestPrintEncryptedData_Text(t *testing.T) {
 		Algorithm:  "AES-256-GCM",
 	}
 
-	err := printer.PrintEncryptedData(data)
+	err := printer.PrintEncryptedData(data, 0)
 	if err != nil {
 		t.Fatalf("PrintEncryptedData failed: %v", err)
 	}
@@ -720,7 +720,7 @@ func TestPrintEncryptedAsym(t *testing.T) {
 	buf := &bytes.Buffer{}
 	printer := NewPrinter("json", buf)
 
-	err := printer.PrintEncryptedAsym("encrypted-ciphertext")
+	err := printer.PrintEncryptedAsym("encrypted-ciphertext", 0)
 	if err != nil {
 		t.Fatalf("PrintEncryptedAsym failed: %v", err)
 	}
@@ -1201,15 +1201,15 @@ func TestPrinterUnknownFormat_ReturnsError(t *testing.T) {
 	}{
 		{"PrintSuccess", func(p *Printer) error { return p.PrintSuccess("msg") }},
 		{"PrintError", func(p *Printer) error { return p.PrintError(errors.New("err")) }},
-		{"PrintSignature", func(p *Printer) error { return p.PrintSignature("sig") }},
+		{"PrintSignature", func(p *Printer) error { return p.PrintSignature("sig", 0) }},
 		{"PrintDecryptedData", func(p *Printer) error { return p.PrintDecryptedData("data") }},
 		{"PrintCertList", func(p *Printer) error { return p.PrintCertList([]string{"cert1"}) }},
 		{"PrintCertExists", func(p *Printer) error { return p.PrintCertExists("cert", true) }},
 		{"PrintMessage", func(p *Printer) error { return p.PrintMessage("msg") }},
-		{"PrintEncryptedAsym", func(p *Printer) error { return p.PrintEncryptedAsym("ct") }},
+		{"PrintEncryptedAsym", func(p *Printer) error { return p.PrintEncryptedAsym("ct", 0) }},
 		{"PrintBackendInfo", func(p *Printer) error { return p.PrintBackendInfo("sw", types.Capabilities{}) }},
 		{"PrintEncryptedData", func(p *Printer) error {
-			return p.PrintEncryptedData(&types.EncryptedData{Ciphertext: []byte("test")})
+			return p.PrintEncryptedData(&types.EncryptedData{Ciphertext: []byte("test")}, 0)
 		}},
 		{"PrintKeyList", func(p *Printer) error {
 			return p.PrintKeyList([]*types.KeyAttributes{{CN: "test"}})

@@ -130,7 +130,8 @@ func TestGetTLSCertificateWithFullSetup(t *testing.T) {
 	})
 }
 
-// TestFindKeyAttributes tests the findKeyAttributes helper function
+// TestFindKeyAttributes tests the xkms.FindKeyAttributes lookup the
+// EncryptAsym pre-check resolves a key through.
 func TestFindKeyAttributes(t *testing.T) {
 	service := setupTLSTest(t)
 	defer xkms.Reset()
@@ -152,9 +153,9 @@ func TestFindKeyAttributes(t *testing.T) {
 			t.Fatalf("Failed to get backend: %v", err)
 		}
 
-		attrs, err := service.findKeyAttributes(context.Background(), ks, "find-attrs-key")
+		attrs, err := xkms.FindKeyAttributes(context.Background(), ks, "find-attrs-key")
 		if err != nil {
-			t.Fatalf("findKeyAttributes failed: %v", err)
+			t.Fatalf("FindKeyAttributes failed: %v", err)
 		}
 
 		if attrs.CN != "find-attrs-key" {
@@ -168,7 +169,7 @@ func TestFindKeyAttributes(t *testing.T) {
 			t.Fatalf("Failed to get backend: %v", err)
 		}
 
-		_, err = service.findKeyAttributes(context.Background(), ks, "nonexistent-key")
+		_, err = xkms.FindKeyAttributes(context.Background(), ks, "nonexistent-key")
 		if err == nil {
 			t.Error("Expected error for nonexistent key")
 		}

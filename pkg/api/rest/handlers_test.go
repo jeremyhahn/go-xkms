@@ -91,6 +91,7 @@ func setupTestService(t *testing.T, backendName string) *xkmsmocks.MockKeyStore 
 		DefaultBackend: backendName,
 	})
 	require.NoError(t, err)
+	wireKeyVersionStore(t)
 
 	t.Cleanup(func() {
 		xkms.Reset()

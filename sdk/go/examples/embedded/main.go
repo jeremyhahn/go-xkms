@@ -641,6 +641,34 @@ func (m *MockXKMSService) RevokeEscrow(ctx context.Context, escrowID string) err
 
 // Policy operations
 
+func (m *MockXKMSService) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key versions"}
+}
+
+func (m *MockXKMSService) EnableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key versions"}
+}
+
+func (m *MockXKMSService) DisableKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key versions"}
+}
+
+func (m *MockXKMSService) RetireKeyVersion(context.Context, *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key versions"}
+}
+
+func (m *MockXKMSService) EnableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key versions"}
+}
+
+func (m *MockXKMSService) DisableAllKeyVersions(context.Context, *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key versions"}
+}
+
+func (m *MockXKMSService) RotateScopeKeys(context.Context, *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
+	return nil, &mockUnsupportedError{capability: "key versions"}
+}
+
 func (m *MockXKMSService) TPMPolicyCreate(context.Context, *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	return nil, &mockUnsupportedError{capability: "policy"}
 }

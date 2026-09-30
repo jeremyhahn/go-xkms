@@ -1,6 +1,6 @@
 # TPM Policies — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 Design: [`architecture.md`](architecture.md). Surface: [`api.md`](api.md).
 
@@ -84,12 +84,86 @@ signatures, over `svc` for a fixed tenant (`""` is the system scope). It
 ignores every request's `TenantID`: authorizing the tenant is the caller's
 job. A nil `svc` is `ErrNotConfigured`.
 
-- `XKMSService` binds the caller's tenant (`tpmPolicyTarget`) and delegates.
+- `XKMSService` binds the caller's tenant (`targetTenant`, `pkg/xkms/tenant_binding.go`) and delegates.
 - xKey's local mode (`xkey/pkg/gui/services/tpm_policy_local.go`) delegates
   every `TPMPolicy*` method for the system scope, holding the TPM accessor
   around each call, so local and connected answers are the same types from
   the same code. `xkms.ParseTPMObjectKind` is the one object-kind parser
   (`*InvalidTPMObjectKindError`).
+
+## Key versions
+
+Design: [`architecture.md`](architecture.md), "Key versions".
+
+| Layer | Package | Responsibility |
+|---|---|---|
+| Model and store | `pkg/keyversion` | `Record`, `Version`, `State`; the `--v<n>` name rules (`Name`, `Parse`, `CheckKeyID`); `Store` over a `storage.Backend` |
+| Composition | `pkg/compose` (`BuildKeyVersionStore`) | The one construction path, over `Storage("key-versions")` (`StorageKeyVersions`); `compose.Build` builds it whenever it has storage, xkmsd in `initializeKeyVersionStore` |
+| Service | `pkg/xkms/key_versions.go`, `servicer_keyversion.go` | Resolving a key to its versions, choosing the version per operation, rotation, the state changes, `RotateScopeKeys` |
+| Transports | `pkg/api/{rest,grpc,mcp}`, `pkg/api/transport/*` | Wire mapping only; `pbconv.KeyVersionClient` and `wire.KeyVersionClient` are the shared clients |
+
+- **Record layout.** `{tenant}/key-versions/<backend>/<keyID>` in the
+  `key-versions` storage, one JSON record per rotated key; the system tenant
+  is `system`. The tenant is the key's own (`KeyAttributes.TenantID`), the
+  backend its registered name.
+- **No record at generate.** `GenerateKey` and `ImportKey` write nothing: a
+  key without a record is version 1, alone and enabled
+  (`keyversion.Implicit`), so a key that is never rotated costs no store
+  write and every key created before versions existed needs no migration.
+  The first `RotateKey` writes the record. Consequently `GenerateKey`,
+  `ImportKey` and `CopyKey` refuse a key ID whose record exists
+  (`*xkms.KeyExistsError`): its version 1 may have been retired, leaving the
+  name free in the backend.
+- **Reserved suffix.** `guardKeyID` refuses any ID ending in `--v<digits>`
+  (`*keyversion.ReservedKeyIDError`) on generate and import; `CopyKey` and
+  `UnwrapKeyByID` refuse it for the new key's ID. Every operation that names
+  a key refuses a version's own name (`K--v2`): versions are reached through
+  their key. Every backend accepts `K--v<n>` wherever it accepts `K`
+  (TPM2 file names, PKCS#11 labels, AWS KMS aliases, GCP `[a-zA-Z0-9_-]`,
+  Azure alphanumerics and dashes, Vault's escaped names).
+- **Resolution** (`resolveKey`). One `ListKeys` of the (tenant-scoped)
+  backend finds every backend key of `K`: `K` itself as version 1 and each
+  `K--v<n>`. The record comes from the store. A version the record holds but
+  the backend lacks is `*xkms.KeyVersionMissingError` (not found). The
+  caller's default sealing key is resolved among the caller's own tenant's
+  keys only (`resolveKeyOf`).
+- **Version choice.** Current: `Sign`, `Encrypt`, `EncryptAsym`, `GetKey`,
+  `ExportKey`, `ExportKeyMaterial`, `CopyKey` (source), `WrapKeyByID` (both
+  keys), `AttestKey`, `Seal`. Requested or current: `DeriveKey`,
+  `DeriveKeyECDH`. Requested or every enabled version newest first
+  (`trialVersions`): `Verify`, AEAD and RSA-OAEP `Decrypt`, `Unseal`, and
+  `UnwrapKeyByID` with AES-KW, AES-KWP, AES-GCM or RSA-OAEP. Requested or the
+  single enabled one (`singleVersion`, else
+  `*keyversion.KeyVersionRequiredError`): AES-CBC and RSA PKCS#1 v1.5
+  `Decrypt`, and `UnwrapKeyByID` with AES-CBC or PKCS#1 v1.5. A requested
+  version must be enabled (`*keyversion.VersionUnavailableError`).
+- **Rotation** (`rotateKey`). Under the key's lock (`Store.Lock`), the
+  record is re-read, a backend key left under the next version's name by an
+  interrupted rotation is deleted, and the new version is generated through
+  `generateKeyWithAttributes` -- the path `GenerateKey` uses -- with the
+  current version's attributes: the algorithm and size or curve read from its
+  public key, and its purpose, hash, partition, exportability, sensitivity
+  and tenant. On TPM2 the new version is bound to
+  `TPMPolicyService().PolicyOf(ctx, tenant, ObjectKey, <current version>)`,
+  in the same tenant scope. The record is stored last; if that fails the new
+  key is deleted. Numbers are never reused (`Record.Next`). X25519 and
+  post-quantum keys are refused (`*xkms.KeyRotationUnsupportedError`). The
+  backends' in-place `RotateKey` is no longer called by the service layer;
+  the package-level `xkms.RotateKey(kid)` rotates through the same path.
+- **State changes** (`updateVersions`). Under the key's lock; the current
+  version cannot be disabled or retired (`*keyversion.CurrentVersionError`);
+  a retired version is final (`*keyversion.RetiredVersionError`); retiring
+  deletes the version's backend key before the record says so.
+- **Deletion.** `DeleteKey` deletes the record first, then every backend key
+  of `K`, newest first; a retry after a partial failure finishes the job.
+- **Listing.** `ListKeys` folds each `K--v<n>` into `K`, reports
+  `KeyInfo.KeyVersion` and the current version's public key, and reads a
+  record only for a key with a version after the first.
+- **Sealed data.** `types.SealedData.KeyVersion` (and `SealResponse` /
+  `UnsealRequest.KeyVersion`) carry the sealing key's version beside the
+  ciphertext. TPM2 sealed objects have no versions.
+- **Concurrency.** Mutations of one key's versions are serialized
+  in-process, like the TPM policy registry's.
 
 ## Configuration
 
@@ -113,6 +187,17 @@ backends:
   two keys bound to one policy, objects/object-policy, refused delete, sign,
   update, two tenants isolated from each other, and two TPM2 seals without a
   key ID staying two objects that each unseal.
+- `pkg/server/key_version_tpm_simulator_test.go` (simulator): a tenant's TPM2
+  key bound to a named policy rotates into the same tenant scope and policy;
+  both versions sign, the old signature verifies, and deleting the key
+  removes both objects.
+- `pkg/keyversion`: the record rules and the store. `pkg/xkms/key_versions_test.go`
+  (software backend): sign/verify across versions, AES-GCM, AES-CBC, external
+  RSA-OAEP and PKCS#1 v1.5 decryption after a rotation, disable/enable/retire,
+  delete, the reserved suffix, listing, `RotateScopeKeys` across tenants,
+  sealing, derivation, unwrap. `pkg/api/{grpc,rest,mcp}/*key_version*_test.go`
+  and `pkg/api/transport/*/transport_key_version_test.go`: every endpoint and
+  its error mapping.
 - `pkg/xkms/servicer_tpm_policy_test.go`, `pkg/xkms/tenant_tpm_policies_test.go`, `pkg/api/{grpc,rest,mcp}/*tpm_policy*_test.go`,
   `pkg/api/grpc/pbconv`, `pkg/api/rest/wire`: binding, system scope, error
   mapping and wire mapping over a TPM-less service

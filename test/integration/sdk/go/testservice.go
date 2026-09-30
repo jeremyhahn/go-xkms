@@ -1179,6 +1179,34 @@ func (s *TestXKMSService) RevokeEscrow(ctx context.Context, escrowID string) err
 
 // Policy operations
 
+func (s *TestXKMSService) ListKeyVersions(context.Context, *xkms.ListKeyVersionsRequest) (*xkms.ListKeyVersionsResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) EnableKeyVersion(context.Context, *xkms.KeyVersionRequest) (*xkms.KeyVersionStateResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) DisableKeyVersion(context.Context, *xkms.KeyVersionRequest) (*xkms.KeyVersionStateResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) RetireKeyVersion(context.Context, *xkms.KeyVersionRequest) (*xkms.KeyVersionStateResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) EnableAllKeyVersions(context.Context, *xkms.AllKeyVersionsRequest) (*xkms.AllKeyVersionsResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) DisableAllKeyVersions(context.Context, *xkms.AllKeyVersionsRequest) (*xkms.AllKeyVersionsResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) RotateScopeKeys(context.Context, *xkms.RotateScopeKeysRequest) (*xkms.RotateScopeKeysResponse, error) {
+	return nil, ErrNotImplemented
+}
+
 func (s *TestXKMSService) TPMPolicyCreate(context.Context, *xkms.TPMPolicyCreateRequest) (*xkms.TPMPolicy, error) {
 	return nil, ErrNotImplemented
 }

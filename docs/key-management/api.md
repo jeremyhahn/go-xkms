@@ -77,7 +77,12 @@ clients; while full it refuses new clients until idle ones are cleaned up.
 | Delete key | `DELETE /api/v1/keys/{id}` | `DeleteKey` | same as REST | `xkms.deleteKey` | `DeleteKey` | `keys:delete` |
 | Sign | `POST /api/v1/keys/{id}/sign` | `Sign` | same as REST | `xkms.sign` | `Sign` | `keys:sign` |
 | Verify | `POST /api/v1/keys/{id}/verify` | `Verify` | same as REST | `xkms.verify` | `Verify` | `keys:verify` |
-| Rotate | `POST /api/v1/keys/{id}/rotate` | `RotateKey` | same as REST | `xkms.rotateKey` | `RotateKey` | `keys:rotate` |
+| Rotate (new current version) | `POST /api/v1/keys/{id}/rotate` | `RotateKey` | same as REST | `xkms.rotateKey` | `RotateKey` | `keys:rotate` |
+| List key versions | `GET /api/v1/keys/{id}/versions` | `ListKeyVersions` | same as REST | `xkms.listKeyVersions` | `ListKeyVersions` | `keys:list` |
+| Enable / disable a version | `POST /api/v1/keys/{id}/versions/{n}/enable\|disable` | `EnableKeyVersion`, `DisableKeyVersion` | same as REST | `xkms.enableKeyVersion`, `xkms.disableKeyVersion` | same | `keys:rotate` |
+| Retire a version | `POST /api/v1/keys/{id}/versions/{n}/retire` | `RetireKeyVersion` | same as REST | `xkms.retireKeyVersion` | `RetireKeyVersion` | `keys:delete` |
+| Enable / disable all versions | `POST /api/v1/keys/{id}/versions/enable-all\|disable-all` | `EnableAllKeyVersions`, `DisableAllKeyVersions` | same as REST | `xkms.enableAllKeyVersions`, `xkms.disableAllKeyVersions` | same | `keys:rotate` |
+| Rotate every key of a tenant | `POST /api/v1/keys/rotate-all` | `RotateScopeKeys` | same as REST | `xkms.rotateScopeKeys` | `RotateScopeKeys` | `keys:rotate` |
 | Encrypt (AEAD) | `POST /api/v1/keys/{id}/encrypt` | `Encrypt` | same as REST | `xkms.encrypt` | `Encrypt` | `keys:encrypt` |
 | Decrypt (AEAD) | `POST /api/v1/keys/{id}/decrypt` | `Decrypt` | same as REST | `xkms.decrypt` | `Decrypt` | `keys:decrypt` |
 | Encrypt asym (OAEP) | `POST /api/v1/keys/{id}/encrypt-asym` | `EncryptAsym` | same as REST | `xkms.asymmetricEncrypt` | `EncryptAsym` | `keys:encrypt` |
@@ -97,6 +102,12 @@ clients; while full it refuses new clients until idle ones are cleaned up.
 | Attest key | `POST /api/v1/attest` | `AttestKey` | same as REST | `xkms.attestKey` | `AttestKey` | `keys:get` |
 | Health | `GET /health`, `/health/live`, `/health/ready`, `/health/startup` | `Health` | same as REST | `xkms.health` | `Health` | public |
 | Capabilities | `GET /api/v1/capabilities` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | — | public |
+
+Sign, encrypt and encrypt-asym report the key version they used as
+`key_version`; verify, decrypt and unseal accept one, and every operation that
+names a key resolves it through its versions. The fields, the version each
+operation chooses and the errors are in
+[`../tpm-policies/api.md`](../tpm-policies/api.md), "Key versions".
 
 ### Encrypt's RSA fallback is PKCS#1 v1.5, and is refused by default
 

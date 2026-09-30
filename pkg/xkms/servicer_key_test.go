@@ -588,7 +588,10 @@ func TestExportKey_NonExistentBackend(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestServicerRotateKey_MockNotImplemented(t *testing.T) {
+// TestServicerRotateKey_RequiresVersionStore proves rotation refuses to run
+// without the key-version store: a version it could not record would be an
+// orphan backend key.
+func TestServicerRotateKey_RequiresVersionStore(t *testing.T) {
 	software, _ := setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
@@ -604,8 +607,9 @@ func TestServicerRotateKey_MockNotImplemented(t *testing.T) {
 		KeyID:   "rotate-me",
 		Backend: "software",
 	})
-	require.Error(t, err) // mockKeyStore.RotateKey returns "not implemented"
-	_ = resp
+	require.ErrorIs(t, err, ErrKeyVersionsNotConfigured)
+	assert.ErrorIs(t, err, ErrNotConfigured)
+	assert.Nil(t, resp)
 }
 
 func TestRotateKey_NonExistentBackend(t *testing.T) {

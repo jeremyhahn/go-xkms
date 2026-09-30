@@ -25,7 +25,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	"github.com/jeremyhahn/go-xkms/pkg/encoding"
+	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -48,16 +48,21 @@ func (s *Server) tenantBackend(ctx context.Context, backendName string) (xkms.Ba
 // the keys ks lists. It is the one place a key ID is matched against a common
 // name, so the tenant scope carried by ks is the only thing that decides which
 // tenant's key a caller can name.
+//
+// A key is found when any of its versions is (xkms.FindKeyAttributes), so a
+// rotated key whose version 1 was retired is still found, and a version's own
+// backend name ("K--v2") is refused rather than resolved.
 func keyByCN(ctx context.Context, ks xkms.Backend, keyID string) (*types.KeyAttributes, error) {
-	keys, err := ks.ListKeys(ctx)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
+	attrs, err := xkms.FindKeyAttributes(ctx, ks, keyID)
+	if err == nil {
+		return attrs, nil
 	}
-
-	for _, attr := range keys {
-		if attr.CN == keyID {
-			return attr, nil
+	if !errors.Is(err, xkms.ErrKeyNotFound) {
+		var reserved *keyversion.ReservedKeyIDError
+		if errors.As(err, &reserved) {
+			return nil, err
 		}
+		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
 
 	// Wraps xkms.ErrKeyNotFound, not a bare *errs.Message, so a caller up the
@@ -288,6 +293,7 @@ func (s *Server) handleGetKey(ctx context.Context, req *JSONRPCRequest) (interfa
 		KeyID:        resp.KeyID,
 		PublicKeyPEM: resp.PublicKeyPEM,
 		Backend:      resp.Backend,
+		KeyVersion:   resp.KeyVersion,
 	}, nil
 }
 
@@ -327,16 +333,13 @@ func (s *Server) handleDeleteKey(ctx context.Context, req *JSONRPCRequest) (inte
 		return nil, mapKeyOpError(err)
 	}
 
-	// Get the correct keystore
-	ks := s.keystore
-	if backendName != "" {
-		ks, err = s.tenantBackend(ctx, backendName)
-		if err != nil {
-			return nil, mapKeyOpError(err)
-		}
+	// The key was found in backendName; the service deletes it there, every
+	// version of it and its version record with them, in the caller's
+	// tenant.
+	if backendName == "" {
+		backendName = s.xkmsService.DefaultBackendName()
 	}
-
-	if err := ks.DeleteKey(ctx, attrs); err != nil {
+	if err := s.xkmsService.DeleteKey(ctx, backendName, attrs.CN); err != nil {
 		return nil, mapKeyOpError(err)
 	}
 
@@ -399,41 +402,26 @@ func (s *Server) handleListKeys(ctx context.Context, req *JSONRPCRequest) (inter
 	}, nil
 }
 
-// listKeysFromBackend lists keys from a single backend, converting each
-// KeyAttributes into the rich KeyInfo format that matches the REST API.
+// listKeysFromBackend lists keys from a single backend, in the caller's
+// tenant, in the rich KeyInfo format that matches the REST API. The listing
+// is the service's, so every key appears once, described by its current
+// version, however many versions it has.
 func (s *Server) listKeysFromBackend(ctx context.Context, backendName string) ([]KeyInfo, error) {
-	ks, err := s.tenantBackend(ctx, backendName)
+	listed, err := s.xkmsService.ListKeys(ctx, backendName)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to list keys of backend %s", backendName), Err: err}
 	}
 
-	keyAttrs, err := ks.ListKeys(ctx)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
-	}
-
-	keys := make([]KeyInfo, 0, len(keyAttrs))
-	for _, attr := range keyAttrs {
-		keyInfo := KeyInfo{
-			KeyID:     attr.CN,
-			KeyType:   attr.KeyType.String(),
-			Algorithm: attr.AlgorithmString(),
-			Backend:   backendName,
-		}
-
-		// Try to get the public key PEM for asymmetric keys
-		privKey, err := ks.GetKey(ctx, attr)
-		if err == nil {
-			pubKey := getPublicKey(privKey)
-			if pubKey != nil {
-				pubKeyPEM, err := encoding.EncodePublicKeyPEM(pubKey)
-				if err == nil {
-					keyInfo.PublicKeyPEM = string(pubKeyPEM)
-				}
-			}
-		}
-
-		keys = append(keys, keyInfo)
+	keys := make([]KeyInfo, 0, len(listed.Keys))
+	for _, key := range listed.Keys {
+		keys = append(keys, KeyInfo{
+			KeyID:        key.KeyID,
+			KeyType:      key.KeyType,
+			Algorithm:    key.Algorithm,
+			Backend:      backendName,
+			PublicKeyPEM: key.PublicKeyPEM,
+			KeyVersion:   key.KeyVersion,
+		})
 	}
 
 	return keys, nil
@@ -485,8 +473,9 @@ func (s *Server) handleSign(ctx context.Context, req *JSONRPCRequest) (interface
 	}
 
 	return SignResult{
-		Signature: resp.Signature,
-		Algorithm: resp.Algorithm,
+		Signature:  resp.Signature,
+		Algorithm:  resp.Algorithm,
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -524,6 +513,7 @@ func (s *Server) handleVerify(ctx context.Context, req *JSONRPCRequest) (interfa
 		SaltLength:   params.SaltLength,
 		PreHash:      params.PreHash,
 		Context:      params.Context,
+		KeyVersion:   params.KeyVersion,
 		TenantID:     callerTenantID(ctx),
 	})
 	if err != nil {
@@ -531,7 +521,8 @@ func (s *Server) handleVerify(ctx context.Context, req *JSONRPCRequest) (interfa
 	}
 
 	return VerifyResult{
-		Valid: resp.Valid,
+		Valid:      resp.Valid,
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -566,6 +557,8 @@ func (s *Server) handleRotateKey(ctx context.Context, req *JSONRPCRequest) (inte
 	return RotateKeyResult{
 		KeyID:        resp.KeyID,
 		PublicKeyPEM: resp.PublicKeyPEM,
+		KeyType:      resp.KeyType,
+		KeyVersion:   resp.KeyVersion,
 	}, nil
 }
 
@@ -640,6 +633,7 @@ func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interf
 		Padding:        params.Padding,
 		Hash:           params.Hash,
 		Label:          params.Label,
+		KeyVersion:     params.KeyVersion,
 		TenantID:       callerTenantID(ctx),
 	})
 	if err != nil {
@@ -647,7 +641,8 @@ func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interf
 	}
 
 	return DecryptResult{
-		Plaintext: resp.Plaintext,
+		Plaintext:  resp.Plaintext,
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -711,6 +706,7 @@ func (s *Server) handleEncrypt(ctx context.Context, req *JSONRPCRequest) (interf
 		Tag:          resp.Tag,
 		IV:           resp.IV,
 		GCMNonceMode: resp.GCMNonceMode,
+		KeyVersion:   resp.KeyVersion,
 	}, nil
 }
 
@@ -1473,6 +1469,7 @@ func (s *Server) handleAsymmetricEncrypt(ctx context.Context, req *JSONRPCReques
 
 	return AsymmetricEncryptResult{
 		Ciphertext: resp.Ciphertext,
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -1515,6 +1512,7 @@ func (s *Server) handleAsymmetricDecrypt(ctx context.Context, req *JSONRPCReques
 		Padding:    padding,
 		Hash:       hash,
 		Label:      params.Label,
+		KeyVersion: params.KeyVersion,
 		TenantID:   callerTenantID(ctx),
 	})
 	if err != nil {
@@ -1522,7 +1520,8 @@ func (s *Server) handleAsymmetricDecrypt(ctx context.Context, req *JSONRPCReques
 	}
 
 	return AsymmetricDecryptResult{
-		Plaintext: resp.Plaintext,
+		Plaintext:  resp.Plaintext,
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -1641,6 +1640,7 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 		WrappedDEK: sealed.WrappedDEK,
 		TPMPublic:  sealed.TPMPublic,
 		TPMPrivate: sealed.TPMPrivate,
+		KeyVersion: sealed.KeyVersion,
 	}, nil
 }
 
@@ -1671,6 +1671,7 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 		WrappedDEK: params.WrappedDEK,
 		Metadata:   params.Metadata,
 		Password:   params.Password,
+		KeyVersion: params.KeyVersion,
 		TenantID:   callerTenantID(ctx),
 	})
 	if err != nil {

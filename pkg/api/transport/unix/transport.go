@@ -343,10 +343,11 @@ func (t *Transport) ListKeys(ctx context.Context, backend string, opts ...transp
 	keys := make([]transport.KeyInfo, len(resp.Keys))
 	for i, k := range resp.Keys {
 		keys[i] = transport.KeyInfo{
-			KeyID:     k.KeyId,
-			KeyType:   k.KeyType,
-			Algorithm: k.Algorithm,
-			Backend:   k.Backend,
+			KeyID:      k.KeyId,
+			KeyType:    k.KeyType,
+			Algorithm:  k.Algorithm,
+			Backend:    k.Backend,
+			KeyVersion: k.KeyVersion,
 		}
 	}
 
@@ -371,10 +372,11 @@ func (t *Transport) GetKey(ctx context.Context, backend, keyID string) (*transpo
 
 	return &transport.GetKeyResponse{
 		KeyInfo: transport.KeyInfo{
-			KeyID:     resp.Key.KeyId,
-			KeyType:   resp.Key.KeyType,
-			Algorithm: resp.Key.Algorithm,
-			Backend:   resp.Key.Backend,
+			KeyID:      resp.Key.KeyId,
+			KeyType:    resp.Key.KeyType,
+			Algorithm:  resp.Key.Algorithm,
+			Backend:    resp.Key.Backend,
+			KeyVersion: resp.Key.KeyVersion,
 		},
 		PublicKeyPEM: resp.PublicKeyPem,
 	}, nil
@@ -479,6 +481,8 @@ func (t *Transport) RotateKey(ctx context.Context, req *transport.RotateKeyReque
 		KeyID:        resp.KeyId,
 		Message:      "Key rotated successfully",
 		PublicKeyPEM: resp.PublicKeyPem,
+		KeyType:      resp.KeyType,
+		KeyVersion:   resp.KeyVersion,
 	}, nil
 }
 
@@ -638,8 +642,9 @@ func (t *Transport) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDR
 	}
 
 	return &transport.WrapKeyByIDResponse{
-		WrappedKey: resp.WrappedKey,
-		Algorithm:  resp.Algorithm,
+		WrappedKey:         resp.WrappedKey,
+		Algorithm:          resp.Algorithm,
+		WrappingKeyVersion: resp.WrappingKeyVersion,
 	}, nil
 }
 
@@ -657,15 +662,16 @@ func (t *Transport) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyB
 		Iv:                   req.IV,
 		Aad:                  req.AAD,
 		// #nosec G115 - CK_GCM_PARAMS.ulTagBits is one of 96..128.
-		TagBits:          int32(req.TagBits),
-		OaepLabel:        req.OAEPLabel,
-		TargetKeyId:      req.TargetKeyID,
-		TargetKeyBackend: req.TargetKeyBackend,
-		TargetKeyType:    req.TargetKeyType,
-		TargetKeySize:    int32(req.TargetKeySize),
-		TargetCurve:      req.TargetCurve,
-		TargetPartition:  req.TargetPartition,
-		TargetExportable: req.TargetExportable,
+		TagBits:              int32(req.TagBits),
+		OaepLabel:            req.OAEPLabel,
+		TargetKeyId:          req.TargetKeyID,
+		TargetKeyBackend:     req.TargetKeyBackend,
+		TargetKeyType:        req.TargetKeyType,
+		TargetKeySize:        int32(req.TargetKeySize),
+		TargetCurve:          req.TargetCurve,
+		TargetPartition:      req.TargetPartition,
+		TargetExportable:     req.TargetExportable,
+		UnwrappingKeyVersion: req.UnwrappingKeyVersion,
 	}
 
 	resp, err := t.client.UnwrapKeyByID(ctx, pbReq)
@@ -703,7 +709,8 @@ func (t *Transport) Sign(ctx context.Context, req *transport.SignRequest) (*tran
 	}
 
 	return &transport.SignResponse{
-		Signature: resp.Signature,
+		Signature:  resp.Signature,
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -722,6 +729,7 @@ func (t *Transport) Verify(ctx context.Context, req *transport.VerifyRequest) (*
 		Padding:      req.Padding,
 		SaltLength:   int32(req.SaltLength),
 		DataIsDigest: req.DataIsDigest,
+		KeyVersion:   req.KeyVersion,
 	}
 
 	resp, err := t.client.Verify(ctx, pbReq)
@@ -730,8 +738,9 @@ func (t *Transport) Verify(ctx context.Context, req *transport.VerifyRequest) (*
 	}
 
 	return &transport.VerifyResponse{
-		Valid:   resp.Valid,
-		Message: resp.Message,
+		Valid:      resp.Valid,
+		Message:    resp.Message,
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -763,6 +772,7 @@ func (t *Transport) Encrypt(ctx context.Context, req *transport.EncryptRequest) 
 		Tag:          resp.Tag,
 		IV:           resp.Iv,
 		GCMNonceMode: resp.GcmNonceMode,
+		KeyVersion:   resp.KeyVersion,
 	}, nil
 }
 
@@ -786,6 +796,7 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 		Hash:           req.Hash,
 		Label:          req.Label,
 		TagSize:        int32(req.TagSize),
+		KeyVersion:     req.KeyVersion,
 	}
 
 	resp, err := t.client.Decrypt(ctx, pbReq)
@@ -794,7 +805,8 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 	}
 
 	return &transport.DecryptResponse{
-		Plaintext: resp.Plaintext,
+		Plaintext:  resp.Plaintext,
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -817,6 +829,7 @@ func (t *Transport) EncryptAsym(ctx context.Context, req *transport.EncryptAsymR
 
 	return &transport.EncryptAsymResponse{
 		Ciphertext: resp.Ciphertext,
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -845,6 +858,7 @@ func (t *Transport) DeriveKey(ctx context.Context, req *transport.DeriveKeyReque
 		StoreResult:      req.StoreResult,
 		DerivedKeyId:     req.DerivedKeyID,
 		DerivedKeyType:   req.DerivedKeyType,
+		KeyVersion:       req.KeyVersion,
 	}
 
 	resp, err := t.client.DeriveKey(ctx, pbReq)
@@ -857,6 +871,7 @@ func (t *Transport) DeriveKey(ctx context.Context, req *transport.DeriveKeyReque
 		KeyID:      resp.KeyId,
 		Algorithm:  resp.Algorithm,
 		KeyLength:  int(resp.KeyLength),
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -876,6 +891,7 @@ func (t *Transport) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKeyE
 		KdfInfo:       req.KDFInfo,
 		KdfLabel:      req.KDFLabel,
 		KeyLength:     int32(req.KeyLength),
+		KeyVersion:    req.KeyVersion,
 	}
 
 	resp, err := t.client.DeriveKeyECDH(ctx, pbReq)
@@ -885,6 +901,7 @@ func (t *Transport) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKeyE
 
 	return &transport.DeriveKeyECDHResponse{
 		DerivedKey: resp.DerivedKey,
+		KeyVersion: resp.KeyVersion,
 	}, nil
 }
 
@@ -2341,6 +2358,67 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 // model is undecided, so Transport does not implement EscrowKey/RecoverKey/
 // ListEscrowed/RevokeEscrow at all. transport.EscrowService is no longer
 // part of transport.Client — see docs/escrow/architecture.md.
+
+// Key Version Operations
+//
+// The key-version API is served by pbconv.KeyVersionClient, shared with the
+// gRPC transport, once this transport holds a connection.
+
+// ListKeyVersions lists a key's versions.
+func (t *Transport) ListKeyVersions(ctx context.Context, req *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.KeyVersionClient{Client: t.client}.ListKeyVersions(ctx, req)
+}
+
+// EnableKeyVersion enables a version of a key.
+func (t *Transport) EnableKeyVersion(ctx context.Context, req *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.KeyVersionClient{Client: t.client}.EnableKeyVersion(ctx, req)
+}
+
+// DisableKeyVersion disables a version of a key.
+func (t *Transport) DisableKeyVersion(ctx context.Context, req *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.KeyVersionClient{Client: t.client}.DisableKeyVersion(ctx, req)
+}
+
+// RetireKeyVersion retires a version of a key.
+func (t *Transport) RetireKeyVersion(ctx context.Context, req *transport.KeyVersionRequest) (*transport.KeyVersionStateResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.KeyVersionClient{Client: t.client}.RetireKeyVersion(ctx, req)
+}
+
+// EnableAllKeyVersions enables every disabled version of a key.
+func (t *Transport) EnableAllKeyVersions(ctx context.Context, req *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.KeyVersionClient{Client: t.client}.EnableAllKeyVersions(ctx, req)
+}
+
+// DisableAllKeyVersions disables every non-current version of a key.
+func (t *Transport) DisableAllKeyVersions(ctx context.Context, req *transport.AllKeyVersionsRequest) (*transport.AllKeyVersionsResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.KeyVersionClient{Client: t.client}.DisableAllKeyVersions(ctx, req)
+}
+
+// RotateScopeKeys rotates every key of a tenant.
+func (t *Transport) RotateScopeKeys(ctx context.Context, req *transport.RotateScopeKeysRequest) (*transport.RotateScopeKeysResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.KeyVersionClient{Client: t.client}.RotateScopeKeys(ctx, req)
+}
 
 // TPM Policy Operations
 //

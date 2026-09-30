@@ -20,12 +20,15 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
@@ -76,11 +79,48 @@ func (s *XKMSService) GenerateKey(ctx context.Context, req *transport.GenerateKe
 	if err != nil {
 		return nil, err
 	}
+	if err := s.refuseRotatedKeyID(ctx, req.TenantID, backendName, req.KeyID); err != nil {
+		return nil, err
+	}
 
-	var privKey crypto.PrivateKey
+	privKey, err := generateKeyWithAttributes(ctx, b, backendName, attrs)
+	if err != nil {
+		return nil, err
+	}
 
-	// Symmetric key generation
+	incrementKeysTotal(backendName)
+
+	resp = &transport.GenerateKeyResponse{
+		KeyID:   req.KeyID,
+		KeyType: req.KeyType,
+	}
+	// A symmetric key has no public half to report.
+	if privKey == nil {
+		return resp, nil
+	}
+	pubPEM, err := pubKeyPEM(privKey)
+	if err != nil {
+		return nil, &ErrKeyOperation{Operation: "encode public key", Err: err}
+	}
+	resp.PublicKeyPEM = pubPEM
+	return resp, nil
+}
+
+// generateKeyWithAttributes generates the key attrs describes in b, the view
+// of the backend registered as backendName: a symmetric key when attrs names
+// a symmetric algorithm, which returns a nil private key, and otherwise an
+// RSA, ECDSA or Ed25519 key pair. GenerateKey and RotateKey both generate
+// through it, so a key's later versions are made exactly as its first was.
+//
+// A symmetric key is generated through the backend's key provider, which a
+// tenant view does not wrap, so the view's tenant is stamped on the
+// attributes here: without it a tenant's symmetric key was stored as a
+// system key, invisible to the tenant that created it.
+func generateKeyWithAttributes(ctx context.Context, b Backend, backendName string, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if attrs.SymmetricAlgorithm != "" {
+		if scoped, ok := b.(*TenantScopedBackend); ok {
+			attrs.TenantID = scoped.tenantID
+		}
 		symProvider, ok := b.KeyProvider().(types.SymmetricKeyProvider)
 		if !ok {
 			return nil, &ErrBackendUnsupported{
@@ -89,18 +129,16 @@ func (s *XKMSService) GenerateKey(ctx context.Context, req *transport.GenerateKe
 				Detail:   "does not support symmetric key generation",
 			}
 		}
-		_, symErr := symProvider.GenerateSymmetricKey(ctx, attrs)
-		if symErr != nil {
-			return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: symErr}
+		if _, err := symProvider.GenerateSymmetricKey(ctx, attrs); err != nil {
+			return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 		}
-		incrementKeysTotal(backendName)
-		return &transport.GenerateKeyResponse{
-			KeyID:   req.KeyID,
-			KeyType: req.KeyType,
-		}, nil
+		return nil, nil
 	}
 
-	// Asymmetric key generation
+	var (
+		privKey crypto.PrivateKey
+		err     error
+	)
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
 		privKey, err = b.GenerateRSA(ctx, attrs)
@@ -109,24 +147,12 @@ func (s *XKMSService) GenerateKey(ctx context.Context, req *transport.GenerateKe
 	case x509.Ed25519:
 		privKey, err = b.GenerateEd25519(ctx, attrs)
 	default:
-		return nil, &ErrValidation{Sentinel: ErrUnsupportedKeyAlgorithm, Detail: req.Algorithm}
+		return nil, &ErrValidation{Sentinel: ErrUnsupportedKeyAlgorithm, Detail: attrs.KeyAlgorithm.String()}
 	}
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
-
-	pubPEM, err := pubKeyPEM(privKey)
-	if err != nil {
-		return nil, &ErrKeyOperation{Operation: "encode public key", Err: err}
-	}
-
-	incrementKeysTotal(backendName)
-
-	return &transport.GenerateKeyResponse{
-		KeyID:        req.KeyID,
-		KeyType:      req.KeyType,
-		PublicKeyPEM: pubPEM,
-	}, nil
+	return privKey, nil
 }
 
 // ListKeys lists all keys in the specified backend, or across all backends
@@ -182,7 +208,9 @@ func (s *XKMSService) ListKeys(ctx context.Context, backendName string, opts ...
 		if err != nil {
 			return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 		}
-		listed = appendPagedKeys(listed, b, backendName, keys)
+		if listed, err = s.appendPagedKeys(ctx, listed, b, backendName, keys); err != nil {
+			return nil, err
+		}
 	} else {
 		// Backends are visited in name order. Ranging the map directly gave a
 		// different concatenation on each call, and a page boundary drawn
@@ -203,7 +231,9 @@ func (s *XKMSService) ListKeys(ctx context.Context, backendName string, opts ...
 			if err != nil {
 				continue
 			}
-			listed = appendPagedKeys(listed, b, name, keys)
+			if listed, err = s.appendPagedKeys(ctx, listed, b, name, keys); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -212,7 +242,11 @@ func (s *XKMSService) ListKeys(ctx context.Context, backendName string, opts ...
 	infos := make([]transport.KeyInfo, 0, len(page))
 	for _, key := range page {
 		info := keyInfoFromAttrs(key.attrs, key.backendName)
-		info.PublicKeyPEM = publicKeyPEMOf(ctx, key.backend, key.attrs)
+		info.KeyID = key.keyID
+		info.KeyVersion = key.version
+		if key.current {
+			info.PublicKeyPEM = publicKeyPEMOf(ctx, key.backend, key.attrs)
+		}
 		infos = append(infos, info)
 	}
 
@@ -223,18 +257,82 @@ func (s *XKMSService) ListKeys(ctx context.Context, backendName string, opts ...
 // backend name it was listed from, kept together so the page can be
 // paginated before any public key is read.
 type pagedKey struct {
+	// attrs are the attributes of the key's current version, or of another
+	// of its versions when the current one's backend key is missing.
 	attrs       *types.KeyAttributes
 	backend     Backend
 	backendName string
+
+	// keyID is the key's ID; a version's backend name is never listed.
+	keyID string
+
+	// version is the key's current version.
+	version uint32
+
+	// current reports whether attrs are the current version's, so the
+	// listing reports its public key.
+	current bool
+}
+
+// keyGroup identifies one key in a backend listing: a key ID is unique only
+// within its tenant.
+type keyGroup struct {
+	tenant string
+	keyID  string
 }
 
 // appendPagedKeys appends every key in keys, as listed from b under name, to
-// listed.
-func appendPagedKeys(listed []pagedKey, b Backend, name string, keys []*types.KeyAttributes) []pagedKey {
+// listed -- once per key, however many versions it has. A version's backend
+// key ("K--v2") is folded into its key K and never listed on its own, and the
+// key is described by its current version.
+func (s *XKMSService) appendPagedKeys(ctx context.Context, listed []pagedKey, b Backend, name string, keys []*types.KeyAttributes) ([]pagedKey, error) {
+	var order []keyGroup
+	groups := make(map[keyGroup]map[uint32]*types.KeyAttributes)
 	for _, attrs := range keys {
-		listed = append(listed, pagedKey{attrs: attrs, backend: b, backendName: name})
+		if attrs == nil {
+			continue
+		}
+		keyID, n, ok := keyversion.Parse(attrs.CN)
+		if !ok {
+			keyID, n = attrs.CN, 1
+		}
+		id := keyGroup{tenant: recordTenant(attrs.TenantID), keyID: keyID}
+		if _, seen := groups[id]; !seen {
+			groups[id] = make(map[uint32]*types.KeyAttributes)
+			order = append(order, id)
+		}
+		groups[id][n] = attrs
 	}
-	return listed
+
+	store := s.keyVersions.load()
+	for _, id := range order {
+		present := groups[id]
+		current := uint32(1)
+		// Only a rotated key has a record, and only a rotated key has a
+		// version after the first; an unrotated key costs no store read.
+		if len(present) > 1 || present[1] == nil {
+			if store != nil {
+				rec, _, err := store.Load(ctx, id.tenant, name, id.keyID)
+				if err != nil {
+					return nil, err
+				}
+				current = rec.Current
+			}
+		}
+		attrs, isCurrent := present[current]
+		if !isCurrent {
+			attrs = present[slices.Max(slices.Collect(maps.Keys(present)))]
+		}
+		listed = append(listed, pagedKey{
+			attrs:       attrs,
+			backend:     b,
+			backendName: name,
+			keyID:       id.keyID,
+			version:     current,
+			current:     isCurrent,
+		})
+	}
+	return listed, nil
 }
 
 // publicKeyPEMOf returns attrs' public key, PEM-encoded, or "" when the key
@@ -259,6 +357,10 @@ func publicKeyPEMOf(ctx context.Context, b Backend, attrs *types.KeyAttributes) 
 // identity on ctx exactly as ListKeys takes it. Another tenant's key is not
 // found -- the same ErrKeyNotFound a key no tenant holds produces -- so the
 // answer does not reveal that the key exists (go-xkms#1218).
+//
+// The key is described by its current version, whose number KeyVersion
+// reports and whose public key PublicKeyPEM carries; ListKeyVersions reports
+// every version's public key.
 func (s *XKMSService) GetKey(ctx context.Context, backendName, keyID string) (resp *transport.GetKeyResponse, err error) {
 	start := time.Now()
 	metricsBackend := s.metricsBackendName(backendName)
@@ -268,19 +370,21 @@ func (s *XKMSService) GetKey(ctx context.Context, backendName, keyID string) (re
 		return nil, ErrInvalidKeyID
 	}
 
-	b, resolvedName, err := s.resolveTenantBackendWithName(backendName, scopedTenantIDFromContext(ctx))
+	k, err := s.resolveKeyIn(ctx, backendName, scopedTenantIDFromContext(ctx), keyID)
+	if err != nil {
+		return nil, err
+	}
+	cur, err := k.current()
 	if err != nil {
 		return nil, err
 	}
 
-	keyAttrs, err := findKeyAttrs(ctx, b, keyID)
-	if err != nil {
-		return nil, err
-	}
-
+	info := keyInfoFromAttrs(cur.attrs, k.backendName)
+	info.KeyID = k.keyID
+	info.KeyVersion = cur.number
 	return &transport.GetKeyResponse{
-		KeyInfo:      keyInfoFromAttrs(keyAttrs, resolvedName),
-		PublicKeyPEM: publicKeyPEMOf(ctx, b, keyAttrs),
+		KeyInfo:      info,
+		PublicKeyPEM: publicKeyPEMOf(ctx, k.backend, cur.attrs),
 	}, nil
 }
 
@@ -290,6 +394,8 @@ func (s *XKMSService) GetKey(ctx context.Context, backendName, keyID string) (re
 // identity on ctx exactly as ListKeys takes it, so a tenant can delete only
 // its own keys; another tenant's key is ErrKeyNotFound, indistinguishable
 // from a key no tenant holds (go-xkms#1218).
+//
+// Every version of the key is deleted, and its version record with them.
 func (s *XKMSService) DeleteKey(ctx context.Context, backendName, keyID string) (err error) {
 	start := time.Now()
 	metricsBackend := s.metricsBackendName(backendName)
@@ -299,21 +405,16 @@ func (s *XKMSService) DeleteKey(ctx context.Context, backendName, keyID string) 
 		return ErrInvalidKeyID
 	}
 
-	b, resolvedName, err := s.resolveTenantBackendWithName(backendName, scopedTenantIDFromContext(ctx))
+	k, err := s.resolveKeyIn(ctx, backendName, scopedTenantIDFromContext(ctx), keyID)
 	if err != nil {
 		return err
 	}
 
-	keyAttrs, err := findKeyAttrs(ctx, b, keyID)
-	if err != nil {
+	if err := s.deleteAllVersions(ctx, k); err != nil {
 		return err
 	}
 
-	if delErr := b.DeleteKey(ctx, keyAttrs); delErr != nil {
-		return delErr
-	}
-
-	decrementKeysTotal(resolvedName)
+	decrementKeysTotal(k.backendName)
 	return nil
 }
 
@@ -353,6 +454,9 @@ func (s *XKMSService) ImportKey(ctx context.Context, req *transport.ImportKeyReq
 	if err != nil {
 		return nil, err
 	}
+	if err := s.refuseRotatedKeyID(ctx, req.TenantID, backendName, req.KeyID); err != nil {
+		return nil, err
+	}
 
 	wrapped := &backend.WrappedKeyMaterial{
 		WrappedKey:  req.WrappedKeyMaterial,
@@ -387,7 +491,8 @@ func (s *XKMSService) ImportKey(ctx context.Context, req *transport.ImportKeyReq
 	return resp, nil
 }
 
-// ExportKey exports a key in wrapped form for secure transport.
+// ExportKey exports a key in wrapped form for secure transport. It exports
+// the key's current version.
 func (s *XKMSService) ExportKey(ctx context.Context, req *transport.ExportKeyRequest) (resp *transport.ExportKeyResponse, err error) {
 	start := time.Now()
 	metricsBackend := ""
@@ -418,10 +523,15 @@ func (s *XKMSService) ExportKey(ctx context.Context, req *transport.ExportKeyReq
 		return nil, unsupportedHalf(backendName, backend.ErrExportNotSupported)
 	}
 
-	keyAttrs, err := findKeyAttrs(ctx, b, req.KeyID)
+	k, err := s.resolveKey(ctx, b, backendName, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
+	cur, err := k.current()
+	if err != nil {
+		return nil, err
+	}
+	keyAttrs := cur.attrs
 
 	algorithm := backend.WrappingAlgorithm(req.Algorithm)
 	wrapped, err := exporter.ExportKey(ctx, keyAttrs, algorithm)
@@ -441,7 +551,18 @@ func (s *XKMSService) ExportKey(ctx context.Context, req *transport.ExportKeyReq
 	}, nil
 }
 
-// RotateKey replaces an existing key with a newly generated key of the same type.
+// RotateKey creates the key's next version and makes it current.
+//
+// The new version is a new backend key, "K--v<n>", generated with the
+// current version's algorithm and attributes -- on a TPM2 backend in the same
+// tenant scope and bound to the same TPM policy -- so rotation never
+// replaces key material in place, on any backend. Every earlier version stays
+// enabled: signatures and ciphertext it produced still verify and decrypt,
+// and sign and encrypt move to the new version at once. Disable or retire an
+// old version with DisableKeyVersion or RetireKeyVersion.
+//
+// It needs the key-version store (SetKeyVersionStore); without one it returns
+// ErrKeyVersionsNotConfigured.
 func (s *XKMSService) RotateKey(ctx context.Context, req *transport.RotateKeyRequest) (resp *transport.RotateKeyResponse, err error) {
 	start := time.Now()
 	metricsBackend := ""
@@ -457,34 +578,28 @@ func (s *XKMSService) RotateKey(ctx context.Context, req *transport.RotateKeyReq
 		return nil, ErrInvalidKeyID
 	}
 
-	backendName := req.Backend
-	if backendName == "" {
-		backendName = s.defaultBackendName()
-	}
-
-	b, err := s.resolveTenantBackend(backendName, req.TenantID)
+	b, backendName, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
 
-	keyAttrs, err := findKeyAttrs(ctx, b, req.KeyID)
+	rotated, err := s.rotateKey(ctx, b, backendName, req.KeyID)
 	if err != nil {
 		return nil, err
-	}
-
-	privKey, err := b.RotateKey(ctx, keyAttrs)
-	if err != nil {
-		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
 
 	resp = &transport.RotateKeyResponse{
-		Success: true,
-		KeyID:   req.KeyID,
-		KeyType: keyAttrs.KeyType.String(),
+		Success:    true,
+		KeyID:      req.KeyID,
+		KeyType:    rotated.attrs.KeyType.String(),
+		KeyVersion: rotated.version,
 	}
-	// A rotated symmetric key has no public half to report, so the field is
-	// left empty for it rather than failing a rotation that succeeded.
-	if pemStr, pemErr := pubKeyPEM(privKey); pemErr == nil {
+	// A rotated symmetric key has no public half to report.
+	if rotated.key != nil {
+		pemStr, pemErr := pubKeyPEM(rotated.key)
+		if pemErr != nil {
+			return nil, &ErrKeyOperation{Operation: "encode public key", KeyID: req.KeyID, Err: pemErr}
+		}
 		resp.PublicKeyPEM = pemStr
 	}
 	return resp, nil
@@ -610,9 +725,23 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		return nil, unsupportedHalf(destBackend, backend.ErrImportNotSupported)
 	}
 
-	srcAttrs, err := findKeyAttrs(ctx, srcB, req.SourceKeyID)
+	// The copy is of the source key's current version, under a new key ID
+	// that starts its own version history.
+	srcKey, err := s.resolveKey(ctx, srcB, sourceBackend, req.SourceKeyID)
 	if err != nil {
 		return nil, &ErrCopyKeyBackend{Role: "source key", Err: err}
+	}
+	srcVersion, err := srcKey.current()
+	if err != nil {
+		return nil, &ErrCopyKeyBackend{Role: "source key", Err: err}
+	}
+	srcAttrs := srcVersion.attrs
+
+	if err := keyversion.CheckKeyID(req.DestKeyID); err != nil {
+		return nil, err
+	}
+	if err := s.refuseRotatedKeyID(ctx, req.TenantID, destBackend, req.DestKeyID); err != nil {
+		return nil, err
 	}
 
 	// The RSA-2048 floor is re-checked here directly against
@@ -687,7 +816,8 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 	}, nil
 }
 
-// ExportKeyMaterial exports raw symmetric key bytes for extractable keys.
+// ExportKeyMaterial exports raw symmetric key bytes for extractable keys: the
+// material of the key's current version.
 //
 // SECURITY WARNING: this returns plaintext key material with no cryptographic
 // protection. It only succeeds for symmetric keys created with exportable=true
@@ -722,10 +852,15 @@ func (s *XKMSService) ExportKeyMaterial(ctx context.Context, req *transport.Expo
 		return nil, unsupportedHalf(req.Backend, backend.ErrExportNotSupported)
 	}
 
-	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
+	k, err := s.resolveKey(ctx, b, req.Backend, req.KeyID)
 	if err != nil {
 		return nil, roleLookupError("key", req.KeyID, err)
 	}
+	cur, err := k.current()
+	if err != nil {
+		return nil, roleLookupError("key", req.KeyID, err)
+	}
+	attrs := cur.attrs
 
 	// A sensitive key's plaintext is never released, whatever the caller says.
 	//
@@ -904,7 +1039,8 @@ func (s *XKMSService) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReq
 // here rather than in the caller. Either way the material is encrypted
 // directly under the wrapping key named by req.WrappingKeyID via
 // wrapKeyMaterial (servicer_wrapkey.go), so both produce the same framing and
-// UnwrapKeyByID reverses both. This is deliberately independent of
+// UnwrapKeyByID reverses both. The wrap uses the wrapping key's current
+// version, which WrappingKeyVersion reports. This is deliberately independent of
 // backend.ImportExportBackend.GetImportParameters/WrapKey, which serve a
 // different feature (the key-IMPORT ceremony: bringing externally generated
 // material into a backend) and always wrap under a freshly generated
@@ -947,12 +1083,16 @@ func (s *XKMSService) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByI
 		return nil, roleLookupError("wrapping key backend", req.WrappingKeyBackend, err)
 	}
 
-	wrappingAttrs, err := findKeyAttrs(ctx, wrappingBackend, req.WrappingKeyID)
+	wrappingKey, err := s.resolveKey(ctx, wrappingBackend, req.WrappingKeyBackend, req.WrappingKeyID)
+	if err != nil {
+		return nil, roleLookupError("wrapping key", req.WrappingKeyID, err)
+	}
+	wrappingVersion, err := wrappingKey.current()
 	if err != nil {
 		return nil, roleLookupError("wrapping key", req.WrappingKeyID, err)
 	}
 
-	wrapped, err := wrapKeyMaterial(ctx, wrappingBackend, wrappingAttrs, req.Algorithm, wrapParams{
+	wrapped, err := wrapKeyMaterial(ctx, wrappingBackend, wrappingVersion.attrs, req.Algorithm, wrapParams{
 		iv:        req.IV,
 		aad:       req.AAD,
 		tagBits:   req.TagBits,
@@ -963,8 +1103,9 @@ func (s *XKMSService) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByI
 	}
 
 	return &transport.WrapKeyByIDResponse{
-		WrappedKey: wrapped,
-		Algorithm:  req.Algorithm,
+		WrappedKey:         wrapped,
+		Algorithm:          req.Algorithm,
+		WrappingKeyVersion: wrappingVersion.number,
 	}, nil
 }
 
@@ -1024,13 +1165,18 @@ func (s *XKMSService) wrapTargetKeyMaterial(ctx context.Context, req *transport.
 		}
 	}
 
-	targetAttrs, err := findKeyAttrs(ctx, targetBackend, req.TargetKeyID)
+	targetKey, err := s.resolveKey(ctx, targetBackend, req.TargetKeyBackend, req.TargetKeyID)
+	if err != nil {
+		return nil, roleLookupError("target key", req.TargetKeyID, err)
+	}
+	targetVersion, err := targetKey.current()
 	if err != nil {
 		return nil, roleLookupError("target key", req.TargetKeyID, err)
 	}
 
 	// Only symmetric keys created with Exportable=true can be released here.
-	keyMaterial, err := targetExporter.ExportKeyMaterial(ctx, targetAttrs)
+	// The target's current version is the material wrapped.
+	keyMaterial, err := targetExporter.ExportKeyMaterial(ctx, targetVersion.attrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrExportKeyMaterialFailed, Detail: "target key", Err: err}
 	}
@@ -1046,7 +1192,11 @@ func (s *XKMSService) wrapTargetKeyMaterial(ctx context.Context, req *transport.
 // ephemeral key, and never routed through
 // backend.ImportExportBackend.GetImportParameters/UnwrapKey, the unrelated
 // key-IMPORT ceremony (see the WrapKeyByID doc comment for why the two must
-// not be conflated). The recovered plaintext material is then imported into
+// not be conflated). The unwrapping key version is req.UnwrappingKeyVersion
+// when given; without it, an authenticated wrap (AES-KW, AES-KWP, AES-GCM,
+// RSA-OAEP) tries each enabled version, newest first, and an unauthenticated
+// one (AES-CBC, RSA PKCS#1 v1.5) needs the key to have exactly one enabled
+// version. The recovered plaintext material is then imported into
 // the target backend using the key template carried in the request, exactly
 // as before.
 //
@@ -1112,17 +1262,32 @@ func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKe
 		}
 	}
 
-	unwrappingAttrs, err := findKeyAttrs(ctx, unwrappingBackend, req.UnwrappingKeyID)
+	if err := keyversion.CheckKeyID(req.TargetKeyID); err != nil {
+		return nil, err
+	}
+
+	unwrappingKey, err := s.resolveKey(ctx, unwrappingBackend, req.UnwrappingKeyBackend, req.UnwrappingKeyID)
 	if err != nil {
 		return nil, roleLookupError("unwrapping key", req.UnwrappingKeyID, err)
 	}
+	mech, err := resolveWrapMechanism(req.Algorithm, "unwrap")
+	if err != nil {
+		return nil, err
+	}
+	versions, err := unwrappingKey.selectVersions(req.UnwrappingKeyVersion, mech.authenticated())
+	if err != nil {
+		return nil, err
+	}
 
-	keyMaterial, err := unwrapKeyMaterial(ctx, unwrappingBackend, unwrappingAttrs, req.Algorithm, wrapParams{
+	params := wrapParams{
 		iv:        req.IV,
 		aad:       req.AAD,
 		tagBits:   req.TagBits,
 		oaepLabel: req.OAEPLabel,
-	}, req.WrappedKey)
+	}
+	keyMaterial, _, err := firstSuccess(versions, func(v keyVersion) ([]byte, error) {
+		return unwrapKeyMaterial(ctx, unwrappingBackend, v.attrs, req.Algorithm, params, req.WrappedKey)
+	})
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "unwrap key", KeyID: req.TargetKeyID, Err: err}
 	}
@@ -1394,11 +1559,15 @@ func resolveKeyHash(hash string) (crypto.Hash, error) {
 // CN == "b". The operation reports success, list_keys shows a key the caller
 // did not ask for, and get_key and sign cannot reach it under the name it was
 // created with.
+//
+// A key ID ending in "--v<digits>" is refused too, with
+// *keyversion.ReservedKeyIDError: version n > 1 of key K is the backend key
+// "K--v<n>", so such a name belongs to a version of another key.
 func guardKeyID(keyID string) error {
 	if err := validation.ValidateKeyID(keyID); err != nil {
 		return &ErrKeyIDValidation{Err: err}
 	}
-	return nil
+	return keyversion.CheckKeyID(keyID)
 }
 
 // buildKeyAttributes constructs a types.KeyAttributes from a GenerateKeyRequest.

@@ -267,13 +267,15 @@ func (p *Printer) PrintError(err error) error {
 	}
 }
 
-// PrintSignature prints a signature (base64 encoded)
-func (p *Printer) PrintSignature(signature string) error {
+// PrintSignature prints a signature (base64 encoded) and, in JSON, the key
+// version that produced it. The text form stays the bare signature, so it
+// can be piped into verify.
+func (p *Printer) PrintSignature(signature string, keyVersion uint32) error {
 	switch p.format {
 	case OutputFormatJSON:
-		return p.printJSON(map[string]interface{}{
+		return p.printJSON(withKeyVersion(map[string]interface{}{
 			"signature": signature,
-		})
+		}, keyVersion))
 	case OutputFormatTable, OutputFormatText:
 		p.writer.println(signature)
 		return p.writer.Err()
@@ -297,21 +299,26 @@ func (p *Printer) PrintDecryptedData(plaintext string) error {
 	}
 }
 
-// PrintEncryptedData prints encrypted data (ciphertext, nonce, tag all base64 encoded)
-func (p *Printer) PrintEncryptedData(data *client.EncryptedData) error {
+// PrintEncryptedData prints encrypted data (ciphertext, nonce, tag all base64
+// encoded) and the key version that produced it, which decrypting AES-CBC
+// ciphertext needs once the key has more than one enabled version.
+func (p *Printer) PrintEncryptedData(data *client.EncryptedData, keyVersion uint32) error {
 	switch p.format {
 	case OutputFormatJSON:
-		return p.printJSON(map[string]interface{}{
+		return p.printJSON(withKeyVersion(map[string]interface{}{
 			"ciphertext": base64.StdEncoding.EncodeToString(data.Ciphertext),
 			"nonce":      base64.StdEncoding.EncodeToString(data.Nonce),
 			"tag":        base64.StdEncoding.EncodeToString(data.Tag),
 			"algorithm":  data.Algorithm,
-		})
+		}, keyVersion))
 	case OutputFormatTable, OutputFormatText:
 		p.writer.printf("Ciphertext: %s\n", base64.StdEncoding.EncodeToString(data.Ciphertext))
 		p.writer.printf("Nonce:      %s\n", base64.StdEncoding.EncodeToString(data.Nonce))
 		p.writer.printf("Tag:        %s\n", base64.StdEncoding.EncodeToString(data.Tag))
 		p.writer.printf("Algorithm:  %s\n", data.Algorithm)
+		if keyVersion != 0 {
+			p.writer.printf("Key version: %d\n", keyVersion)
+		}
 		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
@@ -534,18 +541,29 @@ func (p *Printer) PrintImportParameters(params *client.ImportParameters) error {
 }
 
 // PrintEncryptedAsym prints asymmetrically encrypted data (base64 encoded)
-func (p *Printer) PrintEncryptedAsym(ciphertext string) error {
+// and, in JSON, the key version whose public key encrypted it. The text form
+// stays the bare ciphertext.
+func (p *Printer) PrintEncryptedAsym(ciphertext string, keyVersion uint32) error {
 	switch p.format {
 	case OutputFormatJSON:
-		return p.printJSON(map[string]interface{}{
+		return p.printJSON(withKeyVersion(map[string]interface{}{
 			"ciphertext": ciphertext,
-		})
+		}, keyVersion))
 	case OutputFormatTable, OutputFormatText:
 		p.writer.println(ciphertext)
 		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
+}
+
+// withKeyVersion adds "key_version" to a JSON result when the server reported
+// one.
+func withKeyVersion(result map[string]interface{}, keyVersion uint32) map[string]interface{} {
+	if keyVersion != 0 {
+		result["key_version"] = keyVersion
+	}
+	return result
 }
 
 // PrintMessage prints a simple message
