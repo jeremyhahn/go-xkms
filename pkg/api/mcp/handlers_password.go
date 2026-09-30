@@ -328,13 +328,8 @@ func (s *Server) handlePasswordUpdate(ctx context.Context, req *JSONRPCRequest) 
 		return nil, err
 	}
 
-	existing, err := svc.PasswordGet(ctx, &transport.PasswordGetRequest{ID: params.ID})
-	if err != nil {
-		return nil, mapPasswordError(err)
-	}
-
-	if err := svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
-		ID:         existing.ID,
+	updated, err := svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
+		ID:         params.ID,
 		Name:       params.Name,
 		Title:      params.Title,
 		Username:   params.Username,
@@ -342,34 +337,18 @@ func (s *Server) handlePasswordUpdate(ctx context.Context, req *JSONRPCRequest) 
 		URL:        params.URL,
 		Notes:      params.Notes,
 		FolderPath: params.FolderPath,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, mapPasswordError(err)
 	}
 
-	id, name := updatedPasswordIdentity(existing, params.Name, params.FolderPath)
+	// The servicer answers with the entry as updated: a rename or a move
+	// re-keys it, so its ID is the new one.
 	return PasswordUpdateResult{
-		ID:      id,
-		Name:    name,
+		ID:      updated.ID,
+		Name:    updated.Name,
 		Message: "Password updated successfully",
 	}, nil
-}
-
-// updatedPasswordIdentity returns the ID and name existing has after an
-// update that set name and folder (nil when unchanged). An entry's ID is
-// derived from its name and folder (staticpw.GenerateID), so renaming or
-// moving it re-keys it and the result must report the new ID.
-func updatedPasswordIdentity(existing *transport.PasswordGetResponse, name, folder *string) (string, string) {
-	if name == nil && folder == nil {
-		return existing.ID, existing.Name
-	}
-	newName, newFolder := existing.Name, existing.FolderPath
-	if name != nil {
-		newName = *name
-	}
-	if folder != nil {
-		newFolder = *folder
-	}
-	return staticpw.GenerateID(newName, newFolder), newName
 }
 
 // handlePasswordDelete handles the password.delete method.
@@ -493,25 +472,22 @@ func (s *Server) handlePasswordGenerate(ctx context.Context, req *JSONRPCRequest
 		return nil, err
 	}
 
-	// Apply defaults.
-	length := params.Length
-	if length == 0 {
-		length = staticpw.DefaultLength
+	svc, err := s.passwordService()
+	if err != nil {
+		return nil, err
 	}
 
-	charset := params.Charset
-	if charset == "" {
-		charset = staticpw.CharsetAll
-	}
-
-	password, err := staticpw.GeneratePassword(length, charset)
+	generated, err := svc.PasswordGenerate(ctx, &transport.PasswordGenerateRequest{
+		Length:  params.Length,
+		Charset: params.Charset,
+	})
 	if err != nil {
 		return nil, mapPasswordError(err)
 	}
 
 	return PasswordGenerateResult{
-		Password: password,
-		Length:   length,
+		Password: generated.Password,
+		Length:   len(generated.Password),
 	}, nil
 }
 

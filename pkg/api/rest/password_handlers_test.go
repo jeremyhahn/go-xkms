@@ -905,6 +905,8 @@ func TestGeneratePasswordHandler(t *testing.T) {
 		{"custom length", `{"length":24}`, http.StatusOK, 24},
 		{"default length", `{}`, http.StatusOK, staticpw.DefaultLength},
 		{"invalid length", `{"length":2}`, http.StatusBadRequest, 0},
+		{"named charset", `{"length":20,"charset":"alphanumeric"}`, http.StatusOK, 20},
+		{"literal charset", `{"length":10,"charset":"xy"}`, http.StatusOK, 10},
 		{"malformed body", `{bad`, http.StatusBadRequest, 0},
 	}
 
@@ -924,6 +926,26 @@ func TestGeneratePasswordHandler(t *testing.T) {
 			assert.Equal(t, tc.wantLength, resp.Length)
 		})
 	}
+}
+
+// TestGeneratePasswordHandler_GoesThroughTheServicer proves generation is the
+// service layer's: a literal charset is honoured, and with no password store
+// wired the servicer's not-configured answer is the handler's.
+func TestGeneratePasswordHandler_GoesThroughTheServicer(t *testing.T) {
+	t.Parallel()
+
+	f := newPasswordFixture(t)
+	w := f.do(t, nil, http.MethodPost, "/api/v1/passwords/generate", `{"length":16,"charset":"ab"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp PasswordGenerateResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Regexp(t, `^[ab]{16}$`, resp.Password)
+
+	bare := passwordRouter(NewPasswordHandlers(&xkms.XKMSService{}))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/generate", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	bare.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
 // --- SetAccessModeHandler ---

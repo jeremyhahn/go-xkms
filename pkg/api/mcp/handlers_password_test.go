@@ -678,8 +678,13 @@ func TestPasswordIsolation_PerUserSessions(t *testing.T) {
 
 func TestHandlePasswordGenerate(t *testing.T) {
 	t.Parallel()
-	server := &Server{}
+	server := newPasswordServer(t, "").Server
 	ctx := context.Background()
+
+	t.Run("goes through the service layer", func(t *testing.T) {
+		_, err := (&Server{}).handlePasswordGenerate(ctx, pwRPC(t, "password.generate", PasswordGenerateParams{}))
+		requireCode(t, err, ErrCodeServiceUnavailable)
+	})
 
 	t.Run("generates password with defaults", func(t *testing.T) {
 		result, err := server.handlePasswordGenerate(ctx, pwRPC(t, "password.generate", PasswordGenerateParams{}))

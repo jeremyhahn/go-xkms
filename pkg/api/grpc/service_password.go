@@ -186,12 +186,14 @@ func (s *Service) PasswordUpdate(ctx context.Context, req *pb.PasswordUpdateRequ
 		transportReq.ExpiresAt = req.ExpiresAt
 	}
 
-	if updateErr := svc.PasswordUpdate(ctx, transportReq); updateErr != nil {
+	updated, updateErr := svc.PasswordUpdate(ctx, transportReq)
+	if updateErr != nil {
 		return nil, mapPasswordError(updateErr)
 	}
 
+	// A rename or move changes the entry's ID; answer with the new one.
 	return &pb.PasswordUpdateResponse{
-		Id:      req.Id,
+		Id:      updated.ID,
 		Message: "Password updated successfully",
 	}, nil
 }

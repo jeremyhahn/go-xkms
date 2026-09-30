@@ -54,7 +54,7 @@ func TestPasswordUpdate_NotConfigured(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	err = svc.PasswordUpdate(context.Background(), &transport.PasswordUpdateRequest{})
+	_, err = svc.PasswordUpdate(context.Background(), &transport.PasswordUpdateRequest{})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotConfigured))
 }
@@ -157,7 +157,7 @@ func TestPasswordList_NilRequest(t *testing.T) {
 func TestPasswordUpdate_NilRequest(t *testing.T) {
 	svc := setupServiceWithPasswordStore(t)
 
-	err := svc.PasswordUpdate(context.Background(), nil)
+	_, err := svc.PasswordUpdate(context.Background(), nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNilRequest))
 }
@@ -278,15 +278,19 @@ func TestPasswordUpdate_Success(t *testing.T) {
 
 	newName := "Updated"
 	newPass := "new-pass"
-	err = svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
+	updated, err := svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
 		ID:       addResp.ID,
 		Name:     &newName,
 		Password: &newPass,
 	})
 	require.NoError(t, err)
 
-	// ID is deterministic from name+folder, so renaming changes the ID.
+	// ID is deterministic from name+folder, so renaming changes the ID, and
+	// the update answers with the entry as updated.
 	newID := staticpw.GenerateID("Updated", "")
+	assert.Equal(t, newID, updated.ID)
+	assert.Equal(t, "Updated", updated.Name)
+	assert.Equal(t, "new-pass", updated.Password)
 	getResp, err := svc.PasswordGet(ctx, &transport.PasswordGetRequest{ID: newID})
 	require.NoError(t, err)
 	assert.Equal(t, "Updated", getResp.Name)
@@ -297,7 +301,7 @@ func TestPasswordUpdate_NotFound(t *testing.T) {
 	svc := setupServiceWithPasswordStore(t)
 
 	newName := "x"
-	err := svc.PasswordUpdate(context.Background(), &transport.PasswordUpdateRequest{
+	_, err := svc.PasswordUpdate(context.Background(), &transport.PasswordUpdateRequest{
 		ID:   "ghost",
 		Name: &newName,
 	})
@@ -450,6 +454,26 @@ func TestPasswordGenerate_WithFlags(t *testing.T) {
 	assert.Len(t, resp.Password, 16)
 }
 
+// TestPasswordGenerate_Charset proves a named or literal charset is honoured
+// and that naming a charset together with class flags is refused.
+func TestPasswordGenerate_Charset(t *testing.T) {
+	svc := setupServiceWithPasswordStore(t)
+
+	resp, err := svc.PasswordGenerate(context.Background(), &transport.PasswordGenerateRequest{Length: 64, Charset: "alphanumeric"})
+	require.NoError(t, err)
+	assert.Len(t, resp.Password, 64)
+	for _, c := range resp.Password {
+		assert.Contains(t, staticpw.CharsetAlphanumeric, string(c))
+	}
+
+	resp, err = svc.PasswordGenerate(context.Background(), &transport.PasswordGenerateRequest{Length: 12, Charset: "ab"})
+	require.NoError(t, err)
+	assert.Regexp(t, `^[ab]{12}$`, resp.Password)
+
+	_, err = svc.PasswordGenerate(context.Background(), &transport.PasswordGenerateRequest{Length: 12, Charset: "ab", Digits: true})
+	assert.ErrorIs(t, err, staticpw.ErrInvalidCharset)
+}
+
 func TestPasswordAdd_WithExpiration(t *testing.T) {
 	svc := setupServiceWithPasswordStore(t)
 
@@ -495,7 +519,7 @@ func TestPasswordUpdate_AllFields(t *testing.T) {
 	url := "https://example.com"
 	notes := "some notes"
 	folder := "/personal"
-	err = svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
+	_, err = svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
 		ID:         addResp.ID,
 		Name:       &name,
 		Username:   &username,
@@ -529,7 +553,7 @@ func TestPasswordUpdate_WithExpiration(t *testing.T) {
 	require.NoError(t, err)
 
 	expires := "2030-01-01T00:00:00Z"
-	err = svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
+	_, err = svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
 		ID:        addResp.ID,
 		ExpiresAt: &expires,
 	})
@@ -549,7 +573,7 @@ func TestPasswordUpdate_ClearExpiration(t *testing.T) {
 	require.NoError(t, err)
 
 	empty := ""
-	err = svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
+	_, err = svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
 		ID:        addResp.ID,
 		ExpiresAt: &empty,
 	})
@@ -568,7 +592,7 @@ func TestPasswordUpdate_InvalidExpiration(t *testing.T) {
 	require.NoError(t, err)
 
 	badDate := "not-a-date"
-	err = svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
+	_, err = svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
 		ID:        addResp.ID,
 		ExpiresAt: &badDate,
 	})
@@ -1315,7 +1339,7 @@ func TestPasswordUpdate_SharedOwnershipDenied(t *testing.T) {
 
 	newName := "Hijacked"
 	for _, roles := range [][]string{nil, {roleID(qrdbsdk.RoleNameOperator)}, {qrdbsdk.RoleNameAdmin}} {
-		err := svc.PasswordUpdate(sharedPasswordCtx("bob", roles...), &transport.PasswordUpdateRequest{ID: id, Name: &newName})
+		_, err := svc.PasswordUpdate(sharedPasswordCtx("bob", roles...), &transport.PasswordUpdateRequest{ID: id, Name: &newName})
 		assert.ErrorIs(t, err, staticpw.ErrNotOwner, "roles %v", roles)
 	}
 }
@@ -1338,7 +1362,7 @@ func TestPasswordUpdate_SharedOwnershipAllowedForAdmin(t *testing.T) {
 
 	// bob holds the tenant's Admin role by ID, as a seeded user record does.
 	newName := "Admin Updated"
-	err := svc.PasswordUpdate(sharedPasswordCtx("bob", roleID(qrdbsdk.RoleNameAdmin)), &transport.PasswordUpdateRequest{
+	_, err := svc.PasswordUpdate(sharedPasswordCtx("bob", roleID(qrdbsdk.RoleNameAdmin)), &transport.PasswordUpdateRequest{
 		ID:   id,
 		Name: &newName,
 	})

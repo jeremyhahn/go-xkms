@@ -129,11 +129,32 @@ func TestServicePasswordUpdate_Success(t *testing.T) {
 	newUsername := "root"
 	resp, err := svc.PasswordUpdate(context.Background(), &pb.PasswordUpdateRequest{Id: "db-prod", Username: &newUsername})
 	require.NoError(t, err)
-	assert.Equal(t, "db-prod", resp.Id)
+	assert.Equal(t, staticpw.GenerateID("db-prod", ""), resp.Id, "the response names the entry's ID, not the name the request used")
 
 	got, err := svc.PasswordGet(context.Background(), &pb.PasswordGetRequest{Id: "db-prod"})
 	require.NoError(t, err)
 	assert.Equal(t, "root", got.Entry.Username)
+}
+
+// TestServicePasswordUpdate_RenameReturnsNewID is the regression for the
+// update that answered with the ID it was asked about: a rename or a move
+// re-keys the entry, and the old ID no longer resolves.
+func TestServicePasswordUpdate_RenameReturnsNewID(t *testing.T) {
+	svc := newPasswordGRPCService(t)
+	added, err := svc.PasswordAdd(context.Background(), &pb.PasswordAddRequest{Name: "db-prod", Password: "hunter2"})
+	require.NoError(t, err)
+
+	newName, newFolder := "db-primary", "ops"
+	resp, err := svc.PasswordUpdate(context.Background(), &pb.PasswordUpdateRequest{Id: added.Id, Name: &newName, FolderPath: &newFolder})
+	require.NoError(t, err)
+	assert.Equal(t, staticpw.GenerateID(newName, newFolder), resp.Id)
+	assert.NotEqual(t, added.Id, resp.Id)
+
+	got, err := svc.PasswordGet(context.Background(), &pb.PasswordGetRequest{Id: resp.Id})
+	require.NoError(t, err)
+	assert.Equal(t, newName, got.Entry.Name)
+	_, err = svc.PasswordGet(context.Background(), &pb.PasswordGetRequest{Id: added.Id})
+	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestServicePasswordUpdate_NotFound(t *testing.T) {

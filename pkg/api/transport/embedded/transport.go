@@ -881,7 +881,8 @@ func (t *Transport) PasswordUpdate(ctx context.Context, req *transport.PasswordU
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.service.PasswordUpdate(ctx, req)
+	_, err := t.service.PasswordUpdate(ctx, req)
+	return err
 }
 
 // PasswordDelete deletes a password entry.

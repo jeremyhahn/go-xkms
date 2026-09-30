@@ -61,7 +61,11 @@ func TestPasswordUpdate_AllOptionalFields(t *testing.T) {
 		ExpiresAt:  &newExpiry,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, addResp.Id, updateResp.Id)
+	// The rename and move re-key the entry: the response names the new ID.
+	assert.NotEqual(t, addResp.Id, updateResp.Id)
+	got, err := service.PasswordGet(ctx, &pb.PasswordGetRequest{Id: updateResp.Id})
+	require.NoError(t, err)
+	assert.Equal(t, newName, got.Entry.Name)
 	assert.Contains(t, updateResp.Message, "updated")
 }
 

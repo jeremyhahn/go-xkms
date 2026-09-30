@@ -53,9 +53,13 @@ type PasswordServicer interface {
 	// filtered by scope or folder.
 	PasswordList(ctx context.Context, req *transport.PasswordListRequest) (*transport.PasswordListResponse, error)
 
-	// PasswordUpdate updates an entry, refusing a shared entry the caller
-	// does not own with staticpw.ErrNotOwner.
-	PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) error
+	// PasswordUpdate updates an entry and returns it as updated (a rename
+	// or move re-keys it), refusing a shared entry the caller does not own
+	// with staticpw.ErrNotOwner.
+	PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) (*transport.PasswordGetResponse, error)
+
+	// PasswordGenerate generates a random password.
+	PasswordGenerate(ctx context.Context, req *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error)
 
 	// PasswordDelete deletes an entry, refusing a shared entry the caller
 	// does not own with staticpw.ErrNotOwner.
@@ -311,9 +315,8 @@ func (h *PasswordHandlers) GetPasswordHandler(w http.ResponseWriter, r *http.Req
 
 // UpdatePasswordHandler handles PUT /api/v1/passwords/{id} requests.
 // It updates an existing entry, applying only the fields present in the
-// request. The entry is read first so the {id} path parameter, which may be
-// an ID or a name, resolves to the entry's canonical ID and the response can
-// report the entry's resulting ID and name.
+// request. The {id} path parameter may be an ID or a name; the response
+// reports the entry's resulting ID and name.
 func (h *PasswordHandlers) UpdatePasswordHandler(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -327,14 +330,8 @@ func (h *PasswordHandlers) UpdatePasswordHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	existing, err := h.servicer.PasswordGet(r.Context(), &transport.PasswordGetRequest{ID: id})
-	if err != nil {
-		passwordWriteServiceError(w, err, "Failed to get password")
-		return
-	}
-
-	if err := h.servicer.PasswordUpdate(r.Context(), &transport.PasswordUpdateRequest{
-		ID:         existing.ID,
+	updated, err := h.servicer.PasswordUpdate(r.Context(), &transport.PasswordUpdateRequest{
+		ID:         id,
 		Name:       req.Name,
 		Title:      req.Title,
 		Username:   req.Username,
@@ -342,35 +339,19 @@ func (h *PasswordHandlers) UpdatePasswordHandler(w http.ResponseWriter, r *http.
 		URL:        req.URL,
 		Notes:      req.Notes,
 		FolderPath: req.FolderPath,
-	}); err != nil {
+	})
+	if err != nil {
 		passwordWriteServiceError(w, err, "Failed to update password")
 		return
 	}
 
-	id, name := updatedPasswordIdentity(existing, req.Name, req.FolderPath)
+	// The servicer answers with the entry as updated: a rename or a move
+	// re-keys it, so its ID is the new one.
 	writeJSON(w, PasswordUpdateResponse{
-		ID:      id,
-		Name:    name,
+		ID:      updated.ID,
+		Name:    updated.Name,
 		Message: "Password updated successfully",
 	}, http.StatusOK)
-}
-
-// updatedPasswordIdentity returns the ID and name existing has after an
-// update that set name and folder (nil when unchanged). An entry's ID is
-// derived from its name and folder (staticpw.GenerateID), so renaming or
-// moving it re-keys it and the response must report the new ID.
-func updatedPasswordIdentity(existing *transport.PasswordGetResponse, name, folder *string) (string, string) {
-	if name == nil && folder == nil {
-		return existing.ID, existing.Name
-	}
-	newName, newFolder := existing.Name, existing.FolderPath
-	if name != nil {
-		newName = *name
-	}
-	if folder != nil {
-		newFolder = *folder
-	}
-	return staticpw.GenerateID(newName, newFolder), newName
 }
 
 // DeletePasswordHandler handles DELETE /api/v1/passwords/{id} requests.
@@ -522,30 +503,18 @@ func (h *PasswordHandlers) GeneratePasswordHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Apply defaults
-	length := req.Length
-	if length == 0 {
-		length = staticpw.DefaultLength
-	}
-
-	charset := req.Charset
-	if charset == "" {
-		charset = staticpw.CharsetAll
-	}
-
-	password, err := staticpw.GeneratePassword(length, charset)
+	generated, err := h.servicer.PasswordGenerate(r.Context(), &transport.PasswordGenerateRequest{
+		Length:  req.Length,
+		Charset: req.Charset,
+	})
 	if err != nil {
-		if errors.Is(err, staticpw.ErrInvalidLength) {
-			passwordWriteJSONError(w, "Invalid password length (min 8, max 128)", http.StatusBadRequest)
-			return
-		}
-		passwordWriteJSONError(w, "Failed to generate password", http.StatusInternalServerError)
+		passwordWriteServiceError(w, err, "Failed to generate password")
 		return
 	}
 
 	resp := PasswordGenerateResponse{
-		Password: password,
-		Length:   length,
+		Password: generated.Password,
+		Length:   len(generated.Password),
 	}
 
 	writeJSON(w, resp, http.StatusOK)
@@ -571,6 +540,8 @@ var passwordServiceErrorMappings = []passwordErrorMapping{
 	{staticpw.ErrInvalidFolderPath, "Invalid folder path", http.StatusBadRequest},
 	{staticpw.ErrFolderPathTooDeep, "Folder path exceeds maximum depth", http.StatusBadRequest},
 	{staticpw.ErrInvalidUserID, "Invalid user identity", http.StatusBadRequest},
+	{staticpw.ErrInvalidLength, "Invalid password length (min 8, max 128)", http.StatusBadRequest},
+	{staticpw.ErrInvalidCharset, "Invalid charset", http.StatusBadRequest},
 	{xkms.ErrNilRequest, "Invalid request", http.StatusBadRequest},
 	{staticpw.ErrPasswordReadOnly, "Password is read-only", http.StatusForbidden},
 	{staticpw.ErrNotOwner, "Not the owner of this password", http.StatusForbidden},

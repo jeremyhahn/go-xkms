@@ -2103,6 +2103,10 @@ type PasswordGenerateRequest struct {
 	Lower   bool `json:"lower"`
 	Digits  bool `json:"digits"`
 	Symbols bool `json:"symbols"`
+	// Charset names a charset ("all", "alphanumeric") or lists the
+	// characters to draw from. It is mutually exclusive with the class
+	// flags above.
+	Charset string `json:"charset,omitempty"`
 }
 
 // PasswordGenerateResponse contains a generated password.

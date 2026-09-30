@@ -25,6 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -106,6 +108,9 @@ func TestHandleRequest_PasswordRoutes(t *testing.T) {
 func TestHandleRequest_PasswordGenerate(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
+	// Generation goes through the service layer, which answers only when a
+	// password store is wired.
+	server.xkmsService.SetPasswordStore(staticpw.NewStore(storage.New()))
 
 	ctx := context.Background()
 

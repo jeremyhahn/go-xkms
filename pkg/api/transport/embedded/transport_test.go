@@ -649,11 +649,11 @@ func (m *mockService) PasswordList(_ context.Context, _ *transport.PasswordListR
 	return &transport.PasswordListResponse{}, nil
 }
 
-func (m *mockService) PasswordUpdate(_ context.Context, _ *transport.PasswordUpdateRequest) error {
+func (m *mockService) PasswordUpdate(_ context.Context, req *transport.PasswordUpdateRequest) (*transport.PasswordGetResponse, error) {
 	if m.shouldFail {
-		return errMock
+		return nil, errMock
 	}
-	return nil
+	return &transport.PasswordGetResponse{ID: req.ID}, nil
 }
 
 func (m *mockService) PasswordDelete(_ context.Context, _ *transport.PasswordDeleteRequest) error {

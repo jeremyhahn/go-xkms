@@ -260,7 +260,7 @@ type PasswordServicer interface {
 	PasswordAdd(ctx context.Context, req *PasswordAddRequest) (*PasswordAddResponse, error)
 	PasswordGet(ctx context.Context, req *PasswordGetRequest) (*PasswordGetResponse, error)
 	PasswordList(ctx context.Context, req *PasswordListRequest) (*PasswordListResponse, error)
-	PasswordUpdate(ctx context.Context, req *PasswordUpdateRequest) error
+	PasswordUpdate(ctx context.Context, req *PasswordUpdateRequest) (*PasswordGetResponse, error)
 	PasswordDelete(ctx context.Context, req *PasswordDeleteRequest) error
 	PasswordStoreUnlock(ctx context.Context, req *PasswordStoreUnlockRequest) error
 	PasswordStoreLock(ctx context.Context) error

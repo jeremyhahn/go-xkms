@@ -32,7 +32,7 @@ type PasswordServicer interface {
 	PasswordAdd(ctx context.Context, req *transport.PasswordAddRequest) (*transport.PasswordAddResponse, error)
 	PasswordGet(ctx context.Context, req *transport.PasswordGetRequest) (*transport.PasswordGetResponse, error)
 	PasswordList(ctx context.Context, req *transport.PasswordListRequest) (*transport.PasswordListResponse, error)
-	PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) error
+	PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) (*transport.PasswordGetResponse, error)
 	PasswordDelete(ctx context.Context, req *transport.PasswordDeleteRequest) error
 	PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error
 	PasswordStoreLock(ctx context.Context) error
@@ -263,22 +263,22 @@ func (s *XKMSService) PasswordList(ctx context.Context, req *transport.PasswordL
 }
 
 // PasswordUpdate updates an existing password entry.
-func (s *XKMSService) PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) error {
+func (s *XKMSService) PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) (*transport.PasswordGetResponse, error) {
 	store, err := s.resolvePasswordStore(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if req == nil {
-		return ErrNilRequest
+		return nil, ErrNilRequest
 	}
 
 	existing, err := store.Get(req.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := s.checkSharedPasswordOwnership(ctx, existing); err != nil {
-		return err
+		return nil, err
 	}
 
 	if req.Name != nil {
@@ -308,13 +308,18 @@ func (s *XKMSService) PasswordUpdate(ctx context.Context, req *transport.Passwor
 		} else {
 			parsed, parseErr := time.Parse(time.RFC3339, *req.ExpiresAt)
 			if parseErr != nil {
-				return ErrInvalidKeyAttributes
+				return nil, ErrInvalidKeyAttributes
 			}
 			existing.ExpiresAt = parsed
 		}
 	}
 
-	return store.Update(existing)
+	// Update re-derives the entry's ID from its name and folder, so a rename
+	// or a move answers with the new ID, never the one the request named.
+	if err := store.Update(existing); err != nil {
+		return nil, err
+	}
+	return staticPasswordToGetResponse(existing), nil
 }
 
 // PasswordDelete deletes a password entry from the store.
@@ -531,7 +536,10 @@ func (s *XKMSService) PasswordGenerate(ctx context.Context, req *transport.Passw
 		return nil, ErrNilRequest
 	}
 
-	charset := buildCharset(req)
+	charset, err := generateCharset(req)
+	if err != nil {
+		return nil, err
+	}
 
 	pw, err := staticpw.GeneratePassword(req.Length, charset)
 	if err != nil {
@@ -541,6 +549,21 @@ func (s *XKMSService) PasswordGenerate(ctx context.Context, req *transport.Passw
 	return &transport.PasswordGenerateResponse{
 		Password: pw,
 	}, nil
+}
+
+// generateCharset returns the charset a generate request selects: the named
+// or literal Charset when one is given (staticpw.GeneratePassword resolves
+// "all" and "alphanumeric"), otherwise the class flags. Naming both is
+// ambiguous and refused with staticpw.ErrInvalidCharset.
+func generateCharset(req *transport.PasswordGenerateRequest) (string, error) {
+	flags := req.Upper || req.Lower || req.Digits || req.Symbols
+	if req.Charset != "" {
+		if flags {
+			return "", staticpw.ErrInvalidCharset
+		}
+		return req.Charset, nil
+	}
+	return buildCharset(req), nil
 }
 
 // buildCharset constructs a character set string from the boolean flags in the
