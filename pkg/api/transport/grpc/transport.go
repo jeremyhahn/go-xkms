@@ -2534,6 +2534,21 @@ func protoToUserInfo(u *pb.UserInfo) transport.UserInfo {
 	}
 }
 
+// protoToInviteInfo projects a protobuf InviteInfo onto its transport form.
+// A nil message (no invitation minted -- a certificate-only/bootstrap
+// create) stays nil, rather than a zero-valued struct that would look like
+// an empty token.
+func protoToInviteInfo(i *pb.InviteInfo) *transport.InviteInfo {
+	if i == nil {
+		return nil
+	}
+	return &transport.InviteInfo{
+		Token:     i.GetToken(),
+		URL:       i.GetUrl(),
+		ExpiresAt: i.GetExpiresAt().AsTime(),
+	}
+}
+
 // CreateUser creates a new xkms user.
 func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
 	if t.client == nil {
@@ -2546,11 +2561,12 @@ func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserReq
 		DisplayName:          req.DisplayName,
 		Role:                 req.Role,
 		TenantId:             req.TenantID,
+		InviteTtlSeconds:     req.InviteTTLSeconds,
 	})
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "create user failed", Err: err}
 	}
-	return &transport.GetUserResponse{User: protoToUserInfo(resp.GetUser())}, nil
+	return &transport.GetUserResponse{User: protoToUserInfo(resp.GetUser()), Invite: protoToInviteInfo(resp.GetInvite())}, nil
 }
 
 // ListUsers lists xkms users.
@@ -3173,6 +3189,71 @@ func (t *Transport) FinishAuthentication(ctx context.Context, req *transport.Fin
 		Username: resp.Username,
 		Message:  resp.Message,
 	}, nil
+}
+
+// Invitation redemption (go-xkms#1294 part B). Every RPC is deliberately
+// ungated on the server, mirroring the FIDO2/WebAuthn ceremony RPCs above.
+
+// GetInvite resolves a still-usable invitation's metadata without consuming it.
+func (t *Transport) GetInvite(ctx context.Context, req *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.GetInvite(ctx, &pb.GetInviteRequest{TenantId: req.TenantID, Token: req.Token})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.GetInviteResponse{
+		Email:       resp.Email,
+		DisplayName: resp.DisplayName,
+		ExpiresAt:   resp.GetExpiresAt().AsTime(),
+		Methods:     resp.Methods,
+	}, nil
+}
+
+// BeginInviteRegistration opens the invite-authorized WebAuthn registration ceremony.
+func (t *Transport) BeginInviteRegistration(ctx context.Context, req *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.BeginInviteRegistration(ctx, &pb.BeginInviteRegistrationRequest{TenantId: req.TenantID, Token: req.Token})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.BeginInviteRegistrationResponse{SessionID: resp.SessionId, OptionsJSON: resp.OptionsJson}, nil
+}
+
+// FinishInviteRegistration completes the invite-authorized WebAuthn registration ceremony.
+func (t *Transport) FinishInviteRegistration(ctx context.Context, req *transport.FinishInviteRegistrationRequest) (*transport.FinishInviteRegistrationResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.FinishInviteRegistration(ctx, &pb.FinishInviteRegistrationRequest{
+		TenantId:        req.TenantID,
+		Token:           req.Token,
+		SessionId:       req.SessionID,
+		AttestationJson: req.AttestationJSON,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.FinishInviteRegistrationResponse{UserID: resp.UserId}, nil
+}
+
+// ActivateInvitePIV activates the account by verifying a presented PIV certificate.
+func (t *Transport) ActivateInvitePIV(ctx context.Context, req *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.ActivateInvitePIV(ctx, &pb.ActivateInvitePIVRequest{
+		TenantId: req.TenantID,
+		Token:    req.Token,
+		CertPem:  req.CertPEM,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.ActivateInvitePIVResponse{UserID: resp.UserId}, nil
 }
 
 // ==================== Helper Functions ====================

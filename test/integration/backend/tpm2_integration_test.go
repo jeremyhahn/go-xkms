@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -53,10 +54,8 @@ func createTPM2Backend(t *testing.T) *tpm2.Backend {
 	t.Helper()
 	requireTPM(t)
 
-	keyDir := t.TempDir()
-
 	config := &tpm2.Config{
-		KeyDir: keyDir,
+		KeyStorage: storage.NewMemory(),
 	}
 
 	// Use simulator if configured

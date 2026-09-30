@@ -45,8 +45,8 @@ import (
 // plumbing.
 func testNodeConfig(dataDir string) *config.Config {
 	return &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: dataDir},
-		Barrier: config.BarrierConfig{Enabled: true, Strategy: "none"},
+		Datastore: config.DatastoreConfig{Path: dataDir},
+		Barrier:   config.BarrierConfig{Enabled: true, Strategy: "none"},
 	}
 }
 

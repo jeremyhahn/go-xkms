@@ -105,18 +105,6 @@ func TestFirstBootError_ErrorAndUnwrap(t *testing.T) {
 	assert.Same(t, cause, err.Unwrap())
 }
 
-func TestNodeSealError_ErrorAndUnwrap(t *testing.T) {
-	cause := errors.New("tpm not found")
-	err := &NodeSealError{Reason: "no usable TPM", Err: cause}
-	assert.Contains(t, err.Error(), "no usable TPM")
-	assert.Same(t, cause, err.Unwrap())
-
-	// Err is optional: a NodeSealError raised without an underlying cause
-	// must still Unwrap cleanly to nil rather than panic.
-	bare := &NodeSealError{Reason: "no usable TPM"}
-	assert.Nil(t, bare.Unwrap())
-}
-
 func TestSealedWindowBindError_Error(t *testing.T) {
 	err := &SealedWindowBindError{Host: "0.0.0.0"}
 	assert.Contains(t, err.Error(), "0.0.0.0")

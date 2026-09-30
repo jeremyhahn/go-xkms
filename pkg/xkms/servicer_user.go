@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/base64"
 	"log"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -69,6 +70,22 @@ func (s *XKMSService) roleNameToID(ctx context.Context, name string) (string, er
 }
 
 // CreateUser creates a new xkms user backed by the embedded qrdb node.
+//
+// An account with an email login key (the normal case) is created PENDING,
+// never active: a brand-new account holds no credential, so there is
+// nothing for it to authenticate an enrollment ceremony with. CreateUser
+// mints a single-use activation invitation in the same call (go-xkms#1294
+// part B) — the plaintext token is returned exactly once, in the response,
+// and is not recoverable afterwards — and the invitee redeems it through
+// BeginInviteRegistration/FinishInviteRegistration (FIDO2) or
+// ActivateInvitePIV (PIV), which binds their first credential and activates
+// the account. If minting the invitation fails, the just-created account is
+// rolled back: a pending account nothing can ever activate is worse than no
+// account at all.
+//
+// WithoutEmailLoginKey is the one exception: a certificate-only/bootstrap
+// identity has no email an invitation could be sent to, so it is created
+// ACTIVE with no invitation, exactly as before this change.
 func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
 	if s.users == nil {
 		return nil, ErrNotConfigured
@@ -102,6 +119,14 @@ func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserR
 			Err:       ErrEmailRequired,
 		}
 	}
+	// Fail BEFORE anything is created: an invited account this build cannot
+	// mint an invitation for is a pending account nothing can ever activate.
+	// Checked after the client-input validation above so a malformed
+	// request is still reported as one, not masked by a server
+	// misconfiguration that happens to be true at the same time.
+	if !req.WithoutEmailLoginKey && s.inviteStore == nil {
+		return nil, ErrNotConfigured
+	}
 	roleID, err := s.roleNameToID(ctx, req.Role)
 	if err != nil {
 		return nil, err
@@ -120,6 +145,10 @@ func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserR
 		WithoutEmailLoginKey: req.WithoutEmailLoginKey,
 		TenantID:             req.TenantID,
 		RoleIDs:              roleIDs,
+		// Pending unless this is the certificate-only/bootstrap path: an
+		// email-login-key account has no credential yet and activates only
+		// through invite redemption (go-xkms#1294 part B).
+		Pending: !req.WithoutEmailLoginKey,
 	})
 	if err != nil {
 		return nil, &ErrUserOperation{Operation: "create user", Err: err}
@@ -128,7 +157,30 @@ func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserR
 	// so the response reflects what the store actually holds. Assigning the
 	// request value back masked the fact that Name was never read on the way
 	// out — create looked right while GetUser and ListUsers returned nothing.
-	return &transport.GetUserResponse{User: s.userToTransport(ctx, u)}, nil
+	resp := &transport.GetUserResponse{User: s.userToTransport(ctx, u)}
+	if req.WithoutEmailLoginKey {
+		return resp, nil
+	}
+
+	// Mint the activation invitation in the tenant the record actually
+	// landed in (u.TenantID), not req.TenantID: an empty request tenant
+	// resolves to qrdb's default, and sourcing it from the created record
+	// keeps this call and the account's own storage location agreeing by
+	// construction (the same reasoning userToTransport already applies to
+	// DisplayName above).
+	invite, err := s.createInvite(ctx, u.TenantID, u.ID, time.Duration(req.InviteTTLSeconds)*time.Second)
+	if err != nil {
+		// A user this build cannot activate is worse than no user: roll it
+		// back rather than return an account stuck pending forever. The
+		// rollback is best-effort — the caller is already being told create
+		// failed, and a cleanup failure must not replace the reason it did.
+		if delErr := s.users.DeleteUser(ctx, u.ID); delErr != nil {
+			log.Printf("xkms: rollback of user %d after invite mint failure failed: %v", u.ID, delErr)
+		}
+		return nil, err
+	}
+	resp.Invite = invite
+	return resp, nil
 }
 
 // ListUsers returns all xkms users.

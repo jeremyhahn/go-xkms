@@ -131,14 +131,18 @@ that is what the credential-store decorator hooks
 - **The WebAuthn ceremonies are unauthenticated because they *are* the
   authentication.** `GroupWebAuthn` routes are `RouteAuthPublic`, behind the
   login rate limiter — except `credentials/begin`, which is `RouteAuthSession`.
-  An unauthenticated caller can enrol only an account's first passkey; once an
-  account has one, only a session authenticated as that account can add another
-  (go-xkms#1294).
+  An unauthenticated caller can enrol a first passkey ONLY for an account it
+  creates itself in the same call (open self-registration,
+  `Config.AllowPublicRegistration`); an account that already existed before
+  the call is always refused, whether or not it holds a credential
+  (go-xkms#1294). A provisioned account's first passkey activates through
+  the invitation-redemption ceremony instead
+  (`BeginInviteRegistration`/`FinishInviteRegistration` — see
+  `../user-onboarding/architecture.md`, go-xkms#1294 part B).
 - **The public routes do not reveal accounts.** Registration refusals are one
-  error for "has a passkey" and "unknown while sign-up is off"; login begin
-  answers an unknown account with decoy options; no user ID is returned before a
-  successful login (go-xkms#1296). A provisioned account with no passkey is the
-  known exception, pending go-xkms#1294 part B.
+  error for "has a passkey", "unknown while sign-up is off" and "provisioned
+  but not yet invited-in"; login begin answers an unknown account with decoy
+  options; no user ID is returned before a successful login (go-xkms#1296).
 - **Account standing gates every ceremony.** Login is refused unless the
   account's lifecycle is `active` and its permitted-auth-method policy allows
   `webauthn` — the qrdb record's own `Lifecycle` and `AuthMethods`, which the

@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/webui"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -47,14 +48,14 @@ import (
 // duplication this unification removes.
 //
 // Standalone hosting maps:
-//   - Storage.Path  -> Raft.DataDir (Pebble root)
-//   - embedded      -> Databases[0] = {default, mvcc, pebble|memory}
+//   - Datastore.Path   -> Raft.DataDir (local engine root)
+//   - Datastore.Engine -> Databases[0] = {default, mvcc, memory|file|pebble}
 func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 	// The storage+seal shape (Auth, Raft.DataDir, Databases, Seal.*,
 	// Storage.VolumePools) comes from the shared, Server-independent builder
 	// so this deployment's config resolves the SAME shape xkmsd init resolves
 	// from the same *config.Config -- see embedded_node.go.
-	qcfg := EmbeddedNodeStorageConfig(s.config, ResolvedNodeSeal{
+	qcfg := embeddednode.EmbeddedNodeStorageConfig(s.config, embeddednode.ResolvedNodeSeal{
 		Enabled:  s.nodeSealEnabled,
 		Strategy: s.nodeSealStrategy,
 		TPM:      s.nodeSealTPM,
@@ -69,7 +70,17 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 	// Alt-Svc). Enabling protocols here means node construction runs the
 	// full qrdb server start pipeline — module surfaces answer
 	// Unavailable/503 until xkmsd finishes composing the XKMSService.
-	if s.config.NetworkServing() {
+	//
+	// The loopback desktop engine (pkg/server/loopback) is exempt even
+	// though it forces Protocols.REST on (see Config.LoopbackDesktop): it
+	// serves REST itself on an injected, pre-bound 127.0.0.1 listener
+	// (Server.startREST, gated on s.restListener != nil), never through
+	// this node. The datastore is still always hosted -- LoopbackDesktop
+	// only means "this process is not the unified network API server",
+	// never "this process has no datastore" -- so createStorage still
+	// resolves through the node's KV below; only the node's OWN network
+	// listeners are skipped, avoiding a double bind on the same host.
+	if s.config.NetworkServing() && !s.config.LoopbackDesktop {
 		qcfg.Server.Host = s.config.Server.Host
 		qcfg.Server.AdminPort = s.config.Server.RESTPort
 		qcfg.Server.GRPCPort = s.config.Server.GRPCPort
@@ -108,7 +119,7 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 // (embedded_node.go). The returned sink is retained on s.qrdbAuditSink and
 // closed during Shutdown.
 func (s *Server) newQRDBAuditSink() (qrdbsdk.NodeAuditLogger, error) {
-	return NewEmbeddedAuditSink(s.config, s.logger)
+	return embeddednode.NewEmbeddedAuditSink(s.config, s.logger)
 }
 
 // initEmbeddedQRDBNode constructs the in-process qrdb standalone node that is
@@ -157,8 +168,12 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	// material from the WithServerTLS option, not from the daemon config.
 	// The rotating provider serves operator files or a persisted bootstrap
 	// certificate immediately, then upgrades to the CA-issued certificate
-	// once the CA composes (upgradeUnifiedTLSCert).
-	if s.config.NetworkServing() {
+	// once the CA composes (upgradeUnifiedTLSCert). Skipped for the
+	// loopback desktop engine for the same reason as the protocol wiring
+	// above: it never serves through this node's transports, so building
+	// the unified TLS material (and persisting a bootstrap cert under
+	// Datastore.Path) would be pure waste.
+	if s.config.NetworkServing() && !s.config.LoopbackDesktop {
 		tlsCfg, err := s.buildUnifiedTLSConfig()
 		if err != nil {
 			return &QRDBNodeError{Stage: "build unified server TLS config", Err: err}
@@ -272,7 +287,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 			return &QRDBNodeError{Stage: "sealed window", Err: err}
 		}
 		if node.IsSealed() {
-			return &QRDBNodeError{Stage: "node barrier auto-unseal", Err: &NodeSealError{
+			return &QRDBNodeError{Stage: "node barrier auto-unseal", Err: &embeddednode.NodeSealError{
 				Reason: "barrier did not auto-unseal with the supplied credentials (check the TPM PCR state)"}}
 		}
 		if inner := node.BarrierRegistry(); inner != nil {

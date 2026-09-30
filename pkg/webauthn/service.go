@@ -23,6 +23,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -151,34 +153,90 @@ func NewService(params ServiceParams) (*Service, error) {
 // sent to the client and a session ID.
 //
 // An unauthenticated caller may only ever enroll the FIRST passkey of an
-// account. An account that already holds one or more credentials is refused
-// with ErrRegistrationRefused: adding a passkey to it requires a session
-// authenticated as that account (BeginAddCredential, go-xkms#1294). An email
-// that names no account is refused with the same error when public
-// registration is off, so the refusal does not reveal whether the account
-// exists (go-xkms#1296).
+// account that DID NOT EXIST before this call: the implicit Create below is
+// precisely what "public registration" means — an email nobody has seen
+// before becomes an account — and that is the only case in which reaching
+// this entry point with no proof of anything is safe. When the relying
+// party has open sign-up turned off, that branch is withheld and an unknown
+// email is refused with ErrRegistrationRefused, the same answer every other
+// refusal gets so it does not reveal whether the account exists
+// (go-xkms#1296).
+//
+// An account that already exists — whether it holds credentials or was
+// provisioned through CreateUser with none yet — is always refused here,
+// full stop. A held credential means BeginAddCredential and an authenticated
+// session are required (go-xkms#1294). Zero credentials on a
+// PREVIOUSLY-EXISTING account means the account is either pending
+// activation (CreateUser mints an invitation for exactly this — see
+// pkg/xkms's BeginInviteRegistration, which calls BeginInviteRegistration
+// below instead of this method) or was created through some other path this
+// service does not know how to authorize; either way, enrolling its first
+// credential through this unauthenticated entry point is the hole
+// go-xkms#1294 part B closes. Before that ruling this method enrolled such
+// an account's first passkey with no proof of possession at all.
 func (s *Service) BeginRegistration(ctx context.Context, email, displayName string) (*protocol.CredentialCreation, string, error) {
 	if !s.configured {
 		return nil, "", ErrNotConfigured
 	}
 
-	// The implicit Create below is precisely what "public registration" means:
-	// an email nobody has seen before becomes an account. When the relying
-	// party has open sign-up turned off, that one branch is withheld.
-	user, err := s.users.GetByEmail(ctx, email)
-	if err != nil {
-		if !IsUserNotFound(err) {
-			return nil, "", WrapError("get user by email", err)
-		}
-		if !s.config.PublicRegistrationAllowed() {
-			return nil, "", ErrRegistrationRefused
-		}
-		user, err = s.users.Create(ctx, email, displayName)
-		if err != nil {
-			return nil, "", WrapError("create user", err)
-		}
+	if _, err := s.users.GetByEmail(ctx, email); err == nil {
+		// The account already exists: whatever its credential count, this
+		// unauthenticated entry point never enrolls its first credential.
+		return nil, "", ErrRegistrationRefused
+	} else if !IsUserNotFound(err) {
+		return nil, "", WrapError("get user by email", err)
 	}
 
+	if !s.config.PublicRegistrationAllowed() {
+		return nil, "", ErrRegistrationRefused
+	}
+	user, err := s.users.Create(ctx, email, displayName)
+	if err != nil {
+		return nil, "", WrapError("create user", err)
+	}
+
+	// A brand-new account cannot hold a credential, but the credential store
+	// is still consulted rather than assumed empty: a storage fault here
+	// must surface as an error, not be silently treated as "no credentials".
+	existingCreds, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
+	if err != nil {
+		return nil, "", WrapError("get credentials", err)
+	}
+
+	// beginRegistrationFor also checks account standing — which is how
+	// public registration created accounts as active from the start.
+	return s.beginRegistrationFor(ctx, user, existingCreds)
+}
+
+// BeginInviteRegistration opens a WebAuthn registration ceremony for a
+// PENDING account, authorized by an out-of-band invitation the caller has
+// already validated (pkg/xkms's BeginInviteRegistration looks up the
+// invitation and resolves email from the account it names — never from
+// caller input — before calling this).
+//
+// This is the ONLY unauthenticated entry point that may enroll the first
+// credential of an account that already existed before the call
+// (go-xkms#1294 part B). It refuses everything except an account whose
+// Lifecycle is exactly LifecyclePending and holds no credential yet: an
+// active account (already activated, nothing pending to enroll), a
+// suspended/locked/disabled/deleting one, or a pending one that somehow
+// already holds a credential, all get the same ErrRegistrationRefused a
+// public BeginRegistration refusal carries, so this cannot be used to add a
+// second credential or to re-run activation.
+func (s *Service) BeginInviteRegistration(ctx context.Context, email string) (*protocol.CredentialCreation, string, error) {
+	if !s.configured {
+		return nil, "", ErrNotConfigured
+	}
+	user, err := s.users.GetByEmail(ctx, email)
+	if err != nil {
+		if IsUserNotFound(err) {
+			return nil, "", ErrRegistrationRefused
+		}
+		return nil, "", WrapError("get user by email", err)
+	}
+	if user.Lifecycle() != qrdbsdk.LifecyclePending {
+		return nil, "", ErrRegistrationRefused
+	}
 	existingCreds, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
 	if err != nil {
 		return nil, "", WrapError("get credentials", err)
@@ -187,16 +245,7 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 		return nil, "", ErrRegistrationRefused
 	}
 
-	// An existing account with ZERO credentials — one provisioned through
-	// the authorized user-creation path — still enrolls its first passkey
-	// here without authentication, exactly as before go-xkms#1294, provided
-	// the account is active (beginRegistrationFor, go-xkms#1298). Whether
-	// that first-passkey onboarding needs its own proof of possession
-	// (an enrollment token or an admin-issued ceremony) awaits the owner's
-	// ruling on go-xkms#1294 part B. Until then this path also answers
-	// differently from ErrRegistrationRefused, so a closed deployment still
-	// reveals that a provisioned-but-unenrolled account exists (#1296).
-	return s.beginRegistrationFor(ctx, user, existingCreds)
+	return s.runBeginRegistration(ctx, user, nil)
 }
 
 // BeginAddCredential starts a registration ceremony that adds a passkey to
@@ -243,7 +292,17 @@ func (s *Service) beginRegistrationFor(ctx context.Context, user User, existingC
 		s.logStandingRefusal("begin registration", err)
 		return nil, "", ErrRegistrationRefused
 	}
+	return s.runBeginRegistration(ctx, user, existingCreds)
+}
 
+// runBeginRegistration starts the go-webauthn ceremony for an already
+// resolved, already standing-checked account, excluding the credentials it
+// already holds, and persists the resulting session. It carries no lifecycle
+// or credential-count policy of its own — every caller decides that before
+// reaching here — because BeginInviteRegistration's policy (pending, zero
+// credentials) and beginRegistrationFor's (active) are deliberately
+// different gates in front of the identical ceremony mechanics.
+func (s *Service) runBeginRegistration(ctx context.Context, user User, existingCreds []*Credential) (*protocol.CredentialCreation, string, error) {
 	excludeList := make([]protocol.CredentialDescriptor, len(existingCreds))
 	for i, cred := range existingCreds {
 		excludeList[i] = protocol.CredentialDescriptor{
@@ -303,7 +362,50 @@ func (s *Service) FinishRegistrationPair(ctx context.Context, sessionID string, 
 
 // finishRegistrationUser runs the registration ceremony through credential
 // storage, returning the enrolled user. Token minting is the caller's choice.
+// The account must still be active: it may have left that state since the
+// ceremony began.
 func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData) (User, error) {
+	return s.runFinishRegistration(ctx, sessionID, response, func(user User) error {
+		if err := checkLifecycle(user); err != nil {
+			s.logStandingRefusal("finish registration", err)
+			return ErrRegistrationRefused
+		}
+		return nil
+	})
+}
+
+// FinishInviteRegistration completes an invite-authorized WebAuthn
+// registration ceremony. It binds the credential to the account the
+// ceremony's session names, which must still be LifecyclePending: an
+// invitation authorizes enrolling the FIRST credential of a pending account,
+// nothing else, so a session whose account already activated or left
+// pending some other way is refused exactly like any other invalid
+// registration (ErrRegistrationRefused).
+//
+// This does NOT activate the account or redeem the invitation — the account
+// is deliberately left pending, with its first credential now bound, so a
+// failure in the caller's activation step (pkg/xkms's
+// FinishInviteRegistration) leaves the invitation intact and the token
+// retryable rather than a redeemed invite pointing at a still-pending
+// account with no way back in.
+func (s *Service) FinishInviteRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData) (User, error) {
+	return s.runFinishRegistration(ctx, sessionID, response, func(user User) error {
+		if user.Lifecycle() != qrdbsdk.LifecyclePending {
+			return ErrRegistrationRefused
+		}
+		return nil
+	})
+}
+
+// runFinishRegistration claims the ceremony session, resolves the account it
+// names, and — only once accept approves that account — validates the
+// authenticator response and persists the resulting credential. accept
+// encodes the ONE thing that differs between an ordinary registration finish
+// (the account must still be active) and an invite-authorized one (the
+// account must still be pending): everything else about completing a
+// WebAuthn registration ceremony is identical, and duplicating it per caller
+// is how the two could silently drift.
+func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData, accept func(User) error) (User, error) {
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
@@ -322,10 +424,8 @@ func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, 
 		return nil, WrapError("get user", err)
 	}
 
-	// The account may have left the active state since the ceremony began.
-	if err := checkLifecycle(user); err != nil {
-		s.logStandingRefusal("finish registration", err)
-		return nil, ErrRegistrationRefused
+	if err := accept(user); err != nil {
+		return nil, err
 	}
 
 	// Finish registration

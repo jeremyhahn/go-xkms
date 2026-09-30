@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -81,11 +82,8 @@ func createMinimalConfig(t *testing.T) *config.Config {
 		Auth: config.AuthConfig{
 			Enabled: false,
 		},
-		Storage: config.StorageConfig{
-			Backend: "file",
-			Path:    tempDir,
-		},
-		Default: config.DefaultConfig("software"),
+		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
+		Default:   config.DefaultConfig("software"),
 		Backends: config.BackendsConfig{
 			Software: &config.SoftwareConfig{
 				Enabled: true,
@@ -1634,11 +1632,8 @@ func TestServer_WithDefaultPKCS8Backend(t *testing.T) {
 		Auth: config.AuthConfig{
 			Enabled: false,
 		},
-		Storage: config.StorageConfig{
-			Backend: "file",
-			Path:    tempDir,
-		},
-		Default: config.DefaultConfig("pkcs8"),
+		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
+		Default:   config.DefaultConfig("pkcs8"),
 		Backends: config.BackendsConfig{
 			PKCS8: &config.PKCS8Config{
 				Enabled: true,
@@ -1663,7 +1658,7 @@ func TestServer_InitializeKeyStore_InvalidCertPath(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	// Use an invalid path character
-	cfg.Storage.Path = "/dev/null/invalid"
+	cfg.Datastore.Path = "/dev/null/invalid"
 
 	// This should fail during keystore initialization
 	_, err := New(cfg)
@@ -2310,7 +2305,7 @@ func TestServer_InitializeUserStore_InvalidPath(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Storage.Path = "/dev/null/nonexistent/path"
+	cfg.Datastore.Path = "/dev/null/nonexistent/path"
 
 	_, err := New(cfg)
 	assert.Error(t, err)
@@ -2346,33 +2341,13 @@ func TestPemDecode_NoTypeTerminator(t *testing.T) {
 
 // Test software backend initialization failure
 
-func TestServer_InitializeSoftwareBackend_InvalidPath(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Backends.Software.Path = "/dev/null/invalid"
-
-	_, err := New(cfg)
-	assert.Error(t, err)
-}
-
-// Test PKCS8 backend initialization failure
-
-func TestServer_InitializePKCS8Backend_InvalidPath(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Backends.Software = nil
-	cfg.Backends.PKCS8 = &config.PKCS8Config{
-		Enabled: true,
-		Path:    "/dev/null/invalid",
-	}
-
-	_, err := New(cfg)
-	assert.Error(t, err)
-}
+// TestServer_InitializeSoftwareBackend_InvalidPath and
+// TestServer_InitializePKCS8Backend_InvalidPath used to prove New() failed
+// when Backends.Software.Path/Backends.PKCS8.Path named an unwritable
+// location. That fault injection is no longer reachable: createStorageAt
+// (pkg/server/storage_factory.go) no longer touches the filesystem -- it
+// derives a key namespace from filepath.Base(path) over the one shared
+// datastore (go-xkms#1345).
 
 // ============================================================================
 // Additional tests for protocol startup coverage
@@ -2829,11 +2804,8 @@ func TestServer_InitializeBackends_PKCS8Only(t *testing.T) {
 		Auth: config.AuthConfig{
 			Enabled: false,
 		},
-		Storage: config.StorageConfig{
-			Backend: "file",
-			Path:    tempDir,
-		},
-		Default: config.DefaultConfig("pkcs8"),
+		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
+		Default:   config.DefaultConfig("pkcs8"),
 		Backends: config.BackendsConfig{
 			Software: nil,
 			PKCS8: &config.PKCS8Config{
@@ -2928,9 +2900,15 @@ func TestServer_EmptyDefault(t *testing.T) {
 	t.Cleanup(func() { xkms.Reset() })
 
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 		// Default is empty → code falls back to the one available backend.
 	})
+	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
+	// give this test a real one (initializeKeyStore also builds
+	// certificate storage).
+	var err error
+	s.qrdbStorage, err = storage.NewMemoryBackend()
+	require.NoError(t, err)
 	s.keyProviders = map[string]types.KeyProvider{"software": &nonSealerProvider{}}
 	s.backends = map[string]xkms.Backend{}
 
@@ -2951,7 +2929,7 @@ func TestNew_KeyStoreInitFailure(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	// Set storage path to an invalid location that will fail during keystore init
-	cfg.Storage.Path = "/dev/null/invalid/path/that/cannot/be/created"
+	cfg.Datastore.Path = "/dev/null/invalid/path/that/cannot/be/created"
 
 	_, err := New(cfg)
 	assert.Error(t, err)

@@ -66,9 +66,9 @@ func TestBuildUnifiedTLSConfig_BootstrapGeneratedAndPersisted(t *testing.T) {
 	dir := t.TempDir()
 	mk := func() *Server {
 		return newTLSTestServer(t, &config.Config{
-			Server:  config.ServerConfig{Host: "127.0.0.1"},
-			TLS:     config.TLSConfig{Enabled: true, ServerCN: "unit.example", IncludeLocalhostSANs: true},
-			Storage: config.StorageConfig{Path: dir},
+			Server:    config.ServerConfig{Host: "127.0.0.1"},
+			TLS:       config.TLSConfig{Enabled: true, ServerCN: "unit.example", IncludeLocalhostSANs: true},
+			Datastore: config.DatastoreConfig{Path: dir},
 		})
 	}
 
@@ -109,9 +109,9 @@ func TestEnsureBootstrapCert_PersistFailureLogsAndDegradesToEphemeral(t *testing
 	var logBuf bytes.Buffer
 	s := &Server{
 		config: &config.Config{
-			Server:  config.ServerConfig{Host: "127.0.0.1"},
-			TLS:     config.TLSConfig{ServerCN: "unit.example"},
-			Storage: config.StorageConfig{Path: storageDir},
+			Server:    config.ServerConfig{Host: "127.0.0.1"},
+			TLS:       config.TLSConfig{ServerCN: "unit.example"},
+			Datastore: config.DatastoreConfig{Path: storageDir},
 		},
 		logger: slog.New(slog.NewTextHandler(&logBuf, nil)),
 	}
@@ -138,7 +138,7 @@ func TestBuildUnifiedTLSConfig_ExtraSANs(t *testing.T) {
 			ServerCN:  "unit.example",
 			ExtraSANs: []string{"alias.example.test", "192.0.2.7"},
 		},
-		Storage: config.StorageConfig{Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 	})
 
 	cfg, err := s.buildUnifiedTLSConfig()
@@ -197,7 +197,7 @@ func TestBuildUnifiedTLSConfig_LoopbackSANsAreConfiguration(t *testing.T) {
 				ServerCN:             "unit.example",
 				IncludeLocalhostSANs: include,
 			},
-			Storage: config.StorageConfig{Path: t.TempDir()},
+			Datastore: config.DatastoreConfig{Path: t.TempDir()},
 		})
 		cfg, err := s.buildUnifiedTLSConfig()
 		require.NoError(t, err)
@@ -284,9 +284,9 @@ func TestBuildUnifiedTLSConfig_PersistedBootstrapCertFollowsSANConfiguration(t *
 	dir := t.TempDir()
 	mk := func(include bool) *Server {
 		return newTLSTestServer(t, &config.Config{
-			Server:  config.ServerConfig{Host: "127.0.0.1"},
-			TLS:     config.TLSConfig{Enabled: true, ServerCN: "unit.example", IncludeLocalhostSANs: include},
-			Storage: config.StorageConfig{Path: dir},
+			Server:    config.ServerConfig{Host: "127.0.0.1"},
+			TLS:       config.TLSConfig{Enabled: true, ServerCN: "unit.example", IncludeLocalhostSANs: include},
+			Datastore: config.DatastoreConfig{Path: dir},
 		})
 	}
 	leafFor := func(t *testing.T, s *Server) (*x509.Certificate, []byte) {
@@ -364,9 +364,9 @@ func TestLocalCertSANs_IPLiteralCNIsAnIPSAN(t *testing.T) {
 // tls.extra_sans.
 func TestServerCertSANs_CAIssuedSetIsDeterministic(t *testing.T) {
 	s := newTLSTestServer(t, &config.Config{
-		Server:  config.ServerConfig{Host: "10.0.0.5"},
-		TLS:     config.TLSConfig{Enabled: true, ServerCN: "unit.example", ExtraSANs: []string{"alias.example"}},
-		Storage: config.StorageConfig{Path: t.TempDir()},
+		Server:    config.ServerConfig{Host: "10.0.0.5"},
+		TLS:       config.TLSConfig{Enabled: true, ServerCN: "unit.example", ExtraSANs: []string{"alias.example"}},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 	})
 	hostname := hostnameForTest(t)
 

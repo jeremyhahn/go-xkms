@@ -54,7 +54,7 @@ func TestConnectXKMSdBridge_ConfigCarriesCollaborators(t *testing.T) {
 
 	// Same call connectXKMSdBridge makes: no TPM enrollment resolved, matching
 	// a host xkmsd.tpm.enrollment leaves at its default of false.
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil)
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil, pairing.AlwaysApproveSync)
 	defer collaborators.Close()
 
 	assert.NotNil(t, bridgeCfg.OATHStore, "phone-bridge OATHStore must be wired from openOATHStore")
@@ -78,7 +78,7 @@ func TestConnectXKMSdBridge_ConfigCarriesCollaborators_XKMSdDisabledLeavesFields
 	// only on cmd and the local data directory, never on xkmsd itself.
 	disabledCfg := &XKMSdBridgeConfig{}
 
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), disabledCfg, testListenDevice, nil, nil)
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), disabledCfg, testListenDevice, nil, nil, pairing.AlwaysApproveSync)
 	defer collaborators.Close()
 
 	assert.NotNil(t, bridgeCfg.OATHStore)
@@ -98,7 +98,7 @@ func TestPhoneBackendWithBridge_Close_ClosesCollaborators(t *testing.T) {
 	cmd := &cobra.Command{}
 	xkmsdCfg := loadXKMSdBridgeConfig()
 
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil)
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil, pairing.AlwaysApproveSync)
 
 	bridge, err := pairing.NewBridge(&baseSDKClient{}, bridgeCfg)
 	require.NoError(t, err)

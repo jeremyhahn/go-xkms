@@ -157,7 +157,7 @@ types.Capabilities{
 | Threat | Mitigation |
 |--------|------------|
 | BLE eavesdropping | Noise XX end-to-end encryption |
-| Rogue phone pairing | QR-code-based out-of-band verification during pairing |
+| Rogue phone pairing | A desktop-displayed short authentication string (SAS) derived from the Noise channel binding (go-xkms#1306); informational until the Android app displays the matching code too -- see [Security](security.md#pairing-security) |
 | Lost/stolen phone | Biometric requirement prevents unauthorized key use |
 | Compromised laptop | Private keys remain on phone hardware; attacker cannot extract them |
 | Man-in-the-middle | Noise XX mutual authentication with cached static keys |

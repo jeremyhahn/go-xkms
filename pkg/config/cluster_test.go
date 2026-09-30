@@ -44,11 +44,11 @@ func clusterBaseConfig() Config {
 		Server:    ServerConfig{RESTPort: 8443},
 		// Network serving requires TLS (unified API server contract); the
 		// bootstrap-certificate path makes explicit files optional.
-		TLS:      TLSConfig{Enabled: true},
-		Logging:  LoggingConfig{Level: "info", Format: "json"},
-		Storage:  StorageConfig{Backend: "qrdb", Path: "/data"},
-		Default:  "pkcs8",
-		Backends: BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+		TLS:       TLSConfig{Enabled: true},
+		Logging:   LoggingConfig{Level: "info", Format: "json"},
+		Datastore: DatastoreConfig{Path: "/data"},
+		Default:   "pkcs8",
+		Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 		Cluster: ClusterConfig{
 			Enabled:     true,
 			NodeID:      1,
@@ -68,11 +68,12 @@ func TestValidate_ClusterValid(t *testing.T) {
 	}
 }
 
-func TestValidate_ClusterRequiresQRDB(t *testing.T) {
+func TestValidate_ClusterRequiresStandaloneDatastore(t *testing.T) {
 	c := clusterBaseConfig()
-	c.Storage.Backend = "pebble"
+	c.Datastore.Mode = "remote"
+	c.Datastore.Remote = DatastoreRemoteConfig{Address: "https://qrdb.example.com:63002", Transport: "rest"}
 	if err := c.Validate(); err == nil {
-		t.Fatal("Validate(cluster + pebble) = nil, want error (requires qrdb)")
+		t.Fatal("Validate(cluster + datastore.mode remote) = nil, want error (requires standalone)")
 	}
 }
 

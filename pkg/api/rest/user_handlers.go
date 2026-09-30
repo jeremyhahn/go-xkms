@@ -36,6 +36,9 @@ type createUserBody struct {
 	DisplayName          string `json:"display_name"`
 	Role                 string `json:"role"`
 	TenantID             string `json:"tenant_id"`
+	// InviteTTLSeconds overrides the minted invitation's TTL
+	// (go-xkms#1294 part B); see transport.CreateUserRequest.
+	InviteTTLSeconds int64 `json:"invite_ttl_seconds,omitempty"`
 }
 
 // handleCreateUser handles POST /api/v1/users/.
@@ -57,6 +60,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		DisplayName:          body.DisplayName,
 		Role:                 body.Role,
 		TenantID:             body.TenantID,
+		InviteTTLSeconds:     body.InviteTTLSeconds,
 	})
 	if err != nil {
 		// A missing login key is malformed CLIENT input, not a server fault.
@@ -69,7 +73,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, resp.User, http.StatusCreated)
+	// The full response, not just resp.User: an invited create carries the
+	// one-time activation invitation (go-xkms#1294 part B), returned here
+	// exactly once and unrecoverable afterwards.
+	writeJSON(w, resp, http.StatusCreated)
 }
 
 // handleListUsers handles GET /api/v1/users/.

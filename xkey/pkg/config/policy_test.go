@@ -228,6 +228,8 @@ func TestPolicyCanonicalJSON_FieldOrder(t *testing.T) {
 		"pairing_allowed_applications",
 		"pairing_allow_unpinned_signatures",
 		"lock_pairing_application_policy",
+		"phone_sync_allow_secret_export",
+		"lock_phone_sync_policy",
 		"organization_name",
 		"policy_version",
 	}
@@ -612,6 +614,8 @@ var policySectionFieldReaders = map[string]string{
 	"PairingAllowedApplications":      "pkg/attestation/policy.go ResolveApplicationPolicy (#1305)",
 	"PairingAllowUnpinnedSignatures":  "pkg/attestation/policy.go ResolveApplicationPolicy (#1305)",
 	"LockPairingApplicationPolicy":    "pkg/attestation/policy.go ResolveApplicationPolicy (#1305)",
+	"PhoneSyncAllowSecretExport":      "cmd/xkey/cmd/device_pairing_policy_shared.go allowPhoneSyncExport (go-xkms#1306)",
+	"LockPhoneSyncPolicy":             "cmd/xkey/cmd/device_pairing_policy_shared.go allowPhoneSyncExport (go-xkms#1306)",
 	"OrganizationName":                "pkg/gui/services/setup_wizard_service.go SO provisioning event payload",
 	"PolicyVersion":                   "pkg/gui/services/setup_wizard_service.go SO provisioning event payload",
 }

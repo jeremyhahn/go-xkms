@@ -57,6 +57,32 @@ type XKMSServicer interface {
 	CredentialManagementServicer
 	AuditServicer
 	BootstrapServicer
+	InviteServicer
+}
+
+// InviteServicer redeems administrator-issued account-activation
+// invitations (go-xkms#1294 part B): how an account CreateUser provisioned
+// with zero credentials enrolls its first one. Every method is
+// public/unauthenticated on every transport that carries it — there is no
+// credential yet to authenticate a request with — and every unusable token
+// answers with the same opaque refusal (see xkms.ErrInviteUnusable) so an
+// unauthenticated caller cannot enumerate accounts.
+type InviteServicer interface {
+	// GetInvite resolves a still-usable invitation's metadata without
+	// consuming it.
+	GetInvite(ctx context.Context, req *GetInviteRequest) (*GetInviteResponse, error)
+
+	// BeginInviteRegistration opens the invite-authorized WebAuthn
+	// registration ceremony for the token's account.
+	BeginInviteRegistration(ctx context.Context, req *BeginInviteRegistrationRequest) (*BeginInviteRegistrationResponse, error)
+
+	// FinishInviteRegistration completes the ceremony: binds the
+	// credential, activates the account, and redeems the invitation.
+	FinishInviteRegistration(ctx context.Context, req *FinishInviteRegistrationRequest) (*FinishInviteRegistrationResponse, error)
+
+	// ActivateInvitePIV activates the account by verifying a presented PIV
+	// certificate instead of a WebAuthn ceremony.
+	ActivateInvitePIV(ctx context.Context, req *ActivateInvitePIVRequest) (*ActivateInvitePIVResponse, error)
 }
 
 // HealthServicer handles health checks.

@@ -442,6 +442,43 @@ func (t *Transport) FinishAuthentication(ctx context.Context, req *transport.Fin
 	return t.service.FinishAuthentication(ctx, req)
 }
 
+// Invitation redemption (go-xkms#1294 part B): how an account CreateUser
+// provisioned with zero credentials enrolls its first one. Delegates
+// straight to the in-process XKMSService, exactly like every other method
+// on this transport.
+
+// GetInvite resolves a still-usable invitation's metadata without consuming it.
+func (t *Transport) GetInvite(ctx context.Context, req *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.GetInvite(ctx, req)
+}
+
+// BeginInviteRegistration opens the invite-authorized WebAuthn registration ceremony.
+func (t *Transport) BeginInviteRegistration(ctx context.Context, req *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.BeginInviteRegistration(ctx, req)
+}
+
+// FinishInviteRegistration completes the invite-authorized WebAuthn registration ceremony.
+func (t *Transport) FinishInviteRegistration(ctx context.Context, req *transport.FinishInviteRegistrationRequest) (*transport.FinishInviteRegistrationResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.FinishInviteRegistration(ctx, req)
+}
+
+// ActivateInvitePIV activates the account by verifying a presented PIV certificate.
+func (t *Transport) ActivateInvitePIV(ctx context.Context, req *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.ActivateInvitePIV(ctx, req)
+}
+
 // ExportKeyMaterial exports raw symmetric key bytes for extractable keys.
 func (t *Transport) ExportKeyMaterial(ctx context.Context, req *transport.ExportKeyMaterialRequest) (*transport.ExportKeyMaterialResponse, error) {
 	if !t.connected {

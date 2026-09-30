@@ -73,18 +73,6 @@ func TestEnsureSSHClient_NilXKMSServiceReturnsNil(t *testing.T) {
 	assert.Nil(t, s.ensureSSHClient())
 }
 
-// TestEnsureSSHClient_StorageCreateFailureReturnsNil proves that an
-// unsupported storage backend fails the "ssh" storage view build without
-// panicking, logging and leaving s.sshClient nil.
-func TestEnsureSSHClient_StorageCreateFailureReturnsNil(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "not-a-real-backend"},
-	})
-	s.xkmsService = &xkms.XKMSService{}
-
-	assert.Nil(t, s.ensureSSHClient())
-}
-
 // ============================================================================
 // Tests — firstBootTrustDomain
 // ============================================================================
@@ -190,8 +178,8 @@ func TestBuildRESTConfig_CAServicerSetWhenComposed(t *testing.T) {
 	// whose storage view defaults to Pebble at a path relative to the
 	// working directory, which would be the source tree. Keep it in memory.
 	s := newMinimalServer(t, &config.Config{
-		Server:  config.ServerConfig{Host: "127.0.0.1", RESTPort: 8443},
-		Storage: config.StorageConfig{Backend: "memory"},
+		Server:    config.ServerConfig{Host: "127.0.0.1", RESTPort: 8443},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 	})
 	s.ca = &mockTrustedCA{initialized: true}
 	s.xkmsService = &xkms.XKMSService{}
@@ -297,7 +285,7 @@ func TestUpgradeUnifiedTLSCert_NilProviderIsNoOp(t *testing.T) {
 func TestUpgradeUnifiedTLSCert_UpgradesCertAndPool(t *testing.T) {
 	tlsCert, _ := generateSelfSignedCert(t)
 	s := newMinimalServer(t, buildRESTConfigTLSTestCfg())
-	s.config.Storage.Path = t.TempDir()
+	s.config.Datastore.Path = t.TempDir()
 
 	_, err := s.buildUnifiedTLSConfig()
 	require.NoError(t, err)
@@ -449,106 +437,66 @@ func TestNew_WebAuthnInitFailureAbortsCleanly(t *testing.T) {
 	assert.Equal(t, "webauthn service", svcErr.Service)
 }
 
-// TestNew_PasswordStoreInitFailureAbortsCleanly proves New's password-store
-// init failure branch: a storage path collision (a regular file occupying
-// the "passwords" subdirectory createStorage would create) aborts server
-// construction with a typed *ErrServiceInit, after tearing down the
-// backends already opened -- rather than starting with no password store.
-func TestNew_PasswordStoreInitFailureAbortsCleanly(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
+// TestNew_PasswordStoreInitFailureAbortsCleanly and
+// TestNew_PKCS11StateStoreInitFailureAbortsCleanly used to prove New's
+// password-store and PKCS#11 remote-state store init failure branches by
+// colliding a regular file with the "passwords"/"pkcs11state" subdirectory
+// createStorage would create. That fault injection is no longer reachable:
+// createStorage (pkg/server/storage_factory.go) no longer touches the
+// filesystem at all -- it derives a key namespace over the one shared
+// datastore (go-xkms#1345).
 
-	cfg := createMinimalConfig(t)
-	blocker := filepath.Join(cfg.Storage.Path, "passwords")
-	require.NoError(t, os.WriteFile(blocker, []byte("not a directory"), 0o600))
-
-	server, err := New(cfg)
-	require.Error(t, err)
-	assert.Nil(t, server)
-
-	var svcErr *ErrServiceInit
-	require.ErrorAs(t, err, &svcErr)
-	assert.Equal(t, "password store", svcErr.Service)
-}
-
-// TestNew_PKCS11StateStoreInitFailureAbortsCleanly proves New's PKCS#11
-// remote-state store init failure branch, mirroring
-// TestNew_PasswordStoreInitFailureAbortsCleanly one step later in the
-// cascade.
-func TestNew_PKCS11StateStoreInitFailureAbortsCleanly(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	blocker := filepath.Join(cfg.Storage.Path, "pkcs11state")
-	require.NoError(t, os.WriteFile(blocker, []byte("not a directory"), 0o600))
-
-	server, err := New(cfg)
-	require.Error(t, err)
-	assert.Nil(t, server)
-
-	var svcErr *ErrServiceInit
-	require.ErrorAs(t, err, &svcErr)
-	assert.Equal(t, "pkcs11 state store", svcErr.Service)
-}
-
-// TestNew_AuditLoggerInitFailureAbortsCleanly proves New's audit-logger init
-// failure branch (the non-qrdb, local chained-file path): a directory
-// pre-occupying the audit log's file path makes the file open fail, and New
-// aborts with a typed *ErrServiceInit after tearing down the backends
-// already opened.
+// TestNew_AuditLoggerInitFailureAbortsCleanly proves initializeAuditLogger's
+// local chained-file fallback failure branch: a directory pre-occupying the
+// audit log's file path makes the file open fail, returning a typed
+// *ErrServiceInit. The chained-file path is taken only when s.qrdbClient is
+// nil -- reachable in production only for a datastore.mode "remote"
+// deployment (see qrdb_storage.go's initializeQRDBStorage) -- so this is
+// checked directly against initializeAuditLogger via a newMinimalServer
+// bypass (which never sets s.qrdbClient either), rather than a full
+// New(cfg), which a "remote" datastore.mode would need an actual qrdb
+// cluster to dial successfully.
 func TestNew_AuditLoggerInitFailureAbortsCleanly(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
 	cfg := createMinimalConfig(t)
-	blocker := filepath.Join(cfg.Storage.Path, "audit-events.ndjson")
+	blocker := filepath.Join(cfg.Datastore.Path, "audit-events.ndjson")
 	require.NoError(t, os.MkdirAll(blocker, 0o700))
 
-	server, err := New(cfg)
+	s := newMinimalServer(t, cfg)
+	err := s.initializeAuditLogger()
 	require.Error(t, err)
-	assert.Nil(t, server)
 
 	var svcErr *ErrServiceInit
 	require.ErrorAs(t, err, &svcErr)
-	assert.Equal(t, "audit logger", svcErr.Service)
+	assert.Equal(t, "chained file audit logger", svcErr.Service)
 }
 
-// TestNew_BarrierInitFailureAbortsCleanly proves New's barrier-init failure
-// branch: a storage path collision (a regular file occupying the "barrier"
-// subdirectory createStorage would create) aborts server construction with
-// a typed *ErrServiceInit wrapping *ErrStorageCreate, after tearing down
-// the backends already opened.
-func TestNew_BarrierInitFailureAbortsCleanly(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Barrier.Enabled = true
-	blocker := filepath.Join(cfg.Storage.Path, "barrier")
-	require.NoError(t, os.WriteFile(blocker, []byte("not a directory"), 0o600))
-
-	server, err := New(cfg)
-	require.Error(t, err)
-	assert.Nil(t, server)
-
-	var svcErr *ErrServiceInit
-	require.ErrorAs(t, err, &svcErr)
-	assert.Equal(t, "barrier", svcErr.Service)
-}
+// TestNew_BarrierInitFailureAbortsCleanly used to prove New's barrier-init
+// failure branch by colliding a regular file with the "barrier" subdirectory
+// createStorage would create. That fault injection is no longer reachable:
+// createStorage (pkg/server/storage_factory.go) no longer touches the
+// filesystem at all -- it derives a key namespace ("barrier/") over the one
+// shared datastore, so a blocked directory at that path has no effect
+// (go-xkms#1345).
 
 // TestNew_BarrierRegistryInitFailureAbortsCleanly proves New's
 // barrier-registry init failure branch: a storage path collision at the
 // tenant-volumes pool root aborts server construction with a typed
 // *ErrServiceInit wrapping buildVolumePool's own error, after the barrier
-// itself already built successfully.
+// itself already built successfully. buildVolumePool is real filesystem
+// code, unaffected by the datastore refactor -- unlike createStorage above.
+// barrier.strategy "pkcs11" is not NodeFlipWired, so this deployment keeps
+// xkms's own (non-node) barrier/barrier-registry construction -- the code
+// this test exercises -- instead of adopting the qrdb node's barrier, which
+// would skip both entirely and block boot on an operator unseal for the
+// flip-wired default ("passphrase").
 func TestNew_BarrierRegistryInitFailureAbortsCleanly(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Barrier.Enabled = true
-	blocker := filepath.Join(cfg.Storage.Path, "tenant-volumes")
+	cfg.Barrier.Strategy = "pkcs11"
+	blocker := filepath.Join(cfg.Datastore.Path, "tenant-volumes")
 	require.NoError(t, os.WriteFile(blocker, []byte("not a directory"), 0o600))
 
 	server, err := New(cfg)

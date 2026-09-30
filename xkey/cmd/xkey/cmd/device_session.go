@@ -21,59 +21,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
-// Session errors.
-var (
-	// ErrSessionKeyDecode means the stored pairing keys will not decode, so
-	// the pairing record is unusable and re-pairing is the only fix.
-	ErrSessionKeyDecode = errors.New("device: stored pairing key is malformed")
-
-	// ErrSessionRPC means the phone answered with a JSON-RPC error. The
-	// phone's own code and message travel with it.
-	ErrSessionRPC = errors.New("device: the phone refused the request")
-)
-
-// unsealDeviceLocalKey resolves device's local Noise static private key for
-// the surfaces that reach the phone through openDeviceSession or
-// newPairedDeviceBackendConfig rather than through a device command with its
-// own --barrier-password flags (#42): OATH sync, backup, sharing, attest,
-// phone enrollment, and the FIDO2 phone backend.
-//
-// A legacy plaintext record (IsSealedNoiseKey false) is read with no barrier
-// at all -- these surfaces predate #42 and must keep working unattended for
-// an existing pairing with no barrier configured. A sealed record needs the
-// barrier open, so this opens one from XKEY_BARRIER_PASSWORD -- the one
-// source that does not need a *cobra.Command threaded through this whole call
-// graph -- and closes it again immediately: nothing else in these flows needs
-// it once the key is in hand. There is no fallback to reading a sealed record
-// as plaintext: with no password available, this refuses via
-// pairing.ErrNoiseKeyFormMismatch before ever calling UnsealLocalNoiseKey
-// (which would refuse the same way, since it also has no barrier).
-func unsealDeviceLocalKey(device *PairedDevice, logger *slog.Logger) (*secure.Buffer, error) {
-	if !pairing.IsSealedNoiseKey(device.LocalNoisePrivateKey) {
-		return pairing.UnsealLocalNoiseKey(nil, device.LocalNoisePrivateKey)
-	}
-
-	password := os.Getenv("XKEY_BARRIER_PASSWORD")
-	if password == "" {
-		return nil, &SentinelCauseError{Sentinel: ErrSessionKeyDecode, Cause: pairing.ErrNoiseKeyFormMismatch}
-	}
-	barrier, closeBarrier, err := openDeviceBarrierWithPassword(password)
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrSessionKeyDecode, Cause: err}
-	}
-	defer closeBarrier()
-
-	return pairing.UnsealLocalNoiseKey(barrier, device.LocalNoisePrivateKey)
-}
+// ErrSessionRPC means the phone answered with a JSON-RPC error. The
+// phone's own code and message travel with it.
+var ErrSessionRPC = errors.New("device: the phone refused the request")
 
 // deviceSession is a connected, handshaken channel to a paired phone.
 //
@@ -293,19 +250,6 @@ func enforceReattestation(
 	}
 
 	return attestation.VerifyReattestation(ctx, transport, session, binding, trust, logger)
-}
-
-// newLiveAttestor builds the verifier the phone backend calls after its
-// handshake, for surfaces that connect through PhoneKeyBackend rather than
-// openDeviceSession (#129).
-//
-// The trust loader is passed rather than a pool: attestation.NewLiveAttestor
-// calls it per connection, so a root installed with `xkey trust` between
-// connections takes effect instead of a stale pool refusing a device the
-// machine now trusts.
-func newLiveAttestor(device *PairedDevice, logger *slog.Logger) pairing.LiveAttestFunc {
-	return attestation.NewLiveAttestor(
-		attestation.DeviceBindingFor(*device), loadPairingAttestationTrust, logger)
 }
 
 // newPairedDeviceBackendConfig builds the phone-backend configuration for a

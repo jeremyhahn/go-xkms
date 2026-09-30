@@ -17,9 +17,18 @@ package phone
 
 import (
 	"errors"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
+
+// DefaultLiveAttestTimeout bounds a responder's post-handshake LiveAttest
+// round trip (TCPPairingConfig.LiveAttest, BLEPeripheralConfig.LiveAttest):
+// the laptop's local.attestDevice challenge to the phone, which prompts the
+// phone's user for biometric confirmation before it answers. Matches the
+// CLI's own connect-and-call budget for the same proof (defaultSessionTimeout,
+// cmd/xkey/cmd/device_session.go).
+const DefaultLiveAttestTimeout = 120 * time.Second
 
 // ErrLiveAttestationUnavailable indicates a connection required the #129
 // challenge-response proof and no verifier was supplied to produce one.

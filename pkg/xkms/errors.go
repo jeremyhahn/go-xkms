@@ -699,6 +699,41 @@ func (e *ErrUnknownRole) Error() string {
 	return fmt.Sprintf("keystore: unknown role %q", e.Role)
 }
 
+// ErrInviteUnusable is the single opaque answer every unusable invitation
+// gets: absent, expired and already-redeemed are indistinguishable to an
+// unauthenticated caller (go-xkms#1294 part B). Telling a stranger a token
+// exists but is spent confirms a real user was invited — the enumeration an
+// opaque token exists to prevent. Every invite-redemption entry point
+// collapses qrdbsdk.ErrInviteNotFound, ErrInviteExpired,
+// ErrInviteAlreadyRedeemed and ErrInviteEmptyToken into this one value; see
+// classifyInviteError.
+var ErrInviteUnusable = errors.New("invite: link is not valid")
+
+// ErrPIVCertDecode is returned when an invite's PIV activation certificate
+// cannot be decoded from PEM or parsed as an X.509 certificate.
+type ErrPIVCertDecode struct {
+	Reason string
+}
+
+// Error returns the error message.
+func (e *ErrPIVCertDecode) Error() string {
+	return fmt.Sprintf("invite: piv certificate decode: %s", e.Reason)
+}
+
+// ErrPIVCertRejected is returned when an invite's PIV activation certificate
+// fails chain verification against the CA's trust roots.
+type ErrPIVCertRejected struct {
+	Err error
+}
+
+// Error returns the error message.
+func (e *ErrPIVCertRejected) Error() string {
+	return fmt.Sprintf("invite: piv certificate chain verification failed: %v", e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ErrPIVCertRejected) Unwrap() error { return e.Err }
+
 // ErrSealOperation represents a sealing/unsealing operation error.
 type ErrSealOperation struct {
 	Operation string

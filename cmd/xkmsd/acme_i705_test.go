@@ -71,7 +71,7 @@ func TestStartACMEServer_DefaultDataDirFromStoragePath(t *testing.T) {
 		t.Fatalf("err = %T, want *acmeBackendError (data-dir default resolution must complete first)", err)
 	}
 
-	wantDataDir := filepath.Join(cfg.Storage.Path, "acme")
+	wantDataDir := filepath.Join(cfg.Datastore.Path, "acme")
 	fi, statErr := os.Stat(wantDataDir)
 	if statErr != nil {
 		t.Fatalf("default data dir %q was not created: %v", wantDataDir, statErr)

@@ -330,34 +330,41 @@ func TestBeginRegistration_RefusesInactiveZeroCredentialAccount(t *testing.T) {
 	}
 }
 
-// TestBeginRegistration_ActiveZeroCredentialAccountEnrols is the control.
-func TestBeginRegistration_ActiveZeroCredentialAccountEnrols(t *testing.T) {
+// TestBeginInviteRegistration_PendingAccountEnrols is the control: a
+// provisioned account (go-xkms#1294 part B leaves it LifecyclePending, not
+// active, until redemption) enrolls its first passkey through the
+// invite-authorized entry point.
+func TestBeginInviteRegistration_PendingAccountEnrols(t *testing.T) {
 	f := newEnrollFixture(t, false)
 	ctx := context.Background()
 	const email = "provisioned@example.com"
 	_, err := f.users.Create(ctx, email, "Provisioned")
 	require.NoError(t, err)
+	f.setStanding(t, email, qrdbsdk.LifecyclePending, nil)
 
-	options, sessionID, err := f.svc.BeginRegistration(ctx, email, "Provisioned")
+	options, sessionID, err := f.svc.BeginInviteRegistration(ctx, email)
 	require.NoError(t, err)
-	_, err = f.attest(t, options, sessionID, newEC2Credential(t))
+	_, err = f.attestInvite(t, options, sessionID, newEC2Credential(t))
 	require.NoError(t, err)
 }
 
-// TestFinishRegistration_RefusesAccountDeactivatedMidCeremony closes the
-// window between begin and finish.
-func TestFinishRegistration_RefusesAccountDeactivatedMidCeremony(t *testing.T) {
+// TestFinishInviteRegistration_RefusesAccountDeactivatedMidCeremony closes
+// the window between begin and finish: an invite-authorized ceremony started
+// against a pending account must not bind a credential if the account left
+// pending (activated by another means, or deactivated) before finish runs.
+func TestFinishInviteRegistration_RefusesAccountDeactivatedMidCeremony(t *testing.T) {
 	f := newEnrollFixture(t, false)
 	ctx := context.Background()
 	const email = "provisioned@example.com"
 	user, err := f.users.Create(ctx, email, "Provisioned")
 	require.NoError(t, err)
+	f.setStanding(t, email, qrdbsdk.LifecyclePending, nil)
 
-	options, sessionID, err := f.svc.BeginRegistration(ctx, email, "Provisioned")
+	options, sessionID, err := f.svc.BeginInviteRegistration(ctx, email)
 	require.NoError(t, err)
 	f.setStanding(t, email, qrdbsdk.LifecycleSuspended, nil)
 
-	_, err = f.attest(t, options, sessionID, newEC2Credential(t))
+	_, err = f.attestInvite(t, options, sessionID, newEC2Credential(t))
 	require.ErrorIs(t, err, ErrRegistrationRefused)
 	creds, err := f.creds.GetByUserID(ctx, user.WebAuthnID())
 	require.NoError(t, err)

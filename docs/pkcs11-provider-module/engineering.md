@@ -186,7 +186,7 @@ opens the same token shares one counter per PIN (`MaxPINAttempts`,
   was a process-local mutex: two module instances pointed at the same file
   token directory could interleave their `SpendFailedAttempt` read and write
   and both succeed, undercounting the shared budget. See
-  [`../storage-engines/engineering.md`](../storage-engines/engineering.md)
+  [`../datastore/engineering.md`](../datastore/engineering.md)
   for the lock's design.
 - **A refund never erases someone else's failure.**
   `RefundFailedAttempt` (`storage.go:283`) applies `refundedCount`

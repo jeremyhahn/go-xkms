@@ -29,13 +29,12 @@ Full verb and flag detail: [`../fido2-ctap2/cli.md`](../fido2-ctap2/cli.md).
 and no human, which is how agents and CI authenticate. See
 [`../../xkey/docs/headless-webauthn/cli.md`](../../xkey/docs/headless-webauthn/cli.md).
 
-## Registering and logging in from `xkmsctl`
+## Logging in from `xkmsctl`
 
-`xkmsctl user register` / `xkmsctl user login` / `xkmsctl admin create` drive
-the full server-side WebAuthn ceremony against a local CTAP2 authenticator. An
-authenticator with a CTAP2 PIN set refuses either ceremony unless the request
-carries the PIN, so all three verbs take the same three PIN sources, resolved
-by `resolvePINInput` (`cmd/xkmsctl/pin_input.go:70-72,80-109`), in the same
+`xkmsctl user login` drives the full server-side WebAuthn authentication
+ceremony against a local CTAP2 authenticator. An authenticator with a CTAP2
+PIN set refuses it unless the request carries the PIN, resolved by
+`resolvePINInput` (`cmd/xkmsctl/pin_input.go:70-72,80-109`), in the same
 precedence order as the `xkey auth` verbs (`xkey`'s equivalent has no
 `--pin` flag; see
 [`../../xkey/docs/headless-webauthn/cli.md`](../../xkey/docs/headless-webauthn/cli.md)):
@@ -47,13 +46,19 @@ precedence order as the `xkey auth` verbs (`xkey`'s equivalent has no
 | `--pin` | 3 | visible in `ps`; local development only |
 
 ```
-printf '%s' "$PIN" | xkmsctl user register admin --pin-stdin --email admin@example.com
 printf '%s' "$PIN" | xkmsctl user login admin@example.com --pin-stdin
 ```
 
+`xkmsctl user register` and `xkmsctl admin create --method fido2` no longer
+drive a local ceremony: they create the account and print a one-time
+activation invitation instead (go-xkms#1294 part B — see
+[`../user-onboarding/cli.md`](../user-onboarding/cli.md)), so neither takes
+`--pin*`, `--origin`, `--device`, `--timeout` or `--user-verification` any
+more.
+
 ### The WebAuthn origin
 
-All three verbs bind a WebAuthn origin into the ceremony, and the local
+`user login` binds a WebAuthn origin into the ceremony, and the local
 authenticator refuses a server rpId that origin does not cover (the origin's
 host, or a registrable-domain suffix of it). The origin is resolved by
 `resolveWebAuthnOrigin` (`cmd/xkmsctl/webauthn_origin.go:44`): `--origin`
@@ -69,12 +74,11 @@ xkmsctl --server https://kms.example.com:8443 user login admin@example.com   # o
 ```
 
 The login key is the account's **email**, the key the server resolves the
-account by. `user login <email>` and `user register --email` refuse a value
-that is not a bare email address (a username, or a display-name form such as
+account by. `user login <email>` refuses a value that is not a bare email
+address (a username, or a display-name form such as
 `Alice <alice@example.com>`) before anything reaches the network, so a typo is
-reported locally rather than as a remote authentication failure or a ceremony
-run against a second principal keyed by that string. Surrounding whitespace is
-trimmed.
+reported locally rather than as a remote authentication failure. Surrounding
+whitespace is trimmed.
 
 An authenticator with no PIN configured needs none — supply nothing. A missing
 PIN is reported as missing input naming these sources, and a wrong PIN reports

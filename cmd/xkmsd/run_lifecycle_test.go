@@ -66,11 +66,10 @@ auth:
   enabled: true
   type: "mtls"
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
+  mode: "standalone"
   path: "` + filepath.Join(dir, "storage") + `"
-  qrdb:
-    transport: "embedded"
 
 default_backend: "software"
 

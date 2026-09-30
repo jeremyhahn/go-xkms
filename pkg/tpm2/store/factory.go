@@ -32,25 +32,28 @@ type StorageFactory struct {
 	tempDir   string
 }
 
-// NewStorageFactory creates a new storage factory. If baseDir is empty,
-// a temporary directory is created. The factory uses the local storage
-// package implementations (file or memory based).
+// NewStorageFactory creates a new storage factory backed by a private,
+// file-based engine rooted at baseDir. If baseDir is empty, a temporary
+// directory is created and removed on Close. This constructor is for direct
+// file/test use (see doc comment on StorageFactory); a caller composing
+// through the shared datastore (pkg/datastore.Open, or any other
+// storage.Backend -- e.g. pkg/server's createStorage view) uses NewFactory
+// instead, so TPM key blobs are never a second, private storage engine.
 func NewStorageFactory(logger *slog.Logger, baseDir string) (*StorageFactory, error) {
-	var backend storage.Backend
-	var err error
 	var tempDir string
 
 	if baseDir == "" {
 		// Create a temporary directory for testing
-		tempDir, err = os.MkdirTemp("", "tpm-store-*")
+		dir, err := os.MkdirTemp("", "tpm-store-*")
 		if err != nil {
 			return nil, err
 		}
+		tempDir = dir
 		baseDir = tempDir
 	}
 
 	// Use file-based storage
-	backend, err = file.New(baseDir)
+	backend, err := file.New(baseDir)
 	if err != nil {
 		if tempDir != "" {
 			if rmErr := os.RemoveAll(tempDir); rmErr != nil {
@@ -62,7 +65,7 @@ func NewStorageFactory(logger *slog.Logger, baseDir string) (*StorageFactory, er
 		return nil, err
 	}
 
-	blobStore, err := NewFSBlobStore(logger, backend)
+	factory, err := NewFactory(logger, backend)
 	if err != nil {
 		if closeErr := backend.Close(); closeErr != nil {
 			logger.Error("failed to close backend",
@@ -77,21 +80,23 @@ func NewStorageFactory(logger *slog.Logger, baseDir string) (*StorageFactory, er
 		}
 		return nil, err
 	}
-
-	return &StorageFactory{
-		logger:    logger,
-		backend:   backend,
-		blobStore: blobStore,
-		keyStore:  NewFileBackend(logger, backend),
-		tempDir:   tempDir,
-	}, nil
+	factory.tempDir = tempDir
+	return factory, nil
 }
 
 // NewMemoryStorageFactory creates a storage factory using in-memory storage.
 // This is useful for testing where persistence is not required.
 func NewMemoryStorageFactory(logger *slog.Logger) (*StorageFactory, error) {
-	backend := storage.NewMemory()
+	return NewFactory(logger, storage.NewMemory())
+}
 
+// NewFactory creates a storage factory over an already-open storage.Backend
+// -- e.g. a key-prefixed view of the shared datastore (pkg/datastore.Open,
+// or pkg/server's createStorage) -- rather than opening a private file or
+// memory engine. This is the constructor datastore-backed callers use;
+// NewStorageFactory/NewMemoryStorageFactory remain for direct file/in-memory
+// use (tests, standalone tooling) and are implemented in terms of this one.
+func NewFactory(logger *slog.Logger, backend storage.Backend) (*StorageFactory, error) {
 	blobStore, err := NewFSBlobStore(logger, backend)
 	if err != nil {
 		return nil, err

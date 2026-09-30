@@ -193,7 +193,8 @@ var backendFactories = func() atomic.Value {
 //
 // The factory function receives a generic configuration map and returns a
 // KeyProvider instance. Each backend defines its own expected configuration
-// keys (e.g., "key_dir" for file-based storage).
+// keys (e.g., "key_storage" for a pre-built storage.Backend -- see
+// AutoConfig.Datastore).
 func RegisterBackendFactory(name BackendType, factory BackendFactory) {
 	current := backendFactories.Load().(map[BackendType]BackendFactory)
 	updated := make(map[BackendType]BackendFactory, len(current)+1)

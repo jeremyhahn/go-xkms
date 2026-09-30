@@ -58,7 +58,7 @@ func setupRealTPM2KID(t *testing.T) {
 
 	tpmBackend, err := tpm2backend.NewBackend(&tpm2backend.Config{
 		UseSimulator: true,
-		KeyDir:       t.TempDir(),
+		KeyStorage:   storage.NewMemory(),
 		CN:           "xkms-925-test",
 	})
 	require.NoError(t, err)

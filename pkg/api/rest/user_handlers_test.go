@@ -45,6 +45,7 @@ var errRestMockUnused = errors.New("rest mock: method not used")
 
 type restMockUserClient struct {
 	createUser        func(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error)
+	getUser           func(ctx context.Context, id uint64) (*qrdbtransport.User, error)
 	getUserByUsername func(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error)
 	getUserByEmail    func(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error)
 	listUsers         func(ctx context.Context, req *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error)
@@ -52,6 +53,7 @@ type restMockUserClient struct {
 	enableUser        func(ctx context.Context, id uint64) error
 	disableUser       func(ctx context.Context, id uint64) error
 	addCertBinding    func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
+	updateUser        func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error)
 }
 
 var _ qrdbtransport.UserClient = (*restMockUserClient)(nil)
@@ -61,6 +63,9 @@ func (m *restMockUserClient) CreateUser(ctx context.Context, req *qrdbtransport.
 }
 
 func (m *restMockUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+	if m.getUser != nil {
+		return m.getUser(ctx, id)
+	}
 	return nil, errRestMockUnused
 }
 
@@ -88,6 +93,9 @@ func (m *restMockUserClient) RemoveCertBinding(ctx context.Context, userID uint6
 }
 
 func (m *restMockUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+	if m.updateUser != nil {
+		return m.updateUser(ctx, req)
+	}
 	return nil, errRestMockUnused
 }
 
@@ -167,6 +175,15 @@ func (m *restMockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrd
 	return nil, errRestMockUnused
 }
 
+// restSingleStoreResolver resolves every tenant to the same backing
+// KVStore — enough for a unit test's invite store, which does not exercise
+// per-tenant routing or barrier isolation.
+type restSingleStoreResolver struct{ store qrdbsdk.KVStore }
+
+func (r restSingleStoreResolver) Resolve(context.Context, string) (qrdbsdk.KVStore, error) {
+	return r.store, nil
+}
+
 // setupUserHandlerTest initializes the XKMSService singleton, wires the
 // provided user/role mocks (when non-nil), mounts the user routes on a chi
 // router, and returns the router. Passing nil clients leaves the service's
@@ -184,6 +201,12 @@ func setupUserHandlerTest(t *testing.T, users qrdbtransport.UserClient, roles qr
 	if users != nil || roles != nil {
 		svc.SetUserClients(users, roles)
 	}
+	// CreateUser mints an invitation for every account created with an email
+	// login key (go-xkms#1294 part B); wire the real qrdb invite store over
+	// an in-memory KV store so that path is reachable in these tests.
+	inviteStore, err := qrdbsdk.NewTenantInviteStore(restSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	require.NoError(t, err)
+	svc.SetInviteStore(inviteStore)
 	t.Cleanup(func() { xkms.Reset() })
 
 	s := &Server{xkmsService: svc}
@@ -434,10 +457,18 @@ func TestHandleCreateUser_Success(t *testing.T) {
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/", bytes.NewReader(body)))
 
 	require.Equal(t, http.StatusCreated, rr.Code)
-	var info map[string]any
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &info))
-	assert.Equal(t, "carol", info["username"])
-	assert.Equal(t, "Carol", info["display_name"])
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	user, ok := resp["user"].(map[string]any)
+	require.True(t, ok, "response must carry a \"user\" object")
+	assert.Equal(t, "carol", user["username"])
+	assert.Equal(t, "Carol", user["display_name"])
+
+	// CreateUser mints a one-time activation invitation for an email-login-key
+	// account (go-xkms#1294 part B); it is returned exactly once, here.
+	invite, ok := resp["invite"].(map[string]any)
+	require.True(t, ok, "response must carry an \"invite\" object")
+	assert.NotEmpty(t, invite["token"])
 }
 
 func TestHandleCreateUser_BadJSON(t *testing.T) {

@@ -31,15 +31,16 @@ import (
 // newSimulatorCABackend returns an xkms.Backend whose keys live inside an
 // in-process go-tpm-tools simulator.
 //
-// The simulator is auto-provisioned (EK + SRK) by NewBackend and all state
-// lives under t.TempDir(), so the test needs no external swtpm process and
-// never touches the host's /dev/tpmrm0.
+// The simulator is auto-provisioned (EK + SRK) by NewBackend and all key
+// blob state lives in memory (storage.NewMemory), so the test needs no
+// external swtpm process, never touches the host's /dev/tpmrm0, and leaves
+// nothing on disk.
 func newSimulatorCABackend(t *testing.T) (xkms.Backend, func()) {
 	t.Helper()
 
 	tpmBackend, err := tpmbackend.NewBackend(&tpmbackend.Config{
 		UseSimulator: true,
-		KeyDir:       t.TempDir(),
+		KeyStorage:   storage.NewMemory(),
 		CN:           "ca-multi-keystore-test",
 	})
 	require.NoError(t, err, "TPM simulator backend must construct and auto-provision")

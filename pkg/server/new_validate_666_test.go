@@ -50,7 +50,7 @@ func TestNew_EmptyStoragePath_RejectedBeforeAnyFilesystemWrite(t *testing.T) {
 	}
 
 	cfg := createMinimalConfig(t)
-	cfg.Storage.Path = ""
+	cfg.Datastore.Path = ""
 	// PIN.Enabled is the subsystem that used to build its state directory by
 	// raw string concatenation against Storage.Path -- see
 	// initializePINManager's guard.
@@ -63,7 +63,7 @@ func TestNew_EmptyStoragePath_RejectedBeforeAnyFilesystemWrite(t *testing.T) {
 	var svcErr *ErrServiceInit
 	require.True(t, errors.As(err, &svcErr), "error must unwrap to *ErrServiceInit, got %T", err)
 	assert.Equal(t, "configuration", svcErr.Service)
-	assert.Contains(t, err.Error(), "storage path must be specified")
+	assert.Contains(t, err.Error(), "datastore.path must be specified")
 
 	for _, sub := range watched {
 		_, statErr := os.Stat(filepath.Join(wd, sub))

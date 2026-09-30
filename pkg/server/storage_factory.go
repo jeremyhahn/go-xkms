@@ -17,54 +17,28 @@ import (
 	"path/filepath"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
-// createStorage opens the storage backend the server configuration names,
-// rooted at subdir under the configured path; a qrdb backend is a prefixed
-// view of the shared qrdb store.
+// createStorage opens a storage view for subdir on the server's single
+// shared datastore (s.qrdbStorage, built once in initializeQRDBStorage).
+// Every subsystem -- keys, users, RBAC, custodian, shares, CA serials and
+// revocations, ACME state, everything -- goes through this one seam: the
+// subdir becomes a key namespace via a prefixed view. The view's Close is a
+// no-op on the shared inner backend, which only the server closes
+// (closeQRDBStorage). There is no per-subsystem private storage engine:
+// datastore.engine and datastore.mode (config.DatastoreConfig) select the
+// ONE engine and topology the whole server uses.
 func (s *Server) createStorage(subdir string) (storage.Backend, error) {
-	cfg := s.config.Storage
-	switch cfg.Backend {
-	case "memory":
-		return storage.NewMemoryBackend()
-	case "pebble", "":
-		// Empty defaults to durable PebbleDB (see config validation); never a
-		// non-durable store in a production path.
-		path := filepath.Join(cfg.Path, subdir)
-		return storage.NewPebble(path)
-	case "file":
-		path := filepath.Join(cfg.Path, subdir)
-		return file.New(path)
-	case "qrdb":
-		// All subdirs share the single qrdb backend built in New; the subdir
-		// becomes a key namespace via a prefixed view. The view's Close is a
-		// no-op on the shared inner backend, which only the server closes.
-		return storage.NewPrefixBackend(s.qrdbStorage, subdir+"/")
-	default:
-		return nil, &ErrUnsupportedStorageBackend{Backend: cfg.Backend}
-	}
+	return storage.NewPrefixBackend(s.qrdbStorage, subdir+"/")
 }
 
-// createStorageAt creates a storage backend using the server's configured
-// storage engine but at the given absolute path. This is used for backend
-// key storage paths that are configured independently of the metadata
-// storage root (e.g., Backends.Software.Path, Backends.PKCS8.Path).
+// createStorageAt opens a storage view on the single shared datastore for an
+// absolute path, used for backend key storage paths that are configured
+// independently of the datastore root (e.g., Backends.Software.Path,
+// Backends.PKCS8.Path). The absolute path maps to a key namespace derived
+// from its final path segment, sharing the single datastore from
+// initializeQRDBStorage -- never a separate, private storage engine.
 func (s *Server) createStorageAt(path string) (storage.Backend, error) {
-	cfg := s.config.Storage
-	switch cfg.Backend {
-	case "memory":
-		return storage.NewMemoryBackend()
-	case "pebble", "":
-		return storage.NewPebble(path)
-	case "file":
-		return file.New(path)
-	case "qrdb":
-		// File-style absolute paths map to a qrdb key namespace derived from
-		// the final path segment, sharing the single qrdb backend from New.
-		base := filepath.Base(path)
-		return storage.NewPrefixBackend(s.qrdbStorage, base+"/")
-	default:
-		return nil, &ErrUnsupportedStorageBackend{Backend: cfg.Backend}
-	}
+	base := filepath.Base(path)
+	return storage.NewPrefixBackend(s.qrdbStorage, base+"/")
 }

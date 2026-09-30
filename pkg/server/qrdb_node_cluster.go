@@ -33,7 +33,7 @@ import (
 // Raft node certificates when RaftEnrollment.TrustDomain is unset.
 const defaultRaftTrustDomain = daemon.DefaultTrustDomain
 
-// raftTLSCacheSubdir is the subdirectory of Storage.Path where auto-provisioned
+// raftTLSCacheSubdir is the subdirectory of Datastore.Path where auto-provisioned
 // cluster TLS material (CA + node cert/key + Noise key) is cached so restarts
 // reuse it.
 const raftTLSCacheSubdir = daemon.RaftTLSCacheSubdir
@@ -65,7 +65,7 @@ func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbsdk.Se
 	res, err := daemon.NewNode(s.ctx, &daemon.Options{
 		QRDB:             qcfg,
 		Cluster:          s.daemonClusterOptions(),
-		StoragePath:      s.config.Storage.Path,
+		StoragePath:      s.config.Datastore.Path,
 		Logger:           s.logger,
 		ServerOptions:    serverOpts,
 		NodeOptions:      nodeOpts,
@@ -149,7 +149,7 @@ func (s *Server) resolveRaftMTLS(_ context.Context, members map[uint64]string) (
 			return nil, nil, err
 		}
 		s.logger.Info("Raft inter-node mTLS via TPM-attested ACME cluster enrollment",
-			"data_dir", filepath.Join(s.config.Storage.Path, clusterCACacheSubdir),
+			"data_dir", filepath.Join(s.config.Datastore.Path, clusterCACacheSubdir),
 			"cluster_ca_cn", s.config.Cluster.RaftEnrollment.ClusterCACN,
 			"advertising", adv != nil)
 		return mtls, adv, nil
@@ -163,7 +163,7 @@ func (s *Server) resolveRaftMTLS(_ context.Context, members map[uint64]string) (
 			return nil, nil, err
 		}
 		s.logger.Info("Raft inter-node mTLS auto-provisioned via cluster enrollment",
-			"data_dir", filepath.Join(s.config.Storage.Path, raftTLSCacheSubdir),
+			"data_dir", filepath.Join(s.config.Datastore.Path, raftTLSCacheSubdir),
 			"advertising", adv != nil)
 		return mtls, adv, nil
 	}
@@ -198,7 +198,7 @@ func loadRaftMTLS(cfg config.RaftTLSConfig) (*qrdbnode.RaftMTLSConfig, error) {
 // The first node generates a dedicated self-signed cluster CA and returns a
 // running Noise advertiser for peer enrollment; joining nodes (RaftEnrollment.
 // Bootstrap configured) fetch the CA and issue their own leaf. Generated material
-// is cached under {Storage.Path}/raft-tls so restarts reuse it. The returned
+// is cached under {Datastore.Path}/raft-tls so restarts reuse it. The returned
 // Advertiser is nil except on the first (bootstrapping) node.
 func (s *Server) provisionRaftClusterTLS(members map[uint64]string) (*qrdbnode.RaftMTLSConfig, *clusterenroll.Advertiser, error) {
 	mat, adv, err := clusterenroll.Resolve(s.ctx, s.buildClusterEnrollOptions(members), s.logger)
@@ -220,7 +220,7 @@ func (s *Server) provisionRaftClusterTLS(members map[uint64]string) (*qrdbnode.R
 func (s *Server) buildClusterEnrollOptions(members map[uint64]string) *clusterenroll.Options {
 	opts := &daemon.Options{
 		Cluster:     s.daemonClusterOptions(),
-		StoragePath: s.config.Storage.Path,
+		StoragePath: s.config.Datastore.Path,
 	}
 	return opts.ClusterEnrollOptions(members)
 }

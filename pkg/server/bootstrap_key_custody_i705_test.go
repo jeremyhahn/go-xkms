@@ -70,7 +70,7 @@ func TestNoiseKeyCustody_NoBarrierFileWriteFails(t *testing.T) {
 	tmpPath := filepath.Join(dataDir, noiseStaticKeyFileName+".tmp")
 	require.NoError(t, os.Mkdir(tmpPath, 0700))
 
-	cfg := &config.Config{Storage: config.StorageConfig{Path: dataDir}}
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Path: dataDir}}
 	s := &Server{config: cfg, logger: custodyQuietLogger()}
 
 	key, err := s.loadNoiseStaticKey()
@@ -89,7 +89,7 @@ func TestP256KeyCustody_NoBarrierFileWriteFails(t *testing.T) {
 	tmpPath := filepath.Join(dataDir, p256StaticKeyFileName+".tmp")
 	require.NoError(t, os.Mkdir(tmpPath, 0700))
 
-	cfg := &config.Config{Storage: config.StorageConfig{Path: dataDir}}
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Path: dataDir}}
 	s := &Server{config: cfg, logger: custodyQuietLogger()}
 
 	key, err := s.loadP256StaticKey()

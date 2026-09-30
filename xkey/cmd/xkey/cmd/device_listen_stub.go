@@ -16,16 +16,13 @@
 package cmd
 
 import (
-	"errors"
-
 	"github.com/spf13/cobra"
 )
 
-// Device listen command errors - re-declared for stub builds.
-var (
-	ErrDeviceListenFailed    = errors.New("device: listen failed")
-	ErrDeviceNoDefaultDevice = errors.New("device: no default device configured")
-)
+// Device listen command errors (ErrDeviceListenFailed, ErrDeviceNoDefaultDevice)
+// live in device_listen_handler.go, which carries no build tag: this stub
+// build and the ble build share one declaration instead of two that can
+// drift apart.
 
 // deviceListenCmd starts the BLE peripheral to accept phone-initiated connections.
 // This is a stub implementation when built without BLE support.

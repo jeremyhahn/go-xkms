@@ -115,9 +115,8 @@ func requireTPM2PIV(t *testing.T) func() {
 	xkms.ResetPIV()
 	xkms.Reset()
 
-	keyDir := t.TempDir()
 	config := &tpm2.Config{
-		KeyDir: keyDir,
+		KeyStorage: storage.NewMemory(),
 	}
 
 	if simHost != "" {
@@ -703,9 +702,8 @@ func TestIntegration_PIV_MultiBackend(t *testing.T) {
 	_, hwErr := os.Stat("/dev/tpmrm0")
 	if simHost != "" || hwErr == nil {
 		hasTPM2 = true
-		keyDir := t.TempDir()
 		config := &tpm2.Config{
-			KeyDir: keyDir,
+			KeyStorage: storage.NewMemory(),
 		}
 		if simHost != "" {
 			config.UseSimulator = true

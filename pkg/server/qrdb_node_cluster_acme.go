@@ -186,7 +186,7 @@ func (s *Server) buildClusterACMEOptions(members map[uint64]string, backends fun
 		NodeID:      s.config.Cluster.NodeID,
 		TrustDomain: trustDomain,
 		Members:     members,
-		DataDir:     filepath.Join(s.config.Storage.Path, clusterCACacheSubdir),
+		DataDir:     filepath.Join(s.config.Datastore.Path, clusterCACacheSubdir),
 		ACME: &clusterca.ACMEOptions{
 			DirectoryURL:  enr.ACME.DirectoryURL,
 			ChallengePort: challengePort,

@@ -123,24 +123,31 @@ func TestRPCPermissions_ProtoOptionMatchesGoldenTable(t *testing.T) {
 // exposure — an RPC cannot silently join it.
 func TestRPCPermissions_UnannotatedRPCsAreTheUngatedOnes(t *testing.T) {
 	// The ungated surface: health/discovery, key-version toggles, secure-ECDH
-	// session RPCs, and the WebAuthn ceremony (which authenticates by
-	// ceremony, not by RBAC permission).
+	// session RPCs, the WebAuthn ceremony (which authenticates by ceremony,
+	// not by RBAC permission), and enrollment-invitation redemption (which
+	// authenticates by the single-use invitation token, not by RBAC
+	// permission — there is no credential yet to hold one; go-xkms#1294
+	// part B).
 	wantUnannotated := map[string]struct{}{
-		"Health":                {},
-		"Algorithms":            {},
-		"ListKeyVersions":       {},
-		"EnableKeyVersion":      {},
-		"DisableKeyVersion":     {},
-		"EnableAllKeyVersions":  {},
-		"DisableAllKeyVersions": {},
-		"DeriveKeyECDHSecure":   {},
-		"GenerateEphemeralECDH": {},
-		"UseResidentKey":        {},
-		"DestroyResidentKey":    {},
-		"BeginRegistration":     {},
-		"FinishRegistration":    {},
-		"BeginAuthentication":   {},
-		"FinishAuthentication":  {},
+		"Health":                   {},
+		"Algorithms":               {},
+		"ListKeyVersions":          {},
+		"EnableKeyVersion":         {},
+		"DisableKeyVersion":        {},
+		"EnableAllKeyVersions":     {},
+		"DisableAllKeyVersions":    {},
+		"DeriveKeyECDHSecure":      {},
+		"GenerateEphemeralECDH":    {},
+		"UseResidentKey":           {},
+		"DestroyResidentKey":       {},
+		"BeginRegistration":        {},
+		"FinishRegistration":       {},
+		"BeginAuthentication":      {},
+		"FinishAuthentication":     {},
+		"GetInvite":                {},
+		"BeginInviteRegistration":  {},
+		"FinishInviteRegistration": {},
+		"ActivateInvitePIV":        {},
 	}
 
 	methods := keystoreMethodDescriptors(t)

@@ -27,9 +27,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ErrXKMSdBridgeCreationFailed indicates the Bridge could not be created.
-var ErrXKMSdBridgeCreationFailed = errors.New("xkmsd: bridge creation failed")
-
 // phoneBackendWithBridge wraps a PhoneKeyBackend and adds xkmsd client
 // lifecycle management. It implements keybackend.FIDO2KeyBackend through
 // embedding and overrides Close() to clean up the xkmsd SDK client.
@@ -123,11 +120,21 @@ func connectXKMSdBridge(backend *phone.PhoneKeyBackend, cmd *cobra.Command, devi
 
 	// Build the Bridge configuration through the exact same collaborator
 	// wiring "xkey device listen" uses (buildListenBridgeConfig,
-	// device_listen.go): the OATH store, PIV certificate storage, and sync
-	// service a phone reaches through this bridge are the same ones a paired
-	// laptop's "xkey device listen" serves, not a parallel implementation
-	// that only forwards ping/attestation/TPM enrollment (go-xkms#1041).
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, logger, cfg, device, enroller, enrollerErr)
+	// device_listen_handler.go): the OATH store, PIV certificate storage, and
+	// sync service a phone reaches through this bridge are the same ones a
+	// paired laptop's "xkey device listen" serves, not a parallel
+	// implementation that only forwards ping/attestation/TPM enrollment
+	// (go-xkms#1041).
+	//
+	// syncApproval is nil: "xkey fido2" has no --allow-sync flag or
+	// equivalent operator opt-in, so remote.syncPasswords/syncOATH/syncAll
+	// are refused (ErrSyncApprovalRequired) through this bridge exactly as
+	// they are through "xkey device listen"/"relay" with no opt-in supplied
+	// (go-xkms#1306). This command's job is FIDO2 credential operations;
+	// exporting the password vault or OATH secrets to the phone from here
+	// would need the same explicit decision "device listen"/"relay" require,
+	// which nothing here collects.
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, logger, cfg, device, enroller, enrollerErr, nil)
 
 	bridge, err := pairing.NewBridge(client, bridgeCfg)
 	if err != nil {

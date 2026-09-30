@@ -18,6 +18,8 @@ import (
 	"errors"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -148,33 +150,62 @@ func TestPublicRegistrationDisabled_RefusesUnknownUser(t *testing.T) {
 		"a refused registration must not leave an account behind")
 }
 
-// TestPublicRegistrationDisabled_AllowsProvisionedUser is the property that
-// makes closed mode usable without an invite token or a second enrollment
-// endpoint: an account created through the authorized user-creation path still
-// enrolls its first passkey through this same entry point.
-//
-// Without this, turning the flag off would lock out every user including the
-// ones an administrator had deliberately provisioned.
-func TestPublicRegistrationDisabled_AllowsProvisionedUser(t *testing.T) {
-	ctx := context.Background()
-	svc, users := newServiceWithPublicRegistration(t, false)
+// TestPublicRegistrationDisabled_RefusesProvisionedUser pins go-xkms#1294
+// part B: the public (unauthenticated) BeginRegistration entry point never
+// enrolls the first credential of an account that already existed before the
+// call, in either registration mode. A provisioned-but-unenrolled account
+// activates only through BeginInviteRegistration
+// (TestBeginInviteRegistration_PendingAccountEnrolls), never through this one.
+func TestPublicRegistrationDisabled_RefusesProvisionedUser(t *testing.T) {
+	for _, allow := range []bool{true, false} {
+		ctx := context.Background()
+		svc, users := newServiceWithPublicRegistration(t, allow)
 
-	// Stand in for the authorized CreateUser path an administrator would use.
-	provisioned, err := users.Create(ctx, "staff@example.com", "Staff Member")
-	require.NoError(t, err)
+		// Stand in for the authorized CreateUser path an administrator would
+		// use: an account that exists but holds no credential yet.
+		_, err := users.Create(ctx, "staff@example.com", "Staff Member")
+		require.NoError(t, err)
 
-	options, sessionID, err := svc.BeginRegistration(ctx, "staff@example.com", "Staff Member")
+		options, sessionID, err := svc.BeginRegistration(ctx, "staff@example.com", "Staff Member")
 
-	require.NoError(t, err, "a provisioned account must still be able to enroll a passkey")
-	require.NotNil(t, options)
-	assert.NotEmpty(t, sessionID)
-	// options.Response.User.ID is declared `any` and carries a
-	// protocol.URLEncodedBase64 whose underlying bytes are the WebAuthn user
-	// handle. Assert the concrete type first, then compare raw bytes:
-	// testify's Equal is type-strict, so comparing the handle directly against
-	// []byte would fail on the type even when the bytes match.
-	gotID, ok := options.Response.User.ID.(protocol.URLEncodedBase64)
-	require.True(t, ok, "user ID should be protocol.URLEncodedBase64, got %T", options.Response.User.ID)
-	assert.Equal(t, provisioned.WebAuthnID(), []byte(gotID),
-		"enrollment must bind to the provisioned account, not a new one")
+		require.ErrorIs(t, err, ErrRegistrationRefused, "allow_public_registration=%v", allow)
+		assert.Nil(t, options)
+		assert.Empty(t, sessionID)
+	}
+}
+
+// TestBeginInviteRegistration_PendingAccountEnrolls is the invite-authorized
+// counterpart of the case TestPublicRegistrationDisabled_RefusesProvisionedUser
+// closes: an account created through the authorized user-creation path
+// (LifecyclePending, zero credentials) enrolls its first passkey through
+// BeginInviteRegistration, regardless of the public-registration setting —
+// the invite is the authorization, not the relying party's open-sign-up
+// policy.
+func TestBeginInviteRegistration_PendingAccountEnrolls(t *testing.T) {
+	for _, allow := range []bool{true, false} {
+		ctx := context.Background()
+		svc, users := newServiceWithPublicRegistration(t, allow)
+
+		provisioned, err := users.Create(ctx, "staff@example.com", "Staff Member")
+		require.NoError(t, err)
+		du, ok := provisioned.(*DefaultUser)
+		require.True(t, ok)
+		du.SetLifecycle(qrdbsdk.LifecyclePending)
+
+		options, sessionID, err := svc.BeginInviteRegistration(ctx, "staff@example.com")
+
+		require.NoError(t, err, "allow_public_registration=%v", allow)
+		require.NotNil(t, options)
+		assert.NotEmpty(t, sessionID)
+		// options.Response.User.ID is declared `any` and carries a
+		// protocol.URLEncodedBase64 whose underlying bytes are the WebAuthn
+		// user handle. Assert the concrete type first, then compare raw
+		// bytes: testify's Equal is type-strict, so comparing the handle
+		// directly against []byte would fail on the type even when the
+		// bytes match.
+		gotID, ok := options.Response.User.ID.(protocol.URLEncodedBase64)
+		require.True(t, ok, "user ID should be protocol.URLEncodedBase64, got %T", options.Response.User.ID)
+		assert.Equal(t, provisioned.WebAuthnID(), []byte(gotID),
+			"enrollment must bind to the provisioned account, not a new one")
+	}
 }

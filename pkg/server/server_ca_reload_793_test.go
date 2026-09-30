@@ -64,15 +64,11 @@ func reproCA793Config(dataDir string) *config.Config {
 			SocketPath: filepath.Join(dataDir, "xkms.sock"),
 			Protocol:   "grpc",
 		},
-		Logging: config.LoggingConfig{Level: "info", Format: "json"},
-		TLS:     config.TLSConfig{Enabled: false},
-		Auth:    config.AuthConfig{Enabled: false},
-		Storage: config.StorageConfig{
-			Backend: "qrdb",
-			Path:    filepath.Join(dataDir, "storage"),
-			QRDB:    config.QRDBConfig{Transport: "embedded"},
-		},
-		Default: config.DefaultConfig("software"),
+		Logging:   config.LoggingConfig{Level: "info", Format: "json"},
+		TLS:       config.TLSConfig{Enabled: false},
+		Auth:      config.AuthConfig{Enabled: false},
+		Datastore: config.DatastoreConfig{Path: filepath.Join(dataDir, "storage")},
+		Default:   config.DefaultConfig("software"),
 		Backends: config.BackendsConfig{
 			Software: &config.SoftwareConfig{
 				Enabled: true,
@@ -156,11 +152,7 @@ func TestInitializeCA_QRDB_CorruptPersistedCertificateFailsClosed(t *testing.T) 
 	// truncated write, not a missing key.
 	corrupt := &Server{
 		config: &config.Config{
-			Storage: config.StorageConfig{
-				Backend: "qrdb",
-				Path:    filepath.Join(dataDir, "storage"),
-				QRDB:    config.QRDBConfig{Transport: "embedded"},
-			},
+			Datastore: config.DatastoreConfig{Path: filepath.Join(dataDir, "storage")},
 		},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -186,11 +178,7 @@ func TestInitializeCA_QRDB_CorruptPersistedCertificateFailsClosed(t *testing.T) 
 	// bytes, not a freshly minted certificate.
 	readBack := &Server{
 		config: &config.Config{
-			Storage: config.StorageConfig{
-				Backend: "qrdb",
-				Path:    filepath.Join(dataDir, "storage"),
-				QRDB:    config.QRDBConfig{Transport: "embedded"},
-			},
+			Datastore: config.DatastoreConfig{Path: filepath.Join(dataDir, "storage")},
 		},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}

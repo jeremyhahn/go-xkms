@@ -14,14 +14,14 @@ func TestValidate_EmptyStorageBackendDefaultsToPebble(t *testing.T) {
 		Protocols: ProtocolsConfig{Unix: true},
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Storage:   StorageConfig{Backend: "", Path: "/data"},
+		Datastore: DatastoreConfig{Path: "/data"},
 		Default:   "pkcs8",
 		Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("Validate() with empty backend = %v, want nil", err)
 	}
-	if c.Storage.Backend != "pebble" {
-		t.Fatalf("empty backend defaulted to %q, want pebble", c.Storage.Backend)
+	if c.Datastore.Engine != "pebble" {
+		t.Fatalf("empty backend defaulted to %q, want pebble", c.Datastore.Engine)
 	}
 }

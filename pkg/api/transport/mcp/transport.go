@@ -1032,6 +1032,45 @@ func (t *Transport) FinishAuthentication(ctx context.Context, _ *transport.Finis
 	return nil, ErrIdentityCeremonyExcluded
 }
 
+// Invitation redemption (go-xkms#1294 part B).
+//
+// BeginInviteRegistration/FinishInviteRegistration are excluded for the
+// SAME reason BeginRegistration/FinishRegistration above are: it is a
+// Begin/Finish WebAuthn ceremony, and MCP holds no identity-ceremony state
+// to correlate the two calls. GetInvite and ActivateInvitePIV have no such
+// problem — each is a single call with no ceremony state — so they are
+// real methods (invite.get, invite.pivActivate on the server side).
+
+// BeginInviteRegistration is excluded from the MCP transport by design; see
+// ErrIdentityCeremonyExcluded. It always returns ErrIdentityCeremonyExcluded.
+func (t *Transport) BeginInviteRegistration(ctx context.Context, _ *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
+	return nil, ErrIdentityCeremonyExcluded
+}
+
+// FinishInviteRegistration is excluded from the MCP transport by design;
+// see ErrIdentityCeremonyExcluded. It always returns ErrIdentityCeremonyExcluded.
+func (t *Transport) FinishInviteRegistration(ctx context.Context, _ *transport.FinishInviteRegistrationRequest) (*transport.FinishInviteRegistrationResponse, error) {
+	return nil, ErrIdentityCeremonyExcluded
+}
+
+// GetInvite resolves a still-usable invitation's metadata without consuming it.
+func (t *Transport) GetInvite(ctx context.Context, req *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
+	var result transport.GetInviteResponse
+	if err := t.rpcCall(ctx, "invite.get", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ActivateInvitePIV activates the account by verifying a presented PIV certificate.
+func (t *Transport) ActivateInvitePIV(ctx context.Context, req *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
+	var result transport.ActivateInvitePIVResponse
+	if err := t.rpcCall(ctx, "invite.pivActivate", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // CA Operations
 
 // GetCABundle retrieves the CA certificate bundle.

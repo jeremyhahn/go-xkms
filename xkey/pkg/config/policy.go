@@ -102,6 +102,24 @@ type PolicySection struct {
 	PairingAllowUnpinnedSignatures bool                         `yaml:"pairing_allow_unpinned_signatures" json:"pairing_allow_unpinned_signatures" mapstructure:"pairing_allow_unpinned_signatures"`
 	LockPairingApplicationPolicy   bool                         `yaml:"lock_pairing_application_policy" json:"lock_pairing_application_policy" mapstructure:"lock_pairing_application_policy"`
 
+	// Phone sync export policy (go-xkms#1306).
+	//
+	// PhoneSyncAllowSecretExport is the enterprise/SO answer to "may `xkey
+	// device listen`/`relay` serve remote.syncPasswords, remote.syncOATH and
+	// remote.syncAll -- the bridge methods that export this host's password
+	// vault or OATH secrets to the phone -- at all?". LockPhoneSyncPolicy
+	// decides whether it is the answer that counts: while it is false the
+	// operator's own --allow-sync flag for that session governs, and while
+	// it is true this section does and --allow-sync is ignored. Mirrors
+	// LockPairingAttestationPolicy's precedent above (owner ruling
+	// 2026-08-23 on #95).
+	//
+	// Both zero values are the safe ones, for the same reason
+	// PairingAllowUnattestableDevices's are: unset here means not locked,
+	// and not allowed.
+	PhoneSyncAllowSecretExport bool `yaml:"phone_sync_allow_secret_export" json:"phone_sync_allow_secret_export" mapstructure:"phone_sync_allow_secret_export"`
+	LockPhoneSyncPolicy        bool `yaml:"lock_phone_sync_policy" json:"lock_phone_sync_policy" mapstructure:"lock_phone_sync_policy"`
+
 	OrganizationName string `yaml:"organization_name" json:"organization_name" mapstructure:"organization_name"`
 	PolicyVersion    int    `yaml:"policy_version" json:"policy_version" mapstructure:"policy_version"`
 }

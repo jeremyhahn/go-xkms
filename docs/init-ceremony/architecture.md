@@ -89,7 +89,7 @@ at the moment it is issued there is no unsealed tenant to derive from.
 | Threshold registry | `pkg/init/threshold_registry.go` | go-xkms |
 | SPIFFE identity stamping | `pkg/spiffe` | go-xkms |
 | Driver | `cmd/xkmsd/init_ceremony.go` | go-xkms |
-| Durable node open (shared with `xkmsd run`) | `pkg/server` (`ResolveNodeSeal`, `EmbeddedNodeStorageConfig`, `OpenEmbeddedNode`) | go-xkms |
+| Durable node open (shared with `xkmsd run`) | `pkg/embeddednode` (`ResolveNodeSeal`, `EmbeddedNodeStorageConfig`, `OpenEmbeddedNode`) | go-xkms |
 | First-boot bootstrap (shared with `xkmsd run`) | `pkg/server` (`RunFirstBoot`, `BuildFirstBootDependencies`) | go-xkms wiring, go-qrdb bootstrap |
 | Admin-factor persister | `cmd/xkmsd/init_factor_persister.go` | go-xkms |
 
@@ -153,11 +153,12 @@ by pin. See [`../trust-bootstrap/`](../trust-bootstrap/architecture.md).
 
 On the single-admin path (the ceremony reaches `StateOperational`), `xkmsd
 init` opens the SAME durable qrdb node `xkmsd run` will later reopen from the
-same data directory (`pkg/server.OpenEmbeddedNode`, shared with
-`(*server.Server).initEmbeddedQRDBNode` so the two opens can never disagree
-about the database engine or the barrier/seal/encryption-at-rest
-configuration — see `pkg/server.ResolveNodeSeal` /
-`EmbeddedNodeStorageConfig`). It runs qrdb's canonical first-boot
+same data directory (`pkg/embeddednode.OpenEmbeddedNode`, the shared,
+Server-independent builder `(*server.Server).initEmbeddedQRDBNode` also
+builds on, so the two opens can never disagree about the database engine or
+the barrier/seal/encryption-at-rest configuration — see
+`pkg/embeddednode.ResolveNodeSeal` / `EmbeddedNodeStorageConfig`). It runs
+qrdb's canonical first-boot
 (`pkg/server.RunFirstBoot`) against that node — system tenant, roles, the
 administrator, and its CA-issued certificate, bound to the user record — and
 then enrolls the planned admin login factors with a persister

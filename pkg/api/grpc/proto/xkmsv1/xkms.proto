@@ -845,6 +845,15 @@ service KeystoreService {
   rpc BeginAuthentication(BeginAuthenticationRequest) returns (BeginAuthenticationResponse);
   rpc FinishAuthentication(FinishAuthenticationRequest) returns (FinishAuthenticationResponse);
 
+  // Invitation redemption (go-xkms#1294 part B): how an account CreateUser
+  // provisioned with zero credentials enrolls its first one. Deliberately
+  // ungated, for the same reason the ceremony RPCs above are: there is no
+  // credential yet to authenticate a request with.
+  rpc GetInvite(GetInviteRequest) returns (GetInviteResponse);
+  rpc BeginInviteRegistration(BeginInviteRegistrationRequest) returns (BeginInviteRegistrationResponse);
+  rpc FinishInviteRegistration(FinishInviteRegistrationRequest) returns (FinishInviteRegistrationResponse);
+  rpc ActivateInvitePIV(ActivateInvitePIVRequest) returns (ActivateInvitePIVResponse);
+
   // ==================== SSH Operations ====================
 
   // SSHGenerateKey generates a new SSH key. When backend is set the key is
@@ -955,11 +964,30 @@ message CreateUserRequest {
   // login key -- the certificate-authenticated admin path. Absence must be
   // stated, never defaulted, or a user silently becomes unreachable.
   bool without_email_login_key = 6;
+  // invite_ttl_seconds overrides how long the minted activation invitation
+  // stays redeemable (go-xkms#1294 part B). Zero or negative takes the
+  // server's configured default; a value above the server's configured cap
+  // is clamped down to it, never refused. Ignored when
+  // without_email_login_key is set.
+  int64 invite_ttl_seconds = 7;
 }
 
-// UserResponse returns a single xkms user.
+// InviteInfo is the one-time activation invitation CreateUser mints for a
+// new account with an email login key (go-xkms#1294 part B). token is the
+// plaintext token: it is returned exactly once, here, and cannot be
+// recovered afterwards -- only its digest is stored.
+message InviteInfo {
+  string token = 1;
+  string url = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+// UserResponse returns a single xkms user. invite is set only by CreateUser,
+// for an account created with an email login key; every other caller
+// (GetUser, UpdateUser) leaves it unset.
 message UserResponse {
   UserInfo user = 1;
+  InviteInfo invite = 2;
 }
 
 // ListUsersRequest lists xkms users.
@@ -3539,6 +3567,79 @@ message FinishAuthenticationResponse {
   string token = 2;
   string username = 3;
   string message = 4;
+}
+
+// ==================== Invitation redemption (go-xkms#1294 part B) ====================
+//
+// How an account CreateUser provisioned with zero credentials enrolls its
+// first one. Every RPC below is deliberately ungated, for the same reason
+// the FIDO2/WebAuthn ceremony RPCs above are: there is no credential yet to
+// authenticate a request with, and an unusable token (absent, expired,
+// already redeemed, malformed) answers with the same opaque refusal on
+// every RPC so an unauthenticated caller cannot enumerate accounts.
+
+// GetInviteRequest resolves a still-usable invitation's metadata without
+// consuming it.
+message GetInviteRequest {
+  string tenant_id = 1;
+  string token = 2;
+}
+
+// GetInviteResponse is the invitation metadata an unauthenticated
+// activation page reads to render itself.
+message GetInviteResponse {
+  string email = 1;
+  string display_name = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  // methods lists the credential kinds this build can activate an invite
+  // with ("webauthn", "piv").
+  repeated string methods = 4;
+}
+
+// BeginInviteRegistrationRequest opens the invite-authorized WebAuthn
+// registration ceremony for the token's account.
+message BeginInviteRegistrationRequest {
+  string tenant_id = 1;
+  string token = 2;
+}
+
+// BeginInviteRegistrationResponse carries the begun ceremony: the session ID
+// and JSON-marshaled WebAuthn registration options
+// (PublicKeyCredentialCreationOptions).
+message BeginInviteRegistrationResponse {
+  string session_id = 1;
+  string options_json = 2;
+}
+
+// FinishInviteRegistrationRequest completes the invite-authorized WebAuthn
+// registration ceremony: it binds the credential to the still-pending
+// account, activates the account, and redeems the invitation.
+message FinishInviteRegistrationRequest {
+  string tenant_id = 1;
+  string token = 2;
+  string session_id = 3;
+  string attestation_json = 4;
+}
+
+// FinishInviteRegistrationResponse reports which account the redemption
+// activated.
+message FinishInviteRegistrationResponse {
+  uint64 user_id = 1;
+}
+
+// ActivateInvitePIVRequest completes PIV invite activation: it verifies the
+// presented certificate's chain against the CA's trust roots, binds its
+// SPKI thumbprint to the still-pending account, activates the account, and
+// redeems the invitation.
+message ActivateInvitePIVRequest {
+  string tenant_id = 1;
+  string token = 2;
+  string cert_pem = 3;
+}
+
+// ActivateInvitePIVResponse reports which account the redemption activated.
+message ActivateInvitePIVResponse {
+  uint64 user_id = 1;
 }
 
 // ==================== SSH Messages ====================

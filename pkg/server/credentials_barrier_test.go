@@ -99,12 +99,18 @@ func TestCredentialBarrierStrategy_RoundTripsAcrossRestart(t *testing.T) {
 // proceeding unsealed.
 func TestNew_CredentialBarrierStrategy_UnsupportedConfigurationRefusedCleanly(t *testing.T) {
 	cfg := &config.Config{
-		Storage:     config.StorageConfig{Backend: "file"}, // never node-flip-wired
+		// A remote datastore has no local node to adopt a barrier from --
+		// unlike a local engine choice (memory/file/pebble), which no longer
+		// affects node-flip eligibility; only Datastore.Mode does.
+		Datastore: config.DatastoreConfig{
+			Mode:   "remote",
+			Remote: config.DatastoreRemoteConfig{Address: "https://qrdb.example.com:63002", Transport: "rest"},
+		},
 		Barrier:     config.BarrierConfig{Enabled: true, Strategy: "passphrase"},
 		Credentials: config.CredentialsConfig{SealStrategy: "barrier"},
 	}
 	require.False(t, cfg.CredentialsBarrierStrategySupported(),
-		"precondition: file storage never adopts a node barrier")
+		"precondition: a remote datastore never adopts a node barrier")
 
 	s := newMinimalServer(t, cfg)
 	err := s.initializeCredentialService()

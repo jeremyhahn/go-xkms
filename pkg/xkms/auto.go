@@ -17,14 +17,20 @@ import (
 	"log/slog"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 // AutoConfig configures automatic backend initialization.
 type AutoConfig struct {
-	// DataDir is the base directory for key and certificate storage.
-	// When empty, in-memory storage is used for all backends.
-	DataDir string
+	// Datastore is the shared storage.Backend every backend's key storage
+	// (and the certificate store) is created from, as a key-prefixed view
+	// (storage.NewPrefixBackend) -- exactly the pattern pkg/server's
+	// Server.createStorage uses for an xkmsd-hosted deployment. Callers
+	// without a *server.Server open one with pkg/datastore.Open (or, for
+	// xkey/embedders that already host their own storage.Backend -- e.g. a
+	// barrier-backed store -- pass that directly). A nil Datastore uses
+	// in-memory storage for every backend (tests, ephemeral sessions); this
+	// package never resolves a directory or opens a file store itself.
+	Datastore storage.Backend
 
 	// DefaultBackend overrides the default backend selection.
 	// When empty, defaults to "software". If the specified backend
@@ -36,7 +42,8 @@ type AutoConfig struct {
 	// factories will be initialized. Keys are BackendType constants.
 	//
 	// Common configuration keys supported by most backends:
-	//   - "key_dir" (string): Directory for key storage
+	//   - "key_storage" (storage.Backend): pre-built key storage, overriding
+	//     the Datastore-derived default for that one backend.
 	//
 	// Backend-specific keys are documented on each registration file's
 	// factory function.
@@ -66,7 +73,7 @@ func AutoInitialize(config *AutoConfig) error {
 	}
 
 	// Create shared certificate storage
-	certStorage, err := createCertStorage(config.DataDir)
+	certStorage, err := createCertStorage(config.Datastore)
 	if err != nil {
 		return err
 	}
@@ -84,7 +91,13 @@ func AutoInitialize(config *AutoConfig) error {
 			continue
 		}
 
-		backendConfig := resolveBackendConfig(config, bt)
+		backendConfig, cfgErr := resolveBackendConfig(config, bt)
+		if cfgErr != nil {
+			slog.Warn("failed to resolve backend storage, skipping",
+				"backend", string(bt),
+				"error", cfgErr)
+			continue
+		}
 
 		kp, factoryErr := factory(backendConfig)
 		if factoryErr != nil {
@@ -126,19 +139,22 @@ func AutoInitialize(config *AutoConfig) error {
 	})
 }
 
-// createCertStorage creates the certificate storage backend.
-// Uses file-based storage when dataDir is non-empty, otherwise in-memory.
-func createCertStorage(dataDir string) (storage.Backend, error) {
-	if dataDir == "" {
+// createCertStorage creates the certificate storage backend: a key-prefixed
+// "certs/" view over ds (see storage.NewPrefixBackend) when a Datastore is
+// supplied, otherwise in-memory.
+func createCertStorage(ds storage.Backend) (storage.Backend, error) {
+	if ds == nil {
 		return storage.New(), nil
 	}
-	certDir := dataDir + "/certs"
-	return file.New(certDir)
+	return storage.NewPrefixBackend(ds, "certs/")
 }
 
-// resolveBackendConfig returns the configuration map for a given backend type.
-// It merges the data directory default with any user-provided overrides.
-func resolveBackendConfig(config *AutoConfig, bt BackendType) map[string]interface{} {
+// resolveBackendConfig returns the configuration map for a given backend
+// type: a key-prefixed "key_storage" view over config.Datastore (its own
+// subdirectory per backend, matching the former key_dir convention -- key
+// providers such as pkcs8/symmetric share the "software/" prefix) plus any
+// user-provided overrides.
+func resolveBackendConfig(config *AutoConfig, bt BackendType) (map[string]interface{}, error) {
 	backendConfig := make(map[string]interface{})
 
 	// Apply user overrides if provided
@@ -150,22 +166,25 @@ func resolveBackendConfig(config *AutoConfig, bt BackendType) map[string]interfa
 		}
 	}
 
-	// Set key_dir default from DataDir if not already specified.
-	// Each full-service backend gets its own subdirectory (e.g., "software/",
-	// "tpm2/"). Key providers (pkcs8, symmetric) share the software directory.
-	// Note: storage.KeyPath() adds a "keys/" prefix internally, so key_dir
-	// should NOT include a trailing "/keys" to avoid double nesting.
-	if config.DataDir != "" {
-		if _, ok := backendConfig["key_dir"]; !ok {
+	// Set key_storage default from Datastore if not already specified.
+	// Each full-service backend gets its own key-prefixed subdirectory (e.g.
+	// "software/", "tpm2/"). Key providers (pkcs8, symmetric) share the
+	// software prefix.
+	if config.Datastore != nil {
+		if _, ok := backendConfig["key_storage"]; !ok {
 			dir := string(bt)
 			if IsKeyProviderType(bt) {
 				dir = "software"
 			}
-			backendConfig["key_dir"] = config.DataDir + "/" + dir
+			ns, err := storage.NewPrefixBackend(config.Datastore, dir+"/")
+			if err != nil {
+				return nil, err
+			}
+			backendConfig["key_storage"] = ns
 		}
 	}
 
-	return backendConfig
+	return backendConfig, nil
 }
 
 // ResolveDefaultBackend is the rule for choosing a default backend, applied in

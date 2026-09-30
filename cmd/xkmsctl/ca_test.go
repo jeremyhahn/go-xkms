@@ -172,6 +172,18 @@ func (m *mockCAClient) BeginAuthentication(_ context.Context, _ *client.BeginAut
 func (m *mockCAClient) FinishAuthentication(_ context.Context, _ *client.FinishAuthenticationRequest) (*client.FinishAuthenticationResponse, error) {
 	return nil, client.ErrNotSupported
 }
+func (m *mockCAClient) GetInvite(_ context.Context, _ *client.GetInviteRequest) (*client.GetInviteResponse, error) {
+	return nil, client.ErrNotSupported
+}
+func (m *mockCAClient) BeginInviteRegistration(_ context.Context, _ *client.BeginInviteRegistrationRequest) (*client.BeginInviteRegistrationResponse, error) {
+	return nil, client.ErrNotSupported
+}
+func (m *mockCAClient) FinishInviteRegistration(_ context.Context, _ *client.FinishInviteRegistrationRequest) (*client.FinishInviteRegistrationResponse, error) {
+	return nil, client.ErrNotSupported
+}
+func (m *mockCAClient) ActivateInvitePIV(_ context.Context, _ *client.ActivateInvitePIVRequest) (*client.ActivateInvitePIVResponse, error) {
+	return nil, client.ErrNotSupported
+}
 func (m *mockCAClient) DeriveKey(_ context.Context, _ *transport.DeriveKeyRequest) (*transport.DeriveKeyResponse, error) {
 	return nil, nil
 }

@@ -87,8 +87,8 @@ barrier:
 ratelimit:
   enabled: false
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: pebble
   path: "/data/storage"
 
 default_backend: "software"

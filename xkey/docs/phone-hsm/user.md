@@ -167,16 +167,25 @@ xkey device sync-status
 
 ## When the phone is not on the same bus
 
+`xkey device relay` (go-xkms#1306) is not a pairing mechanism -- it serves
+an **already-paired** device's session over TCP, pinned to that device's
+Noise static key exactly the way `device listen` pins to it, and gated on
+the same live attestation proof. Pair with `device pair` (BLE) first.
+
 ```
 xkey device listen
-xkey device connect 192.0.2.10:port
 xkey device relay
+xkey device relay --device "Pixel-8"
 ```
 
+(`device connect <address>` is a different, unrelated verb: agent
+enrollment against a master xkmsd, not phone connectivity.)
+
 The relay listens on `phone.relay_listen_address` from your xkey config,
-`:8444` on every interface unless you set it. To pin it to one interface, set
-it in the config file, in the environment, or for one run on the command line;
-each overrides the one before:
+`127.0.0.1:8444` (loopback only) unless you set it. Reachable from the
+network is an explicit choice: set a non-loopback address in the config
+file, in the environment, or for one run on the command line; each
+overrides the one before:
 
 ```yaml
 phone:
@@ -187,6 +196,11 @@ phone:
 XKEY_PHONE_RELAY_LISTEN_ADDRESS=192.0.2.10:8444 xkey device relay
 xkey device relay --listen 192.0.2.10:8444
 ```
+
+`--allow-sync` opts the session in to serving `remote.syncPasswords`,
+`remote.syncOATH` and `remote.syncAll` -- the methods that export the
+password vault or OATH secrets to the phone. Without it those three refuse;
+every other bridge method is unaffected.
 
 The relay is this machine's end of the session, not a blind pipe: it
 performs the Noise XX handshake with the phone, decrypts each request and

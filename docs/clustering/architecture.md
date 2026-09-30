@@ -22,8 +22,8 @@ resulting cluster.
 ## Shape chosen: one embedded node, standalone by default, clustered behind a build tag
 
 `xkmsd` always hosts exactly one embedded qrdb node when
-`storage.backend: "qrdb"` (see
-[`../storage-engines/architecture.md`](../storage-engines/architecture.md)).
+`datastore.mode: "standalone"` (the default — see
+[`../datastore/architecture.md`](../datastore/architecture.md)).
 Whether that node is standalone or a Raft cluster member is a **build-time**
 decision as well as a config one:
 

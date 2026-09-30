@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -187,28 +188,16 @@ func TestInitializeEscrow_EnabledWithAgentBuildsRegistry(t *testing.T) {
 // store is built and retained.
 func TestInitializePKCS11StateStore_Success(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 	})
+	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
+	// give this test a real one.
+	var err error
+	s.qrdbStorage, err = storage.NewMemoryBackend()
+	require.NoError(t, err)
 
 	require.NoError(t, s.initializePKCS11StateStore())
 	assert.NotNil(t, s.pkcs11StateStore)
-}
-
-// TestInitializePKCS11StateStore_StorageCreateFails proves that a storage
-// backend createStorage cannot build (an unsupported storage.backend) fails
-// with a typed *ErrStorageCreate rather than a nil state store silently
-// reaching PKCS#11 remote-state callers.
-func TestInitializePKCS11StateStore_StorageCreateFails(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "not-a-real-backend"},
-	})
-
-	err := s.initializePKCS11StateStore()
-	require.Error(t, err)
-	assert.Nil(t, s.pkcs11StateStore)
-
-	var storageErr *ErrStorageCreate
-	require.ErrorAs(t, err, &storageErr)
 }
 
 // TestBootstrapKeys_DestroyNilReceiverIsSafe proves destroy is safe to call

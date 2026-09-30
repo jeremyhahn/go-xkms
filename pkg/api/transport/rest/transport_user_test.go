@@ -84,11 +84,13 @@ func TestTransport_CreateUser_Success(t *testing.T) {
 			if body["tenant_id"] != "acme" {
 				t.Errorf("expected tenant_id acme, got %q", body["tenant_id"])
 			}
-			writeJSON(t, w, http.StatusCreated, transport.UserInfo{
-				Username:    "alice",
-				DisplayName: "Alice",
-				Role:        "admin",
-				Enabled:     true,
+			writeJSON(t, w, http.StatusCreated, transport.GetUserResponse{
+				User: transport.UserInfo{
+					Username:    "alice",
+					DisplayName: "Alice",
+					Role:        "admin",
+					Enabled:     true,
+				},
 			})
 		})
 	})

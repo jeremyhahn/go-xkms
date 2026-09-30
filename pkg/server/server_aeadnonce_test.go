@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // ============================================================================
@@ -36,8 +37,9 @@ import (
 // pointed at a backend a later test in this binary never built.
 func TestInitializeAEADNonceStore_Success(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 	})
+	s.qrdbStorage = storage.NewMemory()
 
 	require.NoError(t, s.initializeAEADNonceStore())
 	t.Cleanup(s.detachAEADNonceStore)
@@ -59,12 +61,13 @@ func TestInitializeAEADNonceStore_Success(t *testing.T) {
 	assert.True(t, errors.Is(err, aead.ErrNonceReuse), "got %v", err)
 }
 
-// TestInitializeAEADNonceStore_StorageCreateFails proves that a storage
-// backend createStorage cannot build (an unsupported storage.backend) fails
-// with a typed *ErrStorageCreate and attaches nothing to the shared guard.
+// TestInitializeAEADNonceStore_StorageCreateFails proves that when
+// createStorage cannot build a view (no datastore has been opened, so there is
+// nothing to prefix; go-xkms#1345) initialization fails with a typed
+// *ErrStorageCreate and attaches nothing to the shared guard.
 func TestInitializeAEADNonceStore_StorageCreateFails(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "not-a-real-backend"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 	})
 
 	err := s.initializeAEADNonceStore()
@@ -80,8 +83,9 @@ func TestInitializeAEADNonceStore_StorageCreateFails(t *testing.T) {
 // nothing is left consulting it.
 func TestDetachAEADNonceStore_RemovesTheAttachedStore(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 	})
+	s.qrdbStorage = storage.NewMemory()
 	require.NoError(t, s.initializeAEADNonceStore())
 
 	guard, err := aead.SharedAEADNonceGuard()
@@ -106,8 +110,9 @@ func TestDetachAEADNonceStore_RemovesTheAttachedStore(t *testing.T) {
 // panic or a redundant guard mutation.
 func TestDetachAEADNonceStore_IsIdempotent(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 	})
+	s.qrdbStorage = storage.NewMemory()
 	require.NoError(t, s.initializeAEADNonceStore())
 
 	s.detachAEADNonceStore()
@@ -122,8 +127,9 @@ func TestDetachAEADNonceStore_IsIdempotent(t *testing.T) {
 // unconditionally on every path.
 func TestDetachAEADNonceStore_NoopWhenNeverAttached(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 	})
+	s.qrdbStorage = storage.NewMemory()
 	assert.NotPanics(t, s.detachAEADNonceStore)
 	assert.False(t, s.aeadNonceStoreAttached)
 }

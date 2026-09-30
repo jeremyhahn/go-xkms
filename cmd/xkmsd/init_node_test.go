@@ -33,11 +33,11 @@ func TestResolveInitNodeConfig_NoLoadedConfig_UsesFlagsAndDataDir(t *testing.T) 
 	flags := &initFlags{barrierStrategy: "passphrase"}
 	nodeCfg := resolveInitNodeConfig(nil, flags, "/var/lib/xkms")
 
-	if nodeCfg.Storage.Backend != "qrdb" {
-		t.Errorf("Storage.Backend: want qrdb, got %q", nodeCfg.Storage.Backend)
+	if nodeCfg.Datastore.Mode != "standalone" {
+		t.Errorf("Datastore.Mode: want standalone, got %q", nodeCfg.Datastore.Mode)
 	}
-	if nodeCfg.Storage.Path != "/var/lib/xkms" {
-		t.Errorf("Storage.Path: want /var/lib/xkms, got %q", nodeCfg.Storage.Path)
+	if nodeCfg.Datastore.Path != "/var/lib/xkms" {
+		t.Errorf("Datastore.Path: want /var/lib/xkms, got %q", nodeCfg.Datastore.Path)
 	}
 	if !nodeCfg.Barrier.Enabled {
 		t.Error("Barrier.Enabled: want true")
@@ -49,15 +49,15 @@ func TestResolveInitNodeConfig_NoLoadedConfig_UsesFlagsAndDataDir(t *testing.T) 
 
 func TestResolveInitNodeConfig_LoadedConfigWins(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: "/etc/configured/path"},
-		Barrier: config.BarrierConfig{Enabled: true, Strategy: "tpm2"},
+		Datastore: config.DatastoreConfig{Path: "/etc/configured/path"},
+		Barrier:   config.BarrierConfig{Enabled: true, Strategy: "tpm2"},
 	}
 	flags := &initFlags{barrierStrategy: "passphrase"}
 
 	nodeCfg := resolveInitNodeConfig(cfg, flags, "/var/lib/xkms")
 
-	if nodeCfg.Storage.Path != "/etc/configured/path" {
-		t.Errorf("Storage.Path: loaded config value must win, got %q", nodeCfg.Storage.Path)
+	if nodeCfg.Datastore.Path != "/etc/configured/path" {
+		t.Errorf("Storage.Path: loaded config value must win, got %q", nodeCfg.Datastore.Path)
 	}
 	if nodeCfg.Barrier.Strategy != "tpm2" {
 		t.Errorf("Barrier.Strategy: loaded config value must win, got %q", nodeCfg.Barrier.Strategy)
@@ -103,8 +103,8 @@ func TestOpenDurableInitNode_NilConfig(t *testing.T) {
 func TestUnsealDurableInitNode_PassphraseStrategyCompletesTheUnseal(t *testing.T) {
 	dataDir := t.TempDir()
 	nodeCfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: dataDir},
-		Barrier: config.BarrierConfig{Enabled: true, Strategy: "passphrase"},
+		Datastore: config.DatastoreConfig{Path: dataDir},
+		Barrier:   config.BarrierConfig{Enabled: true, Strategy: "passphrase"},
 	}
 	node, sealRes, err := openDurableInitNode(context.Background(), nodeCfg, silentLogger())
 	if err != nil {
@@ -127,8 +127,8 @@ func TestUnsealDurableInitNode_PassphraseStrategyCompletesTheUnseal(t *testing.T
 func TestUnsealDurableInitNode_RefusesShamir(t *testing.T) {
 	dataDir := t.TempDir()
 	nodeCfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: dataDir},
-		Barrier: config.BarrierConfig{Enabled: true, Strategy: "shamir", ShamirTotal: 3, ShamirThreshold: 2},
+		Datastore: config.DatastoreConfig{Path: dataDir},
+		Barrier:   config.BarrierConfig{Enabled: true, Strategy: "shamir", ShamirTotal: 3, ShamirThreshold: 2},
 	}
 	node, sealRes, err := openDurableInitNode(context.Background(), nodeCfg, silentLogger())
 	if err != nil {

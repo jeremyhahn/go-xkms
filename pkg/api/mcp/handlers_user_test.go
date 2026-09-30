@@ -148,12 +148,27 @@ func (m *mcpMockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdb
 // mocked, which is unavoidable without an embedded qrdb node. A nil users
 // client leaves the user subsystem unconfigured so the ErrNotConfigured
 // paths are reachable.
+// mcpSingleStoreResolver resolves every tenant to the same backing
+// KVStore — enough for a unit test's invite store, which does not exercise
+// per-tenant routing or barrier isolation.
+type mcpSingleStoreResolver struct{ store qrdbsdk.KVStore }
+
+func (r mcpSingleStoreResolver) Resolve(context.Context, string) (qrdbsdk.KVStore, error) {
+	return r.store, nil
+}
+
 func newUserTestServer(t *testing.T, users qrdbtransport.UserClient) *Server {
 	t.Helper()
 	server := createTestServer(t)
 	if users != nil {
 		server.xkmsService.SetUserClients(users, &mcpMockRoleClient{})
 	}
+	// CreateUser mints an invitation for every account created with an
+	// email login key (go-xkms#1294 part B); wire the real qrdb invite
+	// store over an in-memory KV store so that path is reachable here.
+	inviteStore, err := qrdbsdk.NewTenantInviteStore(mcpSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	require.NoError(t, err)
+	server.xkmsService.SetInviteStore(inviteStore)
 	return server
 }
 

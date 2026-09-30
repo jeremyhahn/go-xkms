@@ -127,8 +127,12 @@ type PhoneConfig struct {
 	AttestationPolicy string `yaml:"attestation_policy" json:"attestation_policy" mapstructure:"attestation_policy"`
 
 	// RelayListenAddress is the host:port `xkey device relay` binds for the
-	// TCP pairing relay; a bare ":port" binds every interface. It is the
-	// defaults-layer value `--listen` overrides.
+	// TCP pairing relay. Defaults to loopback only (go-xkms#1306): a bare
+	// ":port" binds every interface, which is not this default because the
+	// relay serves an already-paired device's bridge -- reachable from the
+	// network is an explicit choice (--listen 0.0.0.0:8444 or a host:port
+	// naming a non-loopback address), not the out-of-the-box behavior. It is
+	// the defaults-layer value `--listen` overrides.
 	RelayListenAddress string `yaml:"relay_listen_address" json:"relay_listen_address" mapstructure:"relay_listen_address"`
 
 	// TPMEnrollment offers TCG-CSR-IDEVID device enrollment from this host's
@@ -433,7 +437,7 @@ func DefaultConfig() *Config {
 			ListenAddress: ":9443",
 		},
 		Phone: PhoneConfig{
-			RelayListenAddress: ":8444",
+			RelayListenAddress: "127.0.0.1:8444",
 		},
 		Log: LogConfig{
 			Level: "info",

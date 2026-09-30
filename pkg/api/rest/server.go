@@ -762,6 +762,13 @@ func (s *Server) registerRoutes(r chi.Router) {
 		registerRateLimited("/api/v1/webauthn", specs)
 	}
 
+	// Invite redemption: every route is unauthenticated (a newly-provisioned
+	// account holds no credential yet) and authorized instead by possession
+	// of a single-use invitation token (go-xkms#1294 part B).
+	if specs := byGroup[GroupInvite]; len(specs) > 0 {
+		registerRateLimited("/api/v1/invites", specs)
+	}
+
 	// Users: authentication only.
 	if specs := byGroup[GroupUsers]; len(specs) > 0 {
 		r.Route("/api/v1/users", func(g chi.Router) {

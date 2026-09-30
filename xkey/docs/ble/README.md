@@ -49,12 +49,18 @@ The phone backend enables xkey to use an Android phone as a remote signing devic
 
 ### Pairing
 
-1. Open xkey app on your phone
+There is no `xkey phone pair` command; pairing is `xkey device pair`
+(phone-hsm's [cli.md](../phone-hsm/cli.md) and [user.md](../phone-hsm/user.md)).
+
+1. Open xkey app on your phone and start advertising
 2. On desktop, run:
    ```bash
-   xkey phone pair
+   xkey device pair
    ```
-3. Confirm pairing on both devices
+3. The desktop prints a short verification code derived from the Noise
+   handshake (go-xkms#1306). The Android app does not yet display a matching
+   code, so there is nothing to confirm against it today; treat the printed
+   code as informational until it does.
 4. Keys are exchanged for secure communication
 
 ### Usage

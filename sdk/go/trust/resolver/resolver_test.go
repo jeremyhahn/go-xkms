@@ -43,8 +43,8 @@ tls:
 auth:
   enabled: false
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
   path: "/data"
 
 default_backend: "pkcs8"
@@ -141,8 +141,8 @@ logging:
   level: "info"
   format: "json"
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
   path: "/data"
 
 default_backend: "pkcs8"

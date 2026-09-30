@@ -213,7 +213,7 @@ func TestUpgradeUnifiedTLSCert_PreservesConfiguredClientCAAfterCAComposes(t *tes
 
 	tlsCert, _ := generateSelfSignedCert(t)
 	cfg := buildRESTConfigTLSTestCfg()
-	cfg.Storage.Path = t.TempDir()
+	cfg.Datastore.Path = t.TempDir()
 	cfg.TLS.ClientCAs = []string{configuredPath}
 	cfg.TLS.ClientAuth = "require_and_verify"
 
@@ -249,7 +249,7 @@ func TestUpgradeUnifiedTLSCert_MalformedClientCAsFile_ReturnsTypedErrorAndKeepsB
 	require.NoError(t, os.WriteFile(goodPath, goodPEM, 0o600))
 
 	cfg := buildRESTConfigTLSTestCfg()
-	cfg.Storage.Path = t.TempDir()
+	cfg.Datastore.Path = t.TempDir()
 	cfg.TLS.ClientCAs = []string{goodPath}
 
 	s := newMinimalServer(t, cfg)
@@ -291,7 +291,7 @@ func TestUpgradeUnifiedTLSCert_MalformedClientCAsFile_ReturnsTypedErrorAndKeepsB
 // documented "reported to the caller for logging" contract.
 func TestUpgradeUnifiedTLSCert_BundleUnavailable_LogsAndStillUpgradesCertificate(t *testing.T) {
 	cfg := buildRESTConfigTLSTestCfg()
-	cfg.Storage.Path = t.TempDir()
+	cfg.Datastore.Path = t.TempDir()
 
 	s := newMinimalServer(t, cfg)
 	_, err := s.buildUnifiedTLSConfig()

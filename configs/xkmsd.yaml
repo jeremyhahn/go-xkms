@@ -64,10 +64,15 @@ health:
   enabled: true
   path: "/health"
 
-storage:
-  # Durable embedded PebbleDB by default. Use "file" for one plain file per key
-  # (human-inspectable), "qrdb" to share the hosted node, or "memory" for tests.
-  backend: "pebble"
+datastore:
+  # The single global datastore every subsystem stores through -- keys,
+  # users, RBAC, custodian state, CA serials/revocations, ACME state,
+  # everything. Durable embedded PebbleDB by default. Use "file" for one
+  # plain file per key (human-inspectable), or "memory" for tests -- never
+  # in production, it discards all state on restart. mode "standalone"
+  # (the default) hosts this datastore in this process; mode "remote"
+  # instead dials an already-running qrdb cluster (see datastore.remote).
+  engine: "pebble"
   path: "xkms-data/storage"
 
 rng:

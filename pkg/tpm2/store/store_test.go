@@ -184,6 +184,41 @@ func TestStorageFactory_NewMemoryStorageFactory(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// TestStorageFactory_NewFactory proves NewFactory builds a working factory
+// over an already-open storage.Backend -- e.g. a key-prefixed view of the
+// shared datastore -- rather than opening a private file or memory engine,
+// and that NewStorageFactory/NewMemoryStorageFactory (a temp/file-rooted
+// engine, and a bare in-memory one) are implemented in terms of it.
+func TestStorageFactory_NewFactory(t *testing.T) {
+	logger := testLogger()
+	backend := storage.NewMemory()
+
+	factory, err := NewFactory(logger, backend)
+	require.NoError(t, err)
+	require.NotNil(t, factory)
+
+	assert.NotNil(t, factory.BlobStore())
+	assert.NotNil(t, factory.KeyBackend())
+	assert.Same(t, backend, factory.Backend(), "NewFactory must use the caller's backend, not a private engine")
+
+	require.NoError(t, factory.BlobStore().Write("datastore-test", []byte("data")))
+	data, readErr := factory.BlobStore().Read("datastore-test")
+	require.NoError(t, readErr)
+	assert.Equal(t, []byte("data"), data)
+
+	// NewFactory never owns the backend's lifecycle beyond what it wraps, so
+	// Close does not remove anything the caller's own datastore owns (no
+	// tempDir was set).
+	require.NoError(t, factory.Close())
+}
+
+// TestStorageFactory_NewFactory_NilBackend proves a nil backend fails closed
+// with a typed error rather than constructing a factory nothing can use.
+func TestStorageFactory_NewFactory_NilBackend(t *testing.T) {
+	_, err := NewFactory(testLogger(), nil)
+	require.Error(t, err)
+}
+
 func TestStorageFactory_Close(t *testing.T) {
 	logger := testLogger()
 

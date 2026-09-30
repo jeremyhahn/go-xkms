@@ -90,7 +90,48 @@ type BridgeConfig struct {
 	// answers without it, reporting an empty status rather than an error,
 	// since "nothing has been synced yet" is a valid status.
 	SyncService *xkeysync.Service
+
+	// SyncApproval gates remote.syncPasswords, remote.syncOATH and
+	// remote.syncAll -- the three methods that export this host's password
+	// vault or OATH secrets to the phone -- behind an explicit desktop-side
+	// decision. remote.syncTrustStore (public certificates) and
+	// remote.syncStatus (metadata) are not gated by it.
+	//
+	// Required for those three methods to serve anything: nil fails every
+	// one of them closed with ErrSyncApprovalRequired rather than exporting
+	// secrets with no desktop check at all. A caller that wants the
+	// existing "trust whoever the Noise session already pinned" behavior
+	// must say so explicitly, by supplying an approver that always allows
+	// (AlwaysApproveSync), not by leaving this nil.
+	SyncApproval SyncApprovalFunc
 }
+
+// SyncApprovalRequest describes one remote.sync* call the bridge is about to
+// serve, for whatever the approval function shows the operator or checks
+// against policy.
+type SyncApprovalRequest struct {
+	// Method is the JSON-RPC method being approved: remote.syncPasswords,
+	// remote.syncOATH, or remote.syncAll.
+	Method string
+
+	// DeviceName is the paired phone's name, from BridgeConfig.DeviceName.
+	DeviceName string
+}
+
+// SyncApprovalFunc decides whether one secret-exporting remote.sync* call may
+// proceed. It returns nil to allow the call and a non-nil error -- normally
+// wrapping ErrSyncNotApproved -- to refuse it. The bridge does not
+// distinguish "explicitly denied" from "approval mechanism itself failed":
+// either way the export does not happen.
+type SyncApprovalFunc func(ctx context.Context, req *SyncApprovalRequest) error
+
+// AlwaysApproveSync is a SyncApprovalFunc that allows every request. It
+// exists so a caller that has already made this decision by some other means
+// -- a test double, or a trust boundary where the Noise session pinning is
+// judged sufficient on its own -- can say so explicitly in one identifiable
+// place, rather than leaving SyncApproval nil, which the bridge treats as
+// "no decision has been made" and refuses.
+func AlwaysApproveSync(context.Context, *SyncApprovalRequest) error { return nil }
 
 // DefaultBridgeConfig returns a BridgeConfig with sensible defaults.
 func DefaultBridgeConfig() *BridgeConfig {
@@ -137,6 +178,10 @@ type Bridge struct {
 	// remote.syncStatus which reports an empty status instead.
 	syncService *xkeysync.Service
 
+	// syncApproval gates the secret-exporting sync methods. nil refuses all
+	// three with ErrSyncApprovalRequired; see BridgeConfig.SyncApproval.
+	syncApproval SyncApprovalFunc
+
 	// Pre-computed lookup sets for O(1) access control checks.
 	allowedSet map[string]struct{}
 	deniedSet  map[string]struct{}
@@ -160,15 +205,16 @@ func NewBridge(client transport.Client, config *BridgeConfig) (*Bridge, error) {
 	}
 
 	b := &Bridge{
-		client:      client,
-		config:      config,
-		logger:      config.Logger.With("component", "bridge"),
-		auditLogger: config.AuditLogger,
-		tpm:         config.TPM,
-		tpmOpenErr:  config.TPMOpenErr,
-		oathStore:   config.OATHStore,
-		pivStorage:  config.PIVStorage,
-		syncService: config.SyncService,
+		client:       client,
+		config:       config,
+		logger:       config.Logger.With("component", "bridge"),
+		auditLogger:  config.AuditLogger,
+		tpm:          config.TPM,
+		tpmOpenErr:   config.TPMOpenErr,
+		oathStore:    config.OATHStore,
+		pivStorage:   config.PIVStorage,
+		syncService:  config.SyncService,
+		syncApproval: config.SyncApproval,
 	}
 
 	// Build O(1) access control lookup sets.
@@ -1031,6 +1077,10 @@ func mapErrorToRPC(err error) (int, string) {
 		return ErrorCodeFeatureUnavailable, "phone: sync is not configured on this host"
 	case errors.Is(err, ErrBackupNotConfigured):
 		return ErrorCodeFeatureUnavailable, "phone: backup is not configured on this host"
+	case errors.Is(err, ErrSyncApprovalRequired):
+		return ErrorCodeSyncApprovalRequired, "phone: exporting secrets to the phone requires desktop approval, which is not configured on this host"
+	case errors.Is(err, ErrSyncNotApproved):
+		return ErrorCodeSyncNotApproved, "phone: the desktop refused to export secrets to the phone"
 	}
 
 	// Fall through to a generic internal error for unrecognized errors.

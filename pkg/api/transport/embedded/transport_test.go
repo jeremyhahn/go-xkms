@@ -306,6 +306,34 @@ func (m *mockService) FinishAuthentication(_ context.Context, _ *transport.Finis
 	return &transport.FinishAuthenticationResponse{}, nil
 }
 
+func (m *mockService) GetInvite(_ context.Context, _ *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetInviteResponse{}, nil
+}
+
+func (m *mockService) BeginInviteRegistration(_ context.Context, _ *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.BeginInviteRegistrationResponse{}, nil
+}
+
+func (m *mockService) FinishInviteRegistration(_ context.Context, _ *transport.FinishInviteRegistrationRequest) (*transport.FinishInviteRegistrationResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.FinishInviteRegistrationResponse{}, nil
+}
+
+func (m *mockService) ActivateInvitePIV(_ context.Context, _ *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.ActivateInvitePIVResponse{}, nil
+}
+
 func (m *mockService) GetCABundle(_ context.Context, _ *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
 	if m.shouldFail {
 		return nil, errMock

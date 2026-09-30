@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -38,7 +39,7 @@ func newTPM2FrostSecretBackend(t *testing.T) (*tpm2.Backend, *types.KeyAttribute
 
 	b, err := tpm2.NewBackend(&tpm2.Config{
 		UseSimulator: true,
-		KeyDir:       t.TempDir(),
+		KeyStorage:   storage.NewMemory(),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, b.Close()) })

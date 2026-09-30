@@ -620,4 +620,15 @@ type Client interface {
 	CredentialManagementService
 	AuditService
 	BootstrapService
+	InviteService
+}
+
+// InviteService redeems administrator-issued account-activation
+// invitations; see InviteServicer's doc comment (servicer.go) for the
+// contract every transport implementing this must honor.
+type InviteService interface {
+	GetInvite(ctx context.Context, req *GetInviteRequest) (*GetInviteResponse, error)
+	BeginInviteRegistration(ctx context.Context, req *BeginInviteRegistrationRequest) (*BeginInviteRegistrationResponse, error)
+	FinishInviteRegistration(ctx context.Context, req *FinishInviteRegistrationRequest) (*FinishInviteRegistrationResponse, error)
+	ActivateInvitePIV(ctx context.Context, req *ActivateInvitePIVRequest) (*ActivateInvitePIVResponse, error)
 }

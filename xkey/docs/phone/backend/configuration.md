@@ -33,27 +33,29 @@ type Config struct {
 
 ## Pairing Setup
 
-Before using the phone backend, pair the phone with the laptop:
+There is no `xkey phone pair` command. Pairing is a `device` verb, documented
+in full in phone-hsm's [cli.md](../../phone-hsm/cli.md) and
+[user.md](../../phone-hsm/user.md):
 
 ```bash
 # On the laptop
-xkey phone pair
+xkey device scan
+xkey device pair
 
 # Follow prompts:
 # 1. Enable Bluetooth on both devices
-# 2. Open xKey app on phone
-# 3. Tap "Pair with Laptop" in the app
-# 4. Confirm the pairing code matches on both devices
+# 2. Open xKey app on phone and start advertising
+# 3. Select the discovered device
+# 4. The desktop prints a verification code (go-xkms#1306); the Android app
+#    does not yet display a matching code to compare it against
 ```
 
-This creates `~/.xkey/phone.yaml` containing:
-```yaml
-device_name: "Pixel 9 Pro"
-ble_address: "AA:BB:CC:DD:EE:FF"
-noise_private_key: "<base64 local static key>"
-phone_public_key: "<base64 phone static key>"
-paired_at: "2025-01-15T10:30:00Z"
-```
+This appends a record to `devices.yaml` (resolved under the xkey data
+directory), containing the device's name and BLE address, its Noise static
+public key, this host's own Noise static private key (sealed under the
+barrier when one is configured -- see [Security](security.md)), and, when
+attestation succeeded, the device's attested fingerprint and security level.
+There is no separate `phone.yaml`.
 
 ## Transport Configuration
 
