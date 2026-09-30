@@ -41,7 +41,7 @@ func (k *keysClient) Generate(ctx context.Context, req sdkssh.GenerateRequest) (
 		return nil, err
 	}
 	if !p.allowed {
-		return nil, k.refuse(ctx, "keys.generate", req.Scope, req.Owner, req.Name)
+		return nil, k.refuse(ctx, p, "keys.generate", req.Scope, req.Owner, req.Name)
 	}
 	return p.client.Keys().Generate(ctx, req)
 }
@@ -53,7 +53,7 @@ func (k *keysClient) Import(ctx context.Context, req sdkssh.ImportRequest, provi
 		return nil, err
 	}
 	if !p.allowed {
-		return nil, k.refuse(ctx, "keys.import", req.Scope, req.Owner, req.Name)
+		return nil, k.refuse(ctx, p, "keys.import", req.Scope, req.Owner, req.Name)
 	}
 	return p.client.Keys().Import(ctx, req, provider)
 }
@@ -74,7 +74,7 @@ func (k *keysClient) Get(ctx context.Context, req sdkssh.GetKeyRequest) (*sdkssh
 // List implements sdkssh.KeysClient. The listing holds only keys the caller
 // owns, whatever the filters name.
 func (k *keysClient) List(ctx context.Context, req sdkssh.ListKeysRequest) ([]*sdkssh.Key, error) {
-	p, who, err := k.c.listPartition(ctx, req.Scope, req.Owner)
+	p, visible, err := k.c.listPartition(ctx, req.Scope, req.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func (k *keysClient) List(ctx context.Context, req sdkssh.ListKeysRequest) ([]*s
 	}
 	owned := make([]*sdkssh.Key, 0, len(all))
 	for _, key := range all {
-		if who.visible(key.Scope, key.Owner) {
+		if visible(key.Scope, key.Owner) {
 			owned = append(owned, key)
 		}
 	}
@@ -132,9 +132,9 @@ func (k *keysClient) Signer(ctx context.Context, req sdkssh.GetKeyRequest) (goss
 
 // refuse answers a refused key write with the not-found answer for the key
 // it names.
-func (k *keysClient) refuse(ctx context.Context, op, scope, owner, name string) error {
+func (k *keysClient) refuse(ctx context.Context, p partition, op, scope, owner, name string) error {
 	_, miss := k.c.empty.Keys().Get(ctx, sdkssh.GetKeyRequest{Scope: scope, Owner: owner, Name: name})
-	return newOwnerBindingError(ctx, op, scope, owner, miss)
+	return newOwnerBindingError(ctx, op, scope, owner, p.refusal, miss)
 }
 
 // ------------------------------------------------------------------
@@ -156,7 +156,7 @@ func (h *knownHostsClient) Add(ctx context.Context, req sdkssh.AddKnownHostReque
 	}
 	if !p.allowed {
 		miss := h.c.empty.KnownHosts().Remove(ctx, sdkssh.RemoveKnownHostRequest{Scope: req.Scope, Owner: req.Owner, Host: req.Host})
-		return newOwnerBindingError(ctx, "knownHosts.add", req.Scope, req.Owner, miss)
+		return newOwnerBindingError(ctx, "knownHosts.add", req.Scope, req.Owner, p.refusal, miss)
 	}
 	return p.client.KnownHosts().Add(ctx, req)
 }
@@ -164,7 +164,7 @@ func (h *knownHostsClient) Add(ctx context.Context, req sdkssh.AddKnownHostReque
 // List implements sdkssh.KnownHostsClient. The listing holds only pins the
 // caller owns, whatever the filters name.
 func (h *knownHostsClient) List(ctx context.Context, req sdkssh.ListKnownHostsRequest) ([]*sdkssh.Pin, error) {
-	p, who, err := h.c.listPartition(ctx, req.Scope, req.Owner)
+	p, visible, err := h.c.listPartition(ctx, req.Scope, req.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +174,7 @@ func (h *knownHostsClient) List(ctx context.Context, req sdkssh.ListKnownHostsRe
 	}
 	owned := make([]*sdkssh.Pin, 0, len(all))
 	for _, pin := range all {
-		if who.visible(pin.Scope, pin.Owner) {
+		if visible(pin.Scope, pin.Owner) {
 			owned = append(owned, pin)
 		}
 	}
@@ -241,7 +241,7 @@ func (a *authorizedKeysClient) Add(ctx context.Context, req sdkssh.AddAuthorized
 	}
 	if !p.allowed {
 		_, miss := a.c.empty.AuthorizedKeys().Get(ctx, req.Scope, req.Owner, req.Name)
-		return newOwnerBindingError(ctx, "authorizedKeys.add", req.Scope, req.Owner, miss)
+		return newOwnerBindingError(ctx, "authorizedKeys.add", req.Scope, req.Owner, p.refusal, miss)
 	}
 	return p.client.AuthorizedKeys().Add(ctx, req)
 }
@@ -262,7 +262,7 @@ func (a *authorizedKeysClient) Get(ctx context.Context, scope, owner, name strin
 // List implements sdkssh.AuthorizedKeysClient. The listing holds only
 // entries the caller owns, whatever the filters name.
 func (a *authorizedKeysClient) List(ctx context.Context, req sdkssh.ListAuthorizedKeysRequest) ([]*sdkssh.AuthorizedEntry, error) {
-	p, who, err := a.c.listPartition(ctx, req.Scope, req.Owner)
+	p, visible, err := a.c.listPartition(ctx, req.Scope, req.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +272,7 @@ func (a *authorizedKeysClient) List(ctx context.Context, req sdkssh.ListAuthoriz
 	}
 	owned := make([]*sdkssh.AuthorizedEntry, 0, len(all))
 	for _, entry := range all {
-		if who.visible(entry.Scope, entry.Owner) {
+		if visible(entry.Scope, entry.Owner) {
 			owned = append(owned, entry)
 		}
 	}
@@ -342,7 +342,7 @@ func (s *sessionClient) Dial(ctx context.Context, req sdkssh.SessionDialRequest)
 	}
 	p := key
 	if !pins.allowed || pins.tenantID != key.tenantID {
-		p = partition{client: s.c.empty}
+		p = partition{client: s.c.empty, refusal: pins.refusal}
 	}
 	session, err := p.client.Session().Dial(ctx, req)
 	if err != nil {

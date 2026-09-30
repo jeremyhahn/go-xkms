@@ -31,6 +31,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	pkgauthorized "github.com/jeremyhahn/go-xkms/pkg/ssh/authorized"
 	sshbackend "github.com/jeremyhahn/go-xkms/pkg/ssh/backend"
 	pkgkeys "github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
@@ -57,13 +58,32 @@ func as(id *auth.Identity) context.Context {
 	return auth.WithIdentity(context.Background(), id)
 }
 
+// grants is a PermissionChecker holding ssh:service for the listed
+// "<tenant>/<subject>" principals and nothing else.
+type grants map[string]bool
+
+// errNotGranted is grants' refusal.
+var errNotGranted = errors.New("tenancy test: permission not granted")
+
+// AuthorizeCaller implements PermissionChecker.
+func (g grants) AuthorizeCaller(ctx context.Context, resource, action string) error {
+	id := auth.GetIdentity(ctx)
+	if id != nil && resource == auth.ResourceSSH && action == auth.ActionService && g[id.TenantID+"/"+id.Subject] {
+		return nil
+	}
+	return errNotGranted
+}
+
+// serviceGrants holds ssh:service for alice of tenant A and tenant B's admin.
+var serviceGrants = grants{tenantA + "/alice": true, tenantB + "/b-admin": true}
+
 // newTestClient returns the tenancy client over empty in-memory storage and,
 // when withBackend is set, a software crypto backend named "software".
 func newTestClient(t *testing.T, withBackend bool) (sdkssh.Client, types.KeyProvider) {
 	t.Helper()
 	backend, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
-	opts := Options{Storage: backend}
+	opts := Options{Storage: backend, Permissions: serviceGrants}
 	var kp types.KeyProvider
 	if withBackend {
 		kp, err = software.NewBackend(&software.Config{KeyStorage: storage.New()})
@@ -135,9 +155,8 @@ func TestKeys_OwnerBinding(t *testing.T) {
 	generate(t, c, adminB, "service", "b-admin", "svc-key")
 
 	refs := map[string]sdkssh.GetKeyRequest{
-		"tenant":  {Scope: "tenant", Owner: tenantB, Name: "b-key"},
-		"user":    {Scope: "user", Owner: "bob", Name: "bob-key"},
-		"service": {Scope: "service", Owner: "b-admin", Name: "svc-key"},
+		"tenant": {Scope: "tenant", Owner: tenantB, Name: "b-key"},
+		"user":   {Scope: "user", Owner: "bob", Name: "bob-key"},
 	}
 	for name, ref := range refs {
 		t.Run(name, func(t *testing.T) {
@@ -193,6 +212,85 @@ func TestKeys_OwnerBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, keys, 1, "%s's keys changed", id.Subject)
 	}
+}
+
+// TestKeys_ServiceScope proves a service-scoped key is reachable only with
+// the explicit ssh:service permission, only in the caller's own tenant, and
+// not at all when no permission checker is wired.
+func TestKeys_ServiceScope(t *testing.T) {
+	c, _ := newTestClient(t, false)
+	empty, _ := newTestClient(t, false)
+	theirs := generate(t, c, adminB, "service", "ci", "deploy")
+	ref := sdkssh.GetKeyRequest{Scope: "service", Owner: "ci", Name: "deploy"}
+
+	// Without ssh:service, bob is refused as if the key were missing, and
+	// cannot plant one.
+	_, err := c.Keys().Generate(as(bobA), sdkssh.GenerateRequest{Scope: "service", Owner: "ci", Name: "deploy", Algorithm: "ed25519"})
+	var refusal *OwnerBindingError
+	require.ErrorAs(t, err, &refusal)
+	var serviceErr *scope.ServiceScopeError
+	require.ErrorAs(t, refusal.Cause, &serviceErr, "the cause names the missing permission")
+
+	// Alice holds ssh:service in tenant A: she creates and reads tenant A's
+	// service keys for any workload...
+	mine := generate(t, c, aliceA, "service", "ci", "deploy")
+	got, err := c.Keys().Get(as(aliceA), ref)
+	require.NoError(t, err)
+	assert.Equal(t, mine.Fingerprint, got.Fingerprint)
+	assert.NotEqual(t, theirs.Fingerprint, mine.Fingerprint, "tenant B's service key must be unreachable from tenant A")
+
+	// ...and bob, in the same tenant, still reaches none of them.
+	_, err = c.Keys().Get(as(bobA), ref)
+	_, miss := empty.Keys().Get(as(bobA), ref)
+	requireRefusedAsMissing(t, err, miss)
+	listed, err := c.Keys().List(as(bobA), sdkssh.ListKeysRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, listed, "bob's listing must omit service keys")
+	listed, err = c.Keys().List(as(aliceA), sdkssh.ListKeysRequest{Scope: "service"})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+
+	// Tenant B's key is untouched.
+	got, err = c.Keys().Get(as(adminB), ref)
+	require.NoError(t, err)
+	assert.Equal(t, theirs.Fingerprint, got.Fingerprint)
+
+	// With no permission checker the scope is closed, even to alice.
+	backend, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+	closed, err := New(Options{Storage: backend})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, closed.Close()) })
+	_, err = closed.Keys().Generate(as(aliceA), sdkssh.GenerateRequest{Scope: "service", Owner: "ci", Name: "deploy", Algorithm: "ed25519"})
+	require.ErrorAs(t, err, &refusal)
+}
+
+// TestKeys_PlatformCannotReachPersonalKeys proves a user's personal keys stay
+// private even from a platform caller: the platform reaches tenants' shared
+// keys, never another user's.
+func TestKeys_PlatformCannotReachPersonalKeys(t *testing.T) {
+	c, _ := newTestClient(t, false)
+	empty, _ := newTestClient(t, false)
+	generate(t, c, bobA, "user", "bob", "bob-key")
+	ref := sdkssh.GetKeyRequest{Scope: "user", Owner: "bob", Name: "bob-key"}
+
+	_, err := c.Keys().Get(as(platform), ref)
+	_, miss := empty.Keys().Get(as(platform), ref)
+	requireRefusedAsMissing(t, err, miss)
+	var refusal *OwnerBindingError
+	require.ErrorAs(t, err, &refusal)
+	var crossUser *scope.CrossUserError
+	require.ErrorAs(t, refusal.Cause, &crossUser)
+
+	err = c.Keys().Delete(as(platform), sdkssh.DeleteKeyRequest(ref))
+	require.Error(t, err)
+	_, err = c.Keys().Get(as(bobA), ref)
+	require.NoError(t, err, "bob's key must survive the platform's refused delete")
+
+	// The platform's own personal keys are its own.
+	generate(t, c, platform, "user", "root", "root-key")
+	_, err = c.Keys().Get(as(platform), sdkssh.GetKeyRequest{Scope: "user", Owner: "root", Name: "root-key"})
+	require.NoError(t, err)
 }
 
 // TestKeys_OwnersAndPlatform is the positive control.
@@ -490,19 +588,21 @@ func TestBackendKeys_NamespacedPerTenant(t *testing.T) {
 // addresses (owner="a-b" name="c" vs. owner="a" name="b-c"), and each must
 // generate, sign and round-trip through Get as its own key on the real
 // software backend -- not silently alias the other's backend CN. Both
-// addresses are generated by the platform caller because scope=user binds a
-// tenant-scoped caller's owner to its own subject; a platform caller may
-// address any owner, which is exactly what is needed to drive both
+// addresses are generated by two platform principals whose subjects are the
+// two owners, since scope=user binds every caller -- the platform included --
+// to its own subject; both live in the platform partition, which drives both
 // addresses through one backend namespace.
 func TestBackendKeys_DistinctAddressesDoNotCollide(t *testing.T) {
 	c, kp := newTestClient(t, true)
+	platformAB := &auth.Identity{Subject: "a-b", TenantID: qrdbsdk.SystemTenantID}
+	platformA := &auth.Identity{Subject: "a", TenantID: qrdbsdk.SystemTenantID}
 	ctx := context.Background()
 
-	key1, err := c.Keys().Generate(as(platform), sdkssh.GenerateRequest{
+	key1, err := c.Keys().Generate(as(platformAB), sdkssh.GenerateRequest{
 		Scope: "user", Owner: "a-b", Name: "c", Algorithm: "ed25519", Backend: "software",
 	})
 	require.NoError(t, err)
-	key2, err := c.Keys().Generate(as(platform), sdkssh.GenerateRequest{
+	key2, err := c.Keys().Generate(as(platformA), sdkssh.GenerateRequest{
 		Scope: "user", Owner: "a", Name: "b-c", Algorithm: "ed25519", Backend: "software",
 	})
 	require.NoError(t, err)
@@ -518,9 +618,9 @@ func TestBackendKeys_DistinctAddressesDoNotCollide(t *testing.T) {
 	// Each address's Signer produces a signature that verifies only under
 	// its own address's public key -- proving the two are genuinely
 	// distinct keys, not one key answering for both addresses.
-	signer1, err := c.Keys().Signer(as(platform), sdkssh.GetKeyRequest{Scope: "user", Owner: "a-b", Name: "c"})
+	signer1, err := c.Keys().Signer(as(platformAB), sdkssh.GetKeyRequest{Scope: "user", Owner: "a-b", Name: "c"})
 	require.NoError(t, err)
-	signer2, err := c.Keys().Signer(as(platform), sdkssh.GetKeyRequest{Scope: "user", Owner: "a", Name: "b-c"})
+	signer2, err := c.Keys().Signer(as(platformA), sdkssh.GetKeyRequest{Scope: "user", Owner: "a", Name: "b-c"})
 	require.NoError(t, err)
 
 	msg := []byte("go-xkms#1238")
@@ -540,12 +640,12 @@ func TestBackendKeys_DistinctAddressesDoNotCollide(t *testing.T) {
 	require.Error(t, pub2.Verify(msg, sig1), "user/a/b-c's key must not accept user/a-b/c's signature")
 
 	// Get round-trips each address back to its own metadata and public key.
-	got1, err := c.Keys().Get(as(platform), sdkssh.GetKeyRequest{Scope: "user", Owner: "a-b", Name: "c"})
+	got1, err := c.Keys().Get(as(platformAB), sdkssh.GetKeyRequest{Scope: "user", Owner: "a-b", Name: "c"})
 	require.NoError(t, err)
 	assert.Equal(t, key1.PublicKey, got1.PublicKey)
 	assert.Equal(t, key1.BackendKeyID, got1.BackendKeyID)
 
-	got2, err := c.Keys().Get(as(platform), sdkssh.GetKeyRequest{Scope: "user", Owner: "a", Name: "b-c"})
+	got2, err := c.Keys().Get(as(platformA), sdkssh.GetKeyRequest{Scope: "user", Owner: "a", Name: "b-c"})
 	require.NoError(t, err)
 	assert.Equal(t, key2.PublicKey, got2.PublicKey)
 	assert.Equal(t, key2.BackendKeyID, got2.BackendKeyID)
@@ -585,7 +685,7 @@ func TestErrors(t *testing.T) {
 
 	// A nil genuine miss -- the empty partition answering -- is still a
 	// refusal, carrying the invariant failure.
-	err := newOwnerBindingError(context.Background(), "keys.generate", "user", "bob", nil)
+	err := newOwnerBindingError(context.Background(), "keys.generate", "user", "bob", nil, nil)
 	var partitionErr *EmptyPartitionError
 	require.True(t, errors.As(err, &partitionErr))
 	var binding *OwnerBindingError

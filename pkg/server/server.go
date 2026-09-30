@@ -507,7 +507,7 @@ func (s *Server) ensureSSHClient() sdkssh.Client {
 		if s.xkmsService == nil {
 			return
 		}
-		client, err := compose.BuildSSHClient(s.createStorage, s.xkmsService.LookupBackend)
+		client, err := compose.BuildSSHClient(s.createStorage, s.xkmsService.LookupBackend, s.xkmsService)
 		if err != nil {
 			s.logger.Error("Failed to build SSH client", slog.Any("error", err))
 			return

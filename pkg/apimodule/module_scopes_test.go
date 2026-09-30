@@ -244,3 +244,38 @@ func TestTenantTPMModeIsCrossScoped(t *testing.T) {
 		t.Fatalf("tpm_policy:create scope = %v, want self", scope)
 	}
 }
+
+// TestSSHServiceIsSelfScopedAndGranted proves ssh:service, the below-gate
+// permission a service-scoped SSH address requires, is contributed, resolves
+// to ScopeSelf like ssh:read/write/delete, and is granted to Admin -- without
+// the grant no role could ever reach a service-scoped asset.
+func TestSSHServiceIsSelfScopedAndGranted(t *testing.T) {
+	registerRoleGrants()
+	perm := qrdbsdk.Permission("ssh:service")
+
+	found := false
+	for _, p := range modulePermissions() {
+		found = found || p == perm
+	}
+	if !found {
+		t.Fatalf("modulePermissions() omits %s", perm)
+	}
+
+	resolver, err := testutil.NewPermissionScopeResolver()
+	if err != nil {
+		t.Fatalf("NewPermissionScopeResolver: %v", err)
+	}
+	scope, err := resolver.Scope(context.Background(), perm)
+	if err != nil {
+		t.Fatalf("Scope(%s): %v", perm, err)
+	}
+	if scope != qrdbsdk.PermissionScopeSelf {
+		t.Fatalf("%s scope = %v, want self", perm, scope)
+	}
+	if !qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perm) {
+		t.Fatalf("Admin does not hold %s", perm)
+	}
+	if qrdbsdk.HasPermissionRoleGrant(qrdbsdk.RoleNameSO, perm) {
+		t.Fatalf("SO must not hold %s", perm)
+	}
+}

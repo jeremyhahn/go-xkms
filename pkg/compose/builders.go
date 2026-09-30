@@ -173,8 +173,9 @@ func BuildCredentialService(logger *slog.Logger, strategy string, platformStore 
 // BuildSSHClient builds the tenant-binding SSH client. Key generation and
 // signing for a request naming a backend resolve through backends, narrowed
 // to the caller's tenant, so a hardware-backed SSH key never leaves its
-// device.
-func BuildSSHClient(open StorageFactory, backends BackendLookup) (sdkssh.Client, error) {
+// device. permissions answers the ssh:service check a service-scoped address
+// requires; nil closes the service scope.
+func BuildSSHClient(open StorageFactory, backends BackendLookup, permissions tenancy.PermissionChecker) (sdkssh.Client, error) {
 	if open == nil {
 		return nil, &NilDependencyError{Feature: FeatureSSH, Dependency: "storage factory"}
 	}
@@ -192,7 +193,7 @@ func BuildSSHClient(open StorageFactory, backends BackendLookup) (sdkssh.Client,
 		}
 		return b.KeyProvider(), nil
 	})
-	client, err := tenancy.New(tenancy.Options{Storage: sshStorage, Resolver: resolver})
+	client, err := tenancy.New(tenancy.Options{Storage: sshStorage, Resolver: resolver, Permissions: permissions})
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureSSH, Err: err}
 	}

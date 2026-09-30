@@ -373,6 +373,15 @@ func (s *XKMSService) SetAuthorizer(a *auth.Authorizer) {
 	s.authorizer = a
 }
 
+// AuthorizeCaller reports whether the identity ctx carries holds
+// resource:action, for a decision made below the transport gate (for example
+// ssh:service, which only a request's scope reveals is needed). It returns nil
+// when allowed; with no Authorizer wired, RBAC is disabled and every request
+// is allowed, as at the transport gate.
+func (s *XKMSService) AuthorizeCaller(ctx context.Context, resource, action string) error {
+	return s.authorizer.Authorize(ctx, auth.GetIdentity(ctx), resource, action)
+}
+
 // SetClusterClient wires the embedded qrdb node's cluster client into the
 // service along with the Raft shard and this node's replica identifier. The
 // service uses it solely to resolve the leader's dialable API endpoint for

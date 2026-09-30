@@ -368,7 +368,7 @@ func TestBuildCA_InvalidInput(t *testing.T) {
 // backend is refused rather than silently falling back to a software key.
 func TestBuildSSHClient_ResolvesBackendKeysThroughService(t *testing.T) {
 	svc := hostdeps.NewService(t)
-	client, err := BuildSSHClient(memoryStorage(t), svc.LookupBackend)
+	client, err := BuildSSHClient(memoryStorage(t), svc.LookupBackend, svc)
 	require.NoError(t, err)
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "alice", TenantID: "acme"})
@@ -395,9 +395,9 @@ func TestBuilders_RejectNilDependencies(t *testing.T) {
 	assert.ErrorAs(t, err, &nilDep)
 	_, err = BuildPlatformStore(nil, memoryStorage(t), PlatformSealer{})
 	assert.ErrorAs(t, err, &nilDep)
-	_, err = BuildSSHClient(nil, nil)
+	_, err = BuildSSHClient(nil, nil, nil)
 	assert.ErrorAs(t, err, &nilDep)
-	_, err = BuildSSHClient(memoryStorage(t), nil)
+	_, err = BuildSSHClient(memoryStorage(t), nil, nil)
 	assert.ErrorAs(t, err, &nilDep)
 	_, err = BuildTPMPolicyService(TPMPolicyParams{Storage: memoryStorage(t)})
 	assert.ErrorAs(t, err, &nilDep)
@@ -419,7 +419,7 @@ func TestBuilders_StorageFailureIsFeatureBuildError(t *testing.T) {
 	assert.Equal(t, FeaturePlatformStore, buildErr.Feature)
 
 	svc := hostdeps.NewService(t)
-	_, err = BuildSSHClient(failingStorage, svc.LookupBackend)
+	_, err = BuildSSHClient(failingStorage, svc.LookupBackend, svc)
 	require.ErrorAs(t, err, &buildErr)
 	assert.Equal(t, FeatureSSH, buildErr.Feature)
 

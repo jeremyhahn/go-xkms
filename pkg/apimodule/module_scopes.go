@@ -99,6 +99,14 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionVerify),
 		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionDelete),
 		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionRotate),
+
+		// ssh:service admits a caller to service-scoped SSH assets, which no
+		// user owns (pkg/scope Service; checked in pkg/ssh/tenancy). It is
+		// ScopeSelf like its siblings ssh:read/write/delete, which qrdb
+		// declares: a tenant identity reaches its own tenant's service
+		// assets, a system-tenant identity any tenant's. qrdb does not
+		// declare this name; xkms owns it.
+		qrdbsdk.Permission(auth.ResourceSSH + ":" + auth.ActionService),
 	}
 }
 

@@ -188,7 +188,7 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 
 	if b.need(FeatureSSH, d.Storage != nil, "storage") {
 		st.SSH = built(b, FeatureSSH, func() (sdkssh.Client, error) {
-			return BuildSSHClient(d.Storage, d.Service.LookupBackend)
+			return BuildSSHClient(d.Storage, d.Service.LookupBackend, d.Service)
 		})
 	}
 

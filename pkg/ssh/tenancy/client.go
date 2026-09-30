@@ -23,16 +23,22 @@
 // The transports' RBAC gate cannot do this: auth.Authorizer binds the
 // caller's own tenant as the target, so ssh:read / ssh:write / ssh:delete,
 // which a tenant Admin holds, admit any address. The binding is therefore
-// enforced here, once, for every transport:
+// enforced here, once, for every transport, by the xkms scope rule
+// (scope.Principal.Authorize):
 //
-//   - scope=tenant is owned by the tenant whose ID is the owner;
-//   - scope=user and scope=service are owned by the principal whose subject
-//     is the owner.
+//   - scope=tenant is owned by the tenant whose ID is the owner, and every
+//     user of that tenant may address it;
+//   - scope=user is owned by the principal whose subject is the owner, in
+//     the caller's tenant, and only that principal may address it -- a
+//     platform caller included;
+//   - scope=service is owned by a workload in the caller's tenant, and only
+//     a caller holding the explicit ssh:service permission may address it
+//     (Options.Permissions; with none wired the scope is closed).
 //
-// A tenant-scoped caller may address only what it owns. A platform caller
-// (auth.IsCrossTenant: no identity, or the system tenant) may address
-// anything. A refusal is an *OwnerBindingError that answers exactly as a
-// missing asset does; a listing silently omits what the caller does not own.
+// A platform caller (auth.IsCrossTenant: no identity, or the system tenant)
+// may also address any tenant's scope=tenant assets. A refusal is an
+// *OwnerBindingError that answers exactly as a missing asset does; a listing
+// silently omits what the caller may not see.
 //
 // # Partitions
 //
@@ -56,6 +62,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	sshbackend "github.com/jeremyhahn/go-xkms/pkg/ssh/backend"
 	pkgscope "github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -79,12 +86,25 @@ type Options struct {
 	// when nil only software keys (sealed in the SSH store) are available and
 	// a request naming a backend is refused by the SDK.
 	Resolver sshbackend.Resolver
+
+	// Permissions answers whether the caller holds ssh:service, the explicit
+	// permission a service-scoped address requires. *xkms.XKMSService
+	// satisfies it. Optional: when nil the service scope is closed to every
+	// caller.
+	Permissions PermissionChecker
+}
+
+// PermissionChecker reports whether the identity on ctx holds
+// resource:action, returning nil when it does.
+type PermissionChecker interface {
+	AuthorizeCaller(ctx context.Context, resource, action string) error
 }
 
 // client is the tenant-binding sdkssh.Client.
 type client struct {
-	storage  storage.Backend
-	resolver sshbackend.Resolver
+	storage     storage.Backend
+	resolver    sshbackend.Resolver
+	permissions PermissionChecker
 
 	// empty is a partition over storage nothing is ever written to: it
 	// serves only refusals, which read, delete and look up through it, and
@@ -112,7 +132,7 @@ func New(opts Options) (sdkssh.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &client{storage: opts.Storage, resolver: opts.Resolver, empty: empty}, nil
+	return &client{storage: opts.Storage, resolver: opts.Resolver, permissions: opts.Permissions, empty: empty}, nil
 }
 
 // Keys implements sdkssh.Client.
@@ -156,38 +176,76 @@ func (c *client) Close() error {
 
 // caller is the authenticated principal a request is bound to.
 type caller struct {
-	identity *auth.Identity
-	platform bool
+	identity  *auth.Identity
+	principal scope.Principal
 }
 
 // callerOf returns the principal ctx carries.
 func callerOf(ctx context.Context) caller {
 	identity := auth.GetIdentity(ctx)
-	return caller{identity: identity, platform: auth.IsCrossTenant(identity)}
+	return caller{identity: identity, principal: scope.PrincipalOf(identity)}
 }
 
-// owns reports whether the caller may address assets of owner in sc.
-func (a caller) owns(sc pkgscope.Scope, owner string) bool {
-	if a.platform {
-		return true
+// platform reports whether the caller is platform-scoped.
+func (a caller) platform() bool { return a.principal.Platform }
+
+// target returns the owner a request addressing (sc, owner) names: a
+// scope=tenant owner is the tenant itself; a user or service owner lives in
+// the caller's own tenant.
+func (a caller) target(sc pkgscope.Scope, owner string) scope.Target {
+	if sc == pkgscope.Tenant {
+		return scope.Target{TenantID: owner, Scope: sc}
 	}
-	switch sc {
-	case pkgscope.Tenant:
-		return owner == a.identity.TenantID
-	case pkgscope.User, pkgscope.Service:
-		return owner == a.identity.Subject
-	default:
+	return scope.Target{TenantID: a.principal.TenantID, Scope: sc, Owner: owner}
+}
+
+// authorize applies the xkms scope rule (scope.Principal.Authorize) to a
+// request addressing (sc, owner). The service-scope permission is resolved
+// only for a service-scoped address, so no other request pays for the check.
+func (c *client) authorize(ctx context.Context, who caller, sc pkgscope.Scope, owner string) error {
+	p := who.principal
+	if sc == pkgscope.Service {
+		p.ServiceAccess = c.serviceAccess(ctx)
+	}
+	return p.Authorize(who.target(sc, owner))
+}
+
+// serviceAccess reports whether the caller holds ssh:service. Without a
+// permission checker the service scope is closed to everyone.
+func (c *client) serviceAccess(ctx context.Context) bool {
+	if c.permissions == nil {
 		return false
+	}
+	return c.permissions.AuthorizeCaller(ctx, auth.ResourceSSH, auth.ActionService) == nil
+}
+
+// visibility returns the listing filter for the caller: whether an asset of
+// owner in scope belongs in its listing. The service-scope permission is
+// resolved at most once per listing.
+func (c *client) visibility(ctx context.Context, who caller) func(scope, owner string) bool {
+	var service *bool
+	return func(rawScope, owner string) bool {
+		sc := pkgscope.Scope(rawScope)
+		p := who.principal
+		if sc == pkgscope.Service {
+			if service == nil {
+				granted := c.serviceAccess(ctx)
+				service = &granted
+			}
+			p.ServiceAccess = *service
+		}
+		return p.Authorize(who.target(sc, owner)) == nil
 	}
 }
 
 // partition is where one request is served: a tenant's partition, the
 // platform partition (tenantID ""), or -- when the caller may not make the
-// request -- the empty partition.
+// request -- the empty partition, with refusal holding why.
 type partition struct {
 	client   sdkssh.Client
 	tenantID string
 	allowed  bool
+	refusal  error
 }
 
 // serve binds a request addressing (rawScope, owner) to the caller and opens
@@ -198,72 +256,79 @@ func (c *client) serve(ctx context.Context, rawScope, owner string) (partition, 
 	if err != nil {
 		return partition{}, &sdkssh.InvalidScopeError{Value: rawScope}
 	}
-	tenantID, allowed, err := c.bind(ctx, sc, owner)
+	b, err := c.bind(ctx, sc, owner)
 	if err != nil {
 		return partition{}, err
 	}
-	if !allowed {
-		return partition{client: c.empty}, nil
+	if b.refusal != nil {
+		return partition{client: c.empty, refusal: b.refusal}, nil
 	}
-	p, err := c.open(tenantID)
+	p, err := c.open(b.tenantID)
 	if err != nil {
 		return partition{}, err
 	}
-	return partition{client: p, tenantID: tenantID, allowed: true}, nil
+	return partition{client: p, tenantID: b.tenantID, allowed: true}, nil
 }
 
-// bind resolves the partition tenant of a request addressing (sc, owner),
-// and whether the caller may make it.
-func (c *client) bind(ctx context.Context, sc pkgscope.Scope, owner string) (string, bool, error) {
+// binding is the outcome of binding a request to its caller: the partition
+// tenant that serves it, or the refusal of a caller that may not make it.
+type binding struct {
+	tenantID string
+	refusal  error
+}
+
+// bind resolves the binding of a request addressing (sc, owner).
+func (c *client) bind(ctx context.Context, sc pkgscope.Scope, owner string) (binding, error) {
 	who := callerOf(ctx)
-	if !who.owns(sc, owner) {
-		return "", false, nil
+	if refusal := c.authorize(ctx, who, sc, owner); refusal != nil {
+		return binding{refusal: refusal}, nil
 	}
-	if !who.platform {
+	if !who.platform() {
 		if err := validatePartitionTenant(who.identity.TenantID); err != nil {
-			return "", false, err
+			return binding{}, err
 		}
-		return who.identity.TenantID, true, nil
+		return binding{tenantID: who.identity.TenantID}, nil
 	}
 	if sc != pkgscope.Tenant || qrdbsdk.IsSystemTenant(owner) {
-		return "", true, nil
+		return binding{}, nil
 	}
-	if storage.ValidateTenantID(owner) != nil {
+	if err := storage.ValidateTenantID(owner); err != nil {
 		// No tenant can have this ID, so it has no partition and no assets.
-		return "", false, nil
+		return binding{refusal: &scope.InvalidSegmentError{Field: "tenant", Value: owner, Err: err}}, nil
 	}
-	return owner, true, nil
+	return binding{tenantID: owner}, nil
 }
 
 // listPartition opens the partition a listing filtered by (rawScope, owner)
-// reads. Either filter may be empty. A tenant-scoped caller always reads its
-// own partition; the caller filters the result to what it owns.
-func (c *client) listPartition(ctx context.Context, rawScope, owner string) (sdkssh.Client, caller, error) {
+// reads, and the filter that keeps what the caller may see. Either filter may
+// be empty. A tenant-scoped caller always reads its own partition.
+func (c *client) listPartition(ctx context.Context, rawScope, owner string) (sdkssh.Client, func(scope, owner string) bool, error) {
 	who := callerOf(ctx)
+	visible := c.visibility(ctx, who)
 	var sc pkgscope.Scope
 	if rawScope != "" {
 		parsed, err := pkgscope.Parse(rawScope)
 		if err != nil {
-			return nil, who, &sdkssh.InvalidScopeError{Value: rawScope}
+			return nil, nil, &sdkssh.InvalidScopeError{Value: rawScope}
 		}
 		sc = parsed
 	}
-	if !who.platform {
+	if !who.platform() {
 		if err := validatePartitionTenant(who.identity.TenantID); err != nil {
-			return nil, who, err
+			return nil, nil, err
 		}
 		p, err := c.open(who.identity.TenantID)
-		return p, who, err
+		return p, visible, err
 	}
 	if sc != pkgscope.Tenant || owner == "" || qrdbsdk.IsSystemTenant(owner) {
 		p, err := c.open("")
-		return p, who, err
+		return p, visible, err
 	}
 	if storage.ValidateTenantID(owner) != nil {
-		return c.empty, who, nil
+		return c.empty, visible, nil
 	}
 	p, err := c.open(owner)
-	return p, who, err
+	return p, visible, err
 }
 
 // validatePartitionTenant checks a tenant-scoped caller's tenant can root a
@@ -325,28 +390,22 @@ func (c *client) wrapRefusal(ctx context.Context, p partition, op, scope, owner 
 	if p.allowed {
 		return err
 	}
-	return newOwnerBindingError(ctx, op, scope, owner, err)
+	return newOwnerBindingError(ctx, op, scope, owner, p.refusal, err)
 }
 
 // newOwnerBindingError builds the refusal carrying miss, the genuine-miss
-// answer. The empty partition holds nothing, so it always has one; a nil
-// miss means something wrote to it, and the refusal becomes an internal
-// error rather than a success.
-func newOwnerBindingError(ctx context.Context, op, scope, owner string, miss error) error {
+// answer, and cause, the scope rule's reason. The empty partition holds
+// nothing, so it always has a miss; a nil miss means something wrote to it,
+// and the refusal becomes an internal error rather than a success.
+func newOwnerBindingError(ctx context.Context, op, scope, owner string, cause, miss error) error {
 	if miss == nil {
 		miss = &EmptyPartitionError{Op: op}
 	}
 	who := callerOf(ctx)
-	refusal := &OwnerBindingError{Op: op, Scope: scope, Owner: owner, Err: miss}
+	refusal := &OwnerBindingError{Op: op, Scope: scope, Owner: owner, Cause: cause, Err: miss}
 	if who.identity != nil {
 		refusal.CallerTenantID = who.identity.TenantID
 		refusal.CallerSubject = who.identity.Subject
 	}
 	return refusal
-}
-
-// visible reports whether a listed asset of owner in scope belongs in the
-// caller's listing. Listed assets carry the store's canonical scope string.
-func (a caller) visible(scope, owner string) bool {
-	return a.owns(pkgscope.Scope(scope), owner)
 }

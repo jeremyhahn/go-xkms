@@ -162,6 +162,14 @@ const (
 	// passwords:write).
 	ActionWrite = "write"
 
+	// ActionService is the explicit permission to address service-scoped
+	// objects (pkg/scope Service): workload-owned assets that no user owns,
+	// so owner == caller cannot authorize them (ssh:service). It is checked
+	// below the transport gate, in addition to the verb's own permission
+	// (ssh:read, ssh:write, ssh:delete). qrdb does not know the name; xkms
+	// owns it and declares its scope (pkg/apimodule/module_scopes.go).
+	ActionService = "service"
+
 	// ActionUse authorizes a cryptographic operation with a slot key whose
 	// material never leaves the card (piv:use). It is deliberately distinct
 	// from piv:read, which returns only slot metadata and certificates.

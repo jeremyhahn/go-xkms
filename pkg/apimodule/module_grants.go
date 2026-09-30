@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // roleGrantOnce guards the one-time contribution of the module's permission
@@ -82,10 +83,21 @@ func registerRoleGrants() {
 	})
 }
 
+// belowGatePermissions returns the permissions xkms checks below the
+// transport gate, which no route, MCP method or RPC names because only the
+// request's content reveals they are needed: ssh:service, required to address
+// a service-scoped SSH asset (pkg/ssh/tenancy).
+func belowGatePermissions() []qrdbsdk.Permission {
+	return []qrdbsdk.Permission{
+		qrdbsdk.Permission(auth.ResourceSSH + ":" + auth.ActionService),
+	}
+}
+
 // modulePermissions returns, sorted and de-duplicated, every permission the
 // xkms module declares across its three declaration surfaces: the REST route
 // table, the MCP method specs, and the qrdb.v1.permission options on its gRPC
-// method descriptors.
+// method descriptors; plus the permissions it checks below the gate
+// (belowGatePermissions).
 //
 // It is DERIVED rather than hand-copied so a new RPC, route, or tool is
 // granted — and scope-checked — the moment it is declared, and so the
@@ -117,6 +129,10 @@ func modulePermissions() []qrdbsdk.Permission {
 				set[perm] = struct{}{}
 			}
 		}
+	}
+
+	for _, p := range belowGatePermissions() {
+		set[string(p)] = struct{}{}
 	}
 
 	perms := make([]qrdbsdk.Permission, 0, len(set))
