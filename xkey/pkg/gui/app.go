@@ -3369,6 +3369,18 @@ func (a *App) startIPCServer() {
 		return
 	}
 
+	// The spawned goroutine below watches a.ctx.Done() to know when to
+	// close the listener. In production a.ctx is always bound by the
+	// Wails startup hook before postDataDirStartup can be reached from the
+	// frontend, so this never fires there; it guards a nil context.Context
+	// (a nil interface, not merely an empty one) from panicking the
+	// goroutine on Done(), which a plain-Go caller -- chiefly tests -- can
+	// otherwise reach.
+	if a.ctx == nil {
+		a.log.Warn("IPC server not started: application context not bound")
+		return
+	}
+
 	socketPath := ipc.DefaultSocketPath()
 	handler := &guiIPCHandler{app: a}
 

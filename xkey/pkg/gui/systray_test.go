@@ -14,10 +14,14 @@
 package gui
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
 
 // TestNewTrayManager verifies the constructor wires the App reference and a
@@ -47,6 +51,79 @@ func TestTrayManager_UpdateMethods_NilMenuItemsNoOp(t *testing.T) {
 		tray.UpdateKeyCount(3)
 		tray.UpdateStorageStatus(true)
 		tray.UpdateStorageStatus(false)
+	})
+}
+
+// writeDevicesYAML sandboxes PhoneService's shared config file
+// (~/.xkey/devices.yaml, resolved from $HOME) under a temp directory and
+// writes the given raw YAML body into it, so a test can pre-populate paired
+// devices without reaching into the unexported services.phoneConfigDevice
+// type from this package.
+func writeDevicesYAML(t *testing.T, yamlBody string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	xkeyDir := filepath.Join(home, ".xkey")
+	require.NoError(t, os.MkdirAll(xkeyDir, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(xkeyDir, "devices.yaml"), []byte(yamlBody), 0600))
+}
+
+// TestTrayManager_HandlePhoneConnect_NoPairedDevices verifies the tray
+// gracefully no-ops (rather than panicking on a nil menu item) when the
+// operator clicks "Connect" and no phone has ever been paired -- the state
+// of a headless test process, and of any real host before first pairing.
+func TestTrayManager_HandlePhoneConnect_NoPairedDevices(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	app := &App{log: lifecycleTestLogger(), phoneService: services.NewPhoneService()}
+	tray := NewTrayManager(app)
+
+	assert.NotPanics(t, func() {
+		tray.handlePhoneConnect()
+	})
+}
+
+// TestTrayManager_HandlePhoneConnect_MissingKeysFails verifies the error path:
+// a paired device record with no Noise keys (a config file hand-edited or
+// left over from a broken pairing) is reported and does not panic.
+func TestTrayManager_HandlePhoneConnect_MissingKeysFails(t *testing.T) {
+	writeDevicesYAML(t, `
+devices:
+  - name: "Test Phone"
+    address: "AA:BB:CC:DD:EE:FF"
+    noise_public_key: ""
+    local_noise_private_key: ""
+default_device: "Test Phone"
+`)
+
+	app := &App{log: lifecycleTestLogger(), phoneService: services.NewPhoneService()}
+	tray := NewTrayManager(app)
+
+	assert.NotPanics(t, func() {
+		tray.handlePhoneConnect()
+	})
+}
+
+// TestTrayManager_HandlePhoneDisconnect_NotConnected verifies the tray
+// no-ops when "Disconnect" is clicked with no phone currently connected.
+func TestTrayManager_HandlePhoneDisconnect_NotConnected(t *testing.T) {
+	app := &App{log: lifecycleTestLogger(), phoneService: services.NewPhoneService()}
+	tray := NewTrayManager(app)
+
+	assert.NotPanics(t, func() {
+		tray.handlePhoneDisconnect()
+	})
+}
+
+// TestTrayManager_HandlePhoneAttest_NotConnected verifies the tray no-ops
+// when "Attest Device" is clicked with no phone currently connected.
+func TestTrayManager_HandlePhoneAttest_NotConnected(t *testing.T) {
+	app := &App{log: lifecycleTestLogger(), phoneService: services.NewPhoneService()}
+	tray := NewTrayManager(app)
+
+	assert.NotPanics(t, func() {
+		tray.handlePhoneAttest()
 	})
 }
 
