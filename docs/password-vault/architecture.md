@@ -19,12 +19,11 @@ The core is a set of small, composable stores rather than one type:
 
 | Concern | File |
 |---|---|
-| Entry model | `entity.go`, `types.go` |
+| Entry model | `types.go` |
 | Base store | `store.go` |
-| DAO-backed store | `dao_store.go` |
 | Scoping | `scope.go`, `scoped_store.go` |
-| Teams | `team_entity.go`, `team_store.go`, `team_scoped_store.go` |
-| Tenancy | `tenant_dao_factory.go`, `tenant_store_manager.go` |
+| Teams (xkey's local team list only) | `team_entity.go`, `team_store.go` |
+| Tenancy | `tenant_store_manager.go` |
 | Access control | `access.go` |
 | Expiry | `expiry.go` |
 | Generation | `generator.go` |
@@ -166,9 +165,9 @@ session gate are enforced once.
   barrier key can read them. A per-user DEK is an open design question.
 - **Scope and sharing are access control, not organisation.** `--shared` shares
   an entry with the tenant; `--scope own|shared|all` chooses what a listing
-  reveals. The team stores (`team_*`) are not wired to any transport: they
-  carry their own member list, and go-qrdb has no user-group model for them
-  to use instead, so they stay unwired until that model exists.
+  reveals. There is no team-scoped sharing: a user-group model belongs to
+  go-qrdb and does not exist yet, so the old unwired team-scoped store, team
+  REST handlers and per-tenant DAO factory were deleted.
 - **Expiry is metadata, not enforcement.** `expiry.go` records
   `--expires-at`; treat an expired entry as a signal to rotate, not as a
   guarantee that the credential stopped working.

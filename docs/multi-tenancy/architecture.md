@@ -94,7 +94,7 @@ itself:
 | Piece | Where | Owner |
 |---|---|---|
 | Tenant model, identity, RBAC | `go-qrdb/sdk/go` | **go-qrdb** |
-| Tenant middleware | `pkg/api/rest/middleware_tenant.go`, `middleware_tenant_dao.go`; `pkg/api/grpc/interceptor_tenant.go`; `pkg/api/tenantgate` | go-xkms |
+| Tenant middleware | `pkg/api/rest/middleware_tenant.go`; `pkg/api/grpc/interceptor_tenant.go`; `pkg/api/tenantgate` | go-xkms |
 | Per-tenant barriers | `pkg/seal/platform_store_tenant.go`, `pkg/xkms/backend_tenant.go` | go-xkms |
 | Tenant surface | `pkg/api/rest/handlers_tenant.go`, `transport.TenantService` | go-xkms |
 | Tenant composition | `sdk/go/tenant_compose.go`, `tenant_factories.go` | go-xkms |

@@ -117,47 +117,11 @@ var (
 	ErrStaticPasswordUnmarshalFailed = staticpw.ErrUnmarshalFailed
 )
 
-// --- Multi-tenant + team-scoped surface ---
-
-// StaticPasswordTeamScopedStore enforces team membership on password operations.
-type StaticPasswordTeamScopedStore = staticpw.TeamScopedStore
-
-// StaticPasswordTenantDAOFactory builds isolated per-tenant DAO password and
-// team stores from the system KV store and a barrier registry accessor.
-type StaticPasswordTenantDAOFactory = staticpw.TenantDAOFactory
-
-// StaticPasswordBarrierRegistryAccessor resolves a per-tenant barrier-backed KV
-// store for the tenant DAO factory.
-type StaticPasswordBarrierRegistryAccessor = staticpw.BarrierRegistryAccessor
-
-// ErrStaticPasswordInvalidTenant is the typed error for an invalid tenant.
-type ErrStaticPasswordInvalidTenant = staticpw.ErrInvalidTenant
-
-// ErrStaticPasswordNilBarrierRegistryAccessor is the typed error for a nil registry.
-type ErrStaticPasswordNilBarrierRegistryAccessor = staticpw.ErrNilBarrierRegistryAccessor
-
-// ErrStaticPasswordNilSystemKVStore is the typed error for a nil system KV store.
-type ErrStaticPasswordNilSystemKVStore = staticpw.ErrNilSystemKVStore
-
-// NewStaticPasswordTeamScopedStore constructs a team-membership-scoped store.
-var NewStaticPasswordTeamScopedStore = staticpw.NewTeamScopedStore
-
-// NewStaticPasswordTenantDAOFactory constructs a per-tenant DAO store factory.
-var NewStaticPasswordTenantDAOFactory = staticpw.NewTenantDAOFactory
-
 var (
 	// ErrStaticPasswordInvalidTenantID is returned for an invalid tenant ID.
 	ErrStaticPasswordInvalidTenantID = staticpw.ErrInvalidTenantID
 	// ErrStaticPasswordInvalidUserID is returned for an empty or invalid user ID.
 	ErrStaticPasswordInvalidUserID = staticpw.ErrInvalidUserID
-	// ErrStaticPasswordNilPasswordStore is returned for a nil password store.
-	ErrStaticPasswordNilPasswordStore = staticpw.ErrNilPasswordStore
-	// ErrStaticPasswordNilTeamStore is returned for a nil team store.
-	ErrStaticPasswordNilTeamStore = staticpw.ErrNilTeamStore
-	// ErrStaticPasswordNotTeamMember is returned when the user is not a member.
-	ErrStaticPasswordNotTeamMember = staticpw.ErrNotTeamMember
-	// ErrStaticPasswordNotTeamOwner is returned when the user is not the owner.
-	ErrStaticPasswordNotTeamOwner = staticpw.ErrNotTeamOwner
 	// ErrStaticPasswordTeamExists is returned when a team already exists.
 	ErrStaticPasswordTeamExists = staticpw.ErrTeamExists
 )

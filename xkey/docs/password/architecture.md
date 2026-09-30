@@ -14,12 +14,11 @@ including folder organization, KeePass/CSV/XML import, and backup/restore.
 
 Out of scope: browser-extension autofill, which reads through this same
 store but adds its own domain-matching and CTAP2-authentication policy —
-see [autofill/](../autofill/). Team- and tenant-scoped password sharing
-(`staticpw.TeamStore`, `TenantDAOFactory`, re-exported as
-`xkms.StaticPasswordTeamStore`/`StaticPasswordTenantDAOFactory` in
-`sdk/go/staticpw.go`) is server-side multi-tenant infrastructure with no
-`xkey` CLI or GUI surface today; it is noted in engineering.md for
-completeness but not otherwise documented here.
+see [autofill/](../autofill/). Tenant-scoped sharing (shared entries every
+tenant user sees, personal entries private to their owner) is a server-side
+feature of go-xkms's password vault; see go-xkms `docs/password-vault/`. The
+GUI's team list (`services.TeamService` over `staticpw.TeamStore`) records
+teams and members locally and shares no passwords.
 
 ## Components
 

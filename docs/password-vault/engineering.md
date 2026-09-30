@@ -36,17 +36,17 @@ the active mode for a tenant store is always `AccessSessionBased`
 type PasswordScope string          // scope.go:17
 ```
 
-Scoped, team-scoped and tenant-scoped stores compose over the base store:
-`scoped_store.go`, `team_scoped_store.go`, `tenant_store_manager.go`,
-`tenant_dao_factory.go`.
+Scoped and tenant-scoped stores compose over the base store:
+`scoped_store.go`, `tenant_store_manager.go`. The team store
+(`team_entity.go`, `team_store.go`) only records teams and their members for
+xkey's local GUI; no password is shared through it.
 
 ### Stores
 
 `store.go`: `BackendStore` (`store.go:107`), wrapping a `storage.Backend` --
 at-rest confidentiality is the backend's (the tenant barrier), not a
 `staticpw`-owned cipher. `scoped_store.go`: `ScopedStore`, splitting personal
-and shared entries over two `BackendStore`s. `dao_store.go`: `DAOStore`,
-persistence through go-qrdb's `qrdbsdk.NewDAO`. All three implement `Store`
+and shared entries over two `BackendStore`s. Both implement `Store`
 and share one `Get` contract: return the entry exactly as stored, with no
 decrypt- or PIN-aware variant. Entries: `entity.go`, `team_entity.go`,
 `types.go`. Support: `generator.go`, `expiry.go`, `validation.go`,
@@ -137,10 +137,9 @@ desktop-local store.
 
 ## Persistence
 
-Through `dao_store.go` to go-qrdb (`qrdbsdk.NewDAO`), over a `storage.Backend`
-that is the tenant barrier for encryption at rest. Tenant scoping is
-`tenant_dao_factory.go` + `tenant_store_manager.go`; team scoping is the
-`team_*` files.
+Through `BackendStore` to a `storage.Backend` that is the tenant barrier for
+encryption at rest, under the `pkg/scope` keyspace. Tenant and user scoping is
+`tenant_store_manager.go` + `scoped_store.go`.
 
 There is no dedicated migration file in this package; entry-layout changes
 go through the same `Store`/DAO surface as any other change (no-backward-compat:

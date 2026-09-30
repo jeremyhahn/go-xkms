@@ -58,7 +58,7 @@ it to a system-tenant identity.
 
 The more important half of this feature has no capability rows: **every
 `/api/v1` route in `GroupAPIv1` runs behind tenant middleware**
-(`pkg/api/rest/middleware_tenant.go`, `middleware_tenant_dao.go`;
+(`pkg/api/rest/middleware_tenant.go`;
 `pkg/api/grpc/interceptor_tenant.go`; `pkg/api/tenantgate`). The gate admits or
 refuses the request; it does not narrow the key namespace.
 

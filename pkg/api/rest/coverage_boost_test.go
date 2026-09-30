@@ -14,8 +14,6 @@
 package rest
 
 import (
-	"bytes"
-	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -34,9 +32,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -1189,90 +1184,6 @@ func TestEncryptHandler_ListKeysError(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-// ==========================================================================
-// handlers_team.go - additional coverage for AddMember/RemoveMember
-// ==========================================================================
-
-func TestTeamHandlers_AddMember_MissingName(t *testing.T) {
-	handlers, _ := newCovBoostTeamHandlers(t)
-
-	body, _ := json.Marshal(transport.AddTeamMemberRequest{MemberID: "bob"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/teams//members", bytes.NewReader(body))
-	// No chi context for name param - triggers missing name.
-	w := httptest.NewRecorder()
-	handlers.AddMemberHandler(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestTeamHandlers_RemoveMember_MissingName(t *testing.T) {
-	handlers, _ := newCovBoostTeamHandlers(t)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/teams//members/bob", nil)
-	w := httptest.NewRecorder()
-	handlers.RemoveMemberHandler(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestTeamHandlers_RemoveMember_InternalError(t *testing.T) {
-	handlers, teamStore := newCovBoostTeamHandlers(t)
-	ctx := context.Background()
-
-	require.NoError(t, teamStore.Create(ctx, &staticpw.TeamEntity{
-		Name: "dev", OwnerID: "alice", Members: []string{"bob"},
-	}))
-
-	// Remove a member that does not exist - the store may return an error.
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/teams/dev/members/nonexistent", nil)
-	req = chiContext(req, map[string]string{"name": "dev", "memberID": "nonexistent"})
-	w := httptest.NewRecorder()
-	handlers.RemoveMemberHandler(w, req)
-	// Even if member doesn't exist, the store might just no-op. Check it doesn't panic.
-	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError, http.StatusNotFound}, w.Code)
-}
-
-func TestTeamHandlers_AuthenticatedUserID_WithHeader(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("X-User-ID", "user-123")
-	result := authenticatedUserID(req)
-	assert.Equal(t, "user-123", result)
-}
-
-func TestTeamHandlers_AuthenticatedUserID_Empty(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	result := authenticatedUserID(req)
-	assert.Equal(t, "", result)
-}
-
-func TestTeamHandlers_CreateTeam_WithOwnerHeader(t *testing.T) {
-	handlers, _ := newCovBoostTeamHandlers(t)
-
-	body, _ := json.Marshal(transport.CreateTeamRequest{Name: "team-owned"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/teams", bytes.NewReader(body))
-	req.Header.Set("X-User-ID", "alice")
-	w := httptest.NewRecorder()
-	handlers.CreateTeamHandler(w, req)
-
-	assert.Equal(t, http.StatusCreated, w.Code)
-	var resp transport.CreateTeamResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "alice", resp.Team.OwnerID)
-}
-
-func newCovBoostTeamHandlers(t *testing.T) (*TeamHandlers, staticpw.TeamStore) {
-	t.Helper()
-	backend := storage.NewMemory()
-	t.Cleanup(func() { backend.Close() })
-
-	kvStore, err := kvadapter.New(backend)
-	require.NoError(t, err)
-
-	teamStore, err := staticpw.NewDAOTeamStore(kvStore)
-	require.NoError(t, err)
-	t.Cleanup(func() { teamStore.Close() })
-
-	return NewTeamHandlers(teamStore), teamStore
 }
 
 // ==========================================================================

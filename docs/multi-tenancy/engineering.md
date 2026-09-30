@@ -18,8 +18,8 @@ type TenantService interface {
 }
 ```
 
-Server side: `pkg/api/rest/handlers_tenant.go` plus `middleware_tenant.go` and
-`middleware_tenant_dao.go`; `pkg/api/grpc/interceptor_tenant.go`;
+Server side: `pkg/api/rest/handlers_tenant.go` plus `middleware_tenant.go`;
+`pkg/api/grpc/interceptor_tenant.go`;
 `pkg/api/tenantgate`. Composition: `sdk/go/tenant_compose.go`,
 `sdk/go/tenant_factories.go`. Per-tenant state:
 `pkg/seal/platform_store_tenant.go`, `pkg/xkms/backend_tenant.go`.
@@ -191,8 +191,8 @@ resolution is `pkg/xkms/backend_tenant.go`.
 
 ## Test strategy
 
-- **Middleware** — `pkg/api/rest/middleware_tenant_test.go`,
-  `middleware_tenant_dao_test.go`; `pkg/api/grpc/interceptor_tenant_test.go`,
+- **Middleware** — `pkg/api/rest/middleware_tenant_test.go`;
+  `pkg/api/grpc/interceptor_tenant_test.go`,
   `interceptor_tenant_stream_test.go`; `pkg/api/{grpc,unix,mcp}/tenant*_test.go`.
 - **Tenant binding** — `pkg/xkms/tenant_binding_test.go` (service layer,
   against go-qrdb's real TenantService over an in-memory barrier: A → B

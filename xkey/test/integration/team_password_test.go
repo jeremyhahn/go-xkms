@@ -16,7 +16,6 @@
 package xkey
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -129,156 +128,6 @@ func TestTeamLifecycle(t *testing.T) {
 	teams, err = svc.ListTeams()
 	require.NoError(t, err)
 	assert.Empty(t, teams)
-}
-
-func TestTeamScopedPasswordAccess(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	teamStore := newFileBackedTeamStore(t, tmpDir)
-	passwordStore := newFileBackedPasswordStore(t, tmpDir)
-
-	// Create a team with an owner and a member.
-	ctx := context.Background()
-	team := &xkms.StaticPasswordTeamEntity{
-		Name:    "devops",
-		OwnerID: "admin",
-		Members: []string{"alice"},
-	}
-	require.NoError(t, teamStore.Create(ctx, team))
-
-	// Owner adds a password under team scope.
-	ownerScoped, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "admin")
-	require.NoError(t, err)
-
-	pw := &xkms.StaticPassword{
-		Name:     "prod-db",
-		Password: "s3cret-db-pass",
-	}
-	require.NoError(t, ownerScoped.AddTeamPassword(ctx, "devops", pw))
-
-	// Member can read team passwords.
-	memberScoped, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "alice")
-	require.NoError(t, err)
-
-	passwords, err := memberScoped.ListTeamPasswords(ctx, "devops")
-	require.NoError(t, err)
-	require.Len(t, passwords, 1)
-	assert.Equal(t, "prod-db", passwords[0].Name)
-	assert.True(t, passwords[0].Shared)
-	assert.Equal(t, "devops", passwords[0].OwnerID)
-
-	// Member can get a specific team password.
-	fetched, err := memberScoped.GetTeamPassword(ctx, "devops", "prod-db")
-	require.NoError(t, err)
-	assert.Equal(t, "prod-db", fetched.Name)
-
-	// Non-member is denied access.
-	outsiderScoped, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "outsider")
-	require.NoError(t, err)
-
-	_, err = outsiderScoped.ListTeamPasswords(ctx, "devops")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNotTeamMember))
-
-	_, err = outsiderScoped.GetTeamPassword(ctx, "devops", "prod-db")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNotTeamMember))
-
-	// Member cannot add passwords (only owner can).
-	memberPW := &xkms.StaticPassword{
-		Name:     "staging-db",
-		Password: "staging-pass",
-	}
-	err = memberScoped.AddTeamPassword(ctx, "devops", memberPW)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNotTeamOwner))
-
-	// Member cannot delete team passwords (only owner can).
-	err = memberScoped.DeleteTeamPassword(ctx, "devops", "prod-db")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNotTeamOwner))
-
-	// Owner can delete team passwords.
-	require.NoError(t, ownerScoped.DeleteTeamPassword(ctx, "devops", "prod-db"))
-
-	passwords, err = ownerScoped.ListTeamPasswords(ctx, "devops")
-	require.NoError(t, err)
-	assert.Empty(t, passwords)
-}
-
-func TestMultipleTeamsIsolation(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	teamStore := newFileBackedTeamStore(t, tmpDir)
-	passwordStore := newFileBackedPasswordStore(t, tmpDir)
-
-	ctx := context.Background()
-
-	// Create two teams with the same owner.
-	frontendTeam := &xkms.StaticPasswordTeamEntity{
-		Name:    "frontend",
-		OwnerID: "admin",
-		Members: []string{"user-fe1"},
-	}
-	backendTeam := &xkms.StaticPasswordTeamEntity{
-		Name:    "backend",
-		OwnerID: "admin",
-		Members: []string{"user-be1"},
-	}
-	require.NoError(t, teamStore.Create(ctx, frontendTeam))
-	require.NoError(t, teamStore.Create(ctx, backendTeam))
-
-	// Owner adds passwords to each team.
-	ownerScoped, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "admin")
-	require.NoError(t, err)
-
-	require.NoError(t, ownerScoped.AddTeamPassword(ctx, "frontend", &xkms.StaticPassword{
-		Name:     "cdn-key",
-		Password: "cdn-secret-123",
-	}))
-	require.NoError(t, ownerScoped.AddTeamPassword(ctx, "frontend", &xkms.StaticPassword{
-		Name:     "analytics-token",
-		Password: "analytics-abc",
-	}))
-	require.NoError(t, ownerScoped.AddTeamPassword(ctx, "backend", &xkms.StaticPassword{
-		Name:     "database-root",
-		Password: "db-root-pass",
-	}))
-
-	// Frontend team sees only its passwords.
-	fePws, err := ownerScoped.ListTeamPasswords(ctx, "frontend")
-	require.NoError(t, err)
-	assert.Len(t, fePws, 2)
-
-	feNames := make([]string, len(fePws))
-	for i, p := range fePws {
-		feNames[i] = p.Name
-	}
-	assert.Contains(t, feNames, "cdn-key")
-	assert.Contains(t, feNames, "analytics-token")
-	assert.NotContains(t, feNames, "database-root")
-
-	// Backend team sees only its passwords.
-	bePws, err := ownerScoped.ListTeamPasswords(ctx, "backend")
-	require.NoError(t, err)
-	assert.Len(t, bePws, 1)
-	assert.Equal(t, "database-root", bePws[0].Name)
-
-	// Frontend member cannot see backend passwords.
-	feScoped, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "user-fe1")
-	require.NoError(t, err)
-
-	_, err = feScoped.ListTeamPasswords(ctx, "backend")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNotTeamMember))
-
-	// Backend member cannot see frontend passwords.
-	beScoped, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "user-be1")
-	require.NoError(t, err)
-
-	_, err = beScoped.ListTeamPasswords(ctx, "frontend")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNotTeamMember))
 }
 
 func TestTeamServiceErrorCases(t *testing.T) {
@@ -413,30 +262,6 @@ func TestTeamServiceErrorCases(t *testing.T) {
 		err = svc.RemoveMember("ops", "user-1")
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, services.ErrTeamStoreNotSet))
-	})
-}
-
-func TestTeamScopedStoreConstructorErrors(t *testing.T) {
-	tmpDir := t.TempDir()
-	passwordStore := newFileBackedPasswordStore(t, tmpDir)
-	teamStore := newFileBackedTeamStore(t, tmpDir)
-
-	t.Run("nil password store", func(t *testing.T) {
-		_, err := xkms.NewStaticPasswordTeamScopedStore(nil, teamStore, "user-1")
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNilPasswordStore))
-	})
-
-	t.Run("nil team store", func(t *testing.T) {
-		_, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, nil, "user-1")
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNilTeamStore))
-	})
-
-	t.Run("empty user ID", func(t *testing.T) {
-		_, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "")
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, xkms.ErrStaticPasswordInvalidUserID))
 	})
 }
 

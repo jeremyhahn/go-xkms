@@ -14,6 +14,7 @@
 package rest
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -26,6 +27,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -577,6 +579,15 @@ func TestRemoveMemberHandler_CustodianMissingUserID(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.RemoveMemberHandler(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// chiContext returns r carrying chi URL params, as the router would set them.
+func chiContext(r *http.Request, params map[string]string) *http.Request {
+	rctx := chi.NewRouteContext()
+	for k, v := range params {
+		rctx.URLParams.Add(k, v)
+	}
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
 
 // ==========================================================================

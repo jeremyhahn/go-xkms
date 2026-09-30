@@ -15,6 +15,29 @@ package staticpw
 
 import "errors"
 
+// ErrDAOCreation is returned when the DAO layer fails to initialize.
+type ErrDAOCreation struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e ErrDAOCreation) Error() string {
+	return "staticpw: failed to create DAO: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e ErrDAOCreation) Unwrap() error {
+	return e.Cause
+}
+
+// ErrNilKVStore is returned when a nil kvstore.KVStore is provided.
+type ErrNilKVStore struct{}
+
+// Error implements the error interface.
+func (e ErrNilKVStore) Error() string {
+	return "staticpw: nil kvstore"
+}
+
 var (
 	// ErrStoreClosed is returned when the store has been closed.
 	ErrStoreClosed = errors.New("staticpw: store is closed")
@@ -115,19 +138,4 @@ var (
 
 	// ErrTeamNameEmpty is returned when the team name is empty.
 	ErrTeamNameEmpty = errors.New("staticpw: team name is required")
-
-	// ErrNotTeamMember is returned when a user attempts an operation on a team
-	// they do not belong to.
-	ErrNotTeamMember = errors.New("staticpw: not a team member")
-
-	// ErrNotTeamOwner is returned when a non-owner attempts a write operation
-	// on a team's passwords.
-	ErrNotTeamOwner = errors.New("staticpw: not the team owner")
-
-	// ErrNilTeamStore is returned when a nil TeamStore is provided.
-	ErrNilTeamStore = errors.New("staticpw: team store is nil")
-
-	// ErrNilPasswordStore is returned when a nil password Store is provided
-	// to TeamScopedStore.
-	ErrNilPasswordStore = errors.New("staticpw: password store is nil")
 )
