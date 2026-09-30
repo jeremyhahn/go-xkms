@@ -23,6 +23,8 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -144,5 +146,70 @@ func generateRawSignKey(t *testing.T, c *CryptoMockClient) {
 	})
 	if err != nil {
 		t.Fatalf("GenerateKey(rsa-2048): %v", err)
+	}
+}
+
+// gcmEncryptSubprocess marks the re-exec'd child of
+// TestCryptoMockClient_Encrypt_FIPS140Only.
+const gcmEncryptSubprocess = "XKMS_PKCS11TEST_GCM_ENCRYPT_SUBPROCESS"
+
+// TestCryptoMockClient_Encrypt_FIPS140Only re-execs this binary with
+// GODEBUG=fips140=only and pins CryptoMockClient.Encrypt's two CKM_AES_GCM
+// outcomes under that mode (go-xkms#23):
+//
+//   - CK_GCM_PARAMS.pIv left empty (the token generates the IV) succeeds,
+//     because that is the one combination cipher.NewGCMWithRandomNonce
+//     supports and pkg/crypto/aead.NewGCMForFreshEncrypt substitutes it for
+//     plain cipher.NewGCM.
+//   - CK_GCM_PARAMS.pIv supplied by the caller -- what every other
+//     CKM_AES_GCM conformance test in this package sends via suiteGCMIV() --
+//     still fails closed with aead.ErrArbitraryIVGCMUnavailable, matching
+//     the module's own documented posture for that case.
+//
+// Decrypting either ciphertext back through this mock remains unsupported
+// under fips140=only; see the doc comment on decryptAESGCM.
+func TestCryptoMockClient_Encrypt_FIPS140Only(t *testing.T) {
+	if os.Getenv(gcmEncryptSubprocess) == "1" {
+		if !fips140.Enforced() {
+			t.Fatal("child is not enforcing FIPS 140-only mode; GODEBUG=fips140=only was not honored")
+		}
+		ctx := context.Background()
+		plaintext := []byte("fips140=only CKM_AES_GCM conformance fixture")
+
+		c := NewCryptoMockClient()
+		resp, err := c.Encrypt(ctx, &transport.EncryptRequest{KeyID: "gcm-generated-iv", Plaintext: plaintext})
+		if err != nil {
+			t.Fatalf("Encrypt with no caller nonce under fips140=only = %v, want success", err)
+		}
+		if len(resp.Nonce) != module.GCMNonceSize {
+			t.Fatalf("generated nonce is %d bytes, want %d", len(resp.Nonce), module.GCMNonceSize)
+		}
+		if len(resp.Tag) != gcmTagLen {
+			t.Fatalf("tag is %d bytes, want %d", len(resp.Tag), gcmTagLen)
+		}
+		if len(resp.Ciphertext) != len(plaintext) {
+			t.Fatalf("ciphertext is %d bytes, want %d", len(resp.Ciphertext), len(plaintext))
+		}
+
+		_, err = c.Encrypt(ctx, &transport.EncryptRequest{
+			KeyID: "gcm-caller-iv", Plaintext: plaintext, Nonce: suiteGCMIV(),
+		})
+		if !errors.Is(err, aead.ErrArbitraryIVGCMUnavailable) {
+			t.Fatalf("Encrypt with a caller-supplied nonce under fips140=only = %v, want ErrArbitraryIVGCMUnavailable", err)
+		}
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestCryptoMockClient_Encrypt_FIPS140Only$", "-test.v")
+	cmd.Env = append(os.Environ(), gcmEncryptSubprocess+"=1", "GODEBUG=fips140=only")
+	out, err := cmd.CombinedOutput()
+	if strings.Contains(string(out), "panic:") {
+		t.Fatalf("fips140=only child panicked:\n%s", out)
+	}
+	if err != nil {
+		t.Fatalf("fips140=only child failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Errorf("fips140=only child did not pass:\n%s", out)
 	}
 }

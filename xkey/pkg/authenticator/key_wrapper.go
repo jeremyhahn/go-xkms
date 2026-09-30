@@ -16,7 +16,6 @@ package authenticator
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
 	"errors"
 
 	"github.com/jeremyhahn/go-enclave"
@@ -134,7 +133,15 @@ func NewAESGCMKeyWrapper(key []byte) (*AESGCMKeyWrapper, error) {
 		return nil, ErrInvalidWrappingKey
 	}
 
-	aead, err := cipher.NewGCM(block)
+	// cipher.NewGCMWithRandomNonce (go-xkms#23) generates the nonce inside
+	// the Go Cryptographic Module boundary and prepends it to Seal's output
+	// itself, rather than this package generating one with crypto/rand and
+	// handing it to Seal as an arbitrary IV -- a construction
+	// GODEBUG=fips140=only refuses outright. Its output framing is
+	// identical to the caller-nonce construction this replaces (nonce (12
+	// bytes) || ciphertext || tag (16 bytes)), so the wrapped format below
+	// is unchanged.
+	aead, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, ErrKeyWrapFailed
 	}
@@ -146,36 +153,26 @@ func NewAESGCMKeyWrapper(key []byte) (*AESGCMKeyWrapper, error) {
 
 // WrapFrom encrypts the plaintext held in src using AES-256-GCM with a random
 // nonce. Output format: nonce (12 bytes) || ciphertext || tag (16 bytes).
-// The tag is automatically appended by the GCM Seal operation.
+// The nonce and tag are both generated/appended by the GCM Seal operation.
 //
 // The plaintext is read through a WithBytes borrow on src, so the mlocked
-// pages stay mapped for the whole encrypt, and Seal streams it straight into
-// the ciphertext buffer: no copy of the plaintext is made on the ordinary Go
-// heap. Only the nonce and the output are allocated here, and neither is
-// secret. The callback touches nothing in pkg/secure, so the borrow it holds
+// pages stay mapped for the whole encrypt, and Seal allocates and returns
+// the output directly: no copy of the plaintext is made on the ordinary Go
+// heap. The callback touches nothing in pkg/secure, so the borrow it holds
 // is the only one WrapFrom takes; the caller must not be holding another.
 //
 // Returns ErrInvalidWrapSource if src is nil or has been destroyed.
-// Returns ErrKeyWrapFailed if nonce generation fails.
 func (w *AESGCMKeyWrapper) WrapFrom(src *secure.Buffer) ([]byte, error) {
 	if src == nil {
 		return nil, ErrInvalidWrapSource
 	}
 
-	// Generate random nonce
-	nonce := make([]byte, AESGCMNonceSize)
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, ErrKeyWrapFailed
-	}
-
 	var wrapped []byte
 	if err := src.WithBytes(func(plaintext []byte) error {
-		// Pre-allocate output buffer: nonce + ciphertext + tag. Seal appends
-		// ciphertext+tag to the nonce already in place.
-		outputLen := AESGCMNonceSize + len(plaintext) + aesGCMTagSize
-		wrapped = make([]byte, AESGCMNonceSize, outputLen)
-		copy(wrapped, nonce)
-		wrapped = w.aead.Seal(wrapped, nonce, plaintext, nil)
+		// w.aead's NonceSize is zero (cipher.NewGCMWithRandomNonce): Seal
+		// generates the nonce itself and prepends it to the returned
+		// ciphertext.
+		wrapped = w.aead.Seal(nil, nil, plaintext, nil)
 		return nil
 	}); err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrInvalidWrapSource, Cause: err}
@@ -207,14 +204,14 @@ func (w *AESGCMKeyWrapper) UnwrapInto(wrapped, dst []byte) error {
 		return ErrInvalidUnwrapDestination
 	}
 
-	// Extract nonce and ciphertext+tag
-	nonce := wrapped[:AESGCMNonceSize]
-	ciphertext := wrapped[AESGCMNonceSize:]
-
+	// w.aead's NonceSize is zero (cipher.NewGCMWithRandomNonce): Open reads
+	// the nonce back off the front of wrapped itself, so the whole blob is
+	// passed as its "ciphertext" argument rather than split beforehand.
+	//
 	// Decrypt and verify. Open appends to dst[:0]; cap(dst) >= plainLen, so
 	// crypto/cipher's sliceForAppend reuses dst rather than allocating —
 	// the plaintext is written directly into the caller's memory.
-	out, err := w.aead.Open(dst[:0], nonce, ciphertext, nil)
+	out, err := w.aead.Open(dst[:0], nil, wrapped, nil)
 	if err != nil {
 		// crypto/cipher clears the output buffer on authentication failure,
 		// so dst carries no partial plaintext here.

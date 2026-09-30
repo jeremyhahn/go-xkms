@@ -41,6 +41,7 @@ import (
 	"golang.org/x/crypto/hkdf"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -354,6 +355,21 @@ func (c *CryptoMockClient) Verify(ctx context.Context, req *transport.VerifyRequ
 
 // Encrypt performs real AES-GCM encryption using the stored or lazily-generated key.
 // Returns Nonce, Tag, and Ciphertext separately per the transport.EncryptResponse contract.
+//
+// It builds its AEAD through pkg/crypto/aead.NewGCMForFreshEncrypt, the same
+// FIPS-aware selector every production symmetric backend uses (go-xkms#23),
+// rather than constructing cipher.NewGCM/NewGCMWithTagSize directly: a real
+// backend already succeeds under GODEBUG=fips140=only for the one
+// combination cipher.NewGCMWithRandomNonce supports -- CK_GCM_PARAMS.pIv
+// left empty (the token generates the IV) and the default full 128-bit tag
+// -- and this mock previously did not, so it understated what a real
+// deployment actually does in that mode. A caller-supplied pIv (the
+// suiteGCMIV() fixture every other CKM_AES_GCM conformance test in this
+// package uses) still fails closed with aead.ErrArbitraryIVGCMUnavailable,
+// matching the module's own documented posture: CKM_AES_GCM's CK_GCM_PARAMS
+// carries the IV to the token with no random-nonce mode to opt into (see
+// docs/fips/README.md "Integration Points"), so most of this suite's
+// CKM_AES_GCM coverage is unaffected and continues to fail the same way.
 func (c *CryptoMockClient) Encrypt(ctx context.Context, req *transport.EncryptRequest) (*transport.EncryptResponse, error) {
 	key, err := c.getOrCreateSymKey(req.KeyID)
 	if err != nil {
@@ -365,13 +381,25 @@ func (c *CryptoMockClient) Encrypt(ctx context.Context, req *transport.EncryptRe
 		return nil, err
 	}
 
-	// Honor the requested tag length, as a real backend must. NIST SP 800-38D
-	// section 5.2.1.2 defines a t-bit tag as the leading t bits of the full
-	// tag; returning 128 bits to a caller that asked for 96 hands back a
-	// ciphertext its peer cannot authenticate.
-	gcm, err := newGCMWithTagSize(block, req.TagSize)
+	callerNonce := len(req.Nonce) > 0
+	gcm, randomNonce, err := aead.NewGCMForFreshEncrypt(block, req.TagSize, callerNonce)
 	if err != nil {
 		return nil, err
+	}
+
+	if randomNonce {
+		// gcm's NonceSize is zero (cipher.NewGCMWithRandomNonce): Seal
+		// generates the nonce itself and prepends it to the returned blob.
+		sealed := gcm.Seal(nil, nil, req.Plaintext, req.AdditionalData)
+		nonce, ciphertext, tag, splitErr := aead.SplitGCMWithRandomNonce(sealed)
+		if splitErr != nil {
+			return nil, splitErr
+		}
+		return &transport.EncryptResponse{
+			Ciphertext: ciphertext,
+			Nonce:      nonce,
+			Tag:        tag,
+		}, nil
 	}
 
 	// Honor a caller-supplied nonce, as a real backend must: the module sends
@@ -449,6 +477,24 @@ func (c *CryptoMockClient) decryptOAEP(req *transport.DecryptRequest) (*transpor
 
 // decryptAESGCM performs real AES-GCM decryption using the stored or
 // lazily-generated symmetric key.
+//
+// Unlike Encrypt, this intentionally still builds its AEAD with
+// newGCMWithTagSize (plain cipher.NewGCM/NewGCMWithTagSize) rather than
+// pkg/crypto/aead's FIPS-aware selector, and so still fails under
+// GODEBUG=fips140=only for every request: CK_GCM_PARAMS.pIv is mandatory on
+// decrypt regardless of how the matching encrypt chose its IV (PKCS#11 v3.0
+// §6.15.1), so req.Nonce is always a caller-supplied value here, and
+// aead.NewGCMForDecrypt's randomNonce=true path is defined for reopening a
+// ciphertext this process's own Encrypt produced with a random nonce it
+// still remembers choosing (see pkg/crypto/aead.NewGCMForDecrypt), not for
+// re-deriving that guarantee retroactively from an externally supplied
+// nonce of unknown provenance. Recovering the token-generated IV Encrypt
+// returned above and matching it back to a subsequent Decrypt call would
+// need a public way to retrieve it from a live C_EncryptInit/C_Encrypt
+// operation, which pkg/pkcs11/module's Module does not currently expose
+// (EncryptOperation.IV() is internal-only) -- a mechanism-table-wide change
+// to the module's public surface, not a test-only fix. Tracked as a known
+// gap (see docs/fips/README.md), not fixed under go-xkms#23.
 func (c *CryptoMockClient) decryptAESGCM(req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
 	key, err := c.getOrCreateSymKey(req.KeyID)
 	if err != nil {

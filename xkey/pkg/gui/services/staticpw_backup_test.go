@@ -14,9 +14,7 @@
 package services
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -94,20 +92,24 @@ func TestPasswordBackup_WrongPassword(t *testing.T) {
 	assert.ErrorIs(t, err, ErrRestoreDecryptFailed)
 }
 
-// TestPasswordBackup_LegacyFormatRefused builds a genuine pre-#1202 file --
-// AES-GCM keyed with an unsalted SHA-256 of the password, nonce prepended --
-// and checks it is refused with a typed error even given the password.
-func TestPasswordBackup_LegacyFormatRefused(t *testing.T) {
-	password := []byte("legacy")
-	hash := sha256.Sum256(password)
-	block, err := aes.NewCipher(hash[:])
-	require.NoError(t, err)
-	gcm, err := cipher.NewGCM(block)
-	require.NoError(t, err)
-	nonce := make([]byte, gcm.NonceSize())
-	legacy := gcm.Seal(nonce, nonce, passwordBackupPlaintext, nil)
+// passwordBackupLegacyFixtureHex is a genuine pre-#1202 file, pinned as a
+// literal rather than built at test time: AES-GCM keyed with an unsalted
+// SHA-256 of the password "legacy", nonce prepended, encrypting
+// passwordBackupPlaintext. Building this with cipher.NewGCM at test time
+// would itself fail under GODEBUG=fips140=only (arbitrary-IV GCM is
+// refused), but the fixture only has to be non-JSON binary for
+// openPasswordBackup's json.Unmarshal/magic check to refuse it -- it is
+// never decrypted -- so a literal captured once under a permissive build is
+// the FIPS-safe way to exercise this refusal.
+const passwordBackupLegacyFixtureHex = "6c65676163796e6f6e6365309c7850a952e586a1325f6b42f3f7a1f896d9c12d4a5e2ad84cf623c35f2a2b56e6ffe9f7ea5174b668d1b250b96d064e2a002e40b3033e8f06a0877d"
 
-	_, err = openPasswordBackup(legacy, "aes-256", password)
+// TestPasswordBackup_LegacyFormatRefused checks that a genuine pre-#1202
+// file is refused with a typed error even given the password.
+func TestPasswordBackup_LegacyFormatRefused(t *testing.T) {
+	legacy, err := hex.DecodeString(passwordBackupLegacyFixtureHex)
+	require.NoError(t, err)
+
+	_, err = openPasswordBackup(legacy, "aes-256", []byte("legacy"))
 	assert.ErrorIs(t, err, ErrRestoreLegacyFormat)
 }
 
@@ -124,12 +126,12 @@ func TestPasswordBackup_HeaderTamperingDetected(t *testing.T) {
 			ErrRestoreKeyDerivationFailed},
 		"inflated memory": {func(e *passwordBackupEnvelope) { e.KDF.MemoryKiB = 1 << 30 },
 			ErrRestoreKeyDerivationFailed},
-		"time":          {func(e *passwordBackupEnvelope) { e.KDF.Time = 1 }, ErrRestoreKeyDerivationFailed},
-		"kdf stripped":  {func(e *passwordBackupEnvelope) { e.KDF = nil }, ErrRestoreKeyDerivationFailed},
-		"version":       {func(e *passwordBackupEnvelope) { e.Version = 2 }, ErrRestoreUnsupportedVersion},
-		"short nonce":   {func(e *passwordBackupEnvelope) { e.Nonce = e.Nonce[:4] }, ErrRestoreDecryptFailed},
-		"ciphertext":    {func(e *passwordBackupEnvelope) { e.Ciphertext[0] ^= 0xFF }, ErrRestoreDecryptFailed},
-		"algorithm tag": {func(e *passwordBackupEnvelope) { e.Algorithm = "aes-128" }, ErrRestoreAlgorithmMismatch},
+		"time":             {func(e *passwordBackupEnvelope) { e.KDF.Time = 1 }, ErrRestoreKeyDerivationFailed},
+		"kdf stripped":     {func(e *passwordBackupEnvelope) { e.KDF = nil }, ErrRestoreKeyDerivationFailed},
+		"version":          {func(e *passwordBackupEnvelope) { e.Version = 3 }, ErrRestoreUnsupportedVersion},
+		"short ciphertext": {func(e *passwordBackupEnvelope) { e.Ciphertext = e.Ciphertext[:4] }, ErrRestoreDecryptFailed},
+		"ciphertext":       {func(e *passwordBackupEnvelope) { e.Ciphertext[0] ^= 0xFF }, ErrRestoreDecryptFailed},
+		"algorithm tag":    {func(e *passwordBackupEnvelope) { e.Algorithm = "aes-128" }, ErrRestoreAlgorithmMismatch},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -160,7 +162,7 @@ func TestPasswordBackup_HeaderIsAAD(t *testing.T) {
 	envelope.Magic = "XKPX"
 	aad, err := envelope.aad()
 	require.NoError(t, err)
-	_, err = gcm.Open(nil, envelope.Nonce, envelope.Ciphertext, aad)
+	_, err = gcm.Open(nil, nil, envelope.Ciphertext, aad)
 	assert.Error(t, err, "a modified header must fail GCM authentication")
 }
 
@@ -175,8 +177,33 @@ func TestPasswordBackup_InvalidInput(t *testing.T) {
 	_, err = openPasswordBackup([]byte("{}"), "blowfish", []byte("pw"))
 	assert.ErrorIs(t, err, ErrBackupInvalidAlgorithm)
 
-	_, err = openPasswordBackup([]byte(`{"magic":"XKPW","version":1,"algorithm":"aes-256"}`), "aes-256", []byte("pw"))
+	_, err = openPasswordBackup([]byte(`{"magic":"XKPW","version":2,"algorithm":"aes-256"}`), "aes-256", []byte("pw"))
 	assert.ErrorIs(t, err, ErrRestoreKeyDerivationFailed)
+}
+
+// passwordBackupV1FixtureJSON is a genuine version 1 envelope, pinned as a
+// literal: version 1 carried an explicit "nonce" field alongside a
+// Ciphertext sealed with a caller-chosen IV (plain cipher.NewGCM), a
+// construction GODEBUG=fips140=only refuses outright. Version 2
+// (passwordBackupGCM, cipher.NewGCMWithRandomNonce) folds the nonce into
+// Ciphertext and drops the field entirely -- see the package comment in
+// staticpw_backup.go. openPasswordBackup refuses on the version number
+// alone, before ever parsing "kdf" or attempting to decrypt "ciphertext",
+// so this fixture's KDF and ciphertext bytes do not need to be
+// cryptographically genuine, only well-formed JSON in the version 1 shape.
+const passwordBackupV1FixtureJSON = `{` +
+	`"magic":"XKPW","version":1,"algorithm":"aes-256",` +
+	`"kdf":{"algorithm":"Argon2id","salt":"AAAAAAAAAAAAAAAAAAAAAA==","time":3,"memory_kib":65536,"threads":4},` +
+	`"nonce":"AAAAAAAAAAAAAAAA",` +
+	`"ciphertext":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="` +
+	`}`
+
+// TestPasswordBackup_Version1EnvelopeRefused pins go-xkms#23's deliberate
+// format break: a genuine version 1 envelope must be refused by version
+// number alone.
+func TestPasswordBackup_Version1EnvelopeRefused(t *testing.T) {
+	_, err := openPasswordBackup([]byte(passwordBackupV1FixtureJSON), "aes-256", []byte("v1-pw"))
+	assert.ErrorIs(t, err, ErrRestoreUnsupportedVersion)
 }
 
 func TestRestorePasswords_EncryptedRoundTripAndRefusals(t *testing.T) {
