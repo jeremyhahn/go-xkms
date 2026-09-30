@@ -1,6 +1,6 @@
 # Password Vault — User Guide
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## What goes in here
 
@@ -23,10 +23,16 @@ xkmsctl password unlock --user-pin -
 xkmsctl password status -o json
 ```
 
-You unlock once and reads work until you lock again.
+You unlock once and your personal entries are readable until you lock again.
+The session is yours alone: unlocking does not open anyone else's personal
+entries, and another user locking does not lock you.
 
-`password status` tells you whether the store is unlocked, and it works while
-locked.
+Shared entries (`--shared`) need no unlock. Every user of your tenant can read
+them whenever the tenant is unsealed; only their owner or a tenant Admin can
+change or delete them.
+
+`password status` tells you whether your session is unlocked, and it works
+while locked.
 
 ## Adding and reading
 
@@ -63,8 +69,8 @@ fixed by how the store was set up when the server started, and
 `pin_per_operation` on a store that is not already in that mode fails rather
 than silently staying on `session_based`.
 
-`password lock` when you walk away — while the store is unlocked, anything
-that can reach it can read every entry in your scope.
+`password lock` when you walk away — while your session is unlocked, anything
+that can act as you can read your personal entries.
 
 ## Sharing within a team
 

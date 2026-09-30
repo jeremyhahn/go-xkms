@@ -1,6 +1,6 @@
 # Multi-Tenancy — Architecture
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## The problem
 
@@ -57,6 +57,37 @@ isolation, and it is also the operational cost.
 **entitlement-gated** (`--allow-system-managed`). System-managed auto-unseal
 trades some of the isolation back for availability, which is why it is a
 permission rather than a flag.
+
+## Ownership scopes
+
+Inside a tenant, every stored security object has one of three scopes, and
+`pkg/scope` is the single implementation of the rule and the layout — the
+password vault, SSH and TPM policies all use it rather than each deciding for
+itself:
+
+| Scope | Keyspace | Who may address it |
+|---|---|---|
+| `tenant` (shared) | `{tenant}/{feature}/shared/...` | every user of the tenant; a platform caller for any tenant |
+| `user` (personal) | `{tenant}/{feature}/users/{subject}/...` | only the owning subject, in its own tenant — **a platform caller included** |
+| `service` | `{tenant}/{feature}/services/{owner}/...` | only a caller holding the feature's explicit service permission (`ssh:service`), in its own tenant |
+
+- **The system tenant is a tenant.** Its scope name is `system` (go-qrdb's
+  `SystemTenantID`); the empty tenant maps to it. It has its own shared and
+  personal objects and is isolated from every tenant in both directions.
+- **A refusal looks like a miss.** `Principal.Authorize` returns
+  `*CrossTenantError`, `*CrossUserError` or `*ServiceScopeError` (all match
+  `scope.ErrRefused`) for diagnostics; each feature answers the caller exactly
+  as it answers an object that does not exist.
+- **Permission scopes complement object scopes.** A permission's go-qrdb
+  scope (`ScopeSelf`, `ScopeTenantOnly`, `ScopeCross`) decides which tenant an
+  identity may exercise it in; the object scope then decides which objects in
+  that tenant it reaches. See [`../rbac/architecture.md`](../rbac/architecture.md#permission-tenancy-scopes).
+- **The platform store stays system scope.** The sealed platform store and
+  its blob store (`SealStore*` on `XKMSService`, `pkg/sealblobstore`;
+  [`../platform-secrets/`](../platform-secrets/architecture.md)) hold the
+  platform's own secrets. They have no tenant or user scope: every call is
+  refused to a tenant-scoped caller (`requirePlatformScope`), so only
+  system-tenant callers reach them.
 
 ## Component boundaries
 

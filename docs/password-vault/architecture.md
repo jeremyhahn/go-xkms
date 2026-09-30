@@ -1,6 +1,6 @@
 # Password Vault — Architecture
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## The problem
 
@@ -52,15 +52,43 @@ const (
 - **`session_based`** — unlock once, then reads work until the store is locked
   again. What people actually use.
 
-Only `session_based` is a reachable code path today:
-`TenantPasswordStoreManager.UnlockTenant`/`LockTenant` (`tenant_store_manager.go:162`,
-`:143`) hold the per-tenant session lock, gated on the tenant barrier being
-unsealed, with the PIN itself checked one layer up by
-`XKMSService.verifyPasswordStoreUserPIN` (`pkg/xkms/servicer_password.go:361`).
-`pin_per_operation` is a defined `AccessMode` constant (`access.go:33`) with
-no store implementation behind it — see `access.go:16-28`. Making the mode an
-explicit, switchable value rather than a hardcoded policy is what leaves room
-for a future per-operation implementation without another API shape.
+Only `session_based` is a reachable code path today, and a session belongs to
+one **user**, not to the tenant: `TenantPasswordStoreManager.UnlockUser` /
+`LockUser` open and close one user's personal session, with the PIN checked
+one layer up by `XKMSService.verifyPasswordStoreUserPIN`
+(`pkg/xkms/servicer_password.go`). `pin_per_operation` is a defined
+`AccessMode` constant (`access.go`) with no store implementation behind it.
+Making the mode an explicit, switchable value rather than a hardcoded policy
+is what leaves room for a future per-operation implementation without another
+API shape.
+
+### Scope and lock semantics
+
+The vault follows the xkms scope model
+([`../multi-tenancy/architecture.md`](../multi-tenancy/architecture.md#ownership-scopes)):
+
+| Entries | Keyspace | Who sees them | When |
+|---|---|---|---|
+| Shared | `{tenant}/staticpw/shared/` | every authenticated user of the tenant | whenever the tenant barrier is unsealed; no session needed |
+| Personal | `{tenant}/staticpw/users/{subject}/` | only their owner | only while the owner's personal session is unlocked |
+
+- **One user locking never locks another.** Sessions are held per
+  `(tenant, subject)`. A locked user still reads and writes shared entries;
+  personal operations answer `ErrStoreLocked`, and a listing of all entries
+  holds the shared ones only.
+- **Sealing ends every session.** A tenant barrier that is sealed and later
+  unsealed does not resume the sessions it ended.
+- **Modifying a shared entry** is restricted to its owner or a member of the
+  tenant's Admin/SO built-in role (`checkSharedPasswordOwnership`); any tenant
+  user may read it.
+- **The system tenant is a tenant.** A system-tenant identity is served from
+  `system/staticpw/...` under the system barrier, with its own shared and
+  personal entries, and never sees a tenant's entries (nor a tenant the
+  system tenant's). Only a request with no identity at all (an internal caller,
+  or authentication disabled) is served from the unscoped system store.
+
+Rejected for the lock: a tenant-wide session (the previous design). One user
+locking locked everyone, and one user unlocking opened every user's session.
 
 Rejected alternatives:
 
@@ -94,8 +122,10 @@ add:     xkmsctl password add NAME --password -
              → storage.Backend → the barrier
 
 read:    xkmsctl password get ID
-           → session lock gate (tenant stores only; session_based, the only
-             implemented mode — requires a prior `password unlock`)
+           → shared entry: served while the tenant barrier is unsealed
+           → personal entry: the caller's own session gate (session_based,
+             the only implemented mode — requires the caller's own prior
+             `password unlock`)
              → store.Get → entry returned exactly as stored
 
            `--decrypt`/`--user-pin` on this call always fail with
@@ -107,8 +137,13 @@ read:    xkmsctl password get ID
 autofill: browser extension → native-messaging host → xkey IPC → the same store
 ```
 
-Locking (`password lock`) drops the session; `password status` reports whether
-the store is unlocked and in which mode.
+Locking (`password lock`) drops the caller's own session; `password status`
+reports whether the caller's session is unlocked, whether the tenant barrier is
+sealed, and how many entries the caller can read now.
+
+Every transport (REST, gRPC, MCP) reaches the store only through the
+`XKMSService` password servicer, so the scope rule, the ownership check and the
+session gate are enforced once.
 
 ## Trust boundaries
 
@@ -116,16 +151,24 @@ the store is unlocked and in which mode.
   `--decrypt`/`--user-pin` outright (`ErrPasswordDecryptNotSupported`,
   `pkg/xkms/servicer_password.go:188`): a plain `get` already returns the
   entry exactly as stored, because `pkg/staticpw` never encrypted the
-  `Password` field on its own. The real boundary is the session lock:
-  `list`/`get` on a tenant store fail with `ErrStoreLocked` until `password
+  `Password` field on its own. The real boundaries are the scope (a user's
+  personal entries live under that user's own keyspace and no other caller's
+  store contains them) and the per-user session lock: personal
+  `list`/`get` fail with `ErrStoreLocked` until that user's `password
   unlock` succeeds.
 - **Access mode is the policy.** `session_based` — the only implemented mode
-  — means anything that can reach the store while a tenant is unlocked can
-  read every entry in scope. `pin_per_operation` is a defined value with no
-  store behind it; it re-authenticates nothing today.
+  — means anything that can act as a user while that user's session is
+  unlocked can read that user's personal entries, and any tenant user can
+  read the shared ones. `pin_per_operation` is a defined value with no store
+  behind it; it re-authenticates nothing today.
+- **Personal entries are not separately encrypted.** They are protected by the
+  tenant barrier and by scope, not by a per-user key: a holder of the tenant
+  barrier key can read them. A per-user DEK is an open design question.
 - **Scope and sharing are access control, not organisation.** `--shared` shares
   an entry with the tenant; `--scope own|shared|all` chooses what a listing
-  reveals. Team stores (`team_*`) extend this to groups.
+  reveals. The team stores (`team_*`) are not wired to any transport: they
+  carry their own member list, and go-qrdb has no user-group model for them
+  to use instead, so they stay unwired until that model exists.
 - **Expiry is metadata, not enforcement.** `expiry.go` records
   `--expires-at`; treat an expired entry as a signal to rotate, not as a
   guarantee that the credential stopped working.

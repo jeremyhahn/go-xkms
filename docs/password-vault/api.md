@@ -1,6 +1,6 @@
 # Password Vault — API
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1249)
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-30 (#1249)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -32,6 +32,21 @@ required.
 | Store status | `GET /api/v1/passwords/status` | `PasswordStoreStatus` | same as REST | `password.status` | `PasswordStoreStatus` | `passwords:read` |
 | Set access mode | `POST /api/v1/passwords/access-mode` | `PasswordStoreSetAccessMode` | same as REST | `password.setAccessMode` | `PasswordStoreSetAccessMode` | `passwords:write` |
 | Generate password | `POST /api/v1/passwords/generate` | `PasswordGenerate` | same as REST | `password.generate` | `PasswordGenerate` | `passwords:generate` |
+
+Unlock, lock and status act on the **caller's own** personal session
+(`(tenant, subject)` of the authenticated identity); none of them addresses
+another user or the tenant as a whole. A system-tenant identity is served from
+the system tenant's own store. Every transport delegates to the
+`XKMSService` password servicer, so the answers below are identical across
+REST, gRPC, QUIC, MCP and embedded:
+
+| Condition | Answer |
+|---|---|
+| personal operation while the caller's session is locked | `ErrStoreLocked` (REST 423) |
+| another user's personal entry, or another tenant's entry | not found (REST 404) — indistinguishable from a missing entry |
+| update/delete of a shared entry by neither its owner nor a tenant Admin/SO | `ErrNotOwner` (REST 403) |
+| unlock/lock with no identity on the request | not supported (REST 501) |
+| tenant barrier sealed | sealed (REST 503) |
 
 **This is one of only three features with complete MCP coverage** (the others
 are the barrier and SSH). Ten `password.*` methods, all carrying the same

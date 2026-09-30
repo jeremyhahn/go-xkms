@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — API
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 Transport model: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped". Unlike FROST and the PKCS#11 backend,
@@ -20,6 +20,11 @@ create, `ssh:delete` to remove, the same pairs the MCP `ssh.*` methods
 every transport: REST (`pkg/api/rest/routes.go:493`), MCP `ssh.keys.sign`
 and gRPC `SSHSign`. Before go-xkms#1230 every REST route, delete and import
 included, gated on the single `ssh:use`.
+
+Any request addressing `scope=service`, on every transport, additionally
+requires `ssh:service`; without it the request answers exactly as a missing
+asset. A `scope=user` address is reachable only by the owning subject, a
+system-tenant caller included.
 
 **Owner binding (every transport).** The permission admits the operation,
 not the asset: `auth.Authorizer` binds the caller's own tenant as the

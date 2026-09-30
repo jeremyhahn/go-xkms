@@ -1,6 +1,6 @@
 # Multi-Tenancy — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## Exported surface — `sdk/go/transport`
 
@@ -23,6 +23,38 @@ Server side: `pkg/api/rest/handlers_tenant.go` plus `middleware_tenant.go` and
 `pkg/api/tenantgate`. Composition: `sdk/go/tenant_compose.go`,
 `sdk/go/tenant_factories.go`. Per-tenant state:
 `pkg/seal/platform_store_tenant.go`, `pkg/xkms/backend_tenant.go`.
+
+## Ownership scopes — `pkg/scope`
+
+```go
+type Scope string // Tenant ("tenant"), User ("user"), Service ("service")
+
+func Parse(s string) (Scope, error)                  // *InvalidScopeError
+func TenantName(tenantID string) string              // "" and the system tenant -> "system"
+func IsSystem(tenantID string) bool
+func Root(tenantID, feature string) (string, error)  // "{tenant}/{feature}/"
+func Prefix(tenantID, feature string, sc Scope, owner string) (string, error)
+func SharedPrefix(tenantID, feature string) (string, error)            // .../shared/
+func PersonalPrefix(tenantID, feature, subject string) (string, error) // .../users/{subject}/
+func SharedSuffix(feature string) (string, error)    // "/{feature}/shared/", for cross-tenant scans
+
+type Principal struct{ TenantID, Subject string; Platform, ServiceAccess bool }
+func PrincipalOf(id *auth.Identity) Principal
+func PrincipalFromContext(ctx context.Context) Principal
+type Target struct{ TenantID string; Scope Scope; Owner string }
+func (p Principal) Authorize(t Target) error
+```
+
+Errors: `*InvalidScopeError`, `*InvalidSegmentError` (a tenant, feature or
+owner that is not exactly one key segment), and the refusals
+`*CrossTenantError`, `*CrossUserError`, `*ServiceScopeError`, which match
+`ErrRefused`. `ServiceAccess` is set by the feature after checking its own
+service permission; `pkg/scope` carries no permission model.
+
+Adopters: `pkg/staticpw` (store prefixes), `pkg/tpmpolicy` (registry keys and
+scope names; the SDK's `TPMPolicyScopeName` is `scope.TenantName`),
+`pkg/ssh/scope` (its `Scope` is this one) and `pkg/ssh/tenancy` (every SSH
+request is bound with `Authorize`). Tests: `pkg/scope/scope_test.go`.
 
 ## Isolation modes
 

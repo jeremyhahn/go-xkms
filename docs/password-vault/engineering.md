@@ -1,6 +1,6 @@
 # Password Vault — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## Exported surface — `pkg/staticpw`
 
@@ -75,8 +75,9 @@ type PasswordService interface {
   decryption step and no plaintext/metadata split
   (`pkg/xkms/servicer_password.go:168`); `PasswordList` never returns the
   password field, matching `PasswordGet`.
-- **Only `session_based` is reachable.** A caller must unlock the store before
-  any read or write succeeds; there is no way to satisfy an operation with a
+- **Only `session_based` is reachable, and sessions are per user.** A caller
+  must unlock its own personal session before any personal read or write
+  succeeds; shared entries need no session, only an unsealed tenant barrier; there is no way to satisfy an operation with a
   per-call PIN instead (`access.go:17`-`26`).
 - **A locked store answers status, not secrets.** `PasswordStoreStatus` works
   while locked; that is what makes it useful.
@@ -89,10 +90,17 @@ type PasswordService interface {
 - **Encryption is the barrier's.** `BackendStore` delegates to `storage.Backend`
   (`store.go:105`-`117`); `staticpw` does not implement a cipher.
 - **Concurrency.** Stores are safe for concurrent use. Session state in
-  `TenantPasswordStoreManager` (`locked atomic.Bool` per tenant,
-  `tenant_store_manager.go:35`-`38`) is shared, process-wide state — unlocking
-  is not per-caller, and that is exactly why `session_based` has the blast
-  radius it does.
+  `TenantPasswordStoreManager` is a lock-free `sync.Map` of open sessions per
+  tenant, keyed by subject: `UnlockUser`/`LockUser` touch only the caller's
+  entry, so one user's session never opens or closes another's. Sealing the
+  tenant barrier clears every session of that tenant.
+- **Manager API.** `ResolveScopedStore(tenant, subject)` (shared entries,
+  plus personal ones while the session is open; `""` tenant is the unscoped
+  system store for identity-less requests), `UnlockUser`, `LockUser`,
+  `IsUserLocked`, `UserStoreStatus`. The system tenant (`"system"`) is served
+  over the registry's system barrier. The transports never call the manager:
+  they call the `XKMSService` password servicer, which resolves the caller
+  with `scope.TenantName(identity.TenantID)` and `identity.Subject`.
 
 ## Error semantics
 

@@ -1,6 +1,6 @@
 # RBAC — Architecture
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1228, #1230, #1231, #1232)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-30 (#1114, #1115, #1228, #1230, #1231, #1232)
 
 ## The problem
 
@@ -141,8 +141,12 @@ for every transport:
   See [`../audit-log/api.md`](../audit-log/api.md) §"Tenant scoping".
 - **SSH keys, host pins and authorized_keys entries** are addressed by
   `(scope, owner, name)`, where the owner is a tenant ID or a subject. The SSH
-  service every transport calls binds the owner to the caller
-  (`pkg/ssh/tenancy/client.go:170-182`) and serves each tenant from its own
+  service every transport calls binds the owner to the caller with the xkms
+  scope rule (`scope.Principal.Authorize`, see
+  [`../multi-tenancy/architecture.md`](../multi-tenancy/architecture.md#ownership-scopes)):
+  a `user` asset only to its owner -- a platform caller included -- and a
+  `service` asset only to a caller that also holds `ssh:service`, checked
+  below the gate through `XKMSService.AuthorizeCaller`. It serves each tenant from its own
   storage partition and backend-key namespace, so equal subjects in two
   tenants never meet. Another owner's asset answers as a missing one; a
   write under it creates nothing (go-xkms#1230; see
@@ -151,6 +155,33 @@ for every transport:
   — `ssh:read` to read, `ssh:write` to create/import/sign, `ssh:delete` to
   remove (`pkg/api/rest/routes.go:496-512`) — instead of one blanket
   permission. `ssh:use` never gated anything and was removed (go-xkms#1232).
+
+## Permission tenancy scopes
+
+Every permission the module contributes has a declared go-qrdb tenancy scope;
+since go-qrdb#504 an undeclared one is refused and breaks token issuance, and
+`TestEveryModulePermissionDeclaresItsScope` is the build gate. go-qrdb
+declares the scope of every name it knows; xkms declares only the names it owns
+(`pkg/apimodule/module_scopes.go`, registered by `registerRoleGrants` through
+`qrdbsdk.RegisterPermissionScope`) and never re-declares an upstream one.
+
+| Scope | Meaning | Families (actions) |
+|---|---|---|
+| `ScopeSelf` | exercised in the identity's own tenant; a system-tenant identity reaches any tenant | `admin` (peers, status) · `audit` (read) · `backends` (list, read) · `barrier` (unseal-share) · `bootstrap`† (read) · `ceremony` (claim_cert, claim_share_begin, claim_share_complete, enroll_custodian, revoke_custodian, sign_csr, status) · `certs` (generate, list, read, revoke) · `keys` (create, decrypt, delete, derive, encrypt, export, get, import, list, rotate, sign, unwrap, update†, verify, wrap) · `passwords` (delete, generate, lock, read, unlock, write) · `pin` (read, write) · `piv` (delete, read, use, write) · `seal` (bootstrap, enable_encryption, generate_recovery, initialize_shamir, recover_with_keys, rekey, rotate_root_key, seal, status, unseal) · `ssh` (delete, read, write, service†) · `tenants` (create, delete, list, read, set_entitlements, set_quotas) · `tpm_policy`† (create, delete, get, list, revoke, rotate, update, verify) · `users` (create, delete, disable, enable, list, read, update) |
+| `ScopeTenantOnly` | exercised only in the identity's own tenant, never lifted across tenants | `tenant_barrier` (init, status, unseal) |
+| `ScopeCross` | exercised only by a system-tenant identity | `credentials` (strategy, submit) · `tenants` (set_tpm_mode†) · `audit` (read:cross, checked below the gate) |
+
+† declared by xkms; every other entry is go-qrdb's declaration.
+
+A permission's scope decides the tenant an identity may exercise it in; it does
+not decide which objects in that tenant it reaches. Object reach is the
+ownership scope (`pkg/scope`): `passwords:read` reaches the tenant's shared
+entries and the caller's own personal ones, never another user's; `ssh:read`
+likewise. Platform-global state (the sealed platform store, the system
+barrier, the backend credential strategy) is additionally refused to
+tenant-scoped callers by `requirePlatformScope`, whatever permission they
+hold.
+
 ## Identities carry role identifiers, never role names
 
 Every authenticated identity carries qrdb role **identifiers** in `Roles`:

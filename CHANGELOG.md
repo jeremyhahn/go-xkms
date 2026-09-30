@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`pkg/scope`: one ownership model for every feature.**
+  - Scopes: `tenant` (shared: every user of the tenant), `user` (personal: the owner only) and `service` (workload-owned: explicit permission).
+  - Keyspace: `{tenant}/{feature}/shared/`, `{tenant}/{feature}/users/{subject}/` and `{tenant}/{feature}/services/{owner}/`.
+  - `Principal.Authorize` is the single access rule. It refuses cross-tenant, cross-user and unpermitted service access with typed errors that match `scope.ErrRefused`.
+  - The system tenant is an ordinary tenant named `system`.
+  - The password vault, TPM policies (`tpmpolicy.ScopeName` is replaced by `scope.TenantName`) and SSH all use it.
+- **`ssh:service`**: the explicit permission a `scope=service` SSH address requires.
+  - It is xkms-owned and `ScopeSelf`, and is granted to Admin and Owner.
+  - It is checked below the transport gate through `XKMSService.AuthorizeCaller`.
+
+### Changed
+
+- **SSH scope binding follows `pkg/scope`.**
+  - `scope=user` assets are reachable only by their owner, now including system-tenant callers.
+  - `scope=service` assets are reachable only with `ssh:service`, in the caller's own tenant, for any workload owner.
+  - `OwnerBindingError` gains a diagnostic `Cause`.
+  - `compose.BuildSSHClient` takes the permission checker.
+- **Password vault sessions are per user.**
+  - Unlocking or locking opens or closes only the caller's personal session (`TenantPasswordStoreManager.UnlockUser` / `LockUser` / `IsUserLocked` / `UserStoreStatus`, replacing the tenant-wide `UnlockTenant` / `LockTenant` / `IsLocked` / `TenantStoreStatus` / `StoreForTenant` / `ResolveStore`).
+  - Shared entries are usable whenever the tenant barrier is unsealed.
+  - Personal operations on a locked session return `ErrStoreLocked`.
+  - Sealing the tenant barrier ends its sessions.
+- **The password transport DTOs carry `Title`.**
+
+### Fixed
+
+- **A system-tenant identity no longer gets "Tenant not found" from the password routes.** The system tenant has its own shared and personal store under the system barrier.
+
 ## [0.45.0-alpha] - 2026-09-30
 
 ### Added

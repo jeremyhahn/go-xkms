@@ -1,6 +1,6 @@
 # Password Vault — CLI
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 Binary: `xkmsctl`, group `password` (`cmd/xkmsctl/password.go`). Global flags:
 [`../key-management/cli.md`](../key-management/cli.md).
@@ -13,7 +13,9 @@ answered. See
 
 ## Unlocking
 
-Under the `session_based` access mode nothing decrypts until you unlock:
+Under the `session_based` access mode your personal entries are unreadable
+until you unlock your own session (shared entries need no unlock; the session
+is per user, so it neither opens nor closes anyone else's):
 
 ```
 xkmsctl password unlock --user-pin -
@@ -106,9 +108,9 @@ fixed by how the store was set up when the server started
 succeeds; requesting `pin_per_operation` against a `session_based` store
 fails rather than silently doing nothing.
 
-- **`session_based`** — unlock once, read freely until locked. Anything that can
-  reach the store while unlocked can read every entry in scope. `password lock`
-  when you are done.
+- **`session_based`** — unlock once, read your personal entries freely until
+  you lock. Anything that can act as you while your session is unlocked can
+  read them. `password lock` when you are done.
 
 ## `password generate`
 
@@ -122,8 +124,9 @@ xkmsctl password generate --length 32
 
 ## `password status`
 
-Works while locked — that is the point. Reports whether the store is unlocked
-and which access mode is in force.
+Works while locked — that is the point. Reports whether your own session is
+unlocked, whether the tenant barrier is sealed, how many entries you can read
+now, and which access mode is in force.
 
 ## Exit codes
 

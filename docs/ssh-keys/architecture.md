@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — Architecture
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## Scope of this folder
 
@@ -138,11 +138,25 @@ tenant-A Admin could list, sign with, delete, and plant `authorized_keys`
 entries for tenant B's and every user's keys.
 
 **Binding.** For each request the service reads the caller from the context
-and decides whether it owns the address (`pkg/ssh/tenancy/client.go:170-182`):
-`scope=tenant` belongs to the tenant whose ID is the owner; `scope=user` and
-`scope=service` belong to the principal whose subject is the owner. A
-platform caller (`auth.IsCrossTenant`: no identity or the system tenant) owns
-every address. A refused request is served from the *empty partition*, a
+and applies the xkms scope rule, `scope.Principal.Authorize`
+([`../multi-tenancy/architecture.md`](../multi-tenancy/architecture.md#ownership-scopes)):
+
+- `scope=tenant` belongs to the tenant whose ID is the owner; every user of
+  that tenant may address it, and a platform caller may address any tenant's.
+- `scope=user` belongs to the principal whose subject is the owner, in the
+  caller's own tenant. Only that principal may address it — **a platform
+  caller included**: a system-tenant identity reaches its own personal keys,
+  never another user's.
+- `scope=service` belongs to a workload in the caller's own tenant. The owner
+  is the workload's ID and is not bound to the caller's subject; instead the
+  caller must hold the explicit `ssh:service` permission, checked below the
+  transport gate through `XKMSService.AuthorizeCaller`
+  (`tenancy.Options.Permissions`). With no checker wired the scope is closed.
+
+A platform caller is `auth.IsCrossTenant`: no identity, or the system tenant.
+The refusal carries the scope rule's reason in `OwnerBindingError.Cause`
+(`*scope.CrossTenantError`, `*scope.CrossUserError`,
+`*scope.ServiceScopeError`) for server-side diagnostics only. A refused request is served from the *empty partition*, a
 store nothing is ever written to (`pkg/ssh/tenancy/client.go:89-93`), so its
 answer is by construction the genuine-miss answer; the service wraps it in
 `*OwnerBindingError`, which renders that answer verbatim
@@ -174,8 +188,8 @@ Which partition serves a request (`pkg/ssh/tenancy/client.go:217-236`):
 | platform | anything else (user/service scope, the system tenant) | the platform partition (the unprefixed view) |
 
 A platform identity therefore manages any tenant's `scope=tenant` assets but
-not a tenant user's `scope=user` assets — the address does not name the
-user's tenant. A session (`Session().Dial`) must take its key and its
+no user's `scope=user` assets other than its own, and service assets of the
+platform partition only with `ssh:service`. A session (`Session().Dial`) must take its key and its
 host-key pins from one partition the caller owns
 (`pkg/ssh/tenancy/ops.go:327-352`).
 
@@ -238,3 +252,9 @@ transport (`pkg/api/rest/routes.go:493`). Until go-xkms#1230 every REST route
 carried the blanket `ssh:use`, so a grant meant for signing also deleted keys
 and added `authorized_keys` entries. The blanket `ssh:use` is retired. See [`api.md`](api.md) for
 the per-route table.
+
+`ssh:service` is the one SSH permission no route names: only the request's
+scope reveals it is needed, so `pkg/ssh/tenancy` checks it, in addition to
+the verb's own permission, for every `scope=service` address. xkms owns and
+declares it (`ScopeSelf`, like its siblings) and contributes it through
+`belowGatePermissions`, so the built-in Admin and Owner roles hold it.
