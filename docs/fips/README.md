@@ -401,6 +401,88 @@ migration path for existing wrapped blobs, consistent with this repository's
 pre-release, no-backward-compatibility posture; there is no prior release to
 carry forward.
 
+### xkey AES-GCM call sites (#23)
+
+Two `xkey` call sites generated their own nonce with `crypto/rand` and
+handed it to a caller-chosen-IV `cipher.NewGCM`/`cipher.NewGCMWithTagSize` —
+refused under `fips140=only` regardless of the nonce actually being random,
+because the module requires generating it internally. Both now build
+their AEAD with `cipher.NewGCMWithRandomNonce` instead:
+
+- **`xkey/pkg/gui/services/staticpw_backup.go`** (the password-vault backup
+  envelope). The on-disk JSON format moves to version 2: version 1 carried a
+  separate `nonce` field alongside a caller-IV-sealed `ciphertext`; version 2
+  folds the nonce into `ciphertext` and drops the field. A version 1 file is
+  refused with `ErrRestoreUnsupportedVersion`, not migrated.
+- **`xkey/pkg/authenticator/key_wrapper.go`** (`AESGCMKeyWrapper`, the
+  in-process key-wrap format `nonce (12) || ciphertext || tag (16)`). The
+  wire format is byte-for-byte unchanged — `cipher.NewGCMWithRandomNonce`'s
+  own framing already matches it — only the nonce's source moved from
+  `crypto/rand` in this package to the module's internal generator.
+
+`xkey/pkg/nativemsg/crypto.go` (the browser-extension session cipher) is
+deliberately NOT converted. Its handshake is X25519, which `fips140=only`
+refuses before any AES-GCM call, so the channel cannot run in FIPS mode until
+the X25519 question at the end of this document is ruled on. Its GCM nonce is also the replay
+counter, authenticated by the tag, and its TypeScript peer
+(`xkey/extension/src/crypto.ts`) builds the same nonce. Converting it means
+changing both sides together, with the counter carried as additional
+authenticated data, alongside the handshake change.
+
+`pkg/testing/pkcs11test`'s mock PKCS#11 transport (`CryptoMockClient.Encrypt`)
+now builds its CKM_AES_GCM AEAD through `pkg/crypto/aead.NewGCMForFreshEncrypt`
+instead of an unconditional `cipher.NewGCM`/`cipher.NewGCMWithTagSize`, so a
+`C_EncryptInit`/`C_Encrypt` call that leaves `CK_GCM_PARAMS.pIv` empty (the
+token generates the IV) now succeeds under `fips140=only`, matching what a
+real symmetric backend already does — `TestCryptoMockClient_Encrypt_FIPS140Only`
+pins both outcomes (empty `pIv` succeeds; a caller-supplied `pIv`, which
+every other CKM_AES_GCM fixture in the conformance suite sends via
+`suiteGCMIV()`, still fails closed with `aead.ErrArbitraryIVGCMUnavailable`).
+This is additive only: it does not change the "Integration Points" CKM_AES_GCM
+finding below, because every existing conformance fixture supplies a caller
+IV. `CryptoMockClient.decryptAESGCM` is deliberately left unchanged and still
+fails every request under `fips140=only`: `CK_GCM_PARAMS.pIv` is mandatory on
+decrypt regardless of how the matching encrypt chose its IV, so the incoming
+nonce always looks caller-supplied to this mock, and reopening it would need
+either (a) a way to positively distinguish "this nonce came from this
+process's own `CKG_GENERATE`" from "this nonce is a caller's own arbitrary
+IV" — PKCS#11's `CK_GCM_PARAMS`/`CK_GCM_MESSAGE_PARAMS` carry no such bit —
+or (b) treating `aead.NewGCMForDecrypt`'s `randomNonce=true` path as valid
+for *any* known nonce regardless of provenance, which is a broader
+FIPS-compliance-posture call than this change makes unilaterally. Both are
+owner decisions, not test fixes.
+
+A related, narrower gap surfaced along the way: `pkg/pkcs11/module`'s public
+`Module` API has no way to retrieve a token-generated AES-GCM IV after
+`C_EncryptInit`/`C_Encrypt` (the single-part path) at all.
+`EncryptOperation.IV()` exists and is exactly what a real PKCS#11 client
+needs per v3.2 §6.13.7, but it is internal to the package; nothing exposes it
+through `*Module`. The message-based API does not have this gap —
+`EncryptMessage`'s `*AESGCMMessageParams` is a pointer the module mutates in
+place with the generated IV (`module.go`, `params.IV = copyBytes(encOp.IV())`),
+matching real PKCS#11's in/out `CK_GCM_MESSAGE_PARAMS.pIv` semantics, which is
+why `TestPKCS11V3Suite/.../MessageEncrypt/init_encrypt_message_final_succeeds`
+now passes under `fips140=only` on the strength of the mock fix above alone.
+Closing the equivalent gap for single-part `C_Encrypt` needs a new `*Module`
+accessor, which is a production API surface addition, not a test change.
+
+`pkg/pkcs11/module/mechanism.go`'s per-mechanism `FIPSApproved` table was
+evaluated for removal in favour of relying on `crypto/fips140.Enabled`
+outright, per this file's "Algorithm enforcement" ruling, and kept: it is not
+a duplicate of stdlib enforcement, because the stdlib gives no signal for
+most of what it decides. `CKM_SHA1_RSA_PKCS`, for example, is
+`FIPSApproved: false` under SP 800-131A Rev. 2's bar on SHA-1 signature
+*generation* — but `crypto/rsa` does not refuse a SHA-1-digested PKCS#1 v1.5
+signature under `fips140=only` at all (RSA itself is approved regardless of
+digest; see "Algorithm enforcement" above), so there is no stdlib refusal to
+substitute. The same is true of most of the ~150-entry mechanism catalog:
+legacy mechanisms like `CKM_RC2_*`/`CKM_RC4`/`CKM_DES_*` have no
+`crypto/fips140`-gated Go package backing them at all, so `fips140=only`
+cannot refuse what it has no opinion about. Removing the table would silently
+re-admit every mechanism it currently withholds to a FIPS-mode PKCS#11
+client. `fipsModeEnabled` (the table's one activation signal) already is
+`crypto/fips140.Enabled` and duplicates nothing.
+
 ## Panics the stdlib raises instead of returning an error (#23)
 
 Most FIPS 140-only refusals in the Go standard library return an `error` a
@@ -488,7 +570,7 @@ with no call site of ours to wrap:
   every WebSocket upgrade through `pkg/ssh/console` fails under
   `fips140=only` as a result.
 
-Two more findings from this work are architecture questions for the owner,
+Three more findings from this work are architecture questions for the owner,
 not something a test fix can resolve, because the "correct" answer changes
 the wire protocol or reopens an already-settled design decision:
 
@@ -498,6 +580,10 @@ the wire protocol or reopens an already-settled design decision:
 - `pkg/api/transport/usb`'s Noise Protocol handshake is hard-wired to
   Curve25519 (`Noise_XX_25519_...`), and the Noise specification defines no
   FIPS-approved substitute DH function for that pattern.
+- `xkey/pkg/nativemsg`'s browser-extension handshake is X25519 ECDH
+  (`crypto/ecdh`), refused under `fips140=only`, with no approved curve
+  pinned; see "xkey AES-GCM call sites" above for why its GCM nonce
+  changes with it.
 
 ## See Also
 

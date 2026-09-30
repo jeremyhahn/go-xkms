@@ -67,16 +67,20 @@ func wrapForTest(w KeyWrapper, plaintext []byte) ([]byte, error) {
 // the KeyWrapper implementation. It pins the format UnwrapInto must accept,
 // and it is the only way a test can build a zero-length payload, which
 // WrapFrom cannot express.
+//
+// It uses cipher.NewGCMWithRandomNonce, exactly as the production
+// implementation does (go-xkms#23): a plain cipher.NewGCM here would itself
+// be refused under GODEBUG=fips140=only ("use of GCM with arbitrary IVs is
+// not allowed"), and the output framing is identical either way, so this
+// stays an independent construction of the same wire format, not a
+// duplicate of AESGCMKeyWrapper.WrapFrom.
 func sealForTest(t *testing.T, key, plaintext []byte) []byte {
 	t.Helper()
 	block, err := aes.NewCipher(key)
 	require.NoError(t, err)
-	aead, err := cipher.NewGCM(block)
+	aead, err := cipher.NewGCMWithRandomNonce(block)
 	require.NoError(t, err)
-	nonce := generateRandomKey(t, AESGCMNonceSize)
-	out := make([]byte, AESGCMNonceSize, AESGCMNonceSize+len(plaintext)+aesGCMTagSize)
-	copy(out, nonce)
-	return aead.Seal(out, nonce, plaintext, nil)
+	return aead.Seal(nil, nil, plaintext, nil)
 }
 
 // openForTest decrypts wrapped data in the wire format directly through
@@ -86,10 +90,10 @@ func openForTest(t *testing.T, key, wrapped []byte) ([]byte, error) {
 	t.Helper()
 	block, err := aes.NewCipher(key)
 	require.NoError(t, err)
-	aead, err := cipher.NewGCM(block)
+	aead, err := cipher.NewGCMWithRandomNonce(block)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(wrapped), AESGCMNonceSize+aesGCMTagSize)
-	return aead.Open(nil, wrapped[:AESGCMNonceSize], wrapped[AESGCMNonceSize:], nil)
+	return aead.Open(nil, nil, wrapped, nil)
 }
 
 func TestNewAESGCMKeyWrapper(t *testing.T) {
