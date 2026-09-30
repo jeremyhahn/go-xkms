@@ -20,7 +20,6 @@ package xkms
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -32,19 +31,13 @@ func init() {
 // newSymmetricKeyProvider creates a symmetric backend KeyProvider from configuration.
 //
 // Supported configuration keys:
-//   - "key_dir" (string): Directory for key storage. Empty or "memory" uses in-memory storage.
+//   - "key_storage" (storage.Backend): pre-built key storage -- the caller's
+//     datastore handle (see AutoConfig.Datastore), already a key-prefixed
+//     view for this backend. Absent, in-memory storage is used.
 func newSymmetricKeyProvider(config map[string]interface{}) (types.KeyProvider, error) {
-	keyDir, _ := config["key_dir"].(string)
-
-	var keyStorage storage.Backend
-	if keyDir == "" || keyDir == "memory" {
+	keyStorage, ok := config["key_storage"].(storage.Backend)
+	if !ok || keyStorage == nil {
 		keyStorage = storage.New()
-	} else {
-		var err error
-		keyStorage, err = file.New(keyDir)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return symmetric.NewBackend(&symmetric.Config{

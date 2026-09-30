@@ -30,6 +30,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 // selfSignedDeviceCLICert mints a throwaway self-signed certificate for use
@@ -53,6 +54,43 @@ func selfSignedDeviceCLICert(t *testing.T, cn string) []byte {
 		t.Fatalf("create certificate: %v", err)
 	}
 	return der
+}
+
+// iakCertDERFromCSR mints a self-signed certificate for the IAK public key
+// packedCSR's TCG-CSR-IDEVID actually carries. go-xkms#1100 made EnrollDevice
+// install the issued IAK certificate via TPM2.ProvisionIAKCert, which
+// refuses a certificate whose public key does not match the TPM's real IAK
+// (validateCertPublicKey, pkg/tpm2/cert_idevid.go) -- a certificate fixed
+// before the TPM simulator that owns the real key exists can never pass
+// that check, so the IAK certificate a fake ACME server hands back must be
+// derived from the CSR the client actually submitted (mirrors
+// pkg/acme/client/service.iakCertDERFromCSR).
+func iakCertDERFromCSR(packedCSR []byte) ([]byte, error) {
+	tcgCSR, err := tpm2.UnmarshalIDevIDCSR(packedCSR)
+	if err != nil {
+		return nil, err
+	}
+	unpacked, err := tpm2.UnpackIDevIDCSR(tcgCSR)
+	if err != nil {
+		return nil, err
+	}
+	iakPubKey, err := tpm2.ExtractPublicKeyFromTPMPublic(unpacked.CsrContents.AttestPub)
+	if err != nil {
+		return nil, err
+	}
+
+	signer, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: "cli-test-iak"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	return x509.CreateCertificate(rand.Reader, template, template, iakPubKey, signer)
 }
 
 // setDeviceCLIConfig points viper at a fake ACME directory and a single
@@ -88,11 +126,20 @@ func setDeviceCLIConfig(t *testing.T, directoryURL, port string) {
 // directory offering enroll-01 — end to end through the same service layer
 // the daemon and GUI use.
 func TestDeviceEnrollCmd_Success(t *testing.T) {
-	iak := selfSignedDeviceCLICert(t, "cli-test-iak")
 	idevid := selfSignedDeviceCLICert(t, "cli-test-idevid")
 	server := testutil.NewFakeACMEDirectory(t,
-		[]string{"http-01", "enroll-01", "device-attest-01"},
-		[][]byte{iak, idevid})
+		[]string{"http-01", "enroll-01", "device-attest-01"}, nil)
+	// The IAK certificate must name the TPM simulator's real IAK public
+	// key (see iakCertDERFromCSR), which is only known once the simulator
+	// under test opens -- so it is computed from the submitted CSR rather
+	// than fixed at server construction like idevid above.
+	server.SetCertsFromCSR(func(csr []byte) ([][]byte, error) {
+		iakDER, err := iakCertDERFromCSR(csr)
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{iakDER, idevid}, nil
+	})
 
 	setDeviceCLIConfig(t, server.DirectoryURL(), "19821")
 

@@ -50,8 +50,8 @@ tls:
 auth:
   enabled: false
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
   path: "/data/xkms"
 
 default_backend: "pkcs8"
@@ -130,8 +130,8 @@ auth:
   enabled: true
   type: "mtls"
 
-storage:
-  backend: "file"
+datastore:
+  engine: "file"
   path: "%s"
 
 default_backend: "software"

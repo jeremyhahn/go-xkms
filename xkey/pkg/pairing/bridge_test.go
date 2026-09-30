@@ -309,6 +309,22 @@ func (m *mockTransportClient) FinishAuthentication(_ context.Context, _ *transpo
 	return nil, errNotImplemented
 }
 
+func (m *mockTransportClient) GetInvite(_ context.Context, _ *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) BeginInviteRegistration(_ context.Context, _ *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) FinishInviteRegistration(_ context.Context, _ *transport.FinishInviteRegistrationRequest) (*transport.FinishInviteRegistrationResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) ActivateInvitePIV(_ context.Context, _ *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (m *mockTransportClient) GetCABundle(_ context.Context, _ *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
 	return nil, errNotImplemented
 }

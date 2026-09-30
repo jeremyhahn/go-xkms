@@ -15,22 +15,22 @@ package tpm2
 
 import (
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // TestNewBackend_WithSimulator_ExercisesTPMInit tests NewBackend with simulator.
 // The simulator starts in an unprovisioned state, so NewTPM2 will typically
 // return ErrNotInitialized indicating TPM needs provisioning.
 // This test exercises the NewBackend code paths including:
-// - file backend creation (lines 135-139)
-// - ToTPMConfig conversion (line 142)
-// - pkgtpm2.NewTPM2 call (lines 145-150)
-// - Error handling for ErrNotInitialized (lines 151-157)
+// - the KeyStorage-backed key backend construction
+// - ToTPMConfig conversion
+// - pkgtpm2.NewTPM2 call
+// - Error handling for ErrNotInitialized
 func TestNewBackend_WithSimulator_ExercisesTPMInit(t *testing.T) {
-	tmpDir := t.TempDir()
-
 	config := &Config{
 		UseSimulator: true,
-		KeyDir:       tmpDir,
+		KeyStorage:   storage.NewMemory(),
 		SRKHandle:    0x81000001,
 		EKHandle:     0x81010001,
 	}
@@ -46,6 +46,9 @@ func TestNewBackend_WithSimulator_ExercisesTPMInit(t *testing.T) {
 			if backend.keyBackend == nil {
 				t.Error("backend.keyBackend should not be nil on success")
 			}
+			if backend.keyStorage == nil {
+				t.Error("backend.keyStorage should not be nil on success")
+			}
 			if backend.srkAttrs == nil {
 				t.Error("backend.srkAttrs should not be nil on success")
 			}
@@ -53,12 +56,10 @@ func TestNewBackend_WithSimulator_ExercisesTPMInit(t *testing.T) {
 				t.Errorf("Close error: %v", err)
 			}
 		}
-		t.Log("NewBackend succeeded with simulator - covers success path lines 166-173")
+		t.Log("NewBackend succeeded with simulator - covers the success path")
 		return
 	}
 
 	// The simulator returns ErrNotInitialized if TPM needs provisioning
-	// This exercises lines 151-156 (ErrNotInitialized handling) or
-	// line 157 (other error handling)
 	t.Logf("NewBackend returned expected error: %v", err)
 }

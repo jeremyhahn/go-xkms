@@ -23,10 +23,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -719,6 +719,16 @@ func cryptoRandReadImpl(b []byte) (int, error) {
 	return len(b), nil // Will be replaced with actual implementation
 }
 
+// readCryptoRandomFrom reads exactly len(b) bytes from r into b using
+// io.ReadFull, so a source that returns fewer bytes than requested on a
+// single Read (a short read) is retried until b is fully populated,
+// instead of silently returning fewer random bytes than the caller asked
+// for. Extracted from the /dev/urandom closure below so this behavior is
+// unit-testable against a fake short-reading io.Reader.
+func readCryptoRandomFrom(r io.Reader, b []byte) (int, error) {
+	return io.ReadFull(r, b)
+}
+
 func init() {
 	// Set up the actual crypto/rand implementation
 	cryptoRandRead = func(b []byte) (int, error) {
@@ -728,7 +738,7 @@ func init() {
 			return 0, err
 		}
 		defer func() { _ = f.Close() }()
-		return f.Read(b)
+		return readCryptoRandomFrom(f, b)
 	}
 }
 
@@ -1810,7 +1820,7 @@ func createFIDO2SoftwareKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keyba
 	logger.Info("using software key backend")
 
 	if cfg.StorageType == FIDO2StorageTypeBarrier {
-		return createFIDO2XKMSSoftwareKeyBackend(logger)
+		return createFIDO2XKMSSoftwareKeyBackend(cfg, logger)
 	}
 
 	keyStorage, err := xkms.NewMemoryBackend()
@@ -1830,9 +1840,17 @@ func createFIDO2SoftwareKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keyba
 
 // createFIDO2XKMSSoftwareKeyBackend initializes the xkms service and creates
 // a FIDO2 key backend from the xkms software backend, matching the GUI's
-// architecture. The xkms service manages the software key storage at
-// {dataDir}/keys/software, ensuring CLI and GUI share the same key store.
-func createFIDO2XKMSSoftwareKeyBackend(logger *slog.Logger) (keybackend.FIDO2KeyBackend, error) {
+// architecture. The xkms service manages the software key storage under the
+// SAME barrier-backed store the GUI's initLocalKeyStore uses (under
+// "keys/"), ensuring CLI and GUI share the same key store and the same
+// encryption-at-rest guarantee. This function is only reached when the
+// caller explicitly selected barrier storage (cfg.StorageType ==
+// FIDO2StorageTypeBarrier, see createFIDO2SoftwareKeyBackend), so it never
+// falls back to a plain, unencrypted file store: it unseals the barrier via
+// openBarrierBackend, the same low-level unseal createBarrierStorage (the
+// FIDO2 credential store's barrier path) and every other barrier-aware CLI
+// command (oath, backup, device oath-sync) share.
+func createFIDO2XKMSSoftwareKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybackend.FIDO2KeyBackend, error) {
 	home, err := xhome.Resolve()
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2BackendCreationFailed, err)
@@ -1842,11 +1860,29 @@ func createFIDO2XKMSSoftwareKeyBackend(logger *slog.Logger) (keybackend.FIDO2Key
 		return nil, errors.Join(ErrFIDO2BackendCreationFailed, err)
 	}
 
-	keysDir := filepath.Join(dataDir, "keys")
+	// Resolve barrier password exactly as createBarrierStorage does.
+	password := cfg.BarrierPassword
+	if password == "" && cfg.BarrierPasswordFile != "" {
+		raw, readErr := os.ReadFile(cfg.BarrierPasswordFile)
+		if readErr != nil {
+			return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierPasswordRequired, Cause: readErr}
+		}
+		password = strings.TrimSpace(strings.SplitN(string(raw), "\n", 2)[0])
+	}
+
+	barrierBackend, err := openBarrierBackend(password, dataDir, cfg.TPMDevice, false)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierUnsealFailed, Cause: err}
+	}
+
+	keyStorage, err := xkms.NewStoragePrefixBackend(barrierBackend, "keys/")
+	if err != nil {
+		return nil, errors.Join(ErrFIDO2BackendCreationFailed, err)
+	}
 
 	xkms.Reset()
 	if err := xkms.AutoInitialize(&xkms.AutoConfig{
-		DataDir:        keysDir,
+		Datastore:      keyStorage,
 		DefaultBackend: "software",
 	}); err != nil {
 		return nil, errors.Join(ErrFIDO2BackendCreationFailed, err)
@@ -1860,7 +1896,7 @@ func createFIDO2XKMSSoftwareKeyBackend(logger *slog.Logger) (keybackend.FIDO2Key
 	adapter := keybackend.NewBackendAdapter(swBackend.KeyProvider(), xkms.BackendTypeSoftware)
 	adapter.SetLogger(logger)
 
-	logger.Info("xkms software key backend initialized", slog.String("keys_dir", keysDir))
+	logger.Info("xkms software key backend initialized over the barrier-backed datastore")
 
 	return adapter, nil
 }

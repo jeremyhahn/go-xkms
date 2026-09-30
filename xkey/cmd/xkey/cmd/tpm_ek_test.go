@@ -31,6 +31,43 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fakeEKCertWriter is a test double for ekCertWriter that records the
+// hierarchyAuth and cert bytes it was called with.
+type fakeEKCertWriter struct {
+	gotAuth []byte
+	gotCert []byte
+	err     error
+}
+
+func (f *fakeEKCertWriter) ProvisionEKCert(hierarchyAuth, ekCert []byte) error {
+	f.gotAuth = append([]byte(nil), hierarchyAuth...)
+	f.gotCert = append([]byte(nil), ekCert...)
+	return f.err
+}
+
+// TestRestoreEKCert_PassesHierarchyAuthThrough proves restoreEKCert forwards
+// the caller's hierarchy authorization to ProvisionEKCert, instead of
+// discarding it and calling an auth-less write (the pre-fix
+// `tpm.WriteEKCert(block.Bytes)`, which always passed nil).
+func TestRestoreEKCert_PassesHierarchyAuthThrough(t *testing.T) {
+	fake := &fakeEKCertWriter{}
+
+	err := restoreEKCert(fake, []byte("owner-secret"), []byte("cert-der"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("owner-secret"), fake.gotAuth)
+	assert.Equal(t, []byte("cert-der"), fake.gotCert)
+}
+
+// TestRestoreEKCert_PropagatesError proves a ProvisionEKCert failure
+// surfaces to the caller.
+func TestRestoreEKCert_PropagatesError(t *testing.T) {
+	wantErr := assert.AnError
+	fake := &fakeEKCertWriter{err: wantErr}
+
+	err := restoreEKCert(fake, []byte("owner-secret"), []byte("cert-der"))
+	assert.ErrorIs(t, err, wantErr)
+}
+
 // generateEKTestCA creates a self-signed CA certificate that simulates a
 // TPM manufacturer root CA. The certificate is valid for issuing EK certs.
 func generateEKTestCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {

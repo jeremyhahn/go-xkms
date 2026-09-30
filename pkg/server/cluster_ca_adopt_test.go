@@ -35,7 +35,7 @@ import (
 func adoptStagedTestServer(t *testing.T) *Server {
 	t.Helper()
 	return newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory", Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()},
 	})
 }
 
@@ -44,7 +44,7 @@ func adoptStagedTestServer(t *testing.T) *Server {
 // clusterCACacheSubdir), creating the parent directory as needed.
 func writeStagedCACerts(t *testing.T, s *Server, pemBytes []byte) {
 	t.Helper()
-	path := clusterca.StagedCACertsPath(filepath.Join(s.config.Storage.Path, clusterCACacheSubdir))
+	path := clusterca.StagedCACertsPath(filepath.Join(s.config.Datastore.Path, clusterCACacheSubdir))
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 	require.NoError(t, os.WriteFile(path, pemBytes, 0o600))
 }

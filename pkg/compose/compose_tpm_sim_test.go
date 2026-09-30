@@ -19,6 +19,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -30,7 +32,7 @@ import (
 // newSimulatorBackend opens a TPM2 key backend over the simulator.
 func newSimulatorBackend(t *testing.T) *tpm2backend.Backend {
 	t.Helper()
-	backend, err := tpm2backend.NewBackend(&tpm2backend.Config{UseSimulator: true, KeyDir: t.TempDir()})
+	backend, err := tpm2backend.NewBackend(&tpm2backend.Config{UseSimulator: true, KeyStorage: storage.NewMemory()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, backend.Close()) })
 	return backend

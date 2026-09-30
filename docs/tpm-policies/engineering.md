@@ -250,8 +250,8 @@ backends:
     enabled: true
     vtpm:
       enabled: true            # off unless set; vtpm mode then answers ErrVTPMUnavailable
-      state_dir: /var/lib/xkms/vtpm       # default <storage.path>/vtpm
-      run_dir: /run/xkms-vtpm             # default <storage.path>/vtpm-run (socket paths <= 107 bytes)
+      state_dir: /var/lib/xkms/vtpm       # default <datastore.path>/vtpm
+      run_dir: /run/xkms-vtpm             # default <datastore.path>/vtpm-run (socket paths <= 107 bytes)
       binary: /usr/bin/swtpm              # default swtpm from PATH
 ```
 

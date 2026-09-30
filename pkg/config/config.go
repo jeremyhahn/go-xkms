@@ -43,7 +43,7 @@ type Config struct {
 	RateLimit   RateLimitConfig           `yaml:"ratelimit"`
 	Metrics     MetricsConfig             `yaml:"metrics"`
 	Health      HealthConfig              `yaml:"health"`
-	Storage     StorageConfig             `yaml:"storage"`
+	Datastore   DatastoreConfig           `yaml:"datastore"`
 	Crypto      CryptoConfig              `yaml:"crypto"`
 	Cluster     ClusterConfig             `yaml:"cluster"`
 	RNG         RNGConfig                 `yaml:"rng"`
@@ -67,15 +67,22 @@ type Config struct {
 	// nil, trust resolution falls back to the OS system trust store.
 	Trust *resolver.Config `yaml:"trust,omitempty"`
 
+	// Invite configures administrator-issued user enrollment invitations
+	// (go-xkms#1294 part B). When nil, invitations use qrdb's own defaults
+	// and the invite link is built from an empty public base URL, which is
+	// never useful in production — an operator serving invitations over the
+	// network must set PublicBaseURL.
+	Invite *InviteConfig `yaml:"invite,omitempty"`
+
 	// LoopbackDesktop marks this Config as backing the in-process loopback
 	// desktop engine (pkg/server/loopback), not a network-facing deployment.
 	// desktopConfig forces Protocols.REST on so the SPA can reach the engine
 	// over 127.0.0.1, which makes NetworkServing report true; Validate uses
-	// this field to skip, for that one launch shape only, the storage.backend
-	// "qrdb" and tls.enabled requirements NetworkServing's doc comment
-	// describes as exempt for local IPC. No other check is affected: a
-	// loopback config still needs a valid port, a configured backend, and
-	// everything else Validate enforces.
+	// this field to skip, for that one launch shape only, the
+	// datastore.mode "standalone" and tls.enabled requirements
+	// NetworkServing's doc comment describes as exempt for local IPC. No
+	// other check is affected: a loopback config still needs a valid port,
+	// a configured datastore, and everything else Validate enforces.
 	//
 	// It is a pure embedder signal, never a deployment setting: yaml:"-"
 	// keeps it unreachable from any config file, environment variable, or
@@ -296,7 +303,7 @@ type CredentialsConfig struct {
 	// barrier can exist -- that barrier's own hardware seal strategies are built
 	// from already-initialized backends (buildHardwareSealStrategies), which is
 	// the exact set "barrier" would need to unseal first. Only the qrdb node's
-	// OWN barrier (Storage.Backend=="qrdb", hosted embedded, with a strategy
+	// OWN barrier (Datastore.Mode=="standalone", with a strategy
 	// BarrierConfig.NodeFlipWired reports true for) is built independently of
 	// backend initialization and is therefore available in time. Every other
 	// configuration is refused at Validate() with a typed error rather than
@@ -319,16 +326,12 @@ type CredentialsConfig struct {
 // and BarrierConfig.NodeFlipWired): it is built directly from
 // Backends.TPM2/SealConfig, never from already-initialized backends, and is
 // adopted before the credential service is constructed. That requires
-// Storage.Backend=="qrdb" hosted with the embedded transport (a remote/
-// clustered qrdb deployment dials out instead of hosting the node that would
-// adopt the barrier), Barrier.Enabled, and a strategy NodeFlipWired reports
-// true for.
+// Datastore.Mode=="standalone" (a remote/clustered qrdb deployment dials out
+// instead of hosting the node that would adopt the barrier), Barrier.Enabled,
+// and a strategy NodeFlipWired reports true for.
 func (c *Config) CredentialsBarrierStrategySupported() bool {
-	if !strings.EqualFold(c.Storage.Backend, "qrdb") {
-		return false
-	}
-	transport := strings.ToLower(strings.TrimSpace(c.Storage.QRDB.Transport))
-	if transport != "" && transport != "embedded" {
+	mode := strings.ToLower(strings.TrimSpace(c.Datastore.Mode))
+	if mode != "" && mode != "standalone" {
 		return false
 	}
 	return c.Barrier.Enabled && c.Barrier.NodeFlipWired()
@@ -370,9 +373,10 @@ type ServerConfig struct {
 // serving runs exclusively on the unified API server: the embedded qrdb
 // node's multi-protocol server takes the ports above and serves the xkms
 // capability plane through the registered ServiceModule (pkg/apimodule).
-// It therefore requires storage.backend "qrdb" and explicit TLS material
-// (qrdb's transports are TLS-only and the xkms CA is not yet composed when
-// the node starts) -- see Validate. QUIC is served as HTTP/3 on the REST
+// It therefore requires datastore.mode "standalone" (the node this process
+// hosts) and explicit TLS material (qrdb's transports are TLS-only and the
+// xkms CA is not yet composed when the node starts) -- see Validate. QUIC
+// is served as HTTP/3 on the REST
 // port (advertised via Alt-Svc); the Unix socket is local IPC and never sets
 // a protocol this method looks at, so it never makes NetworkServing true.
 //
@@ -587,6 +591,32 @@ type WebAuthnConfig struct {
 	JWTExpiresIn string   `yaml:"jwt_expires_in"` // JWT expiration duration (e.g., "24h")
 }
 
+// InviteConfig controls administrator-issued user enrollment invitations
+// (go-xkms#1294 part B): an admin creates a PENDING user, xkms mints a
+// single-use invitation through qrdb's canonical invite store, and the
+// invitee redeems it to enroll their first WebAuthn passkey or PIV
+// credential, which activates the account.
+type InviteConfig struct {
+	// PublicBaseURL is the externally reachable origin (and any UI path
+	// prefix) the invitation link is built from, e.g.
+	// "https://kms.example.com/ui". It is a configured value, NEVER derived
+	// from a request's Host header: the WebAuthn ceremony's RP ID must stay
+	// the fixed value the operator configured for WebAuthnConfig.RPOrigins,
+	// and an admin's own client address must not leak into a link mailed to
+	// someone else. Empty produces a link with no origin, which is only
+	// useful for tests that inspect the token directly.
+	PublicBaseURL string `yaml:"public_base_url"`
+
+	// DefaultTTL is how long an invitation stays redeemable when the caller
+	// does not specify one, as a Go duration string (e.g. "24h"). Empty
+	// defaults to qrdb's own DefaultInviteTTL (24h).
+	DefaultTTL string `yaml:"default_ttl"`
+
+	// MaxTTL caps an operator-requested TTL, as a Go duration string. Empty
+	// defaults to 7 days. A request above the cap is clamped, not refused.
+	MaxTTL string `yaml:"max_ttl"`
+}
+
 // JWTConfig controls JWT authentication
 type JWTConfig struct {
 	Secret        string   `yaml:"secret"`
@@ -677,23 +707,60 @@ type HealthConfig struct {
 	Path    string `yaml:"path"`
 }
 
-// StorageConfig controls storage backend for metadata.
-// Valid backends: "file", "memory", "pebble", "qrdb".
-type StorageConfig struct {
-	Backend string     `yaml:"backend"`
-	Path    string     `yaml:"path"`
-	QRDB    QRDBConfig `yaml:"qrdb"`
+// DatastoreConfig configures xkms's single global datastore. Every
+// subsystem -- keys, users, RBAC, custodian state, shares, CA serials and
+// revocations, ACME state, everything -- is stored through this ONE
+// qrdb-backed datastore (see pkg/server/storage_factory.go); nothing is
+// written to disk outside it by default, and no subsystem hardcodes its own
+// storage engine.
+//
+// Engine selects the local storage engine xkms uses when it hosts the
+// datastore itself (Mode "standalone"); it maps directly onto go-qrdb's own
+// per-database Backend vocabulary (qrdbsdk.DaemonDatabaseConfig.Backend), so
+// xkms never invents a parallel engine enum. Mode selects the datastore's
+// topology: "standalone" hosts the qrdb engine in this process (optionally
+// as a Raft cluster member -- see ClusterConfig), or "remote" dials an
+// already-running qrdb cluster instead of hosting one here. Barrier
+// encryption-at-rest is configured independently via BarrierConfig; it
+// applies uniformly to the datastore regardless of Engine or Mode.
+type DatastoreConfig struct {
+	// Engine selects the local qrdb storage engine: "memory", "file", or
+	// "pebble" (default). Only meaningful when Mode is "standalone"; a
+	// "remote" datastore's engine is whatever the remote cluster runs.
+	Engine string `yaml:"engine"`
+
+	// Path is the on-disk data directory for a standalone datastore, and
+	// for the small set of genuinely pre-datastore material that must exist
+	// before the datastore itself (the node's own Raft data directory,
+	// TPM-sealed pre-barrier blobs, the bootstrap TLS certificate cache --
+	// see docs/datastore/architecture.md). Required whenever Mode is
+	// "standalone", for every Engine including "memory": go-qrdb roots the
+	// node's on-disk state (its vector-storage subsystem in particular)
+	// under this directory regardless of the primary KV engine, so there is
+	// no engine choice that lets a standalone node run with no directory at
+	// all. Not used for datastore mode "remote".
+	Path string `yaml:"path"`
+
+	// Mode selects the datastore topology: "standalone" (default) hosts the
+	// qrdb engine in this process; "remote" dials an already-running qrdb
+	// cluster instead (see Remote).
+	Mode string `yaml:"mode"`
+
+	// Remote configures the connection to an external qrdb cluster. Only
+	// used when Mode is "remote".
+	Remote DatastoreRemoteConfig `yaml:"remote"`
 }
 
-// QRDBConfig configures the QRDB distributed storage backend.
-type QRDBConfig struct {
-	// Address is the QRDB cluster endpoint (e.g., "https://localhost:63002").
+// DatastoreRemoteConfig configures a connection to an already-running,
+// external qrdb cluster (DatastoreConfig.Mode == "remote").
+type DatastoreRemoteConfig struct {
+	// Address is the remote qrdb cluster endpoint (e.g., "https://host:63002").
 	Address string `yaml:"address"`
 
-	// Transport specifies the SDK transport type: "rest", "grpc", or "embedded".
+	// Transport specifies the SDK transport type: "rest" or "grpc".
 	Transport string `yaml:"transport"`
 
-	// TLS configures the TLS settings for the QRDB connection.
+	// TLS configures the TLS settings for the connection.
 	TLS TLSConfig `yaml:"tls"`
 }
 
@@ -706,10 +773,11 @@ var ErrClusterRaftTLSIncomplete = errors.New(
 // ClusterConfig configures Raft clustering for high availability. When enabled,
 // xkms hosts a clustered go-qrdb node (via NewClusteredNode) so all datastore
 // state — keys, users, RBAC, custodian, shares, CA serials/revocations, etc. —
-// is replicated across nodes. Clustering requires the embedded "qrdb" storage
-// backend (PebbleDB-backed). These fields map onto go-qrdb's Raft config.
+// is replicated across nodes. Clustering requires Datastore.Mode ==
+// "standalone" (this process hosts the node); the local engine (pebble,
+// typically) is Datastore.Engine. These fields map onto go-qrdb's Raft config.
 type ClusterConfig struct {
-	// Enabled turns on Raft clustering. Requires Storage.Backend == "qrdb".
+	// Enabled turns on Raft clustering. Requires Datastore.Mode == "standalone".
 	Enabled bool `yaml:"enabled"`
 
 	// NodeID is this node's Raft replica ID within the shard. Must be unique
@@ -1330,9 +1398,10 @@ type DANEBootstrapConfig struct {
 // embedded and test callers can construct whatever posture they need.
 func (c *Config) ComplianceGaps() []string {
 	var gaps []string
+	datastoreMode := strings.ToLower(strings.TrimSpace(c.Datastore.Mode))
 	if !c.Barrier.Enabled {
 		gaps = append(gaps, "encryption-at-rest disabled (barrier.enabled=false): data is stored in plaintext")
-	} else if strings.EqualFold(c.Storage.Backend, "qrdb") && c.barrierLeavesKeysPlaintext() {
+	} else if (datastoreMode == "" || datastoreMode == "standalone") && c.barrierLeavesKeysPlaintext() {
 		// On an embedded qrdb node the barrier encrypts the data plane (and
 		// thus the crypto backends' key stores) whenever the strategy is
 		// wired through the node's own barrier (BarrierConfig.NodeFlipWired:
@@ -1362,18 +1431,9 @@ func (c *Config) ComplianceGaps() []string {
 		gaps = append(gaps, "authentication is no-op (auth.type=\""+c.Auth.Type+"\"): access is effectively anonymous")
 	}
 	// RBAC is the authorization engine for every transport (REST, gRPC, QUIC,
-	// MCP), and it is backed exclusively by the qrdb identity plane, which only
-	// exists when qrdb is the storage backend. Enabling RBAC against any other
-	// backend leaves the Authorizer nil, so each transport falls back to
-	// allow-all: every authenticated caller gets every permission, regardless of
-	// role. That is an access control the operator explicitly asked for that
-	// silently does nothing — FedRAMP AC-3/AC-6, PCI-DSS v4 7.x, and HIPAA
-	// §164.312(a)(1) all require it to actually be enforced.
-	if c.Auth.EnableRBAC && !strings.EqualFold(strings.TrimSpace(c.Storage.Backend), "qrdb") {
-		gaps = append(gaps, "RBAC enabled without an identity plane (auth.enable_rbac=true, storage.backend=\""+
-			c.Storage.Backend+"\"): the qrdb-backed authorizer cannot be built, so every transport authorizes "+
-			"all requests. Set storage.backend=\"qrdb\" or disable auth.enable_rbac")
-	}
+	// MCP), and it is backed by the one qrdb identity plane every deployment
+	// now has (standalone or remote), so there is no longer a configuration
+	// that enables RBAC without an identity plane to back it.
 	if c.CA == nil {
 		gaps = append(gaps, "no CA configured (ca is unset): no certificate provisioning or mTLS trust anchor")
 	}
@@ -1475,22 +1535,70 @@ func (c *Config) barrierLeavesKeysPlaintext() bool {
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
+	// Validate the datastore first: several later checks (network serving,
+	// the credentials "barrier" seal strategy, clustering) read
+	// c.Datastore.Mode and need it already defaulted.
+	//
+	// Engine defaults to durable PebbleDB rather than failing — production
+	// paths must never silently fall back to a non-durable store.
+	// Deployments that want an in-memory engine (tests, ephemeral
+	// deployments) or plain files set engine "memory" / "file" explicitly.
+	if c.Datastore.Engine == "" {
+		c.Datastore.Engine = "pebble"
+	}
+	switch strings.ToLower(c.Datastore.Engine) {
+	case "memory", "file", "pebble":
+	default:
+		return &errs.Message{Msg: fmt.Sprintf("invalid datastore.engine: %s (must be memory, file, or pebble)", c.Datastore.Engine)}
+	}
+	if c.Datastore.Mode == "" {
+		c.Datastore.Mode = "standalone"
+	}
+	switch strings.ToLower(c.Datastore.Mode) {
+	case "standalone":
+		// A standalone datastore hosts the embedded qrdb node in this
+		// process, and go-qrdb roots the node's on-disk state (including its
+		// vector-storage subsystem) under one data directory regardless of
+		// the primary KV engine -- there is no engine choice, "memory"
+		// included, that lets a standalone node run with no directory at
+		// all. Adopting that contract exactly (rather than working around
+		// it) means datastore.path is unconditionally required for
+		// datastore.mode "standalone".
+		if c.Datastore.Path == "" {
+			return &errs.Message{Msg: fmt.Sprintf("datastore.path must be specified for datastore.mode \"standalone\" (required for every datastore.engine, including %q: go-qrdb roots the node's on-disk state under it regardless of the primary KV engine)", c.Datastore.Engine)}
+		}
+	case "remote":
+		// A remote datastore dials an already-running qrdb cluster instead
+		// of hosting one here, so an address and transport are required.
+		if c.Datastore.Remote.Address == "" {
+			return &errs.Message{Msg: "datastore.remote.address is required for datastore.mode \"remote\""}
+		}
+		switch strings.ToLower(c.Datastore.Remote.Transport) {
+		case "rest", "grpc":
+		default:
+			return &errs.Message{Msg: fmt.Sprintf("invalid datastore.remote.transport: %s (must be rest or grpc)", c.Datastore.Remote.Transport)}
+		}
+	default:
+		return &errs.Message{Msg: fmt.Sprintf("invalid datastore.mode: %s (must be standalone or remote)", c.Datastore.Mode)}
+	}
+
 	// Validate server ports
 	// Network serving runs exclusively on the unified API server: the
 	// embedded qrdb node takes xkmsd's ports and serves the capability
 	// plane through the registered ServiceModule. The node is the single
-	// core, so network protocols require qrdb storage; and qrdb's
-	// transports are TLS-only while xkms's CA cannot auto-provision the
-	// node's certificate (the CA composes after — and stores into — the
-	// node), so explicit TLS material is required. Fail closed at
-	// validation rather than at node construction. Local IPC (the Unix
-	// socket and the loopback desktop engine) is exempt: the Unix socket
-	// never sets a NetworkServing protocol, and the loopback desktop engine
-	// opts out explicitly via LoopbackDesktop, which only trusted embedder
-	// code (pkg/server/loopback) can set.
+	// core, so network protocols require this process to host it
+	// (datastore.mode "standalone"); and qrdb's transports are TLS-only
+	// while xkms's CA cannot auto-provision the node's certificate (the CA
+	// composes after — and stores into — the node), so explicit TLS
+	// material is required. Fail closed at validation rather than at node
+	// construction. Local IPC (the Unix socket and the loopback desktop
+	// engine) is exempt: the Unix socket never sets a NetworkServing
+	// protocol, and the loopback desktop engine opts out explicitly via
+	// LoopbackDesktop, which only trusted embedder code
+	// (pkg/server/loopback) can set.
 	if c.NetworkServing() && !c.LoopbackDesktop {
-		if c.Storage.Backend != "qrdb" {
-			return &errs.Message{Msg: fmt.Sprintf("network protocols require storage.backend \"qrdb\" (the embedded qrdb node is the unified API server); got %q — local-only deployments disable rest/grpc/quic/mcp and use the unix socket", c.Storage.Backend)}
+		if !strings.EqualFold(c.Datastore.Mode, "standalone") {
+			return &errs.Message{Msg: fmt.Sprintf("network protocols require datastore.mode \"standalone\" (the embedded qrdb node is the unified API server); got %q — local-only deployments disable rest/grpc/quic/mcp and use the unix socket", c.Datastore.Mode)}
 		}
 		if !c.TLS.Enabled {
 			return &errs.Message{Msg: "network protocols require tls.enabled: the unified API server's transports are TLS-only (explicit cert_file/key_file are optional — without them a bootstrap certificate serves until the CA issues the real one)"}
@@ -1529,10 +1637,9 @@ func (c *Config) Validate() error {
 	// first (go-xkms#812).
 	if strings.EqualFold(c.Credentials.SealStrategy, "barrier") && !c.CredentialsBarrierStrategySupported() {
 		return &errs.Message{Msg: "credentials.seal_strategy \"barrier\" requires an embedded qrdb-hosted " +
-			"barrier: storage.backend \"qrdb\" with storage.qrdb.transport \"embedded\" (or unset), " +
+			"barrier: datastore.mode \"standalone\" (or unset), " +
 			"barrier.enabled true, and a barrier.strategy the node barrier supports (none, passphrase, " +
-			"shamir, or tpm2) -- got storage.backend " + fmt.Sprintf("%q", c.Storage.Backend) +
-			", storage.qrdb.transport " + fmt.Sprintf("%q", c.Storage.QRDB.Transport) +
+			"shamir, or tpm2) -- got datastore.mode " + fmt.Sprintf("%q", c.Datastore.Mode) +
 			", barrier.enabled " + fmt.Sprintf("%t", c.Barrier.Enabled) +
 			", barrier.strategy " + fmt.Sprintf("%q", c.Barrier.SealStrategy()) +
 			". The credential service resolves backend credentials before the general xkms barrier " +
@@ -1621,41 +1728,6 @@ func (c *Config) Validate() error {
 		}
 		if c.TLS.KeyFile == "" {
 			return &errs.Message{Msg: "TLS key_file is required when TLS is enabled without CA"}
-		}
-	}
-
-	// Validate storage. An unspecified backend defaults to durable PebbleDB
-	// rather than failing — production paths must never silently fall back to a
-	// non-durable store. Deployments that want plain files set backend "file"
-	// explicitly (respected, not migrated).
-	if c.Storage.Backend == "" {
-		c.Storage.Backend = "pebble"
-	}
-	switch strings.ToLower(c.Storage.Backend) {
-	case "qrdb":
-		// Default the transport to "embedded" so a standalone qrdb backend
-		// works without specifying a transport.
-		if c.Storage.QRDB.Transport == "" {
-			c.Storage.QRDB.Transport = "embedded"
-		}
-		switch strings.ToLower(c.Storage.QRDB.Transport) {
-		case "embedded":
-			// Embedded qrdb persists data under the storage path, so a path
-			// is required but a cluster address is not.
-			if c.Storage.Path == "" {
-				return &errs.Message{Msg: "storage path must be specified for embedded qrdb"}
-			}
-		case "rest", "grpc":
-			// Remote qrdb dials a cluster endpoint, so an address is required.
-			if c.Storage.QRDB.Address == "" {
-				return &errs.Message{Msg: "qrdb storage address is required for remote qrdb transport"}
-			}
-		default:
-			return &errs.Message{Msg: fmt.Sprintf("invalid qrdb transport: %s (must be embedded, rest, or grpc)", c.Storage.QRDB.Transport)}
-		}
-	default:
-		if c.Storage.Path == "" {
-			return &errs.Message{Msg: "storage path must be specified"}
 		}
 	}
 
@@ -1769,14 +1841,15 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	// Validate clustering. When enabled it requires the embedded, replicated
-	// "qrdb" backend and a complete, parseable membership.
+	// Validate clustering. When enabled it requires this process to host the
+	// datastore (datastore.mode "standalone") and a complete, parseable
+	// membership.
 	if c.Cluster.Enabled {
 		if c.Cluster.ShardID == 0 {
 			c.Cluster.ShardID = 1
 		}
-		if !strings.EqualFold(c.Storage.Backend, "qrdb") {
-			return &errs.Message{Msg: fmt.Sprintf("cluster.enabled requires storage.backend \"qrdb\" (got %q)", c.Storage.Backend)}
+		if !strings.EqualFold(c.Datastore.Mode, "standalone") {
+			return &errs.Message{Msg: fmt.Sprintf("cluster.enabled requires datastore.mode \"standalone\" (got %q)", c.Datastore.Mode)}
 		}
 		if c.Cluster.NodeID == 0 {
 			return &errs.Message{Msg: "cluster.node_id is required and must be non-zero"}

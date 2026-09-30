@@ -95,19 +95,35 @@ func (s *RestService) serveCachedWhenOpen(
 	return value, false
 }
 
-// HealthStatus reports the ACME server's resilience posture: every circuit
-// breaker registered on the shared Manager (Params.Breakers), which includes
-// breakers this RestService created for its own storage access as well as
-// any a caller registered for the challenge verifiers, CT submitter, or KMS
-// signer, and whether the directory and CA-bundle endpoints are currently
-// degraded.
+// HealthStatus reports the ACME server's resilience posture: every named
+// circuit breaker registered on the shared Manager (Params.Breakers), which
+// includes breakers this RestService created for its own storage access as
+// well as any a caller registered for the CT submitter or KMS signer; a
+// bounded summary of the per-target breaker groups (http-01/dns-01
+// validation targets, see TargetGroups); and whether the directory and
+// CA-bundle endpoints are currently degraded.
 type HealthStatus struct {
-	// Healthy is false when any breaker is open.
+	// Healthy is false when any named breaker (Breakers) is open. A
+	// per-target breaker group's Open count does NOT affect Healthy: one
+	// account's failing validation target is expected, isolated behavior
+	// (that isolation is the point of TargetGroups -- see
+	// circuitbreaker.WrapChallengeVerifierPerTarget), not evidence that the
+	// server itself is unhealthy the way an open "storage" or "kms" breaker
+	// is.
 	Healthy bool `json:"healthy"`
 
-	// Breakers reports every breaker on the shared Manager, keyed by name.
-	// Empty when Params.Breakers was nil.
+	// Breakers reports every named breaker on the shared Manager (a small,
+	// fixed set of operator-configured dependencies: "storage", "kms",
+	// "ct_submitter" when wired), keyed by name. Empty when Params.Breakers
+	// was nil. This does NOT include per-target breakers -- see TargetGroups.
 	Breakers map[string]CircuitBreakerStatus `json:"breakers,omitempty"`
+
+	// TargetGroups reports a bounded summary of every per-target breaker
+	// group on the shared Manager, keyed by group name ("http01", "dns01").
+	// Unlike Breakers this never grows with the number of distinct
+	// validation targets seen: see circuitbreaker.TargetGroupStatus. Empty
+	// when Params.Breakers was nil.
+	TargetGroups map[string]circuitbreaker.TargetGroupStatus `json:"target_groups,omitempty"`
 
 	// Degradation reports whether the directory and CA-bundle endpoints are
 	// currently serving cached content because CA-bundle storage access
@@ -152,6 +168,7 @@ func (s *RestService) HealthHandler(w http.ResponseWriter, r *http.Request) {
 				status.Healthy = false
 			}
 		}
+		status.TargetGroups = s.breakers.TargetGroupStatuses()
 	}
 
 	status.Degradation = DegradationStatus{

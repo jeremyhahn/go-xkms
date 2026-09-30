@@ -26,6 +26,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -67,7 +68,7 @@ func autodetectedPlatformSRKAuthPolicy(t *testing.T) []byte {
 
 	cfg := &Config{
 		UseSimulator:    true,
-		KeyDir:          t.TempDir(),
+		KeyStorage:      storage.NewMemory(),
 		CN:              "psrk-shape-autodetect",
 		PlatformPCR:     psrkShapeTestPCR,
 		PlatformPCRBank: psrkShapeTestBank,
@@ -153,7 +154,7 @@ func TestPlatformSRK_AutodetectAndEnrollmentAgreeOnAuthPolicy(t *testing.T) {
 func TestPlatformSRK_AutodetectWithoutPlatformPolicyConfigStillBindsAuthPolicy(t *testing.T) {
 	cfg := &Config{
 		UseSimulator: true,
-		KeyDir:       t.TempDir(),
+		KeyStorage:   storage.NewMemory(),
 		CN:           "psrk-shape-defaults",
 	}
 	backend, err := NewBackend(cfg)

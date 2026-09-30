@@ -15,6 +15,7 @@ package audit
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -59,7 +60,7 @@ func WithLogger(logger *slog.Logger) Option {
 // cache for fast queries.
 type DAOAuditStore struct {
 	mu      sync.RWMutex
-	slog    *SlogLogger
+	slog    entryLogger
 	dao     qrdbsdk.GenericDAO[*AuditEntryEntity]
 	cache   []Entry
 	maxSize int
@@ -139,8 +140,10 @@ func (s *DAOAuditStore) Log(entry Entry) error {
 
 	var slogger *slog.Logger
 	if s.slog != nil {
-		_ = s.slog.Log(entry)
-		slogger = s.slog.logger
+		if slogErr := s.slog.Log(entry); slogErr != nil {
+			writeErr = errors.Join(writeErr, slogErr)
+		}
+		slogger = s.slog.slogHandle()
 	}
 
 	return handleWriteFailure(slogger, entry.Operation, writeErr)

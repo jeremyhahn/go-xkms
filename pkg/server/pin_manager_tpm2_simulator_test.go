@@ -57,7 +57,7 @@ func TestInitializePINManager_TPM2StrategyGovernsWithThePlatformSRK(t *testing.T
 	require.NotNil(t, backend)
 	assert.Equal(t, qrdbsdk.PINStrategyTPM2, backend.Strategy())
 
-	persisted, err := pinselect.LoadStrategy(filepath.Join(cfg.Storage.Path, "pin"))
+	persisted, err := pinselect.LoadStrategy(filepath.Join(cfg.Datastore.Path, "pin"))
 	require.NoError(t, err)
 	assert.Equal(t, qrdbsdk.PINStrategyTPM2, persisted)
 
@@ -83,7 +83,7 @@ func TestInitializePINManager_TPM2StrategyWithoutATPMIsRefused(t *testing.T) {
 	var unavailable *pinselect.ProviderUnavailableError
 	require.True(t, errors.As(err, &unavailable), "want *pinselect.ProviderUnavailableError, got %v", err)
 
-	_, loadErr := pinselect.LoadStrategy(filepath.Join(cfg.Storage.Path, "pin"))
+	_, loadErr := pinselect.LoadStrategy(filepath.Join(cfg.Datastore.Path, "pin"))
 	assert.ErrorIs(t, loadErr, pinselect.ErrStrategyNotPersisted, "a refused strategy must not be recorded")
 }
 
@@ -100,7 +100,7 @@ func TestInitializePINManager_AutoNeverAdoptsAnUnconfirmedSRK(t *testing.T) {
 	defer func() { _ = server.Shutdown() }()
 
 	assert.Equal(t, qrdbsdk.PINStrategySoftware, server.PINBackend().Strategy())
-	persisted, err := pinselect.LoadStrategy(filepath.Join(cfg.Storage.Path, "pin"))
+	persisted, err := pinselect.LoadStrategy(filepath.Join(cfg.Datastore.Path, "pin"))
 	require.NoError(t, err)
 	assert.Equal(t, qrdbsdk.PINStrategySoftware, persisted)
 }
@@ -113,7 +113,7 @@ func TestInitializePINManager_StrategyChangeAgainstRecordIsRefused(t *testing.T)
 	defer xkms.Reset()
 
 	cfg := tpm2PINConfig(t, "tpm2")
-	require.NoError(t, pinselect.SaveStrategy(filepath.Join(cfg.Storage.Path, "pin"), qrdbsdk.PINStrategySoftware))
+	require.NoError(t, pinselect.SaveStrategy(filepath.Join(cfg.Datastore.Path, "pin"), qrdbsdk.PINStrategySoftware))
 
 	_, err := New(cfg)
 	var mismatch *pinselect.StrategyMismatchError

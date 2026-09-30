@@ -388,17 +388,21 @@ environment, never from a file in this repo.
 
 **`pkg/backend/tpm2.Config.KeyDir` has no default** (`config.go:108-118`,
 issue #926): `Validate` returns `*errs.Detail` wrapping `ErrKeyDirRequired`
-when it is empty rather than resolving a directory relative to the process's
-working directory. `pkg/server`'s `resolveTPM2KeyDir`
-(`pkg/server/backend_tpm2.go:31`, `pkg/server/embedded_node.go:84`) derives it
-from `storage.path` and itself returns `*ErrConfigRequired` when that is unset
--- both layers fail closed with a typed error rather than falling back to a
-cwd-relative path. `pkg/xkms.AutoInitialize` derives it from
-`AutoConfig.DataDir` (`pkg/xkms/auto.go:158-166`) the same way it does for
-every other file-backed backend; a caller that leaves `DataDir` empty and
-wants the tpm2 backend must set `key_dir` explicitly in `BackendConfigs`, or
-the backend factory returns an error and `AutoInitialize` skips it (logged,
-not fatal, matching every other backend that fails to initialize).
+when both it and `Config.KeyStorage` (a pre-built `storage.Backend`,
+go-xkms#1345 batch 2) are empty, rather than resolving a directory relative
+to the process's working directory. `pkg/server`'s `resolveTPM2KeyDir`
+(`pkg/server/backend_tpm2.go:31`) derives `KeyDir` from
+`embeddednode.ResolveTPM2KeyDir` (`pkg/embeddednode/embedded_node.go`), which
+derives it from `datastore.path` and itself returns
+`*embeddednode.ErrDatastorePathRequired` when that is unset -- both layers
+fail closed with a typed error rather than falling back to a cwd-relative
+path. `pkg/xkms.AutoInitialize` instead derives `KeyStorage` from
+`AutoConfig.Datastore` (`pkg/xkms/auto.go`, via `register_tpm2.go`'s
+`"key_storage"` factory key) the same way it does for every other backend; a
+caller that leaves `Datastore` nil and wants the tpm2 backend must set
+`key_storage` explicitly in `BackendConfigs`, or the backend factory returns
+an error and `AutoInitialize` skips it (logged, not fatal, matching every
+other backend that fails to initialize).
 
 ## Persistence
 

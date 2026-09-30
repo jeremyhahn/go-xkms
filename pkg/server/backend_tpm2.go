@@ -18,6 +18,7 @@ import (
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 )
@@ -29,19 +30,17 @@ const (
 	vtpmRunSubdir   = "vtpm-run"
 )
 
-// tpm2KeyDirSubdir is the fixed subdirectory, under the configured storage
-// path, where the TPM2 backend and the TPM2 node-barrier seal strategy
-// persist sealed key blobs.
-const tpm2KeyDirSubdir = "tpm2-keys"
-
 // resolveTPM2KeyDir resolves the directory where TPM2-sealed key material is
 // persisted. It is always derived from the configured storage path and must
 // never fall back to a directory resolved relative to the process's working
 // directory: some callers of this package (embedded/programmatic
 // construction of *config.Config) never run config.Config.Validate, so an
-// empty Storage.Path cannot be assumed to have already been rejected.
+// empty Datastore.Path cannot be assumed to have already been rejected.
+// Delegates to embeddednode.ResolveTPM2KeyDir so this backend and the TPM2
+// node-barrier seal strategy always agree on one directory
+// (embeddednode.KeyDirSubdir).
 func (s *Server) resolveTPM2KeyDir() (string, error) {
-	return resolveTPM2KeyDir(s.config)
+	return embeddednode.ResolveTPM2KeyDir(s.config)
 }
 
 // initTPM2Backend initializes the TPM2 backend if enabled in configuration
@@ -56,6 +55,13 @@ func (s *Server) initTPM2Backend() error {
 		devicePath = "/dev/tpmrm0"
 	}
 
+	// keyDir is the TPM2 node-barrier seal strategy's own key directory --
+	// genuinely pre-datastore material (see docs/datastore/architecture.md),
+	// resolved directly under Datastore.Path rather than through the shared
+	// datastore itself. It is used ONLY below, as an optional ListKeys
+	// enumeration hint when this backend shares an already-open TPM
+	// connection with that strategy; it is never this backend's own key
+	// storage (see keyStorage further down for that).
 	keyDir, err := s.resolveTPM2KeyDir()
 	if err != nil {
 		return &ErrBackendCreate{Backend: "TPM2", Err: err}
@@ -99,10 +105,19 @@ func (s *Server) initTPM2Backend() error {
 		return nil
 	}
 
+	// Not sharing a TPM connection: this backend's own key storage is a
+	// key-prefixed view over the single shared datastore (createStorage),
+	// never a private file engine -- pkg/backend/tpm2.Config has no KeyDir
+	// path anymore (go-xkms#1345 batch 2).
+	keyStorage, err := s.createStorage("tpm2")
+	if err != nil {
+		return &ErrBackendCreate{Backend: "TPM2", Err: err}
+	}
+
 	// Create TPM2 backend configuration
 	tpmConfig := &tpm2backend.Config{
 		Device:          devicePath,
-		KeyDir:          keyDir,
+		KeyStorage:      keyStorage,
 		CN:              "xkms",
 		UseSimulator:    s.config.Backends.TPM2.UseSimulator,
 		SimulatorHost:   s.config.Backends.TPM2.SimulatorHost,
@@ -165,10 +180,10 @@ func (s *Server) vtpmConfig() *vtpm.Config {
 		Logger:   s.logger,
 	}
 	if cfg.StateDir == "" {
-		cfg.StateDir = filepath.Join(s.config.Storage.Path, vtpmStateSubdir)
+		cfg.StateDir = filepath.Join(s.config.Datastore.Path, vtpmStateSubdir)
 	}
 	if cfg.RunDir == "" {
-		cfg.RunDir = filepath.Join(s.config.Storage.Path, vtpmRunSubdir)
+		cfg.RunDir = filepath.Join(s.config.Datastore.Path, vtpmRunSubdir)
 	}
 	return cfg
 }

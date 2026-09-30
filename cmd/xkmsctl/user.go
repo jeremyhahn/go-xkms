@@ -34,98 +34,72 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// webAuthnRegistration drives the server-side WebAuthn registration ceremony for
-// the given user. It creates the xkms user (in the embedded qrdb node), begins the
-// ceremony on the server, runs the local CTAP2 authenticator against the returned
-// options through webauthnclient.AuthenticatorAdapter — the SDK re-export of the
-// single canonical WebAuthn ceremony driver (pkg/webauthn/client) — and finishes
-// the ceremony on the server. The returned attestation is the raw WebAuthn
-// PublicKeyCredential JSON the authenticator produced.
+// createInvitedUser creates the xkms user (in the embedded qrdb node) and
+// returns the server's response, which for an account with an email login
+// key now always carries a one-time activation invitation (go-xkms#1294
+// part B): CreateUser creates such an account PENDING, holding no
+// credential, and mints the invitation in the same call.
 //
-// newAdapter opens the local authenticator lazily, after CreateUser and
-// BeginRegistration have already succeeded: opening a CTAP2 authenticator can
-// itself fail closed (no security key attached), and that must not be
-// mistaken for a server-side failure or run before the server-side calls it
-// would otherwise precede.
-//
-// The role is resolved by the caller: admin enrollment always passes RoleAdmin,
-// while user registration passes RoleAdmin for the first user and the requested
-// role otherwise.
-//
-// pin is the authenticator's CTAP2 PIN, resolved by resolvePINInput. It sits
-// after the non-string parameters rather than beside origin so a transposition
-// of the two strings cannot compile: a positional slot adjacent to origin
-// would let a mixed-up caller send the PIN to the relying party as an origin.
-// Nil is correct for an authenticator with no PIN configured; against one
-// that has a PIN set the ceremony fails with ErrWebAuthnPINRequired.
-func webAuthnRegistration(
+// This is the replacement for the pre-#1294 webAuthnRegistration helper,
+// which drove CreateUser, BeginRegistration and a local hardware ceremony
+// back to back. BeginRegistration now refuses an account CreateUser just
+// created — enrolling its first credential is authorized by the invitation,
+// never by having just created the account — so that ceremony can no longer
+// run inline here. Redeem the printed invitation with
+// 'xkmsctl user invite redeem' (see user_invite.go) to enroll the first
+// FIDO2 passkey or PIV credential and activate the account.
+func createInvitedUser(
 	ctx context.Context,
 	cl client.Client,
-	newAdapter func() (webauthnclient.AuthenticatorAdapter, error),
-	printer *Printer,
-	username, email, displayName, role, origin string,
-	pin *secure.Secret,
-) ([]byte, error) {
-	// Create the xkms user in the embedded qrdb node behind the server.
-	if _, err := cl.CreateUser(ctx, &client.CreateUserRequest{
+	username, email, displayName, role string,
+) (*client.GetUserResponse, error) {
+	resp, err := cl.CreateUser(ctx, &client.CreateUserRequest{
 		Username: username,
 		// The canonical tenant-unique login key. WebAuthn enrollment resolves
-		// through it, so this ceremony cannot create a usable account without
-		// one; it is supplied explicitly rather than taken from the username,
-		// which is a separate identifier that merely often looks like an email.
+		// through it, so an account created without one is provisioned and
+		// unreachable; it is supplied explicitly rather than taken from the
+		// username, which is a separate identifier that merely often looks
+		// like an email.
 		Email:       email,
 		DisplayName: displayName,
 		Role:        role,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrCreateUserFailed, Err: err}
 	}
-
-	// Begin the server-side registration ceremony against the account's
-	// email, the login key the service resolves with GetByEmail. The username
-	// is a separate identifier: passing it would fail closed registration for
-	// the account just created and, under open registration, enrol the
-	// credential against a second, unintended principal.
-	beginResp, err := cl.BeginRegistration(ctx, &client.BeginRegistrationRequest{
-		Email:       email,
-		DisplayName: displayName,
-	})
-	if err != nil {
-		return nil, &WrappedError{Sentinel: ErrBeginRegistrationFailed, Err: err}
+	if resp == nil {
+		// Every real transport returns a non-nil response alongside a nil
+		// error; guard anyway so a misbehaving client degrades to "no
+		// invitation to show" rather than a nil dereference below.
+		resp = &client.GetUserResponse{}
 	}
+	return resp, nil
+}
 
-	adapter, err := newAdapter()
-	if err != nil {
-		return nil, &WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err}
+// printInvite reports the one-time activation invitation CreateUser minted,
+// which is the only place it is ever shown: only its digest is stored, so a
+// caller that loses this output must delete and recreate the account.
+func printInvite(printer *Printer, cfg *Config, invite *client.InviteInfo) error {
+	if invite == nil {
+		return nil
 	}
-	if closer, ok := adapter.(interface{ Close() error }); ok {
-		defer closeQuietly(closer)
+	if cfg.OutputFormat == "json" {
+		return printer.PrintJSON(map[string]interface{}{
+			"invite_token":      invite.Token,
+			"invite_url":        invite.URL,
+			"invite_expires_at": invite.ExpiresAt.Format(time.RFC3339),
+		})
 	}
-
-	if err := printer.PrintPrompt("\nPlease touch your security key to register..."); err != nil {
-		return nil, err
+	fmt.Println("\nActivation invitation (shown once — only its digest is stored):")
+	fmt.Printf("  Token:      %s\n", invite.Token)
+	if invite.URL != "" {
+		fmt.Printf("  Link:       %s\n", invite.URL)
 	}
-
-	// Run the local CTAP2 authenticator against the server's challenge. The
-	// adapter parses the options JSON itself (fido2.ParseWebAuthnRegistrationOptions)
-	// and refuses an rp.id the origin does not cover (fido2.ValidateRPID).
-	attestation, err := adapter.MakeCredential(ctx, &webauthnclient.CeremonyOptions{
-		OptionsJSON: []byte(beginResp.OptionsJSON),
-		Origin:      origin,
-		PIN:         pin,
-	})
-	if err != nil {
-		return nil, ceremonyFailure(ErrRegisterCredentialFailed, pin, err)
-	}
-
-	// Finish the server-side ceremony with the authenticator's attestation.
-	if _, err := cl.FinishRegistration(ctx, &client.FinishRegistrationRequest{
-		SessionID:       beginResp.SessionID,
-		AttestationJSON: string(attestation),
-	}); err != nil {
-		return nil, &WrappedError{Sentinel: ErrFinishRegistrationFailed, Err: err}
-	}
-
-	return attestation, nil
+	fmt.Printf("  Expires:    %s\n", invite.ExpiresAt.Format(time.RFC3339))
+	fmt.Println("\nSend this link to the invitee, or redeem it yourself with")
+	fmt.Println("'xkmsctl user invite redeem' to enroll the first FIDO2 passkey or PIV")
+	fmt.Println("credential and activate the account.")
+	return nil
 }
 
 // webAuthnAttestationResponse is the subset of the WebAuthn PublicKeyCredential
@@ -163,26 +137,21 @@ Subsequent users can be assigned different roles based on their needs.`,
 var userRegisterCmd = &cobra.Command{
 	Use:   "register <username>",
 	Short: "Register a new user with FIDO2",
-	Long: `Register a new user account using a FIDO2 security key.
+	Long: `Create a new user account, pending activation.
 
 The first user registered will automatically receive the admin role.
 Subsequent users will receive the 'user' role by default.
 
-During registration, you'll need to touch your FIDO2 security key
-to create a credential that will be used for authentication.
-
-An authenticator with a CTAP2 PIN set refuses the ceremony outright unless
-the request carries the PIN, so supply it the way a browser would prompt for
-it. An authenticator with no PIN configured needs none.
-
-` + pinUsage + `
+The account is created PENDING, holding no credential: an administrator
+cannot enroll a passkey on an invitee's behalf, so this command no longer
+drives a local FIDO2 ceremony inline (go-xkms#1294 part B). It prints a
+one-time activation invitation instead — shown exactly once, since only its
+digest is stored. Send the link to the invitee, or redeem it yourself (from
+the machine holding the security key) with 'xkmsctl user invite redeem'.
 
 Example:
   xkmsctl user register admin --email admin@example.com --display-name "Admin User"
-  xkmsctl user register operator --email operator@example.com --role operator
-
-  # Register against a PIN-protected authenticator, with no PIN in the process list
-  printf '%s' "$PIN" | xkmsctl user register admin --pin-stdin --email admin@example.com`,
+  xkmsctl user register operator --email operator@example.com --role operator`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		username := args[0]
@@ -192,9 +161,6 @@ Example:
 		fr := newFlagReader(cmd)
 		email := fr.String("email")
 		displayName := fr.String("display-name")
-		devicePath := fr.String("device")
-		timeout := fr.Duration("timeout")
-		requireUV := fr.Bool("user-verification")
 		roleStr := fr.String("role")
 		if err := fr.Err(); err != nil {
 			handleError(err)
@@ -216,22 +182,6 @@ Example:
 
 		if displayName == "" {
 			displayName = username
-		}
-
-		// Resolve the PIN before anything reaches the network: a --pin-stdin
-		// with nothing on standard input is operator input to correct, and
-		// correcting it should not first cost a server round trip or a
-		// half-finished registration. An empty PIN is legitimate here — it is
-		// what an authenticator with no PIN configured needs.
-		pin, err := resolvePINInput(cmd)
-		if err != nil {
-			handleError(err)
-			return
-		}
-		origin, err := resolveWebAuthnOrigin(cmd, cfg.Server)
-		if err != nil {
-			handleError(err)
-			return
 		}
 
 		// Connect to the xkms service.
@@ -275,19 +225,6 @@ Example:
 			}
 		}
 
-		// The hardware CTAP2 authenticator adapter is opened lazily by
-		// webAuthnRegistration, only after CreateUser and BeginRegistration have
-		// already succeeded server-side.
-		fidoConfig := fido2.DefaultConfig
-		fidoConfig.DevicePath = devicePath
-		fidoConfig.RequireUserVerification = requireUV
-		fidoConfig.UserPresenceTimeout = timeout
-		enumerator := cfg.HIDDeviceEnumerator()
-
-		newAdapter := func() (webauthnclient.AuthenticatorAdapter, error) {
-			return webauthnclient.NewHardwareAdapter(&fidoConfig, enumerator)
-		}
-
 		if err := printer.PrintMessage("Registering new user..."); err != nil {
 			handleError(err)
 			return
@@ -305,44 +242,37 @@ Example:
 			return
 		}
 
-		attestation, err := webAuthnRegistration(ctx, cl, newAdapter, printer, username, email, displayName, role, origin, pin)
+		// CreateUser creates the account PENDING and mints a one-time
+		// activation invitation in the same call (go-xkms#1294 part B); it
+		// no longer enrolls a passkey inline (see createInvitedUser).
+		resp, err := createInvitedUser(ctx, cl, username, email, displayName, role)
 		if err != nil {
 			handleError(err)
 			return
 		}
 
-		credentialID, err := extractWebAuthnCredentialID(attestation)
-		if err != nil {
+		if err := printer.PrintSuccess("\nUser created successfully; activation is pending."); err != nil {
 			handleError(err)
 			return
 		}
-
-		printVerbose("FIDO2 credential registered successfully")
-
-		if err := printer.PrintSuccess("\nUser registered successfully!"); err != nil {
+		if err := printInvite(printer, cfg, resp.Invite); err != nil {
 			handleError(err)
 			return
 		}
-
-		// Print summary
 		if cfg.OutputFormat == "json" {
-			summary := map[string]interface{}{
-				"success":       true,
-				"username":      username,
-				"display_name":  displayName,
-				"role":          role,
-				"auth_method":   "fido2",
-				"credential_id": base64.URLEncoding.EncodeToString(credentialID),
-				"first_user":    firstUser,
-			}
-			if err := printer.PrintJSON(summary); err != nil {
+			if err := printer.PrintJSON(map[string]interface{}{
+				"success":      true,
+				"username":     username,
+				"display_name": displayName,
+				"role":         role,
+				"first_user":   firstUser,
+				"pending":      true,
+			}); err != nil {
 				handleError(err)
 			}
 		} else {
 			fmt.Printf("\nUsername: %s\n", username)
 			fmt.Printf("Role: %s\n", role)
-			fmt.Printf("Credential ID: %s\n", base64.URLEncoding.EncodeToString(credentialID))
-			fmt.Printf("\nYou can now use this security key to authenticate.\n")
 		}
 	},
 }
@@ -992,8 +922,9 @@ var userUpdateCmd = &cobra.Command{
 	Use:   "update <username>",
 	Short: "Update a user account",
 	Long: `Update a user account's enabled state. Exactly one of --enable or
---disable must be provided; this maps onto the server's user update
-endpoint (PUT /api/v1/users/{username}).
+--disable must be provided; this maps onto the server's per-direction
+enable/disable endpoints (POST /api/v1/users/{username}/enable or
+/disable).
 
 Examples:
   xkmsctl user update alice --enable
@@ -1198,13 +1129,6 @@ func init() {
 	userRegisterCmd.Flags().String("email", "", "canonical login key for the user (REQUIRED)")
 	userRegisterCmd.Flags().String("display-name", "", "user display name (defaults to username)")
 	userRegisterCmd.Flags().String("role", "", "user role (so, admin, operator, user, auditor, custodian)")
-	userRegisterCmd.Flags().String("rp-id", "go-xkms", "relying party ID")
-	userRegisterCmd.Flags().String("rp-name", "Go xKMS", "relying party name")
-	userRegisterCmd.Flags().Duration("timeout", 30*time.Second, "timeout for user presence")
-	userRegisterCmd.Flags().String("device", "", "specific FIDO2 device path to use")
-	userRegisterCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
-	addPINFlags(userRegisterCmd)
-	addOriginFlag(userRegisterCmd)
 
 	// login flags. The server supplies the credential allow-list during the
 	// authentication ceremony, so no credential-id/salt flags are needed.

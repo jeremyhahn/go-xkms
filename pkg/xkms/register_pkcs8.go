@@ -20,7 +20,6 @@ package xkms
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -32,24 +31,19 @@ func init() {
 // newPKCS8KeyProvider creates a PKCS#8 backend KeyProvider from configuration.
 //
 // Supported configuration keys:
-//   - "key_dir" (string): Directory for key storage. Empty or "memory" uses in-memory storage.
+//   - "key_storage" (storage.Backend): pre-built key storage -- the caller's
+//     datastore handle (see AutoConfig.Datastore), already a key-prefixed
+//     view for this backend. Absent, in-memory storage is used.
 //   - "allow_plaintext_keys" (bool): When true, permits persisting unencrypted
 //     PKCS#8 keys (no key password). Defaults to false (fail-closed): a key
 //     generated without a password is rejected with ErrPlaintextKeyNotAllowed.
 //     Set true only when the storage medium is encrypted out of band.
 func newPKCS8KeyProvider(config map[string]interface{}) (types.KeyProvider, error) {
-	keyDir, _ := config["key_dir"].(string)
 	allowPlaintext, _ := config["allow_plaintext_keys"].(bool)
 
-	var keyStorage storage.Backend
-	if keyDir == "" || keyDir == "memory" {
+	keyStorage, ok := config["key_storage"].(storage.Backend)
+	if !ok || keyStorage == nil {
 		keyStorage = storage.New()
-	} else {
-		var err error
-		keyStorage, err = file.New(keyDir)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return pkcs8.NewBackend(&pkcs8.Config{

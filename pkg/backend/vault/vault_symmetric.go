@@ -93,7 +93,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if exists {
-		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: attrs.CN}
 	}
 
 	// Create symmetric key in Vault Transit engine. Unlike GenerateKey's
@@ -193,7 +193,7 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 		}
 		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
@@ -260,7 +260,7 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 		}
 		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}

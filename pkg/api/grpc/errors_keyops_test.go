@@ -137,13 +137,16 @@ func TestMapKeyOpError_ServiceWrappedCauses(t *testing.T) {
 }
 
 // TestMapKeyOpError_AEADNonceSentinels pins go-xkms#1223: a reused AEAD
-// nonce and a full nonce tracker reach mapKeyOpError wrapped exactly as
-// pkg/xkms's claimAEADNonce / claimGeneratedAEADNonce actually wrap them
-// (*xkms.ErrKeyOperation), from both the generic Encrypt RPC and
-// WrapKeyByID's AES-GCM wrap path, and must render as AlreadyExists and
-// ResourceExhausted respectively rather than falling through to the
-// codes.Internal catch-all a caller cannot distinguish from a genuine
-// server fault.
+// nonce and a full nonce tracker reach mapKeyOpError classified via
+// apierrors.AEADSentinelClasses regardless of which wrapper carries the
+// sentinel -- ClassOf uses errors.Is, so it sees through both
+// *xkms.ErrKeyOperation, the shape WrapKeyByID's AES-GCM wrap still
+// produces, and *xkms.ErrOperationWrap, the shape the generic Encrypt RPC
+// produces since go-xkms#1201 moved the claim into the backend's own
+// Encrypt (pkg/backend's ClaimAEADNonce/ClaimGeneratedAEADNonce). Both must
+// render as AlreadyExists and ResourceExhausted respectively rather than
+// falling through to the codes.Internal catch-all a caller cannot
+// distinguish from a genuine server fault.
 func TestMapKeyOpError_AEADNonceSentinels(t *testing.T) {
 	tests := map[string]struct {
 		err  error

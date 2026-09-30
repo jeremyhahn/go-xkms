@@ -275,6 +275,18 @@ func (m *mockPIVClient) BeginAuthentication(_ context.Context, _ *transport.Begi
 func (m *mockPIVClient) FinishAuthentication(_ context.Context, _ *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error) {
 	return nil, errMockNotImplemented
 }
+func (m *mockPIVClient) GetInvite(_ context.Context, _ *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
+	return nil, errMockNotImplemented
+}
+func (m *mockPIVClient) BeginInviteRegistration(_ context.Context, _ *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
+	return nil, errMockNotImplemented
+}
+func (m *mockPIVClient) FinishInviteRegistration(_ context.Context, _ *transport.FinishInviteRegistrationRequest) (*transport.FinishInviteRegistrationResponse, error) {
+	return nil, errMockNotImplemented
+}
+func (m *mockPIVClient) ActivateInvitePIV(_ context.Context, _ *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
+	return nil, errMockNotImplemented
+}
 func (m *mockPIVClient) GetCABundle(_ context.Context, _ *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
 	return nil, errMockNotImplemented
 }

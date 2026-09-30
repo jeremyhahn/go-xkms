@@ -485,7 +485,7 @@ func TestRSASigner_DecryptPKCS1v15_RoundTrip(t *testing.T) {
 	pub := signer.Public().(*rsa.PublicKey)
 
 	plaintext := []byte("pkcs1 v1.5 secret")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext)
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext) //nolint:staticcheck // SA1019: exercises the decrypter's PKCS#1 v1.5 path, which the pkcs11 backend supports for real via CKM_RSA_PKCS
 	require.NoError(t, err)
 
 	t.Run("nil opts", func(t *testing.T) {
@@ -495,7 +495,7 @@ func TestRSASigner_DecryptPKCS1v15_RoundTrip(t *testing.T) {
 	})
 
 	t.Run("explicit PKCS1v15 opts", func(t *testing.T) {
-		got, err := signer.Decrypt(rand.Reader, ciphertext, &rsa.PKCS1v15DecryptOptions{})
+		got, err := signer.Decrypt(rand.Reader, ciphertext, &rsa.PKCS1v15DecryptOptions{}) //nolint:staticcheck // SA1019: proves the decrypter accepts an explicit PKCS1v15DecryptOptions the same as nil opts, matching crypto.Decrypter convention
 		require.NoError(t, err)
 		require.Equal(t, plaintext, got)
 	})

@@ -83,18 +83,27 @@ func TestAdminCreateCmd_Properties(t *testing.T) {
 func TestAdminCreateCmd_HasFlags(t *testing.T) {
 	flags := adminCreateCmd.Flags()
 
+	// go-xkms#1294 part B: enrollFIDO2Admin no longer drives a local FIDO2
+	// ceremony (rp-id/rp-name/timeout/device/user-verification/pin/origin
+	// are gone); it creates the account and prints the activation
+	// invitation.
 	expectedFlags := []string{
+		"email",
 		"display-name",
-		"rp-id",
-		"rp-name",
-		"timeout",
-		"device",
-		"user-verification",
+		"method",
+		"cert-file",
 	}
 
 	for _, flag := range expectedFlags {
 		if flags.Lookup(flag) == nil {
 			t.Errorf("expected flag %q not found on adminCreateCmd", flag)
+		}
+	}
+
+	removedFlags := []string{"rp-id", "rp-name", "timeout", "device", "user-verification"}
+	for _, flag := range removedFlags {
+		if flags.Lookup(flag) != nil {
+			t.Errorf("flag %q should have been removed from adminCreateCmd (go-xkms#1294 part B)", flag)
 		}
 	}
 }
@@ -176,19 +185,9 @@ func TestAdminCmd_PersistentFlags(t *testing.T) {
 func TestAdminCreateCmd_FlagDefaults(t *testing.T) {
 	flags := adminCreateCmd.Flags()
 
-	rpIDFlag := flags.Lookup("rp-id")
-	if rpIDFlag.DefValue != "go-xkms" {
-		t.Errorf("rp-id default = %v, want go-xkms", rpIDFlag.DefValue)
-	}
-
-	rpNameFlag := flags.Lookup("rp-name")
-	if rpNameFlag.DefValue != "Go xKMS" {
-		t.Errorf("rp-name default = %v, want 'Go xKMS'", rpNameFlag.DefValue)
-	}
-
-	timeoutFlag := flags.Lookup("timeout")
-	if timeoutFlag.DefValue != "30s" {
-		t.Errorf("timeout default = %v, want 30s", timeoutFlag.DefValue)
+	methodFlag := flags.Lookup("method")
+	if methodFlag.DefValue != "fido2" {
+		t.Errorf("method default = %v, want fido2", methodFlag.DefValue)
 	}
 }
 

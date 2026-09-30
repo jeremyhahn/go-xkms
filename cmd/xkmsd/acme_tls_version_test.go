@@ -151,7 +151,7 @@ func TestBuildACMETLSConfig_ClientCAsLoaded(t *testing.T) {
 		t.Fatal("tlsCfg.ClientCAs = nil, want a populated cert pool")
 	}
 	if len(tlsCfg.ClientCAs.Subjects()) != 1 { //nolint:staticcheck // Subjects() is deprecated but still the simplest count here.
-		t.Errorf("tlsCfg.ClientCAs contains %d subject(s), want 1", len(tlsCfg.ClientCAs.Subjects())) //nolint:staticcheck
+		t.Errorf("tlsCfg.ClientCAs contains %d subject(s), want 1", len(tlsCfg.ClientCAs.Subjects())) //nolint:staticcheck // Subjects() is deprecated but still the simplest count here.
 	}
 }
 

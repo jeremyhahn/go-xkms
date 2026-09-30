@@ -911,7 +911,7 @@ func TestTLSConfig_SPKIPinned(t *testing.T) {
 	_, pemBytes := selfSignedCA(t)
 	srv := caBundleServer(t, pemBytes)
 	// Compute SPKI pin of the server's TLS certificate.
-	resp, err := http.Get(srv.URL + "/api/v1/ca/bundle") //nolint:noctx
+	resp, err := http.Get(srv.URL + "/api/v1/ca/bundle") //nolint:noctx // test-only request against an httptest server; no deadline/cancellation to propagate
 	if err == nil {
 		resp.Body.Close()
 	}

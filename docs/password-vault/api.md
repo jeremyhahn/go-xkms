@@ -1,20 +1,22 @@
 # Password Vault — API
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1249)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
 
 Routes are registered under `/api/v1/passwords` on the `hasPasswords`
-predicate. Every route with a gRPC or MCP counterpart is `RouteAuthPermission`
-and demands the same `passwords:*` pair those transports enforce (the
+predicate. Every route is `RouteAuthPermission` and demands the same
+`passwords:*` pair gRPC and MCP enforce for the same operation (the
 **Permission** column), so REST, QUIC, gRPC/Unix and MCP ask for one grant per
 operation. Admin and Owner hold every one of them by default.
 
-`POST /api/v1/passwords/access-mode` is the one route still served to any
-authenticated session (`RouteAuthSession`): it has no counterpart on any other
-transport, so there is no canonical permission for it to adopt yet (see the
-asymmetry below).
+`POST /api/v1/passwords/access-mode` used to be the one route in this family
+served to any authenticated session (`RouteAuthSession`) with no RBAC
+permission of its own; go-xkms#1249 closed that gap (the owner's 2026-09-29
+ruling that the password vault is not a login feature) by gating it on
+`passwords:write`, the same permission its other mutating siblings already
+required.
 
 ## Capability matrix
 
@@ -28,18 +30,13 @@ asymmetry below).
 | Unlock store | `POST /api/v1/passwords/unlock` | `PasswordStoreUnlock` | same as REST | `password.unlock` | `PasswordStoreUnlock` | `passwords:unlock` |
 | Lock store | `POST /api/v1/passwords/lock` | `PasswordStoreLock` | same as REST | `password.lock` | `PasswordStoreLock` | `passwords:lock` |
 | Store status | `GET /api/v1/passwords/status` | `PasswordStoreStatus` | same as REST | `password.status` | `PasswordStoreStatus` | `passwords:read` |
-| Set access mode | `POST /api/v1/passwords/access-mode` | — | same as REST | `password.setAccessMode` | `PasswordStoreSetAccessMode` | session |
+| Set access mode | `POST /api/v1/passwords/access-mode` | `PasswordStoreSetAccessMode` | same as REST | `password.setAccessMode` | `PasswordStoreSetAccessMode` | `passwords:write` |
 | Generate password | `POST /api/v1/passwords/generate` | `PasswordGenerate` | same as REST | `password.generate` | `PasswordGenerate` | `passwords:generate` |
 
 **This is one of only three features with complete MCP coverage** (the others
-are the barrier and SSH). Ten `password.*` methods.
-
-The one asymmetry: `PasswordStoreSetAccessMode` has a REST route, an MCP
-method, and an embedded method, but no gRPC RPC and no Unix-socket RPC
-(`pkg/api/transport/{grpc,unix}/transport.go` both return `ErrNotSupported`
-for it). Given that the access mode is a security policy rather than an
-operation, restricting where it can be changed is defensible — but it is an
-inconsistency, not a stated decision.
+are the barrier and SSH). Ten `password.*` methods, all carrying the same
+permission on every transport that exposes them
+(`pkg/api/authz_consistency_test`).
 
 The seventh, product-specific **USB** transport (`pkg/api/transport/usb/transport.go`)
 proxies nine of the ten `PasswordService` methods to the phone's embedded

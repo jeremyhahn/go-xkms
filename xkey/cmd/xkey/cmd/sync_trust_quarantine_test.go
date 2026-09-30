@@ -28,9 +28,20 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
+
+// quarantineTestApplications is a configured allow-list, so LoadTrust in this
+// file's tests reaches the quarantine behavior under test rather than the
+// unrelated unconfigured-policy refusal (#1305).
+func quarantineTestApplications() pairing.ApplicationPolicy {
+	return pairing.ApplicationPolicy{AllowedApplications: []pairing.AllowedApplication{{
+		PackageName:    "com.automatethethings.xkey",
+		SigningDigests: []string{"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"},
+	}}}
+}
 
 // quarantineCA is a generated CA plus its key, so a test can issue a chain
 // under it and ask whether the trust store lets that chain verify.
@@ -130,7 +141,7 @@ func TestSyncTrustStore_ForgedGoogleRootAnchorsNothing(t *testing.T) {
 		assert.Equal(t, truststore.PurposeSynced, meta.Purpose, "%s", ca.cert.Subject)
 	}
 
-	trust, err := attestation.LoadTrust(store)
+	trust, err := attestation.LoadTrust(store, quarantineTestApplications())
 	require.NoError(t, err)
 	_, err = forged.issueLeaf(t, "attested.example.com").Verify(x509.VerifyOptions{
 		Roots:     trust.Pool,

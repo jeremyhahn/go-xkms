@@ -50,13 +50,16 @@ The rest are policy:
   usernameless login.
 - `authenticator_attachment: platform` restricts to built-in authenticators,
   `cross-platform` to removable keys.
-- `allow_public_registration` decides whether anyone can enrol themselves.
-  **Unset means no**: registration is invite-only by default, matching the
-  stack-wide registration model (`iam.self_service_registration.enabled`,
-  default off). To open self-service sign-up, set it to `true` explicitly.
-  Accounts provisioned by an administrator still enrol their first passkey
-  through the same endpoint either way — only implicit account creation for
-  unknown emails is withheld, answered with `403 registration_refused`.
+- `allow_public_registration` decides whether an unknown email may create an
+  account through this endpoint. **Unset means no**: registration is
+  invite-only by default, matching the stack-wide registration model
+  (`iam.self_service_registration.enabled`, default off). To open
+  self-service sign-up, set it to `true` explicitly. This setting does not
+  affect accounts an administrator already provisioned: those enrol their
+  first passkey through the separate invitation-redemption ceremony (see
+  `../user-onboarding/user.md`), never through this endpoint — an
+  already-existing account is always answered `403 registration_refused`
+  here, whether or not it holds a credential (go-xkms#1294 part B).
 
   When xkms runs embedded as a ServiceModule under go-quicbaas, the host's
   registration flag is authoritative: the host projects its decision into

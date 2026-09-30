@@ -11,40 +11,56 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+//go:build ble
+
 package cmd
 
 import (
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// relayCommand builds a *cobra.Command carrying the same flags
+// registerDeviceListenFlags registers on the real deviceRelayCmd, plus
+// relay's own --listen flag, so runDeviceRelay can be driven directly in a
+// test the same way listenCommand drives runDeviceListen.
+func relayCommand(t *testing.T) *cobra.Command {
+	t.Helper()
+	cmd := listenCommand(t)
+	cmd.Flags().String("listen", "", "")
+	return cmd
+}
+
 func TestDeviceRelayCmd_Structure(t *testing.T) {
 	assert.Equal(t, "relay", deviceRelayCmd.Use)
-	assert.Equal(t, "Start TCP pairing relay server", deviceRelayCmd.Short)
+	assert.NotEmpty(t, deviceRelayCmd.Short)
 	assert.NotEmpty(t, deviceRelayCmd.Long)
 	assert.NotNil(t, deviceRelayCmd.RunE)
 }
 
+// TestDeviceRelayCmd_Flags pins the flags relay actually registers: --listen
+// (its own) plus the full registerDeviceListenFlags set it shares with
+// "xkey device listen" (go-xkms#1306) -- no --qr, which the relay never had
+// anything real to show (see the issue's finding that it never read the QR
+// Code field and never actually served a pairing confirm).
 func TestDeviceRelayCmd_Flags(t *testing.T) {
-	listenFlag := deviceRelayCmd.Flags().Lookup("listen")
-	require.NotNil(t, listenFlag, "listen flag must exist")
-	assert.Equal(t, "string", listenFlag.Value.Type())
-
-	qrFlag := deviceRelayCmd.Flags().Lookup("qr")
-	require.NotNil(t, qrFlag, "qr flag must exist")
-	assert.Equal(t, "bool", qrFlag.Value.Type())
+	for _, name := range []string{
+		"listen", "device", "name", "timeout", "attestation-mode",
+		"tpm-device", "tpm-enrollment", "tpm-pcr-bank", "allow-sync",
+		"so-pin-stdin", "barrier-password-stdin", "barrier-password-file",
+	} {
+		assert.NotNil(t, deviceRelayCmd.Flags().Lookup(name), "flag %q must be registered", name)
+	}
+	assert.Nil(t, deviceRelayCmd.Flags().Lookup("qr"), "relay no longer performs first-time pairing, so it has nothing to show a QR code for")
 }
 
-func TestDeviceRelayCmd_FlagDefaults(t *testing.T) {
+func TestDeviceRelayCmd_ListenFlagDefaultsToConfiguration(t *testing.T) {
 	listenFlag := deviceRelayCmd.Flags().Lookup("listen")
 	require.NotNil(t, listenFlag)
 	assert.Equal(t, "", listenFlag.DefValue, "the flag's zero value means \"from configuration\"; the address defaults in phone.relay_listen_address")
-
-	qrFlag := deviceRelayCmd.Flags().Lookup("qr")
-	require.NotNil(t, qrFlag)
-	assert.Equal(t, "false", qrFlag.DefValue)
 }
 
 func TestDeviceRelayCmd_Registered(t *testing.T) {
@@ -73,8 +89,73 @@ func TestDeviceRelayErrors(t *testing.T) {
 	})
 }
 
-func TestRelayHostname(t *testing.T) {
-	name := relayHostname()
-	assert.NotEmpty(t, name, "relayHostname must return a non-empty string")
-	assert.LessOrEqual(t, len(name), 64, "hostname must be truncated to 64 characters")
+// TestRunDeviceRelay_ProceedsWithoutABarrier mirrors
+// TestRunDeviceListen_ProceedsWithoutABarrier: the #42 owner ruling applies
+// identically to the relay.
+func TestRunDeviceRelay_ProceedsWithoutABarrier(t *testing.T) {
+	isolateDeviceBarrierHome(t)
+
+	err := runDeviceRelay(relayCommand(t), nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDeviceNotPaired)
+	assert.NotErrorIs(t, err, ErrDeviceBarrierNotInitialized,
+		"an uninitialized barrier must never be why this command refuses")
+}
+
+// TestRunDeviceRelay_RefusesWithWrongBarrierPassword mirrors the listen
+// wrong-password gate for the relay.
+func TestRunDeviceRelay_RefusesWithWrongBarrierPassword(t *testing.T) {
+	isolateDeviceBarrierHome(t)
+	initDeviceBarrier(t, "correct-horse-battery-staple")
+
+	cmd := relayCommand(t)
+	t.Setenv("XKEY_BARRIER_PASSWORD", "wrong")
+
+	err := runDeviceRelay(cmd, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDeviceBarrierUnsealFailed)
+}
+
+// TestRunDeviceRelay_RefusesEmptyPinnedKey pins #1307 for the relay, exactly
+// as TestRunDeviceListen_RefusesEmptyPinnedKey pins it for BLE: a
+// paired-device record whose NoisePublicKey decodes to nothing usable must
+// refuse before the TCP server is ever built, not silently relay with
+// nothing pinned (go-xkms#1306).
+func TestRunDeviceRelay_RefusesEmptyPinnedKey(t *testing.T) {
+	isolateDeviceBarrierHome(t)
+	require.NoError(t, saveDevicesConfig(&DevicesConfig{
+		Devices: []PairedDevice{{
+			Name:           "A",
+			Address:        "11:22:33:44:55:66",
+			NoisePublicKey: "",
+		}},
+	}))
+
+	err := runDeviceRelay(relayCommand(t), nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDevicePinInvalid)
+}
+
+// TestRunDeviceRelay_RefusesAmbiguousDeviceName mirrors #1315/#1307 for the
+// relay: two paired records sharing a name must refuse rather than silently
+// pinning whichever record happens to be first in the file.
+func TestRunDeviceRelay_RefusesAmbiguousDeviceName(t *testing.T) {
+	isolateDeviceBarrierHome(t)
+	require.NoError(t, saveDevicesConfig(&DevicesConfig{
+		Devices: []PairedDevice{
+			{Name: "A", Address: "11:22:33:44:55:66"},
+			{Name: "A", Address: "AA:BB:CC:DD:EE:FF"},
+		},
+	}))
+
+	cmd := relayCommand(t)
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "device", "A"))
+
+	err := runDeviceRelay(cmd, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDeviceNameAmbiguous)
 }

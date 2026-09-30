@@ -15,6 +15,8 @@ package server
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,7 +27,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 )
+
+// embeddedNodeTestLogger returns a logger that discards output, matching the
+// other package fixtures' silent-by-default convention.
+func embeddedNodeTestLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 // standaloneUnsealedNode opens a standalone embedded qrdb node with no
 // barrier (unsealed immediately), matching the state RunFirstBoot's callers
@@ -34,7 +43,7 @@ import (
 func standaloneUnsealedNode(t *testing.T) *config.Config {
 	t.Helper()
 	return &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 	}
 }
 
@@ -44,7 +53,7 @@ func standaloneUnsealedNode(t *testing.T) *config.Config {
 // one afterwards.
 func TestRunFirstBoot_NoCA_CreatesAdminWithoutBoundCertificate(t *testing.T) {
 	cfg := standaloneUnsealedNode(t)
-	node, _, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
+	node, _, err := embeddednode.OpenEmbeddedNode(context.Background(), embeddednode.EmbeddedNodeOptions{
 		Config: cfg,
 		Logger: embeddedNodeTestLogger(),
 	})
@@ -65,7 +74,7 @@ func TestRunFirstBoot_NoCA_CreatesAdminWithoutBoundCertificate(t *testing.T) {
 // qrdb's canonical first-boot contract.
 func TestRunFirstBoot_Idempotent(t *testing.T) {
 	cfg := standaloneUnsealedNode(t)
-	node, _, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
+	node, _, err := embeddednode.OpenEmbeddedNode(context.Background(), embeddednode.EmbeddedNodeOptions{
 		Config: cfg,
 		Logger: embeddedNodeTestLogger(),
 	})
@@ -86,10 +95,10 @@ func TestRunFirstBoot_Idempotent(t *testing.T) {
 // with ErrFirstBootServicesUnavailable rather than silently doing nothing.
 func TestRunFirstBoot_NoServicesAvailable(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: t.TempDir()},
-		Barrier: config.BarrierConfig{Enabled: true, Strategy: "passphrase"},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
+		Barrier:   config.BarrierConfig{Enabled: true, Strategy: "passphrase"},
 	}
-	node, sealRes, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
+	node, sealRes, err := embeddednode.OpenEmbeddedNode(context.Background(), embeddednode.EmbeddedNodeOptions{
 		Config: cfg,
 		Logger: embeddedNodeTestLogger(),
 	})

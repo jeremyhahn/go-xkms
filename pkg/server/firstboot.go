@@ -282,7 +282,7 @@ const (
 // they are left alone, so a restart never overwrites the credential an operator
 // has already taken delivery of.
 func (s *Server) persistAdminCredential(result *qrdbsdk.FirstBootResult) error {
-	return PersistAdminCredential(s.config.Storage.Path, result, s.logger)
+	return PersistAdminCredential(s.config.Datastore.Path, result, s.logger)
 }
 
 // PersistAdminCredential writes the administrator's certificate and private

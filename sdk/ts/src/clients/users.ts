@@ -17,7 +17,6 @@ import type {
   CreateUserRequest,
   ListUserCredentialsResponse,
   ListUsersResponse,
-  UpdateUserRequest,
   UserInfo,
   UserStatusResponse,
 } from '../types/users.js';
@@ -47,9 +46,14 @@ export class UsersClient {
     return this.http.request('GET', userPath(username));
   }
 
-  /** PUT /api/v1/users/{username} (enable/disable). */
-  update(username: string, req: UpdateUserRequest): Promise<UserInfo> {
-    return this.http.request('PUT', userPath(username), { body: req });
+  /** POST /api/v1/users/{username}/enable */
+  enable(username: string): Promise<UserInfo> {
+    return this.http.request('POST', userPath(username, '/enable'));
+  }
+
+  /** POST /api/v1/users/{username}/disable */
+  disable(username: string): Promise<UserInfo> {
+    return this.http.request('POST', userPath(username, '/disable'));
   }
 
   /** DELETE /api/v1/users/{username} */

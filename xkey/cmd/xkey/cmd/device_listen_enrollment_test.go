@@ -94,7 +94,7 @@ func TestResolveListenEnroller_ReusesTheAttestationTPM(t *testing.T) {
 // enroller is irrelevant when xkmsd is off: without a client there is no
 // bridge to configure at all.
 func TestConnectListenBridge_DisabledXKMSdServesNoBridge(t *testing.T) {
-	client, bridge, collaborators, err := connectListenBridge(&cobra.Command{}, newTestLogger(), testListenDevice, nil, nil)
+	client, bridge, collaborators, err := connectListenBridge(&cobra.Command{}, newTestLogger(), testListenDevice, nil, nil, pairing.AlwaysApproveSync)
 
 	require.NoError(t, err)
 	assert.Nil(t, client)

@@ -53,7 +53,8 @@ func TestListenerAddresses_BuiltInDefaultsWhenNothingLoaded(t *testing.T) {
 	t.Cleanup(func() { loadedConfig = previous })
 
 	assert.Equal(t, ":9443", agentListenAddress(flagCmd("listen")))
-	assert.Equal(t, ":8444", relayListenAddress(flagCmd("listen")))
+	assert.Equal(t, "127.0.0.1:8444", relayListenAddress(flagCmd("listen")),
+		"the relay's built-in default is loopback-only (go-xkms#1306)")
 }
 
 // TestListenerAddresses_ConfigurationOverridesDefaults proves that the
@@ -67,7 +68,8 @@ func TestListenerAddresses_ConfigurationOverridesDefaults(t *testing.T) {
 
 	withListenerConfig(t, "", "")
 	assert.Equal(t, ":9443", agentListenAddress(flagCmd("listen")))
-	assert.Equal(t, ":8444", relayListenAddress(flagCmd("listen")))
+	assert.Equal(t, "127.0.0.1:8444", relayListenAddress(flagCmd("listen")),
+		"the relay's built-in default is loopback-only (go-xkms#1306)")
 }
 
 // TestListenerAddresses_FlagOverridesConfiguration proves that a flag the

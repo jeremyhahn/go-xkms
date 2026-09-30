@@ -9623,18 +9623,19 @@ func TestNewClient_WithNilParams(t *testing.T) {
 // =====================================
 
 type MockTPM struct {
-	ekPub              crypto.PublicKey
-	ekCert             *x509.Certificate
-	ekAttrs            *KeyAttributes
-	iakAttrs           *KeyAttributes
-	idevidCSR          *IDevIDCSR
-	activateCredErr    error
-	provisionEKCertErr error
-	createIDevIDErr    error
-	attestErr          error
-	ekCertErr          error
-	ekAttrsErr         error
-	iakAttrsErr        error
+	ekPub               crypto.PublicKey
+	ekCert              *x509.Certificate
+	ekAttrs             *KeyAttributes
+	iakAttrs            *KeyAttributes
+	idevidCSR           *IDevIDCSR
+	activateCredErr     error
+	provisionEKCertErr  error
+	provisionIAKCertErr error
+	createIDevIDErr     error
+	attestErr           error
+	ekCertErr           error
+	ekAttrsErr          error
+	iakAttrsErr         error
 }
 
 func (m *MockTPM) EK() crypto.PublicKey {
@@ -9680,6 +9681,10 @@ func (m *MockTPM) ActivateCredential(credentialBlob, encryptedSecret []byte) ([]
 
 func (m *MockTPM) ProvisionEKCert(certDER []byte) error {
 	return m.provisionEKCertErr
+}
+
+func (m *MockTPM) ProvisionIAKCert(cert *x509.Certificate) error {
+	return m.provisionIAKCertErr
 }
 
 func (m *MockTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {

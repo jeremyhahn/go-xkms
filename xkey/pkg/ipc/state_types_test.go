@@ -316,6 +316,24 @@ func TestClient_StateSurfacesHandlerFailures(t *testing.T) {
 	assert.ErrorContains(t, err, ErrHandlerFailed.Error())
 }
 
+func TestClient_StatePasswordAccessorsSurfaceHandlerFailures(t *testing.T) {
+	sockPath := startStateServer(t, &mockStateHandler{
+		mockHandler: mockHandler{statusResp: OKResponse(ActionDaemonReady)},
+		err:         errors.New("password store offline"),
+	})
+
+	client := NewClient(sockPath)
+	defer func() { _ = client.Close() }()
+
+	_, err := client.StatePasswordStore()
+	require.ErrorIs(t, err, ErrStateOperation)
+	assert.NotContains(t, err.Error(), "password store offline")
+
+	_, err = client.StatePasswordList()
+	require.ErrorIs(t, err, ErrStateOperation)
+	assert.NotContains(t, err.Error(), "password store offline")
+}
+
 func TestClient_StateRejectsAClosedClient(t *testing.T) {
 	client := NewClient(filepath.Join(privateDir(t), "absent.sock"))
 	require.NoError(t, client.Close())

@@ -59,10 +59,13 @@ func (m *mockProviderCA) SignCSRRaw(context.Context, []byte, string, int) (*x509
 func (m *mockProviderCA) SignCSRWithSPIFFE(context.Context, []byte, string, int, string, string, string, string) (*x509.Certificate, error) {
 	return nil, nil
 }
-func (m *mockProviderCA) IssueCertificateRaw(context.Context, string, string, []string, int, string, string) ([]byte, []byte, []byte, string, error) {
+func (m *mockProviderCA) IssueCertificateRaw(context.Context, string, string, []string, int, string, string, string) ([]byte, []byte, []byte, string, error) {
 	return nil, nil, nil, "", nil
 }
 func (m *mockProviderCA) Revoke(context.Context, *big.Int, int) error { return nil }
+func (m *mockProviderCA) CertificateTenant(context.Context, *big.Int) (string, error) {
+	return "", nil
+}
 func (m *mockProviderCA) GenerateCRL(context.Context) ([]byte, error) { return nil, nil }
 func (m *mockProviderCA) CRL(context.Context) ([]byte, error)         { return nil, nil }
 func (m *mockProviderCA) IsRevoked(*big.Int) (bool, error)            { return false, nil }

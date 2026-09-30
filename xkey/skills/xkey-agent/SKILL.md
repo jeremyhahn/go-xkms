@@ -387,8 +387,8 @@ xkey device device-info [device-name]
 xkey device attest-device --device "<name>" --barrier-password-file <file>
 xkey device attest <key-id> --device "<name>"
 xkey device enroll-phone --ca xkms --validity 720h    # Android-attested LDevID for the phone
-xkey device listen --attestation-mode tpm2 &          # accept phone-initiated requests (--tpm-enrollment)
-xkey device relay --qr                                # TCP pairing relay
+xkey device listen --attestation-mode tpm2 &          # accept phone-initiated requests (--tpm-enrollment, --allow-sync)
+xkey device relay --device "<name>"                   # TCP counterpart of listen; 127.0.0.1:8444 unless --listen
 xkey device share <backend> <key-id> --device "<name>" --label deploy
 xkey device import <key-id> --device "<name>" --backend software
 xkey device share-policy set <backend> <key-id> --allow --share-public

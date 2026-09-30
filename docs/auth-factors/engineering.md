@@ -97,15 +97,25 @@ expired session is consumed all the same (cannot be retried).
   from there and nowhere else, and returns
   `*qrdbsdk.AuthFactorVerificationFailedError` when it is absent. A response
   that could supply its own key could pass with any key the caller holds.
-- **FIDO2 assertions are checked against the enrollment's RP.** `Verify`
-  requires `authenticatorData[0:32] == SHA-256(rp_id)` (the `rp_id` carried in
-  the challenge from the enrollment), the user-present flag, and a
-  clientDataJSON of type `webauthn.get` whose `challenge` is the issued nonce
-  (base64url). It then verifies the signature over
-  `authenticatorData || SHA-256(clientDataJSON)`. It does not require
-  user verification, because no enrollment records that requirement, and it
-  does not check the clientDataJSON `origin`, because no enrollment records an
-  origin.
+- **FIDO2 assertions are checked against the enrollment's RP, origin(s) and
+  user-verification requirement.** `Verify` requires
+  `authenticatorData[0:32] == SHA-256(rp_id)` (the `rp_id` carried in the
+  challenge from the enrollment), the user-present flag, and a clientDataJSON
+  of type `webauthn.get` whose `challenge` is the issued nonce (base64url)
+  and whose `origin` exactly matches one of the enrollment's recorded
+  `origins` (checked with the canonical `protocol.IsOriginInHaystack`
+  comparator, per WebAuthn L2/L3 §7.2 step 9). It then verifies the signature
+  over `authenticatorData || SHA-256(clientDataJSON)`.
+  Enrollment records the origin(s) (`Enroll`'s `"origins"` MethodParam — a
+  string or `[]string`, defaulting to `["https://" + rp_id]`) and the
+  user-verification requirement (`"require_user_verification"`, a bool
+  defaulting to **true** — the WebAuthn/CTAP2 best practice for a factor used
+  to unseal or authenticate). When the recorded requirement is true, `Verify`
+  also refuses an assertion whose `authenticatorData` user-verified flag is
+  clear. An enrollment missing either field (e.g. one recorded before this
+  requirement existed) is refused at `Verify`, the same as any other
+  incomplete challenge — go-xkms is pre-release and carries no compatibility
+  shim for it (go-xkms#1289).
 - **`ChallengeTTLSeconds` applies to all four factors uniformly** when set on
   `factor.Config`. There is no per-factor override at that level.
 - **Concurrency.** Factors are safe for concurrent verification; they hold no
@@ -128,7 +138,10 @@ them.
 | PKCS#11 mechanism differs from the enrolled one, or is inconsistent with the enrolled key's algorithm | fails |
 | FIDO2 RP id mismatch (`authenticatorData` rpIdHash) | fails |
 | FIDO2 user-present flag clear | fails |
+| FIDO2 user-verified flag clear, and the enrollment requires verification | fails |
 | FIDO2 clientDataJSON not `webauthn.get`, or not bound to the nonce | fails |
+| FIDO2 clientDataJSON `origin` not one of the enrollment's recorded origins | fails |
+| FIDO2 enrollment missing `origins` or `require_user_verification` (challenge carries no `require_uv`/`origins` MethodData) | fails |
 | enrolled key missing from the challenge | fails — no key is ever read from the response |
 | enrollment record missing | fails |
 
@@ -150,7 +163,10 @@ capability. The four knobs are `factor.Config` above. What to set in practice:
   administrator-enrollment path sets it by default; see
   [init-ceremony/engineering.md](../init-ceremony/engineering.md).
 - **`FIDO2RPID`** — set it to your actual relying-party id. It is recorded on
-  every enrollment, so changing it later invalidates them.
+  every enrollment, so changing it later invalidates them. The expected
+  origin(s) and the user-verification requirement are per-enrollment
+  `Enroll` MethodParams (`"origins"`, `"require_user_verification"`), not a
+  `factor.Config` knob — see the FIDO2 bullet above.
 - **`PKCS11Mechanism`** — override only with reason; the default
   `CKM_ECDSA_SHA256` is the safe choice for ECDSA enrollments. It applies only
   when the enrolled key is ECDSA-family; an RSA key enrolled without an

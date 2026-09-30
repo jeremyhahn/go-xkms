@@ -1482,6 +1482,31 @@ var (
 	// ErrUserCertSourceRequired is returned when "user bind-cert" is invoked
 	// without exactly one of --thumbprint / --cert-file.
 	ErrUserCertSourceRequired = errors.New("exactly one of --thumbprint or --cert-file is required")
+
+	// ErrInviteReferenceInvalid is returned when "user invite redeem" cannot
+	// resolve a tenant ID and token from its argument and flags: neither an
+	// "/invite/<tenant>/<token>" link nor a bare token plus --tenant-id.
+	ErrInviteReferenceInvalid = errors.New("invite reference must be the printed invitation link, or a bare token with --tenant-id")
+
+	// ErrInviteMethodInvalid is returned when "user invite redeem --method"
+	// names anything other than "fido2" or "piv".
+	ErrInviteMethodInvalid = errors.New("--method must be \"fido2\" or \"piv\"")
+
+	// ErrPIVCertFileRequired is returned when "user invite redeem --method
+	// piv" is invoked without --piv-cert-file.
+	ErrPIVCertFileRequired = errors.New("--piv-cert-file is required with --method piv")
+
+	// ErrGetInviteFailed is the sentinel error "failed to look up invitation".
+	ErrGetInviteFailed = errors.New("failed to look up invitation")
+
+	// ErrBeginInviteRegistrationFailed is the sentinel error "failed to begin invitation registration".
+	ErrBeginInviteRegistrationFailed = errors.New("failed to begin invitation registration")
+
+	// ErrFinishInviteRegistrationFailed is the sentinel error "failed to finish invitation registration".
+	ErrFinishInviteRegistrationFailed = errors.New("failed to finish invitation registration")
+
+	// ErrActivateInvitePIVFailed is the sentinel error "failed to activate invitation with PIV credential".
+	ErrActivateInvitePIVFailed = errors.New("failed to activate invitation with PIV credential")
 )
 
 // WrappedError pairs a sentinel error with an underlying cause, rendering

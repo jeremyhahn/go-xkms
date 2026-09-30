@@ -661,6 +661,18 @@ func (n *noopClient) BeginAuthentication(context.Context, *transport.BeginAuthen
 func (n *noopClient) FinishAuthentication(context.Context, *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error) {
 	return nil, nil
 }
+func (n *noopClient) GetInvite(context.Context, *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) BeginInviteRegistration(context.Context, *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) FinishInviteRegistration(context.Context, *transport.FinishInviteRegistrationRequest) (*transport.FinishInviteRegistrationResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) ActivateInvitePIV(context.Context, *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
+	return nil, nil
+}
 func (n *noopClient) GetCABundle(context.Context, *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
 	return nil, nil
 }

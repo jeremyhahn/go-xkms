@@ -67,6 +67,14 @@ var publicMethods = map[string]struct{}{
 	// authenticated /api/v1 group), so gating it here would make the same
 	// question answerable on one transport and not another.
 	"xkms.algorithms": {},
+
+	// Invitation redemption (go-xkms#1294 part B): there is no credential
+	// yet to authenticate a request with. REST serves the same two methods
+	// (GetInvite, ActivateInvitePIV) unauthenticated
+	// (pkg/api/rest/handlers_invite.go, GroupInvite), so the transports
+	// agree.
+	"invite.get":         {},
+	"invite.pivActivate": {},
 }
 
 // methodPermissions maps every privileged JSON-RPC method to the qrdb
@@ -287,15 +295,19 @@ var methodPermissions = map[string]permission{
 	"credentials.strategy": {auth.ResourceCredentials, auth.ActionStrategy},
 
 	// User management. Mirrors pkg/api/rest/routes.go's /api/v1/users
-	// decorators exactly: create/list/read/delete carry their ordinary CRUD
-	// actions, enable/disable/bindCert all carry update since each mutates an
-	// existing user's state rather than replacing it.
+	// decorators: create/list/read/delete carry their ordinary CRUD actions,
+	// bindCert carries update since it mutates an existing user's state
+	// rather than replacing it. enable/disable carry qrdb's own
+	// users:enable/users:disable (permission.UsersEnable/UsersDisable,
+	// go-xkms#1249) rather than the coarser update, matching gRPC's
+	// EnableUser/DisableUser RPCs and REST's own
+	// POST /api/v1/users/{username}/enable and .../disable routes.
 	"user.create":          {auth.ResourceUsers, auth.ActionCreate},
 	"user.list":            {auth.ResourceUsers, auth.ActionList},
 	"user.get":             {auth.ResourceUsers, auth.ActionRead},
 	"user.delete":          {auth.ResourceUsers, auth.ActionDelete},
-	"user.enable":          {auth.ResourceUsers, auth.ActionUpdate},
-	"user.disable":         {auth.ResourceUsers, auth.ActionUpdate},
+	"user.enable":          {auth.ResourceUsers, auth.ActionEnable},
+	"user.disable":         {auth.ResourceUsers, auth.ActionDisable},
 	"user.bindCert":        {auth.ResourceUsers, auth.ActionUpdate},
 	"user.listCredentials": {auth.ResourceUsers, auth.ActionRead},
 
@@ -312,14 +324,17 @@ var methodPermissions = map[string]permission{
 	"password.setAccessMode": {auth.ResourcePasswords, auth.ActionWrite},
 
 	// Platform-sealed store. Secrets sealed here are key-protection
-	// material, so the actions mirror the keys:* pairs used by every other
-	// transport's SealStore* handlers.
-	"sealStore.put":    {auth.ResourceKeys, auth.ActionWrite},
-	"sealStore.get":    {auth.ResourceKeys, auth.ActionRead},
+	// material, so the actions mirror the per-verb keys:* pairs used by
+	// every other transport's SealStore* handlers (go-xkms#1249): put
+	// stores a new value under a name (create), reseal re-wraps an existing
+	// value in place without changing it (update), and status reports
+	// store-wide state the same way get reports one secret's.
+	"sealStore.put":    {auth.ResourceKeys, auth.ActionCreate},
+	"sealStore.get":    {auth.ResourceKeys, auth.ActionGet},
 	"sealStore.delete": {auth.ResourceKeys, auth.ActionDelete},
 	"sealStore.list":   {auth.ResourceKeys, auth.ActionList},
-	"sealStore.reseal": {auth.ResourceKeys, auth.ActionWrite},
-	"sealStore.status": {auth.ResourceKeys, auth.ActionRead},
+	"sealStore.reseal": {auth.ResourceKeys, auth.ActionUpdate},
+	"sealStore.status": {auth.ResourceKeys, auth.ActionGet},
 
 	// TPM policy management (pkg/tpmpolicy) -- pkg/auth.ResourceTPMPolicy,
 	// a resource family go-qrdb's canonical registry does not declare

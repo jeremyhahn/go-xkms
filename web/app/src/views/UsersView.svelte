@@ -54,10 +54,20 @@
     }
   }
 
-  async function toggle(u: UserInfo): Promise<void> {
+  async function enable(u: UserInfo): Promise<void> {
     try {
-      await getSDKClient().users.update(u.username, { enabled: !u.enabled });
-      showToast("success", `User "${u.username}" ${u.enabled ? "disabled" : "enabled"}.`);
+      await getSDKClient().users.enable(u.username);
+      showToast("success", `User "${u.username}" enabled.`);
+      await load();
+    } catch (e) {
+      showToast("error", e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function disable(u: UserInfo): Promise<void> {
+    try {
+      await getSDKClient().users.disable(u.username);
+      showToast("success", `User "${u.username}" disabled.`);
       await load();
     } catch (e) {
       showToast("error", e instanceof Error ? e.message : String(e));
@@ -111,8 +121,12 @@
             <td>{u.role ?? "—"}</td>
             <td>{u.enabled ? "yes" : "no"}</td>
             <td class="text-right">
-              {#if can("users", "update")}
-                <button class="btn btn-ghost btn-xs" onclick={() => toggle(u)}>{u.enabled ? "Disable" : "Enable"}</button>
+              {#if u.enabled}
+                {#if can("users", "disable")}
+                  <button class="btn btn-ghost btn-xs" onclick={() => disable(u)}>Disable</button>
+                {/if}
+              {:else if can("users", "enable")}
+                <button class="btn btn-ghost btn-xs" onclick={() => enable(u)}>Enable</button>
               {/if}
               {#if can("users", "delete")}
                 <button class="btn btn-ghost btn-xs text-error" onclick={() => del(u)}>Delete</button>

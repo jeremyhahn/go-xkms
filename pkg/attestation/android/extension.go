@@ -747,6 +747,46 @@ type AttestationExtensionOptions struct {
 	// Purpose is teeEnforced's key-purpose claim, encoded as tag 1 when
 	// non-empty. A nil or empty slice omits the tag.
 	Purpose []int
+
+	// ApplicationID is the attestationApplicationId, encoded as tag 709 in
+	// softwareEnforced -- where the Keystore daemon writes it -- when
+	// non-nil. Nil omits the tag, which is how a fixture presents evidence
+	// naming no application (go-xkms#1305).
+	ApplicationID *AttestationApplicationID
+}
+
+// marshalApplicationID DER-encodes an attestationApplicationId as tag 709
+// EXPLICIT around an OCTET STRING wrapping the AttestationApplicationId
+// SEQUENCE, matching how findAttestationApplicationID reads it back.
+func marshalApplicationID(appID *AttestationApplicationID) ([]byte, error) {
+	parsed := attestationApplicationIDASN1{
+		PackageInfos:     make([]attestationPackageInfoASN1, 0, len(appID.Packages)),
+		SignatureDigests: appID.SignatureDigests,
+	}
+	for _, pkg := range appID.Packages {
+		parsed.PackageInfos = append(parsed.PackageInfos, attestationPackageInfoASN1{
+			PackageName: []byte(pkg.Name),
+			Version:     pkg.Version,
+		})
+	}
+	if parsed.SignatureDigests == nil {
+		parsed.SignatureDigests = [][]byte{}
+	}
+
+	inner, err := asn1.Marshal(parsed)
+	if err != nil {
+		return nil, err
+	}
+	wrapped, err := asn1.Marshal(inner)
+	if err != nil {
+		return nil, err
+	}
+	return asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        tagAttestationApplicationID,
+		IsCompound: true,
+		Bytes:      wrapped,
+	})
 }
 
 // marshalExplicitInt DER-encodes an EXPLICIT context-specific INTEGER tag,
@@ -868,8 +908,17 @@ func BuildAttestationExtensionWithOptions(
 		teeEnforced.Write(tagged)
 	}
 
+	var softwareEnforced []byte
+	if opts.ApplicationID != nil {
+		tagged, err := marshalApplicationID(opts.ApplicationID)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "android: failed to marshal attestation application id", Err: err}
+		}
+		softwareEnforced = tagged
+	}
+
 	return buildAttestationExtension(version, attestSecLevel, kmVersion, kmSecLevel,
-		challenge, uniqueID, teeEnforced.Bytes())
+		challenge, uniqueID, softwareEnforced, teeEnforced.Bytes())
 }
 
 // BuildMinimalAttestationExtension builds a KeyDescription extension whose
@@ -886,11 +935,12 @@ func BuildMinimalAttestationExtension(
 	uniqueID []byte,
 ) ([]byte, error) {
 	return buildAttestationExtension(version, attestSecLevel, kmVersion, kmSecLevel,
-		challenge, uniqueID, nil)
+		challenge, uniqueID, nil, nil)
 }
 
-// buildAttestationExtension is the shared encoder. teeEnforcedContent is the
-// DER of the teeEnforced AuthorizationList's ELEMENTS (nil for an empty list).
+// buildAttestationExtension is the shared encoder. softwareEnforcedContent and
+// teeEnforcedContent are the DER of each AuthorizationList's ELEMENTS (nil for
+// an empty list).
 func buildAttestationExtension(
 	version int,
 	attestSecLevel SecurityLevel,
@@ -898,31 +948,27 @@ func buildAttestationExtension(
 	kmSecLevel SecurityLevel,
 	challenge []byte,
 	uniqueID []byte,
+	softwareEnforcedContent []byte,
 	teeEnforcedContent []byte,
 ) ([]byte, error) {
-	// Build the AuthorizationList SEQUENCEs. softwareEnforced is always empty
-	// here; teeEnforced carries whatever the caller supplied.
-	emptySeq, err := asn1.Marshal(asn1.RawValue{
+	softwareSeq, err := asn1.Marshal(asn1.RawValue{
 		Class:      asn1.ClassUniversal,
 		Tag:        asn1.TagSequence,
 		IsCompound: true,
-		Bytes:      []byte{},
+		Bytes:      softwareEnforcedContent,
 	})
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "android: failed to marshal empty authorization list", Err: err}
+		return nil, &errs.Wrapped{Msg: "android: failed to marshal software authorization list", Err: err}
 	}
 
-	teeSeq := emptySeq
-	if len(teeEnforcedContent) > 0 {
-		teeSeq, err = asn1.Marshal(asn1.RawValue{
-			Class:      asn1.ClassUniversal,
-			Tag:        asn1.TagSequence,
-			IsCompound: true,
-			Bytes:      teeEnforcedContent,
-		})
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "android: failed to marshal tee authorization list", Err: err}
-		}
+	teeSeq, err := asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassUniversal,
+		Tag:        asn1.TagSequence,
+		IsCompound: true,
+		Bytes:      teeEnforcedContent,
+	})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "android: failed to marshal tee authorization list", Err: err}
 	}
 
 	// Workaround: build the KeyDescription manually since the encoding
@@ -966,8 +1012,8 @@ func buildAttestationExtension(
 	seqContent.Write(kmSecBytes)
 	seqContent.Write(challengeBytes)
 	seqContent.Write(uniqueIDBytes)
-	seqContent.Write(emptySeq) // softwareEnforced
-	seqContent.Write(teeSeq)   // teeEnforced
+	seqContent.Write(softwareSeq) // softwareEnforced
+	seqContent.Write(teeSeq)      // teeEnforced
 
 	// Wrap in SEQUENCE
 	result, err := asn1.Marshal(asn1.RawValue{

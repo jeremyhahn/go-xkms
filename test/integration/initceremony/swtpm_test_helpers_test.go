@@ -20,7 +20,7 @@
 // cmd/xkmsd/init.go), and of the strategies init accepts, tpm2 is the one
 // that also auto-unseals unattended on every `xkmsd run`, init included (see
 // cmd/xkmsd/init_node.go's unsealDurableInitNode and
-// pkg/server/embedded_node.go's ResolveNodeSeal / OpenEmbeddedNode) --
+// pkg/embeddednode/embedded_node.go's ResolveNodeSeal / OpenEmbeddedNode) --
 // exactly what a restart-driven test with no operator step in between needs.
 // pkcs11 was considered and rejected: config.BarrierConfig.NodeFlipWired's
 // doc comment states plainly that pkcs11 is not wired through the qrdb

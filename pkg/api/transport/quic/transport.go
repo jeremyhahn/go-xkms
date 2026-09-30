@@ -1355,6 +1355,72 @@ func (t *Transport) FinishAuthentication(ctx context.Context, req *transport.Fin
 	return &resp, nil
 }
 
+// Invitation redemption (go-xkms#1294 part B). Every route is public,
+// mirroring the server's own /api/v1/invites/{tenant_id}/{token}... surface
+// (pkg/api/rest/handlers_invite.go) byte-for-byte — the QUIC transport
+// reaches the same REST HTTP handlers over HTTP/3.
+
+// GetInvite resolves a still-usable invitation's metadata without consuming it.
+func (t *Transport) GetInvite(ctx context.Context, req *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
+	path := "/api/v1/invites/" + url.PathEscape(req.TenantID) + "/" + url.PathEscape(req.Token)
+	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.GetInviteResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
+}
+
+// BeginInviteRegistration opens the invite-authorized WebAuthn registration ceremony.
+func (t *Transport) BeginInviteRegistration(ctx context.Context, req *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
+	path := "/api/v1/invites/" + url.PathEscape(req.TenantID) + "/" + url.PathEscape(req.Token) + "/fido2/begin"
+	data, err := t.doRawRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.BeginInviteRegistrationResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
+}
+
+// FinishInviteRegistration completes the invite-authorized WebAuthn registration ceremony.
+func (t *Transport) FinishInviteRegistration(ctx context.Context, req *transport.FinishInviteRegistrationRequest) (*transport.FinishInviteRegistrationResponse, error) {
+	path := "/api/v1/invites/" + url.PathEscape(req.TenantID) + "/" + url.PathEscape(req.Token) + "/fido2/finish"
+	body := map[string]string{
+		"session_id":       req.SessionID,
+		"attestation_json": req.AttestationJSON,
+	}
+	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.FinishInviteRegistrationResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
+}
+
+// ActivateInvitePIV activates the account by verifying a presented PIV certificate.
+func (t *Transport) ActivateInvitePIV(ctx context.Context, req *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
+	path := "/api/v1/invites/" + url.PathEscape(req.TenantID) + "/" + url.PathEscape(req.Token) + "/piv/activate"
+	body := map[string]string{"cert_pem": req.CertPEM}
+	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.ActivateInvitePIVResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
+}
+
 // CA Operations
 
 // GetCABundle retrieves the CA certificate bundle.
@@ -3061,6 +3127,7 @@ func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserReq
 		"display_name":            req.DisplayName,
 		"role":                    req.Role,
 		"tenant_id":               req.TenantID,
+		"invite_ttl_seconds":      req.InviteTTLSeconds,
 	}
 
 	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/users/", body)
@@ -3068,12 +3135,15 @@ func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserReq
 		return nil, err
 	}
 
-	var user transport.UserInfo
-	if err := json.Unmarshal(data, &user); err != nil {
+	// The full response, not just UserInfo: an invited create carries the
+	// one-time activation invitation (go-xkms#1294 part B), returned exactly
+	// once and unrecoverable afterwards.
+	var resp transport.GetUserResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
-	return &transport.GetUserResponse{User: user}, nil
+	return &resp, nil
 }
 
 // ListUsers lists xkms users.
@@ -3127,11 +3197,17 @@ func (t *Transport) DisableUser(ctx context.Context, username string) error {
 	return t.setUserEnabled(ctx, username, false)
 }
 
-// setUserEnabled toggles the enabled state of an xkms user.
+// setUserEnabled toggles the enabled state of an xkms user via its own
+// per-direction route (POST .../enable or .../disable), gated on qrdb's own
+// users:enable/users:disable rather than the coarser users:update
+// (go-xkms#1249).
 func (t *Transport) setUserEnabled(ctx context.Context, username string, enabled bool) error {
-	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(username))
-	body := map[string]bool{"enabled": enabled}
-	if _, err := t.doRawRequest(ctx, http.MethodPut, path, body); err != nil {
+	verb := "disable"
+	if enabled {
+		verb = "enable"
+	}
+	path := fmt.Sprintf("/api/v1/users/%s/%s", url.PathEscape(username), verb)
+	if _, err := t.doRawRequest(ctx, http.MethodPost, path, nil); err != nil {
 		return err
 	}
 

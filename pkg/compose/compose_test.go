@@ -121,6 +121,7 @@ func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
 	assert.NotNil(t, st.Barrier)
 	assert.NotNil(t, st.Custodians)
 	assert.NotNil(t, st.Shares)
+	assert.NotNil(t, st.Invite)
 	assert.Equal(t, "barrier", st.Credentials.Strategy())
 
 	st.Wire(svc)
@@ -181,6 +182,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 		FeatureKeyVersions:   "storage",
 		FeatureBarrier:       "barrier registry",
 		FeatureCustody:       "custody clients",
+		FeatureInvite:        "storage",
 	}, missing)
 
 	assert.Nil(t, st.PasswordStore)
@@ -191,6 +193,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 	assert.Nil(t, st.TPMPolicies)
 	assert.Nil(t, st.KeyVersions)
 	assert.Nil(t, st.Barrier)
+	assert.Nil(t, st.Invite)
 
 	// Wiring an empty composition leaves the service answering "not
 	// configured" for each feature.
@@ -270,7 +273,7 @@ func TestBuild_StorageFailureIsABuildErrorPerFeature(t *testing.T) {
 			assert.ErrorIs(t, reason, errStorageDown)
 		}
 	}
-	for _, f := range []Feature{FeaturePasswords, FeaturePlatformStore, FeatureSSH, FeatureCA, FeatureKeyVersions} {
+	for _, f := range []Feature{FeaturePasswords, FeaturePlatformStore, FeatureSSH, FeatureCA, FeatureKeyVersions, FeatureInvite} {
 		assert.True(t, failed[f], "%s must fail on storage", f)
 	}
 	// Features with no storage of their own still compose.

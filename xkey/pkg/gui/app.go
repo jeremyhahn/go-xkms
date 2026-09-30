@@ -1038,7 +1038,7 @@ func (a *App) initializeDataDir() error {
 
 	// Initialize local key store via embedded SDK.
 	// This provides in-process key management without a remote server connection.
-	a.initLocalKeyStore(dir)
+	a.initLocalKeyStore(barrierBackend)
 
 	// Initialize shared FIDO2 authenticator for autofill CTAP2 authentication.
 	// This authenticator is shared between the USB HID virtual device and the
@@ -1319,15 +1319,31 @@ func (a *App) initializeAuthenticator() {
 // It loads backend-specific settings from the unified config (TPM2 device path,
 // PKCS#11 library path, etc.) so that AutoInitialize can successfully create
 // hardware backends for PIV key generation.
-func (a *App) initLocalKeyStore(dataDir string) {
-	keysDir := filepath.Join(dataDir, "keys")
-
+//
+// Key storage is routed through the SAME barrier-backed datastore every
+// other xkey subsystem uses (barrierService.GetBackend(), under "keys/") --
+// never a private, unencrypted file store under dataDir -- matching the
+// oath/fido2/staticpw/trust/oidc/shares/sealed/ssh pattern elsewhere in this
+// file. When no barrier is active (barrierBackend nil), AutoInitialize's own
+// default applies: in-memory, session-only key storage, never a plaintext
+// file fallback.
+func (a *App) initLocalKeyStore(barrierBackend xkmssdk.StorageBackend) {
 	xkmssdk.Reset()
 
 	backendConfigs := a.buildXKMSBackendConfigs()
 
+	var ds xkmssdk.StorageBackend
+	if barrierBackend != nil {
+		ns, nsErr := xkmssdk.NewStoragePrefixBackend(barrierBackend, "keys/")
+		if nsErr != nil {
+			a.log.Warn("failed to create namespaced key datastore; local key store will be memory-only", "error", nsErr)
+		} else {
+			ds = ns
+		}
+	}
+
 	if err := xkmssdk.AutoInitialize(&xkmssdk.AutoConfig{
-		DataDir:        keysDir,
+		Datastore:      ds,
 		DefaultBackend: "software",
 		BackendConfigs: backendConfigs,
 	}); err != nil {
@@ -1415,7 +1431,7 @@ func (a *App) initLocalKeyStore(dataDir string) {
 		}
 	}
 
-	a.log.Info("local key store initialized", "dir", keysDir)
+	a.log.Info("local key store initialized", "barrier_active", barrierBackend != nil)
 }
 
 // registerPKCS11XKMSBackend dynamically creates and registers a PKCS#11 backend
@@ -1471,9 +1487,18 @@ func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN
 		cfg["so_pin"] = soPin
 	}
 
-	// Set key_dir for PKCS#11 key storage.
-	if a.dataDir != "" {
-		cfg["key_dir"] = filepath.Join(a.dataDir, "keys", "pkcs11")
+	// Route PKCS#11 key storage through the barrier-backed datastore --
+	// the SAME store every other xkey subsystem uses -- never a dataDir
+	// file path. With no barrier active, key_storage is left unset and the
+	// PKCS#11 factory's own default applies (in-memory, session-only),
+	// exactly matching initLocalKeyStore's no-barrier behaviour.
+	if barrierBackend := a.barrierService.GetBackend(); barrierBackend != nil {
+		ns, nsErr := xkmssdk.NewStoragePrefixBackend(barrierBackend, "keys/pkcs11/")
+		if nsErr != nil {
+			a.log.Warn("failed to create namespaced PKCS#11 key datastore", "error", nsErr)
+			return
+		}
+		cfg["key_storage"] = ns
 	}
 
 	kp, err := factory(cfg)
@@ -1492,13 +1517,24 @@ func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN
 		}
 	}
 
-	// Create cert storage at the same location used by AutoInitialize.
-	keysDir := filepath.Join(a.dataDir, "keys")
-	certDir := filepath.Join(keysDir, "certs")
-	certStore, csErr := a.openStore(certDir)
-	if csErr != nil {
-		a.log.Warn("failed to create cert storage for PKCS#11 backend", "error", csErr)
-		return
+	// Create cert storage at the same location used by AutoInitialize: the
+	// barrier-backed datastore when active, otherwise in-memory --
+	// never a dataDir file path.
+	var certStore xkmssdk.StorageBackend
+	if barrierBackend := a.barrierService.GetBackend(); barrierBackend != nil {
+		ns, nsErr := xkmssdk.NewStoragePrefixBackend(barrierBackend, "keys/certs/")
+		if nsErr != nil {
+			a.log.Warn("failed to create cert storage for PKCS#11 backend", "error", nsErr)
+			return
+		}
+		certStore = ns
+	} else {
+		mem, memErr := xkmssdk.NewMemoryBackend()
+		if memErr != nil {
+			a.log.Warn("failed to create cert storage for PKCS#11 backend", "error", memErr)
+			return
+		}
+		certStore = mem
 	}
 
 	ks, ksErr := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
@@ -1636,6 +1672,18 @@ func (a *App) PostBarrierUnseal() error {
 		DataDir: a.dataDir,
 	}))
 	return nil
+}
+
+// resolveBrowsersDir resolves the directory browser certificate state is
+// stored under, ~/.xkey/browsers. Extracted from NewApp so its
+// user-home-directory resolution failure is unit-testable without
+// invoking the rest of NewApp's service construction.
+func resolveBrowsersDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".xkey", "browsers"), nil
 }
 
 // NewApp creates a new App with the provided configuration. Pass nil to
@@ -1815,8 +1863,11 @@ func NewApp(cfg *GUIConfig) *App {
 		}
 	}
 
-	home, _ := os.UserHomeDir()
-	browsersDir := filepath.Join(home, ".xkey", "browsers")
+	browsersDir, err := resolveBrowsersDir()
+	if err != nil {
+		log.Error("failed to resolve user home directory", "error", err)
+		panic("browser service initialization failed: could not resolve user home directory: " + err.Error())
+	}
 	secureBrowserSvc := services.NewSecureBrowserService(
 		browsersDir, browserSvc, trustSvc, log)
 	// Without this the generic launcher only exports SSL_CERT_FILE, which no
@@ -1854,9 +1905,21 @@ func NewApp(cfg *GUIConfig) *App {
 		}
 	}
 
-	// Create audit service now (rather than inline in the App struct
-	// literal below) so the enterprise policy applied next can reach it.
+	// Create audit and phone services now (rather than inline in the App
+	// struct literal below) so the enterprise policy applied next can reach
+	// them.
 	auditSvc := services.NewAuditService(auditStore)
+	phoneSvc := services.NewPhoneService()
+
+	// PhoneService learns ONLY whether this deployment is sealed at all,
+	// here at startup; it never receives the startup DefaultPolicy()
+	// placeholder applyCapabilityPolicy installs on the other services below
+	// (#1305) -- see phone_service.go's policy field comment for why that
+	// placeholder is unsafe for the attested-application allow-list
+	// specifically. Set unconditionally, before any pairing or
+	// re-attestation can run, so a sealed deployment refuses until the SO
+	// verifies it via applyVerifiedEnterprisePolicy (enterprise_policy.go).
+	phoneSvc.SetEnterpriseSealed(config.IsEnterpriseMode(cfgDir))
 
 	// Apply the enterprise policy sections the GUI may honour before the SO
 	// has logged in; see startupEnterprisePolicy. The verified sections
@@ -1875,7 +1938,7 @@ func NewApp(cfg *GUIConfig) *App {
 		configDirPath:            cfgDir,
 		shutdownDone:             make(chan struct{}),
 		appService:               appSvc,
-		phoneService:             services.NewPhoneService(),
+		phoneService:             phoneSvc,
 		sshService:               services.NewSSHService(nil),
 		sshProfileService:        services.NewSSHProfileService(nil),
 		sshConnectService:        services.NewSSHConnectService(),
@@ -2093,8 +2156,8 @@ func NewApp(cfg *GUIConfig) *App {
 		mgr := a.pkcs11Service.GetManager()
 		if mgr != nil {
 			if conn, connErr := mgr.GetConnection(moduleID, slotID); connErr == nil {
-				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPIN) //nolint:staticcheck // SA4023: see below — stub build always errors.
-				if p11Err == nil {                                                              //nolint:staticcheck // SA4023: the !pkcs11 stub build always returns a non-nil error (branch statically dead there); real on-device registration runs in the pkcs11 build.
+				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPIN)
+				if p11Err == nil {
 					if pivErr := xkmssdk.RegisterPIVStore("pkcs11", p11Store); pivErr != nil {
 						a.log.Warn("failed to register PKCS#11 PIV store", "error", pivErr)
 					} else {

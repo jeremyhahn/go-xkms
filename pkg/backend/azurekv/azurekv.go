@@ -48,13 +48,15 @@ import (
 // This interface allows for mocking in tests. It lists exactly the
 // operations Backend calls; WrapKey, UnwrapKey and NewListKeyPropertiesPager
 // were removed (go-xkms#705) because no Backend method ever called them --
-// Backend.WrapKey/UnwrapKey perform the BYOK RSA wrapping ceremony locally
-// (see azurekv_importexport.go) rather than through Azure Key Vault's own
-// wrap/unwrap key operations, and ListKeys is reconstructed from local
-// metadata rather than Key Vault's paginated key listing. An unused
-// interface method can only be covered by a test that calls it directly
-// with no Backend behavior to assert, which is coverage padding, not a
-// real test.
+// Backend.WrapKey wraps key material client-side against the BYOK
+// key-encryption key's public half (see azurekv_importexport.go), and
+// Backend.UnwrapKey is unsupported because Azure Key Vault's HSM performs
+// the corresponding unwrap itself during ImportKey (go-xkms#1342) rather
+// than through Azure Key Vault's own wrap/unwrap key operations, and
+// ListKeys is reconstructed from local metadata rather than Key Vault's
+// paginated key listing. An unused interface method can only be covered by
+// a test that calls it directly with no Backend behavior to assert, which
+// is coverage padding, not a real test.
 type KeyVaultClient interface {
 	CreateKey(ctx context.Context, name string, params azkeys.CreateKeyParameters, options *azkeys.CreateKeyOptions) (azkeys.CreateKeyResponse, error)
 	GetKey(ctx context.Context, name, version string, options *azkeys.GetKeyOptions) (azkeys.GetKeyResponse, error)
@@ -152,21 +154,18 @@ type Backend struct {
 	config        *Config
 	client        KeyVaultClient
 	secretsClient SecretsClient // lazily initialized by initSecretsClient; see azurekv_symmetric.go
-	// importTokens holds the sealed ephemeral RSA wrapping keypair, plus
-	// the algorithm it was issued for (go-xkms#1342), for each in-flight
-	// GetImportParameters -> WrapKey -> ImportKey ceremony, keyed by the
-	// random opaque handle returned as ImportParameters.ImportToken.
-	// The wrapping private key lives only here -- it is never handed to the
-	// caller (go-xkms#1340) and never written through Config.KeyStorage: it
-	// is private key material, not key metadata, and the ceremony is
-	// expected to complete within one process's uptime, so unlike the CN ->
-	// key descriptor records above nothing relies on it surviving a
-	// restart. It is a bounded, TTL-enforced, single-use store rather than a
-	// plain map (go-xkms#1261): a caller that requests import parameters and
-	// never completes the ceremony must not be able to grow this state
-	// without limit, and every evicted wrapping key is destroyed rather than
-	// left for the garbage collector.
-	importTokens *importtoken.Store[*importtoken.Entry]
+	// importTokens binds each in-flight GetImportParameters -> WrapKey ->
+	// ImportKey ceremony's opaque token (ImportParameters.ImportToken) to
+	// the BYOK key-encryption key's kid and the wrapping algorithm it was
+	// issued for (go-xkms#1342). Unlike the local-unwrap ceremony this
+	// backend used before go-xkms#1342, no key material of any kind is
+	// stored here: Azure Key Vault's own HSM holds the KEK's private half
+	// and performs the unwrap, so kekBinding is pure bookkeeping and needs
+	// no destroy callback. It remains a bounded, TTL-enforced, single-use
+	// store rather than a plain map (go-xkms#1261): a caller that requests
+	// import parameters and never completes the ceremony must not be able
+	// to grow this state without limit.
+	importTokens *importtoken.Store[*kekBinding]
 	tracker      types.AEADSafetyTracker
 	mu           sync.RWMutex // guards client/secretsClient initialization
 }
@@ -186,7 +185,7 @@ func NewBackend(config *Config) (*Backend, error) {
 
 	b := &Backend{
 		config:       config,
-		importTokens: importtoken.New[*importtoken.Entry](0, 0, (*importtoken.Entry).Destroy),
+		importTokens: importtoken.New[*kekBinding](0, 0, nil),
 		tracker:      tracker,
 	}
 
@@ -209,7 +208,7 @@ func NewBackendWithClient(config *Config, client KeyVaultClient) (*Backend, erro
 	b := &Backend{
 		config:       config,
 		client:       client,
-		importTokens: importtoken.New[*importtoken.Entry](0, 0, (*importtoken.Entry).Destroy),
+		importTokens: importtoken.New[*kekBinding](0, 0, nil),
 		tracker:      tracker,
 	}
 
@@ -348,7 +347,7 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 	if extension == backend.FSEXT_PRIVATE_BLOB || extension == backend.FSEXT_PUBLIC_BLOB {
 		data, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 		if err != nil {
-			return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: attrs.CN}
 		}
 		return data, nil
 	}
@@ -384,7 +383,7 @@ func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.
 			return &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 		}
 		if exists {
-			return &errs.Detail{Err: backend.ErrFileAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return &errs.Detail{Err: backend.ErrFileAlreadyExists, Detail: attrs.CN}
 		}
 	}
 
@@ -530,7 +529,7 @@ func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte) ([]byte, error
 
 	// Get signing algorithm (use attrs.Hash as default, no PSS)
 	var opts crypto.SignerOpts = attrs.Hash
-	if opts == nil || opts.HashFunc() == 0 {
+	if opts.HashFunc() == 0 { // opts holds a crypto.Hash value, so it can never itself be nil (SA4023)
 		opts = crypto.SHA256
 	}
 	algorithm, err := b.getSigningAlgorithm(attrs, opts)
@@ -593,7 +592,7 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 
 	// Get signing algorithm (use attrs.Hash as default, no PSS)
 	var opts crypto.SignerOpts = attrs.Hash
-	if opts == nil || opts.HashFunc() == 0 {
+	if opts.HashFunc() == 0 { // opts holds a crypto.Hash value, so it can never itself be nil (SA4023)
 		opts = crypto.SHA256
 	}
 	algorithm, err := b.getSigningAlgorithm(attrs, opts)
@@ -655,7 +654,7 @@ func (b *Backend) getKeyParameters(attrs *types.KeyAttributes) (azkeys.CreateKey
 		}
 
 	default:
-		return params, &errs.Detail{Err: ErrUnsupportedKeyType, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+		return params, &errs.Detail{Err: ErrUnsupportedKeyType, Detail: attrs.KeyAlgorithm.String()}
 	}
 
 	return params, nil
@@ -709,7 +708,7 @@ func (b *Backend) getSigningAlgorithm(attrs *types.KeyAttributes, opts crypto.Si
 		}
 		return azkeys.SignatureAlgorithmES256, nil // Default to ES256
 	default:
-		return "", &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+		return "", &errs.Detail{Err: ErrInvalidAlgorithm, Detail: attrs.KeyAlgorithm.String()}
 	}
 }
 
@@ -840,7 +839,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if !exists {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	// Verify key exists in Azure Key Vault. Only an HTTP 404 -- Key Vault's
@@ -1275,8 +1274,8 @@ func jwkToPublicKey(jwk *azkeys.JSONWebKey) (crypto.PublicKey, error) {
 
 		pubKey := &ecdsa.PublicKey{
 			Curve: curve,
-			X:     new(big.Int).SetBytes(jwk.X),
-			Y:     new(big.Int).SetBytes(jwk.Y),
+			X:     new(big.Int).SetBytes(jwk.X), //nolint:staticcheck // SA1019: jwk.X/Y are Azure Key Vault's JWK wire coordinates; crypto/ecdh migration is a separate, behavior-sensitive change
+			Y:     new(big.Int).SetBytes(jwk.Y), //nolint:staticcheck // SA1019: see X above
 		}
 
 		return pubKey, nil

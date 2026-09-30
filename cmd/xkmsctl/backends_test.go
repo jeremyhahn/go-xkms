@@ -384,6 +384,22 @@ func (m *mockBackendsClient) FinishAuthentication(ctx context.Context, req *clie
 	return nil, client.ErrNotSupported
 }
 
+func (m *mockBackendsClient) GetInvite(ctx context.Context, req *client.GetInviteRequest) (*client.GetInviteResponse, error) {
+	return nil, client.ErrNotSupported
+}
+
+func (m *mockBackendsClient) BeginInviteRegistration(ctx context.Context, req *client.BeginInviteRegistrationRequest) (*client.BeginInviteRegistrationResponse, error) {
+	return nil, client.ErrNotSupported
+}
+
+func (m *mockBackendsClient) FinishInviteRegistration(ctx context.Context, req *client.FinishInviteRegistrationRequest) (*client.FinishInviteRegistrationResponse, error) {
+	return nil, client.ErrNotSupported
+}
+
+func (m *mockBackendsClient) ActivateInvitePIV(ctx context.Context, req *client.ActivateInvitePIVRequest) (*client.ActivateInvitePIVResponse, error) {
+	return nil, client.ErrNotSupported
+}
+
 func (m *mockBackendsClient) DeriveKey(ctx context.Context, req *transport.DeriveKeyRequest) (*transport.DeriveKeyResponse, error) {
 	return nil, nil
 }

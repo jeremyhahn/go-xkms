@@ -51,7 +51,7 @@ func (s *Server) BindRoute(spec RouteSpec) http.Handler {
 	switch spec.Group {
 	case GroupAPIv1, GroupSSH:
 		h = s.TenantMiddleware()(h)
-	case GroupAuthSession, GroupWebAuthn:
+	case GroupAuthSession, GroupWebAuthn, GroupInvite:
 		if s.authRateLimiter != nil && s.authRateLimiter.IsEnabled() {
 			h = ratelimit.Middleware(s.authRateLimiter, s.trustedProxies)(h)
 		}

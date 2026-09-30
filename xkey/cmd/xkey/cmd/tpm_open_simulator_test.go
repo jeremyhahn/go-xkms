@@ -21,8 +21,7 @@
 // filesystem or a physical device. Every subtest saves and restores tpmCfg,
 // the package-level flag state these functions read, and closes its TPM
 // before returning so a later simulator open in the same test binary never
-// blocks on the process-wide simulator lock (see
-// barrier_auto_unseal_test.go's initSimulatorTPM2Barrier for background).
+// blocks on the process-wide simulator lock (see pkg/tpm2.OpenSimulator).
 package cmd
 
 import (

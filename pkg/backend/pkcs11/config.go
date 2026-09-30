@@ -105,7 +105,7 @@ func (c *Config) Validate() error {
 
 	// Check if library file exists
 	if _, err := os.Stat(c.Library); os.IsNotExist(err) {
-		return &errs.Detail{Err: ErrLibraryNotFound, Detail: fmt.Sprintf("%s", c.Library)}
+		return &errs.Detail{Err: ErrLibraryNotFound, Detail: c.Library}
 	}
 
 	// Token label is required

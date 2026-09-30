@@ -24,9 +24,10 @@ import (
 var _ storage.CompareAndDeleter = (*FileStorage)(nil)
 
 // CompareAndDelete validates the key, then delegates the guarded delete to the
-// wrapped go-qrdb file engine (whose engineBackend serializes the
-// get-compare-delete under the same mutex it uses for PutIfAbsent, making it
-// genuinely atomic for this single-writer process).
+// wrapped go-qrdb file engine under this store's cross-process advisory lock
+// (lock.go), holding out both the engineBackend mutex that serializes the
+// get-compare-delete within the process AND every other process guarding or
+// writing the same store directory (#1157).
 //
 // It needs none of the chmod handling PutIfAbsent and CompareAndSwap carry:
 // those widen the permissions of a file they just wrote, and a successful
@@ -42,5 +43,11 @@ func (f *FileStorage) CompareAndDelete(ctx context.Context, key string, expected
 	if !ok {
 		return false, storage.ErrCompareAndDeleteUnsupported
 	}
-	return cad.CompareAndDelete(ctx, key, expected)
+	var deleted bool
+	err := withCrossProcessLock(ctx, f.lockPath, func() error {
+		var cadErr error
+		deleted, cadErr = cad.CompareAndDelete(ctx, key, expected)
+		return cadErr
+	})
+	return deleted, err
 }

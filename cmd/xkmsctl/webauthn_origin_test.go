@@ -66,12 +66,20 @@ func TestResolveWebAuthnOrigin_MissingFlagIsReported(t *testing.T) {
 	}
 }
 
-// TestCeremonyVerbsDeclareOrigin proves every xkmsctl WebAuthn ceremony verb
-// exposes --origin, the only way to name the origin over a non-http transport.
+// TestCeremonyVerbsDeclareOrigin proves every xkmsctl verb that drives a
+// local WebAuthn ceremony exposes --origin, the only way to name the origin
+// over a non-http transport. userRegisterCmd and adminCreateCmd no longer
+// drive one inline (go-xkms#1294 part B creates the account and prints an
+// activation invitation instead), so only userLoginCmd carries the flag now.
 func TestCeremonyVerbsDeclareOrigin(t *testing.T) {
-	for _, cmd := range []*cobra.Command{userRegisterCmd, userLoginCmd, adminCreateCmd} {
+	for _, cmd := range []*cobra.Command{userLoginCmd} {
 		if cmd.Flags().Lookup(originFlag) == nil {
 			t.Errorf("%s does not declare --%s", cmd.CommandPath(), originFlag)
+		}
+	}
+	for _, cmd := range []*cobra.Command{userRegisterCmd, adminCreateCmd} {
+		if cmd.Flags().Lookup(originFlag) != nil {
+			t.Errorf("%s should not declare --%s (go-xkms#1294 part B)", cmd.CommandPath(), originFlag)
 		}
 	}
 }

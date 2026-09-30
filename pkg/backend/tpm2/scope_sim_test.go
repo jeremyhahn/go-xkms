@@ -53,7 +53,7 @@ type scopedFixture struct {
 // backend's own TPM, key store and Platform SRK, and installs it.
 func newScopedFixture(t *testing.T) *scopedFixture {
 	t.Helper()
-	backend, err := NewBackend(&Config{UseSimulator: true, KeyDir: t.TempDir()})
+	backend, err := NewBackend(&Config{UseSimulator: true, KeyStorage: storage.NewMemory()})
 	require.NoError(t, err)
 	tpm, ok := backend.TPM().(*pkgtpm2.TPM2)
 	require.True(t, ok)

@@ -491,16 +491,6 @@ func (e *ErrSealBackendNotConfigured) Error() string {
 	return fmt.Sprintf("seal strategy %q selected in barrier preference order but its backend is not configured", e.Strategy)
 }
 
-// ErrUnsupportedStorageBackend indicates an unsupported storage backend was specified.
-type ErrUnsupportedStorageBackend struct {
-	Backend string
-}
-
-// Error returns the error message.
-func (e *ErrUnsupportedStorageBackend) Error() string {
-	return fmt.Sprintf("unsupported storage backend: %s", e.Backend)
-}
-
 // ErrUnknownAuthType indicates the configured auth.type is not a recognized
 // authentication method. It is fatal: falling back to an unauthenticated server
 // would turn a configuration typo into a silently wide-open API. The only ways

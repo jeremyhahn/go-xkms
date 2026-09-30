@@ -1,6 +1,6 @@
 # Phone as HSM — CLI
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 Binary: `xkey`, group `device` (`xkey/cmd/xkey/cmd/device*.go`).
 
@@ -171,16 +171,45 @@ xkey device sync-status --device "Pixel-8"
 
 ```
 xkey device listen
-xkey device connect 192.0.2.10:port
 xkey device relay
+xkey device relay --device "Pixel-8"
 xkey device relay --listen 192.0.2.10:8444
+xkey device relay --allow-sync
 ```
 
-`device relay` binds `phone.relay_listen_address` from the xkey config
-(`XKEY_PHONE_RELAY_LISTEN_ADDRESS`; default `:8444`, every interface), and
-`--listen` overrides it for one run: flag over environment over file over
-the built-in default. The address must be `host:port`; a bare `:port` binds
-every interface, an address binds that interface.
+(`device connect <address>` above is unrelated to phone pairing: it is the
+agent-enrollment verb that reaches a previously enrolled master xkmsd using
+the certificate obtained during enrollment -- see `device enroll`.)
+
+`device relay` (go-xkms#1306) is the TCP counterpart to `device listen`'s
+BLE peripheral, not a pairing mechanism: it serves an **already-paired**
+device's phone-initiated session, pinned to that device's Noise static key
+exactly the way `device listen` pins to it, and gated on the same live
+attestation proof (the host sends `local.attestDevice` to the phone and
+requires a verified answer) before serving anything. Pair with `device
+pair` (BLE) first.
+
+It shares every flag `device listen` registers -- `--device` (selects which
+paired device to serve; falls back to the devices file's default device,
+then the sole paired device), `--name`, `--timeout`, `--attestation-mode`,
+`--tpm-device`, `--tpm-enrollment`, `--tpm-pcr-bank`, `--allow-sync`, the SO
+PIN and barrier-password flags -- plus its own `--listen`.
+
+`--listen` binds `phone.relay_listen_address` from the xkey config
+(`XKEY_PHONE_RELAY_LISTEN_ADDRESS`; default `127.0.0.1:8444`, loopback
+only), and the flag overrides it for one run: flag over environment over
+file over the built-in default. The address must be `host:port`; a bare
+`:port` binds every interface. Reachable from the network is an explicit
+choice -- pass a non-loopback address (for example `0.0.0.0:8444`) only when
+you intend the relay to accept connections from other hosts.
+
+`--allow-sync` opts the session in to serving `remote.syncPasswords`,
+`remote.syncOATH` and `remote.syncAll` -- the bridge methods that export the
+password vault or OATH secrets to the phone. Without it those three methods
+are refused; every other bridge method (signing, FIDO2, PIV, trust-store
+sync, and so on) is unaffected. An enterprise policy sealed under the SO PIN
+can lock this decision either way (`phone_sync_allow_secret_export` /
+`lock_phone_sync_policy`), overriding `--allow-sync`.
 
 The relay is the host's end of the Noise session (`pkg/phone/tcp_server.go`
 performs the handshake, decrypts each request and dispatches it), so it is

@@ -16,6 +16,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -83,11 +84,13 @@ func TestTransport_CreateUser_Success(t *testing.T) {
 			if body["tenant_id"] != "acme" {
 				t.Errorf("expected tenant_id acme, got %q", body["tenant_id"])
 			}
-			writeJSON(t, w, http.StatusCreated, transport.UserInfo{
-				Username:    "alice",
-				DisplayName: "Alice",
-				Role:        "admin",
-				Enabled:     true,
+			writeJSON(t, w, http.StatusCreated, transport.GetUserResponse{
+				User: transport.UserInfo{
+					Username:    "alice",
+					DisplayName: "Alice",
+					Role:        "admin",
+					Enabled:     true,
+				},
 			})
 		})
 	})
@@ -338,43 +341,72 @@ func TestTransport_DeleteUser_NotConnected(t *testing.T) {
 	}
 }
 
+// TestTransport_EnableDisableUser_Success proves EnableUser/DisableUser hit
+// their own per-direction route (POST .../enable, POST .../disable,
+// go-xkms#1249) with no request body — the direction lives in the route,
+// not in a JSON payload the static permission gate would have to decode
+// before it could authorize the request.
 func TestTransport_EnableDisableUser_Success(t *testing.T) {
-	var lastEnabled *bool
+	var lastVerb, lastMethod string
+	var lastBodyLen int
 	tr := newUserTestTransport(t, func(r chi.Router) {
-		r.Put("/{username}", func(w http.ResponseWriter, req *http.Request) {
-			var body map[string]bool
-			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-				t.Errorf("failed to decode body: %v", err)
+		record := func(verb string) http.HandlerFunc {
+			return func(w http.ResponseWriter, req *http.Request) {
+				lastVerb = verb
+				lastMethod = req.Method
+				body, err := io.ReadAll(req.Body)
+				if err != nil {
+					t.Errorf("failed to read body: %v", err)
+				}
+				lastBodyLen = len(body)
+				w.WriteHeader(http.StatusOK)
 			}
-			v := body["enabled"]
-			lastEnabled = &v
-			w.WriteHeader(http.StatusOK)
-		})
+		}
+		r.Post("/{username}/enable", record("enable"))
+		r.Post("/{username}/disable", record("disable"))
 	})
 
 	if err := tr.EnableUser(context.Background(), "alice"); err != nil {
 		t.Fatalf("EnableUser failed: %v", err)
 	}
-	if lastEnabled == nil || !*lastEnabled {
-		t.Fatal("expected enabled=true sent to server")
+	if lastVerb != "enable" || lastMethod != http.MethodPost {
+		t.Fatalf("expected POST .../enable, got %s %s", lastMethod, lastVerb)
+	}
+	if lastBodyLen != 0 {
+		t.Fatalf("expected no request body, got %d bytes", lastBodyLen)
 	}
 
 	if err := tr.DisableUser(context.Background(), "alice"); err != nil {
 		t.Fatalf("DisableUser failed: %v", err)
 	}
-	if lastEnabled == nil || *lastEnabled {
-		t.Fatal("expected enabled=false sent to server")
+	if lastVerb != "disable" || lastMethod != http.MethodPost {
+		t.Fatalf("expected POST .../disable, got %s %s", lastMethod, lastVerb)
+	}
+	if lastBodyLen != 0 {
+		t.Fatalf("expected no request body, got %d bytes", lastBodyLen)
 	}
 }
 
 func TestTransport_EnableUser_ServerError(t *testing.T) {
 	tr := newUserTestTransport(t, func(r chi.Router) {
-		r.Put("/{username}", func(w http.ResponseWriter, _ *http.Request) {
+		r.Post("/{username}/enable", func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(t, w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		})
 	})
 
 	if err := tr.EnableUser(context.Background(), "alice"); err == nil {
+		t.Fatal("expected error for 403 response")
+	}
+}
+
+func TestTransport_DisableUser_ServerError(t *testing.T) {
+	tr := newUserTestTransport(t, func(r chi.Router) {
+		r.Post("/{username}/disable", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		})
+	})
+
+	if err := tr.DisableUser(context.Background(), "alice"); err == nil {
 		t.Fatal("expected error for 403 response")
 	}
 }

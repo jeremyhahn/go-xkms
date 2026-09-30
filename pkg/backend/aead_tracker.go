@@ -14,7 +14,6 @@
 package backend
 
 import (
-	"encoding/hex"
 	"sync"
 	"sync/atomic"
 
@@ -25,16 +24,18 @@ import (
 // Import "github.com/jeremyhahn/go-xkms/pkg/types" for these types.
 //
 // This file contains the memory-based implementation of AEADSafetyTracker.
-
-// memoryAEADTracker is an in-memory implementation of types.AEADSafetyTracker.
-// This is suitable for testing and short-lived processes.
-// Production systems should use persistent storage (file-based or database).
+//
+// It no longer tracks nonces: go-xkms#1201 replaced per-backend, per-process
+// nonce tracking with the single, atomic, optionally-persistent
+// aead.KeyNonceGuard every backend's Encrypt path claims through (see
+// ClaimAEADNonce in aead_nonce.go). This tracker's remaining job is the
+// NIST SP 800-38D bytes-encrypted budget, which is a genuinely separate,
+// per-backend-instance concern: unlike nonce reuse, encrypting past the
+// budget under one instance is not made safe or unsafe by what another
+// instance or another process has encrypted.
 type memoryAEADTracker struct {
 	// Map of keyID -> AEAD options
 	options map[string]*types.AEADOptions
-
-	// Map of keyID -> set of used nonces (hex-encoded)
-	nonces map[string]map[string]bool
 
 	// Map of keyID -> bytes encrypted counter
 	bytes map[string]*int64
@@ -50,60 +51,8 @@ type memoryAEADTracker struct {
 func NewMemoryAEADTracker() types.AEADSafetyTracker {
 	return &memoryAEADTracker{
 		options: make(map[string]*types.AEADOptions),
-		nonces:  make(map[string]map[string]bool),
 		bytes:   make(map[string]*int64),
 	}
-}
-
-// CheckNonce verifies nonce uniqueness for the given key.
-func (t *memoryAEADTracker) CheckNonce(keyID string, nonce []byte) error {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	// Get options for this key
-	opts, ok := t.options[keyID]
-	if !ok || !opts.NonceTracking {
-		// Tracking disabled for this key
-		return nil
-	}
-
-	// Check if nonce was used before
-	nonceHex := hex.EncodeToString(nonce)
-	usedNonces, ok := t.nonces[keyID]
-	if !ok {
-		// No nonces recorded yet - this is the first encryption
-		return nil
-	}
-
-	if usedNonces[nonceHex] {
-		return ErrNonceReused
-	}
-
-	return nil
-}
-
-// RecordNonce records a nonce as used for the given key.
-func (t *memoryAEADTracker) RecordNonce(keyID string, nonce []byte) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	// Get options for this key
-	opts, ok := t.options[keyID]
-	if !ok || !opts.NonceTracking {
-		// Tracking disabled for this key
-		return nil
-	}
-
-	// Initialize nonce set if needed
-	if t.nonces[keyID] == nil {
-		t.nonces[keyID] = make(map[string]bool)
-	}
-
-	// Record the nonce
-	nonceHex := hex.EncodeToString(nonce)
-	t.nonces[keyID][nonceHex] = true
-
-	return nil
 }
 
 // IncrementBytes increments the bytes encrypted counter.
@@ -196,9 +145,6 @@ func (t *memoryAEADTracker) SetAEADOptions(keyID string, opts *types.AEADOptions
 func (t *memoryAEADTracker) ResetTracking(keyID string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-
-	// Clear nonces
-	delete(t.nonces, keyID)
 
 	// Reset byte counter
 	if t.bytes[keyID] != nil {

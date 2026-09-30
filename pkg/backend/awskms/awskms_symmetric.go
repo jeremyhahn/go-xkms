@@ -90,7 +90,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if exists {
-		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: attrs.CN}
 	}
 
 	// Create the KMS key with SYMMETRIC_DEFAULT spec (AES-256-GCM)
@@ -202,7 +202,7 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 		}
 		return nil, &errs.Joined{Lead: ErrMetadataStorage, Detail: fmt.Sprintf("failed to read key metadata for %s", attrs.CN), Cause: err}
 	}
@@ -268,7 +268,7 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if !exists {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	return &awsKMSSymmetricEncrypter{

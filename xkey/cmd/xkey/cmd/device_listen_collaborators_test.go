@@ -82,7 +82,7 @@ func TestBuildListenBridgeConfig_AuditsAgainstThePairedDevice(t *testing.T) {
 	isolatedListenHome(t)
 
 	bridgeCfg, collaborators := buildListenBridgeConfig(&cobra.Command{}, newTestLogger(),
-		loadXKMSdBridgeConfig(), testListenDevice, nil, nil)
+		loadXKMSdBridgeConfig(), testListenDevice, nil, nil, pairing.AlwaysApproveSync)
 	defer collaborators.Close()
 
 	assert.NotNil(t, bridgeCfg.AuditLogger, "bridge calls from the phone must be audited")
@@ -100,7 +100,7 @@ func TestBuildListenBridgeConfig_CollaboratorsAreWired(t *testing.T) {
 	cmd := &cobra.Command{}
 	xkmsdCfg := loadXKMSdBridgeConfig()
 
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil)
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil, pairing.AlwaysApproveSync)
 	defer collaborators.Close()
 
 	assert.NotNil(t, bridgeCfg.OATHStore, "OATHStore must be wired from openOATHStore")
@@ -121,7 +121,7 @@ func TestBuildListenBridgeConfig_OATHRequestReachesRealStore(t *testing.T) {
 	cmd := &cobra.Command{}
 	xkmsdCfg := loadXKMSdBridgeConfig()
 
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil)
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil, pairing.AlwaysApproveSync)
 
 	bridge, err := pairing.NewBridge(&baseSDKClient{}, bridgeCfg)
 	require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestBuildListenBridgeConfig_SyncTrustStoreRequestReachesRealStore(t *testin
 	cmd := &cobra.Command{}
 	xkmsdCfg := loadXKMSdBridgeConfig()
 
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil)
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, newTestLogger(), xkmsdCfg, testListenDevice, nil, nil, pairing.AlwaysApproveSync)
 
 	bridge, err := pairing.NewBridge(&baseSDKClient{}, bridgeCfg)
 	require.NoError(t, err)

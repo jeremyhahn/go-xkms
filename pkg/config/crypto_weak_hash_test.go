@@ -37,8 +37,8 @@ logging:
 tls:
   enabled: true
 
-storage:
-  backend: qrdb
+datastore:
+  engine: pebble
   path: /tmp/xkms-config-test
 
 default_backend: software

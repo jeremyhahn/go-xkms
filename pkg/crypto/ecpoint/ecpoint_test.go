@@ -56,7 +56,7 @@ func shortCoordinateKey(t *testing.T, curve elliptic.Curve, size int) *ecdsa.Pri
 		if err != nil {
 			t.Fatalf("ParseRawPrivateKey(%d): %v", i, err)
 		}
-		if len(key.X.Bytes()) < size || len(key.Y.Bytes()) < size { //nolint:staticcheck // the test's subject is the short raw coordinate
+		if len(key.X.Bytes()) < size || len(key.Y.Bytes()) < size {
 			return key
 		}
 	}
@@ -71,7 +71,7 @@ func TestPublicKeyRoundTripsEveryNamedCurve(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GenerateKey: %v", err)
 			}
-			got, err := PublicKey(tc.curve, key.X.Bytes(), key.Y.Bytes()) //nolint:staticcheck // exercising the raw-coordinate entry point
+			got, err := PublicKey(tc.curve, key.X.Bytes(), key.Y.Bytes())
 			if err != nil {
 				t.Fatalf("PublicKey: %v", err)
 			}
@@ -93,8 +93,8 @@ func TestPublicKeyAcceptsShortCoordinateBuffers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			key := shortCoordinateKey(t, tc.curve, tc.size)
 
-			x := trimLeadingZeros(key.X.Bytes()) //nolint:staticcheck // the test's subject is the short raw coordinate
-			y := trimLeadingZeros(key.Y.Bytes()) //nolint:staticcheck // the test's subject is the short raw coordinate
+			x := trimLeadingZeros(key.X.Bytes())
+			y := trimLeadingZeros(key.Y.Bytes())
 			if len(x) == tc.size && len(y) == tc.size {
 				t.Fatal("fixture is not short: neither coordinate lost a leading zero")
 			}
@@ -128,8 +128,8 @@ func TestPublicKeyRejectsOffCurvePoint(t *testing.T) {
 			}
 			x := make([]byte, tc.size)
 			y := make([]byte, tc.size)
-			key.X.FillBytes(x) //nolint:staticcheck // building a deliberately invalid point
-			key.Y.FillBytes(y) //nolint:staticcheck // building a deliberately invalid point
+			key.X.FillBytes(x)
+			key.Y.FillBytes(y)
 			y[tc.size-1] ^= 0x01
 
 			if _, err := PublicKey(tc.curve, x, y); !errors.Is(err, ErrInvalidPoint) {
@@ -263,7 +263,7 @@ func BenchmarkPublicKeyP256(b *testing.B) {
 	if err != nil {
 		b.Fatalf("GenerateKey: %v", err)
 	}
-	x, y := key.X.Bytes(), key.Y.Bytes() //nolint:staticcheck // benchmarking the raw-coordinate entry point
+	x, y := key.X.Bytes(), key.Y.Bytes()
 	b.ResetTimer()
 	for b.Loop() {
 		if _, err := PublicKey(elliptic.P256(), x, y); err != nil {

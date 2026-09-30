@@ -1,16 +1,16 @@
 # Device Pairing and Enrollment — CLI
 
-> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 Binary: `xkey`. Parent command: `xkey device` (also reachable as `xkey
 phone`, its cobra alias — `cmd/xkey/cmd/device.go:Aliases`).
 
 This page documents the verbs this feature owns: the base management verbs,
-agent enrollment, and QR-assisted relay pairing. The full phone-pairing
-verb catalog (`pair`, `scan`, `listen`, `attest`, `attest-device`,
-`device-info`, `oath-sync`, `piv-sync`, `share*`, `sync*`, and the
-`ble`-tagged barrier/SO-PIN flags shared across them) is documented once, in
-[phone-hsm/cli.md](../phone-hsm/cli.md) — it is not repeated here.
+agent enrollment, and the TCP relay path for an already-paired device. The
+full phone-pairing verb catalog (`pair`, `scan`, `listen`, `attest`,
+`attest-device`, `device-info`, `oath-sync`, `piv-sync`, `share*`, `sync*`,
+and the `ble`-tagged barrier/SO-PIN flags shared across them) is documented
+once, in [phone-hsm/cli.md](../phone-hsm/cli.md) — it is not repeated here.
 
 ## Always compiled (no `ble` tag required)
 
@@ -19,7 +19,7 @@ verb catalog (`pair`, `scan`, `listen`, `attest`, `attest-device`,
 | `device list` | — |
 | `device unpair <device-name>` | `--force` (skip confirmation) |
 | `device status` | `--device` (name filter) |
-| `device relay` | `--listen` (host:port; default `phone.relay_listen_address`, `:8444`), `--qr` (show QR code + URI) |
+| `device relay` | `--listen` (host:port; default `phone.relay_listen_address`, `127.0.0.1:8444`), `--device` (which paired device to serve), `--name`, `--timeout`, `--attestation-mode`, `--tpm-device`, `--tpm-enrollment`, `--tpm-pcr-bank`, `--allow-sync`, SO-PIN and barrier-password flags — the same set `device listen` registers |
 | `device enroll` | `--server` (required, `host:port`), `--code` (rejected — see below), `--name` (default: hostname), `--cert-profile`, `--validity-days` |
 | `device connect <address>` | `--tls-cert`, `--tls-key`, `--tls-ca` |
 
@@ -40,21 +40,33 @@ xkey device unpair "Pixel-8"
 xkey device unpair "Pixel-8" --force
 ```
 
-## `device relay` and QR pairing
+## `device relay`
+
+`device relay` (go-xkms#1306) is **not** a pairing mechanism — there is no
+QR code, and no `--scan` counterpart on the desktop side. It serves an
+**already-paired** device's phone-initiated session over TCP, the exact
+counterpart to `device listen`'s BLE peripheral: pinned to that device's
+Noise static key (`TCPPairingConfig.ExpectedRemoteStatic`), gated on the
+same live-attestation proof `device listen` requires
+(`TCPPairingConfig.LiveAttest` — the host sends `local.attestDevice` to the
+phone and requires a verified answer before serving anything), and serving
+the same xkmsd bridge. Pair with `device pair` (BLE) first; use `device
+relay` afterwards when BLE is not available.
 
 ```
-xkey device relay                        # listen on phone.relay_listen_address (:8444)
-xkey device relay --listen :9443         # override the listen address
-xkey device relay --qr                   # also render a terminal QR code + xkey-pair:// URI
+xkey device relay                          # serve the default paired device on 127.0.0.1:8444
+xkey device relay --device "Pixel-8"       # serve a specific paired device
+xkey device relay --listen :9443           # override the listen address (still loopback)
+xkey device relay --listen 0.0.0.0:8444    # accept connections from the network (explicit opt-in)
+xkey device relay --allow-sync             # also allow this session to export the password vault/OATH secrets
 ```
 
-`--qr` prints a `qrgen.PairingPayload` (protocol version, Noise public key,
-listen address, transport `"tcp"`, this host's name) as both an ASCII
-terminal QR code and its `xkey-pair://<base64url-json>` URI form. A phone
-scans either to obtain the same material `xkey device pair` would have
-exchanged over BLE — the Noise XX handshake it then performs is documented
-in [phone-hsm/architecture.md](../phone-hsm/architecture.md); this command
-has no `--scan` counterpart of its own on the desktop side.
+The built-in default binds loopback only, `127.0.0.1:8444`; a bare `:port`
+binds every interface, so reaching it from the network needs an explicit
+non-loopback address. `--allow-sync` gates `remote.syncPasswords`,
+`remote.syncOATH` and `remote.syncAll`; every other bridge method is
+unaffected. See [phone-hsm/cli.md](../phone-hsm/cli.md#connectivity) for
+the full flag reference.
 
 ## `device enroll` / `device connect` — agent enrollment
 

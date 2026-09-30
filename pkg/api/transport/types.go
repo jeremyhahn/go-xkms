@@ -891,6 +891,24 @@ type CreateUserRequest struct {
 	DisplayName          string `json:"display_name,omitempty"`
 	Role                 string `json:"role,omitempty"`
 	TenantID             string `json:"tenant_id,omitempty"`
+	// InviteTTLSeconds overrides how long the minted invitation stays
+	// redeemable (go-xkms#1294 part B). Zero or negative takes the server's
+	// configured default; a value above the server's configured cap is
+	// clamped down to it, never refused. Ignored when WithoutEmailLoginKey
+	// is set: a bootstrap/certificate-only identity has no email an
+	// invitation could be sent to and is created active, as before.
+	InviteTTLSeconds int64 `json:"invite_ttl_seconds,omitempty"`
+}
+
+// InviteInfo is the one-time activation invitation CreateUser mints for a
+// new account (go-xkms#1294 part B). Token is the plaintext token: it is
+// returned exactly once, here, and cannot be recovered afterwards — only its
+// digest is stored — so a caller that loses it must delete and recreate the
+// user, or use xkmsctl's invite-reissue path once one exists.
+type InviteInfo struct {
+	Token     string    `json:"token"`
+	URL       string    `json:"url"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // ListUsersRequest contains pagination parameters for listing users.
@@ -904,9 +922,14 @@ type ListUsersResponse struct {
 	PageResponse
 }
 
-// GetUserResponse contains user information.
+// GetUserResponse contains user information. Invite is set only by
+// CreateUser's response, for an account created with an email login key
+// (go-xkms#1294 part B); every other caller of GetUserResponse (GetUser,
+// UpdateUser) leaves it nil, since the plaintext token is not recoverable
+// after creation.
 type GetUserResponse struct {
-	User UserInfo `json:"user"`
+	User   UserInfo    `json:"user"`
+	Invite *InviteInfo `json:"invite,omitempty"`
 }
 
 // ListUserCredentialsRequest contains parameters for listing user credentials.
@@ -1023,6 +1046,80 @@ type FinishAuthenticationResponse struct {
 	Token    string `json:"token,omitempty"`
 	Username string `json:"username,omitempty"`
 	Message  string `json:"message,omitempty"`
+}
+
+// Invitation redemption (go-xkms#1294 part B): how an account CreateUser
+// provisioned with zero credentials enrolls its first one. Every verb below
+// is public/unauthenticated on every transport — there is no credential yet
+// to authenticate a request with — and every unusable token (absent,
+// expired, already redeemed, malformed) answers with the same opaque
+// refusal so an unauthenticated caller cannot enumerate accounts.
+
+// GetInviteRequest resolves a still-usable invitation's metadata without
+// consuming it.
+type GetInviteRequest struct {
+	TenantID string `json:"tenant_id"`
+	Token    string `json:"token"`
+}
+
+// GetInviteResponse is the invitation metadata an unauthenticated
+// activation page reads to render itself.
+type GetInviteResponse struct {
+	Email       string    `json:"email,omitempty"`
+	DisplayName string    `json:"display_name,omitempty"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	// Methods lists the credential kinds this build can activate an invite
+	// with ("webauthn", "piv").
+	Methods []string `json:"methods"`
+}
+
+// BeginInviteRegistrationRequest opens the invite-authorized WebAuthn
+// registration ceremony for the token's account.
+type BeginInviteRegistrationRequest struct {
+	TenantID string `json:"tenant_id"`
+	Token    string `json:"token"`
+}
+
+// BeginInviteRegistrationResponse carries the begun ceremony: the full
+// CredentialCreation options, JSON-marshaled so callers do not need the
+// go-webauthn types, and the opaque session ID
+// FinishInviteRegistrationRequest echoes back.
+type BeginInviteRegistrationResponse struct {
+	SessionID   string `json:"session_id"`
+	OptionsJSON string `json:"options_json"`
+}
+
+// FinishInviteRegistrationRequest completes the invite-authorized WebAuthn
+// registration ceremony: it binds the credential to the still-pending
+// account, activates the account, and redeems the invitation, in that safe
+// order.
+type FinishInviteRegistrationRequest struct {
+	TenantID        string `json:"tenant_id"`
+	Token           string `json:"token"`
+	SessionID       string `json:"session_id"`
+	AttestationJSON string `json:"attestation_json"`
+}
+
+// FinishInviteRegistrationResponse reports which account the redemption
+// activated.
+type FinishInviteRegistrationResponse struct {
+	UserID uint64 `json:"user_id,string"`
+}
+
+// ActivateInvitePIVRequest completes PIV invite activation: it verifies the
+// presented certificate's chain against the CA's trust roots, binds its
+// SPKI thumbprint to the still-pending account, activates the account, and
+// redeems the invitation — the same safe order
+// FinishInviteRegistrationRequest uses.
+type ActivateInvitePIVRequest struct {
+	TenantID string `json:"tenant_id"`
+	Token    string `json:"token"`
+	CertPEM  string `json:"cert_pem"`
+}
+
+// ActivateInvitePIVResponse reports which account the redemption activated.
+type ActivateInvitePIVResponse struct {
+	UserID uint64 `json:"user_id,string"`
 }
 
 // DeriveKeyECDHRequest contains parameters for ECDH key agreement and derivation.

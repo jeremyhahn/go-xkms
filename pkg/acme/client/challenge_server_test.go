@@ -195,6 +195,82 @@ func TestEnrollDevice_ReleasesPortOnSuccess(t *testing.T) {
 	_ = ln.Close()
 }
 
+// TestEnrollDevice_InstallsIAKCertificate drives EnrollDevice through a
+// complete enroll-01 round trip and asserts the issued IAK certificate is
+// installed via TPMModule.ProvisionIAKCert -- go-xkms#1100: previously the
+// certificate was parsed out of the finalized chain and returned to the
+// caller, but never installed, so a later device-attest-01 challenge (run
+// against the same TPM, commonly in a separate process) had no certificate
+// to answer with even though enrollment had succeeded.
+func TestEnrollDevice_InstallsIAKCertificate(t *testing.T) {
+	server := newMockACMEServer(t)
+	defer server.Close()
+
+	certDER2, _ := generateTestCert(t)
+	server.certDER2 = certDER2
+
+	client := newTestClientForMockACMEServer(t, server)
+
+	tpm := newMockTPMForEnrollment(t)
+	config := &EnrollmentConfig{
+		Challenge:  "enroll-01",
+		TPMModule:  tpm,
+		IPAddress:  "192.168.1.4",
+		CommonName: "test-device",
+		Port:       freePort(t),
+		Timeout:    10 * time.Second,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result, err := client.EnrollDevice(ctx, config)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.NotNil(t, tpm.provisionedIAKCert, "EnrollDevice must install the issued IAK certificate via ProvisionIAKCert")
+	assert.True(t, result.IAKCertificate.Equal(tpm.provisionedIAKCert),
+		"the certificate installed via ProvisionIAKCert must be the one EnrollDevice returned")
+}
+
+// TestEnrollDevice_ProvisionIAKCertFailure_ReturnsTypedError asserts that
+// when installing the issued IAK certificate fails, EnrollDevice reports a
+// typed error naming the cause instead of returning a certificate the
+// device never actually has -- a later device-attest-01 challenge would
+// otherwise fail confusingly with no certificate available, far from this
+// actual root cause.
+func TestEnrollDevice_ProvisionIAKCertFailure_ReturnsTypedError(t *testing.T) {
+	server := newMockACMEServer(t)
+	defer server.Close()
+
+	certDER2, _ := generateTestCert(t)
+	server.certDER2 = certDER2
+
+	client := newTestClientForMockACMEServer(t, server)
+
+	tpm := newMockTPMForEnrollment(t)
+	wantErr := errors.New("simulated NVRAM write failure")
+	tpm.errors["ProvisionIAKCert"] = wantErr
+
+	config := &EnrollmentConfig{
+		Challenge:  "enroll-01",
+		TPMModule:  tpm,
+		IPAddress:  "192.168.1.5",
+		CommonName: "test-device",
+		Port:       freePort(t),
+		Timeout:    10 * time.Second,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result, err := client.EnrollDevice(ctx, config)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to install IAK certificate")
+	assert.ErrorIs(t, err, wantErr)
+}
+
 // TestEnrollDevice_ReleasesPortOnMidFlightFailure exercises the same
 // concern on an error path that happens after the enroll-01 challenge
 // server has already been started: mockACMEServer's default single

@@ -117,8 +117,9 @@ health:
   enabled: true
   path: "/health"
 
-storage:
-  backend: "qrdb"  # network protocols require the embedded qrdb node (unified API server)
+datastore:
+  engine: "pebble"
+  mode: "standalone"  # network protocols require the embedded qrdb node (unified API server)
   path: "/data/storage"
 
 rng:

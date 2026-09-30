@@ -33,62 +33,30 @@ import (
 	"io"
 	"log/slog"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
 )
-
-// newServerWithoutQRDB builds a real *server.Server whose storage backend is
-// not "qrdb", so no embedded qrdb node is constructed and QRDBClient()
-// legitimately returns nil (pkg/server/server_acme_accessors.go QRDBClient
-// doc comment; pkg/server/qrdb_storage.go initializeQRDBStorage is a no-op
-// for any backend other than "qrdb").
-func newServerWithoutQRDB(t *testing.T) *server.Server {
-	t.Helper()
-	tempDir := t.TempDir()
-	cfg := &config.Config{
-		Server:    config.ServerConfig{Host: "127.0.0.1", RESTPort: 0},
-		Protocols: config.ProtocolsConfig{Unix: true},
-		Unix: config.UnixConfig{
-			Enabled:    true,
-			SocketPath: filepath.Join(tempDir, "xkms.sock"),
-			Protocol:   "grpc",
-		},
-		Logging: config.LoggingConfig{Level: "error", Format: "json"},
-		TLS:     config.TLSConfig{Enabled: false},
-		Auth:    config.AuthConfig{Enabled: false},
-		Storage: config.StorageConfig{
-			Backend: "memory",
-			Path:    tempDir,
-		},
-		Default: config.DefaultConfig("software"),
-		Backends: config.BackendsConfig{
-			Software: &config.SoftwareConfig{Enabled: true, Path: filepath.Join(tempDir, "software")},
-		},
-	}
-
-	srv, err := server.New(cfg)
-	if err != nil {
-		t.Fatalf("server.New: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := srv.Shutdown(); err != nil {
-			t.Errorf("server.Shutdown: %v", err)
-		}
-	})
-	if srv.QRDBClient() != nil {
-		t.Fatal("fixture setup: QRDBClient() != nil with a memory storage backend")
-	}
-	return srv
-}
 
 // TestFinalizeAdminModule_NilQRDBClientRefused proves finalizeAdminModule
 // fails closed (refuses to build the admin surface) rather than falling back
 // to a disabled, allow-all authorizer when no qrdb client is available.
+//
+// finalizeAdminModule reads srv.QRDBClient() as its very first operation and
+// returns immediately if it is nil, before touching anything else on srv --
+// so an unbooted, zero-value *server.Server (never passed through
+// server.New()) exercises exactly that guard, safely: Server's QRDBClient()
+// accessor only reads its own sync.RWMutex and an unexported field, both
+// zero-value-safe. This is deliberately NOT a server.New()-booted server:
+// every standalone deployment now always constructs a working embedded qrdb
+// node by the time New() returns (go-xkms#1345 -- there is no longer a
+// datastore engine choice that leaves QRDBClient() nil on a successfully
+// booted server), so there is no longer a hermetic way to reach this guard
+// through a real boot; only a "remote" datastore.mode leaves it nil in
+// production, and reaching that here would need a real external qrdb
+// cluster to dial.
 func TestFinalizeAdminModule_NilQRDBClientRefused(t *testing.T) {
-	srv := newServerWithoutQRDB(t)
+	srv := &server.Server{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	err := finalizeAdminModule(srv, nil, logger)

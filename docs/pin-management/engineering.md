@@ -79,7 +79,7 @@ is one.
 #### xkmsd
 
 `pin.strategy` is `auto` (the default), `software` or `tpm2`; any other value
-is `*ErrUnknownPINStrategy`. PIN state lives in `<storage.path>/pin`. `tpm2`
+is `*ErrUnknownPINStrategy`. PIN state lives in `<datastore.path>/pin`. `tpm2`
 needs `backends.tpm2.enabled`; the PIN is the auth value of that TPM's Platform
 SRK. Without the backend, startup fails with `*ProviderUnavailableError`.
 

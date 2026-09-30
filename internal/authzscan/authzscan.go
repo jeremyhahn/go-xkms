@@ -195,6 +195,7 @@ func Constants() map[string]string {
 		"ActionWrite":              auth.ActionWrite,
 		"ActionUse":                auth.ActionUse,
 		"ActionDisable":            auth.ActionDisable,
+		"ActionEnable":             auth.ActionEnable,
 		"ActionStatus":             auth.ActionStatus,
 		"ActionPeers":              auth.ActionPeers,
 		"ActionCapabilities":       auth.ActionCapabilities,

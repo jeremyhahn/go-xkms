@@ -83,30 +83,29 @@ type capability struct {
 // go-xkms#1232 was fixed: every entry here matched before that fix's one
 // correction (keys.wrap / keys.unwrap, below) and matches after it.
 //
-// Two known cross-transport mismatches are deliberately NOT in this table,
-// so this golden does not fail on them; they are reported in go-xkms#1232
-// as needing a product decision rather than fixed here:
+// go-xkms#1249 closed every mismatch this table used to allowlist rather
+// than fix, so there are no carve-outs left:
 //
-//   - password.setAccessMode: pkg/api/rest/routes.go serves
+//   - pkcs11state.*: gRPC's seven PKCS11State* RPCs used to collapse every
+//     mutation to keys:write and every read to keys:read, while REST's
+//     /api/v1/pkcs11state/* routes already carried the ordinary per-verb
+//     CRUD actions. gRPC now carries the same per-verb actions REST does.
+//   - users.enable / users.disable: REST's single PUT /api/v1/users/{username}
+//     used to pick EnableUser or DisableUser from a request-body field and
+//     so could only carry the one coarse users:update permission for both
+//     directions, while gRPC's EnableUser/DisableUser and MCP's
+//     user.enable/user.disable required qrdb's own users:enable/
+//     users:disable. REST now serves POST /api/v1/users/{username}/enable
+//     and /disable as their own routes, one per qrdb-native permission,
+//     matching gRPC and MCP; PUT no longer touches enablement at all.
+//   - password.setAccessMode: REST used to serve
 //     POST /api/v1/passwords/access-mode under RouteAuthSession (any
-//     authenticated caller), while pkg/api/grpc's
-//     PasswordStoreSetAccessMode and pkg/api/mcp's password.setAccessMode
-//     both require passwords:write. pkg/api/grpc/service_password.go's own
-//     comment on PasswordStoreSetAccessMode already names this asymmetry
-//     as deliberate (gRPC has no permission-free tier to match REST's
-//     session helper), but a caller who cannot reach passwords:write can
-//     still reach a passwords:write-gated operation over REST alone, which
-//     is exactly the inconsistency this issue exists to close.
-//   - pkcs11state.*: pkg/api/grpc's seven PKCS11State* RPCs collapse every
-//     mutation (Put, PutIfAbsent, Delete, CAS, CAD) to keys:write and every
-//     read (Get, List) to keys:read, per that package's own comment on the
-//     family ("writes for mutation, reads for retrieval/listing"). REST's
-//     /api/v1/pkcs11state/* routes instead carry the ordinary per-verb CRUD
-//     actions (keys:create, keys:get, keys:list, keys:update, keys:delete).
-//     Both are internally consistent design choices for the same family,
-//     but they are two different permission models for the same seven
-//     operations, not a wrong-table typo, so which one is canonical is a
-//     product decision, not a mechanical fix.
+//     authenticated caller, no RBAC permission) while gRPC's
+//     PasswordStoreSetAccessMode and MCP's password.setAccessMode both
+//     required passwords:write — closed by the owner's 2026-09-29 ruling
+//     that the password vault is not a login feature, so it takes the same
+//     passwords:write every other mutating passwords:* route already
+//     required. REST now gates it the same as its siblings.
 var canonicalCapabilities = map[string]capability{
 	"audit.query":              {GRPC: "QueryAudit", MCP: "xkms.queryAudit", REST: "GET /api/v1/audit/"},
 	"backends.get":             {GRPC: "GetBackendInfo", MCP: "xkms.getBackend", REST: "GET /api/v1/backends/{id}"},
@@ -195,9 +194,17 @@ var canonicalCapabilities = map[string]capability{
 	"password.get":             {GRPC: "PasswordGet", MCP: "password.get", REST: "GET /api/v1/passwords/{id}"},
 	"password.list":            {GRPC: "PasswordList", MCP: "password.list", REST: "GET /api/v1/passwords/"},
 	"password.lock":            {GRPC: "PasswordStoreLock", MCP: "password.lock", REST: "POST /api/v1/passwords/lock"},
+	"password.setAccessMode":   {GRPC: "PasswordStoreSetAccessMode", MCP: "password.setAccessMode", REST: "POST /api/v1/passwords/access-mode"},
 	"password.status":          {GRPC: "PasswordStoreStatus", MCP: "password.status", REST: "GET /api/v1/passwords/status"},
 	"password.unlock":          {GRPC: "PasswordStoreUnlock", MCP: "password.unlock", REST: "POST /api/v1/passwords/unlock"},
 	"password.update":          {GRPC: "PasswordUpdate", MCP: "password.update", REST: "PUT /api/v1/passwords/{id}"},
+	"pkcs11state.cad":          {GRPC: "PKCS11StateCAD", REST: "POST /api/v1/pkcs11state/compare-and-delete"},
+	"pkcs11state.cas":          {GRPC: "PKCS11StateCAS", REST: "POST /api/v1/pkcs11state/compare-and-swap"},
+	"pkcs11state.delete":       {GRPC: "PKCS11StateDelete", REST: "POST /api/v1/pkcs11state/delete"},
+	"pkcs11state.get":          {GRPC: "PKCS11StateGet", REST: "POST /api/v1/pkcs11state/get"},
+	"pkcs11state.list":         {GRPC: "PKCS11StateList", REST: "POST /api/v1/pkcs11state/list"},
+	"pkcs11state.put":          {GRPC: "PKCS11StatePut", REST: "POST /api/v1/pkcs11state/put"},
+	"pkcs11state.putIfAbsent":  {GRPC: "PKCS11StatePutIfAbsent", REST: "POST /api/v1/pkcs11state/put-if-absent"},
 	"pin.changeSO":             {GRPC: "ChangeSOPIN", MCP: "xkms.changeSOPIN", REST: "POST /api/v1/pin/so/change"},
 	"pin.changeUser":           {GRPC: "ChangeUserPIN", MCP: "xkms.changeUserPIN", REST: "POST /api/v1/pin/user/change"},
 	"pin.getLockout":           {GRPC: "GetLockoutStatus", MCP: "xkms.getLockoutStatus", REST: "GET /api/v1/pin/lockout"},
@@ -274,7 +281,8 @@ var canonicalCapabilities = map[string]capability{
 	"users.get":                {GRPC: "GetUser", MCP: "user.get", REST: "GET /api/v1/users/{username}"},
 	"users.list":               {GRPC: "ListUsers", MCP: "user.list", REST: "GET /api/v1/users/"},
 	"users.listCredentials":    {GRPC: "ListUserCredentials", MCP: "user.listCredentials", REST: "GET /api/v1/users/{username}/credentials"},
-	"users.update":             {GRPC: "setUserEnabled", MCP: "", REST: "PUT /api/v1/users/{username}"},
+	"users.disable":            {GRPC: "DisableUser", MCP: "user.disable", REST: "POST /api/v1/users/{username}/disable"},
+	"users.enable":             {GRPC: "EnableUser", MCP: "user.enable", REST: "POST /api/v1/users/{username}/enable"},
 }
 
 // scan re-derives the three transports' wire tables from their own source,

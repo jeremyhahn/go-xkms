@@ -23,8 +23,9 @@ import (
 )
 
 // CompareAndSwap validates the key, delegates the atomic compare-and-swap to the
-// underlying engine, and widens the file permissions on a successful swap — the
-// same shape as PutIfAbsent. It errors if the engine does not implement
+// underlying engine under this store's cross-process advisory lock (lock.go,
+// #1157), and widens the file permissions on a successful swap — the same
+// shape as PutIfAbsent. It errors if the engine does not implement
 // CompareAndSwapper.
 func (f *FileStorage) CompareAndSwap(ctx context.Context, key string, expected, newValue []byte) (bool, []byte, error) {
 	if err := validateStorageKey(key); err != nil {
@@ -34,16 +35,26 @@ func (f *FileStorage) CompareAndSwap(ctx context.Context, key string, expected, 
 	if !ok {
 		return false, nil, storage.ErrCompareAndSwapUnsupported
 	}
-	swapped, current, err := cas.CompareAndSwap(ctx, key, expected, newValue)
-	if err != nil || !swapped {
-		return swapped, current, err
-	}
-	// The engine writes 0600; widen only the prefixes that require it. The value
-	// is already persisted, so a chmod failure must still report swapped=true.
-	if perm := filePermissionsForKey(key); perm != defaultPerms {
-		if err := os.Chmod(f.keyPath(key), perm); err != nil {
-			return true, nil, &errs.Wrapped{Msg: fmt.Sprintf("file storage: failed to set permissions for key %q", key), Err: err}
+
+	var swapped bool
+	var current []byte
+	err := withCrossProcessLock(ctx, f.lockPath, func() error {
+		var casErr error
+		swapped, current, casErr = cas.CompareAndSwap(ctx, key, expected, newValue)
+		if casErr != nil || !swapped {
+			return casErr
 		}
-	}
-	return true, nil, nil
+		// The engine writes 0600; widen only the prefixes that require it. The
+		// value is already persisted, so a chmod failure must still report
+		// swapped=true.
+		if perm := filePermissionsForKey(key); perm != defaultPerms {
+			if chmodErr := os.Chmod(f.keyPath(key), perm); chmodErr != nil {
+				current = nil
+				return &errs.Wrapped{Msg: fmt.Sprintf("file storage: failed to set permissions for key %q", key), Err: chmodErr}
+			}
+		}
+		current = nil
+		return nil
+	})
+	return swapped, current, err
 }

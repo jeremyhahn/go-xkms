@@ -45,6 +45,7 @@ var errRestMockUnused = errors.New("rest mock: method not used")
 
 type restMockUserClient struct {
 	createUser        func(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error)
+	getUser           func(ctx context.Context, id uint64) (*qrdbtransport.User, error)
 	getUserByUsername func(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error)
 	getUserByEmail    func(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error)
 	listUsers         func(ctx context.Context, req *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error)
@@ -52,6 +53,7 @@ type restMockUserClient struct {
 	enableUser        func(ctx context.Context, id uint64) error
 	disableUser       func(ctx context.Context, id uint64) error
 	addCertBinding    func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
+	updateUser        func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error)
 }
 
 var _ qrdbtransport.UserClient = (*restMockUserClient)(nil)
@@ -61,6 +63,9 @@ func (m *restMockUserClient) CreateUser(ctx context.Context, req *qrdbtransport.
 }
 
 func (m *restMockUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+	if m.getUser != nil {
+		return m.getUser(ctx, id)
+	}
 	return nil, errRestMockUnused
 }
 
@@ -88,6 +93,9 @@ func (m *restMockUserClient) RemoveCertBinding(ctx context.Context, userID uint6
 }
 
 func (m *restMockUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+	if m.updateUser != nil {
+		return m.updateUser(ctx, req)
+	}
 	return nil, errRestMockUnused
 }
 
@@ -167,6 +175,15 @@ func (m *restMockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrd
 	return nil, errRestMockUnused
 }
 
+// restSingleStoreResolver resolves every tenant to the same backing
+// KVStore — enough for a unit test's invite store, which does not exercise
+// per-tenant routing or barrier isolation.
+type restSingleStoreResolver struct{ store qrdbsdk.KVStore }
+
+func (r restSingleStoreResolver) Resolve(context.Context, string) (qrdbsdk.KVStore, error) {
+	return r.store, nil
+}
+
 // setupUserHandlerTest initializes the XKMSService singleton, wires the
 // provided user/role mocks (when non-nil), mounts the user routes on a chi
 // router, and returns the router. Passing nil clients leaves the service's
@@ -184,6 +201,12 @@ func setupUserHandlerTest(t *testing.T, users qrdbtransport.UserClient, roles qr
 	if users != nil || roles != nil {
 		svc.SetUserClients(users, roles)
 	}
+	// CreateUser mints an invitation for every account created with an email
+	// login key (go-xkms#1294 part B); wire the real qrdb invite store over
+	// an in-memory KV store so that path is reachable in these tests.
+	inviteStore, err := qrdbsdk.NewTenantInviteStore(restSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	require.NoError(t, err)
+	svc.SetInviteStore(inviteStore)
 	t.Cleanup(func() { xkms.Reset() })
 
 	s := &Server{xkmsService: svc}
@@ -192,15 +215,14 @@ func setupUserHandlerTest(t *testing.T, users qrdbtransport.UserClient, roles qr
 		r.Post("/", s.handleCreateUser)
 		r.Get("/", s.handleListUsers)
 		r.Get("/{username}", s.handleGetUser)
-		r.Put("/{username}", s.handleUpdateUser)
+		r.Post("/{username}/enable", s.handleEnableUser)
+		r.Post("/{username}/disable", s.handleDisableUser)
 		r.Delete("/{username}", s.handleDeleteUser)
 		r.Post("/{username}/cert-bindings", s.handleBindUserCert)
 		r.Get("/{username}/credentials", s.handleListUserCredentials)
 	})
 	return r
 }
-
-func boolPtr(b bool) *bool { return &b }
 
 // ============================================================================
 // handleListUsers
@@ -314,10 +336,10 @@ func TestHandleListUserCredentials_ServiceNotInitialized(t *testing.T) {
 }
 
 // ============================================================================
-// handleUpdateUser
+// handleEnableUser / handleDisableUser
 // ============================================================================
 
-func TestHandleUpdateUser_Enable(t *testing.T) {
+func TestHandleEnableUser_Success(t *testing.T) {
 	enabled := false
 	users := &restMockUserClient{
 		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
@@ -330,9 +352,8 @@ func TestHandleUpdateUser_Enable(t *testing.T) {
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
 
-	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(true)})
 	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewReader(body)))
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/alice/enable", nil))
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.True(t, enabled)
@@ -341,7 +362,7 @@ func TestHandleUpdateUser_Enable(t *testing.T) {
 	assert.Equal(t, "alice", info["username"])
 }
 
-func TestHandleUpdateUser_Disable(t *testing.T) {
+func TestHandleDisableUser_Success(t *testing.T) {
 	users := &restMockUserClient{
 		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
 			return &qrdbtransport.User{ID: 4, Username: username, Lifecycle: string(qrdbsdk.LifecycleDisabled)}, nil
@@ -350,33 +371,13 @@ func TestHandleUpdateUser_Disable(t *testing.T) {
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
 
-	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(false)})
 	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/bob", bytes.NewReader(body)))
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/bob/disable", nil))
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
-func TestHandleUpdateUser_BadJSON(t *testing.T) {
-	r := setupUserHandlerTest(t, &restMockUserClient{}, &restMockRoleClient{})
-
-	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewBufferString("{not json")))
-
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
-}
-
-func TestHandleUpdateUser_MissingEnabledField(t *testing.T) {
-	r := setupUserHandlerTest(t, &restMockUserClient{}, &restMockRoleClient{})
-
-	rr := httptest.NewRecorder()
-	// Valid JSON but no "enabled" key => body.Enabled stays nil => 400.
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewBufferString("{}")))
-
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
-}
-
-func TestHandleUpdateUser_EnableError(t *testing.T) {
+func TestHandleEnableUser_EnableError(t *testing.T) {
 	users := &restMockUserClient{
 		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
 			return &qrdbtransport.User{ID: 5, Username: username}, nil
@@ -385,14 +386,13 @@ func TestHandleUpdateUser_EnableError(t *testing.T) {
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
 
-	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(true)})
 	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewReader(body)))
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/alice/enable", nil))
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-func TestHandleUpdateUser_GetAfterUpdateError(t *testing.T) {
+func TestHandleEnableUser_GetAfterUpdateError(t *testing.T) {
 	// Enable succeeds, but the follow-up GetUser fails => 500.
 	calls := 0
 	users := &restMockUserClient{
@@ -407,21 +407,30 @@ func TestHandleUpdateUser_GetAfterUpdateError(t *testing.T) {
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
 
-	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(true)})
 	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewReader(body)))
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/alice/enable", nil))
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-func TestHandleUpdateUser_ServiceNotInitialized(t *testing.T) {
+func TestHandleEnableUser_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	t.Cleanup(func() { xkms.Reset() })
 
 	s := &Server{}
-	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(true)})
 	rr := httptest.NewRecorder()
-	s.handleUpdateUser(rr, httptest.NewRequest(http.MethodPut, "/users/x", bytes.NewReader(body)))
+	s.handleEnableUser(rr, httptest.NewRequest(http.MethodPost, "/users/x/enable", nil))
+
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+}
+
+func TestHandleDisableUser_ServiceNotInitialized(t *testing.T) {
+	xkms.Reset()
+	t.Cleanup(func() { xkms.Reset() })
+
+	s := &Server{}
+	rr := httptest.NewRecorder()
+	s.handleDisableUser(rr, httptest.NewRequest(http.MethodPost, "/users/x/disable", nil))
 
 	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
 }
@@ -448,10 +457,18 @@ func TestHandleCreateUser_Success(t *testing.T) {
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/", bytes.NewReader(body)))
 
 	require.Equal(t, http.StatusCreated, rr.Code)
-	var info map[string]any
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &info))
-	assert.Equal(t, "carol", info["username"])
-	assert.Equal(t, "Carol", info["display_name"])
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	user, ok := resp["user"].(map[string]any)
+	require.True(t, ok, "response must carry a \"user\" object")
+	assert.Equal(t, "carol", user["username"])
+	assert.Equal(t, "Carol", user["display_name"])
+
+	// CreateUser mints a one-time activation invitation for an email-login-key
+	// account (go-xkms#1294 part B); it is returned exactly once, here.
+	invite, ok := resp["invite"].(map[string]any)
+	require.True(t, ok, "response must carry an \"invite\" object")
+	assert.NotEmpty(t, invite["token"])
 }
 
 func TestHandleCreateUser_BadJSON(t *testing.T) {

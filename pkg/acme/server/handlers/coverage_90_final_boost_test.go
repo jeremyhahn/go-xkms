@@ -1007,22 +1007,6 @@ func TestBytesToBigInt_Empty90(t *testing.T) {
 }
 
 // ========================================
-// parseChallengeAsDynamicPortAssignment Tests
-// ========================================
-
-func TestParseChallengeAsDynamicPortAssignment_WithHighPort90(t *testing.T) {
-	baseType, port := parseChallengeAsDynamicPortAssignment("enroll-01-8443")
-	assert.Equal(t, "enroll-01", baseType)
-	assert.Equal(t, uint16(8443), port)
-}
-
-func TestParseChallengeAsDynamicPortAssignment_DeviceAttest90(t *testing.T) {
-	baseType, port := parseChallengeAsDynamicPortAssignment("device-attest-01-443")
-	assert.Equal(t, "device-attest-01", baseType)
-	assert.Equal(t, uint16(443), port)
-}
-
-// ========================================
 // isEnrollXChallenge Tests
 // ========================================
 

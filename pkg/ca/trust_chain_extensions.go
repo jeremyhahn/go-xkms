@@ -347,8 +347,6 @@ func parseAIACertificate(body []byte) (*x509.Certificate, error) {
 }
 
 // appendPEM is a small helper used by the cross-sign-aware pool builders.
-//
-//nolint:unused // retained for future pool construction helpers
 func appendPEM(pool *x509.CertPool, cert *x509.Certificate) {
 	pool.AppendCertsFromPEM(pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
@@ -358,8 +356,6 @@ func appendPEM(pool *x509.CertPool, cert *x509.Certificate) {
 
 // bufferBytes is a helper used by tests to materialise an io.Reader into a
 // known byte slice in a single statement.
-//
-//nolint:unused // retained for consumers that reuse this helper
 func bufferBytes(r io.Reader) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	if _, err := io.Copy(buf, r); err != nil {

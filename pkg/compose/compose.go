@@ -133,6 +133,9 @@ type Stores struct {
 	Custodians qrdbtransport.CustodianGroupClient
 	Shares     qrdbtransport.ShareClient
 
+	// Invite is the enrollment-invitation store (go-xkms#1294 part B).
+	Invite xkms.InviteStore
+
 	// Disabled holds one *FeatureDisabledError or *FeatureBuildError per
 	// feature Build left off.
 	Disabled []error
@@ -227,6 +230,12 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 		b.logger.Info("xkms feature on", "feature", FeatureCustody)
 	}
 
+	if b.need(FeatureInvite, d.Storage != nil, "storage") {
+		st.Invite = built(b, FeatureInvite, func() (xkms.InviteStore, error) {
+			return BuildInviteStore(d.Storage)
+		})
+	}
+
 	return st, nil
 }
 
@@ -269,6 +278,9 @@ func (st *Stores) Wire(svc *xkms.XKMSService) {
 	}
 	if st.Shares != nil {
 		svc.SetShareClient(st.Shares)
+	}
+	if st.Invite != nil {
+		svc.SetInviteStore(st.Invite)
 	}
 }
 

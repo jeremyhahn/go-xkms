@@ -418,7 +418,7 @@ func (d *transitDouble) importKey(w http.ResponseWriter, r *http.Request, name s
 		return
 	}
 
-	rsaLen := wrappingKey.PublicKey.Size()
+	rsaLen := wrappingKey.Size()
 	if len(combined) <= rsaLen {
 		writeVaultError(w, http.StatusBadRequest, "ciphertext too short for wrapping key")
 		return
@@ -778,14 +778,6 @@ func (d *transitDouble) listKeys(w http.ResponseWriter) {
 		keysInterface[i] = n
 	}
 	writeVaultData(w, map[string]interface{}{"keys": keysInterface})
-}
-
-// keyCount reports how many keys the double currently holds, so a test can
-// assert that a delete really removed the key from the engine.
-func (d *transitDouble) keyCount() int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return len(d.keys)
 }
 
 // exportable reports the exportable flag Transit recorded when name was

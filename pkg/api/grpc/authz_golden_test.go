@@ -157,24 +157,31 @@ var goldenRPCPermissions = map[string]string{
 	"TenantVTPMStatus": "tenants:read",
 	"TenantVTPMStart":  "tenants:set_tpm_mode",
 	"TenantVTPMStop":   "tenants:set_tpm_mode",
-	// PKCS#11 remote-state RPCs persist a token's key/object state, so they gate
-	// on the keys resource: writes for mutation, reads for retrieval/listing.
-	"PKCS11StateDelete":      "keys:write",
-	"PKCS11StateGet":         "keys:read",
-	"PKCS11StateList":        "keys:read",
-	"PKCS11StatePut":         "keys:write",
-	"PKCS11StatePutIfAbsent": "keys:write",
-	"PKCS11StateCAS":         "keys:write",
-	"PKCS11StateCAD":         "keys:write",
+	// PKCS#11 remote-state RPCs persist a token's key/object state, so they
+	// gate on the keys resource with the same per-verb CRUD actions REST's
+	// /api/v1/pkcs11state/* routes carry (go-xkms#1249): create for the two
+	// unconditional/conditional puts, update for the compare-and-swap,
+	// delete for both the guarded and unguarded deletes, get/list for the
+	// two reads.
+	"PKCS11StateDelete":      "keys:delete",
+	"PKCS11StateGet":         "keys:get",
+	"PKCS11StateList":        "keys:list",
+	"PKCS11StatePut":         "keys:create",
+	"PKCS11StatePutIfAbsent": "keys:create",
+	"PKCS11StateCAS":         "keys:update",
+	"PKCS11StateCAD":         "keys:delete",
 	// The platform-sealed store persists key-protection material sealed to
-	// the host's hardware, so it gates on the same keys resource as the
-	// PKCS#11 remote-state RPCs above.
-	"SealStorePut":    "keys:write",
-	"SealStoreGet":    "keys:read",
+	// the host's hardware, so it gates on the same keys resource and the
+	// same per-verb model as the PKCS#11 remote-state RPCs above: Put stores
+	// a new value under a name (create, matching PKCS11StatePut), Reseal
+	// re-wraps an existing value in place without changing it (update), and
+	// Status reports store-wide state the same way Get reports one secret's.
+	"SealStorePut":    "keys:create",
+	"SealStoreGet":    "keys:get",
 	"SealStoreDelete": "keys:delete",
 	"SealStoreList":   "keys:list",
-	"SealStoreReseal": "keys:write",
-	"SealStoreStatus": "keys:read",
+	"SealStoreReseal": "keys:update",
+	"SealStoreStatus": "keys:get",
 	// The audit chain records who did what to the rest of this API, so
 	// reading it carries its own permission rather than riding on keys:* or
 	// users:*. There is no emit gate because there is no emit RPC.
@@ -213,7 +220,8 @@ var goldenRPCPermissions = map[string]string{
 	"VerifyUserPIN":            "pin:read",
 	"WrapKey":                  "keys:wrap",
 	"WrapKeyByID":              "keys:wrap",
-	"setUserEnabled":           "users:update",
+	"EnableUser":               "users:enable",
+	"DisableUser":              "users:disable",
 	"SSHAddAuthorizedKey":      "ssh:write",
 	"SSHAddKnownHost":          "ssh:write",
 	"SSHDeleteKey":             "ssh:delete",

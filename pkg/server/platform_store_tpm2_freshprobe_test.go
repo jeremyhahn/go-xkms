@@ -56,7 +56,7 @@ import (
 // by the test suite. A round trip here closes that gap.
 func TestBuildTPM2PlatformSealer_FreshProbeOpensAndEnrolls(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "file", Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Engine: "file", Path: t.TempDir()},
 		Backends: config.BackendsConfig{
 			TPM2: &config.TPM2Config{Enabled: true, UseSimulator: true},
 		},
@@ -93,7 +93,7 @@ func TestBuildTPM2PlatformSealer_FreshProbeOpensAndEnrolls(t *testing.T) {
 // than attempt to autodetect hardware from a nil config.
 func TestBuildTPM2PlatformSealer_NotConfiguredFailsClosed(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "file", Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Engine: "file", Path: t.TempDir()},
 	})
 
 	sealer, err := s.buildTPM2PlatformSealer()

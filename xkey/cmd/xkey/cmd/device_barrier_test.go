@@ -185,6 +185,8 @@ func listenCommand(t *testing.T) *cobra.Command {
 	cmd.Flags().String("tpm-device", "", "")
 	cmd.Flags().Bool("tpm-enrollment", false, "")
 	cmd.Flags().String("tpm-pcr-bank", "", "")
+	cmd.Flags().Bool("allow-sync", false, "")
+	addSOPINFlags(cmd)
 	addDeviceBarrierFlags(cmd)
 	return cmd
 }

@@ -155,7 +155,7 @@ these endpoints per replica.
 
 Read operations succeed on any member (served with follower-read
 consistency — see
-[`../storage-engines/engineering.md`](../storage-engines/engineering.md)).
+[`../datastore/engineering.md`](../datastore/engineering.md)).
 Only writes require the leader and trigger the redirect above. The cluster
 status/membership routes are reads in this sense too, but are documented
 separately above because they are cluster-introspection endpoints rather

@@ -63,6 +63,9 @@ const (
 	// FeatureCustody is Shamir share custody: custodian groups and share
 	// collection over the qrdb node.
 	FeatureCustody Feature = "custody"
+
+	// FeatureInvite is the enrollment-invitation store (go-xkms#1294 part B).
+	FeatureInvite Feature = "invite"
 )
 
 // FeatureDisabledError reports a feature left off because a dependency it

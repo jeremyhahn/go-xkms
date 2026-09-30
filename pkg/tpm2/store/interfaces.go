@@ -74,6 +74,11 @@ const (
 	// constant exists solely so Delete can still find and remove the file
 	// and so refusal errors can name it.
 	FSEXT_LEGACY_PRIVATE_BLOB = ".priv"
+
+	// FSEXT_CERTIFICATE is FileCertStore's extension for a PEM-encoded
+	// certificate, stored beside the object's key material under the same
+	// storage.Backend FileBackend uses for it.
+	FSEXT_CERTIFICATE = ".crt"
 )
 
 // FSExtension is re-exported from types for compatibility

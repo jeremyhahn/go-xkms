@@ -255,6 +255,8 @@ var uiPermissionMatrix = [][2]string{
 	{auth.ResourceUsers, auth.ActionRead},
 	{auth.ResourceUsers, auth.ActionCreate},
 	{auth.ResourceUsers, auth.ActionUpdate},
+	{auth.ResourceUsers, auth.ActionEnable},
+	{auth.ResourceUsers, auth.ActionDisable},
 	{auth.ResourceUsers, auth.ActionDelete},
 	{auth.ResourceTenants, auth.ActionList},
 	{auth.ResourceSeal, auth.ActionStatus},

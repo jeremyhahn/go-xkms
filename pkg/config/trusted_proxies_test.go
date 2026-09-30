@@ -45,7 +45,7 @@ func TestValidate_TrustedProxies(t *testing.T) {
 		Protocols: ProtocolsConfig{REST: true},
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+		Datastore: DatastoreConfig{Path: "/data"},
 		TLS:       TLSConfig{Enabled: true},
 		Default:   "pkcs8",
 		Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},

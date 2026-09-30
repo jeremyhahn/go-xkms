@@ -561,7 +561,7 @@ func TestIssueCertificateRaw_Success(t *testing.T) {
 	testCA := setupTestCA(t)
 
 	certPEM, chainPEM, _, serialHex, err := testCA.IssueCertificateRaw(context.Background(),
-		"server.example.com", "Test Org", nil, 365, "", "",
+		"server.example.com", "Test Org", nil, 365, "", "", "",
 	)
 	if err != nil {
 		t.Fatalf("IssueCertificateRaw failed: %v", err)
@@ -606,7 +606,7 @@ func TestIssueCertificateRaw_WithSANs(t *testing.T) {
 	sans := []string{"DNS:example.com", "IP:1.2.3.4"}
 
 	certPEM, _, _, _, err := testCA.IssueCertificateRaw(context.Background(),
-		"san-cert.example.com", "Test Org", sans, 365, "", "",
+		"san-cert.example.com", "Test Org", sans, 365, "", "", "",
 	)
 	if err != nil {
 		t.Fatalf("IssueCertificateRaw with SANs failed: %v", err)
@@ -655,7 +655,7 @@ func TestIssueCertificateRaw_EmptyCommonName(t *testing.T) {
 	testCA := setupTestCA(t)
 
 	_, _, _, _, err := testCA.IssueCertificateRaw(context.Background(),
-		"", "Test Org", nil, 365, "", "",
+		"", "Test Org", nil, 365, "", "", "",
 	)
 	if err == nil {
 		t.Fatal("Expected error for empty common name, got nil")
@@ -670,7 +670,7 @@ func TestIssueCertificateRaw_NotInitialized(t *testing.T) {
 	uninitCA := setupUninitializedCA(t)
 
 	_, _, _, _, err := uninitCA.IssueCertificateRaw(context.Background(),
-		"uninit.example.com", "Test Org", nil, 365, "", "",
+		"uninit.example.com", "Test Org", nil, 365, "", "", "",
 	)
 	if err == nil {
 		t.Fatal("Expected error for uninitialized CA, got nil")
@@ -694,7 +694,7 @@ func TestIssueCertificateRaw_WithAllSANTypes(t *testing.T) {
 	}
 
 	certPEM, _, _, _, err := testCA.IssueCertificateRaw(context.Background(),
-		"all-sans.example.com", "Test Org", sans, 365, "", "",
+		"all-sans.example.com", "Test Org", sans, 365, "", "", "",
 	)
 	if err != nil {
 		t.Fatalf("IssueCertificateRaw with all SAN types failed: %v", err)
@@ -731,7 +731,7 @@ func TestIssueCertificateRaw_NilSANs(t *testing.T) {
 	testCA := setupTestCA(t)
 
 	certPEM, _, _, serialHex, err := testCA.IssueCertificateRaw(context.Background(),
-		"no-sans.example.com", "Test Org", nil, 365, "", "",
+		"no-sans.example.com", "Test Org", nil, 365, "", "", "",
 	)
 	if err != nil {
 		t.Fatalf("IssueCertificateRaw with nil SANs failed: %v", err)
@@ -749,7 +749,7 @@ func TestIssueCertificateRaw_EmptySANs(t *testing.T) {
 	testCA := setupTestCA(t)
 
 	certPEM, _, _, _, err := testCA.IssueCertificateRaw(context.Background(),
-		"empty-sans.example.com", "Test Org", []string{}, 365, "", "",
+		"empty-sans.example.com", "Test Org", []string{}, 365, "", "", "",
 	)
 	if err != nil {
 		t.Fatalf("IssueCertificateRaw with empty SANs failed: %v", err)
@@ -765,7 +765,7 @@ func TestIssueCertificateRaw_DuplicateCommonName(t *testing.T) {
 
 	// Issue first certificate
 	_, _, _, _, err := testCA.IssueCertificateRaw(context.Background(),
-		"duplicate.example.com", "Test Org", nil, 365, "", "",
+		"duplicate.example.com", "Test Org", nil, 365, "", "", "",
 	)
 	if err != nil {
 		t.Fatalf("First IssueCertificateRaw failed: %v", err)
@@ -773,7 +773,7 @@ func TestIssueCertificateRaw_DuplicateCommonName(t *testing.T) {
 
 	// Attempt to issue a second certificate with the same CN
 	_, _, _, _, err = testCA.IssueCertificateRaw(context.Background(),
-		"duplicate.example.com", "Test Org", nil, 365, "", "",
+		"duplicate.example.com", "Test Org", nil, 365, "", "", "",
 	)
 	if err == nil {
 		t.Fatal("Expected error for duplicate common name, got nil")
@@ -788,7 +788,7 @@ func TestIssueCertificateRaw_WithServerProfile(t *testing.T) {
 	testCA := setupTestCA(t)
 
 	certPEM, _, _, _, err := testCA.IssueCertificateRaw(context.Background(),
-		"profiled-server.example.com", "Test Org", nil, 365, "server", "",
+		"profiled-server.example.com", "Test Org", nil, 365, "server", "", "",
 	)
 	if err != nil {
 		t.Fatalf("IssueCertificateRaw with server profile failed: %v", err)
@@ -1066,7 +1066,7 @@ func TestIssueCertificateRaw_FullRoundTrip(t *testing.T) {
 	certPEM, chainPEM, _, serialHex, err := testCA.IssueCertificateRaw(context.Background(),
 		"roundtrip.example.com", "RoundTrip Org",
 		[]string{"DNS:roundtrip.example.com", "IP:10.10.10.10"},
-		180, "", "",
+		180, "", "", "",
 	)
 	if err != nil {
 		t.Fatalf("IssueCertificateRaw failed: %v", err)

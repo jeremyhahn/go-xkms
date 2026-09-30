@@ -58,6 +58,36 @@ lives in, so signing reaches it through `Client.Sign` exactly like
 because `Client` (the generic `transport.Client`) has no certificate-storage
 verbs.
 
+### Sync approval is a required collaborator, not an optional one (go-xkms#1306)
+
+`remote.syncPasswords`, `remote.syncOATH` and `remote.syncAll` export this
+host's password vault or OATH secrets to the phone; `remote.syncTrustStore`
+(public certificates) and `remote.syncStatus` (metadata) do not and are not
+gated by this. `BridgeConfig.SyncApproval pairing.SyncApprovalFunc`
+(`bridge.go`) is consulted before any of the three run:
+
+```go
+type SyncApprovalFunc func(ctx context.Context, req *SyncApprovalRequest) error
+```
+
+A `nil` `SyncApproval` refuses all three with `ErrSyncApprovalRequired` —
+unlike every other collaborator in the table above, "not configured" is
+never silently equivalent to "unchecked". A configured function that
+returns an error refuses with `ErrSyncNotApproved` wrapping it.
+`AlwaysApproveSync` (`bridge.go`) is the explicit "already decided elsewhere"
+escape hatch for a caller that has made this decision by some other means; it
+exists so leaving `SyncApproval` nil is never mistaken for it.
+
+`cmd/xkey/cmd/device_listen_handler.go`'s `newSessionSyncApproval` is the
+CLI's implementation for `device listen`/`device relay`: one session-level
+decision made at start time from `--allow-sync` and
+`allowPhoneSyncExport`'s enterprise-policy resolution
+(`device_pairing_policy_shared.go`), not a live per-request prompt — those
+commands run as a foreground daemon with no UI thread to interrupt per
+request. A GUI-driven bridge (none exists yet; the GUI does not currently
+build a phone-initiated bridge at all) would want a live per-request prompt
+instead and should implement its own `SyncApprovalFunc`.
+
 Every field above is optional. When one is `nil`, its methods answer with a
 typed "not configured" sentinel (`ErrOATHNotConfigured`, `ErrPIVNotConfigured`,
 `ErrSyncNotConfigured`, all mapped to JSON-RPC `ErrorCodeFeatureUnavailable`)
@@ -74,10 +104,13 @@ anchor. Each `remote.syncTrustStore`/`syncOATH`/`syncPasswords` write is
 recorded as `audit.OpSyncApplied` against `BridgeConfig.DeviceID`/`DeviceName`
 (`Bridge.auditSyncApplied`, `xkey/pkg/pairing/bridge_sync.go`), success or
 failure, with the item counts; a failed audit write fails the call as
-`ErrSyncFailed`.
+`ErrSyncFailed`. A refused `SyncApproval` decision for `syncOATH`/
+`syncPasswords`/`syncAll` (see "Sync approval is a required collaborator"
+above) is audited the same way, as its own entry, before the apply that
+never runs.
 
-`cmd/xkey/cmd/device_listen.go`'s `buildListenBridgeConfig` is the one place
-that wires all three, plus the audit identity — `AuditLogger` is
+`cmd/xkey/cmd/device_listen_handler.go`'s `buildListenBridgeConfig` is the
+one place that wires all three, plus the audit identity — `AuditLogger` is
 `audit.NewSlogLogger`, `DeviceID`/`DeviceName` the paired device's BLE address
 and name: it opens the OATH store through `openOATHStore` and the
 sync service through `openSyncService` — the exact constructors `xkey oath`
@@ -388,8 +421,154 @@ defect and the shape of the fix is what the current design is for.
    absent extension, or evidence from a device with no TEE at all — therefore
    fails closed exactly as a wrong value would.
 
+   **`RequireAttestedApplication` requires the attestation to name an
+   allow-listed application build (#1305).** Everything above says the key
+   lives in a locked, verified-boot handset's secure hardware and was
+   generated there; none of it says *which application* asked for it. Without
+   this check any app on any genuine handset — or a repackaged xkey-android
+   signed with someone else's key — produces evidence that passes. The
+   `attestationApplicationId` (`softwareEnforced` tag 709) is written by the
+   Keystore daemon, not by the calling app, and carries the package name and
+   the SHA-256 digest of each signing certificate.
+
+   `RequireAttestedApplication` (`xkey/pkg/attestation/device.go`) matches it
+   with `pairing.ApplicationPolicy.Match` (`xkey/pkg/pairing/application_policy.go`)
+   — the one implementation, also used by `EnrollmentPolicy.Evaluate` for LDevID
+   enrollment. A package matches only by exact name **and** one of the
+   entry's signing digests; an entry with no digests is honoured only when
+   `allow_unpinned_signatures` is set. Refusals wrap
+   `pairing.ErrApplicationDenied` (wrong package, wrong signer, or no
+   application named) under `ErrDeviceAttestVerifyFailed`.
+
+   The allow-list travels in `attestation.Trust.Applications`, so every path
+   that judges a device — `device pair`, `device attest-device`, the reconnect
+   proof in `device_session.go`, the backend's `NewLiveAttestor`, and the GUI's
+   Pair, Connect and Attest — applies it through `VerifyDeviceAttestation`.
+   Both surfaces read it from `devices.yaml`:
+
+   ```yaml
+   attestation_policy:
+     allowed_applications:
+       - package_name: com.automatethethings.xkey
+         signing_digests:
+           - <hex SHA-256 of the release signing certificate>
+     allow_unpinned_signatures: false
+   ```
+
+   **There is no built-in default.** The official package name,
+   `com.automatethethings.xkey`, is documented above and pinned as
+   `attesttest.AppPackage` for tests, but no release signing digest is
+   defined in this repository — the release keystore lives outside version
+   control — so an empty allow-list refuses every device:
+   `attestation.LoadTrust` returns `pairing.ErrApplicationPolicyUnconfigured`
+   before any phone is asked for evidence, and the error text names exactly
+   what to configure (`allowed_applications`: `package_name` and
+   `signing_digests`). A `devices.yaml` that exists but cannot be parsed
+   refuses too, rather than reading as "no policy". A debug build's package
+   name carries a `.debug` suffix and is a **different** package that is not
+   allow-listed by adding the release name — an operator who wants to pair a
+   debug build lists it explicitly.
+
    A device that fails any of those is **unattestable**, which is a policy
    question with the policy answer above — not a silent admission.
+
+   **The enterprise/SO plane can lock the allow-list too (#1305).** The same
+   mechanism that locks `allow_unattestable_devices` extends to the
+   application allow-list, because an enterprise that wants to control which
+   xkey-android build may hold a device key cannot be overridden by a user
+   editing `devices.yaml`:
+
+   | Plane | Where | Key |
+   |---|---|---|
+   | User | `devices.yaml` | `attestation_policy.allowed_applications`, `attestation_policy.allow_unpinned_signatures` |
+   | Enterprise / SO | the `policy:` section | `pairing_allowed_applications`, `pairing_allow_unpinned_signatures`, gated by `lock_pairing_application_policy` |
+
+   ```yaml
+   policy:
+     lock_pairing_application_policy: true
+     pairing_allowed_applications:
+       - package_name: com.automatethethings.xkey
+         signing_digests:
+           - <hex SHA-256 of the release signing certificate>
+   ```
+
+   `attestation.ResolveApplicationPolicy` (`xkey/pkg/attestation/policy.go`) is
+   the one function both `loadPairingAttestationTrust` (CLI) and
+   `PhoneService.loadAttestationTrust` (GUI) call to combine the two planes,
+   but it is deliberately a PURE function: it takes an already-resolved
+   `*config.PolicySection` (nil, or genuinely verified) and never resolves
+   verification itself. While `lock_pairing_application_policy` is set on a
+   verified section, the enterprise allow-list is used **outright** — never
+   merged with `devices.yaml`'s entries, since merging would let a user widen
+   a locked deployment by appending an entry the SO never approved. While it
+   is unset on a verified section, the user's own `devices.yaml` governs,
+   same as an unset `lock_pairing_attestation_policy` leaves
+   `allow_unattestable_devices` to the user.
+
+   **A sealed section that has not verified must refuse outright, and must
+   NEVER fall back to `devices.yaml`.** This is deliberately a STRICTER rule
+   than `AllowUnattestablePairing`'s own resolution, and the asymmetry is the
+   point. An unverified enterprise plane there degrades safely to the
+   ordinary strict pairing path — attestation is still required, only the
+   *unattestable-device* escape hatch is refused — so nothing is lost by
+   treating "unverified" as "no". Here there is no such safe default to
+   degrade to: SOME allow-list must be consulted for the check to mean
+   anything, and if the deployment's real intent is unknown, using the one
+   supplied by `devices.yaml` — a file anyone with a shell on the machine can
+   edit, without ever producing the SO PIN — is exactly the bypass locking the
+   allow-list exists to prevent. So each surface's own wrapper around
+   `ResolveApplicationPolicy` refuses with
+   `attestation.ErrApplicationPolicyUnverifiable` the moment it detects a
+   sealed config directory whose section it could not verify, and calls
+   `ResolveApplicationPolicy` at all ONLY once it has either confirmed there
+   is no sealed plane (personal mode) or has a genuinely verified section in
+   hand:
+
+   - **CLI.** `resolveEnterpriseApplicationPolicy`
+     (`cmd/xkey/cmd/device_pairing_policy_shared.go` -- not ble-gated, since
+     go-xkms#1306 moved `loadPairingAttestationTrust` and its helpers here so
+     `xkey device relay` reaches them too, without needing BLE support
+     compiled in) checks `config.IsEnterpriseMode` first. Unsealed: `devices.yaml` governs,
+     no PIN needed, nothing to verify. Sealed: it reads `XKEY_SO_PIN` alone —
+     never `--so-pin-stdin`, which only a live operator can answer, since a
+     re-attestation runs unattended on a reconnect with no SO at the keyboard
+     (`device attest-device`, the reconnect proof in `device_session.go`, and
+     the backend's `NewLiveAttestor` all reach `loadPairingAttestationTrust`
+     with no `*cobra.Command` in hand) — and calls
+     `config.LoadVerifiedPolicy` with it. No PIN, a wrong PIN, or no loaded
+     config at all while sealed: `LoadVerifiedPolicy` fails (or the missing-
+     config case is treated the same way), and the wrapper returns
+     `ErrApplicationPolicyUnverifiable` wrapping the underlying cause —
+     `loadPairingAttestationTrust` propagates it and refuses the whole trust
+     load, so pairing and re-attestation both stop before a phone is ever
+     asked for evidence.
+
+     There is **no cryptographic mechanism to verify the sealed section
+     without the SO PIN**: `ComputePolicyHMAC`/`VerifyPolicyHMAC`
+     (`pkg/config/policy_integrity.go`) derive the HMAC key from the SO PIN
+     via Argon2id every time, by design (#118), and the on-disk record's
+     `TPMNVIndex` field is unused reserved space, not an active alternate
+     path. `XKEY_SO_PIN` in the environment is therefore the CLI's only way to
+     satisfy an unattended re-attestation against a locked deployment; an
+     operator who wants that must provision it the same way any other
+     service secret reaches an unattended process.
+
+   - **GUI.** `PhoneService` tracks two things, not one cached section:
+     `SetEnterpriseSealed(bool)`, set once at startup from
+     `config.IsEnterpriseMode` before any pairing or re-attestation can run,
+     and `SetPolicy(*config.PolicySection)`, called ONLY by
+     `applyVerifiedEnterprisePolicy` once SO login has actually verified the
+     section — never with `config.DefaultPolicy()` as a startup placeholder,
+     unlike `AppService`, `PINService`, `TrustService`, `AuditService`,
+     `SealService` and `APIExplorerService`'s own `SetPolicy`, which the GUI
+     DOES install with that placeholder for their own lower-stakes UX
+     switches. `ResolvedApplicationPolicy` reads both: a verified `policy`
+     resolves through `ResolveApplicationPolicy` as above; no verified policy
+     but `enterpriseSealed` true refuses with
+     `ErrApplicationPolicyUnverifiable`; neither set (personal mode) falls
+     through to `devices.yaml`. So before an SO has ever logged in on a
+     sealed deployment, phone pairing and re-attestation are refused
+     outright, not merely left ungated.
 
    **Two pairing surfaces, one gate (#115, #131).** The desktop GUI pairs
    phones too, through `PhoneService.Pair` in `xkey/pkg/gui/services`, and
@@ -563,6 +742,48 @@ Its `Error` and `Unwrap` are nil-safe: the type is exported, so a downstream
 package can construct one by hand, and an error that panics while being logged
 converts a handled failure into an outage.
 
+## Live attestation on a phone-initiated connection (go-xkms#1306)
+
+Everything in the previous section is the laptop-as-INITIATOR case: this
+host dials out (`PhoneKeyBackend.Connect`, `openDeviceSession`) and drives
+`AttestOverSession`/`enforceReattestation` itself. `xkey device listen`
+(BLE peripheral) and `xkey device relay` (TCP) are the opposite direction —
+the phone dials in — and until go-xkms#1306 that direction served the full
+`remote.*` bridge on Noise static-key possession alone, with no liveness
+check: `ExpectedRemoteStatic` proves the peer holds the key paired earlier
+(see above), never that it is hardware-bound, so a copied Noise key was
+sufficient.
+
+Both `phone.TCPPairingConfig` and `phone.BLEPeripheralConfig` now carry a
+required `LiveAttest pairing.LiveAttestFunc`. Immediately after the Noise
+handshake completes and before any request reaches `RequestHandler`, the
+responder runs it: derives `session.AttestChannelBinding()`, builds a
+`pairing.RPCExchange` from `pairing.InlineExchange` (raw send/receive
+primitives — `tcpSend`/`tcpReceive` for TCP, `sendMessage`/
+`receiveMessageTimeout` for BLE — since the responder has no independent
+request-driving loop of its own at this point), and calls the verifier. A
+`nil` `LiveAttest` refuses the connection outright
+(`ErrLiveAttestationUnavailable`), matching `PhoneKeyBackend.proveLiveness`'s
+own fail-closed contract on the initiator side; a verifier that returns an
+error closes the connection before `RequestHandler` ever runs.
+
+`cmd/xkey/cmd/device_session_shared.go`'s `newLiveAttestor` — the same
+constructor `openDeviceSession`'s initiator path uses — is the verifier both
+`device listen` and `device relay` wire in. The wire content is
+`local.attestDevice`: the responder is, for this one exchange, the
+requester, exactly as `bidirectional.md` describes the laptop's `local.*`
+half; the phone answers it the same way it answers an initiator-driven
+reattestation.
+
+`device relay` also pins the Noise handshake itself:
+`TCPPairingConfig.ExpectedRemoteStatic` (mirroring
+`BLEPeripheralConfig.ExpectedRemoteStatic`, and rejected at construction by
+the same too-short/too-long check as `ErrPeripheralInvalidPin` —
+`ErrTCPServerInvalidPin`) is set to the target paired device's stored Noise
+static public key, so an unrelated initiator's handshake fails
+(`ErrStaticKeyMismatch`) before the connection reaches the live-attestation
+step at all.
+
 ## Configuration
 
 Pairing keys and the expected device fingerprint, from a completed pairing.
@@ -571,7 +792,9 @@ Transport selection is USB AOA, TCP relay (`tcp_transport.go`) or BLE.
 server's bind address is `phone.relay_listen_address` in the unified config
 (`pkg/config`, validated as `host:port`; `XKEY_PHONE_RELAY_LISTEN_ADDRESS`),
 resolved by `xkey device relay` as flag (`--listen`) over configuration over
-the built-in `phone.DefaultTCPListenAddr` (`:8444`) (#140).
+the built-in default, `127.0.0.1:8444` — loopback only (go-xkms#1306; #140
+set the resolution order, not this default). Reachable from the network
+needs an explicit non-loopback address.
 
 Device-side policy: `device_enrollment_policy.go`, `sharing_policy.go`.
 
@@ -704,7 +927,8 @@ two-way "have a barrier or don't" that `SealLocalNoiseKey` itself sees:
 func (s *PhoneService) resolveNoiseKeyBarrier() (barrier pairing.NoiseKeyBarrier, noBarrierConfigured bool)
 func (s *PhoneService) sealOrWarnLocalNoiseKey(deviceName string, priv []byte) (string, error)
 
-// cmd/xkey/cmd/device_barrier.go
+// cmd/xkey/cmd/device_barrier_shared.go -- no build tag (go-xkms#1306):
+// `xkey device relay` needs it too, and neither function touches Bluetooth.
 func openDeviceBarrier(cmd *cobra.Command) (pairing.NoiseKeyBarrier, func(), error)
 func sealOrWarnLocalNoiseKey(logger *slog.Logger, deviceName string, barrier pairing.NoiseKeyBarrier, priv []byte) (string, error)
 ```
@@ -725,8 +949,8 @@ does.
 | Surface | Where | Barrier source | No barrier configured | Exists but sealed |
 |---|---|---|---|---|
 | GUI `Pair`/`Connect` | `pkg/gui/services/phone_service.go` | `PhoneService.SetBarrierService`, re-resolved on every use so an app lock/unlock is honoured | legacy plaintext + one `slog.Warn` | refuses (`ErrPhoneBarrierRequired`) |
-| CLI `device pair`, `device listen`, `device attest-device` | `cmd/xkey/cmd/device_barrier.go` (`openDeviceBarrier`) | `--barrier-password`/`--barrier-password-file` flags, then `XKEY_BARRIER_PASSWORD`; resolved before the devices file is even read | legacy plaintext + one `slog.Warn` | refuses (`ErrDeviceBarrierUnsealFailed`) |
-| Every other device-backed command (OATH sync, backup, sharing, re-attest, phone enrollment, FIDO2 phone backend) | `cmd/xkey/cmd/device_session.go` (`unsealDeviceLocalKey`, behind `openDeviceSession`/`newPairedDeviceBackendConfig`) | `XKEY_BARRIER_PASSWORD` only, opened and closed around the one unseal | unaffected — a legacy record already needed no barrier | refuses (only reached for an already-sealed record, which always needs a barrier) |
+| CLI `device pair`, `device listen`, `device relay`, `device attest-device` | `cmd/xkey/cmd/device_barrier_shared.go` (`openDeviceBarrier`) | `--barrier-password`/`--barrier-password-file` flags, then `XKEY_BARRIER_PASSWORD`; resolved before the devices file is even read | legacy plaintext + one `slog.Warn` | refuses (`ErrDeviceBarrierUnsealFailed`) |
+| Every other device-backed command (OATH sync, backup, sharing, re-attest, phone enrollment, FIDO2 phone backend) | `cmd/xkey/cmd/device_session_shared.go` (`unsealDeviceLocalKey`, behind `openDeviceSession`/`newPairedDeviceBackendConfig`) | `XKEY_BARRIER_PASSWORD` only, opened and closed around the one unseal | unaffected — a legacy record already needed no barrier | refuses (only reached for an already-sealed record, which always needs a barrier) |
 
 **No migration.** A device's record stays in whichever form it was written
 in until the operator re-pairs it. There is no reseal-on-use: a legacy

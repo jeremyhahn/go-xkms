@@ -140,10 +140,12 @@ func (s *AutoUnsealService) Enable(passphrase, tpmPolicy, backend string) (*Auto
 
 	// Verify sealer can seal.
 	canSeal, err := s.sealSvc.CanSeal()
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrAutoUnsealTPMNotAvailable, Cause: err}
-	}
 	if !canSeal {
+		if err != nil {
+			// Keep the underlying reason (e.g. TPM communication failure)
+			// reachable alongside the sentinel, rather than discarding it.
+			return nil, &SentinelCauseError{Sentinel: ErrAutoUnsealTPMNotAvailable, Cause: err}
+		}
 		return nil, ErrAutoUnsealTPMNotAvailable
 	}
 

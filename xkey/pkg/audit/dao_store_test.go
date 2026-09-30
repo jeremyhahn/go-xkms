@@ -636,6 +636,37 @@ func TestDAOAuditStore_WithSlogLogger(t *testing.T) {
 	})
 }
 
+// TestDAOAuditStore_Log_SlogFailureIsNotDiscarded proves that a failure
+// from the configured slog logger is joined into the write-failure path
+// instead of being silently dropped: for a SeveritySecurity operation
+// (the default), it must surface as *ErrAuditWriteFailed even though the
+// DAO write itself succeeded.
+func TestDAOAuditStore_Log_SlogFailureIsNotDiscarded(t *testing.T) {
+	store := newTestDAOStore(t)
+
+	slogErr := errors.New("slog handler unavailable")
+	fake := &fakeEntryLogger{logErr: slogErr}
+	store.slog = fake
+
+	logErr := store.Log(Entry{
+		Timestamp: time.Now(),
+		Operation: OpKeyCreated, // SeveritySecurity by default.
+		KeyID:     "key-1",
+		Success:   true,
+	})
+
+	require.Error(t, logErr)
+	assert.ErrorIs(t, logErr, slogErr, "the slog failure must be reachable via errors.Is, not discarded")
+
+	var writeFailed *ErrAuditWriteFailed
+	require.ErrorAs(t, logErr, &writeFailed)
+
+	// The entry must still be cached even though Log reports an error, so
+	// Query/Count stay consistent with what was audibly logged.
+	assert.Equal(t, 1, store.Count())
+	assert.Len(t, fake.logged, 1)
+}
+
 func TestDAOAuditStore_ClosedStoreDropsLogs(t *testing.T) {
 	store := newTestDAOStore(t)
 

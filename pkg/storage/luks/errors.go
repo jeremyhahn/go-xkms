@@ -44,3 +44,20 @@ var (
 	// ErrVolumeLockFailed is returned when the volume cannot be locked.
 	ErrVolumeLockFailed = errors.New("luks storage: failed to lock volume")
 )
+
+// VolumeMountCheckError indicates the backend could not determine whether
+// the underlying volume is mounted. It wraps the underlying cause so
+// callers using errors.Is/errors.As can inspect it.
+type VolumeMountCheckError struct {
+	Err error
+}
+
+// Error implements the error interface.
+func (e *VolumeMountCheckError) Error() string {
+	return "luks storage: could not determine volume mount state: " + e.Err.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *VolumeMountCheckError) Unwrap() error {
+	return e.Err
+}

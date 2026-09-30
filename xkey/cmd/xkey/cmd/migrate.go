@@ -170,7 +170,11 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Lock source if mounted
-	if sourceVol.IsMounted() || sourceVol.IsOpen() {
+	mounted, err := sourceVol.IsMounted()
+	if err != nil {
+		return &MigrateError{Operation: "check_mounted", Err: err}
+	}
+	if mounted || sourceVol.IsOpen() {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Locking current container...")
 		if err := sourceVol.Lock(); err != nil {
 			// If lock fails, try to continue (might already be locked)

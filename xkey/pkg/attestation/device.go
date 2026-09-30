@@ -252,8 +252,16 @@ type Verified struct {
 // selected the appended certificate. Two sets that must agree are two sets
 // that can disagree, so there is now only one, and the anchor is read back out
 // of the verification instead of being inferred — see VerifiedTrustAnchor.
+//
+// Applications is the other half of what a device is judged against: which
+// application builds may hold a device key at all (#1305). The pool alone says
+// the key lives in some locked handset's secure hardware; it says nothing about
+// WHICH application on that handset generated it, so without the allow-list
+// any app on any genuine handset passes. The zero value allow-lists nothing,
+// and every attestation is refused.
 type Trust struct {
-	Pool *x509.CertPool
+	Pool         *x509.CertPool
+	Applications pairing.ApplicationPolicy
 }
 
 // LoadTrust builds the Android hardware-attestation trust material from a
@@ -265,7 +273,15 @@ type Trust struct {
 // only safe thing to do with unjudgeable evidence is refuse it — so refuse
 // earlier, where the message is about this machine's trust store rather than
 // about the phone.
-func LoadTrust(store truststore.TrustStore) (*Trust, error) {
+//
+// The same holds for apps, the application allow-list: an empty one refuses
+// here with pairing.ErrApplicationPolicyUnconfigured, before any phone is
+// asked for evidence that could only be refused (#1305).
+func LoadTrust(store truststore.TrustStore, apps pairing.ApplicationPolicy) (*Trust, error) {
+	if !apps.Configured() {
+		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: pairing.ErrApplicationPolicyUnconfigured}
+	}
+
 	verifier, err := NewVerifier(store, truststore.LoadEmbeddedRoots)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
@@ -276,7 +292,7 @@ func LoadTrust(store truststore.TrustStore) (*Trust, error) {
 		return nil, fmt.Errorf("%w: %w", ErrDeviceAttestVerifyFailed, err)
 	}
 
-	return &Trust{Pool: pool}, nil
+	return &Trust{Pool: pool, Applications: apps}, nil
 }
 
 // Challenge is what the verifier committed to when it issued a challenge: the
@@ -391,12 +407,16 @@ func VerifyOptions(pool *x509.CertPool) *xkms.AndroidVerifyOptions {
 //  4. the attested key's TEE-enforced authorization list says the key was
 //     GENERATED inside secure hardware and is authorized to SIGN (#132) —
 //     see RequireAttestedKeyOrigin;
-//  5. the device produced a live signature, by that same attested key, over a
+//  5. the attestationApplicationId names an allow-listed package signed by an
+//     allow-listed key (#1305) — see RequireAttestedApplication;
+//  6. the device produced a live signature, by that same attested key, over a
 //     transcript carrying this exchange's nonce, purpose and channel binding.
 //
 // (2), (3) and (4) together say the key lives in that handset's secure
 // hardware and was made to be an xkey device key there, never imported into
-// it. (5) says the party on this connection holds it right now. None of these
+// it. (5) says the application that generated it is the xkey build this
+// machine trusts rather than any other app on a genuine handset. (6) says the
+// party on this connection holds it right now. None of these
 // is worth much alone: a chain without a signature is a public document
 // anyone can replay, a signature without a chain is possession of a key
 // nobody vouched for, and a chain plus a signature for a key that was
@@ -415,6 +435,9 @@ func VerifyDeviceAttestation(
 	}
 	if challenge == nil || len(challenge.Nonce) == 0 {
 		return nil, fmt.Errorf("%w: no challenge to verify freshness against", ErrDeviceAttestVerifyFailed)
+	}
+	if !trust.Applications.Configured() {
+		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: pairing.ErrApplicationPolicyUnconfigured}
 	}
 
 	// Version first. A device that cannot do challenge-response has nothing to
@@ -460,6 +483,10 @@ func VerifyDeviceAttestation(
 	}
 
 	if err := RequireAttestedKeyOrigin(desc); err != nil {
+		return nil, err
+	}
+
+	if err := RequireAttestedApplication(desc, trust.Applications); err != nil {
 		return nil, err
 	}
 
@@ -769,6 +796,27 @@ func RequireAttestedKeyOrigin(desc *xkms.AndroidKeyDescription) error {
 			ErrDeviceAttestVerifyFailed, ErrAttestationKeyPurposeNotSign, tee.Purpose)
 	}
 
+	return nil
+}
+
+// RequireAttestedApplication refuses an attestation whose
+// attestationApplicationId does not name an allow-listed package signed by an
+// allow-listed key (#1305).
+//
+// Every other check in VerifyDeviceAttestation is about the handset: its
+// secure hardware, its boot chain, where its key was made. None of them says
+// which application asked for the key, so without this check any app on any
+// locked Android handset -- a stranger's app, or a repackaged xkey signed with
+// someone else's key -- produces evidence that passes. The identity is written
+// by the Keystore daemon, not by the calling app, and the signing digest is
+// what makes a package name more than a claim.
+//
+// The match is pairing.ApplicationPolicy.Match, the one implementation LDevID
+// enrollment applies as well.
+func RequireAttestedApplication(desc *xkms.AndroidKeyDescription, apps pairing.ApplicationPolicy) error {
+	if _, _, err := apps.Match(pairing.AttestedApplication(desc)); err != nil {
+		return &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: err}
+	}
 	return nil
 }
 

@@ -54,8 +54,6 @@ var (
 )
 
 // ekRequest represents the endorsement key request for endorse-01 challenge
-//
-//nolint:unused // Used in tests and future endorse-01 challenge integration
 type ekRequest struct {
 	EKPublicKey  string `json:"ekPublicKey"`
 	EKAttributes string `json:"ekAttributes"`
@@ -349,6 +347,16 @@ func (c *Client) EnrollDevice(ctx context.Context, config *EnrollmentConfig) (*E
 	idevidCert, err := x509.ParseCertificate(certChain[1])
 	if err != nil {
 		return nil, caerrors.MalformedError("enrollment failed: failed to parse IDevID certificate: %v", err)
+	}
+
+	// Install the issued IAK certificate so a later device-attest-01
+	// challenge (deviceattest01.Setup) can read it back via IAKCertificate
+	// for the statement's x5c[0] -- without this, a device that enrolls and
+	// attests in separate processes (the normal case on real hardware) has
+	// no certificate to answer with, even though enrollment succeeded
+	// (go-xkms#1100).
+	if err := config.TPMModule.ProvisionIAKCert(iakCert); err != nil {
+		return nil, caerrors.Wrap(caerrors.InternalServer, err, "enrollment failed: failed to install IAK certificate")
 	}
 
 	chain, err := parseIssuingChain(certChain[2:])
@@ -688,8 +696,6 @@ func (c *Client) RequestEndorsementKeyCertificate(ctx context.Context, config *E
 }
 
 // setupEndorseChallenge sets up the HTTP server for endorse-01 challenge
-//
-//nolint:unused // Used in tests and future endorse-01 challenge integration
 func (c *Client) setupEndorseChallenge(config *EnrollmentConfig, keyAuth, token string) error {
 	// Get EK certificate from TPM
 	ekCert, err := config.TPMModule.EKCertificate()
@@ -726,8 +732,6 @@ func (c *Client) setupEndorseChallenge(config *EnrollmentConfig, keyAuth, token 
 }
 
 // startEndorseServer starts an HTTP server for endorse-01 challenge handling
-//
-//nolint:unused // Used in tests and future endorse-01 challenge integration
 func (c *Client) startEndorseServer(config *EnrollmentConfig, req ekRequest, token string) {
 	mux := http.NewServeMux()
 

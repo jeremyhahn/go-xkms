@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/descope/virtualwebauthn"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/stretchr/testify/assert"
@@ -72,6 +74,22 @@ func (f *enrollFixture) attest(t *testing.T, options *protocol.CredentialCreatio
 	require.NoError(t, err)
 	_, user, err := f.svc.FinishRegistration(context.Background(), sessionID, parsed)
 	return user, err
+}
+
+// attestInvite completes the invite-authorized registration ceremony begun
+// with options/sessionID using credential, returning FinishInviteRegistration's
+// result. Unlike attest, it does not mint a token: invite redemption does not
+// authenticate a session, it enrolls a credential.
+func (f *enrollFixture) attestInvite(t *testing.T, options *protocol.CredentialCreation, sessionID string, credential virtualwebauthn.Credential) (User, error) {
+	t.Helper()
+	optionsJSON, err := json.Marshal(options.Response)
+	require.NoError(t, err)
+	parsedOptions, err := virtualwebauthn.ParseAttestationOptions(string(optionsJSON))
+	require.NoError(t, err)
+	attestation := virtualwebauthn.CreateAttestationResponse(f.rp, virtualwebauthn.NewAuthenticator(), credential, *parsedOptions)
+	parsed, err := parseAttestationResponse(attestation)
+	require.NoError(t, err)
+	return f.svc.FinishInviteRegistration(context.Background(), sessionID, parsed)
 }
 
 // enroll registers a first passkey for email through the public ceremony.
@@ -190,21 +208,44 @@ func TestBeginAddCredential_NotConfigured(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotConfigured)
 }
 
-// TestBeginRegistration_ZeroCredentialAccountUnchanged pins the first-passkey
-// onboarding path that go-xkms#1294 part B leaves as it was: an account with
-// no credentials enrolls through the public ceremony in both modes.
-func TestBeginRegistration_ZeroCredentialAccountUnchanged(t *testing.T) {
+// TestBeginRegistration_RefusesPreexistingZeroCredentialAccount pins the
+// go-xkms#1294 part B closure: an account that existed before the call —
+// even with zero credentials — is refused by the public BeginRegistration
+// entry point in both registration modes. Its first credential enrolls only
+// through BeginInviteRegistration
+// (TestBeginInviteRegistration_EnrollsPendingAccount).
+func TestBeginRegistration_RefusesPreexistingZeroCredentialAccount(t *testing.T) {
 	for _, allow := range []bool{true, false} {
 		f := newEnrollFixture(t, allow)
-		provisioned, err := f.users.Create(context.Background(), "new@example.com", "New Hire")
+		_, err := f.users.Create(context.Background(), "new@example.com", "New Hire")
 		require.NoError(t, err)
 
 		options, sessionID, err := f.svc.BeginRegistration(context.Background(), "new@example.com", "New Hire")
-		require.NoError(t, err, "allow_public_registration=%v", allow)
-		enrolled, err := f.attest(t, options, sessionID, newEC2Credential(t))
-		require.NoError(t, err)
-		assert.Equal(t, provisioned.WebAuthnID(), enrolled.WebAuthnID())
+		require.ErrorIs(t, err, ErrRegistrationRefused, "allow_public_registration=%v", allow)
+		assert.Nil(t, options)
+		assert.Empty(t, sessionID)
 	}
+}
+
+// TestBeginInviteRegistration_EnrollsPendingAccount is the invite-authorized
+// replacement for the unauthenticated first-passkey path
+// TestBeginRegistration_RefusesPreexistingZeroCredentialAccount closes: a
+// PENDING account with zero credentials enrolls its first passkey through
+// BeginInviteRegistration/FinishInviteRegistration.
+func TestBeginInviteRegistration_EnrollsPendingAccount(t *testing.T) {
+	f := newEnrollFixture(t, false)
+	ctx := context.Background()
+	provisioned, err := f.users.Create(ctx, "new@example.com", "New Hire")
+	require.NoError(t, err)
+	du, ok := provisioned.(*DefaultUser)
+	require.True(t, ok)
+	du.SetLifecycle(qrdbsdk.LifecyclePending)
+
+	options, sessionID, err := f.svc.BeginInviteRegistration(ctx, "new@example.com")
+	require.NoError(t, err)
+	enrolled, err := f.attestInvite(t, options, sessionID, newEC2Credential(t))
+	require.NoError(t, err)
+	assert.Equal(t, provisioned.WebAuthnID(), enrolled.WebAuthnID())
 }
 
 // TestBeginRegistration_RefusalsAreIndistinguishable is go-xkms#1296: with

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -118,10 +119,22 @@ type tpm2Sealer interface {
 // var so tests can stub the open deterministically without touching hardware,
 // mirroring quicbaas's tpm2AutoSealStrategy seam. errTPM2NotInitialized lets
 // the probe classify a fresh/unprovisioned device as "not usable".
+//
+// cfg.KeyDir is resolved to a file-based storage.Backend here, not passed
+// through as a directory: tpm2backend.Config has no KeyDir field of its own
+// (go-xkms#1345 batch 2 -- it takes its storage exclusively through
+// KeyStorage). The directory itself is genuinely pre-datastore material (the
+// node-barrier seal strategy's own key, which must exist before -- and can
+// seal -- the datastore it protects), so it stays a real file-based engine
+// here rather than a qrdb-backed one.
 var openTPM2Backend = func(cfg *TPM2ProbeConfig) (tpm2Sealer, error) {
+	keyStorage, err := file.New(cfg.KeyDir)
+	if err != nil {
+		return nil, err
+	}
 	return tpm2backend.NewBackend(&tpm2backend.Config{
 		Device:          cfg.Device,
-		KeyDir:          cfg.KeyDir,
+		KeyStorage:      keyStorage,
 		UseSimulator:    cfg.UseSimulator,
 		SimulatorHost:   cfg.SimulatorHost,
 		SimulatorPort:   cfg.SimulatorPort,

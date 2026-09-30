@@ -52,6 +52,11 @@ var escapableKeyCases = []struct {
 // use a store per case, so the engine leaves exactly one file behind; locating
 // it by walking rather than by recomputing the escaped name keeps the
 // assertion independent of the code under test.
+//
+// The store's own cross-process lock file (lock.go's lockFileName) is
+// excluded: it is not a key the engine wrote, never touched by Get/Put/List,
+// and Put's first call is exactly what creates it, so a walk that counted it
+// would see two files after the very first write this package makes.
 func soleStoredFile(t *testing.T, root string) string {
 	t.Helper()
 	var found []string
@@ -59,7 +64,7 @@ func soleStoredFile(t *testing.T, root string) string {
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() {
+		if !d.IsDir() && d.Name() != lockFileName {
 			found = append(found, path)
 		}
 		return nil

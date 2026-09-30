@@ -226,7 +226,7 @@ func (s *Server) unifiedClientCAPool(bundle caBundleSource) (*x509.CertPool, err
 // addresses). It exists so the unified server can terminate TLS before the
 // CA composes without demanding operator-managed files.
 func (s *Server) ensureBootstrapCert() (*tls.Certificate, error) {
-	dir := filepath.Join(s.config.Storage.Path, unifiedBootstrapCertDir)
+	dir := filepath.Join(s.config.Datastore.Path, unifiedBootstrapCertDir)
 	certPath := filepath.Join(dir, "cert.pem")
 	keyPath := filepath.Join(dir, "key.pem")
 
@@ -288,7 +288,7 @@ func (s *Server) ensureBootstrapCert() (*tls.Certificate, error) {
 	// than refusing to serve, but the failure is no longer silent: it is
 	// logged so an operator can see why the bootstrap identity is not
 	// stable across restarts.
-	if s.config.Storage.Path != "" {
+	if s.config.Datastore.Path != "" {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			s.logger.Warn("unified API server: failed to create bootstrap TLS certificate directory; serving an ephemeral certificate",
 				slog.Any("error", &ErrTLSCertOp{Operation: "create bootstrap TLS certificate directory", Err: err}))

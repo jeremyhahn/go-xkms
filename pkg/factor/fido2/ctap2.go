@@ -218,6 +218,15 @@ func (c *LocalCeremony) Enroll(_ context.Context, req LocalEnrollRequest) (*Loca
 		"cose_public_key": cose,
 		"credential_id":   base64.RawURLEncoding.EncodeToString(attestation.CredentialID),
 		"rp_id":           req.RPID,
+		// The same origin the ceremony above presented to the authenticator
+		// (https://<rp id>), recorded explicitly rather than left to
+		// Factor.Enroll's default so the enrollment can never drift from what
+		// was actually attested.
+		"origins": []string{"https://" + req.RPID},
+		// The same user-verification requirement passed to the ceremony
+		// above (RequireUserVerification), recorded explicitly for the same
+		// reason.
+		"require_user_verification": c.userVerif,
 	}
 	if len(aaguid) > 0 {
 		params["aaguid"] = base64.RawURLEncoding.EncodeToString(aaguid)

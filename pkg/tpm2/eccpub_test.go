@@ -74,7 +74,7 @@ func shortCoordinateECCKey(t *testing.T, curve elliptic.Curve, size int) *ecdsa.
 		new(big.Int).SetInt64(int64(i)).FillBytes(scalar)
 		key, err := ecdsa.ParseRawPrivateKey(curve, scalar)
 		require.NoError(t, err)
-		if len(key.X.Bytes()) < size || len(key.Y.Bytes()) < size { //nolint:staticcheck // the test's subject is the short raw coordinate
+		if len(key.X.Bytes()) < size || len(key.Y.Bytes()) < size {
 			return key
 		}
 	}
@@ -90,7 +90,7 @@ func TestECCPublicKeyReconstructsEveryNamedCurve(t *testing.T) {
 
 			// big.Int.Bytes() is exactly what a TPM puts in the 2B buffer:
 			// the minimal big-endian encoding, leading zeros dropped.
-			pub, err := eccPublicKey(rawECCPublicArea(tc.curveID, key.X.Bytes(), key.Y.Bytes())) //nolint:staticcheck // reproducing the TPM's raw-coordinate encoding
+			pub, err := eccPublicKey(rawECCPublicArea(tc.curveID, key.X.Bytes(), key.Y.Bytes()))
 			require.NoError(t, err)
 			assert.True(t, pub.Equal(&key.PublicKey), "reconstructed key differs from the original")
 		})
@@ -108,8 +108,8 @@ func TestECCPublicKeyAcceptsShortCoordinateBuffer(t *testing.T) {
 	for _, tc := range eccPublicAreaCurves {
 		t.Run(tc.name, func(t *testing.T) {
 			key := shortCoordinateECCKey(t, tc.curve, tc.size)
-			x := key.X.Bytes() //nolint:staticcheck // the test's subject is the short raw coordinate
-			y := key.Y.Bytes() //nolint:staticcheck // the test's subject is the short raw coordinate
+			x := key.X.Bytes()
+			y := key.Y.Bytes()
 			require.True(t, len(x) < tc.size || len(y) < tc.size,
 				"fixture is not short: both coordinates are full width")
 
@@ -133,8 +133,8 @@ func TestECCPublicKeyRejectsOffCurvePoint(t *testing.T) {
 
 			x := make([]byte, tc.size)
 			y := make([]byte, tc.size)
-			key.X.FillBytes(x) //nolint:staticcheck // building a deliberately invalid public area
-			key.Y.FillBytes(y) //nolint:staticcheck // building a deliberately invalid public area
+			key.X.FillBytes(x)
+			key.Y.FillBytes(y)
 			y[tc.size-1] ^= 0x01
 
 			_, err = eccPublicKey(rawECCPublicArea(tc.curveID, x, y))
@@ -155,7 +155,7 @@ func TestECCPublicKeyRejectsUnknownCurveID(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	_, err = eccPublicKey(rawECCPublicArea(tpm2.TPMECCNone, key.X.Bytes(), key.Y.Bytes())) //nolint:staticcheck // reproducing the TPM's raw-coordinate encoding
+	_, err = eccPublicKey(rawECCPublicArea(tpm2.TPMECCNone, key.X.Bytes(), key.Y.Bytes()))
 	assert.ErrorIs(t, err, ErrECCPublicArea)
 }
 
@@ -185,8 +185,8 @@ func TestExtractPublicKeyFromTPMPublicRejectsOffCurvePoint(t *testing.T) {
 
 	x := make([]byte, 32)
 	y := make([]byte, 32)
-	key.X.FillBytes(x) //nolint:staticcheck // building a deliberately invalid public area
-	key.Y.FillBytes(y) //nolint:staticcheck // building a deliberately invalid public area
+	key.X.FillBytes(x)
+	key.Y.FillBytes(y)
 	y[31] ^= 0x01
 
 	area := rawECCPublicArea(tpm2.TPMECCNistP256, x, y)
@@ -201,7 +201,7 @@ func TestExtractPublicKeyFromTPMPublicRejectsOffCurvePoint(t *testing.T) {
 func TestExtractPublicKeyFromTPMPublicAcceptsShortCoordinateBuffer(t *testing.T) {
 	key := shortCoordinateECCKey(t, elliptic.P256(), 32)
 
-	area := rawECCPublicArea(tpm2.TPMECCNistP256, key.X.Bytes(), key.Y.Bytes()) //nolint:staticcheck // the test's subject is the short raw coordinate
+	area := rawECCPublicArea(tpm2.TPMECCNistP256, key.X.Bytes(), key.Y.Bytes())
 	marshalled := tpm2.Marshal(*area)
 
 	pub, err := ExtractPublicKeyFromTPMPublic(marshalled)
@@ -221,8 +221,8 @@ func TestECDSAPublicFromAreaWrapsAsCertifyMalformed(t *testing.T) {
 
 	x := make([]byte, 32)
 	y := make([]byte, 32)
-	key.X.FillBytes(x) //nolint:staticcheck // building a deliberately invalid public area
-	key.Y.FillBytes(y) //nolint:staticcheck // building a deliberately invalid public area
+	key.X.FillBytes(x)
+	key.Y.FillBytes(y)
 	y[31] ^= 0x01
 
 	_, err = ecdsaPublicFromArea(rawECCPublicArea(tpm2.TPMECCNistP256, x, y))
@@ -234,7 +234,7 @@ func TestECDSAPublicFromAreaAcceptsShortCoordinateBuffer(t *testing.T) {
 	key := shortCoordinateECCKey(t, elliptic.P256(), 32)
 
 	pub, err := ecdsaPublicFromArea(
-		rawECCPublicArea(tpm2.TPMECCNistP256, key.X.Bytes(), key.Y.Bytes())) //nolint:staticcheck // the test's subject is the short raw coordinate
+		rawECCPublicArea(tpm2.TPMECCNistP256, key.X.Bytes(), key.Y.Bytes()))
 	require.NoError(t, err)
 	assert.True(t, pub.Equal(&key.PublicKey))
 }

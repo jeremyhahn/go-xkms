@@ -32,7 +32,7 @@ import (
 func TestBuildClusterEnrollOptions_Defaults(t *testing.T) {
 	dir := t.TempDir()
 	s := &Server{config: &config.Config{
-		Storage: config.StorageConfig{Path: dir},
+		Datastore: config.DatastoreConfig{Path: dir},
 		Cluster: config.ClusterConfig{
 			RaftAddress: "10.0.0.1:63001",
 			Peers:       "1=10.0.0.1:63001,2=10.0.0.2:63001",
@@ -71,7 +71,7 @@ func TestBuildClusterEnrollOptions_Defaults(t *testing.T) {
 func TestBuildClusterEnrollOptions_ExplicitAndSingleNode(t *testing.T) {
 	dir := t.TempDir()
 	s := &Server{config: &config.Config{
-		Storage: config.StorageConfig{Path: dir},
+		Datastore: config.DatastoreConfig{Path: dir},
 		Cluster: config.ClusterConfig{
 			RaftAddress: "10.0.0.1:63001",
 			RaftEnrollment: config.RaftEnrollmentConfig{

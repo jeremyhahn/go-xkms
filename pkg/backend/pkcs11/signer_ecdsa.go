@@ -200,7 +200,7 @@ func exportECDSAPublicKey(pool *SessionPool, pubHandle pkcs11.ObjectHandle) (*ec
 		// The length is already known to be right, so Unmarshal is now only
 		// deciding whether the coordinates name a point that is actually on the
 		// curve.
-		x, y := elliptic.Unmarshal(curve, pointBytes)
+		x, y := elliptic.Unmarshal(curve, pointBytes) //nolint:staticcheck // SA1019: PKCS#11 CKA_EC_POINT is the uncompressed-point wire format elliptic.Unmarshal decodes directly; crypto/ecdh migration is a separate, behavior-sensitive change
 		if x == nil {
 			return &errs.Detail{
 				Err:    ErrInvalidKeyAttributes,
@@ -210,8 +210,8 @@ func exportECDSAPublicKey(pool *SessionPool, pubHandle pkcs11.ObjectHandle) (*ec
 
 		pub = &ecdsa.PublicKey{
 			Curve: curve,
-			X:     x,
-			Y:     y,
+			X:     x, //nolint:staticcheck // SA1019: x/y are the coordinates elliptic.Unmarshal just decoded from CKA_EC_POINT above
+			Y:     y, //nolint:staticcheck // SA1019: see X above
 		}
 		return nil
 	})

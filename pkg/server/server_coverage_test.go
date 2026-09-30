@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -236,24 +238,28 @@ func TestServer_CreateCompositeAuthenticator_MTLSSuccess(t *testing.T) {
 // without a hosted qrdb node (file storage backend => qrdbClient nil) the
 // server routes audit to the LOCAL tamper-evident chained file — the same
 // record shape as the qrdb-hosted chain — never a silent NoOp.
+// TestServer_InitializeAuditLogger_NoQRDBClientUsesChainedFile proves the
+// fallback path initializeAuditLogger takes when s.qrdbClient is nil --
+// today, only a datastore.mode "remote" deployment (see qrdb_storage.go's
+// initializeQRDBStorage: only the "standalone" branch sets s.qrdbClient)
+// still routes through here. Exercised directly via newMinimalServer, which
+// never sets s.qrdbClient either, rather than a real "remote" New(cfg),
+// which would need to dial an actual qrdb cluster to succeed.
 func TestServer_InitializeAuditLogger_NoQRDBClientUsesChainedFile(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
 	tmpDir := t.TempDir()
 	cfg := createMinimalConfig(t)
+	cfg.Datastore.Path = tmpDir
 	cfg.Auth.Audit = &config.AuditConfig{
 		Enabled: true,
 		Path:    filepath.Join(tmpDir, "audit.log"),
 	}
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
+	server := newMinimalServer(t, cfg)
+	require.NoError(t, server.initializeAuditLogger())
 
 	require.NotNil(t, server.auditLogger)
 	_, ok := server.auditLogger.(*audit.ChainedFileLogger)
-	assert.True(t, ok, "non-qrdb deployments must audit to the local chained file")
+	assert.True(t, ok, "a server with no qrdb client must audit to the local chained file")
 }
 
 // TestServer_InitializeAuditLogger_EnabledMissingPathNoLongerErrors verifies
@@ -288,6 +294,12 @@ func TestServer_InitializeBarrier_Enabled(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Barrier.Enabled = true
+	// "pkcs11" is not NodeFlipWired, so this deployment keeps xkms's own
+	// (non-node) barrier -- initializeBarrier, the function this test
+	// exercises -- instead of adopting the qrdb node's barrier, which would
+	// skip initializeBarrier entirely and block boot on an operator unseal
+	// for the flip-wired default ("passphrase").
+	cfg.Barrier.Strategy = "pkcs11"
 	cfg.Barrier.RootKeyPath = "barrier/root-key"
 
 	server, err := New(cfg)
@@ -304,6 +316,9 @@ func TestServer_InitializeBarrier_WithPreferenceOrder(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Barrier.Enabled = true
+	// See TestServer_InitializeBarrier_Enabled: keeps xkms's own barrier
+	// (PreferenceOrder-driven) instead of the node-flip.
+	cfg.Barrier.Strategy = "pkcs11"
 	cfg.Barrier.RootKeyPath = ""
 	cfg.Barrier.PreferenceOrder = []string{"software"}
 
@@ -396,7 +411,7 @@ func TestServer_CreateStorage_Memory(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Storage.Backend = "memory"
+	cfg.Datastore.Engine = "memory"
 
 	server, err := New(cfg)
 	require.NoError(t, err)
@@ -413,8 +428,8 @@ func TestServer_CreateStorage_Pebble(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	cfg := createMinimalConfig(t)
-	cfg.Storage.Backend = "pebble"
-	cfg.Storage.Path = tmpDir
+	cfg.Datastore.Engine = "pebble"
+	cfg.Datastore.Path = tmpDir
 
 	server, err := New(cfg)
 	require.NoError(t, err)
@@ -425,73 +440,69 @@ func TestServer_CreateStorage_Pebble(t *testing.T) {
 	assert.NotNil(t, store)
 }
 
-func TestServer_CreateStorage_Unsupported(t *testing.T) {
-	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "redis"},
-	}
-	s := newMinimalServer(t, cfg)
+// TestServer_CreateStorage_DistinctPrefixesOverOneStore is the regression
+// test for go-xkms#1345: createStorage never builds a private, per-subsystem
+// storage engine. Every subdir is a key-prefixed view over the SAME shared
+// datastore (s.qrdbStorage), so two subsystems' keys coexist in one KV under
+// distinct prefixes -- writing under one subdir's view must never be visible
+// under another's.
+func TestServer_CreateStorage_DistinctPrefixesOverOneStore(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
 
-	_, err := s.createStorage("test")
-	assert.Error(t, err)
-	var errUnsupported *ErrUnsupportedStorageBackend
-	assert.True(t, errors.As(err, &errUnsupported))
-}
+	cfg := createMinimalConfig(t)
+	cfg.Datastore.Engine = "memory"
 
-func TestServer_CreateStorageAt_Memory(t *testing.T) {
-	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
-	}
-	s := newMinimalServer(t, cfg)
-
-	store, err := s.createStorageAt("/any/path")
+	server, err := New(cfg)
 	require.NoError(t, err)
-	assert.NotNil(t, store)
+	defer func() { _ = server.Shutdown() }()
+
+	certs, err := server.createStorage("certs")
+	require.NoError(t, err)
+	webauthn, err := server.createStorage("webauthn")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, certs.Put(ctx, "k", []byte("cert-value")))
+	require.NoError(t, webauthn.Put(ctx, "k", []byte("webauthn-value")))
+
+	certVal, err := certs.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("cert-value"), certVal)
+
+	webauthnVal, err := webauthn.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("webauthn-value"), webauthnVal)
+
+	// The same key under a different subdir's view is a different entry in
+	// the one shared store -- writing to "certs" must not leak into "webauthn".
+	assert.NotEqual(t, certVal, webauthnVal)
 }
 
-func TestServer_CreateStorageAt_Pebble(t *testing.T) {
+// TestServer_CreateStorageAt_PrefixesOverSharedStore proves createStorageAt
+// derives its key namespace from the final path segment, over the one
+// shared datastore, regardless of Datastore.Engine (go-xkms#1345:
+// createStorageAt no longer builds a private, per-call storage engine, so
+// there is nothing left for the engine value to change here).
+func TestServer_CreateStorageAt_PrefixesOverSharedStore(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "pebble"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 	}
 	s := newMinimalServer(t, cfg)
-
-	store, err := s.createStorageAt(filepath.Join(tmpDir, "pebble-at"))
+	var err error
+	s.qrdbStorage, err = storage.NewMemoryBackend()
 	require.NoError(t, err)
-	assert.NotNil(t, store)
-}
 
-func TestServer_CreateStorageAt_File(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "file"},
-	}
-	s := newMinimalServer(t, cfg)
-
-	store, err := s.createStorageAt(filepath.Join(tmpDir, "file-at"))
+	store, err := s.createStorageAt(filepath.Join(tmpDir, "at-test"))
 	require.NoError(t, err)
-	assert.NotNil(t, store)
-}
+	require.NotNil(t, store)
 
-func TestServer_CreateStorageAt_EmptyBackend(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: ""},
-	}
-	s := newMinimalServer(t, cfg)
-
-	store, err := s.createStorageAt(filepath.Join(tmpDir, "empty-at"))
+	ctx := context.Background()
+	require.NoError(t, store.Put(ctx, "k", []byte("v")))
+	got, err := store.Get(ctx, "k")
 	require.NoError(t, err)
-	assert.NotNil(t, store)
-}
-
-func TestServer_CreateStorageAt_Unsupported(t *testing.T) {
-	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "redis"},
-	}
-	s := newMinimalServer(t, cfg)
-
-	_, err := s.createStorageAt("/any/path")
-	assert.Error(t, err)
+	assert.Equal(t, []byte("v"), got)
 }
 
 // ============================================================================
@@ -504,6 +515,9 @@ func TestServer_InitializePlatformStore_WithBarrier(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Barrier.Enabled = true
+	// "none" auto-unseals unattended (whichever barrier this resolves to,
+	// node-adopted or xkms's own) so this test never blocks on an operator.
+	cfg.Barrier.Strategy = "none"
 
 	server, err := New(cfg)
 	require.NoError(t, err)

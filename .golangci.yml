@@ -83,6 +83,11 @@ linters:
     - gocritic
     # forbidigo carries exactly one rule, for go-xkms#1074: see its settings.
     - forbidigo
+    # nolintlint (go-xkms#1348): every //nolint directive must name the
+    # linter it silences and carry a reason, so a suppression can be
+    # evaluated for relevance without archaeology. See the settings block
+    # below for require-explanation / require-specific.
+    - nolintlint
     # err113 was evaluated for #700 (the typed-error migration) and is NOT
     # enabled repo-wide yet: golangci-lint v2.13.2's err113, run with every
     # other setting in this file unchanged, reports 107 pre-existing findings
@@ -126,6 +131,15 @@ linters:
         # surface; that is an API decision, not a lint fix.
         - hugeParam
         - rangeValCopy
+    nolintlint:
+      # A bare //nolint or //nolint:linter with no reason is exactly the
+      # kind of suppression that outlives the issue it was written for --
+      # require-specific forces it to name the linter (so a later config
+      # change can find every site that silences it), and
+      # require-explanation forces the trailing "// reason" comment (so
+      # review does not have to reconstruct why from git blame).
+      require-explanation: true
+      require-specific: true
   exclusions:
     generated: lax
     rules:

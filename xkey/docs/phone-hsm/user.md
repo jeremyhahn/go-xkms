@@ -1,6 +1,6 @@
 # Phone as HSM — User Guide
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 ## What this does
 
@@ -36,6 +36,44 @@ set `allow_unattestable_devices: true` under `attestation_policy` in
 `devices.yaml` (see [`../device/engineering.md`](../device/engineering.md)); the pairing
 then completes with no security level, boot state or device fingerprint on
 record, and the GUI says so. An enterprise policy can lock that choice closed.
+
+**Say which phone app you trust before pairing.** A genuine handset proves
+its key is held in secure hardware, but not which app asked for it; xkey only
+accepts the xkey-android build you list, by package name and signing
+certificate digest, in `devices.yaml`:
+
+```yaml
+attestation_policy:
+  allowed_applications:
+    - package_name: com.automatethethings.xkey
+      signing_digests:
+        - <hex SHA-256 of the app's signing certificate>
+```
+
+Until at least one application is listed, every pairing and every
+re-attestation is refused with *no application is allow-listed for device
+attestation*. `allow_unpinned_signatures: true` accepts a listed package with
+no digests — for development builds only, since anyone can build an app
+claiming that package name. The package name alone is not proof of anything;
+list a signing digest as soon as you have one from your release keystore, or
+pairing stays refused on purpose.
+
+An enterprise deployment can lock this list too, the same way it can lock
+`allow_unattestable_devices`: while the `policy:` section's
+`lock_pairing_application_policy` is set, its own `pairing_allowed_applications`
+governs and your `devices.yaml` entries are ignored, not merged with them.
+You will see this as a pairing or re-attestation that refuses (or accepts) a
+build regardless of what you wrote in `attestation_policy`; ask your
+administrator which builds the fleet allows.
+
+On a sealed (enterprise) machine, pairing and re-attestation refuse outright
+— never falling back to your own `attestation_policy` — until that section
+has actually been verified: on the CLI that means an operator with the SO PIN
+has set `XKEY_SO_PIN` for the command; on the desktop GUI it means an SO has
+logged in since the app started. This is deliberate: your machine being
+sealed at all could mean the fleet locked this exact list, and using your own
+`devices.yaml` before that is confirmed would be exactly the loophole locking
+it exists to close.
 
 `--force` re-pairs over an existing pairing. It throws the old binding away —
 use it when you mean to, not to make an error go away.
@@ -129,16 +167,25 @@ xkey device sync-status
 
 ## When the phone is not on the same bus
 
+`xkey device relay` (go-xkms#1306) is not a pairing mechanism -- it serves
+an **already-paired** device's session over TCP, pinned to that device's
+Noise static key exactly the way `device listen` pins to it, and gated on
+the same live attestation proof. Pair with `device pair` (BLE) first.
+
 ```
 xkey device listen
-xkey device connect 192.0.2.10:port
 xkey device relay
+xkey device relay --device "Pixel-8"
 ```
 
+(`device connect <address>` is a different, unrelated verb: agent
+enrollment against a master xkmsd, not phone connectivity.)
+
 The relay listens on `phone.relay_listen_address` from your xkey config,
-`:8444` on every interface unless you set it. To pin it to one interface, set
-it in the config file, in the environment, or for one run on the command line;
-each overrides the one before:
+`127.0.0.1:8444` (loopback only) unless you set it. Reachable from the
+network is an explicit choice: set a non-loopback address in the config
+file, in the environment, or for one run on the command line; each
+overrides the one before:
 
 ```yaml
 phone:
@@ -149,6 +196,11 @@ phone:
 XKEY_PHONE_RELAY_LISTEN_ADDRESS=192.0.2.10:8444 xkey device relay
 xkey device relay --listen 192.0.2.10:8444
 ```
+
+`--allow-sync` opts the session in to serving `remote.syncPasswords`,
+`remote.syncOATH` and `remote.syncAll` -- the methods that export the
+password vault or OATH secrets to the phone. Without it those three refuse;
+every other bridge method is unaffected.
 
 The relay is this machine's end of the session, not a blind pipe: it
 performs the Noise XX handshake with the phone, decrypts each request and
@@ -194,6 +246,8 @@ to change in the same release, so it is coordinated work rather than a setting.
 | **the peer did not prove possession of the attested key** | the phone could not sign this connection's challenge — an outdated app, or not the handset you paired with | update the phone app; if it is current, investigate |
 | **device answered with an unsupported attestation protocol version** | the phone app predates challenge-response attestation | update xkey-android |
 | **device attestation could not be verified - pairing refused** (GUI) | the phone's attestation chain does not reach a trusted Android hardware root, it did not sign this pairing's challenge, or the desktop has no trust store to judge it with | check the trust store (`xkey trust list`); update xkey-android; only if you accept an unattested device, set `allow_unattestable_devices: true` |
+| **no application is allow-listed for device attestation** | `devices.yaml` lists no trusted phone app | add `allowed_applications` under `attestation_policy` (see above) |
+| **attested application is not allowed** | the key was generated by a package, or a build signed by a key, that is not on your allow-list | check the package name and signing digest you listed; install the official xkey-android build |
 | "not connected" after an error | the session ended | reconnect; a Noise session cannot resume mid-stream |
 | commands are slow in parallel | the channel is serialised | run them in sequence |
 | attestation rejected | the Android hardware root is missing or misclassified | add it with purpose `android-hardware` |

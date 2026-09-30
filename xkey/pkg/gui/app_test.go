@@ -14,10 +14,33 @@
 package gui
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// TestResolveBrowsersDir_Success verifies the happy path resolves to
+// $HOME/.xkey/browsers.
+func TestResolveBrowsersDir_Success(t *testing.T) {
+	t.Setenv("HOME", "/home/test-user")
+
+	dir, err := resolveBrowsersDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join("/home/test-user", ".xkey", "browsers"), dir)
+}
+
+// TestResolveBrowsersDir_NoHomeDirectory verifies that a user home
+// directory that cannot be resolved is reported as an error instead of
+// silently producing a browsers directory rooted at an empty path (which
+// NewApp previously did via `home, _ := os.UserHomeDir()`).
+func TestResolveBrowsersDir_NoHomeDirectory(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	_, err := resolveBrowsersDir()
+	assert.Error(t, err)
+}
 
 func TestParseFirmwareVersion_ValidSemver(t *testing.T) {
 	result := ParseFirmwareVersion("1.2.3")

@@ -38,7 +38,7 @@ func TestListKeys_ReadDirError(t *testing.T) {
 	}
 	// Try to list keys from a file (not directory) - this will cause ReadDir to fail
 	// with an error that is NOT os.IsNotExist
-	b := &Backend{closed: false, config: &Config{KeyDir: notADir}}
+	b := &Backend{closed: false, keyDir: notADir}
 	_, err := b.ListKeys(context.Background())
 	if err == nil {
 		t.Error("Expected error when listing keys from a file path")
@@ -108,7 +108,7 @@ func TestConfig_Validate_EmptyDeviceWithoutSimulator(t *testing.T) {
 	config := &Config{
 		Device:       tmpFile.Name(),
 		UseSimulator: false,
-		KeyDir:       t.TempDir(),
+		KeyStorage:   storage.NewMemory(),
 	}
 	if err := config.Validate(); err != nil {
 		t.Errorf("Validate() failed for existing device: %v", err)
@@ -166,7 +166,7 @@ func TestListKeys_SkipsNonBlobFiles(t *testing.T) {
 		}
 	}
 
-	b := &Backend{closed: false, config: &Config{KeyDir: tmpDir}}
+	b := &Backend{closed: false, keyDir: tmpDir}
 	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys() error = %v", err)
@@ -189,7 +189,7 @@ func TestListKeys_SkipsNonBlobFiles(t *testing.T) {
 
 // TestConfig_Validate_AllDefaults verifies all defaults are set when empty config
 func TestConfig_Validate_AllDefaults(t *testing.T) {
-	config := &Config{UseSimulator: true, KeyDir: t.TempDir()}
+	config := &Config{UseSimulator: true, KeyStorage: storage.NewMemory()}
 	err := config.Validate()
 	if err != nil {
 		t.Fatalf("Validate() error = %v", err)
@@ -321,7 +321,6 @@ func TestBackend_NilAttributesAllMethods(t *testing.T) {
 func TestConfig_ToTPMConfig_CompleteConfig(t *testing.T) {
 	config := &Config{
 		Device:          "/dev/tpmrm0",
-		KeyDir:          "/tmp/keys",
 		UseSimulator:    true,
 		SimulatorHost:   "localhost",
 		SimulatorPort:   2321,

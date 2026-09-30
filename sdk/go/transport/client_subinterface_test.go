@@ -223,6 +223,19 @@ func (s *stubClient) FinishAuthentication(context.Context, *FinishAuthentication
 	panic("stub")
 }
 
+func (s *stubClient) GetInvite(context.Context, *GetInviteRequest) (*GetInviteResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) BeginInviteRegistration(context.Context, *BeginInviteRegistrationRequest) (*BeginInviteRegistrationResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) FinishInviteRegistration(context.Context, *FinishInviteRegistrationRequest) (*FinishInviteRegistrationResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) ActivateInvitePIV(context.Context, *ActivateInvitePIVRequest) (*ActivateInvitePIVResponse, error) {
+	panic("stub")
+}
+
 func (s *stubClient) GetCABundle(context.Context, *GetCABundleRequest) (*GetCABundleResponse, error) {
 	panic("stub")
 }

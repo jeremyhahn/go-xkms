@@ -36,11 +36,9 @@ type createUserBody struct {
 	DisplayName          string `json:"display_name"`
 	Role                 string `json:"role"`
 	TenantID             string `json:"tenant_id"`
-}
-
-// updateUserBody is the request payload for enabling/disabling a user.
-type updateUserBody struct {
-	Enabled *bool `json:"enabled"`
+	// InviteTTLSeconds overrides the minted invitation's TTL
+	// (go-xkms#1294 part B); see transport.CreateUserRequest.
+	InviteTTLSeconds int64 `json:"invite_ttl_seconds,omitempty"`
 }
 
 // handleCreateUser handles POST /api/v1/users/.
@@ -62,6 +60,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		DisplayName:          body.DisplayName,
 		Role:                 body.Role,
 		TenantID:             body.TenantID,
+		InviteTTLSeconds:     body.InviteTTLSeconds,
 	})
 	if err != nil {
 		// A missing login key is malformed CLIENT input, not a server fault.
@@ -74,7 +73,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, resp.User, http.StatusCreated)
+	// The full response, not just resp.User: an invited create carries the
+	// one-time activation invitation (go-xkms#1294 part B), returned here
+	// exactly once and unrecoverable afterwards.
+	writeJSON(w, resp, http.StatusCreated)
 }
 
 // handleListUsers handles GET /api/v1/users/.
@@ -108,25 +110,34 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp.User, http.StatusOK)
 }
 
-// handleUpdateUser handles PUT /api/v1/users/{username} (enable/disable).
-func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+// handleEnableUser handles POST /api/v1/users/{username}/enable. It
+// requires users:enable (go-qrdb permission.UsersEnable) rather than the
+// coarser users:update, matching gRPC's EnableUser RPC and MCP's
+// user.enable method (go-xkms#1249).
+func (s *Server) handleEnableUser(w http.ResponseWriter, r *http.Request) {
+	s.setUserEnabled(w, r, true)
+}
+
+// handleDisableUser handles POST /api/v1/users/{username}/disable. It
+// requires users:disable (go-qrdb permission.UsersDisable) for the same
+// reason handleEnableUser requires users:enable (go-xkms#1249).
+func (s *Server) handleDisableUser(w http.ResponseWriter, r *http.Request) {
+	s.setUserEnabled(w, r, false)
+}
+
+// setUserEnabled performs the toggle and returns the updated user. The
+// permission gate (users:enable or users:disable) is the caller's route
+// decorator, not this helper, so this helper itself must never hold an
+// authorization decision.
+func (s *Server) setUserEnabled(w http.ResponseWriter, r *http.Request, enabled bool) {
 	if s.xkmsService == nil {
 		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
 		return
 	}
 	svc := s.xkmsService
 	username := chi.URLParam(r, "username")
-	var body updateUserBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, err, http.StatusBadRequest)
-		return
-	}
-	if body.Enabled == nil {
-		writeError(w, ErrMissingTenantID, http.StatusBadRequest)
-		return
-	}
 	var err error
-	if *body.Enabled {
+	if enabled {
 		err = svc.EnableUser(r.Context(), username)
 	} else {
 		err = svc.DisableUser(r.Context(), username)

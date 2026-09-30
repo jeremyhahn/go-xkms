@@ -38,9 +38,9 @@ var pinStrategies = map[string]qrdbsdk.PINStrategyID{
 
 // initializePINManager builds the PIN backend through pinselect.Resolve, the
 // same selection path xKey's GUI, headless daemon and CLI use: the governing
-// strategy is recorded in <storage.path>/pin/strategy, a TPM2 strategy puts
+// strategy is recorded in <datastore.path>/pin/strategy, a TPM2 strategy puts
 // the user PIN on the TPM's Platform SRK (PlatformKeyStore.PINBackend), and
-// software keeps a salted hash under <storage.path>/pin.
+// software keeps a salted hash under <datastore.path>/pin.
 func (s *Server) initializePINManager() error {
 	if !s.config.PIN.Enabled {
 		s.logger.Info("PIN management disabled")
@@ -53,18 +53,19 @@ func (s *Server) initializePINManager() error {
 	}
 
 	// PIN state -- the strategy record and the software store -- is
-	// file-backed under storage.path for every storage backend. A remote
-	// qrdb transport (rest/grpc) is the one shape config.Validate lets reach
-	// here without storage.path; refuse it rather than resolve "" + "/pin"
-	// into the filesystem root's own "/pin" directory (go-xkms#666).
-	if s.config.Storage.Path == "" {
+	// file-backed under datastore.path for every datastore engine.
+	// config.Validate requires datastore.path for "standalone";
+	// datastore.mode "remote" is the one shape that can still reach here
+	// with it empty; refuse it rather than resolve "" + "/pin" into the
+	// filesystem root's own "/pin" directory (go-xkms#666).
+	if s.config.Datastore.Path == "" {
 		return &ErrConfigRequired{
-			Field:   "storage.path",
+			Field:   "datastore.path",
 			Backend: "pin",
-			Hint:    "the PIN state directory is derived from storage.path and must not resolve to the filesystem root",
+			Hint:    "the PIN state directory is derived from datastore.path and must not resolve to the filesystem root",
 		}
 	}
-	pinDir := filepath.Join(s.config.Storage.Path, "pin")
+	pinDir := filepath.Join(s.config.Datastore.Path, "pin")
 
 	persisted, err := pinselect.LoadStrategy(pinDir)
 	if err != nil && !errors.Is(err, pinselect.ErrStrategyNotPersisted) {

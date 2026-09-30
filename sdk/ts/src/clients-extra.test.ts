@@ -664,7 +664,7 @@ describe('CredentialsClient (submit)', () => {
   });
 });
 
-describe('UsersClient (list/get/update/delete/credentials)', () => {
+describe('UsersClient (list/get/enable/disable/delete/credentials)', () => {
   it('routes the remaining user lifecycle endpoints', async () => {
     const fake = newFakeFetch({ body: {} });
     const c = make(fake);
@@ -674,17 +674,20 @@ describe('UsersClient (list/get/update/delete/credentials)', () => {
     await c.users.get('bob');
     expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/users/bob`);
 
-    await c.users.update('bob', { enabled: false });
-    expect(fake.calls[2]?.method).toBe('PUT');
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/users/bob`);
-    expect(fake.calls[2]?.body).toEqual({ enabled: false });
+    await c.users.enable('bob');
+    expect(fake.calls[2]?.method).toBe('POST');
+    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/users/bob/enable`);
+
+    await c.users.disable('bob');
+    expect(fake.calls[3]?.method).toBe('POST');
+    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/users/bob/disable`);
 
     await c.users.delete('bob');
-    expect(fake.calls[3]?.method).toBe('DELETE');
-    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/users/bob`);
+    expect(fake.calls[4]?.method).toBe('DELETE');
+    expect(fake.calls[4]?.url).toBe(`${BASE}/api/v1/users/bob`);
 
     await c.users.credentials('bob');
-    expect(fake.calls[4]?.url).toBe(`${BASE}/api/v1/users/bob/credentials`);
+    expect(fake.calls[5]?.url).toBe(`${BASE}/api/v1/users/bob/credentials`);
   });
 });
 

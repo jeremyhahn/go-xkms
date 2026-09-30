@@ -294,6 +294,12 @@ func NewTCPPhoneServer() (*TCPPhoneServer, error) {
 	server, err := phone.NewTCPPairingServer(&phone.TCPPairingConfig{
 		ListenAddr:     ":0",
 		RequestHandler: handler,
+		// This harness plays the phone's TCP server role for tests that
+		// dial IN as the desktop initiator; it never exercises the #129
+		// live-attestation gate a phone-initiated connection now requires
+		// on the real desktop responder, so it stands in an always-approve
+		// verifier rather than leaving every connection refused.
+		LiveAttest: func(context.Context, pairing.RPCExchange, []byte) error { return nil },
 	})
 	if err != nil {
 		return nil, &WrappedError{Msg: "failed to create TCP pairing server", Err: err}

@@ -36,6 +36,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -174,7 +175,7 @@ func TestInitTPM2Backend_Disabled(t *testing.T) {
 // on whether a TPM simulator is available in this build.
 func TestInitTPM2Backend_EnabledNoDevice(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 		Backends: config.BackendsConfig{
 			TPM2: &config.TPM2Config{
 				Enabled:    true,
@@ -198,7 +199,7 @@ func TestInitTPM2Backend_EnabledNoDevice(t *testing.T) {
 // without panicking.
 func TestInitTPM2Backend_DefaultDevicePath(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 		Backends: config.BackendsConfig{
 			TPM2: &config.TPM2Config{
 				Enabled:    true,
@@ -231,22 +232,6 @@ func TestServer_CloseBackends_EmptyKeyProviders(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — ownedRemoteBackend.Close
-// ============================================================================
-
-// TestOwnedRemoteBackend_CloseNilClient exercises the Close path with a struct
-// that holds a nil inner backend and no live client. We test the type itself
-// rather than triggering a real network dial.
-func TestOwnedRemoteBackend_CloseNilClient(t *testing.T) {
-	// We can't easily test ownedRemoteBackend.Close without a real SDK client,
-	// but we can verify the struct satisfies the storage.Backend interface at
-	// compile time — the compile-time check is in qrdb_storage.go via the
-	// *ownedRemoteBackend returned from newRemoteQRDBStorage.
-	// This test documents the non-exercisability boundary.
-	t.Log("ownedRemoteBackend.Close requires a live SDK client; boundary documented")
-}
-
-// ============================================================================
 // Tests — getBuildVersion branches
 // ============================================================================
 
@@ -259,19 +244,12 @@ func TestGetBuildVersion_NonEmpty(t *testing.T) {
 	// so we only require a non-empty result.
 }
 
-// ============================================================================
-// Tests — initializeQRDBStorage default transport (non-qrdb backends)
-// ============================================================================
-
-func TestInitializeQRDBStorage_NonQRDB(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "file"},
-	})
-	// For non-qrdb backends initializeQRDBStorage is a no-op.
-	err := s.initializeQRDBStorage()
-	require.NoError(t, err)
-	assert.Nil(t, s.qrdbStorage)
-}
+// TestInitializeQRDBStorage_NonQRDB used to prove initializeQRDBStorage was
+// a no-op for a non-"qrdb" storage.backend. That branch no longer exists:
+// initializeQRDBStorage always builds the one shared datastore now, in
+// either "standalone" or "remote" mode (go-xkms#1345) -- see
+// TestInitializeQRDBStorage_QRDBEmptyTransportIsEmbedded below for the
+// standalone case this collapsed into.
 
 func TestInitializeQRDBStorage_QRDBEmptyTransportIsEmbedded(t *testing.T) {
 	// Transport "" → "embedded" → initEmbeddedQRDBNode is called.
@@ -279,12 +257,7 @@ func TestInitializeQRDBStorage_QRDBEmptyTransportIsEmbedded(t *testing.T) {
 	// (embedded path will fail or succeed depending on qrdb availability,
 	// but the transport dispatch is what we're verifying.)
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "qrdb",
-			QRDB: config.QRDBConfig{
-				Transport: "", // should resolve to "embedded"
-			},
-		},
+		Datastore: config.DatastoreConfig{},
 	})
 	s.ctx = context.Background()
 	s.logger = setupLogger(config.LoggingConfig{Level: "error", Format: "json"})
@@ -292,7 +265,7 @@ func TestInitializeQRDBStorage_QRDBEmptyTransportIsEmbedded(t *testing.T) {
 	// the unsupported-transport error is NOT returned.
 	err := s.initializeQRDBStorage()
 	if err != nil {
-		var unsup *ErrUnsupportedStorageBackend
+		var unsup *datastore.ErrUnsupportedStorageBackend
 		assert.False(t, errors.As(err, &unsup), "should not be unsupported transport for empty/embedded")
 	}
 }
@@ -625,26 +598,20 @@ func TestInitializeCA_NilConfig(t *testing.T) {
 // Tests — initializePasswordStore
 // ============================================================================
 
-func TestInitializePasswordStore_FileBackend(t *testing.T) {
+// TestInitializePasswordStore_Success proves initializePasswordStore builds
+// a working password store over the one shared datastore. Datastore.Engine
+// no longer changes createStorage's behavior (go-xkms#1345: there is no
+// per-subsystem private engine left to select), so the separate
+// file/memory-engine variants this used to have collapsed into one.
+func TestInitializePasswordStore_Success(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "file",
-			Path:    t.TempDir(),
-		},
+		Datastore: config.DatastoreConfig{Engine: "file", Path: t.TempDir()},
 	})
-	err := s.initializePasswordStore()
+	var err error
+	s.qrdbStorage, err = storage.NewMemoryBackend()
 	require.NoError(t, err)
-	assert.NotNil(t, s.passwordStore)
-}
 
-func TestInitializePasswordStore_MemoryBackend(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "memory",
-		},
-	})
-	err := s.initializePasswordStore()
-	require.NoError(t, err)
+	require.NoError(t, s.initializePasswordStore())
 	assert.NotNil(t, s.passwordStore)
 }
 
@@ -727,12 +694,12 @@ func TestInitTPMPolicyService_NoTPMLeavesTheServiceOff(t *testing.T) {
 }
 
 // TestVTPMConfig resolves backends.tpm2.vtpm: off unless enabled, and an
-// enabled section without directories defaults them under storage.path.
+// enabled section without directories defaults them under datastore.path.
 func TestVTPMConfig(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
 	assert.Nil(t, s.vtpmConfig(), "no TPM2 section leaves vtpm mode off")
 
-	s.config.Storage.Path = "/var/lib/xkms"
+	s.config.Datastore.Path = "/var/lib/xkms"
 	s.config.Backends.TPM2 = &config.TPM2Config{Enabled: true, VTPM: &config.VTPMConfig{}}
 	assert.Nil(t, s.vtpmConfig(), "a vtpm section that is not enabled leaves vtpm mode off")
 
@@ -840,6 +807,10 @@ func TestBuildHardwareSealStrategies_SoftwareOnlyInOrder(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Barrier.Enabled = true
+	// "pkcs11" is not NodeFlipWired, so this deployment keeps xkms's own
+	// (non-node) barrier -- buildHardwareSealStrategies, the function this
+	// test exercises -- instead of adopting the qrdb node's barrier.
+	cfg.Barrier.Strategy = "pkcs11"
 	cfg.Barrier.PreferenceOrder = []string{"software"}
 
 	server, err := New(cfg)
@@ -971,18 +942,15 @@ func TestBuildTLSConfig_KeyAttrParseError(t *testing.T) {
 
 // TestNew_SoftwareBackendStoragePathFails verifies the error path where the
 // software backend's key storage path cannot be created.
-func TestNew_SoftwareBackendStoragePathFails(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	// Override software path to an unwritable location.
-	cfg.Backends.Software.Path = "/dev/null/no-such-dir"
-
-	_, err := New(cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "backends")
-}
+// TestNew_SoftwareBackendStoragePathFails used to prove that an unwritable
+// Backends.Software.Path aborted New() at the "backends" stage. That fault
+// injection is no longer reachable: createStorageAt
+// (pkg/server/storage_factory.go) no longer touches the filesystem -- it
+// derives a key namespace from filepath.Base(path) over the one shared
+// datastore, which cannot fail once initializeQRDBStorage has already
+// succeeded earlier in New's boot ordering (go-xkms#1345). See
+// TestNew_BackendsFailure_WrapsAsErrServiceInit's replacement comment
+// (new_error_wrapping_test.go) for the identical reasoning.
 
 // ============================================================================
 // Tests — canonicalizeCAPath symlink resolution
@@ -1008,10 +976,7 @@ func TestCanonicalizeCAPath_WithSymlink(t *testing.T) {
 func TestInitializePINManager_CreatesDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "file",
-			Path:    tmpDir,
-		},
+		Datastore: config.DatastoreConfig{Engine: "file", Path: tmpDir},
 		PIN: config.PINConfig{
 			Enabled:  true,
 			Strategy: "software",
@@ -1428,29 +1393,13 @@ func TestLoadNoiseStaticKey_Generate(t *testing.T) {
 	assert.NotNil(t, key)
 }
 
-// ============================================================================
-// Tests — initializeQRDBStorage unsupported transport variant
-// ============================================================================
-
-// TestInitializeQRDBStorage_UnknownTransportExtraCase exercises the unsupported
-// transport branch with a different transport name to complement the existing
-// TestInitializeQRDBStorage_UnsupportedTransport in backend_factory_qrdb_test.go.
-func TestInitializeQRDBStorage_UnknownTransportExtraCase(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "qrdb",
-			QRDB: config.QRDBConfig{
-				Transport: "thrift", // not a supported qrdb transport
-			},
-		},
-	})
-	s.ctx = context.Background()
-	err := s.initializeQRDBStorage()
-	require.Error(t, err)
-	// The default case returns *ErrUnsupportedStorageBackend directly.
-	var unsup *ErrUnsupportedStorageBackend
-	assert.True(t, errors.As(err, &unsup))
-}
+// TestInitializeQRDBStorage_UnknownTransportExtraCase used to exercise
+// initializeQRDBStorage's unsupported-transport branch for a bare (no Mode)
+// datastore config. An unset Datastore.Mode now defaults to "standalone"
+// (go-xkms#1345), which always builds a real embedded node rather than
+// rejecting a transport name -- see
+// TestInitializeQRDBStorage_NonQRDBBackendNoop's replacement comment
+// (storage_factory_qrdb_test.go) for where this coverage lives now.
 
 // ============================================================================
 // Tests — closeBackends with a closing keyProvider
@@ -1900,7 +1849,7 @@ func TestNewQRDBAuditSink_AuditDisabled(t *testing.T) {
 func TestBuildXKMSQRDBConfig_WithDataDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Path: tmpDir},
+		Datastore: config.DatastoreConfig{Path: tmpDir},
 	})
 	qcfg := s.buildXKMSQRDBConfig()
 	assert.Equal(t, tmpDir, qcfg.Raft.DataDir)
@@ -1910,7 +1859,7 @@ func TestBuildXKMSQRDBConfig_WithDataDir(t *testing.T) {
 
 func TestBuildXKMSQRDBConfig_NoDataDir(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Path: ""},
+		Datastore: config.DatastoreConfig{Path: ""},
 	})
 	qcfg := s.buildXKMSQRDBConfig()
 	assert.Equal(t, "memory", qcfg.Databases[0].Backend)
@@ -1971,7 +1920,11 @@ func TestNew_MTLSAuthWithoutTLSFails(t *testing.T) {
 // Tests — Shutdown with qrdb node path (stopQRDBNode called)
 // ============================================================================
 
-func TestServer_Shutdown_QRDBNodeNil(t *testing.T) {
+// TestServer_Shutdown_WithQRDBNode proves Shutdown succeeds cleanly for a
+// running server, including tearing down the embedded qrdb node every
+// standalone deployment now hosts (go-xkms#1345: there is no longer a
+// datastore configuration whose server has no node to shut down).
+func TestServer_Shutdown_WithQRDBNode(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -1985,8 +1938,7 @@ func TestServer_Shutdown_QRDBNodeNil(t *testing.T) {
 		return server.UnixGRPCServer() != nil
 	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
 
-	// qrdbNode is nil for non-qrdb backends; Shutdown should succeed.
-	assert.Nil(t, server.qrdbNode)
+	assert.NotNil(t, server.qrdbNode)
 	err = server.Shutdown()
 	assert.NoError(t, err)
 }
@@ -2243,6 +2195,11 @@ func TestInitializeBarrierRegistry_WithBarrier(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Barrier.Enabled = true
+	// "pkcs11" is not NodeFlipWired, so this deployment keeps xkms's own
+	// (non-node) barrier and registry -- s.barrier/s.barrierRegistry, the
+	// fields this test asserts on -- instead of adopting the qrdb node's,
+	// which leaves both nil (see server.go's nodeSealEnabled doc comment).
+	cfg.Barrier.Strategy = "pkcs11"
 	cfg.Barrier.PreferenceOrder = []string{"software"}
 
 	server, err := New(cfg)
@@ -2264,6 +2221,9 @@ func TestInitializeBarrierRegistry_WiresTenantServiceAndVolumePool(t *testing.T)
 
 	cfg := createMinimalConfig(t)
 	cfg.Barrier.Enabled = true
+	// See TestInitializeBarrierRegistry_WithBarrier: keeps xkms's own
+	// tenantService/volumePool construction instead of the node-flip.
+	cfg.Barrier.Strategy = "pkcs11"
 	cfg.Barrier.PreferenceOrder = []string{"software"}
 
 	server, err := New(cfg)
@@ -2286,7 +2246,7 @@ func TestInitializePINManager_UnknownStrategy(t *testing.T) {
 			Enabled:  true,
 			Strategy: "unsupported-strategy",
 		},
-		Storage: config.StorageConfig{Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 	})
 	err := s.initializePINManager()
 	require.Error(t, err)
@@ -2715,6 +2675,10 @@ func TestNew_WithBarrierAndPIN(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Barrier.Enabled = true
+	// "pkcs11" is not NodeFlipWired, so this deployment keeps xkms's own
+	// (non-node) barrier -- s.barrier/s.barrierRegistry, asserted below --
+	// instead of adopting the qrdb node's, which leaves both nil.
+	cfg.Barrier.Strategy = "pkcs11"
 	cfg.Barrier.PreferenceOrder = []string{"software"}
 	cfg.PIN.Enabled = true
 	cfg.PIN.Strategy = "software"
@@ -2765,9 +2729,15 @@ func TestInitializeKeyStore_DefaultBackendFallback(t *testing.T) {
 	t.Cleanup(func() { xkms.Reset() })
 
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 		// Default is empty → code falls back to the one available backend.
 	})
+	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
+	// give this test a real one (initializeKeyStore also builds
+	// certificate storage).
+	var qerr error
+	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	require.NoError(t, qerr)
 	s.keyProviders = map[string]types.KeyProvider{"software": &nonSealerProvider{}}
 	s.backends = map[string]xkms.Backend{}
 
@@ -2814,13 +2784,15 @@ func TestCloseQRDBStorage_StorageCloseError(t *testing.T) {
 // an explicit dir is handled (uses in-memory or creates a temp path).
 func TestInitializePasswordStore_EmptyPath(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "memory",
-			Path:    "", // no base path
-		},
+		Datastore: config.DatastoreConfig{Engine: "memory", Path: ""}, // no base path
 	})
-	err := s.initializePasswordStore()
+	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
+	// give this test a real one.
+	var err error
+	s.qrdbStorage, err = storage.NewMemoryBackend()
 	require.NoError(t, err)
+
+	require.NoError(t, s.initializePasswordStore())
 	assert.NotNil(t, s.passwordStore)
 }
 
@@ -3271,7 +3243,7 @@ func TestServer_StartUnix_EmptyProtocolDefaultsToGRPC(t *testing.T) {
 // returns an error that is wrapped and returned.
 func TestInitializeWebAuthnService_ServiceCreateError(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 	})
 	// Set a webauthnConfig with RPID="" which fails Validate().
 	s.webauthnConfig = &webauthn.Config{
@@ -3299,9 +3271,7 @@ func TestInitializeWebAuthnService_ServiceCreateError(t *testing.T) {
 // for CommonName, positive Valid, and non-empty Keys — not the algorithm string.
 func TestInitializeCA_NewFromConfigFails(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "memory",
-		},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 		CA: &ca.MultiIdentityCAConfig{
 			SelectedCA: 0,
 			Identity: []ca.Identity{
@@ -3320,6 +3290,12 @@ func TestInitializeCA_NewFromConfigFails(t *testing.T) {
 			},
 		},
 	})
+	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
+	// give this test a real one so initializeCA reaches its own
+	// config-parsing failure instead of failing earlier on storage.
+	var qerr error
+	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	require.NoError(t, qerr)
 	// Provide a software backend so the keystoreType lookup succeeds.
 	s.backends = map[string]xkms.Backend{"software": &minimalBackend{}}
 	s.ctx = context.Background()
@@ -3331,57 +3307,14 @@ func TestInitializeCA_NewFromConfigFails(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — initializeCA with storage backend that fails createStorage
-// ============================================================================
-
-// TestInitializeCA_StorageCreateFails verifies that when the configured storage
-// backend cannot create the CA subdirectory (e.g. unsupported backend), the
-// typed error ErrStorageCreate or ErrServiceInit is returned.
-func TestInitializeCA_StorageCreateFails(t *testing.T) {
-	// Use an unknown storage backend so createStorage("ca") returns
-	// ErrUnsupportedStorageBackend, which initializeCA wraps in ErrStorageCreate.
-	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "badbackend", // unknown → createStorage fails
-			Path:    t.TempDir(),
-		},
-		CA: &ca.MultiIdentityCAConfig{
-			SelectedCA: 0,
-			Identity: []ca.Identity{
-				{
-					IsRoot: true,
-					Valid:  1,
-					Subject: ca.Subject{
-						CommonName: "Test Root CA",
-					},
-					Keys: []*types.KeyConfig{
-						{
-							KeyAlgorithm: types.AlgorithmECDSA,
-							ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
-						},
-					},
-				},
-			},
-		},
-	})
-	// Register a backend so the keystoreType lookup succeeds.
-	s.backends = map[string]xkms.Backend{"software": &minimalBackend{}}
-	s.ctx = context.Background()
-
-	err := s.initializeCA()
-	require.Error(t, err)
-	// The error must come from the storage-create step inside initializeCA.
-	var storageErr *ErrStorageCreate
-	assert.True(t, errors.As(err, &storageErr), "expected ErrStorageCreate, got: %v", err)
-}
-
-// ============================================================================
 // Tests — New() barrier failure propagated through the init chain
 // ============================================================================
 
 // TestNew_BarrierStorageCreateFails verifies that when the barrier is enabled
-// but the storage backend is misconfigured so createStorage("barrier") fails,
-// New() returns ErrServiceInit wrapping the barrier init error.
+// but the datastore engine is invalid, New() refuses the configuration.
+// createStorage itself can no longer fail -- it always returns a prefixed
+// view over the single shared datastore (go-xkms#1345) -- so an invalid
+// engine is now caught earlier, by cfg.Validate() inside New().
 func TestNew_BarrierStorageCreateFails(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
@@ -3389,14 +3322,11 @@ func TestNew_BarrierStorageCreateFails(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Barrier.Enabled = true
 	cfg.Barrier.PreferenceOrder = []string{"software"}
-	// Override storage backend to one that will fail createStorage.
-	cfg.Storage.Backend = "badbackend"
+	cfg.Datastore.Engine = "badbackend"
 
 	_, err := New(cfg)
 	require.Error(t, err)
-	// The outer error is ErrServiceInit for "barrier" (or backends/keystore since
-	// software backend also uses createStorageAt which would fail first).
-	assert.NotNil(t, err)
+	assert.Contains(t, err.Error(), "datastore.engine")
 }
 
 // ============================================================================
@@ -3496,30 +3426,6 @@ func TestServer_StartREST_NoBackends(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — initializeKeyStore with unsupported storage backend (xkms service init
-// path exercised by reaching xkms.Initialize with a populated backends map)
-// ============================================================================
-
-// TestInitializeKeyStore_UnsupportedStorageBackend verifies that when the cert
-// storage path uses an unsupported backend type, ErrStorageCreate is returned
-// before any keystores are created.
-func TestInitializeKeyStore_UnsupportedStorageBackend(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "badbackend"},
-	})
-	s.keyProviders = map[string]types.KeyProvider{"software": &nonSealerProvider{}}
-	s.backends = map[string]xkms.Backend{}
-
-	err := s.initializeKeyStore()
-	require.Error(t, err)
-	var storageErr *ErrStorageCreate
-	assert.True(t, errors.As(err, &storageErr))
-}
-
-// ============================================================================
 // Tests — initializeBackends with software backend new failure
 // ============================================================================
 
@@ -3527,10 +3433,7 @@ func TestInitializeKeyStore_UnsupportedStorageBackend(t *testing.T) {
 // software backend's storage path is invalid, ErrStorageCreate is returned.
 func TestInitializeBackends_SoftwareStoragePathFails(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "file",
-			Path:    t.TempDir(),
-		},
+		Datastore: config.DatastoreConfig{Engine: "file", Path: t.TempDir()},
 		Backends: config.BackendsConfig{
 			Software: &config.SoftwareConfig{
 				Enabled: true,
@@ -3541,29 +3444,6 @@ func TestInitializeBackends_SoftwareStoragePathFails(t *testing.T) {
 	s.keyProviders = map[string]types.KeyProvider{}
 
 	err := s.initializeBackends()
-	require.Error(t, err)
-	var storageErr *ErrStorageCreate
-	assert.True(t, errors.As(err, &storageErr))
-}
-
-// ============================================================================
-// Tests — initializeBarrier storage create error
-// ============================================================================
-
-// TestInitializeBarrier_StorageCreateFails verifies that when the storage
-// backend is misconfigured, initializeBarrier returns ErrStorageCreate.
-func TestInitializeBarrier_StorageCreateFails(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "badbackend",
-		},
-		Barrier: config.BarrierConfig{
-			Enabled:         true,
-			PreferenceOrder: []string{"software"},
-		},
-	})
-
-	err := s.initializeBarrier()
 	require.Error(t, err)
 	var storageErr *ErrStorageCreate
 	assert.True(t, errors.As(err, &storageErr))
@@ -3656,31 +3536,6 @@ func TestCreateCompositeAuth_UnknownMethod(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — initializeWebAuthnService storage create error (line 844-846)
-// ============================================================================
-
-// TestInitializeWebAuthnService_StorageCreateError verifies that when the
-// configured storage backend cannot create the webauthn subdirectory (no
-// qrdb client in play), ErrServiceInit is returned.
-func TestInitializeWebAuthnService_StorageCreateError(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "badbackend"},
-	})
-	// webauthnConfig must be non-nil to enter the initialization body.
-	s.webauthnConfig = &webauthn.Config{
-		RPID:          "localhost",
-		RPDisplayName: "Test RP",
-		RPOrigins:     []string{"https://localhost"},
-	}
-	// qrdbClient must be nil so we take the createStorage("webauthn") path.
-
-	err := s.initializeWebAuthnService()
-	require.Error(t, err)
-	var svcInit *ErrServiceInit
-	assert.True(t, errors.As(err, &svcInit))
-}
-
-// ============================================================================
 // Tests — initializePINManager with bad filestorage path (lines 1055-1057)
 // ============================================================================
 
@@ -3693,30 +3548,13 @@ func TestInitializePINManager_BadPath(t *testing.T) {
 			Strategy: "software",
 		},
 		// Storage.Path + "/pin" == "/dev/null/pin" which os.MkdirAll cannot create.
-		Storage: config.StorageConfig{Path: "/dev/null"},
+		Datastore: config.DatastoreConfig{Path: "/dev/null"},
 	})
 
 	err := s.initializePINManager()
 	require.Error(t, err)
 	var loadErr *pinselect.StrategyLoadError
 	assert.True(t, errors.As(err, &loadErr), "the unreadable strategy record is reported, got %v", err)
-}
-
-// ============================================================================
-// Tests — initializePasswordStore with bad storage backend (lines 1083-1085)
-// ============================================================================
-
-// TestInitializePasswordStore_BadBackend verifies that when createStorage
-// returns an error (unsupported backend), ErrStorageCreate is returned.
-func TestInitializePasswordStore_BadBackend(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "badbackend"},
-	})
-
-	err := s.initializePasswordStore()
-	require.Error(t, err)
-	var storageErr *ErrStorageCreate
-	assert.True(t, errors.As(err, &storageErr))
 }
 
 // ============================================================================
@@ -3776,8 +3614,8 @@ func TestStartNoiseBootstrap_BadKeyFilePath(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dataDir, noiseStaticKeyFileName), []byte("not-a-valid-key"), 0600))
 
 	s := newMinimalServer(t, &config.Config{
-		Server:  config.ServerConfig{Host: "127.0.0.1", NoisePort: 0},
-		Storage: config.StorageConfig{Path: dataDir},
+		Server:    config.ServerConfig{Host: "127.0.0.1", NoisePort: 0},
+		Datastore: config.DatastoreConfig{Path: dataDir},
 	})
 	s.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
@@ -4012,9 +3850,7 @@ func TestStartUnix_UnknownProtocol(t *testing.T) {
 // backend, initializeCA returns ErrBackendNotAvailable with the custom name.
 func TestInitializeCA_BackendNotAvailableCustomType(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "memory",
-		},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 		CA: &ca.MultiIdentityCAConfig{
 			SelectedCA: 0,
 			Identity: []ca.Identity{
@@ -4058,8 +3894,15 @@ func TestInitializeKeyStore_ErrKeystoreCreate(t *testing.T) {
 	defer xkms.Reset()
 
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 	})
+	// newMinimalServer bypasses New(), so s.qrdbStorage -- the one shared
+	// datastore createStorage now always resolves through, including for
+	// the certificate storage initializeKeyStore also builds -- is never
+	// built; give this test a real one.
+	var qerr error
+	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	require.NoError(t, qerr)
 	// Inject a nil provider — xkms.New will fail with ErrBackendRequired.
 	s.keyProviders = map[string]types.KeyProvider{"software": nil}
 	s.backends = map[string]xkms.Backend{}
@@ -4108,10 +3951,7 @@ func TestPemDecode_RestNewlineStripped(t *testing.T) {
 // ErrStorageCreate.
 func TestInitializeBackends_PKCS8StorageFails(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "file",
-			Path:    t.TempDir(),
-		},
+		Datastore: config.DatastoreConfig{Engine: "file", Path: t.TempDir()},
 		Backends: config.BackendsConfig{
 			PKCS8: &config.PKCS8Config{
 				Enabled: true,
@@ -4139,8 +3979,14 @@ func TestInitializeKeyStore_EmptyBackends(t *testing.T) {
 	defer xkms.Reset()
 
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 	})
+	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
+	// give this test a real one (initializeKeyStore also builds
+	// certificate storage before the keyProviders loop runs).
+	var qerr error
+	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	require.NoError(t, qerr)
 	// No key providers → the for loop never runs → s.backends stays empty.
 	s.keyProviders = map[string]types.KeyProvider{}
 	s.backends = map[string]xkms.Backend{}
@@ -4169,8 +4015,14 @@ func TestInitializeKeyStore_DefaultBackendIsDeterministic(t *testing.T) {
 		xkms.Reset()
 
 		s := newMinimalServer(t, &config.Config{
-			Storage: config.StorageConfig{Backend: "memory"},
+			Datastore: config.DatastoreConfig{Engine: "memory"},
 		})
+		// newMinimalServer bypasses New(), so s.qrdbStorage is never
+		// built; give this test a real one (initializeKeyStore also
+		// builds certificate storage).
+		qrdbStorage, qerr := storage.NewMemoryBackend()
+		require.NoError(t, qerr)
+		s.qrdbStorage = qrdbStorage
 		s.keyProviders = make(map[string]types.KeyProvider, len(names))
 		for _, name := range names {
 			s.keyProviders[name] = &nonSealerProvider{}
@@ -4197,9 +4049,15 @@ func TestInitializeKeyStore_UnloadedConfiguredDefaultResolvesDeterministically(t
 		xkms.Reset()
 
 		s := newMinimalServer(t, &config.Config{
-			Storage: config.StorageConfig{Backend: "memory"},
-			Default: "not-compiled-in",
+			Datastore: config.DatastoreConfig{Engine: "memory"},
+			Default:   "not-compiled-in",
 		})
+		// newMinimalServer bypasses New(), so s.qrdbStorage is never
+		// built; give this test a real one (initializeKeyStore also
+		// builds certificate storage).
+		qrdbStorage, qerr := storage.NewMemoryBackend()
+		require.NoError(t, qerr)
+		s.qrdbStorage = qrdbStorage
 		s.keyProviders = make(map[string]types.KeyProvider, len(names))
 		for _, name := range names {
 			s.keyProviders[name] = &nonSealerProvider{}
@@ -4219,9 +4077,15 @@ func TestInitializeKeyStore_ConfiguredDefaultBackendIsHonoured(t *testing.T) {
 	defer xkms.Reset()
 
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
-		Default: "tpm2",
+		Datastore: config.DatastoreConfig{Engine: "memory"},
+		Default:   "tpm2",
 	})
+	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
+	// give this test a real one (initializeKeyStore also builds
+	// certificate storage).
+	var qerr error
+	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	require.NoError(t, qerr)
 	s.keyProviders = map[string]types.KeyProvider{
 		"software": &nonSealerProvider{},
 		"tpm2":     &nonSealerProvider{},
@@ -4235,24 +4099,12 @@ func TestInitializeKeyStore_ConfiguredDefaultBackendIsHonoured(t *testing.T) {
 // ============================================================================
 // Tests — initializeCA serial/revocation store failures (lines 1428-1430, 1436-1438)
 // ============================================================================
-
-// TestInitializeCA_SerialStoreFailure verifies that when createStorage("ca-serials")
-// fails, initializeCA returns ErrServiceInit wrapping the storage error.
-// We achieve this by using a storage backend that creates directories lazily;
-// the "badbackend" type makes ALL createStorage calls fail, but here we use a
-// custom approach: a server whose storage backend is "badbackend" so the
-// "ca" storage already fails — to isolate serial/revocation failures we need
-// a custom storageFailAt helper. Since these are hard to isolate without a
-// dedicated storage stub, we verify through the existing
-// TestInitializeCA_StorageCreateFails path that all storage errors are handled.
-// The serial-store failure is effectively covered by the same error-handling
-// pattern exercised in the existing test.
-
-// TestInitializeCA_RevocationStoreCreateFails is a compile-time correctness
-// check that the error path at line 1436 is syntactically reachable.
-// The actual error-handling behaviour is validated by TestInitializeCA_StorageCreateFails.
-// (Comment-only sentinel — no runtime assertion needed here since the storage
-// create error path is already exercised by TestInitializeCA_StorageCreateFails.)
+//
+// createStorage("ca-serials") / createStorage("ca-revocations") can no
+// longer fail -- every subdir is a prefixed view over the single shared
+// datastore (go-xkms#1345), constructed unconditionally -- so this failure
+// path no longer exists to test. Invalid datastore configuration is now
+// caught earlier, at cfg.Validate() (see pkg/config's TestValidate_Datastore).
 
 // ============================================================================
 // Tests — Reload reloadLogging change branch (lines 47-65 in reload.go)
@@ -4262,18 +4114,12 @@ func TestInitializeKeyStore_ConfiguredDefaultBackendIsHonoured(t *testing.T) {
 // Tests — newQRDBNode cluster-requires-raft error (qrdb_node_standalone.go:36-38)
 // ============================================================================
 
-// TestNewQRDBNode_ClusterRequiresRaft verifies that when Storage.Backend=qrdb
-// with embedded transport and Cluster.Enabled=true is used in a non-raft build,
-// initializeQRDBStorage fails with a cluster-requires-raft error.
+// TestNewQRDBNode_ClusterRequiresRaft verifies that when the datastore is
+// hosted standalone in this process and Cluster.Enabled=true is used in a
+// non-raft build, initializeQRDBStorage fails with a cluster-requires-raft error.
 func TestNewQRDBNode_ClusterRequiresRaft(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "qrdb",
-			Path:    t.TempDir(),
-			QRDB: config.QRDBConfig{
-				Transport: "embedded",
-			},
-		},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 		Cluster: config.ClusterConfig{
 			Enabled: true,
 		},
@@ -5083,13 +4929,7 @@ func TestCanonicalizeCAPath_EvalSymlinksNotDir(t *testing.T) {
 // ErrStorageCreate and returns it immediately.
 func TestInitEmbeddedQRDBNode_AuditSinkError(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "qrdb",
-			Path:    t.TempDir(),
-			QRDB: config.QRDBConfig{
-				Transport: "embedded",
-			},
-		},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 		Auth: config.AuthConfig{
 			Audit: &config.AuditConfig{
 				Enabled: true,
@@ -5227,12 +5067,18 @@ type nonSealerKeyProvider struct {
 // ErrServiceInit("barrier") at line 984-986.
 func TestInitializeBarrier_SealStrategyBuildError(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 		Barrier: config.BarrierConfig{
 			Enabled:         true,
 			PreferenceOrder: []string{string(seal.StrategyPKCS11)},
 		},
 	})
+	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
+	// give this test a real one so initializeBarrier reaches its own
+	// seal-strategy build failure instead of failing earlier on storage.
+	var qerr error
+	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	require.NoError(t, qerr)
 	// Register a provider for pkcs11 that does NOT implement types.Sealer.
 	s.keyProviders = map[string]types.KeyProvider{
 		string(seal.StrategyPKCS11): &nonSealerKeyProvider{},

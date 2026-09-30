@@ -673,8 +673,8 @@ var goldenMethodPermissions = map[string]string{
 	"user.bindCert":        "users:update",
 	"user.create":          "users:create",
 	"user.delete":          "users:delete",
-	"user.disable":         "users:update",
-	"user.enable":          "users:update",
+	"user.disable":         "users:disable",
+	"user.enable":          "users:enable",
 	"user.get":             "users:read",
 	"user.list":            "users:list",
 	"user.listCredentials": "users:read",
@@ -692,14 +692,14 @@ var goldenMethodPermissions = map[string]string{
 	"password.update":        "passwords:write",
 
 	// Platform-sealed store — pkg/api/mcp/handlers_seal_store.go. Same
-	// keys:* pairs as the PKCS#11 remote-state RPCs on every other
+	// per-verb keys:* pairs as the PKCS#11 remote-state RPCs on every other
 	// transport, since both persist key-protection material.
-	"sealStore.put":    "keys:write",
-	"sealStore.get":    "keys:read",
+	"sealStore.put":    "keys:create",
+	"sealStore.get":    "keys:get",
 	"sealStore.delete": "keys:delete",
 	"sealStore.list":   "keys:list",
-	"sealStore.reseal": "keys:write",
-	"sealStore.status": "keys:read",
+	"sealStore.reseal": "keys:update",
+	"sealStore.status": "keys:get",
 
 	// TPM policy management — pkg/api/grpc's TPMPolicy*/
 	// RPCs' (qrdb.v1.permission) options.

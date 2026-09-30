@@ -13,7 +13,11 @@
 
 package config
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
+)
 
 // PolicySection holds organization-level security policy that governs
 // backend selection, PIN requirements, platform binding, and user
@@ -76,6 +80,45 @@ type PolicySection struct {
 	// deployments. Unset here means: not locked, and not allowed.
 	PairingAllowUnattestableDevices bool `yaml:"pairing_allow_unattestable_devices" json:"pairing_allow_unattestable_devices" mapstructure:"pairing_allow_unattestable_devices"`
 	LockPairingAttestationPolicy    bool `yaml:"lock_pairing_attestation_policy" json:"lock_pairing_attestation_policy" mapstructure:"lock_pairing_attestation_policy"`
+
+	// PairingAllowedApplications and PairingAllowUnpinnedSignatures are the
+	// enterprise/SO answer to which xkey-android builds' attestation pairing
+	// and every re-attestation accept -- the same allow-list devices.yaml's
+	// attestation_policy configures on the user plane (pairing.ApplicationPolicy,
+	// #1305). LockPairingApplicationPolicy decides whether they are the answer
+	// that counts: while false the user's devices.yaml governs, and while true
+	// this section does, IN FULL -- attestation.ResolveApplicationPolicy
+	// returns it outright rather than merging it with the user's entries, so a
+	// locked deployment cannot be widened by appending an entry to
+	// devices.yaml. Owner ruling 2026-09-29 on #1305, the enterprise half of
+	// the same mechanism PairingAllowUnattestableDevices/
+	// LockPairingAttestationPolicy already establishes above.
+	//
+	// Both zero values are the safe ones, for the reason documented on
+	// PairingAllowUnattestableDevices: unset here means not locked (the user's
+	// devices.yaml governs) and nothing enterprise-allowed, never a wider
+	// default a partial policy file could fall into by omission.
+	PairingAllowedApplications     []pairing.AllowedApplication `yaml:"pairing_allowed_applications" json:"pairing_allowed_applications" mapstructure:"pairing_allowed_applications"`
+	PairingAllowUnpinnedSignatures bool                         `yaml:"pairing_allow_unpinned_signatures" json:"pairing_allow_unpinned_signatures" mapstructure:"pairing_allow_unpinned_signatures"`
+	LockPairingApplicationPolicy   bool                         `yaml:"lock_pairing_application_policy" json:"lock_pairing_application_policy" mapstructure:"lock_pairing_application_policy"`
+
+	// Phone sync export policy (go-xkms#1306).
+	//
+	// PhoneSyncAllowSecretExport is the enterprise/SO answer to "may `xkey
+	// device listen`/`relay` serve remote.syncPasswords, remote.syncOATH and
+	// remote.syncAll -- the bridge methods that export this host's password
+	// vault or OATH secrets to the phone -- at all?". LockPhoneSyncPolicy
+	// decides whether it is the answer that counts: while it is false the
+	// operator's own --allow-sync flag for that session governs, and while
+	// it is true this section does and --allow-sync is ignored. Mirrors
+	// LockPairingAttestationPolicy's precedent above (owner ruling
+	// 2026-08-23 on #95).
+	//
+	// Both zero values are the safe ones, for the same reason
+	// PairingAllowUnattestableDevices's are: unset here means not locked,
+	// and not allowed.
+	PhoneSyncAllowSecretExport bool `yaml:"phone_sync_allow_secret_export" json:"phone_sync_allow_secret_export" mapstructure:"phone_sync_allow_secret_export"`
+	LockPhoneSyncPolicy        bool `yaml:"lock_phone_sync_policy" json:"lock_phone_sync_policy" mapstructure:"lock_phone_sync_policy"`
 
 	OrganizationName string `yaml:"organization_name" json:"organization_name" mapstructure:"organization_name"`
 	PolicyVersion    int    `yaml:"policy_version" json:"policy_version" mapstructure:"policy_version"`

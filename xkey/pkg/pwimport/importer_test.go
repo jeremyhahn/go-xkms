@@ -14,8 +14,10 @@
 package pwimport
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -26,6 +28,18 @@ func newTestImporter(t *testing.T) *Importer {
 	backend := xkms.NewStorageMemory()
 	store := xkms.NewStaticPasswordStore(backend)
 	return NewImporter(store)
+}
+
+// getErrorStore decorates a real xkms.StaticPasswordStore and overrides Get
+// to always fail with a fixed error, so tests can prove a non-not-found
+// Get failure is handled distinctly from "no existing entry".
+type getErrorStore struct {
+	xkms.StaticPasswordStore
+	getErr error
+}
+
+func (s *getErrorStore) Get(idOrName string) (*xkms.StaticPassword, error) {
+	return nil, s.getErr
 }
 
 func TestImporter_SupportedFormats(t *testing.T) {
@@ -244,6 +258,45 @@ func TestImporter_Import_DuplicateError(t *testing.T) {
 	}
 	if len(result2.Errors) != 1 {
 		t.Errorf("Errors count = %d, want 1", len(result2.Errors))
+	}
+}
+
+// TestImporter_Import_GetErrorOtherThanNotFound verifies that a store.Get
+// failure which is not "not found" (e.g. a backend read error) records the
+// entry as failed instead of being treated as "no existing entry" and
+// imported anyway, which would risk masking a duplicate the store simply
+// failed to report.
+func TestImporter_Import_GetErrorOtherThanNotFound(t *testing.T) {
+	content := `"Title","Username","Password"
+"Entry1","user1","pass1"
+`
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "test.csv")
+	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	backend := xkms.NewStorageMemory()
+	realStore := xkms.NewStaticPasswordStore(backend)
+	getErr := errors.New("backend read failure")
+	store := &getErrorStore{StaticPasswordStore: realStore, getErr: getErr}
+	imp := NewImporter(store)
+
+	result, err := imp.Import(&ImportOptions{FilePath: filePath})
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Imported != 0 {
+		t.Errorf("Imported = %d, want 0: a Get failure must not be treated as no existing entry", result.Imported)
+	}
+	if result.Failed != 1 {
+		t.Errorf("Failed = %d, want 1", result.Failed)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("Errors count = %d, want 1", len(result.Errors))
+	}
+	if !strings.Contains(result.Errors[0].Error, getErr.Error()) {
+		t.Errorf("Errors[0].Error = %q, want it to contain %q", result.Errors[0].Error, getErr.Error())
 	}
 }
 
