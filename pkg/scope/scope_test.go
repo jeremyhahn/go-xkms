@@ -110,6 +110,46 @@ func TestPrefix_RefusesUnsafeSegments(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestFeaturePrefixAndScopeRoot(t *testing.T) {
+	for sc, want := range map[scope.Scope]string{
+		scope.Tenant:  "ssh/shared/",
+		scope.User:    "ssh/users/alice/",
+		scope.Service: "ssh/services/alice/",
+	} {
+		got, err := scope.FeaturePrefix("ssh", sc, "alice")
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+
+		full, err := scope.Prefix("acme", "ssh", sc, "alice")
+		require.NoError(t, err)
+		assert.Equal(t, "acme/"+want, full, "Prefix is the tenant root plus FeaturePrefix")
+	}
+	for sc, want := range map[scope.Scope]string{
+		scope.Tenant: "ssh/shared/", scope.User: "ssh/users/", scope.Service: "ssh/services/",
+	} {
+		got, err := scope.ScopeRoot("ssh", sc)
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+	}
+
+	root, err := scope.TenantRoot("")
+	require.NoError(t, err)
+	assert.Equal(t, "system/", root)
+
+	_, err = scope.FeaturePrefix("", scope.Tenant, "")
+	require.Error(t, err)
+	_, err = scope.FeaturePrefix("ssh", scope.User, "")
+	require.Error(t, err)
+	_, err = scope.FeaturePrefix("ssh", "bogus", "x")
+	require.Error(t, err)
+	_, err = scope.ScopeRoot("ssh", "bogus")
+	require.Error(t, err)
+	_, err = scope.ScopeRoot("a/b", scope.User)
+	require.Error(t, err)
+	_, err = scope.TenantRoot("a/b")
+	require.Error(t, err)
+}
+
 func TestPrincipalOf(t *testing.T) {
 	platform := scope.PrincipalOf(nil)
 	assert.True(t, platform.Platform)

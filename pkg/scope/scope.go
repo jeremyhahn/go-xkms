@@ -107,9 +107,9 @@ func IsSystem(tenantID string) bool {
 	return TenantName(tenantID) == SystemTenant
 }
 
-// Root returns "{tenant}/{feature}/", the root of a feature's keyspace in
-// tenantID.
-func Root(tenantID, feature string) (string, error) {
+// TenantRoot returns "{tenant}/", the root of every feature's keyspace in
+// tenantID ("" and the system tenant are "system/").
+func TenantRoot(tenantID string) (string, error) {
 	tenant := TenantName(tenantID)
 	if err := storage.ValidateTenantID(tenant); err != nil {
 		return "", &InvalidSegmentError{Field: "tenant", Value: tenant, Err: err}
@@ -117,20 +117,46 @@ func Root(tenantID, feature string) (string, error) {
 	if err := validSegment("tenant", tenant); err != nil {
 		return "", err
 	}
-	if err := validSegment("feature", feature); err != nil {
-		return "", err
-	}
-	return tenant + "/" + feature + "/", nil
+	return tenant + "/", nil
 }
 
-// Prefix returns the keyspace holding a feature's objects of scope sc in
-// tenantID. owner is the owning subject (User) or workload (Service); it is
-// ignored for Tenant scope.
-func Prefix(tenantID, feature string, sc Scope, owner string) (string, error) {
-	root, err := Root(tenantID, feature)
+// Root returns "{tenant}/{feature}/", the root of a feature's keyspace in
+// tenantID.
+func Root(tenantID, feature string) (string, error) {
+	tenant, err := TenantRoot(tenantID)
 	if err != nil {
 		return "", err
 	}
+	if err := validSegment("feature", feature); err != nil {
+		return "", err
+	}
+	return tenant + feature + "/", nil
+}
+
+// Prefix returns the keyspace holding a feature's objects of scope sc in
+// tenantID: TenantRoot(tenantID) + FeaturePrefix(feature, sc, owner).
+func Prefix(tenantID, feature string, sc Scope, owner string) (string, error) {
+	tenant, err := TenantRoot(tenantID)
+	if err != nil {
+		return "", err
+	}
+	rel, err := FeaturePrefix(feature, sc, owner)
+	if err != nil {
+		return "", err
+	}
+	return tenant + rel, nil
+}
+
+// FeaturePrefix returns a scope's keyspace relative to its tenant root:
+// "{feature}/shared/", "{feature}/users/{owner}/" or
+// "{feature}/services/{owner}/". owner is the owning subject (User) or
+// workload (Service); it is ignored for Tenant scope. A store whose backend
+// is already a tenant's partition (the tenant root) keys its records with it.
+func FeaturePrefix(feature string, sc Scope, owner string) (string, error) {
+	if err := validSegment("feature", feature); err != nil {
+		return "", err
+	}
+	root := feature + "/"
 	switch sc {
 	case Tenant:
 		return root + sharedSegment + "/", nil
@@ -144,6 +170,25 @@ func Prefix(tenantID, feature string, sc Scope, owner string) (string, error) {
 			return "", err
 		}
 		return root + servicesSegment + "/" + owner + "/", nil
+	default:
+		return "", &InvalidScopeError{Value: string(sc)}
+	}
+}
+
+// ScopeRoot returns "{feature}/shared/", "{feature}/users/" or
+// "{feature}/services/": the relative prefix of every owner's objects of
+// scope sc, for listing a scope across owners.
+func ScopeRoot(feature string, sc Scope) (string, error) {
+	if err := validSegment("feature", feature); err != nil {
+		return "", err
+	}
+	switch sc {
+	case Tenant:
+		return feature + "/" + sharedSegment + "/", nil
+	case User:
+		return feature + "/" + usersSegment + "/", nil
+	case Service:
+		return feature + "/" + servicesSegment + "/", nil
 	default:
 		return "", &InvalidScopeError{Value: string(sc)}
 	}
