@@ -116,14 +116,32 @@ func TestRun_FullLifecycleGracefulShutdown(t *testing.T) {
 	os.Args = []string{"xkmsd", "--config", path}
 	t.Cleanup(func() { os.Args = origArgs })
 
+	// adminRouterState is package-level; clear any value an earlier test left so
+	// the readiness wait below observes THIS run() reaching it.
+	adminRouterState.Store(nil)
+
 	done := make(chan int, 1)
 	go func() { done <- run() }()
 
-	// Give run() time to reach its shutdown wait (config load, compliance
-	// gate, admin module construction, server.New, srv.Start, ACME no-op,
-	// finalizeAdminModule) before delivering the "signal". This mirrors
-	// TestSetupSignalHandler_SIGTERMCancelsContext's own settle delay.
-	time.Sleep(300 * time.Millisecond)
+	// Wait until run() has reached its shutdown wait before delivering the
+	// signal. run() registers its signal handler (setupSignalHandler) before
+	// serve(), and serve() publishes adminRouterState in finalizeAdminModule
+	// immediately before blocking on the shutdown context, so a non-nil
+	// adminRouterState proves the handler is installed. A fixed sleep raced
+	// the handler registration on a loaded CI runner: the SIGTERM landed first
+	// and run() then waited forever.
+	deadline := time.Now().Add(30 * time.Second)
+	for adminRouterState.Load() == nil {
+		select {
+		case code := <-done:
+			t.Fatalf("run() returned %d before reaching its shutdown wait", code)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("run() did not reach its shutdown wait within 30s")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatalf("failed to send SIGTERM to self: %v", err)
 	}
