@@ -18,7 +18,6 @@ import (
 	"errors"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
@@ -158,7 +157,7 @@ type PasswordAccessModeResult struct {
 
 var (
 	// ErrPasswordStoreNotConfigured is returned when password store operations
-	// are attempted without a configured TenantPasswordStoreManager.
+	// are attempted without a password store wired into the XKMS service.
 	ErrPasswordStoreNotConfigured = errors.New("password store not configured")
 
 	// ErrPasswordIDRequired is returned when an operation requires a password
@@ -187,21 +186,15 @@ func errPasswordStoreNotConfigured() error {
 	return &KeyOpError{Code: ErrCodeServiceUnavailable, Err: ErrPasswordStoreNotConfigured}
 }
 
-// resolvePasswordStore returns the appropriate store for the request context.
-// When a manager is configured and the identity has a TenantID, a scoped store
-// (with personal/shared separation) is returned. Otherwise, the system store
-// is returned.
-func (s *Server) resolvePasswordStore(ctx context.Context) (staticpw.Store, error) {
-	if s.passwordManager == nil {
-		return nil, ErrPasswordStoreNotConfigured
+// passwordService returns the XKMS service every password handler delegates
+// to, or the Service-unavailable error when none is wired. The servicer is
+// the single place that resolves the caller's store and enforces the
+// shared-entry ownership rule, so no handler touches a store directly.
+func (s *Server) passwordService() (*xkms.XKMSService, error) {
+	if s.xkmsService == nil {
+		return nil, errPasswordStoreNotConfigured()
 	}
-
-	identity := auth.GetIdentity(ctx)
-	if identity != nil && identity.TenantID != "" {
-		return s.passwordManager.ResolveScopedStore(identity.TenantID, identity.Subject)
-	}
-
-	return s.passwordManager.SystemStore(), nil
+	return s.xkmsService, nil
 }
 
 // handlePasswordAdd handles the password.add method.
@@ -211,12 +204,12 @@ func (s *Server) handlePasswordAdd(ctx context.Context, req *JSONRPCRequest) (in
 		return nil, err
 	}
 
-	store, err := s.resolvePasswordStore(ctx)
+	svc, err := s.passwordService()
 	if err != nil {
-		return nil, mapPasswordStoreError(err)
+		return nil, err
 	}
 
-	pw := &staticpw.StaticPassword{
+	resp, err := svc.PasswordAdd(ctx, &transport.PasswordAddRequest{
 		Name:       params.Name,
 		Title:      params.Title,
 		Username:   params.Username,
@@ -225,15 +218,14 @@ func (s *Server) handlePasswordAdd(ctx context.Context, req *JSONRPCRequest) (in
 		Notes:      params.Notes,
 		FolderPath: params.FolderPath,
 		Shared:     params.Shared,
-	}
-
-	if err := store.Add(pw); err != nil {
+	})
+	if err != nil {
 		return nil, mapPasswordError(err)
 	}
 
 	return PasswordAddResult{
-		ID:      pw.ID,
-		Name:    pw.Name,
+		ID:      resp.ID,
+		Name:    resp.Name,
 		Message: "Password added successfully",
 	}, nil
 }
@@ -249,12 +241,12 @@ func (s *Server) handlePasswordGet(ctx context.Context, req *JSONRPCRequest) (in
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: ErrPasswordIDRequired}
 	}
 
-	store, err := s.resolvePasswordStore(ctx)
+	svc, err := s.passwordService()
 	if err != nil {
-		return nil, mapPasswordStoreError(err)
+		return nil, err
 	}
 
-	pw, err := store.Get(params.ID)
+	pw, err := svc.PasswordGet(ctx, &transport.PasswordGetRequest{ID: params.ID})
 	if err != nil {
 		return nil, mapPasswordError(err)
 	}
@@ -271,8 +263,8 @@ func (s *Server) handlePasswordGet(ctx context.Context, req *JSONRPCRequest) (in
 		OwnerID:    pw.OwnerID,
 		Shared:     pw.Shared,
 		ReadOnly:   pw.ReadOnly,
-		CreatedAt:  pw.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:  pw.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:  pw.CreatedAt,
+		UpdatedAt:  pw.UpdatedAt,
 	}, nil
 }
 
@@ -283,37 +275,21 @@ func (s *Server) handlePasswordList(ctx context.Context, req *JSONRPCRequest) (i
 		return nil, err
 	}
 
-	store, err := s.resolvePasswordStore(ctx)
+	svc, err := s.passwordService()
 	if err != nil {
-		return nil, mapPasswordStoreError(err)
+		return nil, err
 	}
 
-	var entries []*staticpw.StaticPassword
-
-	// Scope-aware listing.
-	switch {
-	case params.Scope != "":
-		ps := staticpw.PasswordScope(params.Scope)
-		if !ps.IsValid() {
-			return nil, mapPasswordStoreError(staticpw.ErrInvalidScope)
-		}
-		if scopedStore, ok := store.(*staticpw.ScopedStore); ok {
-			entries, err = scopedStore.ListByScope(ps)
-		} else {
-			entries, err = store.List()
-		}
-	case params.Folder != "":
-		entries, err = store.ListByFolder(params.Folder)
-	default:
-		entries, err = store.List()
-	}
-
+	resp, err := svc.PasswordList(ctx, &transport.PasswordListRequest{
+		FolderPath: params.Folder,
+		Scope:      params.Scope,
+	})
 	if err != nil {
 		return nil, mapPasswordError(err)
 	}
 
-	infos := make([]PasswordInfo, len(entries))
-	for i, pw := range entries {
+	infos := make([]PasswordInfo, len(resp.Passwords))
+	for i, pw := range resp.Passwords {
 		infos[i] = PasswordInfo{
 			ID:         pw.ID,
 			Name:       pw.Name,
@@ -323,8 +299,8 @@ func (s *Server) handlePasswordList(ctx context.Context, req *JSONRPCRequest) (i
 			FolderPath: pw.FolderPath,
 			OwnerID:    pw.OwnerID,
 			Shared:     pw.Shared,
-			CreatedAt:  pw.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			UpdatedAt:  pw.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			CreatedAt:  pw.CreatedAt,
+			UpdatedAt:  pw.UpdatedAt,
 		}
 	}
 
@@ -334,7 +310,9 @@ func (s *Server) handlePasswordList(ctx context.Context, req *JSONRPCRequest) (i
 	}, nil
 }
 
-// handlePasswordUpdate handles the password.update method.
+// handlePasswordUpdate handles the password.update method. The entry is read
+// first so an ID given as a name resolves to the entry's canonical ID and the
+// result can report the entry's resulting ID and name.
 func (s *Server) handlePasswordUpdate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordUpdateParams
 	if err := decodeParams(req, &params); err != nil {
@@ -345,49 +323,53 @@ func (s *Server) handlePasswordUpdate(ctx context.Context, req *JSONRPCRequest) 
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: ErrPasswordIDRequired}
 	}
 
-	store, err := s.resolvePasswordStore(ctx)
+	svc, err := s.passwordService()
 	if err != nil {
-		return nil, mapPasswordStoreError(err)
+		return nil, err
 	}
 
-	// Get existing entry.
-	existing, err := store.Get(params.ID)
+	existing, err := svc.PasswordGet(ctx, &transport.PasswordGetRequest{ID: params.ID})
 	if err != nil {
 		return nil, mapPasswordError(err)
 	}
 
-	// Apply updates from request (only non-nil pointer fields).
-	if params.Name != nil {
-		existing.Name = *params.Name
-	}
-	if params.Title != nil {
-		existing.Title = *params.Title
-	}
-	if params.Username != nil {
-		existing.Username = *params.Username
-	}
-	if params.Password != nil {
-		existing.Password = *params.Password
-	}
-	if params.URL != nil {
-		existing.URL = *params.URL
-	}
-	if params.Notes != nil {
-		existing.Notes = *params.Notes
-	}
-	if params.FolderPath != nil {
-		existing.FolderPath = *params.FolderPath
-	}
-
-	if err := store.Update(existing); err != nil {
+	if err := svc.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{
+		ID:         existing.ID,
+		Name:       params.Name,
+		Title:      params.Title,
+		Username:   params.Username,
+		Password:   params.Password,
+		URL:        params.URL,
+		Notes:      params.Notes,
+		FolderPath: params.FolderPath,
+	}); err != nil {
 		return nil, mapPasswordError(err)
 	}
 
+	id, name := updatedPasswordIdentity(existing, params.Name, params.FolderPath)
 	return PasswordUpdateResult{
-		ID:      existing.ID,
-		Name:    existing.Name,
+		ID:      id,
+		Name:    name,
 		Message: "Password updated successfully",
 	}, nil
+}
+
+// updatedPasswordIdentity returns the ID and name existing has after an
+// update that set name and folder (nil when unchanged). An entry's ID is
+// derived from its name and folder (staticpw.GenerateID), so renaming or
+// moving it re-keys it and the result must report the new ID.
+func updatedPasswordIdentity(existing *transport.PasswordGetResponse, name, folder *string) (string, string) {
+	if name == nil && folder == nil {
+		return existing.ID, existing.Name
+	}
+	newName, newFolder := existing.Name, existing.FolderPath
+	if name != nil {
+		newName = *name
+	}
+	if folder != nil {
+		newFolder = *folder
+	}
+	return staticpw.GenerateID(newName, newFolder), newName
 }
 
 // handlePasswordDelete handles the password.delete method.
@@ -401,12 +383,12 @@ func (s *Server) handlePasswordDelete(ctx context.Context, req *JSONRPCRequest) 
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: ErrPasswordIDRequired}
 	}
 
-	store, err := s.resolvePasswordStore(ctx)
+	svc, err := s.passwordService()
 	if err != nil {
-		return nil, mapPasswordStoreError(err)
+		return nil, err
 	}
 
-	if err := store.Delete(params.ID); err != nil {
+	if err := svc.PasswordDelete(ctx, &transport.PasswordDeleteRequest{ID: params.ID}); err != nil {
 		return nil, mapPasswordError(err)
 	}
 
@@ -415,20 +397,17 @@ func (s *Server) handlePasswordDelete(ctx context.Context, req *JSONRPCRequest) 
 	}, nil
 }
 
-// handlePasswordUnlock handles the password.unlock method.
+// handlePasswordUnlock handles the password.unlock method. It opens the
+// caller's personal password session; sessions are per user, so this never
+// opens another user's personal entries.
 //
-// The unlock itself is performed by the service layer, which verifies the
-// caller's user PIN first. The handler must not call
-// TenantPasswordStoreManager.UnlockTenant directly: that path carries no
-// credential check, so any authenticated tenant user could open the store.
+// The servicer verifies the caller's user PIN before opening the session. A
+// request without an identity has no personal session and is answered with
+// Method not found by the servicer's ErrOperationNotSupported.
 func (s *Server) handlePasswordUnlock(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.passwordManager == nil || s.xkmsService == nil {
-		return nil, errPasswordStoreNotConfigured()
-	}
-
-	identity := auth.GetIdentity(ctx)
-	if auth.IsCrossTenant(identity) {
-		return nil, mapPasswordError(staticpw.ErrInvalidTenantID)
+	svc, err := s.passwordService()
+	if err != nil {
+		return nil, err
 	}
 
 	// The user PIN is optional on the wire so an unprovisioned deployment gets
@@ -442,40 +421,58 @@ func (s *Server) handlePasswordUnlock(ctx context.Context, req *JSONRPCRequest) 
 		}
 	}
 
-	if err := s.xkmsService.PasswordStoreUnlock(ctx, &unlockReq); err != nil {
+	if err := svc.PasswordStoreUnlock(ctx, &unlockReq); err != nil {
 		return nil, mapPasswordUnlockError(err)
 	}
 
-	status, err := s.passwordManager.TenantStoreStatus(identity.TenantID)
-	if err != nil {
-		return nil, mapPasswordStoreError(err)
-	}
-
-	return PasswordStoreStatusResult{
-		Available:     true,
-		IsLocked:      status.IsLocked,
-		BarrierSealed: status.BarrierSealed,
-		PasswordCount: status.PasswordCount,
-		Message:       "Store unlocked successfully",
-	}, nil
+	return passwordStatusResult(ctx, svc, "Store unlocked successfully")
 }
 
-// handlePasswordLock handles the password.lock method.
+// handlePasswordLock handles the password.lock method. It closes the caller's
+// personal password session; other users' sessions are untouched.
 func (s *Server) handlePasswordLock(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.passwordManager == nil {
-		return nil, errPasswordStoreNotConfigured()
+	svc, err := s.passwordService()
+	if err != nil {
+		return nil, err
 	}
 
-	identity := auth.GetIdentity(ctx)
-	if auth.IsCrossTenant(identity) {
-		return nil, mapPasswordError(staticpw.ErrInvalidTenantID)
+	if err := svc.PasswordStoreLock(ctx); err != nil {
+		return nil, mapPasswordLockError(err)
 	}
 
-	if err := s.passwordManager.LockTenant(identity.TenantID); err != nil {
-		return nil, mapPasswordStoreError(err)
+	return passwordStatusResult(ctx, svc, "Store locked successfully")
+}
+
+// handlePasswordStatus handles the password.status method. It reports the
+// caller's view of its store: whether its personal session is locked, the
+// barrier's seal state, and how many entries it can read now. A deployment
+// with no password store reports Available=false rather than an error.
+func (s *Server) handlePasswordStatus(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	svc, err := s.passwordService()
+	if err != nil {
+		return passwordNotConfiguredStatus(), nil
 	}
 
-	status, err := s.passwordManager.TenantStoreStatus(identity.TenantID)
+	result, err := passwordStatusResult(ctx, svc, "Password store status retrieved")
+	if errors.Is(err, ErrPasswordStoreNotConfigured) {
+		return passwordNotConfiguredStatus(), nil
+	}
+	return result, err
+}
+
+// passwordNotConfiguredStatus is the status reported when no password store
+// is wired.
+func passwordNotConfiguredStatus() PasswordStoreStatusResult {
+	return PasswordStoreStatusResult{
+		Available: false,
+		Message:   "Password store not configured",
+	}
+}
+
+// passwordStatusResult reads the caller's store status through svc and
+// renders it with message.
+func passwordStatusResult(ctx context.Context, svc *xkms.XKMSService, message string) (interface{}, error) {
+	status, err := svc.PasswordStoreStatus(ctx)
 	if err != nil {
 		return nil, mapPasswordStoreError(err)
 	}
@@ -485,39 +482,7 @@ func (s *Server) handlePasswordLock(ctx context.Context, req *JSONRPCRequest) (i
 		IsLocked:      status.IsLocked,
 		BarrierSealed: status.BarrierSealed,
 		PasswordCount: status.PasswordCount,
-		Message:       "Store locked successfully",
-	}, nil
-}
-
-// handlePasswordStatus handles the password.status method.
-func (s *Server) handlePasswordStatus(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.passwordManager == nil {
-		return PasswordStoreStatusResult{
-			Available: false,
-			Message:   "Password store not configured",
-		}, nil
-	}
-
-	identity := auth.GetIdentity(ctx)
-	if identity != nil && identity.TenantID != "" {
-		status, err := s.passwordManager.TenantStoreStatus(identity.TenantID)
-		if err != nil {
-			return nil, mapPasswordStoreError(err)
-		}
-
-		return PasswordStoreStatusResult{
-			Available:     true,
-			IsLocked:      status.IsLocked,
-			BarrierSealed: status.BarrierSealed,
-			PasswordCount: status.PasswordCount,
-			Message:       "Password store status retrieved",
-		}, nil
-	}
-
-	// System-level fallback.
-	return PasswordStoreStatusResult{
-		Available: true,
-		Message:   "Password store is available",
+		Message:       message,
 	}, nil
 }
 
@@ -600,9 +565,8 @@ func mapPasswordAccessModeError(err error) error {
 	}
 }
 
-// mapPasswordError converts an error from a staticpw.Store method (or a
-// caller-supplied sentinel such as staticpw.ErrInvalidTenantID) into a
-// *KeyOpError, mirroring the JSON-RPC-vocabulary-appropriate code
+// mapPasswordError converts an error returned by an XKMSService password
+// entry method into a *KeyOpError, mirroring the JSON-RPC-vocabulary-appropriate code
 // pkg/api/grpc/service_password.go's mapPasswordError chooses for the same
 // sentinel (its own per-case gRPC status message is not reproduced here;
 // this transport keeps its own established wording per case). It used to
@@ -622,11 +586,12 @@ func mapPasswordError(err error) error {
 	case errors.Is(err, staticpw.ErrInvalidCharset):
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidCharset}
 	case errors.Is(err, staticpw.ErrInvalidTenantID):
-		// Matches gRPC's codes.InvalidArgument for the same cross-tenant
-		// condition (service_password.go). handlePasswordUnlock and
-		// handlePasswordLock route their cross-tenant refusal through here
-		// rather than returning the bare sentinel.
+		// Matches gRPC's codes.InvalidArgument (service_password.go).
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidTenantID}
+	case errors.Is(err, staticpw.ErrInvalidFolderPath):
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidFolderPath}
+	case errors.Is(err, staticpw.ErrFolderPathTooDeep):
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrFolderPathTooDeep}
 	case errors.Is(err, staticpw.ErrPasswordExists):
 		return &KeyOpError{Code: sdkssh.JSONRPCCodeDuplicate, Err: staticpw.ErrPasswordExists}
 	case errors.Is(err, staticpw.ErrStoreClosed):
@@ -635,8 +600,15 @@ func mapPasswordError(err error) error {
 		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: staticpw.ErrPasswordNotFound}
 	case errors.Is(err, staticpw.ErrPasswordReadOnly):
 		return &KeyOpError{Code: ErrCodeForbidden, Err: staticpw.ErrPasswordReadOnly}
+	case errors.Is(err, staticpw.ErrNotOwner):
+		// A shared entry the caller does not own; matches gRPC's
+		// codes.PermissionDenied and REST's 403.
+		return &KeyOpError{Code: ErrCodeForbidden, Err: staticpw.ErrNotOwner}
 	default:
-		return &KeyOpError{Code: ErrCodeInternalError, Err: err}
+		// Store resolution errors (not configured, locked, sealed, unknown
+		// tenant, invalid identity or scope) reach the entry handlers too,
+		// because the servicer resolves the caller's store on every call.
+		return mapPasswordStoreError(err)
 	}
 }
 
@@ -657,28 +629,56 @@ func mapPasswordUnlockError(err error) error {
 	case errors.Is(err, xkms.ErrPasswordStoreUserPINRequired),
 		errors.Is(err, xkms.ErrPasswordStoreUserPINNotProvisioned):
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
-	case errors.Is(err, xkms.ErrNotConfigured), errors.Is(err, xkms.ErrOperationNotSupported):
+	case errors.Is(err, xkms.ErrOperationNotSupported):
+		// A request without an identity has no personal session: a
+		// capability boundary, reported as REST's 501 is.
 		return &KeyOpError{Code: ErrCodeMethodNotFound, Err: err}
-	case errors.Is(err, staticpw.ErrStoreNotLocked),
-		errors.Is(err, seal.ErrTenantSealed),
+	case errors.Is(err, xkms.ErrNilRequest):
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	case errors.Is(err, xkms.ErrNotConfigured),
+		errors.Is(err, staticpw.ErrInvalidUserID),
+		errors.Is(err, staticpw.ErrNoSystemBarrier),
 		errors.Is(err, seal.ErrTenantNotFound):
+		return mapPasswordStoreError(err)
+	case errors.Is(err, staticpw.ErrStoreNotLocked),
+		errors.Is(err, seal.ErrTenantSealed):
 		return classified(ErrCodeInternalError, err)
 	default:
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "user PIN verification failed"}}
 	}
 }
 
-// mapPasswordStoreError converts an error from resolvePasswordStore or a
-// staticpw.Store/seal.Barrier method into a *KeyOpError. Like
-// mapPasswordError, it used to return an unclassified, unwrapped sentinel
-// for every case, so every caller of resolvePasswordStore -- and
-// handlePasswordLock's LockTenant, handlePasswordStatus's
-// TenantStoreStatus -- reported ErrCodeInternalError regardless of cause
+// mapPasswordLockError converts an error returned by
+// XKMSService.PasswordStoreLock into a *KeyOpError. It mirrors
+// mapPasswordUnlockError: a request without an identity is a capability
+// boundary (Method not found), and a session that is already locked is a
+// client-facing precondition failure on the internal floor, as an already
+// open session is on unlock.
+func mapPasswordLockError(err error) error {
+	switch {
+	case errors.Is(err, xkms.ErrOperationNotSupported):
+		return &KeyOpError{Code: ErrCodeMethodNotFound, Err: err}
+	case errors.Is(err, staticpw.ErrStoreAlreadyLocked):
+		return classified(ErrCodeInternalError, err)
+	default:
+		return mapPasswordStoreError(err)
+	}
+}
+
+// mapPasswordStoreError converts an error the servicer reports while
+// resolving the caller's store (or reading its status) into a *KeyOpError.
+// It used to return an unclassified, unwrapped sentinel for every case, so
+// every caller reported ErrCodeInternalError regardless of cause
 // (go-xkms#912).
 func mapPasswordStoreError(err error) error {
 	switch {
-	case errors.Is(err, ErrPasswordStoreNotConfigured), errors.Is(err, staticpw.ErrNotConfigured):
+	case errors.Is(err, ErrPasswordStoreNotConfigured),
+		errors.Is(err, staticpw.ErrNotConfigured),
+		errors.Is(err, xkms.ErrNotConfigured),
+		errors.Is(err, staticpw.ErrNoSystemBarrier):
 		return errPasswordStoreNotConfigured()
+	case errors.Is(err, xkms.ErrNilRequest):
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: xkms.ErrNilRequest}
 	case errors.Is(err, seal.ErrTenantNotFound):
 		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: seal.ErrTenantNotFound}
 	case errors.Is(err, staticpw.ErrInvalidUserID):

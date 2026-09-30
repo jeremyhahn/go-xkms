@@ -654,10 +654,6 @@ type HostConfig struct {
 	// answering "not configured".
 	PasswordStore *staticpw.BackendStore
 
-	// PasswordStoreManager routes Password Manager entries to per-tenant
-	// stores; pass the same manager the XKMSService was wired with.
-	PasswordStoreManager *staticpw.TenantPasswordStoreManager
-
 	// SSHClient enables the /xkms/v1/ssh routes. Nil leaves them
 	// answering "not configured".
 	SSHClient sdkssh.Client
@@ -784,7 +780,6 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 	}
 
 	cfg.PasswordStore = hc.PasswordStore
-	cfg.PasswordStoreManager = hc.PasswordStoreManager
 	cfg.SSHClient = hc.SSHClient
 	// The XKMSService is the CA servicer when it carries a CA -- the same
 	// condition xkmsd's buildRESTConfig gates restConfig.CA on.

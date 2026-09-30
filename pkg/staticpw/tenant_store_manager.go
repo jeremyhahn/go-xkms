@@ -14,46 +14,78 @@
 package staticpw
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
-// TenantStoreStatus contains the status of a tenant's password store
-// including session lock state, barrier seal state, and password count.
+// ErrNoSystemBarrier is returned when the system tenant's password store is
+// addressed and the barrier registry holds no system barrier.
+var ErrNoSystemBarrier = errors.New("staticpw: the barrier registry has no system barrier")
+
+// TenantStoreStatus is the password store status one user sees: whether the
+// user's personal session is locked, whether the tenant barrier is sealed,
+// and how many entries the user can currently read.
 type TenantStoreStatus struct {
 	IsLocked      bool `json:"is_locked"`
 	BarrierSealed bool `json:"barrier_sealed"`
 	PasswordCount int  `json:"password_count"`
 }
 
-// tenantPasswordState holds the per-tenant shared store, per-user personal
-// stores, the underlying backend, and session lock state.
+// sealProbe reports whether a barrier is sealed. *seal.TenantBarrier and the
+// system *seal.Barrier both satisfy it.
+type sealProbe interface {
+	IsSealed() bool
+}
+
+// tenantPasswordState holds one tenant's shared store, its users' personal
+// stores, and the set of users whose personal session is open.
 type tenantPasswordState struct {
-	shared   *BackendStore   // one shared store per tenant
-	personal sync.Map        // userID -> *BackendStore
-	locked   atomic.Bool     // starts locked (true)
-	backend  storage.Backend // the TenantBarrier backend
+	shared   *BackendStore   // the tenant-shared entries
+	personal sync.Map        // subject -> *BackendStore
+	unlocked sync.Map        // subject -> struct{}: open personal sessions
+	backend  storage.Backend // the tenant barrier, as a storage backend
+	barrier  sealProbe
 	tenantID string
 }
 
-// TenantPasswordStoreManager manages per-tenant password stores and
-// session lock state. Each tenant's store is backed by a TenantBarrier
-// from the BarrierRegistry, providing cryptographic isolation between
-// tenants. Stores are cached in a sync.Map for lock-free concurrent access.
+// sealed reports whether the tenant barrier is sealed. Sealing ends every
+// personal session: a barrier unsealed again later does not resume them.
+func (st *tenantPasswordState) sealed() bool {
+	if !st.barrier.IsSealed() {
+		return false
+	}
+	st.unlocked.Clear()
+	return true
+}
+
+// TenantPasswordStoreManager routes password operations to per-tenant stores
+// under the xkms scope model (pkg/scope):
+//
+//   - Shared entries ("{tenant}/staticpw/shared/") are readable and writable
+//     by every authenticated user of the tenant whenever the tenant barrier
+//     is unsealed. They have no session of their own.
+//   - A user's personal entries ("{tenant}/staticpw/users/{subject}/") are
+//     visible only to that user, and only while the user's personal session
+//     is open (UnlockUser). Each user locks and unlocks independently: one
+//     user locking never locks another.
+//
+// Each tenant's entries are encrypted by its TenantBarrier from the
+// BarrierRegistry. The system tenant is an ordinary tenant whose entries are
+// encrypted by the system barrier. The systemStore serves only requests that
+// carry no identity (internal callers, authentication disabled).
 type TenantPasswordStoreManager struct {
 	registry    *seal.BarrierRegistry
 	systemStore Store
-	tenants     sync.Map // tenantID -> *tenantPasswordState
+	tenants     sync.Map // tenant scope name -> *tenantPasswordState
 }
 
-// NewTenantPasswordStoreManager creates a manager that routes password
-// operations to per-tenant encrypted stores. The registry provides
-// TenantBarrier instances for cryptographic isolation. The systemStore
-// is used for non-tenant (system-level) operations.
+// NewTenantPasswordStoreManager creates a manager over registry. systemStore
+// serves requests with no identity.
 func NewTenantPasswordStoreManager(registry *seal.BarrierRegistry, systemStore Store) (*TenantPasswordStoreManager, error) {
 	if registry == nil {
 		return nil, ErrNilBarrierRegistry
@@ -67,257 +99,189 @@ func NewTenantPasswordStoreManager(registry *seal.BarrierRegistry, systemStore S
 	}, nil
 }
 
-// SystemStore returns the system-level store for non-tenant operations.
+// SystemStore returns the store that serves requests with no identity.
 func (m *TenantPasswordStoreManager) SystemStore() Store {
 	return m.systemStore
 }
 
-// ResolveStore returns the appropriate store for the given tenant ID.
-// If tenantID is empty, the system store is returned. Otherwise, the
-// tenant store is returned (creating it if needed). Returns ErrStoreLocked
-// if the tenant's session is locked.
-func (m *TenantPasswordStoreManager) ResolveStore(tenantID string) (Store, error) {
-	if tenantID == "" {
-		return m.systemStore, nil
-	}
-	return m.StoreForTenant(tenantID)
-}
-
-// StoreForTenant returns the BackendStore for the given tenant, creating
-// it on first access. Returns ErrStoreLocked if the tenant's session is
-// locked. The store is backed by the tenant's TenantBarrier for per-tenant
-// DEK encryption.
-func (m *TenantPasswordStoreManager) StoreForTenant(tenantID string) (Store, error) {
-	// Fast path: existing state.
-	if val, ok := m.tenants.Load(tenantID); ok {
-		state := val.(*tenantPasswordState)
-		if state.locked.Load() {
-			return nil, ErrStoreLocked
-		}
-		return state.shared, nil
+// tenantState returns tenantID's state, creating it on first use. The empty
+// tenant and the system tenant are both the system tenant.
+func (m *TenantPasswordStoreManager) tenantState(tenantID string) (*tenantPasswordState, error) {
+	name := scope.TenantName(tenantID)
+	if val, ok := m.tenants.Load(name); ok {
+		return val.(*tenantPasswordState), nil
 	}
 
-	// Verify tenant exists in registry.
-	tb, err := m.registry.Tenant(tenantID)
+	backend, probe, err := m.barrierFor(name)
 	if err != nil {
 		return nil, err
 	}
-
-	// Wrap the tenant barrier so it satisfies storage.Backend (adding the
-	// atomic PutIfAbsent primitive on top of the barrier's operations).
-	backend := seal.NewBarrierBackend(tb.Barrier())
-
-	// Create new shared tenant store backed by the tenant barrier.
-	shared, err := NewSharedTenantStore(backend, tenantID)
+	shared, err := NewSharedTenantStore(backend, name)
 	if err != nil {
 		return nil, err
 	}
-
 	state := &tenantPasswordState{
 		shared:   shared,
 		backend:  backend,
-		tenantID: tenantID,
+		barrier:  probe,
+		tenantID: name,
 	}
-	state.locked.Store(true) // starts locked
 
-	// Use LoadOrStore to handle concurrent creation.
-	actual, loaded := m.tenants.LoadOrStore(tenantID, state)
+	actual, loaded := m.tenants.LoadOrStore(name, state)
 	if loaded {
-		// Another goroutine already created it. Close our duplicate.
 		if cerr := shared.Close(); cerr != nil {
-			slog.Debug("staticpw: failed to close a duplicate shared tenant store", "tenant_id", tenantID, "error", cerr)
+			slog.Debug("staticpw: failed to close a duplicate shared tenant store", "tenant_id", name, "error", cerr)
 		}
-		existing := actual.(*tenantPasswordState)
-		if existing.locked.Load() {
-			return nil, ErrStoreLocked
-		}
-		return existing.shared, nil
+		return actual.(*tenantPasswordState), nil
 	}
-
-	// We stored our state — it starts locked.
-	return nil, ErrStoreLocked
+	return state, nil
 }
 
-// LockTenant sets the session lock for the given tenant. Returns
-// ErrStoreAlreadyLocked if the tenant is already locked.
-func (m *TenantPasswordStoreManager) LockTenant(tenantID string) error {
-	val, ok := m.tenants.Load(tenantID)
-	if !ok {
-		// No state yet — verify tenant exists in registry.
-		if _, err := m.registry.Tenant(tenantID); err != nil {
-			return err
+// barrierFor returns the barrier holding tenant name's entries, as a storage
+// backend and as a seal probe.
+func (m *TenantPasswordStoreManager) barrierFor(name string) (storage.Backend, sealProbe, error) {
+	if name == scope.SystemTenant {
+		system := m.registry.SystemBarrier()
+		if system == nil {
+			return nil, nil, ErrNoSystemBarrier
 		}
-		return ErrStoreAlreadyLocked // no state = default locked
+		return seal.NewBarrierBackend(system), system, nil
 	}
-	state := val.(*tenantPasswordState)
-	if !state.locked.CompareAndSwap(false, true) {
-		return ErrStoreAlreadyLocked
+	tb, err := m.registry.Tenant(name)
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil
+	return seal.NewBarrierBackend(tb.Barrier()), tb, nil
 }
 
-// UnlockTenant clears the session lock for the given tenant. The tenant's
-// barrier must be unsealed; returns seal.ErrTenantSealed if it is sealed.
-// Returns ErrStoreNotLocked if the tenant is already unlocked.
-func (m *TenantPasswordStoreManager) UnlockTenant(tenantID string) error {
-	// Verify the tenant's barrier is unsealed.
-	tb, err := m.registry.Tenant(tenantID)
+// ResolveScopedStore returns the store userID sees in tenantID: the tenant's
+// shared entries, plus the user's personal entries while the user's personal
+// session is open. With the session locked, personal operations report
+// ErrStoreLocked and shared entries stay usable.
+//
+// An empty tenantID is a request without an identity and gets the
+// systemStore. An empty userID gets the shared entries only. Returns
+// seal.ErrTenantSealed while the tenant barrier is sealed.
+func (m *TenantPasswordStoreManager) ResolveScopedStore(tenantID, userID string) (Store, error) {
+	if tenantID == "" {
+		return m.systemStore, nil
+	}
+	state, err := m.tenantState(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if state.sealed() {
+		return nil, seal.ErrTenantSealed
+	}
+	if userID == "" {
+		return state.shared, nil
+	}
+	if !isValidUserID(userID) {
+		return nil, ErrInvalidUserID
+	}
+	if _, open := state.unlocked.Load(userID); !open {
+		return NewLockedScopedStore(state.shared, userID)
+	}
+	personal, err := m.getOrCreatePersonalStore(state, userID)
+	if err != nil {
+		return nil, err
+	}
+	return NewScopedStore(state.shared, personal, userID)
+}
+
+// UnlockUser opens userID's personal session in tenantID. The caller verifies
+// the user's credential first; this only records the session. Returns
+// seal.ErrTenantSealed while the tenant barrier is sealed and
+// ErrStoreNotLocked when the session is already open.
+func (m *TenantPasswordStoreManager) UnlockUser(tenantID, userID string) error {
+	state, err := m.tenantState(tenantID)
 	if err != nil {
 		return err
 	}
-	if tb.IsSealed() {
+	if state.sealed() {
 		return seal.ErrTenantSealed
 	}
-
-	// Get or create the tenant state.
-	val, ok := m.tenants.Load(tenantID)
-	if !ok {
-		// Wrap the tenant barrier so it satisfies storage.Backend.
-		backend := seal.NewBarrierBackend(tb.Barrier())
-
-		// Create the shared store now that we know the barrier is unsealed.
-		shared, storeErr := NewSharedTenantStore(backend, tenantID)
-		if storeErr != nil {
-			return storeErr
-		}
-
-		state := &tenantPasswordState{
-			shared:   shared,
-			backend:  backend,
-			tenantID: tenantID,
-		}
-		state.locked.Store(false) // unlock immediately
-
-		actual, loaded := m.tenants.LoadOrStore(tenantID, state)
-		if loaded {
-			if cerr := shared.Close(); cerr != nil {
-				slog.Debug("staticpw: failed to close a duplicate shared tenant store", "tenant_id", tenantID, "error", cerr)
-			}
-			existing := actual.(*tenantPasswordState)
-			if !existing.locked.CompareAndSwap(true, false) {
-				return ErrStoreNotLocked
-			}
-		}
-		return nil
+	if !isValidUserID(userID) {
+		return ErrInvalidUserID
 	}
-
-	state := val.(*tenantPasswordState)
-	if !state.locked.CompareAndSwap(true, false) {
+	if _, open := state.unlocked.LoadOrStore(userID, struct{}{}); open {
 		return ErrStoreNotLocked
 	}
 	return nil
 }
 
-// IsLocked returns the session lock state for the given tenant. A tenant
-// with no cached state defaults to locked.
-func (m *TenantPasswordStoreManager) IsLocked(tenantID string) (bool, error) {
-	val, ok := m.tenants.Load(tenantID)
-	if !ok {
-		// No state yet — verify tenant exists.
-		if _, err := m.registry.Tenant(tenantID); err != nil {
-			return false, err
-		}
-		return true, nil // default: locked
-	}
-	return val.(*tenantPasswordState).locked.Load(), nil
-}
-
-// TenantStoreStatus returns status information for the given tenant
-// including session lock state, barrier seal state, and password count.
-func (m *TenantPasswordStoreManager) TenantStoreStatus(tenantID string) (*TenantStoreStatus, error) {
-	tb, err := m.registry.Tenant(tenantID)
+// LockUser closes userID's personal session in tenantID. Other users'
+// sessions are untouched. Returns ErrStoreAlreadyLocked when the session is
+// not open.
+func (m *TenantPasswordStoreManager) LockUser(tenantID, userID string) error {
+	state, err := m.tenantState(tenantID)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	status := &TenantStoreStatus{
-		BarrierSealed: tb.IsSealed(),
+	if !isValidUserID(userID) {
+		return ErrInvalidUserID
 	}
-
-	// Check lock state.
-	val, ok := m.tenants.Load(tenantID)
-	if !ok {
-		status.IsLocked = true // default locked
-		return status, nil
+	if _, open := state.unlocked.LoadAndDelete(userID); !open {
+		return ErrStoreAlreadyLocked
 	}
-
-	state := val.(*tenantPasswordState)
-	status.IsLocked = state.locked.Load()
-
-	// Count passwords if unlocked and barrier is unsealed.
-	if !status.IsLocked && !status.BarrierSealed {
-		passwords, listErr := state.shared.List()
-		if listErr == nil {
-			status.PasswordCount = len(passwords)
-		}
-	}
-
-	return status, nil
+	return nil
 }
 
-// ResolveScopedStore returns a ScopedStore for the given tenant and user.
-// If tenantID is empty, the system store is returned (backward compat).
-// If userID is empty, the shared store is returned (backward compat for
-// system-level operations). When both are present, a ScopedStore wrapping
-// the shared and personal stores is returned.
-func (m *TenantPasswordStoreManager) ResolveScopedStore(tenantID, userID string) (Store, error) {
-	if tenantID == "" {
-		return m.systemStore, nil
+// IsUserLocked reports whether userID's personal session in tenantID is
+// locked. Sessions start locked.
+func (m *TenantPasswordStoreManager) IsUserLocked(tenantID, userID string) (bool, error) {
+	state, err := m.tenantState(tenantID)
+	if err != nil {
+		return false, err
 	}
-
-	// Get or create the tenant state.
-	val, ok := m.tenants.Load(tenantID)
-	if !ok {
-		// Force creation via StoreForTenant (which may return ErrStoreLocked).
-		_, err := m.StoreForTenant(tenantID)
-		if err != nil {
-			return nil, err
-		}
-		val, ok = m.tenants.Load(tenantID)
-		if !ok {
-			return nil, ErrNotConfigured
-		}
+	if state.sealed() {
+		return true, nil
 	}
+	_, open := state.unlocked.Load(userID)
+	return !open, nil
+}
 
-	state := val.(*tenantPasswordState)
-	if state.locked.Load() {
-		return nil, ErrStoreLocked
-	}
-
-	// No userID → shared store only (backward compat).
-	if userID == "" {
-		return state.shared, nil
-	}
-
-	// Validate userID.
-	if !isValidUserID(userID) {
+// UserStoreStatus returns the status userID sees in tenantID. PasswordCount
+// counts the entries the user can read now: the shared entries, and the
+// personal ones while the session is open.
+func (m *TenantPasswordStoreManager) UserStoreStatus(tenantID, userID string) (*TenantStoreStatus, error) {
+	if userID != "" && !isValidUserID(userID) {
 		return nil, ErrInvalidUserID
 	}
-
-	// Get or create the personal store for this user.
-	personalStore, err := m.getOrCreatePersonalStore(state, userID)
+	state, err := m.tenantState(tenantID)
 	if err != nil {
 		return nil, err
 	}
+	if state.sealed() {
+		return &TenantStoreStatus{IsLocked: true, BarrierSealed: true}, nil
+	}
+	_, open := state.unlocked.Load(userID)
+	status := &TenantStoreStatus{IsLocked: !open}
 
-	return NewScopedStore(state.shared, personalStore, userID)
+	store, err := m.ResolveScopedStore(state.tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	status.PasswordCount = len(entries)
+	return status, nil
 }
 
 // getOrCreatePersonalStore returns the cached personal store for a user,
 // creating it on first access.
 func (m *TenantPasswordStoreManager) getOrCreatePersonalStore(state *tenantPasswordState, userID string) (*BackendStore, error) {
-	// Fast path: existing store.
 	if val, ok := state.personal.Load(userID); ok {
 		return val.(*BackendStore), nil
 	}
 
-	// Create new personal store.
 	store, err := NewPersonalTenantStore(state.backend, state.tenantID, userID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Use LoadOrStore to handle concurrent creation.
 	actual, loaded := state.personal.LoadOrStore(userID, store)
 	if loaded {
 		if cerr := store.Close(); cerr != nil {
@@ -325,23 +289,21 @@ func (m *TenantPasswordStoreManager) getOrCreatePersonalStore(state *tenantPassw
 		}
 		return actual.(*BackendStore), nil
 	}
-
 	return store, nil
 }
 
-// Close closes all cached tenant stores and releases resources.
+// Close closes all cached tenant stores and ends every session.
 func (m *TenantPasswordStoreManager) Close() error {
 	var lastErr error
 	m.tenants.Range(func(key, value any) bool {
 		state := value.(*tenantPasswordState)
-		// Close personal stores.
+		state.unlocked.Clear()
 		state.personal.Range(func(_, pVal any) bool {
 			if err := pVal.(*BackendStore).Close(); err != nil {
 				lastErr = err
 			}
 			return true
 		})
-		// Close shared store.
 		if err := state.shared.Close(); err != nil {
 			lastErr = err
 		}

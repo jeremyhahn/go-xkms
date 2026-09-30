@@ -1999,6 +1999,7 @@ type ResetLockoutRequest struct {
 // PasswordAddRequest contains parameters for adding a static password.
 type PasswordAddRequest struct {
 	Name       string `json:"name"`
+	Title      string `json:"title,omitempty"`
 	Username   string `json:"username,omitempty"`
 	Password   string `json:"password"`
 	URL        string `json:"url,omitempty"`
@@ -2026,6 +2027,7 @@ type PasswordGetRequest struct {
 type PasswordGetResponse struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
+	Title      string `json:"title,omitempty"`
 	Username   string `json:"username,omitempty"`
 	Password   string `json:"password,omitempty"`
 	URL        string `json:"url,omitempty"`
@@ -2059,6 +2061,7 @@ type PasswordListResponse struct {
 type PasswordUpdateRequest struct {
 	ID         string  `json:"id"`
 	Name       *string `json:"name,omitempty"`
+	Title      *string `json:"title,omitempty"`
 	Username   *string `json:"username,omitempty"`
 	Password   *string `json:"password,omitempty"`
 	URL        *string `json:"url,omitempty"`

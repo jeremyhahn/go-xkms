@@ -84,7 +84,6 @@ func TestHandleRequest_PasswordRoutes(t *testing.T) {
 
 	for _, method := range passwordMethods {
 		t.Run(method, func(t *testing.T) {
-			server.passwordManager = nil
 			paramsJSON, _ := json.Marshal(map[string]string{"id": "test"})
 			req := &JSONRPCRequest{
 				JSONRPC: "2.0",
@@ -293,15 +292,6 @@ func TestHandleRequest_ErrorLogging(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
-}
-
-func TestSetPasswordManager(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupXKMS()
-
-	assert.Nil(t, server.passwordManager)
-	server.SetPasswordManager(nil)
-	assert.Nil(t, server.passwordManager)
 }
 
 func TestHandleListCertsWithPagination(t *testing.T) {

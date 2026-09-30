@@ -28,7 +28,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -164,21 +163,46 @@ func TestNewServer_WithBarrierRegistry(t *testing.T) {
 	assert.NotNil(t, server.tenantHandlers)
 }
 
+// TestNewServer_WithPasswordStore pins the wiring: the password routes are
+// served by handlers over the injected XKMSService, and only when a password
+// store is configured, so the "passwords" capability flag stays honest.
 func TestNewServer_WithPasswordStore(t *testing.T) {
 	ks := newMockKeyStore()
-	memStore := storage.NewMemory()
-	pwStore := staticpw.NewStore(memStore)
+	pwStore := staticpw.NewStore(storage.NewMemory())
+	svc := &xkms.XKMSService{}
+	svc.SetPasswordStore(pwStore)
 
-	cfg := &Config{
+	server, err := NewServer(&Config{
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends:      map[string]xkms.Backend{"test": ks},
 		PasswordStore: pwStore,
-	}
-
-	server, err := NewServer(cfg)
+		XKMSService:   svc,
+	})
 	require.NoError(t, err)
-	require.NotNil(t, server)
-	assert.NotNil(t, server.passwordHandlers)
+	require.NotNil(t, server.passwordHandlers)
+	assert.Same(t, svc, server.passwordHandlers.servicer)
+	assert.True(t, server.capabilityFlags()["passwords"])
+}
+
+func TestNewServer_PasswordHandlersRequireStoreAndService(t *testing.T) {
+	ks := newMockKeyStore()
+	pwStore := staticpw.NewStore(storage.NewMemory())
+
+	cases := map[string]*Config{
+		"no password store": {XKMSService: &xkms.XKMSService{}},
+		"no xkms service":   {PasswordStore: pwStore},
+	}
+	for name, cfg := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg.Authenticator = auth.NewNoOpAuthenticator()
+			cfg.Backends = map[string]xkms.Backend{"test": ks}
+
+			server, err := NewServer(cfg)
+			require.NoError(t, err)
+			assert.Nil(t, server.passwordHandlers)
+			assert.False(t, server.capabilityFlags()["passwords"])
+		})
+	}
 }
 
 func TestNewServer_WithPasswordStoreAndRegistry(t *testing.T) {
@@ -400,65 +424,6 @@ func TestGetCertHandler_BackendNotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-// ==========================================================================
-// password_handlers.go - UpdatePasswordHandler additional error branches
-// ==========================================================================
-
-func TestUpdatePasswordHandler_StoreClosed(t *testing.T) {
-	systemBackend := storage.NewMemory()
-	systemStore := staticpw.NewStore(systemBackend)
-	handlers := NewPasswordHandlers(systemStore, nil)
-
-	// Add first.
-	addBody := `{"name":"TestPW","password":"pass123"}`
-	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/passwords", strings.NewReader(addBody))
-	addW := httptest.NewRecorder()
-	handlers.AddPasswordHandler(addW, addReq)
-	require.Equal(t, http.StatusCreated, addW.Code)
-
-	var addResp PasswordAddResponse
-	require.NoError(t, json.NewDecoder(addW.Body).Decode(&addResp))
-
-	// Close the store.
-	require.NoError(t, systemBackend.Close())
-
-	router := chi.NewRouter()
-	router.Put("/api/v1/passwords/{id}", handlers.UpdatePasswordHandler)
-
-	updateBody := `{"name":"Updated"}`
-	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/passwords/"+addResp.ID, strings.NewReader(updateBody))
-	updateW := httptest.NewRecorder()
-	router.ServeHTTP(updateW, updateReq)
-	assert.NotEqual(t, http.StatusOK, updateW.Code)
-}
-
-func TestDeletePasswordHandler_StoreClosed(t *testing.T) {
-	systemBackend := storage.NewMemory()
-	systemStore := staticpw.NewStore(systemBackend)
-	handlers := NewPasswordHandlers(systemStore, nil)
-
-	// Add first.
-	addBody := `{"name":"TestPW","password":"pass123"}`
-	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/passwords", strings.NewReader(addBody))
-	addW := httptest.NewRecorder()
-	handlers.AddPasswordHandler(addW, addReq)
-	require.Equal(t, http.StatusCreated, addW.Code)
-
-	var addResp PasswordAddResponse
-	require.NoError(t, json.NewDecoder(addW.Body).Decode(&addResp))
-
-	// Close the store.
-	require.NoError(t, systemBackend.Close())
-
-	router := chi.NewRouter()
-	router.Delete("/api/v1/passwords/{id}", handlers.DeletePasswordHandler)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/passwords/"+addResp.ID, nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
 // ==========================================================================

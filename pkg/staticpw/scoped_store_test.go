@@ -516,3 +516,84 @@ func TestScopedStore_CrossUserIsolation(t *testing.T) {
 	assert.Len(t, bobSharedPWs, 1)
 	assert.Equal(t, "team-secret", bobSharedPWs[0].Password)
 }
+
+// --- locked personal session ---
+
+// newLockedPair returns alice's open store and her locked view over the same
+// backend.
+func newLockedPair(t *testing.T) (open, locked *ScopedStore) {
+	t.Helper()
+	backend := storage.New()
+	shared, err := NewSharedTenantStore(backend, "acme")
+	require.NoError(t, err)
+	personal, err := NewPersonalTenantStore(backend, "acme", "alice")
+	require.NoError(t, err)
+	open, err = NewScopedStore(shared, personal, "alice")
+	require.NoError(t, err)
+	locked, err = NewLockedScopedStore(shared, "alice")
+	require.NoError(t, err)
+	return open, locked
+}
+
+func TestNewLockedScopedStore_Validation(t *testing.T) {
+	_, err := NewLockedScopedStore(nil, "alice")
+	assert.ErrorIs(t, err, ErrNilStore)
+	shared, err := NewSharedTenantStore(storage.New(), "acme")
+	require.NoError(t, err)
+	_, err = NewLockedScopedStore(shared, "bad/user")
+	assert.ErrorIs(t, err, ErrInvalidUserID)
+}
+
+func TestLockedScopedStore_SharedEntriesStayUsable(t *testing.T) {
+	_, locked := newLockedPair(t)
+	shared := &StaticPassword{Name: "wiki", Password: "pw", Shared: true, FolderPath: "team"}
+	require.NoError(t, locked.Add(shared))
+
+	got, err := locked.Get("wiki")
+	require.NoError(t, err)
+	assert.Equal(t, "alice", got.OwnerID)
+	got.Username = "svc"
+	require.NoError(t, locked.Update(got))
+
+	inFolder, err := locked.ListByFolder("team")
+	require.NoError(t, err)
+	assert.Len(t, inFolder, 1)
+	direct, err := locked.ListByFolderDirect("team")
+	require.NoError(t, err)
+	assert.Len(t, direct, 1)
+	folders, err := locked.ListFolders()
+	require.NoError(t, err)
+	assert.Contains(t, folders, "team")
+
+	require.NoError(t, locked.MoveToFolder("wiki", "moved"))
+	require.NoError(t, locked.Delete("wiki"))
+}
+
+func TestLockedScopedStore_PersonalEntriesAreLocked(t *testing.T) {
+	open, locked := newLockedPair(t)
+	personal := &StaticPassword{Name: "bank", Password: "pw"}
+	require.NoError(t, open.Add(personal))
+
+	assert.True(t, locked.PersonalLocked())
+	assert.ErrorIs(t, locked.Add(&StaticPassword{Name: "new", Password: "pw"}), ErrStoreLocked)
+	_, err := locked.Get(personal.ID)
+	assert.ErrorIs(t, err, ErrStoreLocked)
+	assert.ErrorIs(t, locked.Update(personal), ErrStoreLocked)
+	assert.ErrorIs(t, locked.Delete(personal.ID), ErrStoreLocked)
+	assert.ErrorIs(t, locked.ForceDelete(personal.ID), ErrStoreLocked)
+	assert.ErrorIs(t, locked.MoveToFolder(personal.ID, "x"), ErrStoreLocked)
+	assert.ErrorIs(t, locked.CreateFolder("f"), ErrStoreLocked)
+	assert.ErrorIs(t, locked.RemoveFolder("f"), ErrStoreLocked)
+	_, err = locked.ListByScope(ScopePersonal)
+	assert.ErrorIs(t, err, ErrStoreLocked)
+
+	all, err := locked.List()
+	require.NoError(t, err)
+	assert.Empty(t, all, "a locked listing omits personal entries")
+
+	// Nothing the locked view refused touched the entry.
+	got, err := open.Get(personal.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "bank", got.Name)
+	require.NoError(t, locked.Close())
+}

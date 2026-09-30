@@ -89,13 +89,12 @@ func (m *Module) restServer() (*rest.Server, error) {
 
 	stores := m.hostStores(x)
 	hc := &rest.HostConfig{
-		XKMSService:          x,
-		Session:              m.sessionOptions,
-		PIVLogin:             m.pivLogin,
-		PasswordStore:        stores.PasswordStore,
-		PasswordStoreManager: stores.PasswordManager,
-		SSHClient:            stores.SSH,
-		ServeBarrier:         m.barrierRoutes,
+		XKMSService:   x,
+		Session:       m.sessionOptions,
+		PIVLogin:      m.pivLogin,
+		PasswordStore: stores.PasswordStore,
+		SSHClient:     stores.SSH,
+		ServeBarrier:  m.barrierRoutes,
 	}
 	if m.resolveQRDBClient != nil {
 		hc.QRDBClient = m.resolveQRDBClient()

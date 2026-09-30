@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 )
 
@@ -58,23 +59,31 @@ var (
 	ErrPasswordStoreUserPINNotProvisioned = errors.New("keystore: password store unlock requires a provisioned user PIN: enable PIN management (pin.enabled=true) and set the user PIN before unlocking")
 )
 
-// resolvePasswordStore returns the appropriate password store for the request
-// context. If a TenantPasswordStoreManager is configured and the identity is
-// bound to a real tenant, the tenant-specific scoped store is returned (with
-// personal/shared separation when a user Subject is present). Otherwise, falls
-// back to the system passwordStore.
+// passwordCaller returns the tenant scope name and subject a password request
+// is served for, and false when ctx carries no identity.
 //
-// The tenant test is auth.IsCrossTenant, not TenantID != "": an identity in the
-// reserved "system" tenant is platform-scoped, so scoping it would silently
-// create a tenant store literally named "system" instead of using the system
-// store — the same drift that made the transports reject system identities.
+// A system-tenant identity is served from the system tenant's own store,
+// with shared entries and per-user personal entries like any tenant's; only
+// a request with no identity at all (an internal caller, or authentication
+// disabled) falls back to the unscoped system passwordStore.
+func passwordCaller(ctx context.Context) (tenantID, subject string, ok bool) {
+	identity := auth.GetIdentity(ctx)
+	if identity == nil {
+		return "", "", false
+	}
+	return scope.TenantName(identity.TenantID), identity.Subject, true
+}
+
+// resolvePasswordStore returns the password store the caller sees: with a
+// TenantPasswordStoreManager configured and an identity present, the
+// caller's tenant store (shared entries, plus the caller's personal entries
+// while its personal session is open); otherwise the system passwordStore.
 func (s *XKMSService) resolvePasswordStore(ctx context.Context) (staticpw.Store, error) {
 	passwordStoreManager := s.passwordStoreManager.load()
 	passwordStore := s.passwordStore.load()
 	if passwordStoreManager != nil {
-		identity := auth.GetIdentity(ctx)
-		if !auth.IsCrossTenant(identity) {
-			return passwordStoreManager.ResolveScopedStore(identity.TenantID, identity.Subject)
+		if tenantID, subject, ok := passwordCaller(ctx); ok {
+			return passwordStoreManager.ResolveScopedStore(tenantID, subject)
 		}
 	}
 	if passwordStore != nil {
@@ -165,6 +174,7 @@ func (s *XKMSService) PasswordAdd(ctx context.Context, req *transport.PasswordAd
 
 	pw := &staticpw.StaticPassword{
 		Name:       req.Name,
+		Title:      req.Title,
 		Username:   req.Username,
 		Password:   req.Password,
 		URL:        req.URL,
@@ -274,6 +284,9 @@ func (s *XKMSService) PasswordUpdate(ctx context.Context, req *transport.Passwor
 	if req.Name != nil {
 		existing.Name = *req.Name
 	}
+	if req.Title != nil {
+		existing.Title = *req.Title
+	}
 	if req.Username != nil {
 		existing.Username = *req.Username
 	}
@@ -326,21 +339,22 @@ func (s *XKMSService) PasswordDelete(ctx context.Context, req *transport.Passwor
 	return store.Delete(req.ID)
 }
 
-// PasswordStoreUnlock unlocks the tenant password store session.
+// PasswordStoreUnlock opens the caller's personal password session.
 //
-// Sessions are a per-tenant capability: a tenant store is backed by its own
-// TenantBarrier and starts locked, so it must be unlocked before entries can
-// be read. The system-level store has no session of its own -- it is protected
-// by the system barrier, which is unsealed once at startup -- so unlocking it
-// is not a supported operation rather than an unfinished one. Callers reaching
-// this method without a tenant identity therefore get ErrOperationNotSupported.
+// Sessions are per user: each user of a tenant unlocks and locks their own
+// personal entries, and one user's session never opens or closes another's.
+// Shared entries need no session; they are usable whenever the tenant
+// barrier is unsealed. The unscoped system passwordStore, which serves only
+// requests without an identity, has no session of its own -- it is protected
+// by the system barrier -- so a request without an identity gets
+// ErrOperationNotSupported.
 //
-// The unlock itself is credential gated: the caller must supply the user PIN,
-// which is verified through the service's PIN backend before the session is
-// opened (verifyPasswordStoreUserPIN). A missing PIN, a wrong PIN, or a
-// deployment with no provisioned user PIN all fail closed and leave the store
-// locked. An unsealed tenant barrier is not, on its own, authorization to open
-// the vault.
+// The unlock is credential gated: the caller must supply the user PIN, which
+// is verified through the service's PIN backend before the session is opened
+// (verifyPasswordStoreUserPIN). A missing PIN, a wrong PIN, or a deployment
+// with no provisioned user PIN all fail closed and leave the session locked.
+// An unsealed tenant barrier is not, on its own, authorization to open a
+// user's personal entries.
 func (s *XKMSService) PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error {
 	passwordStoreManager := s.passwordStoreManager.load()
 	passwordStore := s.passwordStore.load()
@@ -348,12 +362,11 @@ func (s *XKMSService) PasswordStoreUnlock(ctx context.Context, req *transport.Pa
 		return ErrNilRequest
 	}
 	if passwordStoreManager != nil {
-		tenantID := scopedTenantIDFromContext(ctx)
-		if tenantID != "" {
+		if tenantID, subject, ok := passwordCaller(ctx); ok {
 			if err := s.verifyPasswordStoreUserPIN(req.UserPIN); err != nil {
 				return err
 			}
-			return passwordStoreManager.UnlockTenant(tenantID)
+			return passwordStoreManager.UnlockUser(tenantID, subject)
 		}
 	}
 	if passwordStore == nil {
@@ -381,20 +394,19 @@ func (s *XKMSService) verifyPasswordStoreUserPIN(userPIN string) error {
 	return pinManager.VerifyUserPIN(userPIN)
 }
 
-// PasswordStoreLock locks the tenant password store session. It mirrors
-// PasswordStoreUnlock: sessions exist only for tenant stores, so locking the
-// system-level store reports ErrOperationNotSupported. See PasswordStoreUnlock
-// for why that is a capability boundary and not an unfinished path.
+// PasswordStoreLock closes the caller's personal password session. It
+// mirrors PasswordStoreUnlock: sessions are per user, so locking closes only
+// the caller's, and a request without an identity reports
+// ErrOperationNotSupported.
 //
 // Locking needs no credential: it only ever removes access, so requiring one
-// would risk leaving a store readable when the caller cannot produce a PIN.
+// would risk leaving entries readable when the caller cannot produce a PIN.
 func (s *XKMSService) PasswordStoreLock(ctx context.Context) error {
 	passwordStoreManager := s.passwordStoreManager.load()
 	passwordStore := s.passwordStore.load()
 	if passwordStoreManager != nil {
-		tenantID := scopedTenantIDFromContext(ctx)
-		if tenantID != "" {
-			return passwordStoreManager.LockTenant(tenantID)
+		if tenantID, subject, ok := passwordCaller(ctx); ok {
+			return passwordStoreManager.LockUser(tenantID, subject)
 		}
 	}
 	if passwordStore == nil {
@@ -403,17 +415,17 @@ func (s *XKMSService) PasswordStoreLock(ctx context.Context) error {
 	return ErrOperationNotSupported
 }
 
-// PasswordStoreStatus returns the current status of the password store.
-// When a TenantPasswordStoreManager is configured and the identity has a
-// TenantID, it returns per-tenant status including barrier seal state.
-// Otherwise, returns system-level status.
+// PasswordStoreStatus returns the status of the password store the caller
+// sees. With a TenantPasswordStoreManager configured and an identity present,
+// it is the caller's view of its tenant store: whether its own personal
+// session is locked, the tenant barrier's seal state, and how many entries it
+// can read now. Otherwise it is the system passwordStore's status.
 func (s *XKMSService) PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error) {
 	passwordStoreManager := s.passwordStoreManager.load()
 	passwordStore := s.passwordStore.load()
 	if passwordStoreManager != nil {
-		tenantID := scopedTenantIDFromContext(ctx)
-		if tenantID != "" {
-			status, err := passwordStoreManager.TenantStoreStatus(tenantID)
+		if tenantID, subject, ok := passwordCaller(ctx); ok {
+			status, err := passwordStoreManager.UserStoreStatus(tenantID, subject)
 			if err != nil {
 				return nil, err
 			}
@@ -451,15 +463,16 @@ var ErrInvalidAccessMode = errors.New("xkms: invalid password store access mode"
 // PasswordAccessMode reports the access-control strategy the password store
 // enforces for ctx.
 //
-// A tenant-scoped store is session based: it starts locked and stays readable
-// until it is locked again, which is exactly staticpw.AccessSessionBased. The
-// system-level store has no access-control strategy of its own -- entries are
-// protected by the system barrier -- so it reports an empty mode.
-// Returns ErrNotConfigured when no password store is wired.
+// A tenant store, the system tenant's included, is session based: each user's
+// personal entries start locked and stay readable until that user locks them
+// again, which is exactly staticpw.AccessSessionBased. The unscoped system
+// store serving requests without an identity has no access-control strategy
+// of its own -- entries are protected by the system barrier -- so it reports
+// an empty mode. Returns ErrNotConfigured when no password store is wired.
 func (s *XKMSService) PasswordAccessMode(ctx context.Context) (staticpw.AccessMode, error) {
 	passwordStoreManager := s.passwordStoreManager.load()
 	passwordStore := s.passwordStore.load()
-	if passwordStoreManager != nil && scopedTenantIDFromContext(ctx) != "" {
+	if _, _, ok := passwordCaller(ctx); ok && passwordStoreManager != nil {
 		return staticpw.AccessSessionBased, nil
 	}
 	if passwordStore == nil {
@@ -559,6 +572,7 @@ func staticPasswordToGetResponse(pw *staticpw.StaticPassword) *transport.Passwor
 	resp := &transport.PasswordGetResponse{
 		ID:         pw.ID,
 		Name:       pw.Name,
+		Title:      pw.Title,
 		Username:   pw.Username,
 		Password:   pw.Password,
 		URL:        pw.URL,

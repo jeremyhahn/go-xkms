@@ -22,83 +22,68 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // PasswordHandlers provides HTTP handlers for password store operations.
-// When a TenantPasswordStoreManager is provided, operations are routed
-// to per-tenant encrypted stores based on the authenticated identity.
+//
+// Every entry and session operation is delegated to the service layer
+// (PasswordServicer). The servicer is the single place that resolves the
+// caller's store -- the tenant's shared entries plus the caller's personal
+// entries while the caller's personal session is open, or the unscoped system
+// store for a request without an identity -- and enforces the shared-entry
+// ownership rule on update and delete. The handlers only translate between
+// the HTTP wire shapes and the transport types.
 type PasswordHandlers struct {
-	store    staticpw.Store
-	manager  *staticpw.TenantPasswordStoreManager
 	servicer PasswordServicer
 }
 
-// PasswordServicer is the service-layer seam used by the password store
-// endpoints that carry business rules. It keeps the handlers free of password
-// store business logic; *xkms.XKMSService satisfies it.
+// PasswordServicer is the service-layer seam the password endpoints delegate
+// to; *xkms.XKMSService satisfies it.
 type PasswordServicer interface {
+	// PasswordAdd stores a new entry in the caller's store.
+	PasswordAdd(ctx context.Context, req *transport.PasswordAddRequest) (*transport.PasswordAddResponse, error)
+
+	// PasswordGet returns one entry the caller can read.
+	PasswordGet(ctx context.Context, req *transport.PasswordGetRequest) (*transport.PasswordGetResponse, error)
+
+	// PasswordList returns the entries the caller can read, optionally
+	// filtered by scope or folder.
+	PasswordList(ctx context.Context, req *transport.PasswordListRequest) (*transport.PasswordListResponse, error)
+
+	// PasswordUpdate updates an entry, refusing a shared entry the caller
+	// does not own with staticpw.ErrNotOwner.
+	PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) error
+
+	// PasswordDelete deletes an entry, refusing a shared entry the caller
+	// does not own with staticpw.ErrNotOwner.
+	PasswordDelete(ctx context.Context, req *transport.PasswordDeleteRequest) error
+
 	// PasswordStoreSetAccessMode selects the access-control strategy for the
 	// password store addressed by the request context.
 	PasswordStoreSetAccessMode(ctx context.Context, req *transport.PasswordStoreSetAccessModeRequest) error
 
-	// PasswordStoreUnlock opens a session on the tenant password store. The
-	// servicer verifies the caller's user PIN before unlocking; the handler
-	// must never call TenantPasswordStoreManager.UnlockTenant directly or the
-	// credential check is bypassed entirely.
+	// PasswordStoreUnlock opens the caller's personal session after
+	// verifying the caller's user PIN.
 	PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error
 
-	// PasswordStoreLock closes the session on the tenant password store.
-	// Locking needs no credential, so the handler may call it unconditionally
-	// once a tenant identity is established.
+	// PasswordStoreLock closes the caller's personal session.
 	PasswordStoreLock(ctx context.Context) error
 
-	// PasswordStoreStatus reports the current lock and seal state of the
-	// password store addressed by the request context. The handler must read
-	// status through the servicer rather than a locally-held
-	// TenantPasswordStoreManager: the servicer's manager is the single
-	// instance session state is tracked against, so a second, independently
-	// constructed manager would report stale or divergent state.
+	// PasswordStoreStatus reports the lock and seal state of the store the
+	// caller sees.
 	PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error)
 }
 
 // Compile-time check that the canonical servicer satisfies the seam.
 var _ PasswordServicer = (*xkms.XKMSService)(nil)
 
-// NewPasswordHandlers creates a new PasswordHandlers instance. The manager
-// parameter may be nil for single-tenant (backward compatible) mode.
-func NewPasswordHandlers(store staticpw.Store, manager *staticpw.TenantPasswordStoreManager) *PasswordHandlers {
-	return &PasswordHandlers{
-		store:   store,
-		manager: manager,
-	}
-}
-
-// SetServicer wires the XKMS service layer into the password handlers. It
-// follows the same injection convention as HandlerContext.SetXKMSService and
-// must be called by the composition root for the access-mode and unlock
-// endpoints to be available.
-func (h *PasswordHandlers) SetServicer(servicer PasswordServicer) {
-	h.servicer = servicer
-}
-
-// resolveStore returns the appropriate store for the request. When a manager
-// is configured and the identity has a TenantID, a scoped store (with
-// personal/shared separation) is returned. Otherwise, the system store is used.
-func (h *PasswordHandlers) resolveStore(r *http.Request) (staticpw.Store, error) {
-	if h.manager != nil {
-		identity := auth.GetIdentity(r.Context())
-		if identity != nil && identity.TenantID != "" {
-			return h.manager.ResolveScopedStore(identity.TenantID, identity.Subject)
-		}
-	}
-	if h.store != nil {
-		return h.store, nil
-	}
-	return nil, staticpw.ErrNotConfigured
+// NewPasswordHandlers creates password handlers that delegate every store
+// operation to servicer.
+func NewPasswordHandlers(servicer PasswordServicer) *PasswordHandlers {
+	return &PasswordHandlers{servicer: servicer}
 }
 
 // --- Request types ---
@@ -226,21 +211,15 @@ type PasswordStoreStatusResponse struct {
 // --- Handlers ---
 
 // AddPasswordHandler handles POST /api/v1/passwords requests.
-// It decodes the request body, validates the input, and stores the new password entry.
+// It decodes the request body and stores the new entry through the servicer.
 func (h *PasswordHandlers) AddPasswordHandler(w http.ResponseWriter, r *http.Request) {
-	store, err := h.resolveStore(r)
-	if err != nil {
-		passwordHandleStoreError(w, err)
-		return
-	}
-
 	var req PasswordAddRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		passwordWriteJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	pw := &staticpw.StaticPassword{
+	resp, err := h.servicer.PasswordAdd(r.Context(), &transport.PasswordAddRequest{
 		Name:       req.Name,
 		Title:      req.Title,
 		Username:   req.Username,
@@ -249,77 +228,35 @@ func (h *PasswordHandlers) AddPasswordHandler(w http.ResponseWriter, r *http.Req
 		Notes:      req.Notes,
 		FolderPath: req.FolderPath,
 		Shared:     req.Shared,
-	}
-
-	if err := store.Add(pw); err != nil {
-		switch {
-		case errors.Is(err, staticpw.ErrInvalidName):
-			passwordWriteJSONError(w, "Name is required", http.StatusBadRequest)
-		case errors.Is(err, staticpw.ErrEmptyPassword):
-			passwordWriteJSONError(w, "Password is required", http.StatusBadRequest)
-		case errors.Is(err, staticpw.ErrPasswordExists):
-			passwordWriteJSONError(w, "Password with this name already exists", http.StatusConflict)
-		case errors.Is(err, staticpw.ErrStoreClosed):
-			passwordWriteJSONError(w, "Password store is closed", http.StatusServiceUnavailable)
-		default:
-			passwordWriteJSONError(w, "Failed to add password", http.StatusInternalServerError)
-		}
+	})
+	if err != nil {
+		passwordWriteServiceError(w, err, "Failed to add password")
 		return
 	}
 
-	resp := PasswordAddResponse{
-		ID:      pw.ID,
-		Name:    pw.Name,
+	writeJSON(w, PasswordAddResponse{
+		ID:      resp.ID,
+		Name:    resp.Name,
 		Message: "Password added successfully",
-	}
-
-	writeJSON(w, resp, http.StatusCreated)
+	}, http.StatusCreated)
 }
 
 // ListPasswordsHandler handles GET /api/v1/passwords requests.
-// It returns all password entries, optionally filtered by folder query parameter.
+// It returns the entries the caller can read, optionally filtered by the
+// scope (personal, shared, all) or folder query parameter.
 func (h *PasswordHandlers) ListPasswordsHandler(w http.ResponseWriter, r *http.Request) {
-	store, err := h.resolveStore(r)
+	query := r.URL.Query()
+	resp, err := h.servicer.PasswordList(r.Context(), &transport.PasswordListRequest{
+		FolderPath: query.Get("folder"),
+		Scope:      query.Get("scope"),
+	})
 	if err != nil {
-		passwordHandleStoreError(w, err)
+		passwordWriteServiceError(w, err, "Failed to list passwords")
 		return
 	}
 
-	folder := r.URL.Query().Get("folder")
-	scope := r.URL.Query().Get("scope")
-
-	var entries []*staticpw.StaticPassword
-
-	// Scope-aware listing.
-	switch {
-	case scope != "":
-		ps := staticpw.PasswordScope(scope)
-		if !ps.IsValid() {
-			passwordWriteJSONError(w, "Invalid scope (use personal, shared, or all)", http.StatusBadRequest)
-			return
-		}
-		if scopedStore, ok := store.(*staticpw.ScopedStore); ok {
-			entries, err = scopedStore.ListByScope(ps)
-		} else {
-			entries, err = store.List()
-		}
-	case folder != "":
-		entries, err = store.ListByFolder(folder)
-	default:
-		entries, err = store.List()
-	}
-
-	if err != nil {
-		if errors.Is(err, staticpw.ErrStoreClosed) {
-			passwordWriteJSONError(w, "Password store is closed", http.StatusServiceUnavailable)
-			return
-		}
-		passwordWriteJSONError(w, "Failed to list passwords", http.StatusInternalServerError)
-		return
-	}
-
-	infos := make([]PasswordInfo, len(entries))
-	for i, pw := range entries {
+	infos := make([]PasswordInfo, len(resp.Passwords))
+	for i, pw := range resp.Passwords {
 		infos[i] = PasswordInfo{
 			ID:         pw.ID,
 			Name:       pw.Name,
@@ -329,49 +266,33 @@ func (h *PasswordHandlers) ListPasswordsHandler(w http.ResponseWriter, r *http.R
 			FolderPath: pw.FolderPath,
 			OwnerID:    pw.OwnerID,
 			Shared:     pw.Shared,
-			CreatedAt:  pw.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			UpdatedAt:  pw.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			CreatedAt:  pw.CreatedAt,
+			UpdatedAt:  pw.UpdatedAt,
 		}
 	}
 
-	resp := PasswordListResponse{
+	writeJSON(w, PasswordListResponse{
 		Passwords: infos,
 		Total:     len(infos),
-	}
-
-	writeJSON(w, resp, http.StatusOK)
+	}, http.StatusOK)
 }
 
 // GetPasswordHandler handles GET /api/v1/passwords/{id} requests.
 // It retrieves a password entry by ID or name.
 func (h *PasswordHandlers) GetPasswordHandler(w http.ResponseWriter, r *http.Request) {
-	store, err := h.resolveStore(r)
-	if err != nil {
-		passwordHandleStoreError(w, err)
-		return
-	}
-
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		passwordWriteJSONError(w, "Password ID is required", http.StatusBadRequest)
 		return
 	}
 
-	pw, err := store.Get(id)
+	pw, err := h.servicer.PasswordGet(r.Context(), &transport.PasswordGetRequest{ID: id})
 	if err != nil {
-		if errors.Is(err, staticpw.ErrPasswordNotFound) {
-			passwordWriteJSONError(w, "Password not found", http.StatusNotFound)
-			return
-		}
-		if errors.Is(err, staticpw.ErrStoreClosed) {
-			passwordWriteJSONError(w, "Password store is closed", http.StatusServiceUnavailable)
-			return
-		}
-		passwordWriteJSONError(w, "Failed to get password", http.StatusInternalServerError)
+		passwordWriteServiceError(w, err, "Failed to get password")
 		return
 	}
 
-	resp := PasswordDetailResponse{
+	writeJSON(w, PasswordDetailResponse{
 		ID:         pw.ID,
 		Name:       pw.Name,
 		Title:      pw.Title,
@@ -383,22 +304,17 @@ func (h *PasswordHandlers) GetPasswordHandler(w http.ResponseWriter, r *http.Req
 		OwnerID:    pw.OwnerID,
 		Shared:     pw.Shared,
 		ReadOnly:   pw.ReadOnly,
-		CreatedAt:  pw.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:  pw.UpdatedAt.Format("2006-01-02T15:04:05Z"),
-	}
-
-	writeJSON(w, resp, http.StatusOK)
+		CreatedAt:  pw.CreatedAt,
+		UpdatedAt:  pw.UpdatedAt,
+	}, http.StatusOK)
 }
 
 // UpdatePasswordHandler handles PUT /api/v1/passwords/{id} requests.
-// It updates an existing password entry, applying only non-nil fields from the request.
+// It updates an existing entry, applying only the fields present in the
+// request. The entry is read first so the {id} path parameter, which may be
+// an ID or a name, resolves to the entry's canonical ID and the response can
+// report the entry's resulting ID and name.
 func (h *PasswordHandlers) UpdatePasswordHandler(w http.ResponseWriter, r *http.Request) {
-	store, err := h.resolveStore(r)
-	if err != nil {
-		passwordHandleStoreError(w, err)
-		return
-	}
-
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		passwordWriteJSONError(w, "Password ID is required", http.StatusBadRequest)
@@ -411,134 +327,79 @@ func (h *PasswordHandlers) UpdatePasswordHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Get existing entry
-	existing, err := store.Get(id)
+	existing, err := h.servicer.PasswordGet(r.Context(), &transport.PasswordGetRequest{ID: id})
 	if err != nil {
-		if errors.Is(err, staticpw.ErrPasswordNotFound) {
-			passwordWriteJSONError(w, "Password not found", http.StatusNotFound)
-			return
-		}
-		if errors.Is(err, staticpw.ErrStoreClosed) {
-			passwordWriteJSONError(w, "Password store is closed", http.StatusServiceUnavailable)
-			return
-		}
-		passwordWriteJSONError(w, "Failed to get password", http.StatusInternalServerError)
+		passwordWriteServiceError(w, err, "Failed to get password")
 		return
 	}
 
-	// Apply updates from request (only non-nil pointer fields)
-	if req.Name != nil {
-		existing.Name = *req.Name
-	}
-	if req.Title != nil {
-		existing.Title = *req.Title
-	}
-	if req.Username != nil {
-		existing.Username = *req.Username
-	}
-	if req.Password != nil {
-		existing.Password = *req.Password
-	}
-	if req.URL != nil {
-		existing.URL = *req.URL
-	}
-	if req.Notes != nil {
-		existing.Notes = *req.Notes
-	}
-	if req.FolderPath != nil {
-		existing.FolderPath = *req.FolderPath
-	}
-
-	if err := store.Update(existing); err != nil {
-		switch {
-		case errors.Is(err, staticpw.ErrInvalidName):
-			passwordWriteJSONError(w, "Name is required", http.StatusBadRequest)
-		case errors.Is(err, staticpw.ErrEmptyPassword):
-			passwordWriteJSONError(w, "Password is required", http.StatusBadRequest)
-		case errors.Is(err, staticpw.ErrPasswordNotFound):
-			passwordWriteJSONError(w, "Password not found", http.StatusNotFound)
-		case errors.Is(err, staticpw.ErrPasswordReadOnly):
-			passwordWriteJSONError(w, "Password is read-only", http.StatusForbidden)
-		case errors.Is(err, staticpw.ErrStoreClosed):
-			passwordWriteJSONError(w, "Password store is closed", http.StatusServiceUnavailable)
-		default:
-			passwordWriteJSONError(w, "Failed to update password", http.StatusInternalServerError)
-		}
+	if err := h.servicer.PasswordUpdate(r.Context(), &transport.PasswordUpdateRequest{
+		ID:         existing.ID,
+		Name:       req.Name,
+		Title:      req.Title,
+		Username:   req.Username,
+		Password:   req.Password,
+		URL:        req.URL,
+		Notes:      req.Notes,
+		FolderPath: req.FolderPath,
+	}); err != nil {
+		passwordWriteServiceError(w, err, "Failed to update password")
 		return
 	}
 
-	resp := PasswordUpdateResponse{
-		ID:      existing.ID,
-		Name:    existing.Name,
+	id, name := updatedPasswordIdentity(existing, req.Name, req.FolderPath)
+	writeJSON(w, PasswordUpdateResponse{
+		ID:      id,
+		Name:    name,
 		Message: "Password updated successfully",
-	}
+	}, http.StatusOK)
+}
 
-	writeJSON(w, resp, http.StatusOK)
+// updatedPasswordIdentity returns the ID and name existing has after an
+// update that set name and folder (nil when unchanged). An entry's ID is
+// derived from its name and folder (staticpw.GenerateID), so renaming or
+// moving it re-keys it and the response must report the new ID.
+func updatedPasswordIdentity(existing *transport.PasswordGetResponse, name, folder *string) (string, string) {
+	if name == nil && folder == nil {
+		return existing.ID, existing.Name
+	}
+	newName, newFolder := existing.Name, existing.FolderPath
+	if name != nil {
+		newName = *name
+	}
+	if folder != nil {
+		newFolder = *folder
+	}
+	return staticpw.GenerateID(newName, newFolder), newName
 }
 
 // DeletePasswordHandler handles DELETE /api/v1/passwords/{id} requests.
 // It removes a password entry by ID or name.
 func (h *PasswordHandlers) DeletePasswordHandler(w http.ResponseWriter, r *http.Request) {
-	store, err := h.resolveStore(r)
-	if err != nil {
-		passwordHandleStoreError(w, err)
-		return
-	}
-
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		passwordWriteJSONError(w, "Password ID is required", http.StatusBadRequest)
 		return
 	}
 
-	if err := store.Delete(id); err != nil {
-		switch {
-		case errors.Is(err, staticpw.ErrPasswordNotFound):
-			passwordWriteJSONError(w, "Password not found", http.StatusNotFound)
-		case errors.Is(err, staticpw.ErrPasswordReadOnly):
-			passwordWriteJSONError(w, "Password is read-only", http.StatusForbidden)
-		case errors.Is(err, staticpw.ErrStoreClosed):
-			passwordWriteJSONError(w, "Password store is closed", http.StatusServiceUnavailable)
-		default:
-			passwordWriteJSONError(w, "Failed to delete password", http.StatusInternalServerError)
-		}
+	if err := h.servicer.PasswordDelete(r.Context(), &transport.PasswordDeleteRequest{ID: id}); err != nil {
+		passwordWriteServiceError(w, err, "Failed to delete password")
 		return
 	}
 
-	resp := PasswordDeleteResponse{
+	writeJSON(w, PasswordDeleteResponse{
 		Message: "Password deleted successfully",
-	}
-
-	writeJSON(w, resp, http.StatusOK)
+	}, http.StatusOK)
 }
 
-// UnlockHandler handles POST /api/v1/passwords/unlock requests. It unlocks
-// the caller's tenant session, allowing password store access.
+// UnlockHandler handles POST /api/v1/passwords/unlock requests. It opens the
+// caller's personal password session; sessions are per user, so this never
+// opens another user's personal entries.
 //
-// The unlock itself is performed by the service layer, which verifies the
-// caller's user PIN first. The handler must not call
-// TenantPasswordStoreManager.UnlockTenant directly: that path carries no
-// credential check, so any authenticated tenant user could open the store.
-//
-// Both the unlock and the status read below go through h.servicer rather
-// than a locally-held TenantPasswordStoreManager. The servicer owns the one
-// manager instance session state is tracked against; a second, independently
-// constructed manager here would drift out of sync with it and could report
-// a store as locked when the servicer had already unlocked it (or the
-// reverse), which is a worse failure mode than a capability that is honestly
-// unavailable.
+// The servicer verifies the caller's user PIN before opening the session. A
+// request without an identity has no personal session and is answered with
+// 501 by the servicer's ErrOperationNotSupported.
 func (h *PasswordHandlers) UnlockHandler(w http.ResponseWriter, r *http.Request) {
-	if h.servicer == nil {
-		passwordWriteJSONError(w, "Password store unlock requires server integration", http.StatusNotImplemented)
-		return
-	}
-
-	identity := auth.GetIdentity(r.Context())
-	if auth.IsCrossTenant(identity) {
-		passwordWriteJSONError(w, "Tenant identity required", http.StatusUnauthorized)
-		return
-	}
-
 	// The user PIN is optional on the wire so an unprovisioned deployment gets
 	// the servicer's precise "not provisioned" answer rather than a decode
 	// failure. An absent body is an unlock attempt with no PIN, which the
@@ -556,87 +417,27 @@ func (h *PasswordHandlers) UnlockHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	status, err := h.servicer.PasswordStoreStatus(r.Context())
-	if err != nil {
-		passwordWriteJSONError(w, "Store unlocked but failed to get status", http.StatusInternalServerError)
-		return
-	}
-
-	resp := PasswordStoreStatusResponse{
-		Available:     true,
-		IsLocked:      status.IsLocked,
-		BarrierSealed: status.BarrierSealed,
-		PasswordCount: status.PasswordCount,
-		Message:       "Store unlocked successfully",
-	}
-
-	writeJSON(w, resp, http.StatusOK)
+	h.writeStatus(w, r, "Store unlocked successfully", "Store unlocked but failed to get status")
 }
 
-// LockHandler handles POST /api/v1/passwords/lock requests. It locks the
-// caller's tenant session, preventing password store access. See
-// UnlockHandler for why this goes through h.servicer rather than a
-// locally-held TenantPasswordStoreManager.
+// LockHandler handles POST /api/v1/passwords/lock requests. It closes the
+// caller's personal password session; other users' sessions are untouched.
 func (h *PasswordHandlers) LockHandler(w http.ResponseWriter, r *http.Request) {
-	if h.servicer == nil {
-		passwordWriteJSONError(w, "Password store lock requires server integration", http.StatusNotImplemented)
-		return
-	}
-
-	identity := auth.GetIdentity(r.Context())
-	if auth.IsCrossTenant(identity) {
-		passwordWriteJSONError(w, "Tenant identity required", http.StatusUnauthorized)
-		return
-	}
-
 	if err := h.servicer.PasswordStoreLock(r.Context()); err != nil {
 		passwordWriteLockError(w, err)
 		return
 	}
 
-	status, err := h.servicer.PasswordStoreStatus(r.Context())
-	if err != nil {
-		passwordWriteJSONError(w, "Store locked but failed to get status", http.StatusInternalServerError)
-		return
-	}
-
-	resp := PasswordStoreStatusResponse{
-		Available:     true,
-		IsLocked:      status.IsLocked,
-		BarrierSealed: status.BarrierSealed,
-		PasswordCount: status.PasswordCount,
-		Message:       "Store locked successfully",
-	}
-
-	writeJSON(w, resp, http.StatusOK)
+	h.writeStatus(w, r, "Store locked successfully", "Store locked but failed to get status")
 }
 
-// StatusHandler handles GET /api/v1/passwords/status requests.
-// It returns the availability and lock status of the password store.
-//
-// Status is read through h.servicer, the same source of truth UnlockHandler
-// and LockHandler use, rather than a locally-held TenantPasswordStoreManager;
-// see UnlockHandler for why a second manager instance would risk reporting
-// state that has drifted from what was actually unlocked or locked.
-// PasswordStoreStatus itself distinguishes tenant-scoped status from
-// system-level status, so no separate branch is needed here for either case.
+// StatusHandler handles GET /api/v1/passwords/status requests. It reports the
+// caller's view of its store: whether its personal session is locked, the
+// barrier's seal state, and how many entries it can read now.
 func (h *PasswordHandlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
-	if h.servicer == nil {
-		// No service layer wired: report only that the store exists.
-		writeJSON(w, PasswordStoreStatusResponse{
-			Available: true,
-			Message:   "Password store is available",
-		}, http.StatusOK)
-		return
-	}
-
 	status, err := h.servicer.PasswordStoreStatus(r.Context())
 	if err != nil {
-		if errors.Is(err, seal.ErrTenantNotFound) {
-			passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
-			return
-		}
-		passwordWriteJSONError(w, "Failed to get store status", http.StatusInternalServerError)
+		passwordWriteServiceError(w, err, "Failed to get store status")
 		return
 	}
 
@@ -649,15 +450,28 @@ func (h *PasswordHandlers) StatusHandler(w http.ResponseWriter, r *http.Request)
 	}, http.StatusOK)
 }
 
+// writeStatus writes the caller's store status after a successful unlock or
+// lock, with message on success and failMessage when the status read fails.
+func (h *PasswordHandlers) writeStatus(w http.ResponseWriter, r *http.Request, message, failMessage string) {
+	status, err := h.servicer.PasswordStoreStatus(r.Context())
+	if err != nil {
+		passwordWriteJSONError(w, failMessage, http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, PasswordStoreStatusResponse{
+		Available:     true,
+		IsLocked:      status.IsLocked,
+		BarrierSealed: status.BarrierSealed,
+		PasswordCount: status.PasswordCount,
+		Message:       message,
+	}, http.StatusOK)
+}
+
 // SetAccessModeHandler handles POST /api/v1/passwords/access-mode requests.
 // It delegates to the XKMS service layer, which owns the rules for which
 // access-control strategy a given password store can enforce.
 func (h *PasswordHandlers) SetAccessModeHandler(w http.ResponseWriter, r *http.Request) {
-	if h.servicer == nil {
-		passwordWriteJSONError(w, "Password store service not configured", http.StatusServiceUnavailable)
-		return
-	}
-
 	var req PasswordStoreAccessModeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		passwordWriteJSONError(w, "Invalid request body", http.StatusBadRequest)
@@ -737,29 +551,56 @@ func (h *PasswordHandlers) GeneratePasswordHandler(w http.ResponseWriter, r *htt
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// passwordHandleStoreError maps store resolution errors to HTTP status codes.
-func passwordHandleStoreError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, staticpw.ErrStoreLocked):
-		passwordWriteJSONError(w, "Password store is locked", http.StatusLocked)
-	case errors.Is(err, seal.ErrTenantSealed):
-		passwordWriteJSONError(w, "Tenant barrier is sealed", http.StatusServiceUnavailable)
-	case errors.Is(err, seal.ErrTenantNotFound):
-		passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
-	case errors.Is(err, staticpw.ErrNotConfigured):
-		passwordWriteJSONError(w, "Password store not configured", http.StatusServiceUnavailable)
-	case errors.Is(err, staticpw.ErrInvalidUserID):
-		passwordWriteJSONError(w, "Invalid user identity", http.StatusBadRequest)
-	case errors.Is(err, staticpw.ErrNotOwner):
-		passwordWriteJSONError(w, "Not the owner of this password", http.StatusForbidden)
-	case errors.Is(err, staticpw.ErrInvalidScope):
-		passwordWriteJSONError(w, "Invalid scope", http.StatusBadRequest)
-	default:
-		passwordWriteJSONError(w, "Failed to access password store", http.StatusInternalServerError)
-	}
+// passwordErrorMapping pairs a service-layer sentinel with the HTTP response
+// it is reported as.
+type passwordErrorMapping struct {
+	target  error
+	message string
+	status  int
 }
 
-// passwordWriteJSONError writes an error response in the standard JSON format.
+// passwordServiceErrorMappings maps the errors the password servicer returns
+// onto HTTP responses. It is ordered: the first sentinel errors.Is matches
+// wins, so wrapped errors resolve to their most specific cause.
+var passwordServiceErrorMappings = []passwordErrorMapping{
+	{staticpw.ErrPasswordNotFound, "Password not found", http.StatusNotFound},
+	{staticpw.ErrPasswordExists, "Password with this name already exists", http.StatusConflict},
+	{staticpw.ErrInvalidName, "Name is required", http.StatusBadRequest},
+	{staticpw.ErrEmptyPassword, "Password is required", http.StatusBadRequest},
+	{staticpw.ErrInvalidScope, "Invalid scope (use personal, shared, or all)", http.StatusBadRequest},
+	{staticpw.ErrInvalidFolderPath, "Invalid folder path", http.StatusBadRequest},
+	{staticpw.ErrFolderPathTooDeep, "Folder path exceeds maximum depth", http.StatusBadRequest},
+	{staticpw.ErrInvalidUserID, "Invalid user identity", http.StatusBadRequest},
+	{xkms.ErrNilRequest, "Invalid request", http.StatusBadRequest},
+	{staticpw.ErrPasswordReadOnly, "Password is read-only", http.StatusForbidden},
+	{staticpw.ErrNotOwner, "Not the owner of this password", http.StatusForbidden},
+	{staticpw.ErrStoreLocked, "Password store is locked", http.StatusLocked},
+	{staticpw.ErrStoreClosed, "Password store is closed", http.StatusServiceUnavailable},
+	{seal.ErrTenantSealed, "Tenant barrier is sealed", http.StatusServiceUnavailable},
+	{seal.ErrTenantNotFound, "Tenant not found", http.StatusNotFound},
+	{staticpw.ErrNoSystemBarrier, "System password store is unavailable", http.StatusServiceUnavailable},
+	{staticpw.ErrNotConfigured, "Password store not configured", http.StatusServiceUnavailable},
+	{xkms.ErrNotConfigured, "Password store not configured", http.StatusServiceUnavailable},
+}
+
+// passwordWriteServiceError writes the HTTP response for an error returned by
+// the password servicer, falling back to 500 with fallback as the message for
+// an error no mapping names.
+func passwordWriteServiceError(w http.ResponseWriter, err error, fallback string) {
+	for _, m := range passwordServiceErrorMappings {
+		if errors.Is(err, m.target) {
+			passwordWriteJSONError(w, m.message, m.status)
+			return
+		}
+	}
+	passwordWriteJSONError(w, fallback, http.StatusInternalServerError)
+}
+
+// passwordHandleStoreError maps store resolution errors to HTTP status codes.
+func passwordHandleStoreError(w http.ResponseWriter, err error) {
+	passwordWriteServiceError(w, err, "Failed to access password store")
+}
+
 // passwordWriteUnlockError maps the errors returned by
 // XKMSService.PasswordStoreUnlock onto HTTP statuses. The user-PIN sentinels
 // are distinguished from one another so an operator can tell "you sent no PIN"
@@ -773,12 +614,20 @@ func passwordWriteUnlockError(w http.ResponseWriter, err error) {
 		passwordWriteJSONError(w, "User PIN is not provisioned; enable PIN management and set a user PIN", http.StatusPreconditionFailed)
 	case errors.Is(err, staticpw.ErrStoreNotLocked):
 		passwordWriteJSONError(w, "Store is already unlocked", http.StatusConflict)
+	case errors.Is(err, staticpw.ErrInvalidUserID):
+		passwordWriteJSONError(w, "Invalid user identity", http.StatusBadRequest)
 	case errors.Is(err, seal.ErrTenantSealed):
 		passwordWriteJSONError(w, "Tenant barrier is sealed", http.StatusServiceUnavailable)
 	case errors.Is(err, seal.ErrTenantNotFound):
 		passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
-	case errors.Is(err, xkms.ErrNotConfigured), errors.Is(err, xkms.ErrOperationNotSupported):
-		passwordWriteJSONError(w, "Password store unlock requires server integration", http.StatusNotImplemented)
+	case errors.Is(err, staticpw.ErrNoSystemBarrier):
+		passwordWriteJSONError(w, "System password store is unavailable", http.StatusServiceUnavailable)
+	case errors.Is(err, xkms.ErrNilRequest):
+		passwordWriteJSONError(w, "Invalid request", http.StatusBadRequest)
+	case errors.Is(err, xkms.ErrNotConfigured):
+		passwordWriteJSONError(w, "Password store not configured", http.StatusServiceUnavailable)
+	case errors.Is(err, xkms.ErrOperationNotSupported):
+		passwordWriteJSONError(w, "Password store unlock requires an authenticated user", http.StatusNotImplemented)
 	default:
 		// Any remaining error is a failed PIN verification from the PIN
 		// backend. Report it as an authentication failure without echoing the
@@ -793,15 +642,14 @@ func passwordWriteLockError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, staticpw.ErrStoreAlreadyLocked):
 		passwordWriteJSONError(w, "Store is already locked", http.StatusConflict)
-	case errors.Is(err, seal.ErrTenantNotFound):
-		passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
-	case errors.Is(err, xkms.ErrNotConfigured), errors.Is(err, xkms.ErrOperationNotSupported):
-		passwordWriteJSONError(w, "Password store lock requires server integration", http.StatusNotImplemented)
+	case errors.Is(err, xkms.ErrOperationNotSupported):
+		passwordWriteJSONError(w, "Password store lock requires an authenticated user", http.StatusNotImplemented)
 	default:
-		passwordWriteJSONError(w, "Failed to lock store", http.StatusInternalServerError)
+		passwordWriteServiceError(w, err, "Failed to lock store")
 	}
 }
 
+// passwordWriteJSONError writes an error response in the standard JSON format.
 func passwordWriteJSONError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

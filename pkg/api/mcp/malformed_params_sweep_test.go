@@ -96,7 +96,7 @@ func newMalformedParamsTestServer(t *testing.T) *Server {
 
 	server := createTestServer(t)
 
-	server.passwordManager = createPasswordManager(t)
+	server.xkmsService.SetPasswordStoreManager(unlockTestManager(t))
 
 	barrier, _, _ := createTestBarrier(t)
 	server.xkmsService.SetBarrier(barrier)

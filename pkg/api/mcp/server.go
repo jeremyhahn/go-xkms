@@ -41,7 +41,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -101,7 +100,6 @@ type Server struct {
 	keystore        xkms.Backend // Default keystore for backward compatibility
 	xkmsService     *xkms.XKMSService
 	barrierRegistry *seal.BarrierRegistry
-	passwordManager *staticpw.TenantPasswordStoreManager
 	authenticator   auth.Authenticator
 	// authorizer is the qrdb-backed authorization seam shared with the REST,
 	// gRPC, and QUIC transports. It is never nil: when RBAC is disabled it is
@@ -128,7 +126,6 @@ type Config struct {
 	// gRPC, and QUIC do (see pkg/api/tenantgate). Nil disables tenant
 	// enforcement.
 	BarrierRegistry *seal.BarrierRegistry
-	PasswordManager *staticpw.TenantPasswordStoreManager
 	// XKMSService is the injected XKMS service; replaces the package singleton lookup.
 	XKMSService *xkms.XKMSService
 	// SSHClient is the optional SSH sub-system. When set, the MCP server
@@ -196,7 +193,6 @@ func NewServer(config *Config) (*Server, error) {
 	s := &Server{
 		xkmsService:     svc,
 		barrierRegistry: config.BarrierRegistry,
-		passwordManager: config.PasswordManager,
 		authenticator:   authenticator,
 		authorizer:      authorizer,
 		rbacEnabled:     config.EnableRBAC,
@@ -227,11 +223,6 @@ func NewServer(config *Config) (*Server, error) {
 // creation.
 func (s *Server) SetBarrierRegistry(registry *seal.BarrierRegistry) {
 	s.barrierRegistry = registry
-}
-
-// SetPasswordManager configures the password store manager for the MCP server.
-func (s *Server) SetPasswordManager(pm *staticpw.TenantPasswordStoreManager) {
-	s.passwordManager = pm
 }
 
 // rpcHandler dispatches a single JSON-RPC method to its handler. The *Server

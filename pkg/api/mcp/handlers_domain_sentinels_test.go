@@ -163,26 +163,23 @@ func TestInvokeMethod_BarrierDomainSentinel_AlreadyInitialized(t *testing.T) {
 	assert.ErrorIs(t, secondErr, seal.ErrAlreadyInitialized)
 }
 
-// TestInvokeMethod_PasswordDomainSentinel_CrossTenant proves
-// handlePasswordUnlock's cross-tenant refusal reaches the caller as Invalid
-// params through the real InvokeMethod dispatch (go-xkms#912), matching
-// pkg/api/grpc/service_password.go's codes.InvalidArgument for
-// staticpw.ErrInvalidTenantID.
-func TestInvokeMethod_PasswordDomainSentinel_CrossTenant(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupXKMS()
-	server.passwordManager = createPasswordManager(t)
-
-	// The reserved "system" TenantID has no per-tenant password store to
-	// unlock, exactly like TestHandlePasswordUnlock's identical direct-call
-	// regression case; this test drives the same condition through the full
-	// InvokeMethod dispatch instead of calling the handler directly.
+// TestInvokeMethod_PasswordUnlock_SystemTenant proves a caller rooted in the
+// reserved "system" tenant (e.g. a WebAuthn-registered identity) opens its own
+// personal session in the system tenant's password store through the real
+// InvokeMethod dispatch. It used to be refused as cross-tenant: the system
+// tenant had no password store of its own.
+func TestInvokeMethod_PasswordUnlock_SystemTenant(t *testing.T) {
+	s := newPasswordServer(t, unlockTestUserPIN)
+	s.authorizer = auth.NewAuthorizer(nil)
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "webauthn-user", TenantID: "system"})
 
-	_, err := server.InvokeMethod(ctx, "password.unlock", json.RawMessage(`{}`))
-	require.Error(t, err)
+	result, err := s.InvokeMethod(ctx, "password.unlock", json.RawMessage(`{"user_pin":"`+unlockTestUserPIN+`"}`))
 
-	var keyErr *KeyOpError
-	require.ErrorAs(t, err, &keyErr)
-	assert.Equal(t, ErrCodeInvalidParams, keyErr.Code)
+	require.NoError(t, err)
+	status, ok := result.(PasswordStoreStatusResult)
+	require.True(t, ok)
+	assert.False(t, status.IsLocked)
+	locked, err := s.manager.IsUserLocked("system", "webauthn-user")
+	require.NoError(t, err)
+	assert.False(t, locked)
 }

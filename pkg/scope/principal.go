@@ -16,8 +16,12 @@ package scope
 import (
 	"context"
 
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
+
+// pkg/scope reads identities through the go-qrdb SDK, never pkg/auth (whose
+// auth.Identity is an alias of qrdbsdk.Identity): pkg/auth imports the PKCS#11
+// module and through it the transports, which themselves use pkg/scope.
 
 // Principal is the caller a request is authorized for.
 type Principal struct {
@@ -41,9 +45,10 @@ type Principal struct {
 }
 
 // PrincipalOf returns the principal id authenticates, following go-qrdb's
-// system-tenant rule (auth.IsCrossTenant).
-func PrincipalOf(id *auth.Identity) Principal {
-	if auth.IsCrossTenant(id) {
+// system-tenant rule (the one auth.IsCrossTenant applies): no identity, or an
+// identity in the system tenant, is the platform.
+func PrincipalOf(id *qrdbsdk.Identity) Principal {
+	if qrdbsdk.IdentityIsSystemTenant(id) {
 		p := Principal{TenantID: SystemTenant, Platform: true}
 		if id != nil {
 			p.Subject = id.Subject
@@ -55,7 +60,7 @@ func PrincipalOf(id *auth.Identity) Principal {
 
 // PrincipalFromContext returns the principal of the identity ctx carries.
 func PrincipalFromContext(ctx context.Context) Principal {
-	return PrincipalOf(auth.GetIdentity(ctx))
+	return PrincipalOf(qrdbsdk.IdentityFromContext(ctx))
 }
 
 // Target is the owner of an object a request addresses.

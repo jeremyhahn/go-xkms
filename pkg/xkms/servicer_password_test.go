@@ -1033,12 +1033,6 @@ func TestPasswordGet_ReturnsOwnerAndShared(t *testing.T) {
 func TestPasswordAdd_SharedPersonalIsolation(t *testing.T) {
 	svc, _ := setupServiceWithPasswordManager(t)
 
-	// Unlock tenant-1 using a generic tenant context.
-	unlockCtx := contextWithTenant("tenant-1")
-	err := svc.PasswordStoreUnlock(unlockCtx, unlockRequest())
-	require.NoError(t, err)
-
-	// Create user-specific contexts for alice and bob.
 	aliceCtx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject:  "alice",
 		TenantID: "tenant-1",
@@ -1048,31 +1042,109 @@ func TestPasswordAdd_SharedPersonalIsolation(t *testing.T) {
 		TenantID: "tenant-1",
 	})
 
-	// Alice adds a personal password.
-	_, err = svc.PasswordAdd(aliceCtx, &transport.PasswordAddRequest{
+	// Sessions are per user: each opens their own.
+	require.NoError(t, svc.PasswordStoreUnlock(aliceCtx, unlockRequest()))
+	require.NoError(t, svc.PasswordStoreUnlock(bobCtx, unlockRequest()))
+
+	// Alice adds a personal password and a shared one.
+	private, err := svc.PasswordAdd(aliceCtx, &transport.PasswordAddRequest{
 		Name:     "Alice Private Key",
 		Password: "alice-secret",
 	})
 	require.NoError(t, err)
+	_, err = svc.PasswordAdd(aliceCtx, &transport.PasswordAddRequest{
+		Name:     "Team Wiki",
+		Password: "wiki-secret",
+		Shared:   true,
+	})
+	require.NoError(t, err)
 
-	// Bob lists personal scope and should see 0 entries (alice's personal
-	// passwords are invisible to bob).
+	// Bob sees none of alice's personal passwords, cannot address hers by ID,
+	// and sees the shared one.
 	bobPersonal, err := svc.PasswordList(bobCtx, &transport.PasswordListRequest{Scope: "personal"})
 	require.NoError(t, err)
 	assert.Equal(t, 0, bobPersonal.Total)
+	_, err = svc.PasswordGet(bobCtx, &transport.PasswordGetRequest{ID: private.ID})
+	assert.ErrorIs(t, err, staticpw.ErrPasswordNotFound)
+	assert.ErrorIs(t, svc.PasswordDelete(bobCtx, &transport.PasswordDeleteRequest{ID: private.ID}), staticpw.ErrPasswordNotFound)
+	bobShared, err := svc.PasswordList(bobCtx, &transport.PasswordListRequest{Scope: "shared"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, bobShared.Total)
 
-	// Bob adds his own personal password.
+	// Bob adds his own personal password and sees exactly it.
 	_, err = svc.PasswordAdd(bobCtx, &transport.PasswordAddRequest{
 		Name:     "Bob SSH Key",
 		Password: "bob-secret",
 	})
 	require.NoError(t, err)
-
-	// Bob lists personal scope and should see exactly 1 entry (his own).
 	bobPersonal, err = svc.PasswordList(bobCtx, &transport.PasswordListRequest{Scope: "personal"})
 	require.NoError(t, err)
 	assert.Equal(t, 1, bobPersonal.Total)
 	assert.Equal(t, "Bob SSH Key", bobPersonal.Passwords[0].Name)
+
+	// Alice's entry survived bob's attempts.
+	got, err := svc.PasswordGet(aliceCtx, &transport.PasswordGetRequest{ID: private.ID})
+	require.NoError(t, err)
+	assert.Equal(t, "alice-secret", got.Password)
+}
+
+// TestPasswordStoreSessions_ArePerUser proves one user's unlock or lock never
+// opens or closes another user's personal session, and that shared entries
+// stay usable while a session is locked.
+func TestPasswordStoreSessions_ArePerUser(t *testing.T) {
+	svc, _ := setupServiceWithPasswordManager(t)
+	aliceCtx := sharedPasswordCtx("alice")
+	bobCtx := sharedPasswordCtx("bob")
+
+	require.NoError(t, svc.PasswordStoreUnlock(aliceCtx, unlockRequest()))
+	bobStatus, err := svc.PasswordStoreStatus(bobCtx)
+	require.NoError(t, err)
+	assert.True(t, bobStatus.IsLocked, "alice unlocking must not unlock bob")
+
+	// Bob, locked, still reads and writes shared entries.
+	_, err = svc.PasswordAdd(bobCtx, &transport.PasswordAddRequest{Name: "shared", Password: "pw", Shared: true})
+	require.NoError(t, err)
+	_, err = svc.PasswordAdd(bobCtx, &transport.PasswordAddRequest{Name: "personal", Password: "pw"})
+	assert.ErrorIs(t, err, staticpw.ErrStoreLocked)
+
+	require.NoError(t, svc.PasswordStoreUnlock(bobCtx, unlockRequest()))
+	require.NoError(t, svc.PasswordStoreLock(aliceCtx))
+	bobStatus, err = svc.PasswordStoreStatus(bobCtx)
+	require.NoError(t, err)
+	assert.False(t, bobStatus.IsLocked, "alice locking must not lock bob")
+	aliceStatus, err := svc.PasswordStoreStatus(aliceCtx)
+	require.NoError(t, err)
+	assert.True(t, aliceStatus.IsLocked)
+	assert.ErrorIs(t, svc.PasswordStoreLock(aliceCtx), staticpw.ErrStoreAlreadyLocked)
+}
+
+// TestPasswordStore_SystemTenantHasItsOwnStore is the regression for the
+// system-tenant "Tenant not found": a system-tenant identity is served from
+// the system tenant's own store, isolated from every tenant's.
+func TestPasswordStore_SystemTenantHasItsOwnStore(t *testing.T) {
+	svc, _ := setupServiceWithPasswordManager(t)
+	rootCtx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "root", TenantID: qrdbsdk.SystemTenantID})
+	tenantCtx := sharedPasswordCtx("alice")
+
+	require.NoError(t, svc.PasswordStoreUnlock(rootCtx, unlockRequest()))
+	_, err := svc.PasswordAdd(rootCtx, &transport.PasswordAddRequest{Name: "sys-shared", Password: "pw", Shared: true})
+	require.NoError(t, err)
+	_, err = svc.PasswordAdd(rootCtx, &transport.PasswordAddRequest{Name: "sys-personal", Password: "pw"})
+	require.NoError(t, err)
+
+	status, err := svc.PasswordStoreStatus(rootCtx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, status.PasswordCount)
+
+	listed, err := svc.PasswordList(tenantCtx, &transport.PasswordListRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, listed.Total, "a tenant must not see the system tenant's entries")
+
+	// The unscoped store serving requests without an identity is separate.
+	flat, err := svc.PasswordList(context.Background(), &transport.PasswordListRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, flat.Total)
+	assert.ErrorIs(t, svc.PasswordStoreUnlock(context.Background(), unlockRequest()), ErrOperationNotSupported)
 }
 
 // --- checkSharedPasswordOwnership tests ---
@@ -1337,8 +1409,8 @@ func TestPasswordStoreUnlock_WrongPINKeepsStoreLocked(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, status.IsLocked, "store must stay locked after a wrong PIN")
 
-	// A locked store must not serve entries.
-	_, err = svc.PasswordList(ctx, &transport.PasswordListRequest{})
+	// A locked session must not serve personal entries.
+	_, err = svc.PasswordList(ctx, &transport.PasswordListRequest{Scope: "personal"})
 	assert.ErrorIs(t, err, staticpw.ErrStoreLocked)
 }
 
@@ -1356,7 +1428,7 @@ func TestPasswordStoreUnlock_MissingPINRejected(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, status.IsLocked, "store must stay locked when no PIN is supplied")
 
-	_, err = svc.PasswordList(ctx, &transport.PasswordListRequest{})
+	_, err = svc.PasswordAdd(ctx, &transport.PasswordAddRequest{Name: "personal", Password: "pw"})
 	assert.ErrorIs(t, err, staticpw.ErrStoreLocked)
 }
 

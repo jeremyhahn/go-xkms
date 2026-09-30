@@ -17,8 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,8 +26,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // unlockTestUserPIN is the PIN the stub PIN backend treats as correct.
@@ -70,68 +68,23 @@ func (b *stubPINBackend) SOPINSet() bool                              { return t
 func (b *stubPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus { return nil }
 func (b *stubPINBackend) ResetLockout(_ string) error                 { return nil }
 
-// unlockTestManager builds a TenantPasswordStoreManager with "tenant-1"
-// registered, initialized, and therefore genuinely unlockable, so a successful
-// unlock is observable rather than masked by a missing tenant.
+// unlockTestManager builds a TenantPasswordStoreManager over a registry with
+// tenants registered, initialized, and therefore genuinely unlockable, so a
+// successful unlock is observable rather than masked by a missing tenant.
 func unlockTestManager(t *testing.T) *staticpw.TenantPasswordStoreManager {
 	t.Helper()
-
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	sysBackend, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
-
-	sysBarrier, err := seal.NewBarrier(
-		logger,
-		sysBackend,
-		seal.BarrierConfig{
-			RootKeyPath:     "root-key",
-			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-		},
-		seal.NewSoftwareStrategy(),
-	)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	sysCreds := seal.MustCredentials([]byte("test-pw"))
-	defer sysCreds.Secret.Destroy()
-	require.NoError(t, sysBarrier.Initialize(ctx, sysCreds))
-
-	registry, err := seal.NewBarrierRegistry(sysBarrier)
-	require.NoError(t, err)
-
-	_, err = registry.RegisterTenant("tenant-1")
-	require.NoError(t, err)
-	tenantCreds := seal.MustCredentials([]byte("tenant-pw"))
-	defer tenantCreds.Secret.Destroy()
-	require.NoError(t, registry.InitializeTenant(ctx, "tenant-1", tenantCreds))
-
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, staticpw.NewStore(storage.New()))
-	require.NoError(t, err)
+	_, _, manager := passwordTestRegistry(t)
 	return manager
 }
 
-// setupUnlockServer wires the MCP server's real XKMS service with a tenant
-// password store manager and a PIN backend, so the unlock path exercises the
-// genuine service-layer credential check rather than a stub servicer.
+// setupUnlockServer builds an MCP server over a real XKMS service wired with
+// a tenant password store manager and a PIN backend, so the unlock path
+// exercises the genuine service-layer credential check rather than a stub
+// servicer.
 func setupUnlockServer(t *testing.T, provisionedPIN string) (*Server, *stubPINBackend) {
 	t.Helper()
-
-	server := createTestServer(t)
-	t.Cleanup(cleanupXKMS)
-
-	manager := unlockTestManager(t)
-	server.passwordManager = manager
-
-	pinBackend := &stubPINBackend{userPIN: provisionedPIN}
-
-	svc, err := xkms.Get()
-	require.NoError(t, err)
-	svc.SetPasswordStoreManager(manager)
-	svc.SetPINManager(pinBackend)
-	server.xkmsService = svc
-
-	return server, pinBackend
+	s := newPasswordServer(t, provisionedPIN)
+	return s.Server, s.pin
 }
 
 // tenantCtx returns a context carrying an authenticated tenant identity.
@@ -240,11 +193,14 @@ func TestMapPasswordUnlockError(t *testing.T) {
 	}{
 		{"missing PIN", xkms.ErrPasswordStoreUserPINRequired, ErrCodeInvalidParams},
 		{"unprovisioned PIN", xkms.ErrPasswordStoreUserPINNotProvisioned, ErrCodeInvalidParams},
-		{"not configured", xkms.ErrNotConfigured, ErrCodeMethodNotFound},
+		{"not configured", xkms.ErrNotConfigured, ErrCodeServiceUnavailable},
+		{"no system barrier", staticpw.ErrNoSystemBarrier, ErrCodeServiceUnavailable},
 		{"operation not supported", xkms.ErrOperationNotSupported, ErrCodeMethodNotFound},
+		{"nil request", xkms.ErrNilRequest, ErrCodeInvalidParams},
+		{"invalid user", staticpw.ErrInvalidUserID, ErrCodeInvalidParams},
 		{"already unlocked", staticpw.ErrStoreNotLocked, ErrCodeInternalError},
 		{"tenant sealed", seal.ErrTenantSealed, ErrCodeInternalError},
-		{"tenant not found", seal.ErrTenantNotFound, ErrCodeInternalError},
+		{"tenant not found", seal.ErrTenantNotFound, sdkssh.JSONRPCCodeNotFound},
 	}
 
 	for _, tc := range cases {

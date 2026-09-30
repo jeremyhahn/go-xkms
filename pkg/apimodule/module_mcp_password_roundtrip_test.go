@@ -65,7 +65,6 @@ func startRoundTripMCPServer(t *testing.T) string {
 	backend := newMCPBackend(t)
 
 	mgr := newRoundTripPasswordManager(t)
-	backend.SetPasswordManager(mgr)
 
 	svc, err := xkms.Get()
 	require.NoError(t, err)

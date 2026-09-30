@@ -2872,22 +2872,21 @@ func (s *Server) ModuleRESTServer() *rest.Server {
 // (pkg/apimodule), so both surfaces are built from identical wiring.
 func (s *Server) buildRESTConfig() (*rest.Config, error) {
 	restConfig := &rest.Config{
-		Host:                 s.config.Server.Host,
-		Port:                 s.config.Server.RESTPort,
-		Backends:             s.backends,
-		Version:              getBuildVersion(),
-		Authenticator:        s.liveAuthenticator,
-		EnableRBAC:           s.config.Auth.EnableRBAC,
-		RBACAuthorizer:       s.rbacAuthorizer,
-		AuditLogger:          s.auditLogger,
-		PasswordStore:        s.passwordStore,
-		PasswordStoreManager: s.passwordManager,
-		BarrierRegistry:      s.barrierRegistry,
-		CustodianEnabled:     s.qrdbClient != nil,
-		ShareEnabled:         s.qrdbClient != nil,
-		CeremonyService:      s.ceremonyService,
-		XKMSService:          s.xkmsService,
-		SSHClient:            s.ensureSSHClient(),
+		Host:             s.config.Server.Host,
+		Port:             s.config.Server.RESTPort,
+		Backends:         s.backends,
+		Version:          getBuildVersion(),
+		Authenticator:    s.liveAuthenticator,
+		EnableRBAC:       s.config.Auth.EnableRBAC,
+		RBACAuthorizer:   s.rbacAuthorizer,
+		AuditLogger:      s.auditLogger,
+		PasswordStore:    s.passwordStore,
+		BarrierRegistry:  s.barrierRegistry,
+		CustodianEnabled: s.qrdbClient != nil,
+		ShareEnabled:     s.qrdbClient != nil,
+		CeremonyService:  s.ceremonyService,
+		XKMSService:      s.xkmsService,
+		SSHClient:        s.ensureSSHClient(),
 	}
 
 	// Embedded web UI: serve the compiled SPA (installed via SetUIAssets)
