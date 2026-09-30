@@ -1652,8 +1652,9 @@ jobs:
         run: |
           # libssl-dev: go-tpm-tools/simulator compiles the reference TPM
           # with cgo and links it against -lcrypto. libicu-dev and
-          # libusb-1.0-0-dev: see the "build" job's comment.
-          sudo .github/scripts/apt-deps.sh libssl-dev libicu-dev libusb-1.0-0-dev
+          # libusb-1.0-0-dev: see the "build" job's comment. swtpm:
+          # pkg/tpm2/vtpm supervises a real swtpm process per tenant.
+          sudo .github/scripts/apt-deps.sh libssl-dev libicu-dev libusb-1.0-0-dev swtpm
 
       - name: Run pkg/tpm2 on the simulator
         env:

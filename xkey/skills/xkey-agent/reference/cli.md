@@ -2584,8 +2584,10 @@ Usage: `xkey tpm policy create <name> [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--auto-unseal` | bool | false | Also make it the barrier auto-unseal policy (see 'tpm policy auto-unseal') |
-| `--bank` | string | sha256 | PCR bank: sha1, sha256, sha384 or sha512 |
-| `--pcrs` | string |  | PCR indices, e.g. 0,7 or 0-7 (required) |
+| `--bank` | string |  | PCR bank of --pcrs: sha1, sha256, sha384 or sha512 (default sha256) |
+| `--branch` | stringArray | [] | A policy branch, e.g. 'pcr=sha256:0,7;auth_value;locality=0' (repeatable) |
+| `--description` | string |  | Free-text description of the policy |
+| `--pcrs` | string |  | PCR indices of a one-branch policy, e.g. 0,7 or 0-7 |
 
 ## xkey tpm policy delete
 
@@ -2594,6 +2596,12 @@ Delete a policy no object uses
 Usage: `xkey tpm policy delete <name>`
 
 Aliases: rm
+
+## xkey tpm policy describe
+
+Set a policy's description
+
+Usage: `xkey tpm policy describe <name> <text>`
 
 ## xkey tpm policy get
 
