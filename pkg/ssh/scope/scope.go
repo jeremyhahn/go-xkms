@@ -22,51 +22,35 @@
 // splits on "/" so future layout changes stay local.
 package scope
 
-import "strings"
+import (
+	"strings"
 
-// Scope identifies the ownership domain of an SSH asset. A key owned at
-// tenant scope is visible to every user in that tenant; a user-scoped
-// key is visible only to the owning user; a service-scoped key is owned
-// by an automated workload.
-type Scope string
-
-// Scope constants. The string values are the canonical on-disk form and
-// MUST NOT change without a storage-migration plan.
-const (
-	// Tenant identifies tenant-owned SSH assets.
-	Tenant Scope = "tenant"
-
-	// User identifies user-owned SSH assets.
-	User Scope = "user"
-
-	// Service identifies service-account-owned SSH assets.
-	Service Scope = "service"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 )
 
-// Valid reports whether s is one of the three canonical scope values.
-func (s Scope) Valid() bool {
-	switch s {
-	case Tenant, User, Service:
-		return true
-	default:
-		return false
-	}
-}
+// Scope identifies the ownership domain of an SSH asset. It is the
+// xkms-wide ownership scope (pkg/scope): a tenant-scoped key is visible to
+// every user in that tenant, a user-scoped key only to the owning user, and a
+// service-scoped key only to callers holding the explicit service permission.
+type Scope = scope.Scope
 
-// String returns the canonical string form.
-func (s Scope) String() string { return string(s) }
+// Scope constants, re-exported from pkg/scope. The string values are the
+// canonical on-disk form.
+const (
+	// Tenant identifies tenant-owned SSH assets.
+	Tenant = scope.Tenant
+
+	// User identifies user-owned SSH assets.
+	User = scope.User
+
+	// Service identifies service-account-owned SSH assets.
+	Service = scope.Service
+)
 
 // Parse normalizes s and returns the matching Scope or a
-// *ScopeInvalidError. Leading and trailing whitespace is trimmed and
-// comparison is case-insensitive; the returned Scope is always the
-// canonical lowercase form.
+// *ScopeInvalidError. See scope.Parse.
 func Parse(s string) (Scope, error) {
-	trimmed := strings.ToLower(strings.TrimSpace(s))
-	sc := Scope(trimmed)
-	if !sc.Valid() {
-		return "", &ScopeInvalidError{Value: s}
-	}
-	return sc, nil
+	return scope.Parse(s)
 }
 
 // BuildKeyID returns the canonical storage-path fragment

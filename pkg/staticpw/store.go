@@ -25,11 +25,16 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
-
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
-const defaultKeyPrefix = "staticpw/"
+const defaultKeyPrefix = Feature + "/"
+
+// Feature is the password manager's feature segment in the xkms keyspace
+// (pkg/scope): shared entries live under "{tenant}/staticpw/shared/" and a
+// user's personal entries under "{tenant}/staticpw/users/{subject}/".
+const Feature = "staticpw"
 
 // folderMarkerSuffix is the sub-prefix used to persist empty folder markers
 // so they survive across restarts even without entries.
@@ -130,29 +135,38 @@ func NewTenantStore(backend storage.Backend, tenantID string) (*BackendStore, er
 	if !isValidTenantID(tenantID) {
 		return nil, ErrInvalidTenantID
 	}
-	return &BackendStore{
-		backend:   backend,
-		tenantID:  tenantID,
-		keyPrefix: tenantID + "/" + defaultKeyPrefix,
-	}, nil
-}
-
-// NewSharedTenantStore creates a BackendStore for tenant-wide shared passwords.
-// Keys are prefixed with "{tenantID}/staticpw/shared/".
-func NewSharedTenantStore(backend storage.Backend, tenantID string) (*BackendStore, error) {
-	if !isValidTenantID(tenantID) {
-		return nil, ErrInvalidTenantID
+	root, err := scope.Root(tenantID, Feature)
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrInvalidTenantID, Detail: err.Error()}
 	}
 	return &BackendStore{
 		backend:   backend,
 		tenantID:  tenantID,
-		keyPrefix: tenantID + "/" + defaultKeyPrefix + "shared/",
+		keyPrefix: root,
+	}, nil
+}
+
+// NewSharedTenantStore creates a BackendStore for tenant-wide shared passwords.
+// Keys are prefixed with the tenant's shared keyspace,
+// "{tenantID}/staticpw/shared/" (scope.SharedPrefix).
+func NewSharedTenantStore(backend storage.Backend, tenantID string) (*BackendStore, error) {
+	if !isValidTenantID(tenantID) {
+		return nil, ErrInvalidTenantID
+	}
+	prefix, err := scope.SharedPrefix(tenantID, Feature)
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrInvalidTenantID, Detail: err.Error()}
+	}
+	return &BackendStore{
+		backend:   backend,
+		tenantID:  tenantID,
+		keyPrefix: prefix,
 	}, nil
 }
 
 // NewPersonalTenantStore creates a BackendStore for a specific user's personal
-// passwords within a tenant. Keys are prefixed with
-// "{tenantID}/staticpw/users/{userID}/".
+// passwords within a tenant. Keys are prefixed with the user's personal
+// keyspace, "{tenantID}/staticpw/users/{userID}/" (scope.PersonalPrefix).
 func NewPersonalTenantStore(backend storage.Backend, tenantID string, userID string) (*BackendStore, error) {
 	if !isValidTenantID(tenantID) {
 		return nil, ErrInvalidTenantID
@@ -160,10 +174,14 @@ func NewPersonalTenantStore(backend storage.Backend, tenantID string, userID str
 	if !isValidUserID(userID) {
 		return nil, ErrInvalidUserID
 	}
+	prefix, err := scope.PersonalPrefix(tenantID, Feature, userID)
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrInvalidUserID, Detail: err.Error()}
+	}
 	return &BackendStore{
 		backend:   backend,
 		tenantID:  tenantID,
-		keyPrefix: tenantID + "/" + defaultKeyPrefix + "users/" + userID + "/",
+		keyPrefix: prefix,
 	}, nil
 }
 

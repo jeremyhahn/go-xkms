@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
+	xscope "github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -105,7 +106,7 @@ type scopeState struct {
 }
 
 // isSystem reports whether the state is the system scope's.
-func (st *scopeState) isSystem() bool { return st.name == systemScopeName }
+func (st *scopeState) isSystem() bool { return st.name == xscope.SystemTenant }
 
 // tenantID returns the KeyAttributes.TenantID of the scope's objects: empty
 // for the system scope.
@@ -134,7 +135,7 @@ func (st *scopeState) ownerAuth(physical []byte) []byte {
 
 // scopeName validates tenant and returns its scope name.
 func scopeName(tenant string) (string, error) {
-	name := ScopeName(tenant)
+	name := xscope.TenantName(tenant)
 	if err := storage.ValidateTenantID(name); err != nil {
 		return "", &InvalidTenantError{Tenant: tenant, Err: err}
 	}
@@ -202,7 +203,7 @@ func (s *Service) flush(scope string, key *types.KeyAttributes) error {
 // defaultMode is the mode a scope is created with on first use: the system
 // scope is always on the physical TPM.
 func defaultMode(name string) Mode {
-	if name == systemScopeName {
+	if name == xscope.SystemTenant {
 		return ModeShared
 	}
 	return DefaultMode

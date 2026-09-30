@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 
+	xscope "github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 )
 
@@ -47,7 +48,11 @@ func (r *Registry) Scopes(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, &StoreError{Op: "list", Key: "", Err: err}
 	}
-	suffix := registryPrefix + scopeKey
+	shared, err := xscope.SharedSuffix(registryFeature)
+	if err != nil {
+		return nil, err
+	}
+	suffix := shared + scopeKey
 	var out []string
 	for _, k := range keys {
 		if scope, ok := strings.CutSuffix(k, suffix); ok && scope != "" && !strings.Contains(scope, "/") {
@@ -111,7 +116,7 @@ func (s *Service) KeyStore(tenant string) (store.KeyBackend, error) {
 	if err != nil {
 		return nil, err
 	}
-	if name == systemScopeName {
+	if name == xscope.SystemTenant {
 		return s.keys, nil
 	}
 	return s.tenantKeys(name)

@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	xscope "github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -57,13 +58,13 @@ func TestRegistry_ScopesListsOnlyScopeRecords(t *testing.T) {
 	assert.Empty(t, empty)
 
 	require.NoError(t, r.PutScope(ctx, &Scope{Tenant: "globex", Mode: ModeShared}))
-	require.NoError(t, r.PutScope(ctx, &Scope{Tenant: systemScopeName, Mode: ModeShared}))
+	require.NoError(t, r.PutScope(ctx, &Scope{Tenant: xscope.SystemTenant, Mode: ModeShared}))
 	require.NoError(t, r.PutScope(ctx, &Scope{Tenant: "acme", Mode: ModeShared}))
 	require.NoError(t, r.CreatePolicy(ctx, "initech", testPolicy("boot")))
 
 	scopes, err := r.Scopes(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"acme", "globex", systemScopeName}, scopes)
+	assert.Equal(t, []string{"acme", "globex", xscope.SystemTenant}, scopes)
 }
 
 // TestRegistry_AssignmentsAreScopedToTheTenant proves Assignments returns a

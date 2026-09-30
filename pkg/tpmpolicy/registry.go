@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 
+	xscope "github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
@@ -42,8 +43,7 @@ const (
 	policiesPrefix  = "policies/"
 	objectsPrefix   = "objects/"
 	byPolicyPrefix  = "by-policy/"
-	registryPrefix  = "/tpm-policies/shared/"
-	systemScopeName = "system"
+	registryFeature = "tpm-policies"
 )
 
 // Registry persists scopes, named policies and object assignments. A TPM
@@ -68,15 +68,6 @@ func NewRegistry(store storage.Backend) (*Registry, error) {
 	return &Registry{store: store, locks: make(map[string]*sync.Mutex)}, nil
 }
 
-// ScopeName normalizes a tenant ID to its scope name: the empty tenant is the
-// system scope.
-func ScopeName(tenant string) string {
-	if tenant == "" {
-		return systemScopeName
-	}
-	return tenant
-}
-
 // lock returns the mutex serializing tenant's registry mutations.
 func (r *Registry) lock(tenant string) *sync.Mutex {
 	r.locksMu.Lock()
@@ -89,13 +80,14 @@ func (r *Registry) lock(tenant string) *sync.Mutex {
 	return mu
 }
 
-// key returns the storage key of a registry entry for tenant.
+// key returns the storage key of a registry entry for tenant: the entry lives
+// in the tenant's shared keyspace of the tpm-policies feature (pkg/scope).
 func key(tenant, suffix string) (string, error) {
-	scope := ScopeName(tenant)
-	if err := storage.ValidateTenantID(scope); err != nil {
+	prefix, err := xscope.SharedPrefix(tenant, registryFeature)
+	if err != nil {
 		return "", &InvalidTenantError{Tenant: tenant, Err: err}
 	}
-	return scope + registryPrefix + suffix, nil
+	return prefix + suffix, nil
 }
 
 // validName refuses names that cannot be a single key segment.
@@ -196,7 +188,7 @@ func (r *Registry) PutScope(ctx context.Context, s *Scope) error {
 // DeleteScope removes tenant's scope record. It refuses while the tenant has
 // any object or named policy: TPM objects cannot leave their TPM.
 func (r *Registry) DeleteScope(ctx context.Context, tenant string) error {
-	mu := r.lock(ScopeName(tenant))
+	mu := r.lock(xscope.TenantName(tenant))
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -228,7 +220,7 @@ func (r *Registry) refuseIfPopulated(ctx context.Context, tenant string) error {
 	for _, p := range policies {
 		names = append(names, p.Name)
 	}
-	return &ScopeInUseError{Tenant: ScopeName(tenant), Objects: objects, Policies: names}
+	return &ScopeInUseError{Tenant: xscope.TenantName(tenant), Objects: objects, Policies: names}
 }
 
 // CreatePolicy stores a new named policy. It refuses a name that already
@@ -329,7 +321,7 @@ func (r *Registry) DeletePolicy(ctx context.Context, tenant, name string) error 
 	if name == PlatformPolicy {
 		return ErrReservedPolicy
 	}
-	mu := r.lock(ScopeName(tenant))
+	mu := r.lock(xscope.TenantName(tenant))
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -359,7 +351,7 @@ func (r *Registry) Assign(ctx context.Context, tenant string, a *Assignment) err
 	if err := validObjectID(a.ObjectID); err != nil {
 		return err
 	}
-	mu := r.lock(ScopeName(tenant))
+	mu := r.lock(xscope.TenantName(tenant))
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -388,7 +380,7 @@ func (r *Registry) Unassign(ctx context.Context, tenant, objectID string) error 
 	if err := validObjectID(objectID); err != nil {
 		return err
 	}
-	mu := r.lock(ScopeName(tenant))
+	mu := r.lock(xscope.TenantName(tenant))
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -438,7 +430,7 @@ func (r *Registry) ObjectsOf(ctx context.Context, tenant, name string) ([]string
 	if err := validName(name); err != nil {
 		return nil, err
 	}
-	mu := r.lock(ScopeName(tenant))
+	mu := r.lock(xscope.TenantName(tenant))
 	mu.Lock()
 	defer mu.Unlock()
 	return r.objectsOf(ctx, tenant, name)

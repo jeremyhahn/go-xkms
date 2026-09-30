@@ -13,18 +13,13 @@
 
 package scope
 
+import "github.com/jeremyhahn/go-xkms/pkg/scope"
+
 // ScopeInvalidError is returned by Parse / BuildKeyID / ParseKeyID when
 // the scope component is not one of the canonical values (tenant, user,
-// service). Value holds the offending input exactly as supplied, so the
-// caller can format diagnostic messages without re-normalizing.
-type ScopeInvalidError struct {
-	Value string
-}
-
-// Error implements the error interface.
-func (e *ScopeInvalidError) Error() string {
-	return "ssh/scope: invalid scope: " + e.Value
-}
+// service). It is the xkms-wide scope.InvalidScopeError; Value holds the
+// offending input exactly as supplied.
+type ScopeInvalidError = scope.InvalidScopeError
 
 // KeyIDMalformedError is returned when a key-ID component is missing,
 // empty, or contains the reserved separator. Field identifies which

@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 
+	xscope "github.com/jeremyhahn/go-xkms/pkg/scope"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
@@ -75,7 +76,7 @@ type ScopeError struct {
 
 // Error implements the error interface.
 func (e *ScopeError) Error() string {
-	return fmt.Sprintf("tpm2: TPM scope of tenant %q: %v", tpmpolicy.ScopeName(e.Tenant), e.Err)
+	return fmt.Sprintf("tpm2: TPM scope of tenant %q: %v", xscope.TenantName(e.Tenant), e.Err)
 }
 
 // Unwrap returns the underlying cause.
@@ -91,7 +92,7 @@ type AssignmentError struct {
 
 // Error implements the error interface.
 func (e *AssignmentError) Error() string {
-	return fmt.Sprintf("tpm2: TPM policy assignment of %q in tenant %q: %v", e.Object, tpmpolicy.ScopeName(e.Tenant), e.Err)
+	return fmt.Sprintf("tpm2: TPM policy assignment of %q in tenant %q: %v", e.Object, xscope.TenantName(e.Tenant), e.Err)
 }
 
 // Unwrap returns the underlying cause.
@@ -118,7 +119,7 @@ func (b *Backend) TenantBoundSealing() bool {
 
 // isSystemTenant reports whether tenant names the system scope.
 func isSystemTenant(tenant string) bool {
-	return tpmpolicy.ScopeName(tenant) == tpmpolicy.ScopeName("")
+	return xscope.IsSystem(tenant)
 }
 
 // keyScope is the TPM scope one operation runs in: the TPM, the key store and

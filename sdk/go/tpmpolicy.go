@@ -15,6 +15,7 @@ package xkms
 
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -168,8 +169,9 @@ var (
 	// ("key", "" or "sealed") names, or *InvalidTPMObjectKindError.
 	ParseTPMObjectKind = pkgxkms.ParseTPMObjectKind
 
-	// TPMPolicyScopeName normalizes a tenant ID to its scope name.
-	TPMPolicyScopeName = tpmpolicy.ScopeName
+	// TPMPolicyScopeName normalizes a tenant ID to its scope name ("" and
+	// the system tenant are "system"); it is the xkms-wide scope.TenantName.
+	TPMPolicyScopeName = scope.TenantName
 
 	// TPMPolicyPCRBranch returns an API branch holding one pcr condition:
 	// the whole of a policy that approves one PCR state.

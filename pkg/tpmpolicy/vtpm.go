@@ -20,6 +20,7 @@ import (
 	"io/fs"
 
 	"github.com/google/go-tpm/tpm2"
+	xscope "github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -128,7 +129,7 @@ func (s *Service) StopVTPM(ctx context.Context, tenant string) error {
 // VTPMStatus reports tenant's vTPM. Without a vTPM supervisor, or for a
 // tenant with no running vTPM, Running is false.
 func (s *Service) VTPMStatus(tenant string) vtpm.Status {
-	name := ScopeName(tenant)
+	name := xscope.TenantName(tenant)
 	if s.vtpm == nil {
 		return vtpm.Status{Tenant: name}
 	}
