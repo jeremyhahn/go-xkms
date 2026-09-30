@@ -1,8 +1,0 @@
-- **A shared-mode tenant can hold TPM symmetric keys, and unsealing in-memory blobs honours the object's named policy.**
-  - `pkg/tpm2` symmetric keys accepted only the Platform SRK as parent, and only the TPM's default key store. They now accept any storage key beneath the Platform SRK (never the Shared SRK, and never a non-storage key) through the store-aware `GenerateSymmetricKeyIn`, `GetSymmetricKeyIn`, `SymmetricEncrypterIn` and `DeriveFromSymmetricKeyIn`.
-  - The TPM2 backend routes every scope's symmetric keys through these variants. The encrypter it returns opens its key's scope for each operation, because a shared tenant's storage key is flushed when the operation ends.
-  - `Unseal` of caller-supplied blobs read a named policy's binding record from the TPM's default store only, so a tenant's sealed object failed its policy session. It now reads the record from `UnsealOptions.Backend`, and the backend's copy-from-store workaround is removed.
-  - Verified on the simulator:
-    - `TestSymmetricKey_UnderATenantStorageKey`: a tenant key encrypts and decrypts, and Shared SRK and non-storage parents are refused;
-    - `TestScopedBackend_SymmetricKeysInEveryScope`: the system and tenant scopes, the registry assignments, and cross-tenant invisibility;
-    - `TestAuthorizedPolicy_SealedObjectFromBlobsInCallerStore`: proven to fail without the fix.

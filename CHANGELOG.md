@@ -7,6 +7,144 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0-alpha] - 2026-09-30
+
+### Added
+
+- **Named TPM policies can be composite (an OR of branches, each an AND of `pcr`, `auth_value` and `locality` conditions), and carry a description.**
+  - The authority signs one approval per branch, all for the policy's `policyRef`, so `PolicyAuthorize` accepts whichever branch the session satisfies. Update, revoke and authority rotation work on every branch, still without re-keying.
+  - The session tries the branches in order.
+    - A branch with `auth_value` is tried only when a password was supplied.
+    - A branch whose PCR or locality check fails moves on.
+    - If every branch is refused, the result is `*PolicyBranchesRefusedError`, which unwraps to each branch's error.
+    - A policy with an `auth_value` condition gives its objects no separate password branch, so a password alone cannot bypass a "PCR and password" policy.
+    - An `auth_value` policy refuses objects without a password (`ErrPolicyAuthValueRequired`).
+  - `TPM2_PolicyLocality`, which go-tpm v0.9.8 does not implement, is sent as a raw command.
+  - The binding record is `XTPB` v2 with the auth-value flag; v1 records still decode.
+  - `Service.SetDescription` updates the free-text description.
+  - Verified on the simulator:
+    - AND: signing needs both the password and the PCR;
+    - OR: the PCR branch works without a password, and the password branch after the PCR changes;
+    - locality: the allowed locality works, and the TPM refuses a disallowed one at use;
+    - update, replay refusal, revoke and rotation across every branch;
+    - per-branch verification and descriptions.
+- **Key versions on every backend and every API surface.** Rotating a key no longer replaces its material in place: `RotateKey(K)` generates the next version as its own backend key `K--v<n>`, with the current version's algorithm, size or curve and attributes -- for a TPM2 key, in the same tenant scope and bound to the same TPM policy (`PolicyOf`) -- and records it as current in a version record (`pkg/keyversion`, stored under `{tenant}/key-versions/<backend>/<keyID>` in the new `key-versions` storage, built through the one construction path `compose.BuildKeyVersionStore` by xkmsd and embedding hosts alike). A key with no record is version 1; generating a key writes no record. Sign, encrypt and encrypt-asym use the current version and report `key_version` beside their standard-format output; verify, AEAD and RSA-OAEP decrypt, unseal and authenticated unwrap try every enabled version newest first unless `key_version` names one; AES-CBC and RSA PKCS#1 v1.5 decrypt (and unwrap) require `key_version` once a key has more than one enabled version (`*keyversion.KeyVersionRequiredError`, 400 / InvalidArgument). Derivation (`DeriveKey`, `DeriveKeyECDH`) takes and reports the base key's version. Versions are listed, enabled, disabled and retired (retiring deletes the version's key; the current version cannot be disabled or retired, 409 / FailedPrecondition), and `RotateScopeKeys` rotates every key of a tenant. `ListKeys` shows each key once with its current version; `DeleteKey` deletes every version. Key IDs ending in `--v<digits>` are reserved and refused. New surface on REST (`GET /api/v1/keys/{id}/versions`, `POST …/versions/{n}/enable|disable|retire`, `POST …/versions/enable-all|disable-all`, `POST /api/v1/keys/rotate-all`), gRPC/Unix (the declared `ListKeyVersions`/`Enable`/`Disable`/`EnableAll`/`DisableAllKeyVersions` RPCs are implemented and gated, plus `RetireKeyVersion` and `RotateScopeKeys`; `key_version` fields on `KeyInfo`, `Sign`, `Verify`, `Encrypt`, `Decrypt`, `EncryptAsym`, `RotateKey`, `Seal`/`Unseal`, `Wrap`/`UnwrapKeyByID`, `DeriveKey`, `DeriveKeyECDH`), MCP (`xkms.*KeyVersion*`, `xkms.rotateScopeKeys`), every client transport (`transport.KeyVersionService`), `sdk/go`, `sdk/ts` (`keys.versions.list/enable/disable/retire/enableAll/disableAll/rotateAll`) and `xkmsctl` (`key versions`, `key version enable|disable|retire|enable-all|disable-all`, `key rotate-all [--tenant]`, `--key-version` on `key verify` and `key decrypt`). Permissions reuse `keys:list`, `keys:rotate` and `keys:delete`. A tenant's symmetric key generated through the service is now stored in the tenant (it was stored as a system key). See `docs/tpm-policies/` ("Key versions").
+- **`pkg/tpm2` can bind keys and sealed objects to named, authorized TPM policies that can be updated, revoked and re-signed by a new authority without re-keying.**
+  - A key or sealed object whose `TPMPolicy` names a policy (anything but `""` or `platform`) is created with `authPolicy = PolicyOR(PolicyAuthorizeNV(the policy's NV index), PolicyAuthValue)`. It has only the first branch when it has no auth value, and `userWithAuth` is cleared.
+  - A `.tpmpolicy` binding record (format `XTPB` v1) is saved beside its blobs.
+  - At use, the session code reads that record and runs PolicyPCR → PolicyNV(counter == epoch) → VerifySignature → PolicyAuthorize → PolicyAuthorizeNV. The approval comes from a `PolicyBindingResolver`.
+  - A PCR change fails as `PolicyPCRMismatchError`, and a superseded approval fails as `PolicyApprovalRevokedError`. Both wrap the TPM response code.
+  - New primitives:
+    - digests: `PolicyRef`, `AuthorizeDigest`, `ApprovedPolicyDigest`, `ApprovalDigest`, `AuthorizedObjectPolicy`;
+    - NV indices: `FindFreeNVIndex`, `DefinePolicyIndex`, `WritePolicyIndex`, `ReadPolicyIndex`, `UndefineNVIndex`, `NVIndexName` (a full NV space is `ErrTPMNVExhausted`);
+    - counters: `DefineCounterIndex`, `IncrementCounter`, `ReadCounter`;
+    - keys: `CreateStorageKey` (a tenant's storage key under the Platform SRK), `SignApproval` and `AuthorityName`.
+  - NV indices are `AUTHWRITE` with a random write secret, plus `POLICYREAD` restricted to the one command that needs the read, so using an object needs no secret.
+  - Verified on the TPM simulator:
+    - `TestAuthorizedPolicy_DigestsMatchLiveSession`: every trial digest equals the live session digest;
+    - `..._KeysSignUnderApproval`: two keys, with and without a password;
+    - `..._PCRChangeRefusesApprovedBranch`;
+    - `..._UpdateReapprovesWithoutRekey`: byte-identical blobs;
+    - `..._ReplayOfSupersededApprovalRefused`;
+    - `..._AuthorityRotation`: the old authority is refused;
+    - `..._SealedObject`, the binding-record and refusal tests, and the NV index and counter tests.
+- **Named TPM policies on every API surface.** The TPM policy service (`pkg/tpmpolicy`) is built by xkmsd whenever `backends.tpm2` is enabled (and by an embedding host whose XKMSService has a `tpm2` backend) through the one construction path `compose.BuildTPMPolicyService`, and installed as the TPM2 backend's scope provider: every TPM2 key and seal now runs in the TPM scope of its tenant (`KeyAttributes.TenantID`), is bound to a named policy (`tpm_policy`, default `platform`), and is recorded in the policy registry. New surface on REST (`/api/v1/tpm/policies*`, `/api/v1/tpm/authority/rotate`, `/api/v1/keys/{id}/tpm-policy`, `/api/v1/tenants/{id}/tpm*`), gRPC/Unix (`TPMPolicy*`, `TPMObjectPolicy`, `Get/SetTenantTPMMode`, `TenantVTPM*`), MCP (`tpm.policy.*`, `tpm.object.policy`, `tpm.authority.rotate`, `xkms.*TenantTPMMode`, `xkms.tenantVTPM*`), the SDK (`transport.TPMPolicyService`, plus `TPMPolicyService`/`NewTPMPolicyService` for an in-process service) and `xkmsctl` (`tpm policy …`, `tpm authority rotate`, `key policy`, `key generate --tpm-policy`, `seal --tpm-policy/--password`, `tenant tpm-mode`, `tenant vtpm …`). Permissions `tpm_policy:{create,get,list,update,revoke,verify,delete,rotate}` (ScopeSelf) and `tenants:set_tpm_mode` (ScopeCross). New config `backends.tpm2.vtpm` (off unless enabled). See `docs/tpm-policies/`.
+- gRPC `Seal`/`Unseal` carry a TPM2 sealed object's areas, the TPM policy and the password (`SealRequest` 5–6, `SealResponse` 6–9, `UnsealRequest` 7–11); REST and MCP carry them too.
+- **`pkg/tpmpolicy`: named TPM policies, the key↔policy registry, and per-tenant TPM scopes.**
+  - `Service` creates, lists, updates, revokes, verifies and deletes named policies. The PCR values are captured live from the TPM, never supplied by the caller.
+  - `UpdatePolicy` re-captures a policy's PCRs, bumps the tenant's NV counter and re-signs every approval in the scope, so bound keys keep working without a re-key and superseded approvals are refused by the TPM. `RevokePolicy` bumps the counter and leaves the revoked policy unapproved. `RotateAuthority` rewrites every policy index and re-signs under a new authority, and is crash-recoverable.
+  - The registry answers "which policy does this object use" and "which objects use this policy". `DeletePolicy` refuses with `*PolicyInUseError`, listing the objects.
+  - Tenant scopes follow `tpm.mode` (default `shared`):
+    - `shared`: the physical TPM, under a per-tenant storage key and a tenant-prefixed key store;
+    - `vtpm`: a supervised swtpm, provisioned on first start, whose state key is sealed under the system scope's `vtpm-state` policy;
+    - `none`: `ErrTPMModeNone`.
+  - A mode change is refused while the tenant has TPM objects or policies.
+  - Scope secrets are sealed by the physical TPM.
+  - Verified on the TPM simulator and on real swtpm:
+    - two keys under one policy, both listed by the registry;
+    - a PCR change refuses them;
+    - update restores them with byte-identical blobs;
+    - replaying an old approval is refused;
+    - deleting a policy while it's assigned is refused;
+    - revoke and restore;
+    - authority rotation, with no re-key and the old authority refused;
+    - shared-mode tenant isolation: the other tenant's key cannot be loaded (`TPM_RC_INTEGRITY`);
+    - mode-change refusal;
+    - crash reconciliation;
+    - a vTPM that survives stop/start and a service restart with the same state key.
+  - A go-tpm v0.9.8 defect (`hmacKeyFromAuthValue` truncates an auth value at any 0x00 byte, not just trailing ones) makes HMAC authorization fail for about 12% of random 32-byte secrets. The generated scope secrets therefore contain no zero byte.
+- **`pkg/tpm2/vtpm` runs a per-tenant virtual TPM for `tpm.mode: vtpm`.** `Manager` starts one `swtpm socket --tpm2` child process per tenant. Each has its own state directory and a private unix command socket. The process is supervised and restarted with backoff if it dies. `Transport(tenant)` hands out a `go-tpm` transport that frames TPM responses and reconnects to a restarted process. A command lost mid-flight is reported as `ErrConnectionLost` and never replayed, because TPM commands are not idempotent.
+  - A vTPM's state is always encrypted with an AES-256 key from a `StateKeyProvider`. The key reaches swtpm through an inherited pipe (`--key fd=3`) and is never written to disk. xkms seals the key under the system scope's `vtpm-state` policy.
+  - swtpm is now a dependency of `make test`. It was already installed in the CI and devcontainer images.
+  - Verified against real swtpm 0.7.3 by `TestManager_StartServesAVTPMAndStopEndsIt`, `..._StatePersistsAcrossRestartUnderItsKey` (state survives a restart, and a vTPM refuses to start over state encrypted under another key), `..._RestartsACrashedVTPMAndTheTransportFollows` (SIGKILL, supervised restart, same transport reconnects), `..._TenantsAreSeparateTPMs`, `..._RefusesBadInputs` and `..._MissingBinaryIsAStartError`, stable over `-race -count=5`.
+- **xkmsd can keep the user PIN in the TPM (`pin.strategy: tpm2`), and it chooses the PIN store exactly the way xKey does.** Before this change, `initializePINManager` accepted only `software`. PIN selection now runs through one resolver shared by xkmsd, the xKey GUI, `xkey pin` and `xkey extension serve`. That resolver is `pkg/pinselect.Resolve`, moved from `xkey/pkg/pinstrategy`, which is deleted; xKey reaches it through `xkmssdk.ResolvePINBackend`. The governing strategy is recorded in `<storage.path>/pin/strategy`.
+  - `tpm2` puts the PIN on the Platform SRK of xkmsd's TPM2 backend as its auth value, verified in hardware with the TPM's lockout. The store comes from the new `pkg/tpm2.AttachPlatformKeyStore`, which xKey's GUI now uses too.
+  - `auto` is now the default. It never adopts an SRK whose auth nobody has confirmed, so an existing software deployment keeps software.
+  - An explicit strategy that differs from the recorded one is refused with `*pinselect.StrategyMismatchError`, because switching would orphan every PIN in the old store.
+  - `tpm2` without `backends.tpm2.enabled` refuses to start with `*pinselect.ProviderUnavailableError` and records nothing.
+  - Files: `pkg/pinselect/{resolve,strategy,strategy_errors,tpmprovider}.go`, `pkg/tpm2/platform_keystore.go`, `pkg/server/pin_manager.go`, `pkg/server/server.go`, `pkg/server/errors.go`, `sdk/go/pin.go`, `sdk/go/tpm.go`, `xkey/pkg/gui/app.go`, `xkey/pkg/gui/services/pin_strategy.go`, `xkey/cmd/xkey/cmd/{pin,pin_tpm,extension_serve}.go`, `docs/pin-management/{engineering,user}.md`.
+  - Verified with the TPM simulator by `TestInitializePINManager_TPM2StrategyGovernsWithThePlatformSRK` (the PIN is set and verified in the TPM, and a wrong PIN is refused), `..._TPM2StrategyWithoutATPMIsRefused`, `..._AutoNeverAdoptsAnUnconfirmedSRK` and `..._StrategyChangeAgainstRecordIsRefused`. Also by the `TestResolve_Explicit*` resolver tests and the `TestAttachPlatformKeyStore_*` tests.
+
+### Changed
+
+- **Composite TPM policies and descriptions reach every surface, the single-branch shims are gone, and `rotate-all` skips keys a rotation would not serve.**
+  - The API speaks branches only. `TPMPolicy` carries `description` and `branches` (each with its `conditions` -- `type`, `bank`, `pcrs`, hex `pcr_values`/`pcr_digest`, `localities` -- and `approved`). `TPMPolicyCreateRequest` carries `description` and `branches`, and a request that supplies PCR values is refused. `TPMPolicyVerifyResponse` reports every branch.
+  - The top-level `bank`/`pcrs`/`pcr_values`/`pcr_digest`/`mismatched` fields are removed from the API and the proto; their field numbers are reserved. The deprecated `tpmpolicy.CreatePolicyRequest.Bank`/`PCRs`, `Policy.Bank`/`PCRs`/`PCRValues`/`PCRDigest`/`Approval`, `Verification.Mismatched` and `ErrAmbiguousPolicyRequest` are also removed. `tpmpolicy.PCRBranch` and `transport.TPMPolicyPCRBranch` build the one-branch policy.
+  - New operation to set a description: `POST /api/v1/tpm/policies/{name}/description`, gRPC `TPMPolicySetDescription` (`tpm_policy:update`), MCP `tpm.policy.setDescription`. It is available on every client transport (the USB transport answers not supported) and in `sdk/go` and `sdk/ts` (`setDescription`, `pcrBranch`).
+  - CLIs. `xkmsctl` and `xkey` `tpm policy create` take `--description`, and either `--pcrs`/`--bank` for one pcr branch or a repeatable `--branch 'pcr=sha256:0,7;auth_value;locality=0'`. Both commands parse through the shared `transport.TPMPolicyBranches`. `tpm policy describe NAME TEXT` sets a description, and `get`/`list`/`verify` show branches.
+  - The web console and xKey TPM policy panels create policies in a simple mode (one PCR selection) or an advanced mode (branches of PCR, password and locality conditions). They show and edit descriptions, and verify each branch.
+  - New typed errors from policy validation are classified as invalid argument on every transport: `*InvalidLocalityError`, `*UnknownConditionTypeError`, `*DuplicateConditionError`, `*ConditionOperandError`, `*DescriptionTooLongError`, `ErrNoBranches`, `ErrEmptyBranch`, `ErrEmptyLocalitySelection`, `ErrPCRValuesSupplied` and `tpm2.ErrPolicyAuthValueRequired`.
+  - `RotateScopeKeys` gives each key a `state` (`rotated`, `skipped` with a `reason`, or `failed`) and counts `skipped`.
+    - It skips keys that other subsystems name exactly: TPM2 PIV slot keys (`piv-<slot>`), the TPM2 sealed objects `Seal` names, and the barrier's seal wrapping key (`xkms-barrier-seal`). A new version of these would never be used.
+    - It skips keys with a certificate, because the certificate would stay on the old version.
+    - Single-key `RotateKey` still rotates a certified key, and reports `certificate_reissue_required` (gRPC field 7). `xkmsctl key rotate` and the web console warn when it is set.
+  - Verified by `pkg/tpmpolicy`, `pkg/xkms` (`TestRotateScopeKeys_SkipsPinnedAndCertifiedKeys`, `TestPinnedKeyReason`, `TestRotateKey_ReportsCertificateReissue`) and `pkg/api/...` (route, authz-golden and error-class parity for the new operation). CLI tests cover both CLIs, and there are `sdk/ts`, web console and xKey frontend vitest suites.
+- **A TPM key names its policy instead of flipping a `PlatformPolicy` switch, and `platform` is the default.** `types.KeyAttributes.PlatformPolicy bool` is now `TPMPolicy string`. The value is empty for no policy (the TCG primaries such as the EK and Shared SRK), `types.TPMPolicyPlatform` (`"platform"`) for today's PCR-16-or-password policy, or the name of an authorized TPM policy (added next, in `pkg/tpmpolicy`). `KeyConfig.platform-policy` is now `tpm-policy`. `pkg/backend/tpm2` binds every key and symmetric key its caller leaves unnamed to `platform`. The xkmsd platform store's sealed objects always use `platform`.
+  - Removed: `backends.tpm2.platform_policy`, `pkg/backend/tpm2.Config.PlatformPolicy`, `seal.TPM2ProbeConfig.PlatformPolicy`, and the dead `platform-policy` fields on the CA software and TPM2 keystore configs and the PKCS#11 backend config. None of the removed fields reached key creation. The TCG provisioning switches (`idevid`/`iak`/`platform-srk` `platform-policy`) stay, because they configure the primaries.
+  - Verified by `TestGenerateKey_DefaultsToThePlatformPolicy` (a key created with no policy is bound to `platform` and signs on the simulator), `TestGenerateKey_KeepsAnExplicitPolicyReference`, and the existing `pkg/tpm2`, `pkg/backend/tpm2`, `pkg/seal`, `pkg/server`, `pkg/xkms` and `pkg/ca` suites.
+- **The web console and the TypeScript SDK use TPM policies.**
+  - `@go-xkms/sdk` drops the PCR-snapshot `policies` client.
+  - It adds `tpmPolicies` (create, list, get, update, revoke, verify, delete, objects, setAutoUnseal, keyPolicy, rotateAuthority) and tenant TPM-mode and vTPM methods on `tenants`.
+  - It adds `tpm_policy` on key generation and `tpm_policy`/`password` on seal.
+  - The console's "PCR Policies" view is replaced by "TPM Policies" (`/tpm/policies`, shown when the server reports the `tpm_policies` capability). The view covers:
+    - approval state, object counts and the auto-unseal toggle;
+    - create with bank and PCR selection;
+    - update, revoke and verify (which shows mismatched PCRs);
+    - delete, which surfaces the server's "assigned to …" refusal;
+    - rotate authority.
+  - The key-generation dialog gains a TPM policy picker, defaulting to `platform`.
+  - Verified by 169 SDK and 414 console vitest cases, plus `npm run check`/`build`.
+- **xKey uses the shared TPM policy service; its own PCR-policy stores are gone.**
+  - Deleted: `xkey/pkg/pcr_policy`, `PlatformPolicyService` (and its `platform.policy` file), the composite PCR/password policies, policy export/import, manual policy-to-handle assignment, the `custom_pcr` seal type (which silently ignored its PCRs) and `xkey policy`.
+  - In local mode xKey runs `pkg/tpmpolicy` over its own TPM, with its registry in `<dataDir>/tpm-policies`. Connected to xkmsd, it runs the same operations through the `TPMPolicy*` client methods, and `TPMPolicyService.SetClient` is now wired on connect.
+  - CLI: `xkey tpm policy create|list|get|update|revoke|verify|delete|objects|key|auto-unseal` and `xkey tpm authority rotate`. They run against the server when an xkmsd URL is configured.
+  - GUI: the TPM view gains a Policies panel (create with bank and PCR picker, update, revoke, verify, delete, objects, auto-unseal, rotate). The Seal view picks none, `platform` or a named policy plus an optional password. Settings gains a barrier auto-unseal panel.
+  - Barrier auto-unseal is now an attribute of a named policy. Enabling it seals the barrier password in the TPM under that policy, and startup unseals it through a real policy session. A PCR change or a revoke makes the TPM refuse (`ErrBarrierAutoUnsealRefused`), and the user unlocks by hand. The previous software PCR comparison and its unchecked TPM fallback are removed.
+  - The setup wizard seals the barrier password under an `auto-unseal` policy (PCRs 0, 7 and 9) and the LUKS passphrase under `platform`. Its "Creating platform policy" step is gone.
+  - Verified by the service tests on the simulator (two keys under one policy, delete refused listing them, update, verify, auto-unseal refused after a PCR change), remote-mode and connection-wiring tests, CLI tests, and frontend vitest.
+
+### Removed
+
+- The PCR snapshot store `pkg/seal/policy` and everything built on it: `/api/v1/policies/*`, the `Policy*` RPCs, the `policy.*` MCP tools, `transport.PolicyService`, `xkmsctl policy`, `apimodule.WithPCRReader` / `WithServiceModulePCRReader`, `compose.BuildPolicyManager`, `pkg/tpm2.BankPCRReader`, the `policy:*` permissions. `SealRequest.PCRs`/`PCRHashAlg` were removed: they were copied into a PCR selection that never became an authPolicy, so a "PCR-bound" sealed object was bound to nothing.
+
+### Fixed
+
+- **xkmsd's TPM platform PCR defaults to 16, as it does in xKey and the library, instead of PCR 0.** `pkg/backend/tpm2.Config.Validate` left an unset `platform_pcr` at zero, so xkmsd's `backends.tpm2` path (the key backend, node-seal autodetect and platform-store opens) extended the golden measurement into PCR 0, the firmware PCR, and computed platform policies over it. The library default (`pkg/tpm2.DefaultConfig`) and xKey used PCR 16, so a TPM enrolled by one computed a different Platform SRK policy from the other. `Validate` now resolves an unset PCR to the new `pkg/tpm2.DefaultPlatformPCR` (16) and an unset bank to `PCRBankSHA256`. `DefaultConfig`, the SDK (`xkmssdk.DefaultPlatformPCR`) and xKey's CLI all use the same constant instead of their own literals. **Upgrade note:** an xkmsd that relied on the old implicit PCR 0 computes a different platform policy after this change and must re-enrol its Platform SRK; zero is "unset", so PCR 0 can no longer be selected.
+  - Files: `pkg/tpm2/config.go`, `pkg/backend/tpm2/config.go`, `pkg/config/config.go`, `sdk/go/tpm.go`, `xkey/cmd/xkey/cmd/tpm.go`, `docs/tpm2/engineering.md`.
+  - Verified by `TestConfig_Validate_PlatformPCRDefault` and `TestConfig_Validate_PlatformPCRExplicit` (`pkg/backend/tpm2`).
+- **A shared-mode tenant can hold TPM symmetric keys, and unsealing in-memory blobs honours the object's named policy.**
+  - `pkg/tpm2` symmetric keys accepted only the Platform SRK as parent, and only the TPM's default key store. They now accept any storage key beneath the Platform SRK (never the Shared SRK, and never a non-storage key) through the store-aware `GenerateSymmetricKeyIn`, `GetSymmetricKeyIn`, `SymmetricEncrypterIn` and `DeriveFromSymmetricKeyIn`.
+  - The TPM2 backend routes every scope's symmetric keys through these variants. The encrypter it returns opens its key's scope for each operation, because a shared tenant's storage key is flushed when the operation ends.
+  - `Unseal` of caller-supplied blobs read a named policy's binding record from the TPM's default store only, so a tenant's sealed object failed its policy session. It now reads the record from `UnsealOptions.Backend`, and the backend's copy-from-store workaround is removed.
+  - Verified on the simulator:
+    - `TestSymmetricKey_UnderATenantStorageKey`: a tenant key encrypts and decrypts, and Shared SRK and non-storage parents are refused;
+    - `TestScopedBackend_SymmetricKeysInEveryScope`: the system and tenant scopes, the registry assignments, and cross-tenant invisibility;
+    - `TestAuthorizedPolicy_SealedObjectFromBlobsInCallerStore`: proven to fail without the fix.
+- **A TPM2 seal without a key ID no longer overwrites the previous one, and the TPM policy API has one conversion for xkmsd and xKey.**
+  - Fixed: every TPM2 seal without a `key_id` reused the object name `xkms-sealing-key-tpm2`, so each seal replaced the previous object's blobs, policy binding and registry assignment, and the earlier object no longer unsealed (`TPM_RC_POLICY_FAIL`). Each such seal now creates its own object named `xkms-sealing-key-tpm2-<uuid>`, returned in `SealResponse.KeyID` (REST/MCP `key_id`, gRPC `key_id` = 9), and its assignment is per object. A TPM2 unseal must pass that key ID back; without one it is refused with `xkms.ErrTPMSealedObjectKeyIDRequired` (invalid argument). Other backends are unchanged. `pkg/xkms/servicer_seal.go`; `xkmsctl seal`/`unseal-data` `--key-id` help updated.
+  - Changed: `xkms.TenantTPMPolicies` (`NewTenantTPMPolicies(svc, tenant)`, re-exported by `sdk/go`) serves the tenant-level `TPMPolicy*` operations for one fixed tenant and holds the single `*tpmpolicy.Service` to API-type conversion. `XKMSService` binds the caller's tenant and delegates to it; xKey's `LocalTPMPolicies` delegates to it for the system scope under the TPM accessor, and its duplicate converter (`localPolicyToTransport`, `formatPolicyTime`, `localObjectKinds`) and `ErrTPMObjectKindInvalid` are deleted in favour of `xkms.ParseTPMObjectKind` / `*xkms.InvalidTPMObjectKindError`.
+  - Verified by `TestTPMPolicy_SealsWithoutKeyIDAreDistinctObjects` (simulator, xkmsd: the first of two seals still unseals to its plaintext and keeps its `boot` assignment; failed before the fix), `TestSeal_TPM2Backend_NoAutoGenerate`, `TestUnseal_TPM2Backend_RequiresKeyID`, `TestNewTPMSealedObjectName`, the `TenantTPMPolicies` tests, and the unchanged `pkg/xkms` TPM policy servicer and xKey local-mode simulator suites.
+
 ## [0.44.0-alpha] - 2026-09-29
 
 ### Security
