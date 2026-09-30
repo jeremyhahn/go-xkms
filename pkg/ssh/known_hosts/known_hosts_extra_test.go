@@ -530,8 +530,8 @@ func (khCorruptBackend) Get(_ context.Context, _ string) ([]byte, error) {
 	return []byte("{{{not json"), nil
 }
 func (khCorruptBackend) Exists(_ context.Context, _ string) (bool, error) { return false, nil }
-func (khCorruptBackend) Scan(_ context.Context, _ string, fn func(string, []byte) error) error {
-	return fn("k", []byte("{{{not json"))
+func (khCorruptBackend) Scan(_ context.Context, prefix string, fn func(string, []byte) error) error {
+	return fn(prefix+"known_hosts/k", []byte("{{{not json"))
 }
 
 // khPutFailBackend lets Exists succeed (returns not present) but fails Put.
@@ -553,8 +553,8 @@ type khPayloadBackend struct {
 func (b *khPayloadBackend) Get(_ context.Context, _ string) ([]byte, error) {
 	return b.data, nil
 }
-func (b *khPayloadBackend) Scan(_ context.Context, _ string, fn func(string, []byte) error) error {
-	return fn("k", b.data)
+func (b *khPayloadBackend) Scan(_ context.Context, prefix string, fn func(string, []byte) error) error {
+	return fn(prefix+"known_hosts/k", b.data)
 }
 func (b *khPayloadBackend) Put(_ context.Context, _ string, _ []byte) error { return nil }
 func (b *khPayloadBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {

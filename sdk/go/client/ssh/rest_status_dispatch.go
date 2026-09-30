@@ -91,6 +91,14 @@ func classify(err error) sshErrorClass {
 		}
 	}
 	{
+		// A tenant-scoped key of that name is held by another owner: the
+		// name is taken, exactly as a duplicate pin or entry is.
+		var e *pkgkeys.OwnerConflictError
+		if errors.As(err, &e) {
+			return classDuplicate
+		}
+	}
+	{
 		// MismatchError on host key is a MITM indicator. Classified apart
 		// from classDuplicate so gRPC and MCP can each report it precisely.
 		var e *pkgknownhosts.MismatchError

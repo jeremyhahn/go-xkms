@@ -47,6 +47,7 @@ func TestHTTPStatusForError_MappingTable(t *testing.T) {
 		// 409 — duplicate / conflict.
 		{"knownhosts.DuplicateError", &pkgknownhosts.DuplicateError{Host: "h"}, http.StatusConflict},
 		{"authorized.DuplicateError", &pkgauthorized.DuplicateError{Name: "n"}, http.StatusConflict},
+		{"keys.OwnerConflictError", &pkgkeys.OwnerConflictError{ID: "tenant/o/n"}, http.StatusConflict},
 		{"knownhosts.MismatchError_MITM", &pkgknownhosts.MismatchError{
 			Host: "h", Expected: "SHA256:a", Received: "SHA256:b",
 		}, http.StatusConflict},

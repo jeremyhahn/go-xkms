@@ -12,14 +12,24 @@
 //     Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package scope defines the ownership scope (tenant / user / service) of
-// SSH assets managed by xkms and provides the canonical key-ID layout
-// shared by keys, known_hosts, and authorized_keys storage.
+// SSH assets managed by xkms, the "<scope>/<owner>/<name>" identifier of an
+// asset, and the storage layout shared by the keys, known_hosts and
+// authorized_keys stores.
 //
-// A key ID is "<scope>/<owner>/<name>", where owner is a tenant ID,
-// user ID, or service ID depending on scope. This package is the single
-// source of truth for that layout — every SSH subpackage and SDK client
-// routes through BuildKeyID / ParseKeyID instead of open-coding joins or
-// splits on "/" so future layout changes stay local.
+// The identifier (BuildKeyID / ParseKeyID) names an asset in APIs, backend
+// key IDs and certificate CNs. The storage path (Kind.RecordPath) is where
+// the asset's record lives inside its tenant's partition, following the
+// xkms-wide scope layout (pkg/scope):
+//
+//	ssh/shared/<kind>/<name>             Tenant scope
+//	ssh/users/<owner>/<kind>/<name>      User scope
+//	ssh/services/<owner>/<kind>/<name>   Service scope
+//
+// Under the tenant root "{tenant}/" every partition is rooted at, that is
+// "{tenant}/ssh/shared/...", "{tenant}/ssh/users/{subject}/..." and
+// "{tenant}/ssh/services/{owner}/...". This package is the single source of
+// truth for both forms; no SSH subpackage or SDK client open-codes joins or
+// splits on "/".
 package scope
 
 import (
@@ -53,8 +63,8 @@ func Parse(s string) (Scope, error) {
 	return scope.Parse(s)
 }
 
-// BuildKeyID returns the canonical storage-path fragment
-// "<scope>/<owner>/<name>" identifying an SSH asset.
+// BuildKeyID returns the canonical identifier "<scope>/<owner>/<name>" of
+// an SSH asset. It is not a storage path; see Kind.RecordPath.
 //
 // owner and name must be non-empty and must not contain "/" — the
 // separator is reserved for the layout itself. scope must satisfy
@@ -64,17 +74,11 @@ func BuildKeyID(s Scope, owner, name string) (string, error) {
 	if !s.Valid() {
 		return "", &ScopeInvalidError{Value: string(s)}
 	}
-	if owner == "" {
-		return "", &KeyIDMalformedError{Field: "owner", Reason: "empty"}
+	if err := validateComponent("owner", owner); err != nil {
+		return "", err
 	}
-	if name == "" {
-		return "", &KeyIDMalformedError{Field: "name", Reason: "empty"}
-	}
-	if strings.ContainsRune(owner, '/') {
-		return "", &KeyIDMalformedError{Field: "owner", Reason: "contains separator"}
-	}
-	if strings.ContainsRune(name, '/') {
-		return "", &KeyIDMalformedError{Field: "name", Reason: "contains separator"}
+	if err := validateComponent("name", name); err != nil {
+		return "", err
 	}
 	// strings.Builder avoids the extra allocations of fmt.Sprintf on the
 	// hot path; key IDs are constructed per request.

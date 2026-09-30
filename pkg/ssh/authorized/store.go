@@ -24,10 +24,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
-// storagePrefix is the top-level namespace for authorized-entry
-// envelopes. Changing this string is a disk-layout break.
-const storagePrefix = "ssh/authorized_keys/"
-
 // envelopeVersion is the current on-disk envelope format.
 const envelopeVersion = 1
 
@@ -38,13 +34,14 @@ const envelopeVersion = 1
 // concurrent use.
 type Store interface {
 	// Add persists entry under (scope, owner, name). Returns
-	// *DuplicateError if a record already exists at that path;
-	// non-idempotent by design.
+	// *DuplicateError if a record already exists at that path — for a
+	// tenant-scoped entry, under any owner; non-idempotent by design.
 	Add(ctx context.Context, sc scope.Scope, owner, name string, entry *Entry) error
 
 	// Get loads the record at (scope, owner, name). Returns
-	// *NotFoundError on miss. The returned Record carries the stored
-	// coordinates, which are authoritative over the arguments.
+	// *NotFoundError on miss or when the record is held by another
+	// owner. The returned Record carries the stored coordinates, which
+	// are authoritative over the arguments.
 	Get(ctx context.Context, sc scope.Scope, owner, name string) (*Record, error)
 
 	// List enumerates records under (scope, owner). An empty scope
@@ -53,11 +50,16 @@ type Store interface {
 	// record can be fed straight back into Get or Remove.
 	List(ctx context.Context, sc scope.Scope, owner string) ([]*Record, error)
 
-	// Remove deletes the entry. Returns *NotFoundError on miss.
+	// Remove deletes the entry. Returns *NotFoundError on miss or when
+	// the entry is held by another owner.
 	Remove(ctx context.Context, sc scope.Scope, owner, name string) error
 }
 
-// BackendStore implements Store on top of a storage.Backend.
+// BackendStore implements Store on top of a storage.Backend. Records live
+// at scope.KindAuthorizedKeys.RecordPath -- e.g.
+// "ssh/users/<owner>/authorized_keys/<name>". A tenant-scoped path carries
+// no owner, so the envelope's Owner is authoritative: an entry held by
+// another owner answers as missing.
 type BackendStore struct {
 	backend storage.Backend
 }
@@ -130,36 +132,34 @@ func (s *BackendStore) Get(ctx context.Context, sc scope.Scope, owner, name stri
 	if err != nil {
 		return nil, err
 	}
-	data, gerr := s.backend.Get(ctx, path)
-	if gerr != nil {
-		if errors.Is(gerr, storage.ErrNotFound) {
-			return nil, &NotFoundError{Scope: string(sc), Owner: owner, Name: name}
-		}
-		return nil, &StorageError{Op: "get", Err: gerr}
+	env, err := s.load(ctx, path, sc, owner, name)
+	if err != nil {
+		return nil, err
 	}
-	return decodeEnvelope(data)
+	return env.record()
 }
 
 // List implements Store.List.
 func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) ([]*Record, error) {
-	prefix := storagePrefix
-	if sc != "" {
-		if !sc.Valid() {
-			return nil, &scope.ScopeInvalidError{Value: string(sc)}
-		}
-		prefix += string(sc) + "/"
-		if owner != "" {
-			if strings.ContainsRune(owner, '/') {
-				return nil, &scope.KeyIDMalformedError{Field: "owner", Reason: "contains separator"}
-			}
-			prefix += owner + "/"
-		}
+	prefix, err := scope.ListPrefix(sc, owner)
+	if err != nil {
+		return nil, err
 	}
 	var out []*Record
-	err := s.backend.Scan(ctx, prefix, func(_ string, value []byte) error {
-		rec, derr := decodeEnvelope(value)
+	err = s.backend.Scan(ctx, prefix, func(key string, value []byte) error {
+		if !scope.KindAuthorizedKeys.Match(key) {
+			return nil
+		}
+		env, derr := decodeEnvelope(value)
 		if derr != nil {
 			return derr
+		}
+		if sc != "" && owner != "" && env.Owner != owner {
+			return nil
+		}
+		rec, rerr := env.record()
+		if rerr != nil {
+			return rerr
 		}
 		out = append(out, rec)
 		return nil
@@ -170,11 +170,17 @@ func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) (
 	return out, nil
 }
 
-// Remove implements Store.Remove.
+// Remove implements Store.Remove. A tenant-scoped entry is read first so an
+// entry held by another owner answers as missing and survives.
 func (s *BackendStore) Remove(ctx context.Context, sc scope.Scope, owner, name string) error {
 	path, err := buildPath(sc, owner, name)
 	if err != nil {
 		return err
+	}
+	if sc == scope.Tenant {
+		if _, lerr := s.load(ctx, path, sc, owner, name); lerr != nil {
+			return lerr
+		}
 	}
 	if derr := s.backend.Delete(ctx, path); derr != nil {
 		if errors.Is(derr, storage.ErrNotFound) {
@@ -185,30 +191,37 @@ func (s *BackendStore) Remove(ctx context.Context, sc scope.Scope, owner, name s
 	return nil
 }
 
-// buildPath validates components and returns the full storage key
-// "ssh/authorized_keys/<scope>/<owner>/<name>".
+// load returns the envelope at path, the entry of (sc, owner, name). A
+// missing entry, or one held by another owner, is *NotFoundError.
+func (s *BackendStore) load(ctx context.Context, path string, sc scope.Scope, owner, name string) (*storedEnvelope, error) {
+	data, err := s.backend.Get(ctx, path)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &NotFoundError{Scope: string(sc), Owner: owner, Name: name}
+		}
+		return nil, &StorageError{Op: "get", Err: err}
+	}
+	env, err := decodeEnvelope(data)
+	if err != nil {
+		return nil, err
+	}
+	if env.Owner != owner {
+		return nil, &NotFoundError{Scope: string(sc), Owner: owner, Name: name}
+	}
+	return env, nil
+}
+
+// buildPath validates components and returns the entry's storage path
+// (scope.KindAuthorizedKeys.RecordPath). The name is validated first so a
+// malformed name reports *InvalidNameError.
 func buildPath(sc scope.Scope, owner, name string) (string, error) {
 	if !sc.Valid() {
 		return "", &scope.ScopeInvalidError{Value: string(sc)}
 	}
-	if owner == "" {
-		return "", &scope.KeyIDMalformedError{Field: "owner", Reason: "empty"}
-	}
-	if strings.ContainsRune(owner, '/') {
-		return "", &scope.KeyIDMalformedError{Field: "owner", Reason: "contains separator"}
-	}
 	if err := validateName(name); err != nil {
 		return "", err
 	}
-	var b strings.Builder
-	b.Grow(len(storagePrefix) + len(sc) + len(owner) + len(name) + 2)
-	b.WriteString(storagePrefix)
-	b.WriteString(string(sc))
-	b.WriteByte('/')
-	b.WriteString(owner)
-	b.WriteByte('/')
-	b.WriteString(name)
-	return b.String(), nil
+	return scope.KindAuthorizedKeys.RecordPath(sc, owner, name)
 }
 
 // validateName enforces the same rules used by buildPath: non-empty, no
@@ -226,16 +239,19 @@ func validateName(name string) error {
 	return nil
 }
 
-// decodeEnvelope reads a JSON envelope and rehydrates a *Record: the
-// Entry comes from re-parsing the stored authorized_keys line, the
-// coordinates from the envelope's own metadata fields. Every envelope
-// ever written carries scope/owner/name, so this reads pre-existing
-// data unchanged — no migration and no re-write required.
-func decodeEnvelope(data []byte) (*Record, error) {
+// decodeEnvelope unmarshals a JSON envelope.
+func decodeEnvelope(data []byte) (*storedEnvelope, error) {
 	var env storedEnvelope
 	if jerr := json.Unmarshal(data, &env); jerr != nil {
 		return nil, &SerializationError{Op: "unmarshal envelope", Err: jerr}
 	}
+	return &env, nil
+}
+
+// record rehydrates the *Record env stores: the Entry comes from
+// re-parsing the stored authorized_keys line, the coordinates from the
+// envelope's own metadata fields.
+func (env *storedEnvelope) record() (*Record, error) {
 	// Add stamps every envelope with the format version, but nothing read it
 	// back, so a future bump would have been misparsed as v1 and silently
 	// mishandled. Refuse a newer format instead: a binary that predates the

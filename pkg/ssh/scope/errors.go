@@ -34,3 +34,14 @@ type KeyIDMalformedError struct {
 func (e *KeyIDMalformedError) Error() string {
 	return "ssh/scope: malformed key id: " + e.Field + ": " + e.Reason
 }
+
+// KindInvalidError is returned by Kind.RecordPath for a kind that is not
+// one of KindKeys, KindKnownHosts or KindAuthorizedKeys.
+type KindInvalidError struct {
+	Value string
+}
+
+// Error implements the error interface.
+func (e *KindInvalidError) Error() string {
+	return "ssh/scope: invalid kind: " + e.Value
+}

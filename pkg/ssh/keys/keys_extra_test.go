@@ -404,8 +404,8 @@ type keysCorruptBackend struct{ keysFailingBackend }
 func (keysCorruptBackend) Get(_ context.Context, _ string) ([]byte, error) {
 	return []byte("{{{not json"), nil
 }
-func (keysCorruptBackend) Scan(_ context.Context, _ string, fn func(string, []byte) error) error {
-	return fn("k", []byte("{{{not json"))
+func (keysCorruptBackend) Scan(_ context.Context, prefix string, fn func(string, []byte) error) error {
+	return fn(prefix+"keys/k", []byte("{{{not json"))
 }
 func (keysCorruptBackend) Delete(_ context.Context, _ string) error { return errKeysFail }
 
@@ -418,8 +418,8 @@ type keysPayloadBackend struct {
 func (b *keysPayloadBackend) Get(_ context.Context, _ string) ([]byte, error) {
 	return b.data, nil
 }
-func (b *keysPayloadBackend) Scan(_ context.Context, _ string, fn func(string, []byte) error) error {
-	return fn("k", b.data)
+func (b *keysPayloadBackend) Scan(_ context.Context, prefix string, fn func(string, []byte) error) error {
+	return fn(prefix+"keys/k", b.data)
 }
 func (b *keysPayloadBackend) Put(_ context.Context, _ string, _ []byte) error { return nil }
 func (b *keysPayloadBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {

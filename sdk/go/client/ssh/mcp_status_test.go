@@ -44,6 +44,7 @@ func TestJSONRPCCodeForError_MappingTable(t *testing.T) {
 		// Duplicate.
 		{"knownhosts.DuplicateError", &pkgknownhosts.DuplicateError{Host: "h"}, sdkssh.JSONRPCCodeDuplicate},
 		{"authorized.DuplicateError", &pkgauthorized.DuplicateError{Name: "n"}, sdkssh.JSONRPCCodeDuplicate},
+		{"keys.OwnerConflictError", &pkgkeys.OwnerConflictError{ID: "tenant/o/n"}, sdkssh.JSONRPCCodeDuplicate},
 
 		// Mismatch (MITM) — separable from Duplicate, unlike REST's shared 409.
 		{"knownhosts.MismatchError_MITM", &pkgknownhosts.MismatchError{

@@ -61,8 +61,8 @@ func (corruptBackend) Get(_ context.Context, _ string) ([]byte, error) {
 	return []byte("not-json{{{"), nil
 }
 func (corruptBackend) Put(_ context.Context, _ string, _ []byte) error { return nil }
-func (corruptBackend) Scan(_ context.Context, _ string, fn func(string, []byte) error) error {
-	return fn("key", []byte("not-json{{{"))
+func (corruptBackend) Scan(_ context.Context, prefix string, fn func(string, []byte) error) error {
+	return fn(prefix+"authorized_keys/k", []byte("not-json{{{"))
 }
 
 // putFailBackend reports Exists=false but fails on Put.

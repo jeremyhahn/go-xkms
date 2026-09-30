@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 No build tag gates any symbol in this document — see
 [`architecture.md`](architecture.md).
@@ -14,11 +14,11 @@ No build tag gates any symbol in this document — see
 | `Key` (`key.go:76`) | `IsBackendBacked() bool`, `ID() string`, `Destroy()`. `Material` is nil for a backend-backed key. |
 | `(*Key).Signer() (ssh.Signer, error)` / `SignerWithClose()` | `signer.go:40,73`. Software-key signer. |
 | `(*Key).BackendSigner(ctx, BackendProvider) (ssh.Signer, error)` | `signer.go:120`. Backend-backed signer — see `pkg/ssh/backend`. |
-| `Store` interface: `Put`/`Get`/`Delete`/`List` (`store.go:39`) | `Get`/`Delete` on a missing key return `*KeyNotFoundError`. `List` returns records with `Material == nil` — the envelope is not opened during a list. |
-| `BackendStore` (`store.go:94`) | The `storage.Backend`-backed `Store` implementation. `NewBackendStore(backend storage.Backend) (*BackendStore, error)`. Storage prefix `"ssh/keys/"` (`store.go:31`) — "changing this string is a disk-layout break that requires a migration." Envelope version `v2`; v1 (software-only, pre-backend-key) envelopes still load. |
+| `Store` interface: `Put`/`Get`/`Delete`/`List` (`store.go:34`) | `Get`/`Delete` on a missing key, or on a tenant-scoped key held by another owner, return `*KeyNotFoundError`. `Put` over a tenant-scoped key held by another owner is `*OwnerConflictError`. `List` returns records with `Material == nil` — the envelope is not opened during a list. |
+| `BackendStore` (`store.go:96`) | The `storage.Backend`-backed `Store` implementation. `NewBackendStore(backend storage.Backend) (*BackendStore, error)`. Records live at `scope.KindKeys.RecordPath` — `ssh/shared/keys/<name>`, `ssh/users/<owner>/keys/<name>`, `ssh/services/<owner>/keys/<name>`. Envelope version `v2`; v1 (software-only, pre-backend-key) envelopes still load. |
 | `Fingerprint(pub ssh.PublicKey) string` | `fingerprint.go:26`. OpenSSH `SHA256:<base64-no-padding>` form. |
 | `ParsePEM(ctx, pemBuf *secure.Buffer, provider secure.PassphraseProvider) (*Key, error)` | `parse.go:51`. An encrypted PEM with no matching provider is `*PassphraseRequiredError`. |
-| Typed errors (`errors.go`) | `NilInputError`, `UnsupportedAlgorithmError`, `InvalidKeySizeError`, `PassphraseRequiredError`, `PEMParseError`, `KeyMaterialError`, `KeyNotFoundError`, `StorageError`, `SerializationError`, `ClosedSignerError`, `BackendKeyIDTooLongError`. |
+| Typed errors (`errors.go`) | `NilInputError`, `UnsupportedAlgorithmError`, `InvalidKeySizeError`, `PassphraseRequiredError`, `PEMParseError`, `KeyMaterialError`, `KeyNotFoundError`, `OwnerConflictError`, `StorageError`, `SerializationError`, `ClosedSignerError`, `BackendKeyIDTooLongError`. |
 
 ### `backendKeyID` — the backend CN encoding (go-xkms#1238)
 
@@ -68,6 +68,18 @@ so it is documented here rather than left to the source comment alone.
   truncated — truncation could itself collide two identities the same way
   the bug being fixed did.
 
+## Exported surface — `pkg/ssh/scope` (identifier and storage layout)
+
+| Symbol | Contract |
+|---|---|
+| `Scope`, `Tenant`/`User`/`Service`, `Parse` (`scope.go`) | Aliases of `pkg/scope`. |
+| `BuildKeyID` / `ParseKeyID` (`scope.go`) | The `"<scope>/<owner>/<name>"` identifier. Not a storage path. |
+| `Feature` (`layout.go:23`) | `"ssh"`, the `pkg/scope` feature every SSH record is stored under. |
+| `Kind`: `KindKeys`, `KindKnownHosts`, `KindAuthorizedKeys`; `Valid()` (`layout.go:45`) | The store a record belongs to; the segment after the scope's keyspace. |
+| `(Kind).RecordPath(sc, owner, name) (string, error)` (`layout.go:69`) | `ssh/shared/<kind>/<name>`, `ssh/users/<owner>/<kind>/<name>`, `ssh/services/<owner>/<kind>/<name>`, via `scope.FeaturePrefix`. `owner`/`name` validated as `BuildKeyID` does (`*KeyIDMalformedError`); invalid scope `*ScopeInvalidError`; invalid kind `*KindInvalidError`; a traversal owner (`..`) `*scope.InvalidSegmentError` from `pkg/scope`. The owner is validated but not written for Tenant scope. |
+| `ListPrefix(sc, owner) (string, error)` (`layout.go:102`) | The prefix a listing scans: `ssh/` (no scope; owner ignored), `scope.ScopeRoot` (no owner, or Tenant scope — the caller filters by record owner), else `scope.FeaturePrefix`. |
+| `(Kind).Match(key) bool` (`layout.go:121`) | Whether a scanned key is a record of the kind, so a listing over a prefix shared by every kind keeps only its own. |
+
 ## Exported surface — `pkg/ssh/backend`
 
 | Symbol | Contract |
@@ -83,7 +95,7 @@ so it is documented here rather than left to the source comment alone.
 |---|---|
 | `Pin` (`pin.go:54`) | `Host`, `Fingerprint` (`SHA256:...`), `Algorithm`, `Scope`, `Owner`, `AddedAt`, `Source`, `PublicKey []byte` (SSH wire format; required — `Add` rejects a nil `PublicKey` with `*PublicKeyRequiredError`). `Source` constants: `SourceManual`, `SourceFirstContact`, `SourceImport` (prefix, full value typically `"imported:<origin>"`). |
 | `Store` interface: `Add`/`Get`/`List`/`Remove` (`store.go:40`) | |
-| `BackendStore` (`store.go:86`) | `NewBackendStore(backend storage.Backend) (*BackendStore, error)`. A pre-v2 (fingerprint-only) pin decodes as `*LegacyPinError`, not a zero-`PublicKey` `Pin` — `Get`/`Verify` fail closed naming the host that must be re-pinned; `List` skips it. |
+| `BackendStore` (`store.go:84`) | `NewBackendStore(backend storage.Backend) (*BackendStore, error)`. Records live at `scope.KindKnownHosts.RecordPath` (`ssh/…/known_hosts/<host>`); a tenant-scoped pin held by another owner answers as `*NotFoundError`, and `Add` over it is `*DuplicateError`. A pre-v2 (fingerprint-only) pin decodes as `*LegacyPinError`, not a zero-`PublicKey` `Pin` — `Get`/`Verify` fail closed naming the host that must be re-pinned; `List` skips it. |
 | `Verify` | Compares the full public key, not the fingerprint field alone. |
 | `Callback` | Builds an `ssh.HostKeyCallback` from `Verify`. |
 | Typed errors (`errors.go`) | `NilInputError`, `NoPublicKeyError`, `LegacyPinError`, `NotFoundError`, `DuplicateError`, `MismatchError`, `RejectedError`, `InvalidHostError`, `PublicKeyRequiredError`, `InvalidFingerprintError`, `StorageError`, `SerializationError`. |
@@ -95,7 +107,7 @@ so it is documented here rather than left to the source comment alone.
 | `Entry{Key *keys.Key, Options []string, Comment string}` | `entry.go:34`. Models exactly one `authorized_keys` line. `Options` are preserved verbatim; this package does not validate option semantics. |
 | `Record{Scope, Owner, Name, AddedAt, Entry *Entry}` | `record.go:38`. Store metadata + parsed `Entry`; `Entry` is never nil on a `Record` this package produces. |
 | `Store` interface: `Add`/`Get`/`List`/`Remove` (`store.go:39`) | |
-| `BackendStore` (`store.go:61`) | `NewBackendStore(backend storage.Backend) (*BackendStore, error)`. |
+| `BackendStore` (`store.go:63`) | `NewBackendStore(backend storage.Backend) (*BackendStore, error)`. Records live at `scope.KindAuthorizedKeys.RecordPath` (`ssh/…/authorized_keys/<name>`); a tenant-scoped entry held by another owner answers as `*NotFoundError`, and `Add` over it is `*DuplicateError`. |
 | `ParseLine` / `Emit` | Parse an `authorized_keys`-format line into an `Entry`; render an `Entry` back to a line. |
 | Typed errors (`errors.go`) | `NilInputError`, `MalformedLineError`, `NotFoundError`, `DuplicateError`, `InvalidNameError`, `StorageError`, `SerializationError`, `UnsupportedVersionError`. |
 
@@ -105,7 +117,7 @@ so it is documented here rather than left to the source comment alone.
 |---|---|
 | `Options{Storage, Resolver}` / `New(opts) (sdkssh.Client, error)` | `client.go:72-116`. `Storage` is required (`*NilInputError` otherwise) and owned: `Close` closes it, idempotently. `Resolver` is optional and unscoped; the client narrows it per partition. |
 | Owner binding | `client.go:170-182`. A tenant-scoped caller owns `scope=tenant` only for `owner == identity.TenantID`, and `scope=user`/`service` only for `owner == identity.Subject`. A platform caller (`auth.IsCrossTenant`) owns every address. |
-| Partition choice | `client.go:217-266`. Tenant-scoped callers: their own tenant, always. Platform callers: the tenant a `scope=tenant` owner names, else the platform (unprefixed) partition. A platform owner no tenant can have (`storage.ValidateTenantID` fails) has no partition and is refused. Tenant partitions are `tenants/<id>/` prefixes of `Storage` (`client.go:69,283-301`). |
+| Partition choice | `client.go:217-266`. Tenant-scoped callers: their own tenant, always. Platform callers: the tenant a `scope=tenant` owner names, else the platform partition. A platform owner no tenant can have (`storage.ValidateTenantID` fails) has no partition and is refused. Every partition, the platform's included, is the tenant root `scope.TenantRoot(tenantID)` as a prefix of `Storage` — `{tenant}/`, and `system/` for the platform (`client.go:352-372`). |
 | Backend namespace | `client.go:306-320`, `keyprovider.go:33-105`. A tenant partition's `KeyProvider` sets `KeyAttributes.TenantID` on every call, never mutating the caller's attributes; `ListKeys` returns only its tenant's keys; `Close` releases nothing (the provider is shared). A resolver that returns no provider is `*backend.BackendNotFoundError`. |
 | Refusals | Reads, deletes, `Verify` and `Callback` on an address the caller does not own are served by the empty partition and wrapped in `*OwnerBindingError` (`client.go:324-346`). Writes (`Generate`, `Import`, known-hosts `Add`, authorized-keys `Add`) are answered with the empty partition's lookup of the same address and never touch a store or backend (`ops.go:38-59,135-138,152-163,237-248`). `Emit` addresses no asset and is not bound (`ops.go:297-299`). |
 | Listings | `ops.go:76-92,166-182,264-280`. The listing reads the caller's partition and drops every item the caller does not own; filters never widen it. |
@@ -183,6 +195,16 @@ SDK client, not the server handler.
   tenant B. Every read must equal the genuine-miss response byte for byte and
   leave the asset in place; no listing may show it; no write may land.
   `pkg/api/rest/server_ssh_authz_test.go` pins each REST route's permission.
+- Storage layout: `pkg/ssh/scope/layout_test.go` pins `RecordPath` for every
+  scope and kind, its validation errors, `ListPrefix` and `Match`. Each store's
+  `store_layout_test.go` (`pkg/ssh/keys`, `pkg/ssh/known_hosts`,
+  `pkg/ssh/authorized`) asserts the raw storage key a write lands at, that a
+  tenant-scoped record held by another owner answers as missing, survives a
+  delete, refuses an overwrite and is filtered from that owner's listing, and
+  that a listing never picks up another kind's record under the same scope and
+  owner. `pkg/ssh/tenancy/layout_test.go` pins the full
+  `{tenant}/ssh/...` keys through the server-side service, the platform's
+  under `system/`, and that equal subjects in two tenants never share one.
 - Unit: `make test-ssh` runs `pkg/ssh/...`. Also
   `go test -tags codec_json ./xkey/pkg/gui/services/ -run SSH` and the SDK +
   gRPC-service SSH test files (`sdk/go/client/ssh/*_test.go`,

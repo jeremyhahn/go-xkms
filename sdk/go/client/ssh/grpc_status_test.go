@@ -48,6 +48,7 @@ func TestGRPCCodeForError_MappingTable(t *testing.T) {
 		// AlreadyExists.
 		{"knownhosts.DuplicateError", &pkgknownhosts.DuplicateError{Host: "h"}, codes.AlreadyExists},
 		{"authorized.DuplicateError", &pkgauthorized.DuplicateError{Name: "n"}, codes.AlreadyExists},
+		{"keys.OwnerConflictError", &pkgkeys.OwnerConflictError{ID: "tenant/o/n"}, codes.AlreadyExists},
 
 		// FailedPrecondition (MITM).
 		{"knownhosts.MismatchError_MITM", &pkgknownhosts.MismatchError{

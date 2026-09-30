@@ -213,7 +213,10 @@ func writeEnvelope(t *testing.T, backend storage.Backend, env persistedEnvelope)
 	if err != nil {
 		t.Fatalf("marshal envelope: %v", err)
 	}
-	path := "ssh/authorized_keys/" + env.Scope + "/" + env.Owner + "/" + env.Name
+	path, err := scope.KindAuthorizedKeys.RecordPath(scope.Scope(env.Scope), env.Owner, env.Name)
+	if err != nil {
+		t.Fatalf("record path: %v", err)
+	}
 	if err := backend.Put(context.Background(), path, data); err != nil {
 		t.Fatalf("put envelope: %v", err)
 	}

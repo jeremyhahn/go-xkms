@@ -45,13 +45,21 @@
 // A subject is unique only within its tenant -- the mTLS authenticator uses
 // the username -- so user- and service-scoped assets of equal subjects in two
 // tenants would share an address in one flat store. Every tenant therefore
-// has its own storage partition (the "tenants/<tenant-id>/" prefix of the
-// shared SSH storage view) and its own backend-key namespace (the backend
-// KeyProvider sees the tenant in types.KeyAttributes.TenantID, exactly as a
-// xkms.TenantScopedBackend scopes it). A tenant-scoped caller is always
-// served from its own tenant's partition. A platform caller is served from
-// the partition of the tenant a scope=tenant owner names, and from the
-// platform partition -- the unprefixed view -- otherwise.
+// has its own storage partition, rooted at the tenant root "{tenant}/"
+// (scope.TenantRoot) of the shared SSH storage view, and its own backend-key
+// namespace (the backend KeyProvider sees the tenant in
+// types.KeyAttributes.TenantID, exactly as a xkms.TenantScopedBackend scopes
+// it). The platform is the ordinary tenant "system": its partition is
+// "system/". The stores key records by the xkms scope layout inside the
+// partition, so every asset lands at
+//
+//	{tenant}/ssh/shared/<kind>/<name>             scope=tenant
+//	{tenant}/ssh/users/{subject}/<kind>/<name>    scope=user
+//	{tenant}/ssh/services/{owner}/<kind>/<name>   scope=service
+//
+// A tenant-scoped caller is always served from its own tenant's partition. A
+// platform caller is served from the partition of the tenant a scope=tenant
+// owner names, and from the platform partition otherwise.
 package tenancy
 
 import (
@@ -69,11 +77,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
-
-// tenantPartitionPrefix roots every tenant partition in the shared storage
-// view. The platform partition's records begin with "ssh/", so no tenant ID
-// can make a tenant partition overlap it.
-const tenantPartitionPrefix = "tenants/"
 
 // Options configures New.
 type Options struct {
@@ -239,7 +242,7 @@ func (c *client) visibility(ctx context.Context, who caller) func(scope, owner s
 }
 
 // partition is where one request is served: a tenant's partition, the
-// platform partition (tenantID ""), or -- when the caller may not make the
+// platform partition (tenantID "", the "system" tenant), or -- when the caller may not make the
 // request -- the empty partition, with refusal holding why.
 type partition struct {
 	client   sdkssh.Client
@@ -342,17 +345,18 @@ func validatePartitionTenant(tenantID string) error {
 }
 
 // open returns the embedded client over tenantID's partition ("" is the
-// platform partition). A partition is a view -- a key prefix over the shared
-// storage and a tenant-narrowed backend resolver -- so opening one allocates
-// no resources that need releasing.
+// platform partition, rooted at "system/"). A partition is a view -- the
+// tenant root (scope.TenantRoot) as a key prefix over the shared storage and
+// a tenant-narrowed backend resolver -- so opening one allocates no
+// resources that need releasing.
 func (c *client) open(tenantID string) (sdkssh.Client, error) {
-	view := c.storage
-	if tenantID != "" {
-		prefixed, err := storage.NewPrefixBackend(c.storage, tenantPartitionPrefix+tenantID+"/")
-		if err != nil {
-			return nil, err
-		}
-		view = prefixed
+	root, err := scope.TenantRoot(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	view, err := storage.NewPrefixBackend(c.storage, root)
+	if err != nil {
+		return nil, err
 	}
 	opts := sdkssh.EmbeddedOptions{Backend: view}
 	if c.resolver != nil {

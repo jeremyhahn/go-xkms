@@ -18,16 +18,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
-
-// storagePrefix is the top-level namespace for pin envelopes. Changing
-// this string is a disk-layout break that requires a migration.
-const storagePrefix = "ssh/known_hosts/"
 
 // envelopeVersion is the current on-disk envelope format. Incremented
 // on incompatible schema changes.
@@ -39,13 +34,13 @@ const envelopeVersion = 2
 // concurrent use.
 type Store interface {
 	// Add persists pin. If a pin already exists for
-	// (pin.Scope, pin.Owner, pin.Host), returns *DuplicateError — Add
-	// does NOT overwrite. Callers that intend to rotate must Remove
-	// first.
+	// (pin.Scope, pin.Owner, pin.Host) — or, for a tenant-scoped pin,
+	// for the host under any owner — returns *DuplicateError: Add does
+	// NOT overwrite. Callers that intend to rotate must Remove first.
 	Add(ctx context.Context, pin *Pin) error
 
 	// Get loads the pin for (sc, owner, host). Returns *NotFoundError
-	// when absent.
+	// when absent or held by another owner.
 	Get(ctx context.Context, sc scope.Scope, owner, host string) (*Pin, error)
 
 	// List returns all pins under the requested prefix. When sc is
@@ -55,7 +50,7 @@ type Store interface {
 	List(ctx context.Context, sc scope.Scope, owner string) ([]*Pin, error)
 
 	// Remove deletes the pin. Returns *NotFoundError if it is already
-	// absent.
+	// absent or held by another owner.
 	Remove(ctx context.Context, sc scope.Scope, owner, host string) error
 }
 
@@ -73,16 +68,19 @@ type storedEnvelope struct {
 	Source      string    `json:"source,omitempty"`
 
 	// PublicKey is the base64 (std) SSH wire-format host key. Required from
-	// envelope v2 onward; decodeEnvelope rejects a pre-v2 envelope that
+	// envelope v2 onward; storedEnvelope.pin rejects a pre-v2 envelope that
 	// lacks it with *LegacyPinError rather than reconstructing a
 	// fingerprint-only Pin.
 	PublicKey string `json:"pub,omitempty"`
 }
 
 // BackendStore is the production Store. It serializes Pins into JSON
-// envelopes and persists them under
-// "ssh/known_hosts/<scope>/<owner>/<host>" in the supplied
+// envelopes and persists them at scope.KindKnownHosts.RecordPath -- e.g.
+// "ssh/users/<owner>/known_hosts/<host>" -- in the supplied
 // storage.Backend.
+//
+// A tenant-scoped path carries no owner, so the envelope's Owner is
+// authoritative: a pin held by another owner answers as missing.
 type BackendStore struct {
 	backend storage.Backend
 }
@@ -154,35 +152,33 @@ func (s *BackendStore) Get(ctx context.Context, sc scope.Scope, owner, host stri
 	if err != nil {
 		return nil, err
 	}
-	data, gerr := s.backend.Get(ctx, path)
-	if gerr != nil {
-		if errors.Is(gerr, storage.ErrNotFound) {
-			return nil, &NotFoundError{Scope: string(sc), Owner: owner, Host: host}
-		}
-		return nil, &StorageError{Op: "get", Err: gerr}
+	env, err := s.load(ctx, path, sc, owner, host)
+	if err != nil {
+		return nil, err
 	}
-	return decodeEnvelope(data)
+	return env.pin()
 }
 
 // List implements Store.List.
 func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) ([]*Pin, error) {
-	prefix := storagePrefix
-	if sc != "" {
-		if !sc.Valid() {
-			return nil, &scope.ScopeInvalidError{Value: string(sc)}
-		}
-		prefix += string(sc) + "/"
-		if owner != "" {
-			if strings.ContainsRune(owner, '/') {
-				return nil, &scope.KeyIDMalformedError{Field: "owner", Reason: "contains separator"}
-			}
-			prefix += owner + "/"
-		}
+	prefix, err := scope.ListPrefix(sc, owner)
+	if err != nil {
+		return nil, err
 	}
 
 	var out []*Pin
-	scanErr := s.backend.Scan(ctx, prefix, func(_ string, value []byte) error {
-		pin, perr := decodeEnvelope(value)
+	scanErr := s.backend.Scan(ctx, prefix, func(key string, value []byte) error {
+		if !scope.KindKnownHosts.Match(key) {
+			return nil
+		}
+		env, derr := decodeEnvelope(value)
+		if derr != nil {
+			return derr
+		}
+		if sc != "" && owner != "" && env.Owner != owner {
+			return nil
+		}
+		pin, perr := env.pin()
 		if perr != nil {
 			// A single unmatchable legacy (pre-v2) pin must not block
 			// listing every other pin in scope — List is the discovery
@@ -204,11 +200,17 @@ func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) (
 	return out, nil
 }
 
-// Remove implements Store.Remove.
+// Remove implements Store.Remove. A tenant-scoped pin is read first so a
+// pin held by another owner answers as missing and survives.
 func (s *BackendStore) Remove(ctx context.Context, sc scope.Scope, owner, host string) error {
 	path, err := buildPath(sc, owner, host)
 	if err != nil {
 		return err
+	}
+	if sc == scope.Tenant {
+		if _, lerr := s.load(ctx, path, sc, owner, host); lerr != nil {
+			return lerr
+		}
 	}
 	if derr := s.backend.Delete(ctx, path); derr != nil {
 		if errors.Is(derr, storage.ErrNotFound) {
@@ -219,40 +221,52 @@ func (s *BackendStore) Remove(ctx context.Context, sc scope.Scope, owner, host s
 	return nil
 }
 
-// buildPath validates the components and returns the full storage key.
-// The path layout is "ssh/known_hosts/<scope>/<owner>/<host>".
+// load returns the envelope at path, the pin of (sc, owner, host). A
+// missing pin, or one held by another owner, is *NotFoundError.
+func (s *BackendStore) load(ctx context.Context, path string, sc scope.Scope, owner, host string) (*storedEnvelope, error) {
+	data, err := s.backend.Get(ctx, path)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &NotFoundError{Scope: string(sc), Owner: owner, Host: host}
+		}
+		return nil, &StorageError{Op: "get", Err: err}
+	}
+	env, err := decodeEnvelope(data)
+	if err != nil {
+		return nil, err
+	}
+	if env.Owner != owner {
+		return nil, &NotFoundError{Scope: string(sc), Owner: owner, Host: host}
+	}
+	return env, nil
+}
+
+// buildPath validates the components and returns the pin's storage path
+// (scope.KindKnownHosts.RecordPath). The host is validated first so a
+// malformed host reports *InvalidHostError.
 func buildPath(sc scope.Scope, owner, host string) (string, error) {
 	if !sc.Valid() {
 		return "", &scope.ScopeInvalidError{Value: string(sc)}
 	}
-	if owner == "" {
-		return "", &scope.KeyIDMalformedError{Field: "owner", Reason: "empty"}
-	}
-	if strings.ContainsRune(owner, '/') {
-		return "", &scope.KeyIDMalformedError{Field: "owner", Reason: "contains separator"}
-	}
 	if err := ValidateHost(host); err != nil {
 		return "", err
 	}
-	var b strings.Builder
-	b.Grow(len(storagePrefix) + len(sc) + len(owner) + len(host) + 2)
-	b.WriteString(storagePrefix)
-	b.WriteString(string(sc))
-	b.WriteByte('/')
-	b.WriteString(owner)
-	b.WriteByte('/')
-	b.WriteString(host)
-	return b.String(), nil
+	return scope.KindKnownHosts.RecordPath(sc, owner, host)
 }
 
-// decodeEnvelope reads a JSON envelope and reconstructs a *Pin. Returns
-// *LegacyPinError for a pre-v2 envelope that carries no PublicKey: such a
-// pin can no longer be trusted for matching and must be re-pinned.
-func decodeEnvelope(data []byte) (*Pin, error) {
+// decodeEnvelope unmarshals a JSON envelope.
+func decodeEnvelope(data []byte) (*storedEnvelope, error) {
 	var env storedEnvelope
 	if jerr := json.Unmarshal(data, &env); jerr != nil {
 		return nil, &SerializationError{Op: "unmarshal envelope", Err: jerr}
 	}
+	return &env, nil
+}
+
+// pin reconstructs the *Pin env stores. Returns *LegacyPinError for a
+// pre-v2 envelope that carries no PublicKey: such a pin can no longer be
+// trusted for matching and must be re-pinned.
+func (env *storedEnvelope) pin() (*Pin, error) {
 	sc, err := scope.Parse(env.Scope)
 	if err != nil {
 		return nil, err
@@ -264,7 +278,7 @@ func decodeEnvelope(data []byte) (*Pin, error) {
 	if derr != nil {
 		return nil, &SerializationError{Op: "decode public key", Err: derr}
 	}
-	pin := &Pin{
+	return &Pin{
 		Host:        env.Host,
 		Fingerprint: env.Fingerprint,
 		Algorithm:   env.Algorithm,
@@ -273,6 +287,5 @@ func decodeEnvelope(data []byte) (*Pin, error) {
 		AddedAt:     env.AddedAt,
 		Source:      env.Source,
 		PublicKey:   raw,
-	}
-	return pin, nil
+	}, nil
 }

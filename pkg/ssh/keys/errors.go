@@ -116,6 +116,20 @@ func (e *KeyNotFoundError) Error() string {
 	return "ssh/keys: key not found: " + e.ID
 }
 
+// OwnerConflictError is returned by Put when a tenant-scoped key of the
+// requested name is already held by another owner. A tenant-scoped storage
+// path carries no owner, so overwriting would silently hand the record to
+// the new owner. ID is the requested "<scope>/<owner>/<name>"; the holder is
+// deliberately not named.
+type OwnerConflictError struct {
+	ID string
+}
+
+// Error implements the error interface.
+func (e *OwnerConflictError) Error() string {
+	return "ssh/keys: key held by another owner: " + e.ID
+}
+
 // StorageError wraps an underlying storage-backend failure.
 type StorageError struct {
 	Op  string

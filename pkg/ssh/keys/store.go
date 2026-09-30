@@ -27,31 +27,29 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
-// storagePrefix is the top-level namespace under which all SSH key
-// envelopes are stored. Changing this string is a disk-layout break
-// that requires a migration.
-const storagePrefix = "ssh/keys/"
-
 // Store is the pluggable persistence interface for SSH keys. All
 // methods take a context.Context so storage backends can propagate
 // deadlines / cancellation. Store implementations MUST be safe for
 // concurrent use.
 type Store interface {
 	// Put persists key (overwriting any prior entry at the same
-	// Scope/Owner/Name). The key's Material must be non-nil.
+	// Scope/Owner/Name). The key's Material must be non-nil. A
+	// tenant-scoped key held by another owner is never overwritten: Put
+	// returns *OwnerConflictError.
 	Put(ctx context.Context, key *Key) error
 
 	// Get loads the key identified by (sc, owner, name). Returns a
-	// *KeyNotFoundError when the key does not exist.
+	// *KeyNotFoundError when the key does not exist or is held by
+	// another owner.
 	Get(ctx context.Context, sc scope.Scope, owner, name string) (*Key, error)
 
 	// Delete removes the key. Returns *KeyNotFoundError if it is
-	// already absent.
+	// already absent or held by another owner.
 	Delete(ctx context.Context, sc scope.Scope, owner, name string) error
 
 	// List returns stored key records scoped to (sc, owner) when both
 	// are non-empty, to sc alone when owner is empty, or to everything
-	// when both are empty. The returned Keys have nil Material — the
+	// when sc is empty. The returned Keys have nil Material — the
 	// on-disk envelope is not opened during a list. Callers that need
 	// the material must Get each one.
 	List(ctx context.Context, sc scope.Scope, owner string) ([]*Key, error)
@@ -89,8 +87,12 @@ type storedEnvelope struct {
 const envelopeVersion = 2
 
 // BackendStore is the production Store. It serializes Keys into JSON
-// envelopes and persists them under "ssh/keys/<scope>/<owner>/<name>"
-// in the supplied storage.Backend.
+// envelopes and persists them at scope.KindKeys.RecordPath -- e.g.
+// "ssh/users/<owner>/keys/<name>" -- in the supplied storage.Backend.
+//
+// A tenant-scoped path carries no owner, so the envelope's Owner is
+// authoritative: a key held by another owner answers as missing and is
+// never overwritten.
 type BackendStore struct {
 	backend storage.Backend
 }
@@ -119,9 +121,14 @@ func (s *BackendStore) Put(ctx context.Context, key *Key) error {
 	if key.Material == nil && !key.IsBackendBacked() {
 		return &NilInputError{Field: "key.Material"}
 	}
-	id, err := scope.BuildKeyID(key.Scope, key.Owner, key.Name)
+	path, err := scope.KindKeys.RecordPath(key.Scope, key.Owner, key.Name)
 	if err != nil {
 		return err
+	}
+	if key.Scope == scope.Tenant {
+		if cerr := s.checkOwner(ctx, path, key.Scope, key.Owner, key.Name); cerr != nil {
+			return cerr
+		}
 	}
 
 	env := storedEnvelope{
@@ -144,7 +151,7 @@ func (s *BackendStore) Put(ctx context.Context, key *Key) error {
 		if jerr != nil {
 			return &SerializationError{Op: "marshal envelope", Err: jerr}
 		}
-		if perr := s.backend.Put(ctx, storagePrefix+id, data); perr != nil {
+		if perr := s.backend.Put(ctx, path, data); perr != nil {
 			return &StorageError{Op: "put", Err: perr}
 		}
 		return nil
@@ -166,7 +173,7 @@ func (s *BackendStore) Put(ctx context.Context, key *Key) error {
 	if jerr != nil {
 		return &SerializationError{Op: "marshal envelope", Err: jerr}
 	}
-	if perr := s.backend.Put(ctx, storagePrefix+id, data); perr != nil {
+	if perr := s.backend.Put(ctx, path, data); perr != nil {
 		return &StorageError{Op: "put", Err: perr}
 	}
 	return nil
@@ -174,33 +181,32 @@ func (s *BackendStore) Put(ctx context.Context, key *Key) error {
 
 // Get loads the key and rehydrates a fully-populated *Key.
 func (s *BackendStore) Get(ctx context.Context, sc scope.Scope, owner, name string) (*Key, error) {
-	id, err := scope.BuildKeyID(sc, owner, name)
+	path, err := scope.KindKeys.RecordPath(sc, owner, name)
 	if err != nil {
 		return nil, err
 	}
-	data, err := s.backend.Get(ctx, storagePrefix+id)
+	env, err := s.load(ctx, path, sc, owner, name)
 	if err != nil {
-		if isStorageNotFound(err) {
-			return nil, &KeyNotFoundError{ID: id}
-		}
-		return nil, &StorageError{Op: "get", Err: err}
+		return nil, err
 	}
-	var env storedEnvelope
-	if jerr := json.Unmarshal(data, &env); jerr != nil {
-		return nil, &SerializationError{Op: "unmarshal envelope", Err: jerr}
-	}
-	return envelopeToKey(&env)
+	return envelopeToKey(env)
 }
 
-// Delete removes the key from the backend.
+// Delete removes the key from the backend. A tenant-scoped key is read
+// first so a key held by another owner answers as missing and survives.
 func (s *BackendStore) Delete(ctx context.Context, sc scope.Scope, owner, name string) error {
-	id, err := scope.BuildKeyID(sc, owner, name)
+	path, err := scope.KindKeys.RecordPath(sc, owner, name)
 	if err != nil {
 		return err
 	}
-	if derr := s.backend.Delete(ctx, storagePrefix+id); derr != nil {
+	if sc == scope.Tenant {
+		if _, lerr := s.load(ctx, path, sc, owner, name); lerr != nil {
+			return lerr
+		}
+	}
+	if derr := s.backend.Delete(ctx, path); derr != nil {
 		if isStorageNotFound(derr) {
-			return &KeyNotFoundError{ID: id}
+			return notFound(sc, owner, name)
 		}
 		return &StorageError{Op: "delete", Err: derr}
 	}
@@ -211,25 +217,22 @@ func (s *BackendStore) Delete(ctx context.Context, sc scope.Scope, owner, name s
 // The returned Keys have Material=nil — the caller Gets each one to
 // receive material.
 func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) ([]*Key, error) {
-	prefix := storagePrefix
-	if sc != "" {
-		if !sc.Valid() {
-			return nil, &scope.ScopeInvalidError{Value: string(sc)}
-		}
-		prefix += string(sc) + "/"
-		if owner != "" {
-			if strings.ContainsRune(owner, '/') {
-				return nil, &scope.KeyIDMalformedError{Field: "owner", Reason: "contains separator"}
-			}
-			prefix += owner + "/"
-		}
+	prefix, err := scope.ListPrefix(sc, owner)
+	if err != nil {
+		return nil, err
 	}
 
 	var out []*Key
-	err := s.backend.Scan(ctx, prefix, func(_ string, value []byte) error {
+	err = s.backend.Scan(ctx, prefix, func(key string, value []byte) error {
+		if !scope.KindKeys.Match(key) {
+			return nil
+		}
 		var env storedEnvelope
 		if jerr := json.Unmarshal(value, &env); jerr != nil {
 			return &SerializationError{Op: "unmarshal envelope", Err: jerr}
+		}
+		if sc != "" && owner != "" && env.Owner != owner {
+			return nil
 		}
 		k, kerr := envelopeToKeyMetaOnly(&env)
 		if kerr != nil {
@@ -242,6 +245,55 @@ func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) (
 		return nil, &StorageError{Op: "scan", Err: err}
 	}
 	return out, nil
+}
+
+// read returns the envelope stored at path, or nil when there is none.
+func (s *BackendStore) read(ctx context.Context, path string) (*storedEnvelope, error) {
+	data, err := s.backend.Get(ctx, path)
+	if err != nil {
+		if isStorageNotFound(err) {
+			return nil, nil
+		}
+		return nil, &StorageError{Op: "get", Err: err}
+	}
+	var env storedEnvelope
+	if jerr := json.Unmarshal(data, &env); jerr != nil {
+		return nil, &SerializationError{Op: "unmarshal envelope", Err: jerr}
+	}
+	return &env, nil
+}
+
+// load returns the envelope at path, the record of (sc, owner, name). A
+// missing record, or one held by another owner, is *KeyNotFoundError.
+func (s *BackendStore) load(ctx context.Context, path string, sc scope.Scope, owner, name string) (*storedEnvelope, error) {
+	env, err := s.read(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if env == nil || env.Owner != owner {
+		return nil, notFound(sc, owner, name)
+	}
+	return env, nil
+}
+
+// checkOwner refuses a write to path, the record of (sc, owner, name),
+// with *OwnerConflictError when a record there is held by another owner.
+func (s *BackendStore) checkOwner(ctx context.Context, path string, sc scope.Scope, owner, name string) error {
+	env, err := s.read(ctx, path)
+	if err != nil {
+		return err
+	}
+	if env != nil && env.Owner != owner {
+		return &OwnerConflictError{ID: string(sc) + "/" + owner + "/" + name}
+	}
+	return nil
+}
+
+// notFound returns the *KeyNotFoundError of (sc, owner, name), identified
+// by the key's "<scope>/<owner>/<name>" ID. The components were validated by
+// RecordPath, so the ID is well-formed.
+func notFound(sc scope.Scope, owner, name string) error {
+	return &KeyNotFoundError{ID: string(sc) + "/" + owner + "/" + name}
 }
 
 // envelopeToKey decodes an envelope and reconstructs the full *Key,

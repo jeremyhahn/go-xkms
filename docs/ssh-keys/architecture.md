@@ -81,7 +81,7 @@ xkmsd: s.ensureSSHClient() builds ONE tenancy client, shared by every transport
 pkg/ssh/tenancy: bind (scope, owner) to the caller, pick the partition
         |
         v  per request: an embedded sdkssh.Client over one partition
-        +-- storage "ssh" view [+ "tenants/<id>/"] --> pkg/ssh/keys.BackendStore  (SSH key envelopes)
+        +-- storage "ssh" view + "{tenant}/" --> pkg/ssh/keys.BackendStore        (SSH key envelopes)
         +-- pkg/ssh/known_hosts.Store                                            (host-key pins)
         +-- pkg/ssh/authorized.Store                                             (authorized_keys entries)
         +-- pkg/ssh/backend.Provider --> tenant KeyProvider view
@@ -124,6 +124,38 @@ caller-assigned label within that (Scope, Owner) pair. `xkmsctl ssh`'s
 (`cmd/xkmsctl/ssh.go:219-220`). Against `xkmsd` a tenant-scoped caller must
 name an owner it owns (next section), so it passes `--owner <its subject>`
 for `user`/`service` scope and `--owner <its tenant ID>` for `tenant` scope.
+
+The `"<scope>/<owner>/<name>"` identifier (`scope.BuildKeyID`) names an asset
+in APIs, backend key IDs and CNs; it is not where the asset is stored. Storage
+follows the xkms-wide scope layout (`pkg/scope`,
+[`../multi-tenancy/architecture.md`](../multi-tenancy/architecture.md#ownership-scopes)),
+built in one place, `pkg/ssh/scope/layout.go` (`Kind.RecordPath`,
+`ListPrefix`, `Kind.Match`), so the three stores never re-derive it:
+
+```
+{tenant}/ssh/shared/<kind>/<name>             scope=tenant
+{tenant}/ssh/users/{subject}/<kind>/<name>    scope=user
+{tenant}/ssh/services/{owner}/<kind>/<name>   scope=service
+
+<kind> = keys | known_hosts | authorized_keys
+```
+
+Each store writes the part from `ssh/` on; the `{tenant}/` root is the
+partition the store's backend already is (next section). Other SSH features
+sharing the view (`ssh/sessions/`, `ssh/profiles/`) never match a record path,
+so a listing that scans the whole `ssh/` view keeps only its own kind.
+
+A tenant-scoped path carries no owner — the owner is the tenant, which the
+partition already is — so each store keeps the owner in the record and treats
+it as authoritative: a `Get`, `Delete`/`Remove` or `Verify` naming another
+owner answers exactly as a missing asset (and deletes nothing), a listing
+filtered by owner filters on the record, and a write over another owner's
+record is refused — `*keys.OwnerConflictError` for a key `Put` (a 409 on
+every transport), `*DuplicateError` for a pin or `authorized_keys` `Add`. The
+server never reaches this (tenancy binds a tenant-scoped owner to its
+partition's tenant); it keeps an embedded or local store, such as xkey's, from
+ever aliasing two owners. There is no data migration and no compatibility
+reader for the previous `ssh/<kind>/<scope>/<owner>/<name>` layout.
 
 ## Owner binding and tenant partitions (go-xkms#1230)
 
@@ -169,8 +201,9 @@ keeps only what the caller owns (`pkg/ssh/tenancy/ops.go:76-92`).
 authenticator uses the username (`pkg/auth/mtls.go:252`) — so the owner
 binding alone would still let `alice` of tenant A reach the `user/alice`
 keys of `alice` in tenant B in one flat store. Each tenant therefore gets its
-own storage partition, the `tenants/<tenant-id>/` prefix of the shared `ssh`
-storage view (`pkg/ssh/tenancy/client.go:66-69,283-301`), and its own
+own storage partition, rooted at its tenant root `{tenant}/`
+(`scope.TenantRoot`) in the shared `ssh` storage view
+(`pkg/ssh/tenancy/client.go:352-372`), and its own
 backend-key namespace: backend-backed keys are generated and resolved
 through a `KeyProvider` view that sets `types.KeyAttributes.TenantID`
 (`pkg/ssh/tenancy/keyprovider.go:24-105`), exactly as
@@ -179,13 +212,16 @@ common name (`ssh-<scope>-<owner>-<name>`, `pkg/ssh/keys/generate.go:238-244`)
 is unique only within a tenant; the namespace keeps two tenants' equal names
 apart.
 
-Which partition serves a request (`pkg/ssh/tenancy/client.go:217-236`):
+The platform is the ordinary tenant `system` (`scope.TenantRoot("")` is
+`system/`), so its assets land under `system/ssh/...` exactly as tenant A's
+land under `tenant-a/ssh/...`. Which partition serves a request
+(`pkg/ssh/tenancy/client.go:284-305`):
 
 | Caller | Address | Partition |
 |---|---|---|
 | tenant-scoped | any it owns | its own tenant's |
 | platform | `scope=tenant`, owner a real tenant ID | that tenant's |
-| platform | anything else (user/service scope, the system tenant) | the platform partition (the unprefixed view) |
+| platform | anything else (user/service scope, the system tenant) | the platform partition, `system/` |
 
 A platform identity therefore manages any tenant's `scope=tenant` assets but
 no user's `scope=user` assets other than its own, and service assets of the

@@ -27,6 +27,7 @@ import "net/http"
 //	*pkg/ssh/keys.KeyNotFoundError            -> 404
 //	*pkg/ssh/known_hosts.DuplicateError       -> 409
 //	*pkg/ssh/authorized.DuplicateError        -> 409
+//	*pkg/ssh/keys.OwnerConflictError          -> 409
 //	*pkg/ssh/known_hosts.MismatchError        -> 409 (MITM)
 //	*InvalidScopeError                        -> 400
 //	*InvalidAlgorithmError                    -> 400
