@@ -78,6 +78,42 @@ aHash          = H(approvedPolicy ‖ policyRef(P))
 signature      = Sign(authority(S), aHash)
 ```
 
+### Composite policies and descriptions
+
+Owner ruling (2026-09-30): named policies can combine conditions beyond
+PCR-or-password, and carry a free-text description.
+
+- A named policy is an **OR of branches**. Each branch is an **AND of
+  conditions**:
+  - `pcr`: a bank and a selection, with values captured live;
+  - `auth_value`: the object's password must be presented;
+  - `locality`: the set of TPM localities the command may come from.
+
+  xKey's old AND/OR composites map onto this directly: AND is one branch
+  holding every condition, and OR is one branch per condition. A policy
+  created with just a bank and PCRs is one branch holding one `pcr`
+  condition.
+- The authority signs **one approval per branch**. Each covers
+  `approvedPolicy = the branch's assertions → PolicyNV(counter == epoch)` for
+  the same `policyRef`. `PolicyAuthorize` accepts any approval the authority
+  signed for that reference, so the OR needs no `PolicyOR` inside the
+  approved policy.
+- At use, the session tries the branches in order.
+  - A branch with an `auth_value` condition is tried only when a password was
+    supplied, so the dictionary-attack counter is never spent on a guess.
+  - A branch whose `PolicyPCR` or `PolicyLocality` fails moves on to the next.
+  - If no branch succeeds, the typed errors from the branches tried are
+    returned.
+- **Structure is immutable.** An update re-captures the PCR values of every
+  `pcr` condition, re-signs, and never changes the branches. A different
+  structure is a new policy plus a re-key.
+- **The object's own password branch.** The outer
+  `PolicyOR(PolicyAuthorizeNV, PolicyAuthValue)` exists only when the object
+  has a password **and** its policy has no `auth_value` condition. When the
+  policy has one, the password counts only inside that policy's branches.
+  Otherwise the password alone would bypass a "PCR **and** password" policy.
+- `description` is free text, which can be updated at any time.
+
 ### Using an object (sign, decrypt, ECDH, unseal)
 
 The session code (`pkg/tpm2/session.go`, `createKeySession`) chooses a branch
@@ -171,7 +207,7 @@ both recorded as `rotating`, and startup finishes the remaining writes.
 
 **Tenant key rotation** (ruled 2026-09-29: a service-layer version model on
 every backend, with the version carried in an envelope header). It is
-designed in [Key versions](#key-versions). The ruling asks for key versions:
+designed in [Key versions](#key-versions). Before that ruling, the gap was:
 a new version under the tenant's scope, old versions kept for verify and
 decrypt until retired, and "rotate all keys in this scope". xkms has no such
 model today:
@@ -186,49 +222,60 @@ verify or decrypt call selects a version.
 
 ## Key versions
 
-Owner ruling (2026-09-29): a service-layer version model on every backend.
+Owner rulings (2026-09-29, 2026-09-30): a service-layer version model on
+every backend, with interoperability with standard tooling first.
 
-- **A version is its own backend key.** Key `K` version `n` is the backend key
-  `K@v<n>`. `RotateKey(K)` creates `K@v<n+1>` with the same algorithm,
-  attributes and, for TPM2, the same scope and policy. It then makes that
-  version current. Nothing is re-keyed in place, so a non-exportable TPM2 key
-  rotates like any other.
-- **The version records live in the registry**
-  (`{tenant}/key-versions/<keyID>`). A record holds the current version and,
-  per version, its state (`enabled`, `disabled` or `retired`) and creation
-  time. The gRPC `ListKeyVersions`, `Enable/DisableKeyVersion` and
-  `Enable/DisableAllKeyVersions` RPCs, already declared, are implemented over
-  it.
-- **Encrypt and sign always use the current version. Decrypt and verify select
-  the version from the envelope,** so callers never track versions.
-  - A disabled version refuses every operation until it is re-enabled.
-  - A retired version is gone: its backend key is deleted, and it can never be
+- **A version is its own backend key.** Version 1 is the key as generated,
+  under its own name `K`. Version `n > 1` is the backend key `K--v<n>`, a name
+  users cannot create (`--v<digits>` suffixes are reserved).
+  - `RotateKey(K)` creates `K--v<n+1>` with the same algorithm and attributes.
+    For TPM2 it also keeps the same tenant scope and TPM policy. It then makes
+    that version current.
+  - A key rotates this way on every backend, including a non-exportable TPM2
+    key.
+- **Version records** live in the registry at
+  `{tenant}/key-versions/<backend>/<keyID>`. Each holds the current version
+  and, per version, its state (`enabled`, `disabled`, `retired`) and creation
+  time. A key without a record is version 1, alone and enabled.
+  - `ListKeyVersions`, `Enable/DisableKeyVersion` and
+    `Enable/DisableAllKeyVersions` (declared in the proto, now implemented) plus
+    `RetireKeyVersion` work on them.
+  - The current version cannot be disabled or retired; rotate first.
+  - A retired version's backend key is deleted, and it can never be
     re-enabled.
-  - Older enabled versions keep serving decrypt and verify.
-- **Rotate all:** `RotateScopeKeys(tenant)` rotates every key in the tenant's
-  scope and reports each result.
+  - `RotateScopeKeys(tenant)` rotates every key in the tenant's scope and
+    reports each key's result.
+  - Listings show a key once, under `K`, never its `K--v<n>` versions.
+- **Sign and encrypt** always use the current version. They return
+  `key_version` as response metadata beside the output, never inside it.
 
-### Envelope format (v1)
+### No envelope
 
-```
-offset  size  field
-0       2     magic 0x58 0x4B ("XK")
-2       1     format version, 0x01
-3       1     kind: 0x01 ciphertext, 0x02 signature
-4       4     key version, uint32 big-endian (1-based)
-8       n     payload: the backend's ciphertext or signature, unchanged
-```
+Every output stays in its standard format: raw, X.509/CSR, SSH, JWS and git
+signatures, RSA ciphertext, and AES output. The version travels only as the
+`key_version` field.
 
-- A header whose magic, format version or kind is unknown is refused with
-  `*EnvelopeFormatError`. It is never guessed at.
-- A future format bumps byte 2. Decoders keep every format they have ever
-  shipped.
+- xkms-sealed data already carries its own metadata (`SealedData`), so its
+  version is recorded there, not in the bytes.
+- Standard formats plus metadata cover every case, so no envelope is built.
+- A magic prefix could not be made unambiguous in any case. xkms returns AES
+  output raw (and CBC must stay PKCS#11-compatible), and raw ciphertext can
+  begin with any byte string.
 
-**Open question, not yet ruled on:** a signature or an RSA-OAEP ciphertext
-often leaves xkms in a standard format that has no room for a header: X.509
-and CSR signatures, SSH signatures, JWS, git commit signatures, and ciphertext
-a third party produced with the public key. See the report accompanying this
-section for the options.
+### Choosing the version on verify and decrypt
+
+| Input | `key_version` given | `key_version` absent |
+|---|---|---|
+| Any signature (ECDSA, Ed25519, RSA PSS/PKCS#1 v1.5) | that version | try the enabled versions, newest first. These are public-key checks, and a false accept is cryptographically negligible. |
+| AEAD ciphertext (AES-GCM, ChaCha20-Poly1305, XChaCha20-Poly1305) | that version | try the enabled versions, newest first. The authentication tag makes a wrong key fail. |
+| RSA-OAEP ciphertext, including ciphertext produced outside xkms | that version | try the enabled versions, newest first (approved). OAEP's padding check makes a wrong key fail. |
+| AES-CBC (`cbc`, `cbc-pad`) and RSA PKCS#1 v1.5 ciphertext | that version | the one enabled version if there is exactly one; otherwise `*KeyVersionRequiredError` |
+
+The last row is a refusal, not a guess. A wrong key under unpadded CBC
+decrypts silently to garbage. CBC with padding, and PKCS#1 v1.5, pass their
+padding check by chance often enough to return wrong plaintext, and trying keys
+one after another is a padding oracle. The caller keeps `key_version` from the
+encrypt response.
 
 ## NV counter and revocation
 
