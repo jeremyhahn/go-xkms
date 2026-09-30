@@ -1577,6 +1577,26 @@ func (m *mockPIVClient) PasswordDelete(_ context.Context, _ *transport.PasswordD
 	return errMockNotImplemented
 }
 
+func (m *mockPIVClient) PasswordVaultStatus(context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockPIVClient) PasswordVaultEnroll(context.Context, *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (m *mockPIVClient) PasswordVaultRotate(context.Context, *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (m *mockPIVClient) PasswordVaultRemoveFactor(context.Context, *transport.PasswordVaultRemoveFactorRequest) error {
+	return nil
+}
+
+func (m *mockPIVClient) PasswordVaultRecover(context.Context, *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
 func (m *mockPIVClient) PasswordStoreUnlock(_ context.Context, _ *transport.PasswordStoreUnlockRequest) error {
 	return errMockNotImplemented
 }

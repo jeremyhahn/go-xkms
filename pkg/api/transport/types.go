@@ -2077,9 +2077,84 @@ type PasswordDeleteRequest struct {
 	TenantID string `json:"tenant_id,omitempty"`
 }
 
-// PasswordStoreUnlockRequest contains parameters for unlocking the password store.
+// PasswordVaultCredential is a factor of the caller's personal vault: a
+// passphrase, a passkey (a FIDO2 credential with the hmac-secret / WebAuthn
+// PRF extension), or -- for recovery only -- the recovery code.
+type PasswordVaultCredential struct {
+	// Factor is "passphrase" or "passkey".
+	Factor string `json:"factor"`
+
+	// Passphrase is the passphrase (Factor "passphrase").
+	Passphrase string `json:"passphrase,omitempty"`
+
+	// CredentialID identifies the passkey (Factor "passkey").
+	CredentialID []byte `json:"credential_id,omitempty"`
+
+	// PRFSalt is the 32-byte salt the authenticator evaluated hmac-secret
+	// over. Required to enroll a passkey; an enrolled passkey's salt is
+	// reported by PasswordVaultStatus.
+	PRFSalt []byte `json:"prf_salt,omitempty"`
+
+	// Secret is the 32-byte hmac-secret (PRF) output (Factor "passkey").
+	Secret []byte `json:"secret,omitempty"`
+
+	// Label names an enrolled factor.
+	Label string `json:"label,omitempty"`
+}
+
+// PasswordStoreUnlockRequest opens the caller's personal password session
+// with one of the caller's own vault factors.
 type PasswordStoreUnlockRequest struct {
-	UserPIN string `json:"user_pin"`
+	PasswordVaultCredential
+}
+
+// PasswordVaultFactor describes one enrolled factor (no key material).
+type PasswordVaultFactor struct {
+	ID           string `json:"id"`
+	Factor       string `json:"factor"`
+	Label        string `json:"label,omitempty"`
+	CreatedAt    string `json:"created_at"`
+	CredentialID []byte `json:"credential_id,omitempty"`
+	PRFSalt      []byte `json:"prf_salt,omitempty"`
+}
+
+// PasswordVaultStatusResponse describes the caller's personal vault.
+type PasswordVaultStatusResponse struct {
+	Initialized bool                  `json:"initialized"`
+	Unlocked    bool                  `json:"unlocked"`
+	Factors     []PasswordVaultFactor `json:"factors"`
+}
+
+// PasswordVaultEnrollRequest enrolls a factor. The first enrollment
+// initializes the vault; later ones need the caller's session open.
+type PasswordVaultEnrollRequest struct {
+	PasswordVaultCredential
+}
+
+// PasswordVaultEnrollResponse is the enrolled factor and, on the first
+// enrollment or a recovery, the new recovery code, shown exactly once.
+type PasswordVaultEnrollResponse struct {
+	Factor       PasswordVaultFactor `json:"factor"`
+	RecoveryCode string              `json:"recovery_code,omitempty"`
+}
+
+// PasswordVaultRotateRequest replaces factor FactorID with a new secret of
+// the same type.
+type PasswordVaultRotateRequest struct {
+	FactorID string `json:"factor_id"`
+	PasswordVaultCredential
+}
+
+// PasswordVaultRemoveFactorRequest removes factor FactorID.
+type PasswordVaultRemoveFactorRequest struct {
+	FactorID string `json:"factor_id"`
+}
+
+// PasswordVaultRecoverRequest uses the one-time recovery code to enroll a new
+// factor.
+type PasswordVaultRecoverRequest struct {
+	RecoveryCode string `json:"recovery_code"`
+	PasswordVaultCredential
 }
 
 // PasswordStoreStatusResponse contains the password store status.

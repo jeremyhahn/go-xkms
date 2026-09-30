@@ -3040,6 +3040,21 @@ func (m *mockCertClient) PasswordStoreUnlock(ctx context.Context, req *transport
 func (m *mockCertClient) PasswordStoreLock(ctx context.Context) error {
 	return nil
 }
+func (m *mockCertClient) PasswordVaultStatus(_ context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return nil, nil
+}
+func (m *mockCertClient) PasswordVaultEnroll(_ context.Context, _ *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+func (m *mockCertClient) PasswordVaultRotate(_ context.Context, _ *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+func (m *mockCertClient) PasswordVaultRemoveFactor(_ context.Context, _ *transport.PasswordVaultRemoveFactorRequest) error {
+	return nil
+}
+func (m *mockCertClient) PasswordVaultRecover(_ context.Context, _ *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
 
 func (m *mockCertClient) PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error) {
 	return nil, nil

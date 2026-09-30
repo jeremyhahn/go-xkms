@@ -1,6 +1,6 @@
 # Static Passwords — CLI
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
 
 Every flag below is read from `cmd/xkey/cmd/password.go`/`touch.go`'s
 `init()` and matches `xkey password <verb> --help`/`xkey touch --help`
@@ -97,15 +97,40 @@ Acts on an `xkmsd` server's session; requires `--xkmsd-url`. In
 
 | Flag | Default | Description |
 |---|---|---|
-| `--pin-stdin` | `false` | Read the User PIN from standard input (required; no interactive prompt in this verb) |
+| `--passphrase-stdin` | `false` | Read your vault passphrase from standard input |
 
-There is no `--pin` value flag: a value on the command line is visible to
-every other process on the host via `ps`. The PIN comes from `--pin-stdin`
-or the `XKEY_PIN` environment variable.
+The session opens with your own vault passphrase, never a device or
+deployment PIN. There is no `--passphrase` value flag: a value on the command
+line is visible to every other process on the host via `ps`. The passphrase
+comes from `--passphrase-stdin` or the `XKEY_VAULT_PASSPHRASE` environment
+variable.
 
 ```bash
-echo 1234 | xkey password unlock --pin-stdin
-XKEY_PIN=1234 xkey password unlock
+xkey password unlock --passphrase-stdin < passphrase.txt
+XKEY_VAULT_PASSPHRASE=... xkey password unlock
+```
+
+## `xkey password vault`
+
+Manages your personal vault on the `xkmsd` server: the factors your personal
+entries' key is wrapped under. Requires `--xkmsd-url`.
+
+| Verb | Flags | Does |
+|---|---|---|
+| `vault status` | | whether your vault exists and is unlocked, and your factors |
+| `vault enroll` | `--passphrase-stdin`, `--label` | enroll a passphrase; the first enrollment prints the one-time recovery code |
+| `vault rotate` | `--factor-id`, `--passphrase-stdin`, `--label` | replace a passphrase (the label is kept unless given) |
+| `vault remove` | `--factor-id` | remove a factor (not the recovery code, not the last passphrase or passkey) |
+| `vault recover` | `--recovery-code-stdin`, `--passphrase-stdin`, `--label` | enroll a new passphrase with the recovery code; prints the replacement code once |
+
+Secrets come from `--passphrase-stdin` / `XKEY_VAULT_PASSPHRASE` and
+`--recovery-code-stdin` / `XKEY_VAULT_RECOVERY_CODE`; at most one may read
+standard input. Passkey factors are served by the API but not yet by this
+CLI.
+
+```bash
+XKEY_VAULT_PASSPHRASE=... xkey password vault enroll --label laptop
+XKEY_VAULT_PASSPHRASE=... xkey password vault recover --recovery-code-stdin < code.txt
 ```
 
 ## `xkey password lock`

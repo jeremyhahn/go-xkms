@@ -551,7 +551,9 @@ func passwordSealStoreOps() []passwordSealStoreOp {
 			return tr.PasswordDelete(ctx, &transport.PasswordDeleteRequest{ID: "pw-1"})
 		}},
 		{"PasswordStoreUnlock", methodPasswordStoreUnlock, func(ctx context.Context, tr *Transport) error {
-			return tr.PasswordStoreUnlock(ctx, &transport.PasswordStoreUnlockRequest{UserPIN: "123456"})
+			return tr.PasswordStoreUnlock(ctx, &transport.PasswordStoreUnlockRequest{
+				PasswordVaultCredential: transport.PasswordVaultCredential{Factor: "passphrase", Passphrase: "correct horse"},
+			})
 		}},
 		{"PasswordStoreLock", methodPasswordStoreLock, func(ctx context.Context, tr *Transport) error {
 			return tr.PasswordStoreLock(ctx)

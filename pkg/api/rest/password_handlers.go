@@ -69,8 +69,8 @@ type PasswordServicer interface {
 	// password store addressed by the request context.
 	PasswordStoreSetAccessMode(ctx context.Context, req *transport.PasswordStoreSetAccessModeRequest) error
 
-	// PasswordStoreUnlock opens the caller's personal session after
-	// verifying the caller's user PIN.
+	// PasswordStoreUnlock opens the caller's personal session with one of
+	// the caller's own vault factors.
 	PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error
 
 	// PasswordStoreLock closes the caller's personal session.
@@ -79,6 +79,23 @@ type PasswordServicer interface {
 	// PasswordStoreStatus reports the lock and seal state of the store the
 	// caller sees.
 	PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error)
+
+	// PasswordVaultStatus describes the caller's personal vault.
+	PasswordVaultStatus(ctx context.Context) (*transport.PasswordVaultStatusResponse, error)
+
+	// PasswordVaultEnroll enrolls a passphrase or passkey on the caller's
+	// vault; the first enrollment initializes it and opens the session.
+	PasswordVaultEnroll(ctx context.Context, req *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error)
+
+	// PasswordVaultRotate replaces the secret of one of the caller's factors.
+	PasswordVaultRotate(ctx context.Context, req *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error)
+
+	// PasswordVaultRemoveFactor removes one of the caller's factors.
+	PasswordVaultRemoveFactor(ctx context.Context, req *transport.PasswordVaultRemoveFactorRequest) error
+
+	// PasswordVaultRecover uses the caller's one-time recovery code to
+	// enroll a new factor and open the session.
+	PasswordVaultRecover(ctx context.Context, req *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error)
 }
 
 // Compile-time check that the canonical servicer satisfies the seam.
@@ -119,11 +136,6 @@ type PasswordUpdateRequest struct {
 type PasswordGenerateRequest struct {
 	Length  int    `json:"length,omitempty"`
 	Charset string `json:"charset,omitempty"`
-}
-
-// PasswordStoreUnlockRequest is the request body for unlocking the password store.
-type PasswordStoreUnlockRequest struct {
-	PIN string `json:"pin"`
 }
 
 // PasswordStoreAccessModeRequest is the request body for selecting the
@@ -374,17 +386,16 @@ func (h *PasswordHandlers) DeletePasswordHandler(w http.ResponseWriter, r *http.
 }
 
 // UnlockHandler handles POST /api/v1/passwords/unlock requests. It opens the
-// caller's personal password session; sessions are per user, so this never
-// opens another user's personal entries.
+// caller's personal password session with one of the caller's vault factors;
+// sessions are per user, so this never opens another user's personal entries.
 //
-// The servicer verifies the caller's user PIN before opening the session. A
-// request without an identity has no personal session and is answered with
-// 501 by the servicer's ErrOperationNotSupported.
+// The body is a transport.PasswordVaultCredential: {"factor": "passphrase",
+// "passphrase": ...} or {"factor": "passkey", "credential_id", "secret"} with
+// the byte fields base64 encoded. A request without an identity has no
+// personal vault and is answered with 501.
 func (h *PasswordHandlers) UnlockHandler(w http.ResponseWriter, r *http.Request) {
-	// The user PIN is optional on the wire so an unprovisioned deployment gets
-	// the servicer's precise "not provisioned" answer rather than a decode
-	// failure. An absent body is an unlock attempt with no PIN, which the
-	// servicer rejects.
+	// An absent body is an unlock attempt with no credential, which the
+	// servicer rejects as an invalid credential.
 	var unlockReq transport.PasswordStoreUnlockRequest
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&unlockReq); err != nil && !errors.Is(err, io.EOF) {
@@ -392,6 +403,7 @@ func (h *PasswordHandlers) UnlockHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
+	defer clear(unlockReq.Secret)
 
 	if err := h.servicer.PasswordStoreUnlock(r.Context(), &unlockReq); err != nil {
 		passwordWriteUnlockError(w, err)
@@ -572,39 +584,43 @@ func passwordHandleStoreError(w http.ResponseWriter, err error) {
 	passwordWriteServiceError(w, err, "Failed to access password store")
 }
 
-// passwordWriteUnlockError maps the errors returned by
-// XKMSService.PasswordStoreUnlock onto HTTP statuses. The user-PIN sentinels
-// are distinguished from one another so an operator can tell "you sent no PIN"
-// from "this deployment has no PIN to check" from "your PIN was wrong"; the
-// last of those must not leak any detail beyond 401.
-func passwordWriteUnlockError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, xkms.ErrPasswordStoreUserPINRequired):
-		passwordWriteJSONError(w, "User PIN is required to unlock the password store", http.StatusBadRequest)
-	case errors.Is(err, xkms.ErrPasswordStoreUserPINNotProvisioned):
-		passwordWriteJSONError(w, "User PIN is not provisioned; enable PIN management and set a user PIN", http.StatusPreconditionFailed)
-	case errors.Is(err, staticpw.ErrStoreNotLocked):
-		passwordWriteJSONError(w, "Store is already unlocked", http.StatusConflict)
-	case errors.Is(err, staticpw.ErrInvalidUserID):
-		passwordWriteJSONError(w, "Invalid user identity", http.StatusBadRequest)
-	case errors.Is(err, seal.ErrTenantSealed):
-		passwordWriteJSONError(w, "Tenant barrier is sealed", http.StatusServiceUnavailable)
-	case errors.Is(err, seal.ErrTenantNotFound):
-		passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
-	case errors.Is(err, staticpw.ErrNoSystemBarrier):
-		passwordWriteJSONError(w, "System password store is unavailable", http.StatusServiceUnavailable)
-	case errors.Is(err, xkms.ErrNilRequest):
-		passwordWriteJSONError(w, "Invalid request", http.StatusBadRequest)
-	case errors.Is(err, xkms.ErrNotConfigured):
-		passwordWriteJSONError(w, "Password store not configured", http.StatusServiceUnavailable)
-	case errors.Is(err, xkms.ErrOperationNotSupported):
-		passwordWriteJSONError(w, "Password store unlock requires an authenticated user", http.StatusNotImplemented)
-	default:
-		// Any remaining error is a failed PIN verification from the PIN
-		// backend. Report it as an authentication failure without echoing the
-		// backend's message, which can carry retry counters and lockout state.
-		passwordWriteJSONError(w, "User PIN verification failed", http.StatusUnauthorized)
+// passwordVaultErrorMappings maps the personal-vault errors onto HTTP
+// responses. A malformed credential is the caller's mistake (400); a vault
+// with no factor needs enrollment first (412); a credential that unwraps no
+// factor is an authentication failure that must not say why (401).
+var passwordVaultErrorMappings = []passwordErrorMapping{
+	{staticpw.ErrVaultInvalidCredential, "Invalid vault credential: supply a passphrase or a passkey", http.StatusBadRequest},
+	{staticpw.ErrVaultRecoveryFactor, "The recovery code is not a removable, rotatable or unlocking factor", http.StatusBadRequest},
+	{staticpw.ErrVaultNotInitialized, "No vault factor is enrolled: enroll a passphrase or passkey first", http.StatusPreconditionFailed},
+	{staticpw.ErrVaultCredentialRejected, "Credential rejected", http.StatusUnauthorized},
+	{staticpw.ErrVaultFactorNotFound, "Vault factor not found", http.StatusNotFound},
+	{staticpw.ErrVaultLastFactor, "Cannot remove the last passphrase or passkey", http.StatusConflict},
+	{staticpw.ErrVaultPasskeyExists, "Passkey already enrolled", http.StatusConflict},
+	{xkms.ErrOperationNotSupported, "The personal password vault requires an authenticated user", http.StatusNotImplemented},
+}
+
+// passwordWriteVaultError writes the HTTP response for an error returned by a
+// personal-vault operation: the vault mappings first, then the store
+// mappings, falling back to 500 with fallback as the message.
+func passwordWriteVaultError(w http.ResponseWriter, err error, fallback string) {
+	for _, m := range passwordVaultErrorMappings {
+		if errors.Is(err, m.target) {
+			passwordWriteJSONError(w, m.message, m.status)
+			return
+		}
 	}
+	passwordWriteServiceError(w, err, fallback)
+}
+
+// passwordWriteUnlockError maps the errors returned by
+// XKMSService.PasswordStoreUnlock onto HTTP statuses: an already open session
+// is a 409, everything else is a vault error.
+func passwordWriteUnlockError(w http.ResponseWriter, err error) {
+	if errors.Is(err, staticpw.ErrStoreNotLocked) {
+		passwordWriteJSONError(w, "Store is already unlocked", http.StatusConflict)
+		return
+	}
+	passwordWriteVaultError(w, err, "Failed to unlock store")
 }
 
 // passwordWriteLockError maps the errors returned by

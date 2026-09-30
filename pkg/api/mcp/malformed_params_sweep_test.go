@@ -49,6 +49,7 @@ var paramsOptionalMethods = map[string]string{
 	"credentials.strategy":       "no parameters",
 	"password.lock":              "no parameters (tenant comes from the caller's identity)",
 	"password.status":            "no parameters (tenant comes from the caller's identity)",
+	"password.vault.status":      "no parameters (the vault is the caller's)",
 	"bootstrap.showKeys":         "no parameters",
 	"sealStore.list":             "no parameters",
 	"sealStore.status":           "no parameters",
@@ -96,7 +97,8 @@ func newMalformedParamsTestServer(t *testing.T) *Server {
 
 	server := createTestServer(t)
 
-	server.xkmsService.SetPasswordStoreManager(unlockTestManager(t))
+	_, _, manager := passwordTestRegistry(t)
+	server.xkmsService.SetPasswordStoreManager(manager)
 
 	barrier, _, _ := createTestBarrier(t)
 	server.xkmsService.SetBarrier(barrier)

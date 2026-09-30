@@ -39,7 +39,33 @@ func newConnectionWiringApp() *App {
 		tenantService:      services.NewTenantService(),
 		certificateService: services.NewCertificateService(),
 		tpmPolicyService:   services.NewTPMPolicyService(),
+		staticPWService:    services.NewStaticPasswordService(nil),
 	}
+}
+
+// vaultClient is a connected xkmsd client whose personal vault reports as
+// initialized, so a test can see which client the password service follows.
+type vaultClient struct {
+	transport.Client
+}
+
+func (vaultClient) PasswordVaultStatus(context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return &transport.PasswordVaultStatusResponse{Initialized: true}, nil
+}
+
+func TestApplyConnectionEvent_PasswordVaultFollowsTheConnection(t *testing.T) {
+	a := newConnectionWiringApp()
+	_, err := a.staticPWService.VaultStatus()
+	assert.ErrorIs(t, err, services.ErrStaticPWNoClient, "before a connection there is no vault to reach")
+
+	a.applyConnectionEvent(events.EventServerConnected, vaultClient{})
+	status, err := a.staticPWService.VaultStatus()
+	assert.NoError(t, err)
+	assert.True(t, status.Initialized, "the vault is served by the connected client")
+
+	a.applyConnectionEvent(events.EventServerDisconnected, nil)
+	_, err = a.staticPWService.VaultStatus()
+	assert.ErrorIs(t, err, services.ErrStaticPWNoClient, "a disconnect detaches the vault")
 }
 
 func TestApplyConnectionEvent_ConnectPutsTPMPoliciesInServerMode(t *testing.T) {

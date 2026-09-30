@@ -602,25 +602,36 @@ func TestPasswordUpdate_InvalidExpiration(t *testing.T) {
 
 // --- Tenant-aware servicer tests ---
 
-// testPasswordStoreUserPIN is the user PIN provisioned on the PIN backend that
-// setupServiceWithPasswordManager wires into the service. Unlocking a tenant
-// password store verifies this PIN, so tests that expect a successful unlock
-// must supply it.
-const testPasswordStoreUserPIN = "654321"
+// testVaultPassphrase is the personal-vault passphrase the tests enroll.
+var testVaultPassphrase = transport.PasswordVaultCredential{Factor: "passphrase", Passphrase: "a test vault passphrase"}
 
-// unlockRequest builds a password store unlock request carrying the PIN
-// provisioned by setupServiceWithPasswordManager.
+// unlockRequest builds an unlock request carrying testVaultPassphrase.
 func unlockRequest() *transport.PasswordStoreUnlockRequest {
-	return &transport.PasswordStoreUnlockRequest{UserPIN: testPasswordStoreUserPIN}
+	return &transport.PasswordStoreUnlockRequest{PasswordVaultCredential: testVaultPassphrase}
+}
+
+// openPersonalVault opens the caller's personal session: it enrolls
+// testVaultPassphrase on the caller's first use (which initializes the vault
+// and opens the session) and unlocks with it afterwards.
+func openPersonalVault(svc *XKMSService, ctx context.Context) error {
+	status, err := svc.PasswordVaultStatus(ctx)
+	if err != nil {
+		return err
+	}
+	if !status.Initialized {
+		_, err = svc.PasswordVaultEnroll(ctx, &transport.PasswordVaultEnrollRequest{PasswordVaultCredential: testVaultPassphrase})
+		return err
+	}
+	return svc.PasswordStoreUnlock(ctx, unlockRequest())
 }
 
 // setupServiceWithPasswordManager creates an XKMSService with a
-// TenantPasswordStoreManager backed by a registered and unsealed tenant, and a
-// PIN backend holding testPasswordStoreUserPIN so unlocks can be authorized.
+// TenantPasswordStoreManager backed by a registered and unsealed tenant. No
+// PIN backend is wired: personal sessions open with the user's own vault
+// factors, never a deployment-wide PIN.
 func setupServiceWithPasswordManager(t *testing.T) (*XKMSService, *seal.BarrierRegistry) {
 	t.Helper()
 	svc, _, _ := setupServiceWithProviders(t)
-	svc.SetPINManager(&mockPINManager{soPin: "123456", userPin: testPasswordStoreUserPIN})
 
 	// Create a system barrier with a software strategy.
 	sysBackend, err := storage.NewMemoryBackend()
@@ -678,7 +689,7 @@ func TestPasswordStoreLock_WithManager(t *testing.T) {
 	ctx := contextWithTenant("tenant-1")
 
 	// Unlock first.
-	err := svc.PasswordStoreUnlock(ctx, unlockRequest())
+	err := openPersonalVault(svc, ctx)
 	require.NoError(t, err)
 
 	// Lock.
@@ -686,7 +697,7 @@ func TestPasswordStoreLock_WithManager(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify locked: unlock should succeed again if it was locked.
-	err = svc.PasswordStoreUnlock(ctx, unlockRequest())
+	err = openPersonalVault(svc, ctx)
 	require.NoError(t, err)
 }
 
@@ -713,7 +724,7 @@ func TestPasswordStoreUnlock_WithManager(t *testing.T) {
 	svc, _ := setupServiceWithPasswordManager(t)
 	ctx := contextWithTenant("tenant-1")
 
-	err := svc.PasswordStoreUnlock(ctx, unlockRequest())
+	err := openPersonalVault(svc, ctx)
 	require.NoError(t, err)
 }
 
@@ -722,7 +733,7 @@ func TestPasswordStoreUnlock_NoTenantID(t *testing.T) {
 
 	// Manager is configured but no tenant ID in context. Falls through to
 	// system store path which returns ErrOperationNotSupported.
-	err := svc.PasswordStoreUnlock(context.Background(), unlockRequest())
+	err := openPersonalVault(svc, context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrOperationNotSupported)
 }
@@ -735,7 +746,7 @@ func TestPasswordStoreUnlock_TenantSealed(t *testing.T) {
 	err := registry.SealTenant("tenant-1")
 	require.NoError(t, err)
 
-	err = svc.PasswordStoreUnlock(ctx, unlockRequest())
+	err = openPersonalVault(svc, ctx)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, seal.ErrTenantSealed)
 }
@@ -767,7 +778,7 @@ func TestPasswordStoreStatus_TenantUnlocked(t *testing.T) {
 	ctx := contextWithTenant("tenant-1")
 
 	// Unlock the tenant first.
-	err := svc.PasswordStoreUnlock(ctx, unlockRequest())
+	err := openPersonalVault(svc, ctx)
 	require.NoError(t, err)
 
 	resp, err := svc.PasswordStoreStatus(ctx)
@@ -782,7 +793,7 @@ func TestResolvePasswordStore_TenantStore(t *testing.T) {
 	ctx := contextWithTenant("tenant-1")
 
 	// Unlock tenant so resolvePasswordStore returns the tenant store.
-	err := svc.PasswordStoreUnlock(ctx, unlockRequest())
+	err := openPersonalVault(svc, ctx)
 	require.NoError(t, err)
 
 	// Add a password via the tenant store.
@@ -916,7 +927,7 @@ func TestPasswordAdd_SharedFlag(t *testing.T) {
 	ctx := contextWithTenant("tenant-1")
 
 	// Unlock the tenant store.
-	err := svc.PasswordStoreUnlock(ctx, unlockRequest())
+	err := openPersonalVault(svc, ctx)
 	require.NoError(t, err)
 
 	// Add a shared password.
@@ -957,7 +968,7 @@ func TestPasswordList_ScopeAwareWithScopedStore(t *testing.T) {
 	ctx := contextWithTenant("tenant-1")
 
 	// Unlock the tenant store.
-	err := svc.PasswordStoreUnlock(ctx, unlockRequest())
+	err := openPersonalVault(svc, ctx)
 	require.NoError(t, err)
 
 	// Add a shared entry.
@@ -998,7 +1009,7 @@ func TestPasswordList_InvalidScope(t *testing.T) {
 	ctx := contextWithTenant("tenant-1")
 
 	// Unlock the tenant store.
-	err := svc.PasswordStoreUnlock(ctx, unlockRequest())
+	err := openPersonalVault(svc, ctx)
 	require.NoError(t, err)
 
 	// List with an invalid scope value.
@@ -1036,7 +1047,7 @@ func TestPasswordGet_ReturnsOwnerAndShared(t *testing.T) {
 	ctx := contextWithTenant("tenant-1")
 
 	// Unlock the tenant store.
-	err := svc.PasswordStoreUnlock(ctx, unlockRequest())
+	err := openPersonalVault(svc, ctx)
 	require.NoError(t, err)
 
 	// Add a shared password.
@@ -1067,8 +1078,8 @@ func TestPasswordAdd_SharedPersonalIsolation(t *testing.T) {
 	})
 
 	// Sessions are per user: each opens their own.
-	require.NoError(t, svc.PasswordStoreUnlock(aliceCtx, unlockRequest()))
-	require.NoError(t, svc.PasswordStoreUnlock(bobCtx, unlockRequest()))
+	require.NoError(t, openPersonalVault(svc, aliceCtx))
+	require.NoError(t, openPersonalVault(svc, bobCtx))
 
 	// Alice adds a personal password and a shared one.
 	private, err := svc.PasswordAdd(aliceCtx, &transport.PasswordAddRequest{
@@ -1120,7 +1131,7 @@ func TestPasswordStoreSessions_ArePerUser(t *testing.T) {
 	aliceCtx := sharedPasswordCtx("alice")
 	bobCtx := sharedPasswordCtx("bob")
 
-	require.NoError(t, svc.PasswordStoreUnlock(aliceCtx, unlockRequest()))
+	require.NoError(t, openPersonalVault(svc, aliceCtx))
 	bobStatus, err := svc.PasswordStoreStatus(bobCtx)
 	require.NoError(t, err)
 	assert.True(t, bobStatus.IsLocked, "alice unlocking must not unlock bob")
@@ -1131,7 +1142,7 @@ func TestPasswordStoreSessions_ArePerUser(t *testing.T) {
 	_, err = svc.PasswordAdd(bobCtx, &transport.PasswordAddRequest{Name: "personal", Password: "pw"})
 	assert.ErrorIs(t, err, staticpw.ErrStoreLocked)
 
-	require.NoError(t, svc.PasswordStoreUnlock(bobCtx, unlockRequest()))
+	require.NoError(t, openPersonalVault(svc, bobCtx))
 	require.NoError(t, svc.PasswordStoreLock(aliceCtx))
 	bobStatus, err = svc.PasswordStoreStatus(bobCtx)
 	require.NoError(t, err)
@@ -1150,7 +1161,7 @@ func TestPasswordStore_SystemTenantHasItsOwnStore(t *testing.T) {
 	rootCtx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "root", TenantID: qrdbsdk.SystemTenantID})
 	tenantCtx := sharedPasswordCtx("alice")
 
-	require.NoError(t, svc.PasswordStoreUnlock(rootCtx, unlockRequest()))
+	require.NoError(t, openPersonalVault(svc, rootCtx))
 	_, err := svc.PasswordAdd(rootCtx, &transport.PasswordAddRequest{Name: "sys-shared", Password: "pw", Shared: true})
 	require.NoError(t, err)
 	_, err = svc.PasswordAdd(rootCtx, &transport.PasswordAddRequest{Name: "sys-personal", Password: "pw"})
@@ -1168,7 +1179,7 @@ func TestPasswordStore_SystemTenantHasItsOwnStore(t *testing.T) {
 	flat, err := svc.PasswordList(context.Background(), &transport.PasswordListRequest{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, flat.Total)
-	assert.ErrorIs(t, svc.PasswordStoreUnlock(context.Background(), unlockRequest()), ErrOperationNotSupported)
+	assert.ErrorIs(t, openPersonalVault(svc, context.Background()), ErrOperationNotSupported)
 }
 
 // --- checkSharedPasswordOwnership tests ---
@@ -1322,7 +1333,7 @@ func TestCheckSharedPasswordOwnership_RoleResolutionFailure(t *testing.T) {
 // add a shared entry, returning its ID.
 func addAlicesSharedPassword(t *testing.T, svc *XKMSService, name string) string {
 	t.Helper()
-	require.NoError(t, svc.PasswordStoreUnlock(contextWithTenant(sharedPasswordTenant), unlockRequest()))
+	require.NoError(t, openPersonalVault(svc, contextWithTenant(sharedPasswordTenant)))
 	addResp, err := svc.PasswordAdd(sharedPasswordCtx("alice"), &transport.PasswordAddRequest{
 		Name:     name,
 		Password: "alice-pass",
@@ -1419,89 +1430,63 @@ func TestPasswordGet_WithExpiresAt(t *testing.T) {
 
 // --- Password store unlock credential enforcement ---
 
-// A wrong user PIN must not open the vault, and the store must stay locked.
-func TestPasswordStoreUnlock_WrongPINKeepsStoreLocked(t *testing.T) {
+// A wrong passphrase must not open the session, which stays locked.
+func TestPasswordStoreUnlock_WrongPassphraseKeepsSessionLocked(t *testing.T) {
 	svc, _ := setupServiceWithPasswordManager(t)
 	ctx := contextWithTenant("tenant-1")
+	require.NoError(t, openPersonalVault(svc, ctx))
+	require.NoError(t, svc.PasswordStoreLock(ctx))
 
 	err := svc.PasswordStoreUnlock(ctx, &transport.PasswordStoreUnlockRequest{
-		UserPIN: "000000",
+		PasswordVaultCredential: transport.PasswordVaultCredential{Factor: "passphrase", Passphrase: "not the passphrase"},
 	})
-	require.Error(t, err)
+	assert.ErrorIs(t, err, staticpw.ErrVaultCredentialRejected)
 
 	status, err := svc.PasswordStoreStatus(ctx)
 	require.NoError(t, err)
-	assert.True(t, status.IsLocked, "store must stay locked after a wrong PIN")
-
-	// A locked session must not serve personal entries.
+	assert.True(t, status.IsLocked, "the session must stay locked after a wrong passphrase")
 	_, err = svc.PasswordList(ctx, &transport.PasswordListRequest{Scope: "personal"})
 	assert.ErrorIs(t, err, staticpw.ErrStoreLocked)
 }
 
-// Regression: unlocking used to succeed with no credential at all because the
-// supplied PIN was never verified. An empty PIN must now fail closed.
-func TestPasswordStoreUnlock_MissingPINRejected(t *testing.T) {
+// An unlock with no credential is refused: there is no fallback credential.
+func TestPasswordStoreUnlock_MissingCredentialRejected(t *testing.T) {
 	svc, _ := setupServiceWithPasswordManager(t)
 	ctx := contextWithTenant("tenant-1")
+	require.NoError(t, openPersonalVault(svc, ctx))
+	require.NoError(t, svc.PasswordStoreLock(ctx))
 
 	err := svc.PasswordStoreUnlock(ctx, &transport.PasswordStoreUnlockRequest{})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrPasswordStoreUserPINRequired)
-
-	status, err := svc.PasswordStoreStatus(ctx)
-	require.NoError(t, err)
-	assert.True(t, status.IsLocked, "store must stay locked when no PIN is supplied")
+	assert.ErrorIs(t, err, staticpw.ErrVaultInvalidCredential)
 
 	_, err = svc.PasswordAdd(ctx, &transport.PasswordAddRequest{Name: "personal", Password: "pw"})
 	assert.ErrorIs(t, err, staticpw.ErrStoreLocked)
 }
 
-// The correct user PIN opens the session and the store becomes readable.
-func TestPasswordStoreUnlock_CorrectPINUnlocks(t *testing.T) {
+// A user with no enrolled factor cannot unlock: the first step is enrolling.
+func TestPasswordStoreUnlock_NotInitialized(t *testing.T) {
 	svc, _ := setupServiceWithPasswordManager(t)
+	err := svc.PasswordStoreUnlock(contextWithTenant("tenant-1"), unlockRequest())
+	assert.ErrorIs(t, err, staticpw.ErrVaultNotInitialized)
+}
+
+// The deployment-wide user PIN no longer opens personal entries, and a
+// deployment without a PIN backend unlocks with the user's own factor.
+func TestPasswordStoreUnlock_NeedsNoPINBackend(t *testing.T) {
+	svc, _ := setupServiceWithPasswordManager(t)
+	svc.SetPINManager(nil)
 	ctx := contextWithTenant("tenant-1")
 
+	require.NoError(t, openPersonalVault(svc, ctx))
+	require.NoError(t, svc.PasswordStoreLock(ctx))
 	require.NoError(t, svc.PasswordStoreUnlock(ctx, unlockRequest()))
 
 	status, err := svc.PasswordStoreStatus(ctx)
 	require.NoError(t, err)
 	assert.False(t, status.IsLocked)
-
 	resp, err := svc.PasswordList(ctx, &transport.PasswordListRequest{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, resp.Total)
-}
-
-// A deployment with no PIN backend has no credential to verify, so the unlock
-// is refused rather than performed without one.
-func TestPasswordStoreUnlock_NoPINBackendFailsClosed(t *testing.T) {
-	svc, _ := setupServiceWithPasswordManager(t)
-	svc.SetPINManager(nil)
-	ctx := contextWithTenant("tenant-1")
-
-	err := svc.PasswordStoreUnlock(ctx, unlockRequest())
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrPasswordStoreUserPINNotProvisioned)
-
-	status, err := svc.PasswordStoreStatus(ctx)
-	require.NoError(t, err)
-	assert.True(t, status.IsLocked)
-}
-
-// A PIN backend that has never had a user PIN set is the same explicit state:
-// there is nothing to verify, so the unlock fails closed.
-func TestPasswordStoreUnlock_UserPINNotSetFailsClosed(t *testing.T) {
-	svc, _ := setupServiceWithPasswordManager(t)
-	svc.SetPINManager(&mockPINManager{soPin: "123456"})
-	ctx := contextWithTenant("tenant-1")
-
-	err := svc.PasswordStoreUnlock(ctx, unlockRequest())
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrPasswordStoreUserPINNotProvisioned)
-
-	status, err := svc.PasswordStoreStatus(ctx)
-	require.NoError(t, err)
-	assert.True(t, status.IsLocked)
 }
 
 // A nil unlock request is rejected before any credential handling.

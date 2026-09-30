@@ -23,9 +23,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -232,7 +230,9 @@ func TestServicePasswordStoreLock_OperationNotSupportedOnSystemStore(t *testing.
 
 func TestServicePasswordStoreUnlock_OperationNotSupportedOnSystemStore(t *testing.T) {
 	svc := newPasswordGRPCService(t)
-	_, err := svc.PasswordStoreUnlock(context.Background(), &pb.PasswordStoreUnlockRequest{Pin: "1234"})
+	_, err := svc.PasswordStoreUnlock(context.Background(), &pb.PasswordStoreUnlockRequest{
+		Credential: &pb.PasswordVaultCredential{Factor: "passphrase", Passphrase: "correct horse battery"},
+	})
 	assert.Equal(t, codes.Unimplemented, status.Code(err))
 }
 
@@ -281,22 +281,16 @@ func TestMapSealStoreError_UnclassifiedFallsBackToInternal(t *testing.T) {
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
-// --- Tenant-scoped password store coverage ---
-//
-// Every existing password test (including the ones above) addresses either
-// the system-level store or the "no manager configured" guard, so the
-// TenantPasswordStoreManager branch of PasswordStoreUnlock, PasswordStoreLock,
-// PasswordStoreStatus and PasswordStoreSetAccessMode -- plus
-// mapPasswordUnlockError's wrong-PIN mapping -- was never reached. This
-// mirrors pkg/xkms's setupServiceWithPasswordManager fixture one layer up,
-// through the gRPC handlers.
-
-const tenantPasswordStoreUserPIN = "654321"
+// The TenantPasswordStoreManager branch of PasswordStoreUnlock,
+// PasswordStoreLock, PasswordStoreStatus and PasswordStoreSetAccessMode,
+// through the gRPC handlers. This mirrors pkg/xkms's
+// setupServiceWithPasswordManager fixture one layer up. The personal-vault
+// RPCs have their own tests in service_password_vault_test.go.
 
 // newTenantPasswordGRPCService wires an XKMSService with a
-// TenantPasswordStoreManager backed by a registered, unsealed tenant barrier
-// and a PIN backend holding tenantPasswordStoreUserPIN, and returns the gRPC
-// Service in front of it together with a context scoped to that tenant.
+// TenantPasswordStoreManager backed by a registered, unsealed tenant barrier,
+// and returns the gRPC Service in front of it together with a context scoped
+// to a user of that tenant.
 func newTenantPasswordGRPCService(t *testing.T) (*Service, context.Context) {
 	t.Helper()
 	ctx := context.Background()
@@ -321,17 +315,12 @@ func newTenantPasswordGRPCService(t *testing.T) (*Service, context.Context) {
 	registry, err := seal.NewBarrierRegistry(sysBarrier)
 	require.NoError(t, err)
 
-	_, err = registry.RegisterTenant("tenant-1")
+	_, err = registry.RegisterTenant(vaultTenant)
 	require.NoError(t, err)
 	tenantCreds, err := seal.CredentialsFor([]byte("tenant-password"))
 	require.NoError(t, err)
 	defer tenantCreds.Secret.Destroy()
-	require.NoError(t, registry.InitializeTenant(ctx, "tenant-1", tenantCreds))
-
-	pinBackend, err := qrdbsdk.NewSoftwareBackend(nil, qrdbsdk.DefaultHashConfig())
-	require.NoError(t, err)
-	require.NoError(t, pinBackend.SetSOPIN("", "123456"))
-	require.NoError(t, pinBackend.SetUserPIN("123456", tenantPasswordStoreUserPIN))
+	require.NoError(t, registry.InitializeTenant(ctx, vaultTenant, tenantCreds))
 
 	systemStore := staticpw.NewStore(storage.NewMemory())
 	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore)
@@ -340,30 +329,37 @@ func newTenantPasswordGRPCService(t *testing.T) (*Service, context.Context) {
 	xkmsSvc := &xkms.XKMSService{}
 	xkmsSvc.SetPasswordStore(systemStore)
 	xkmsSvc.SetPasswordStoreManager(manager)
-	xkmsSvc.SetPINManager(pinBackend)
 
-	svc := NewService(nil, nil, xkmsSvc)
-	tenantCtx := auth.WithIdentity(ctx, &auth.Identity{Subject: "test-user", TenantID: "tenant-1"})
-	return svc, tenantCtx
+	return NewService(nil, nil, xkmsSvc), vaultUserCtx("test-user")
 }
 
 func TestServicePasswordStoreUnlock_TenantSuccess(t *testing.T) {
 	svc, ctx := newTenantPasswordGRPCService(t)
-	resp, err := svc.PasswordStoreUnlock(ctx, &pb.PasswordStoreUnlockRequest{Pin: tenantPasswordStoreUserPIN})
+	enrollPasskey(t, svc, ctx, testPasskey("test-user"))
+	_, err := svc.PasswordStoreLock(ctx, &pb.PasswordStoreLockRequest{})
+	require.NoError(t, err)
+
+	resp, err := svc.PasswordStoreUnlock(ctx, &pb.PasswordStoreUnlockRequest{Credential: testPasskey("test-user")})
 	require.NoError(t, err)
 	assert.False(t, resp.IsLocked)
 }
 
-func TestServicePasswordStoreUnlock_WrongPIN(t *testing.T) {
+func TestServicePasswordStoreUnlock_WrongCredential(t *testing.T) {
 	svc, ctx := newTenantPasswordGRPCService(t)
-	_, err := svc.PasswordStoreUnlock(ctx, &pb.PasswordStoreUnlockRequest{Pin: "000000"})
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	enrollPasskey(t, svc, ctx, testPasskey("test-user"))
+	_, err := svc.PasswordStoreLock(ctx, &pb.PasswordStoreLockRequest{})
+	require.NoError(t, err)
+
+	wrong := testPasskey("test-user")
+	wrong.Secret = make([]byte, 32)
+	_, err = svc.PasswordStoreUnlock(ctx, &pb.PasswordStoreUnlockRequest{Credential: wrong})
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 }
 
 func TestServicePasswordStoreLock_TenantSuccess(t *testing.T) {
 	svc, ctx := newTenantPasswordGRPCService(t)
-	_, err := svc.PasswordStoreUnlock(ctx, &pb.PasswordStoreUnlockRequest{Pin: tenantPasswordStoreUserPIN})
-	require.NoError(t, err)
+	// The first enrollment opens the session.
+	enrollPasskey(t, svc, ctx, testPasskey("test-user"))
 
 	resp, err := svc.PasswordStoreLock(ctx, &pb.PasswordStoreLockRequest{})
 	require.NoError(t, err)
@@ -391,4 +387,20 @@ func TestServicePasswordStoreSetAccessMode_TenantUnsupportedMode(t *testing.T) {
 	svc, ctx := newTenantPasswordGRPCService(t)
 	_, err := svc.PasswordStoreSetAccessMode(ctx, &pb.PasswordStoreSetAccessModeRequest{Mode: string(staticpw.AccessPINPerOperation)})
 	assert.Equal(t, codes.Unimplemented, status.Code(err))
+}
+
+func TestServicePasswordGenerate_CharsetPassesThrough(t *testing.T) {
+	svc := newPasswordGRPCService(t)
+	resp, err := svc.PasswordGenerate(context.Background(), &pb.PasswordGenerateRequest{Length: 32, Charset: "0123456789"})
+	require.NoError(t, err)
+	require.Len(t, resp.Password, 32)
+	for _, r := range resp.Password {
+		assert.True(t, r >= '0' && r <= '9', "%q is outside the requested charset", r)
+	}
+}
+
+func TestServicePasswordGenerate_InvalidCharset(t *testing.T) {
+	svc := newPasswordGRPCService(t)
+	_, err := svc.PasswordGenerate(context.Background(), &pb.PasswordGenerateRequest{Length: 16, Charset: "a", Upper: true})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }

@@ -134,6 +134,11 @@ var goldenRPCPermissions = map[string]string{
 	"PasswordStoreStatus":         "passwords:read",
 	"PasswordStoreUnlock":         "passwords:unlock",
 	"PasswordUpdate":              "passwords:write",
+	"PasswordVaultEnroll":         "passwords:unlock",
+	"PasswordVaultRecover":        "passwords:unlock",
+	"PasswordVaultRemoveFactor":   "passwords:unlock",
+	"PasswordVaultRotate":         "passwords:unlock",
+	"PasswordVaultStatus":         "passwords:read",
 	// TPM policy management (pkg/tpmpolicy) -- pkg/auth.ResourceTPMPolicy,
 	// a resource family go-qrdb's canonical registry does not declare
 	// upstream; xkms owns it and scopes it in

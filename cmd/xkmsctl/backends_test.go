@@ -917,6 +917,26 @@ func (m *mockBackendsClient) PasswordStoreLock(ctx context.Context) error {
 	return nil
 }
 
+func (m *mockBackendsClient) PasswordVaultStatus(ctx context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) PasswordVaultEnroll(ctx context.Context, req *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) PasswordVaultRotate(ctx context.Context, req *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) PasswordVaultRemoveFactor(ctx context.Context, req *transport.PasswordVaultRemoveFactorRequest) error {
+	return nil
+}
+
+func (m *mockBackendsClient) PasswordVaultRecover(ctx context.Context, req *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
 func (m *mockBackendsClient) PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error) {
 	return nil, nil
 }

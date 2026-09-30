@@ -95,6 +95,13 @@ const (
 	OpAutofillRequested     OperationType = "autofill_requested"
 	OpAutofillDenied        OperationType = "autofill_denied"
 
+	// Personal password vault factor operations: enrolling, rotating or
+	// removing an unlock factor, and recovering with the recovery code.
+	OpPasswordVaultFactorEnrolled OperationType = "password_vault_factor_enrolled"
+	OpPasswordVaultFactorRotated  OperationType = "password_vault_factor_rotated"
+	OpPasswordVaultFactorRemoved  OperationType = "password_vault_factor_removed"
+	OpPasswordVaultRecovered      OperationType = "password_vault_recovered"
+
 	// User presence operations.
 	//
 	// OpTouchEventReceived was removed (issue #688): SocketHandler

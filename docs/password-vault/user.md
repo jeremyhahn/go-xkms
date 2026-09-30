@@ -16,12 +16,28 @@ database password, a credential your browser fills in.
 The same store backs `xkmsctl password`, `xkey password`, and the browser
 extension's autofill. One vault, several front doors.
 
-## Unlock first
+## Set up your vault, then unlock
+
+Your personal entries are sealed with your own key. Enroll a passphrase
+once; that creates your vault, unlocks it, and prints a **recovery code**
+that is never shown again -- store it somewhere safe now:
 
 ```
-xkmsctl password unlock --user-pin -
+xkmsctl password vault enroll --label laptop
+```
+
+After that, unlock with your passphrase:
+
+```
+xkmsctl password unlock --passphrase -
 xkmsctl password status -o json
 ```
+
+Nobody else can open your personal entries: not another user, not a tenant
+administrator, not someone holding the tenant's key. If you forget your
+passphrase, `xkmsctl password vault recover --recovery-code -` enrolls a new
+one with the recovery code and gives you a new code. Without your passphrase
+or your recovery code, your personal entries cannot be recovered.
 
 You unlock once and your personal entries are readable until you lock again.
 The session is yours alone: unlocking does not open anyone else's personal
@@ -103,7 +119,7 @@ xkmsctl password generate --length 32
 
 | What you see | What it means | What to do |
 |---|---|---|
-| reads fail with "locked" | you have not unlocked the store | `password unlock --user-pin -` |
+| reads fail with "locked" | you have not unlocked the store | `password unlock --passphrase -` (first time: `password vault enroll`) |
 | an entry you created is "not found" | wrong scope or tenant | `--scope all`, and check `--tenant-id` |
 | `password` routes return 404 | the vault is not configured on this server | server-side configuration |
 | an expired entry still works | expiry is metadata, not enforcement | rotate it |

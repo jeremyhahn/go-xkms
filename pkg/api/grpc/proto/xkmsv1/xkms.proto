@@ -708,8 +708,40 @@ service KeystoreService {
     option (qrdb.v1.permission) = "passwords:delete";
   }
 
-  // PasswordStoreUnlock unlocks the tenant password store session.
+  // PasswordStoreUnlock opens the caller's personal password session with
+  // one of the caller's own vault factors.
   rpc PasswordStoreUnlock(PasswordStoreUnlockRequest) returns (PasswordStoreStatusResponse) {
+    option (qrdb.v1.permission) = "passwords:unlock";
+  }
+
+  // PasswordVaultStatus describes the caller's personal vault and its
+  // enrolled factors.
+  rpc PasswordVaultStatus(PasswordVaultStatusRequest) returns (PasswordVaultStatusResponse) {
+    option (qrdb.v1.permission) = "passwords:read";
+  }
+
+  // PasswordVaultEnroll enrolls a passphrase or passkey on the caller's
+  // vault; the first enrollment initializes it and returns the recovery
+  // code. Managing one's own vault factors is gated with the session verb,
+  // passwords:unlock.
+  rpc PasswordVaultEnroll(PasswordVaultEnrollRequest) returns (PasswordVaultEnrollResponse) {
+    option (qrdb.v1.permission) = "passwords:unlock";
+  }
+
+  // PasswordVaultRotate re-wraps the caller's DEK under a new secret for a
+  // factor.
+  rpc PasswordVaultRotate(PasswordVaultRotateRequest) returns (PasswordVaultEnrollResponse) {
+    option (qrdb.v1.permission) = "passwords:unlock";
+  }
+
+  // PasswordVaultRemoveFactor removes one of the caller's factors.
+  rpc PasswordVaultRemoveFactor(PasswordVaultRemoveFactorRequest) returns (PasswordVaultRemoveFactorResponse) {
+    option (qrdb.v1.permission) = "passwords:unlock";
+  }
+
+  // PasswordVaultRecover uses the caller's one-time recovery code to enroll a
+  // new factor and returns the replacement code.
+  rpc PasswordVaultRecover(PasswordVaultRecoverRequest) returns (PasswordVaultEnrollResponse) {
     option (qrdb.v1.permission) = "passwords:unlock";
   }
 
@@ -3603,9 +3635,83 @@ message SealStoreStatusResponse {
   repeated string secret_names = 4;
 }
 
-// PasswordStoreUnlockRequest requests unlocking the password store.
+// PasswordVaultCredential is a factor of the caller's personal vault: a
+// passphrase, or a passkey (a FIDO2 credential with the hmac-secret / WebAuthn
+// PRF extension).
+message PasswordVaultCredential {
+  // factor is "passphrase" or "passkey".
+  string factor = 1;
+  // passphrase is the passphrase (factor "passphrase").
+  string passphrase = 2;
+  // credential_id identifies the passkey (factor "passkey").
+  bytes credential_id = 3;
+  // prf_salt is the 32-byte salt the authenticator evaluated hmac-secret
+  // over; required to enroll a passkey.
+  bytes prf_salt = 4;
+  // secret is the 32-byte hmac-secret (PRF) output (factor "passkey").
+  bytes secret = 5;
+  // label names an enrolled factor.
+  string label = 6;
+}
+
+// PasswordStoreUnlockRequest opens the caller's personal password session
+// with one of the caller's own vault factors.
 message PasswordStoreUnlockRequest {
-  string pin = 1;
+  PasswordVaultCredential credential = 1;
+}
+
+// PasswordVaultFactor describes one enrolled factor (no key material).
+message PasswordVaultFactor {
+  string id = 1;
+  string factor = 2;
+  string label = 3;
+  string created_at = 4;
+  bytes credential_id = 5;
+  bytes prf_salt = 6;
+}
+
+// PasswordVaultStatusRequest requests the caller's vault status.
+message PasswordVaultStatusRequest {}
+
+// PasswordVaultStatusResponse describes the caller's personal vault.
+message PasswordVaultStatusResponse {
+  bool initialized = 1;
+  bool unlocked = 2;
+  repeated PasswordVaultFactor factors = 3;
+}
+
+// PasswordVaultEnrollRequest enrolls a factor; the first enrollment
+// initializes the vault.
+message PasswordVaultEnrollRequest {
+  PasswordVaultCredential credential = 1;
+}
+
+// PasswordVaultEnrollResponse is the enrolled factor and, on the first
+// enrollment or a recovery, the one-time recovery code (shown once).
+message PasswordVaultEnrollResponse {
+  PasswordVaultFactor factor = 1;
+  string recovery_code = 2;
+}
+
+// PasswordVaultRotateRequest replaces factor factor_id with a new secret of
+// the same type.
+message PasswordVaultRotateRequest {
+  string factor_id = 1;
+  PasswordVaultCredential credential = 2;
+}
+
+// PasswordVaultRemoveFactorRequest removes factor factor_id.
+message PasswordVaultRemoveFactorRequest {
+  string factor_id = 1;
+}
+
+// PasswordVaultRemoveFactorResponse acknowledges a removal.
+message PasswordVaultRemoveFactorResponse {}
+
+// PasswordVaultRecoverRequest uses the recovery code to enroll a new factor.
+message PasswordVaultRecoverRequest {
+  string recovery_code = 1;
+  PasswordVaultCredential credential = 2;
 }
 
 // PasswordStoreLockRequest requests locking the password store.
@@ -3631,6 +3737,9 @@ message PasswordGenerateRequest {
   bool lower = 3;
   bool digits = 4;
   bool symbols = 5;
+  // charset names a charset ("all", "alphanumeric") or lists the characters
+  // to draw from; exclusive with the class flags.
+  string charset = 6;
 }
 
 // PasswordGenerateResponse contains the generated password.

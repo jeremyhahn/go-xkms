@@ -39,25 +39,12 @@ type PasswordServicer interface {
 	PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error)
 	PasswordStoreSetAccessMode(ctx context.Context, req *transport.PasswordStoreSetAccessModeRequest) error
 	PasswordGenerate(ctx context.Context, req *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error)
+	PasswordVaultStatus(ctx context.Context) (*transport.PasswordVaultStatusResponse, error)
+	PasswordVaultEnroll(ctx context.Context, req *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error)
+	PasswordVaultRotate(ctx context.Context, req *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error)
+	PasswordVaultRemoveFactor(ctx context.Context, req *transport.PasswordVaultRemoveFactorRequest) error
+	PasswordVaultRecover(ctx context.Context, req *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error)
 }
-
-// Password store credential errors.
-var (
-	// ErrPasswordStoreUserPINRequired is returned when a tenant password store
-	// unlock is attempted without the user PIN. Unlocking the store is a
-	// credential-gated operation: the tenant barrier being unsealed proves the
-	// tenant's data can be read by the server, not that this caller is
-	// authorized to open the vault.
-	ErrPasswordStoreUserPINRequired = errors.New("keystore: password store unlock requires the user PIN: set user_pin in the unlock request")
-
-	// ErrPasswordStoreUserPINNotProvisioned is returned when a tenant password
-	// store unlock is attempted on a deployment that has no user PIN to verify
-	// against -- PIN management is disabled (pin.enabled=false, so no PIN
-	// backend is wired) or the user PIN has never been set. There is no
-	// credential to check, so the unlock fails closed instead of proceeding
-	// without one.
-	ErrPasswordStoreUserPINNotProvisioned = errors.New("keystore: password store unlock requires a provisioned user PIN: enable PIN management (pin.enabled=true) and set the user PIN before unlocking")
-)
 
 // passwordCaller returns the tenant scope name and subject a password request
 // is served for, and false when ctx carries no identity.
@@ -344,59 +331,32 @@ func (s *XKMSService) PasswordDelete(ctx context.Context, req *transport.Passwor
 	return store.Delete(req.ID)
 }
 
-// PasswordStoreUnlock opens the caller's personal password session.
+// PasswordStoreUnlock opens the caller's personal password session with one
+// of the caller's own vault factors: a passphrase or a passkey
+// (hmac-secret / PRF output). The factor unwraps the caller's DEK, so the
+// session is exactly as private as the factor: neither the tenant key nor any
+// deployment-wide credential opens it.
 //
 // Sessions are per user: each user of a tenant unlocks and locks their own
 // personal entries, and one user's session never opens or closes another's.
 // Shared entries need no session; they are usable whenever the tenant
 // barrier is unsealed. The unscoped system passwordStore, which serves only
-// requests without an identity, has no session of its own -- it is protected
-// by the system barrier -- so a request without an identity gets
-// ErrOperationNotSupported.
-//
-// The unlock is credential gated: the caller must supply the user PIN, which
-// is verified through the service's PIN backend before the session is opened
-// (verifyPasswordStoreUserPIN). A missing PIN, a wrong PIN, or a deployment
-// with no provisioned user PIN all fail closed and leave the session locked.
-// An unsealed tenant barrier is not, on its own, authorization to open a
-// user's personal entries.
+// requests without an identity, has no session of its own, so a request
+// without an identity gets ErrOperationNotSupported.
 func (s *XKMSService) PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error {
-	passwordStoreManager := s.passwordStoreManager.load()
-	passwordStore := s.passwordStore.load()
 	if req == nil {
+		if s.passwordStoreManager.load() == nil && s.passwordStore.load() == nil {
+			return ErrNotConfigured
+		}
 		return ErrNilRequest
 	}
-	if passwordStoreManager != nil {
-		if tenantID, subject, ok := passwordCaller(ctx); ok {
-			if err := s.verifyPasswordStoreUserPIN(req.UserPIN); err != nil {
-				return err
-			}
-			return passwordStoreManager.UnlockUser(tenantID, subject)
-		}
+	manager, tenantID, subject, err := s.vaultCaller(ctx)
+	if err != nil {
+		return err
 	}
-	if passwordStore == nil {
-		return ErrNotConfigured
-	}
-	return ErrOperationNotSupported
-}
-
-// verifyPasswordStoreUserPIN verifies userPIN against the configured PIN
-// backend (PINBackend.VerifyUserPIN), so a password store session is opened
-// by exactly one credential check.
-//
-// A deployment with no PIN backend (pin.enabled=false) or with no user PIN set
-// has no credential to verify, which is an explicit, reported state
-// (ErrPasswordStoreUserPINNotProvisioned) rather than an unlock that proceeds
-// without a credential.
-func (s *XKMSService) verifyPasswordStoreUserPIN(userPIN string) error {
-	pinManager := s.pinManager.load()
-	if pinManager == nil || !pinManager.UserPINSet() {
-		return ErrPasswordStoreUserPINNotProvisioned
-	}
-	if userPIN == "" {
-		return ErrPasswordStoreUserPINRequired
-	}
-	return pinManager.VerifyUserPIN(userPIN)
+	cred := vaultCredential(req.PasswordVaultCredential)
+	defer clear(cred.Secret)
+	return manager.UnlockUser(ctx, tenantID, subject, cred)
 }
 
 // PasswordStoreLock closes the caller's personal password session. It

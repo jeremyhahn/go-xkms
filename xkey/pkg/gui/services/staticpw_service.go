@@ -184,8 +184,14 @@ func (s *StaticPasswordService) SetStore(store staticpw.Store) {
 }
 
 // SetClient sets the transport client used for server-side password store
-// operations (lock, unlock, status, access mode, generate).
+// operations (lock, unlock, status, access mode, generate, and the personal
+// vault). A nil client detaches the service from the server, so those
+// operations report ErrStaticPWNoClient rather than dereferencing nil.
 func (s *StaticPasswordService) SetClient(c transport.Client) {
+	if c == nil {
+		s.client.Store(nil)
+		return
+	}
 	s.client.Store(&c)
 }
 
@@ -721,22 +727,6 @@ func (s *StaticPasswordService) RestorePasswords(filePath string, encrypted bool
 // Server-side password store operations (via transport client)
 // ---------------------------------------------------------------------------
 
-// Unlock unlocks the password store by providing the user PIN. This delegates
-// to the server's PasswordStoreUnlock endpoint via the transport client.
-func (s *StaticPasswordService) Unlock(pin string) error {
-	client, err := s.getClient()
-	if err != nil {
-		return err
-	}
-	unlockErr := client.PasswordStoreUnlock(s.getContext(), &transport.PasswordStoreUnlockRequest{
-		UserPIN: pin,
-	})
-	if auditErr := s.logPasswordEvent(audit.OpPasswordStoreUnlocked, "", unlockErr == nil, unlockErr, nil); auditErr != nil {
-		return auditErr
-	}
-	return unlockErr
-}
-
 // Lock locks the password store, requiring re-authentication before further
 // access. This delegates to the server's PasswordStoreLock endpoint.
 func (s *StaticPasswordService) Lock() error {
@@ -786,19 +776,6 @@ func (s *StaticPasswordService) SetAccessMode(mode string) error {
 
 	return client.PasswordStoreSetAccessMode(s.getContext(), &transport.PasswordStoreSetAccessModeRequest{
 		Mode: mode,
-	})
-}
-
-// TryAutoUnlock attempts to unlock the password store without a PIN by
-// sending an empty PIN to the server. This supports auto-unseal scenarios
-// where the server uses platform-sealed credentials.
-func (s *StaticPasswordService) TryAutoUnlock() error {
-	client, err := s.getClient()
-	if err != nil {
-		return err
-	}
-	return client.PasswordStoreUnlock(s.getContext(), &transport.PasswordStoreUnlockRequest{
-		UserPIN: "",
 	})
 }
 

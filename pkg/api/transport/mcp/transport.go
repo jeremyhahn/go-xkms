@@ -171,12 +171,15 @@ var methodMapping = map[string]string{
 	"/v1/pin/lockout/reset":   "xkms.resetLockout",
 
 	// Password Store
-	"/api/v1/passwords":             "password.list",
-	"/api/v1/passwords/unlock":      "password.unlock",
-	"/api/v1/passwords/lock":        "password.lock",
-	"/api/v1/passwords/status":      "password.status",
-	"/api/v1/passwords/access-mode": "password.setAccessMode",
-	"/api/v1/passwords/generate":    "password.generate",
+	"/api/v1/passwords":               "password.list",
+	"/api/v1/passwords/unlock":        "password.unlock",
+	"/api/v1/passwords/lock":          "password.lock",
+	"/api/v1/passwords/status":        "password.status",
+	"/api/v1/passwords/access-mode":   "password.setAccessMode",
+	"/api/v1/passwords/generate":      "password.generate",
+	"/api/v1/passwords/vault":         "password.vault.status",
+	"/api/v1/passwords/vault/factors": "password.vault.enroll",
+	"/api/v1/passwords/vault/recover": "password.vault.recover",
 
 	// Key derivation
 	"/api/v1/keys/derive":      "xkms.deriveKey",
@@ -1587,6 +1590,53 @@ func (t *Transport) PasswordGenerate(ctx context.Context, req *transport.Passwor
 	}
 	var result transport.PasswordGenerateResponse
 	if err := t.rpcCall(ctx, "password.generate", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// PasswordVaultStatus describes the caller's personal vault.
+func (t *Transport) PasswordVaultStatus(ctx context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.PasswordVaultStatusResponse
+	if err := t.rpcCall(ctx, "password.vault.status", nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// PasswordVaultEnroll enrolls a passphrase or passkey on the caller's vault.
+func (t *Transport) PasswordVaultEnroll(ctx context.Context, req *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return t.passwordVaultCall(ctx, "password.vault.enroll", req)
+}
+
+// PasswordVaultRotate replaces the secret of one of the caller's factors.
+func (t *Transport) PasswordVaultRotate(ctx context.Context, req *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return t.passwordVaultCall(ctx, "password.vault.rotate", req)
+}
+
+// PasswordVaultRemoveFactor removes one of the caller's factors.
+func (t *Transport) PasswordVaultRemoveFactor(ctx context.Context, req *transport.PasswordVaultRemoveFactorRequest) error {
+	if !t.IsConnected() {
+		return ErrNotConnected
+	}
+	return t.rpcCall(ctx, "password.vault.removeFactor", req, nil)
+}
+
+// PasswordVaultRecover uses the caller's recovery code to enroll a new factor.
+func (t *Transport) PasswordVaultRecover(ctx context.Context, req *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return t.passwordVaultCall(ctx, "password.vault.recover", req)
+}
+
+// passwordVaultCall invokes a vault method whose result is an enrollment.
+func (t *Transport) passwordVaultCall(ctx context.Context, method string, params any) (*transport.PasswordVaultEnrollResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.PasswordVaultEnrollResponse
+	if err := t.rpcCall(ctx, method, params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

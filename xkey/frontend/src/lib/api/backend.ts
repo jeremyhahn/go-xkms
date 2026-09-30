@@ -556,6 +556,31 @@ export interface BackendTPMKey {
   purpose: string;
 }
 
+/** One enrolled factor of the caller's personal password vault (no key material). */
+export interface PasswordVaultFactor {
+  id: string;
+  /** "passphrase" or "passkey". */
+  factor: string;
+  label: string;
+  created_at: string;
+}
+
+/** The caller's personal password vault on the connected xkmsd server. */
+export interface PasswordVaultStatus {
+  initialized: boolean;
+  unlocked: boolean;
+  factors: PasswordVaultFactor[];
+}
+
+/**
+ * An enrolled vault factor and, on the first enrollment or a recovery, the
+ * recovery code the server shows exactly once.
+ */
+export interface PasswordVaultEnrollResult {
+  factor: PasswordVaultFactor;
+  recovery_code?: string;
+}
+
 export interface StaticPasswordEntry {
   id: string;
   name: string;

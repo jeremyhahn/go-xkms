@@ -1901,6 +1901,26 @@ func (m *mockTransportClient) PasswordDelete(_ context.Context, _ *transport.Pas
 	return errNotImplemented
 }
 
+func (m *mockTransportClient) PasswordVaultStatus(context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockTransportClient) PasswordVaultEnroll(context.Context, *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (m *mockTransportClient) PasswordVaultRotate(context.Context, *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (m *mockTransportClient) PasswordVaultRemoveFactor(context.Context, *transport.PasswordVaultRemoveFactorRequest) error {
+	return nil
+}
+
+func (m *mockTransportClient) PasswordVaultRecover(context.Context, *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
 func (m *mockTransportClient) PasswordStoreUnlock(_ context.Context, _ *transport.PasswordStoreUnlockRequest) error {
 	return errNotImplemented
 }

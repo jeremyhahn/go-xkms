@@ -45,6 +45,10 @@ func resetPasswordFlags() {
 		passwordLockCmd.Flags(),
 		passwordStatusCmd.Flags(),
 		passwordAccessModeCmd.Flags(),
+		passwordVaultEnrollCmd.Flags(),
+		passwordVaultRotateCmd.Flags(),
+		passwordVaultRemoveCmd.Flags(),
+		passwordVaultRecoverCmd.Flags(),
 	}
 	for _, fs := range cmds {
 		fs.VisitAll(func(f *pflag.Flag) {
@@ -73,8 +77,19 @@ type mockPasswordStoreClient struct {
 	statusCalls  int
 	setModeCalls int
 
-	// Track the last PIN passed to unlock.
-	lastUnlockPIN string
+	// Track the last credential passed to unlock.
+	lastUnlockReq *transport.PasswordStoreUnlockRequest
+
+	// Personal vault responses and the requests that reached them.
+	vaultStatusResp *transport.PasswordVaultStatusResponse
+	vaultStatusErr  error
+	vaultEnrollResp *transport.PasswordVaultEnrollResponse
+	vaultEnrollErr  error
+	vaultRemoveErr  error
+	lastEnrollReq   *transport.PasswordVaultEnrollRequest
+	lastRotateReq   *transport.PasswordVaultRotateRequest
+	lastRemoveReq   *transport.PasswordVaultRemoveFactorRequest
+	lastRecoverReq  *transport.PasswordVaultRecoverRequest
 
 	// Track the last mode passed to set-access-mode.
 	lastSetMode string
@@ -101,7 +116,7 @@ func (m *mockPasswordStoreClient) PasswordStoreUnlock(_ context.Context, req *tr
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.unlockCalls++
-	m.lastUnlockPIN = req.UserPIN
+	m.lastUnlockReq = req
 	if m.unlockErr != nil {
 		return m.unlockErr
 	}
@@ -145,6 +160,40 @@ func (m *mockPasswordStoreClient) PasswordStoreSetAccessMode(_ context.Context, 
 	}
 	m.accessMode = req.Mode
 	return nil
+}
+
+func (m *mockPasswordStoreClient) PasswordVaultStatus(_ context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.vaultStatusResp, m.vaultStatusErr
+}
+
+func (m *mockPasswordStoreClient) PasswordVaultEnroll(_ context.Context, req *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastEnrollReq = req
+	return m.vaultEnrollResp, m.vaultEnrollErr
+}
+
+func (m *mockPasswordStoreClient) PasswordVaultRotate(_ context.Context, req *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastRotateReq = req
+	return m.vaultEnrollResp, m.vaultEnrollErr
+}
+
+func (m *mockPasswordStoreClient) PasswordVaultRemoveFactor(_ context.Context, req *transport.PasswordVaultRemoveFactorRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastRemoveReq = req
+	return m.vaultRemoveErr
+}
+
+func (m *mockPasswordStoreClient) PasswordVaultRecover(_ context.Context, req *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastRecoverReq = req
+	return m.vaultEnrollResp, m.vaultEnrollErr
 }
 
 // withMockPasswordClient injects a mock password client factory for the duration
@@ -219,6 +268,7 @@ func TestPasswordCmd_SubcommandRegistration(t *testing.T) {
 		"lock":        false,
 		"status":      false,
 		"access-mode": false,
+		"vault":       false,
 	}
 
 	for _, cmd := range PasswordCmd.Commands() {
@@ -425,7 +475,15 @@ func TestPasswordErrors(t *testing.T) {
 		ErrPasswordAccessModeFailed,
 		ErrPasswordInvalidMode,
 		ErrPasswordMissingMode,
-		ErrPasswordMissingPIN,
+		ErrPasswordMissingPassphrase,
+		ErrPasswordMissingRecoveryCode,
+		ErrPasswordMissingFactorID,
+		ErrPasswordVaultSingleStdin,
+		ErrPasswordVaultStatusFailed,
+		ErrPasswordVaultEnrollFailed,
+		ErrPasswordVaultRotateFailed,
+		ErrPasswordVaultRemoveFailed,
+		ErrPasswordVaultRecoverFailed,
 		ErrPasswordConnectFailed,
 	}
 
@@ -678,7 +736,7 @@ func TestPasswordCmd_Unlock(t *testing.T) {
 	mock := newMockPasswordStoreClient()
 	withMockPasswordClient(t, mock)
 
-	t.Setenv("XKEY_PIN", "1234")
+	t.Setenv("XKEY_VAULT_PASSPHRASE", "correct horse")
 
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
@@ -694,8 +752,9 @@ func TestPasswordCmd_Unlock(t *testing.T) {
 		t.Errorf("PasswordStoreUnlock called %d times, want 1", mock.unlockCalls)
 	}
 
-	if mock.lastUnlockPIN != "1234" {
-		t.Errorf("unlock PIN = %q, want %q", mock.lastUnlockPIN, "1234")
+	if mock.lastUnlockReq == nil || mock.lastUnlockReq.Factor != "passphrase" ||
+		mock.lastUnlockReq.Passphrase != "correct horse" {
+		t.Errorf("unlock credential = %+v, want the passphrase factor", mock.lastUnlockReq)
 	}
 
 	if mock.isLocked {
@@ -708,11 +767,12 @@ func TestPasswordCmd_Unlock(t *testing.T) {
 	}
 }
 
-func TestPasswordCmd_UnlockMissingPIN(t *testing.T) {
+func TestPasswordCmd_UnlockMissingPassphrase(t *testing.T) {
 	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	withMockPasswordClient(t, mock)
+	t.Setenv("XKEY_VAULT_PASSPHRASE", "")
 
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
@@ -720,8 +780,8 @@ func TestPasswordCmd_UnlockMissingPIN(t *testing.T) {
 	RootCmd.SetArgs([]string{"password", "unlock"})
 
 	err := RootCmd.Execute()
-	if !errors.Is(err, ErrPasswordMissingPIN) {
-		t.Errorf("unlock without --pin: error = %v, want %v", err, ErrPasswordMissingPIN)
+	if !errors.Is(err, ErrPasswordMissingPassphrase) {
+		t.Errorf("unlock without a passphrase: error = %v, want %v", err, ErrPasswordMissingPassphrase)
 	}
 
 	if mock.unlockCalls != 0 {
@@ -733,10 +793,10 @@ func TestPasswordCmd_UnlockServerError(t *testing.T) {
 	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
-	mock.unlockErr = errors.New("invalid PIN")
+	mock.unlockErr = errors.New("credential rejected")
 	withMockPasswordClient(t, mock)
 
-	t.Setenv("XKEY_PIN", "wrong")
+	t.Setenv("XKEY_VAULT_PASSPHRASE", "wrong")
 
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
@@ -757,7 +817,7 @@ func TestPasswordCmd_UnlockConnectError(t *testing.T) {
 	resetPasswordFlags()
 	withFailingPasswordClientFactory(t, errors.New("no server"))
 
-	t.Setenv("XKEY_PIN", "1234")
+	t.Setenv("XKEY_VAULT_PASSPHRASE", "correct horse")
 
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
@@ -1124,7 +1184,7 @@ func TestPasswordCmd_UnlockLockRoundtrip(t *testing.T) {
 	}
 
 	// Unlock the store.
-	t.Setenv("XKEY_PIN", "mypin")
+	t.Setenv("XKEY_VAULT_PASSPHRASE", "my passphrase")
 
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)

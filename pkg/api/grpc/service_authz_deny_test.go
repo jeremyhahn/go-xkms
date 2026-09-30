@@ -204,6 +204,26 @@ func TestAuthzDeny_ServiceMethods(t *testing.T) {
 			return err
 		}},
 		{"PasswordGenerate", func() error { _, err := svc.PasswordGenerate(ctx, &pb.PasswordGenerateRequest{}); return err }},
+		{"PasswordVaultStatus", func() error {
+			_, err := svc.PasswordVaultStatus(ctx, &pb.PasswordVaultStatusRequest{})
+			return err
+		}},
+		{"PasswordVaultEnroll", func() error {
+			_, err := svc.PasswordVaultEnroll(ctx, &pb.PasswordVaultEnrollRequest{})
+			return err
+		}},
+		{"PasswordVaultRotate", func() error {
+			_, err := svc.PasswordVaultRotate(ctx, &pb.PasswordVaultRotateRequest{FactorId: "f1"})
+			return err
+		}},
+		{"PasswordVaultRemoveFactor", func() error {
+			_, err := svc.PasswordVaultRemoveFactor(ctx, &pb.PasswordVaultRemoveFactorRequest{FactorId: "f1"})
+			return err
+		}},
+		{"PasswordVaultRecover", func() error {
+			_, err := svc.PasswordVaultRecover(ctx, &pb.PasswordVaultRecoverRequest{})
+			return err
+		}},
 		// service_piv.go methods
 		{"ListPIVSlots", func() error {
 			_, err := svc.ListPIVSlots(ctx, &pb.ListPIVSlotsRequest{Backend: "test"})

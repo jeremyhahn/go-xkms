@@ -27,7 +27,12 @@ required.
 | Get entry | `GET /api/v1/passwords/{id}` | `PasswordGet` | same as REST | `password.get` | `PasswordGet` | `passwords:read` |
 | Update entry | `PUT /api/v1/passwords/{id}` | `PasswordUpdate` | same as REST | `password.update` | `PasswordUpdate` | `passwords:write` |
 | Delete entry | `DELETE /api/v1/passwords/{id}` | `PasswordDelete` | same as REST | `password.delete` | `PasswordDelete` | `passwords:delete` |
-| Unlock store | `POST /api/v1/passwords/unlock` | `PasswordStoreUnlock` | same as REST | `password.unlock` | `PasswordStoreUnlock` | `passwords:unlock` |
+| Unlock own session | `POST /api/v1/passwords/unlock` | `PasswordStoreUnlock` | same as REST | `password.unlock` | `PasswordStoreUnlock` | `passwords:unlock` |
+| Vault status | `GET /api/v1/passwords/vault` | `PasswordVaultStatus` | same as REST | `password.vault.status` | `PasswordVaultStatus` | `passwords:read` |
+| Enroll factor | `POST /api/v1/passwords/vault/factors` | `PasswordVaultEnroll` | same as REST | `password.vault.enroll` | `PasswordVaultEnroll` | `passwords:unlock` |
+| Rotate factor | `PUT /api/v1/passwords/vault/factors/{id}` | `PasswordVaultRotate` | same as REST | `password.vault.rotate` | `PasswordVaultRotate` | `passwords:unlock` |
+| Remove factor | `DELETE /api/v1/passwords/vault/factors/{id}` | `PasswordVaultRemoveFactor` | same as REST | `password.vault.removeFactor` | `PasswordVaultRemoveFactor` | `passwords:unlock` |
+| Recover | `POST /api/v1/passwords/vault/recover` | `PasswordVaultRecover` | same as REST | `password.vault.recover` | `PasswordVaultRecover` | `passwords:unlock` |
 | Lock store | `POST /api/v1/passwords/lock` | `PasswordStoreLock` | same as REST | `password.lock` | `PasswordStoreLock` | `passwords:lock` |
 | Store status | `GET /api/v1/passwords/status` | `PasswordStoreStatus` | same as REST | `password.status` | `PasswordStoreStatus` | `passwords:read` |
 | Set access mode | `POST /api/v1/passwords/access-mode` | `PasswordStoreSetAccessMode` | same as REST | `password.setAccessMode` | `PasswordStoreSetAccessMode` | `passwords:write` |
@@ -45,11 +50,38 @@ REST, gRPC, QUIC, MCP and embedded:
 | personal operation while the caller's session is locked | `ErrStoreLocked` (REST 423) |
 | another user's personal entry, or another tenant's entry | not found (REST 404) — indistinguishable from a missing entry |
 | update/delete of a shared entry by neither its owner nor a tenant Admin/SO | `ErrNotOwner` (REST 403) |
-| unlock/lock with no identity on the request | not supported (REST 501) |
+| unlock/lock or a vault verb with no identity on the request | not supported (REST 501, gRPC Unimplemented) |
 | tenant barrier sealed | sealed (REST 503) |
+| malformed credential, or the recovery code offered to unlock | invalid (REST 400, gRPC InvalidArgument) |
+| unlock or factor management before any enrollment | not initialized (REST 412, gRPC FailedPrecondition) |
+| credential unwraps no factor | rejected (REST 401, gRPC Unauthenticated) — never says which part was wrong |
+| factor ID unknown | not found (REST 404) |
+| removing the last passphrase or passkey | refused (REST 409, gRPC FailedPrecondition) |
+| enrolling a passkey credential already enrolled | refused (REST 409, gRPC AlreadyExists) |
+
+The unlock body and every vault credential is a `PasswordVaultCredential`:
+
+```json
+{"factor": "passphrase", "passphrase": "…"}
+{"factor": "passkey", "credential_id": "<b64>", "secret": "<b64 32-byte hmac-secret output>",
+ "prf_salt": "<b64 32 bytes, enrollment only>", "label": "laptop key"}
+```
+
+Enroll and recover answer `{"factor": {...}, "recovery_code": "ABCD-…"}`; the
+code is present only on the first enrollment and on every recovery, and is
+never returned again. Vault status lists each factor's `id`, `factor`,
+`label`, `created_at` and, for a passkey, its `credential_id` and `prf_salt`
+(what a client needs to evaluate hmac-secret before unlocking). Rotate takes
+`{"factor_id": …}` in the path plus a new credential of the same type; recover
+takes `{"recovery_code": …}` plus the new credential. A password entry named
+`vault` or `status` is reachable by ID, not by name, on `GET /{id}`: those
+paths are the vault and status routes.
+
+The USB transport forwards `password.unlock` to the paired phone with the
+credential body; the phone side does not implement the vault verbs yet.
 
 **This is one of only three features with complete MCP coverage** (the others
-are the barrier and SSH). Ten `password.*` methods, all carrying the same
+are the barrier and SSH). Fifteen `password.*` methods, all carrying the same
 permission on every transport that exposes them
 (`pkg/api/authz_consistency_test`).
 

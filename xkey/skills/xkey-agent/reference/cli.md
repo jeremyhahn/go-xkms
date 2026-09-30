@@ -1554,13 +1554,70 @@ Aliases: emit
 
 ## xkey password unlock
 
-Unlock the password store
+Open your personal password session
 
 Usage: `xkey password unlock [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--pin-stdin` | bool | false | Read the PIN from standard input |
+| `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
+
+## xkey password vault
+
+Manage your personal password vault on an xkmsd server
+
+Usage: `xkey password vault`
+
+## xkey password vault enroll
+
+Enroll a passphrase on your personal vault
+
+Usage: `xkey password vault enroll [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--label` | string |  | Label naming the factor (e.g. the device it is used on) |
+| `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
+
+## xkey password vault recover
+
+Enroll a new passphrase with your one-time recovery code
+
+Usage: `xkey password vault recover [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--label` | string |  | Label naming the new factor |
+| `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
+| `--recovery-code-stdin` | bool | false | Read the recovery code from standard input |
+
+## xkey password vault remove
+
+Remove an enrolled factor
+
+Usage: `xkey password vault remove [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--factor-id` | string |  | ID of the factor to remove (see 'xkey password vault status') |
+
+## xkey password vault rotate
+
+Replace the passphrase of an enrolled factor
+
+Usage: `xkey password vault rotate [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--factor-id` | string |  | ID of the factor to rotate (see 'xkey password vault status') |
+| `--label` | string |  | New label for the factor (default: keep the current one) |
+| `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
+
+## xkey password vault status
+
+Show your personal vault status and factors
+
+Usage: `xkey password vault status`
 
 ## xkey pin
 
@@ -2584,8 +2641,10 @@ Usage: `xkey tpm policy create <name> [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--auto-unseal` | bool | false | Also make it the barrier auto-unseal policy (see 'tpm policy auto-unseal') |
-| `--bank` | string | sha256 | PCR bank: sha1, sha256, sha384 or sha512 |
-| `--pcrs` | string |  | PCR indices, e.g. 0,7 or 0-7 (required) |
+| `--bank` | string |  | PCR bank of --pcrs: sha1, sha256, sha384 or sha512 (default sha256) |
+| `--branch` | stringArray | [] | A policy branch, e.g. 'pcr=sha256:0,7;auth_value;locality=0' (repeatable) |
+| `--description` | string |  | Free-text description of the policy |
+| `--pcrs` | string |  | PCR indices of a one-branch policy, e.g. 0,7 or 0-7 |
 
 ## xkey tpm policy delete
 
@@ -2594,6 +2653,12 @@ Delete a policy no object uses
 Usage: `xkey tpm policy delete <name>`
 
 Aliases: rm
+
+## xkey tpm policy describe
+
+Set a policy's description
+
+Usage: `xkey tpm policy describe <name> <text>`
 
 ## xkey tpm policy get
 

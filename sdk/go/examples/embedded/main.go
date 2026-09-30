@@ -583,8 +583,8 @@ func (m *MockXKMSService) PasswordList(ctx context.Context, req *transport.Passw
 	return nil, &mockUnsupportedError{capability: "password store"}
 }
 
-func (m *MockXKMSService) PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) error {
-	return &mockUnsupportedError{capability: "password store"}
+func (m *MockXKMSService) PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) (*transport.PasswordGetResponse, error) {
+	return nil, &mockUnsupportedError{capability: "password store"}
 }
 
 func (m *MockXKMSService) PasswordDelete(ctx context.Context, req *transport.PasswordDeleteRequest) error {
@@ -609,6 +609,30 @@ func (m *MockXKMSService) PasswordStoreSetAccessMode(ctx context.Context, req *t
 
 func (m *MockXKMSService) PasswordGenerate(ctx context.Context, req *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error) {
 	return nil, &mockUnsupportedError{capability: "password store"}
+}
+
+// Personal password vault operations. The mock has no password store, so it
+// has no per-user vault either; a real XKMSService wraps each user's
+// personal-entry key under the user's passphrase or passkey.
+
+func (m *MockXKMSService) PasswordVaultStatus(ctx context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return nil, &mockUnsupportedError{capability: "password vault"}
+}
+
+func (m *MockXKMSService) PasswordVaultEnroll(ctx context.Context, req *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, &mockUnsupportedError{capability: "password vault"}
+}
+
+func (m *MockXKMSService) PasswordVaultRotate(ctx context.Context, req *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, &mockUnsupportedError{capability: "password vault"}
+}
+
+func (m *MockXKMSService) PasswordVaultRemoveFactor(ctx context.Context, req *transport.PasswordVaultRemoveFactorRequest) error {
+	return &mockUnsupportedError{capability: "password vault"}
+}
+
+func (m *MockXKMSService) PasswordVaultRecover(ctx context.Context, req *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, &mockUnsupportedError{capability: "password vault"}
 }
 
 // Platform store operations

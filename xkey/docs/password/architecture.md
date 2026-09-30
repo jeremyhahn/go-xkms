@@ -1,6 +1,6 @@
 # Static Passwords — Architecture
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
 
 ## Scope
 
@@ -63,7 +63,8 @@ Two mutually exclusive decrypt-time policies, selected by
 `xkey password access-mode`:
 
 - **`pin_per_operation`** — every decrypt requires the PIN again.
-- **`session_based`** — one `Unlock(pin)` grants decryption until `Lock()`.
+- **`session_based`** — one `Unlock` with your own vault passphrase opens your
+  personal entries until `Lock()`; the session is per user.
 
 The mode and the lock/unlock state belong to whichever `xkmsd` server holds
 the session (`transport.PasswordService`); the on-disk store itself has no
@@ -108,8 +109,10 @@ Argon2id `XKPW` envelope with an authenticated header, see
 KDBX / CSV / XML import (`xkey/pkg/pwimport`) — **GUI-only**, no CLI
 verb calls `pwimport`. It also drives the session verbs
 (`Unlock`/`Lock`/`GetStoreStatus`/`SetAccessMode`) through the same
-`transport.Client` the CLI's session verbs use, plus `TryAutoUnlock` for
-barrier PCR-policy auto-unseal at GUI startup.
+`transport.Client` the CLI's session verbs use, and the personal-vault verbs
+(`PasswordVaultPanel`: first-run enrollment with the one-time recovery code,
+unlock, rotate, remove, recover). There is no auto-unlock: a personal session
+opens only with the user's own factor.
 
 ## Data flow: adding a password with autofill metadata
 

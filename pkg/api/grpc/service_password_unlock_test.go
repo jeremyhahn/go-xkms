@@ -22,104 +22,57 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// TestMapPasswordError_UserPINSentinels pins the status codes for the password
-// store user-PIN sentinels. Before these mappings the sentinels fell through to
-// codes.Internal, so a caller could not tell a missing credential from a server
-// fault.
-func TestMapPasswordError_UserPINSentinels(t *testing.T) {
+// TestMapPasswordError_VaultSentinels pins the status codes of the errors the
+// personal-vault RPCs and PasswordStoreUnlock return. Each is matched through
+// a wrapping error, as the service layer may wrap them.
+func TestMapPasswordError_VaultSentinels(t *testing.T) {
 	cases := []struct {
-		name string
 		err  error
 		want codes.Code
 	}{
-		{
-			name: "user PIN required",
-			err:  xkms.ErrPasswordStoreUserPINRequired,
-			want: codes.InvalidArgument,
-		},
-		{
-			name: "user PIN not provisioned",
-			err:  xkms.ErrPasswordStoreUserPINNotProvisioned,
-			want: codes.FailedPrecondition,
-		},
+		{staticpw.ErrVaultInvalidCredential, codes.InvalidArgument},
+		{staticpw.ErrVaultRecoveryFactor, codes.InvalidArgument},
+		{staticpw.ErrVaultNotInitialized, codes.FailedPrecondition},
+		{staticpw.ErrVaultCredentialRejected, codes.Unauthenticated},
+		{staticpw.ErrVaultFactorNotFound, codes.NotFound},
+		{staticpw.ErrVaultLastFactor, codes.FailedPrecondition},
+		{staticpw.ErrVaultPasskeyExists, codes.AlreadyExists},
+		{staticpw.ErrStoreLocked, codes.FailedPrecondition},
+		{staticpw.ErrStoreNotLocked, codes.FailedPrecondition},
+		{seal.ErrTenantSealed, codes.Unavailable},
+		{xkms.ErrOperationNotSupported, codes.Unimplemented},
+		{xkms.ErrNotConfigured, codes.Unavailable},
+		{xkms.ErrNilRequest, codes.InvalidArgument},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := mapPasswordError(tc.err)
+		t.Run(tc.err.Error(), func(t *testing.T) {
+			got := mapPasswordError(errors.Join(errors.New("context"), tc.err))
 			require.Error(t, got)
 			assert.Equal(t, tc.want, status.Code(got))
 		})
 	}
 }
 
-// TestMapPasswordUnlockError covers the unlock path's mapping. It differs from
-// mapPasswordError only in its fallback: on the unlock path an unrecognised
-// error is a failed PIN verification, which is PermissionDenied rather than
-// Internal.
-func TestMapPasswordUnlockError(t *testing.T) {
-	t.Run("nil is nil", func(t *testing.T) {
-		assert.NoError(t, mapPasswordUnlockError(nil))
-	})
+// TestMapPasswordError_RejectedCredentialSaysNothingMore proves a rejected
+// credential reports only the fixed sentinel text: which factor was tried
+// and why it failed must not reach the caller.
+func TestMapPasswordError_RejectedCredentialSaysNothingMore(t *testing.T) {
+	got := mapPasswordError(errors.Join(staticpw.ErrVaultCredentialRejected, errors.New("factor f-123 tag mismatch")))
 
-	t.Run("missing PIN is invalid argument", func(t *testing.T) {
-		err := mapPasswordUnlockError(xkms.ErrPasswordStoreUserPINRequired)
-		require.Error(t, err)
-		assert.Equal(t, codes.InvalidArgument, status.Code(err))
-	})
-
-	t.Run("unprovisioned PIN is failed precondition", func(t *testing.T) {
-		err := mapPasswordUnlockError(xkms.ErrPasswordStoreUserPINNotProvisioned)
-		require.Error(t, err)
-		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
-	})
-
-	t.Run("wrong PIN is permission denied and does not leak backend detail", func(t *testing.T) {
-		backendErr := errors.New("pin: verification failed, 2 attempts remaining")
-
-		err := mapPasswordUnlockError(backendErr)
-		require.Error(t, err)
-		assert.Equal(t, codes.PermissionDenied, status.Code(err))
-		assert.NotContains(t, err.Error(), "attempts remaining",
-			"retry counters and lockout state must not reach the caller")
-		assert.Contains(t, err.Error(), "user PIN verification failed")
-	})
-
-	t.Run("genuine internal faults stay internal", func(t *testing.T) {
-		// These are deliberately mapped to Internal by mapPasswordError and
-		// must not be reinterpreted as a failed credential check.
-		for _, sentinel := range []error{
-			staticpw.ErrNilStore,
-			staticpw.ErrNilBarrierRegistry,
-		} {
-			err := mapPasswordUnlockError(sentinel)
-			require.Error(t, err)
-			assert.Equal(t, codes.Internal, status.Code(err), sentinel.Error())
-		}
-	})
-
-	t.Run("already unlocked is preserved", func(t *testing.T) {
-		err := mapPasswordUnlockError(staticpw.ErrStoreNotLocked)
-		require.Error(t, err)
-		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
-	})
-
-	t.Run("not configured is preserved", func(t *testing.T) {
-		err := mapPasswordUnlockError(xkms.ErrNotConfigured)
-		require.Error(t, err)
-		assert.Equal(t, codes.Unavailable, status.Code(err))
-	})
+	assert.Equal(t, codes.Unauthenticated, status.Code(got))
+	assert.NotContains(t, got.Error(), "f-123")
+	assert.NotContains(t, got.Error(), "tag mismatch")
 }
 
-// TestIsKnownInternalPasswordError distinguishes the sentinels mapPasswordError
-// deliberately reports as Internal from an unrecognised error that merely fell
-// through to its default.
-func TestIsKnownInternalPasswordError(t *testing.T) {
-	assert.True(t, isKnownInternalPasswordError(staticpw.ErrNilStore))
-	assert.True(t, isKnownInternalPasswordError(staticpw.ErrNilBarrierRegistry))
-	assert.False(t, isKnownInternalPasswordError(errors.New("pin: verification failed")))
+// TestMapPasswordError_NilAndUnknown covers the edges: nil maps to nil and an
+// unrecognised error is Internal.
+func TestMapPasswordError_NilAndUnknown(t *testing.T) {
+	assert.NoError(t, mapPasswordError(nil))
+	assert.Equal(t, codes.Internal, status.Code(mapPasswordError(errors.New("boom"))))
 }

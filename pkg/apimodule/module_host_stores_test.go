@@ -31,11 +31,13 @@ import (
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/hostdeps"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -164,10 +166,19 @@ func TestModule_HostMount_EveryStoreAnswers(t *testing.T) {
 	h := newFullHostMount(t)
 
 	t.Run("passwords", func(t *testing.T) {
-		// A tenant store opens with the host PIN backend's user PIN
-		// (WithPINBackend) ...
-		w := h.callAs(t, tenantUser, http.MethodPost, "/api/v1/passwords/unlock", "/api/v1/passwords/unlock", nil,
-			map[string]string{"user_pin": hostUserPIN})
+		// The caller's personal vault is initialized by enrolling a passkey,
+		// which returns the recovery code and opens the session ...
+		passkey := vaulttest.Passkey(tenantUser.Subject)
+		w := h.callAs(t, tenantUser, http.MethodPost, "/api/v1/passwords/vault/factors", "/api/v1/passwords/vault/factors", nil, passkey)
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+		var enrolled transport.PasswordVaultEnrollResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &enrolled))
+		assert.NotEmpty(t, enrolled.RecoveryCode)
+
+		// ... and, once locked, reopens with that passkey ...
+		w = h.callAs(t, tenantUser, http.MethodPost, "/api/v1/passwords/lock", "/api/v1/passwords/lock", nil, nil)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		w = h.callAs(t, tenantUser, http.MethodPost, "/api/v1/passwords/unlock", "/api/v1/passwords/unlock", nil, passkey)
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 		// ... and the entry is routed to the tenant's store behind its own

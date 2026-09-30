@@ -134,7 +134,7 @@ func TestStaticPasswordService_Unlock_RecordsOpPasswordStoreUnlocked(t *testing.
 	rec := &spwRecordingAuditLogger{}
 	svc.SetAuditLogger(rec)
 
-	require.NoError(t, svc.Unlock("1234"))
+	require.NoError(t, svc.Unlock("correct horse"))
 
 	assert.Equal(t, audit.OpPasswordStoreUnlocked, rec.last().Operation)
 	assert.True(t, rec.last().Success)

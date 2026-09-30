@@ -698,6 +698,41 @@ func (m *mockService) PasswordGenerate(_ context.Context, _ *transport.PasswordG
 	return &transport.PasswordGenerateResponse{}, nil
 }
 
+func (m *mockService) PasswordVaultStatus(_ context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.PasswordVaultStatusResponse{}, nil
+}
+
+func (m *mockService) PasswordVaultEnroll(_ context.Context, _ *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.PasswordVaultEnrollResponse{}, nil
+}
+
+func (m *mockService) PasswordVaultRotate(_ context.Context, _ *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.PasswordVaultEnrollResponse{}, nil
+}
+
+func (m *mockService) PasswordVaultRemoveFactor(_ context.Context, _ *transport.PasswordVaultRemoveFactorRequest) error {
+	if m.shouldFail {
+		return errMock
+	}
+	return nil
+}
+
+func (m *mockService) PasswordVaultRecover(_ context.Context, _ *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.PasswordVaultEnrollResponse{}, nil
+}
+
 func (m *mockService) SealStorePut(_ context.Context, _ *transport.SealStorePutRequest) error {
 	if m.shouldFail {
 		return errMock
@@ -1543,6 +1578,13 @@ func TestAllMethods_NotConnected(t *testing.T) {
 			return tr.PasswordStoreSetAccessMode(ctx, &transport.PasswordStoreSetAccessModeRequest{})
 		}},
 		{"PasswordGenerate", func() error { _, e := tr.PasswordGenerate(ctx, &transport.PasswordGenerateRequest{}); return e }},
+		{"PasswordVaultStatus", func() error { _, e := tr.PasswordVaultStatus(ctx); return e }},
+		{"PasswordVaultEnroll", func() error { _, e := tr.PasswordVaultEnroll(ctx, &transport.PasswordVaultEnrollRequest{}); return e }},
+		{"PasswordVaultRotate", func() error { _, e := tr.PasswordVaultRotate(ctx, &transport.PasswordVaultRotateRequest{}); return e }},
+		{"PasswordVaultRemoveFactor", func() error {
+			return tr.PasswordVaultRemoveFactor(ctx, &transport.PasswordVaultRemoveFactorRequest{})
+		}},
+		{"PasswordVaultRecover", func() error { _, e := tr.PasswordVaultRecover(ctx, &transport.PasswordVaultRecoverRequest{}); return e }},
 		{"SealStorePut", func() error { return tr.SealStorePut(ctx, &transport.SealStorePutRequest{}) }},
 		{"SealStoreGet", func() error { _, e := tr.SealStoreGet(ctx, &transport.SealStoreGetRequest{}); return e }},
 		{"SealStoreDelete", func() error { return tr.SealStoreDelete(ctx, &transport.SealStoreDeleteRequest{}) }},
@@ -1720,6 +1762,13 @@ func TestAllMethods_Connected(t *testing.T) {
 			return tr.PasswordStoreSetAccessMode(ctx, &transport.PasswordStoreSetAccessModeRequest{})
 		}},
 		{"PasswordGenerate", func() error { _, e := tr.PasswordGenerate(ctx, &transport.PasswordGenerateRequest{}); return e }},
+		{"PasswordVaultStatus", func() error { _, e := tr.PasswordVaultStatus(ctx); return e }},
+		{"PasswordVaultEnroll", func() error { _, e := tr.PasswordVaultEnroll(ctx, &transport.PasswordVaultEnrollRequest{}); return e }},
+		{"PasswordVaultRotate", func() error { _, e := tr.PasswordVaultRotate(ctx, &transport.PasswordVaultRotateRequest{}); return e }},
+		{"PasswordVaultRemoveFactor", func() error {
+			return tr.PasswordVaultRemoveFactor(ctx, &transport.PasswordVaultRemoveFactorRequest{})
+		}},
+		{"PasswordVaultRecover", func() error { _, e := tr.PasswordVaultRecover(ctx, &transport.PasswordVaultRecoverRequest{}); return e }},
 		{"SealStorePut", func() error { return tr.SealStorePut(ctx, &transport.SealStorePutRequest{}) }},
 		{"SealStoreGet", func() error { _, e := tr.SealStoreGet(ctx, &transport.SealStoreGetRequest{}); return e }},
 		{"SealStoreDelete", func() error { return tr.SealStoreDelete(ctx, &transport.SealStoreDeleteRequest{}) }},

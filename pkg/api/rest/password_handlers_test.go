@@ -26,18 +26,17 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// testUserPIN is the user PIN the password tests send on unlock.
-const testUserPIN = "123456"
 
 // Tenants and users the password tests act as.
 const (
@@ -96,28 +95,23 @@ type passwordFixture struct {
 	svc      *xkms.XKMSService
 	registry *seal.BarrierRegistry
 	manager  *staticpw.TenantPasswordStoreManager
-	pin      *mockPINManager
 	router   chi.Router
 }
 
-// newPasswordFixture builds a passwordFixture with a provisioned user PIN
-// that accepts testUserPIN.
+// newPasswordFixture builds a passwordFixture.
 func newPasswordFixture(t *testing.T) *passwordFixture {
 	t.Helper()
 
 	registry, systemStore, manager := testPasswordSetup(t)
-	pin := &mockPINManager{userPINSet: true}
 
 	svc := &xkms.XKMSService{}
 	svc.SetPasswordStore(systemStore)
 	svc.SetPasswordStoreManager(manager)
-	svc.SetPINManager(pin)
 
 	return &passwordFixture{
 		svc:      svc,
 		registry: registry,
 		manager:  manager,
-		pin:      pin,
 		router:   passwordRouter(NewPasswordHandlers(svc)),
 	}
 }
@@ -133,6 +127,11 @@ func passwordRouter(h *PasswordHandlers) chi.Router {
 		r.Get("/status", h.StatusHandler)
 		r.Post("/access-mode", h.SetAccessModeHandler)
 		r.Post("/generate", h.GeneratePasswordHandler)
+		r.Get("/vault", h.VaultStatusHandler)
+		r.Post("/vault/factors", h.VaultEnrollHandler)
+		r.Put("/vault/factors/{id}", h.VaultRotateHandler)
+		r.Delete("/vault/factors/{id}", h.VaultRemoveFactorHandler)
+		r.Post("/vault/recover", h.VaultRecoverHandler)
 		r.Get("/{id}", h.GetPasswordHandler)
 		r.Put("/{id}", h.UpdatePasswordHandler)
 		r.Delete("/{id}", h.DeletePasswordHandler)
@@ -169,10 +168,49 @@ func entryPath(id string) string {
 	return "/api/v1/passwords/" + url.PathEscape(id)
 }
 
-// unlock opens identity's personal session through the handler.
+// passkeyFor returns identity's test passkey. Passkeys unwrap with HKDF,
+// which keeps the many session opens of this suite cheap; the passphrase
+// (Argon2id) path has its own tests.
+func passkeyFor(identity *auth.Identity) transport.PasswordVaultCredential {
+	return vaulttest.Passkey(identity.TenantID + "/" + identity.Subject)
+}
+
+// jsonBody marshals v for a request body.
+func jsonBody(t *testing.T, v any) string {
+	t.Helper()
+	data, err := json.Marshal(v)
+	require.NoError(t, err)
+	return string(data)
+}
+
+// vaultStatus reads identity's vault status through the handler.
+func (f *passwordFixture) vaultStatus(t *testing.T, identity *auth.Identity) transport.PasswordVaultStatusResponse {
+	t.Helper()
+	w := f.do(t, identity, http.MethodGet, "/api/v1/passwords/vault", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp transport.PasswordVaultStatusResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	return resp
+}
+
+// unlock opens identity's personal session through the handlers with the
+// identity's passkey: the first time it enrolls the passkey, which
+// initializes the vault and opens the session; afterwards it unlocks.
 func (f *passwordFixture) unlock(t *testing.T, identity *auth.Identity) {
 	t.Helper()
-	w := f.do(t, identity, http.MethodPost, "/api/v1/passwords/unlock", `{"user_pin":"`+testUserPIN+`"}`)
+	if !f.vaultStatus(t, identity).Initialized {
+		w := f.do(t, identity, http.MethodPost, "/api/v1/passwords/vault/factors", jsonBody(t, passkeyFor(identity)))
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+		return
+	}
+	w := f.do(t, identity, http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, passkeyFor(identity)))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+// lock closes identity's personal session through the handler.
+func (f *passwordFixture) lock(t *testing.T, identity *auth.Identity) {
+	t.Helper()
+	w := f.do(t, identity, http.MethodPost, "/api/v1/passwords/lock", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
@@ -249,8 +287,10 @@ func TestUnlockHandler_OpensCallersSession(t *testing.T) {
 
 	f := newPasswordFixture(t)
 	alice := user(tenantA, userA)
+	f.unlock(t, alice)
+	f.lock(t, alice)
 
-	w := f.do(t, alice, http.MethodPost, "/api/v1/passwords/unlock", `{"user_pin":"`+testUserPIN+`"}`)
+	w := f.do(t, alice, http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, passkeyFor(alice)))
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var resp PasswordStoreStatusResponse
@@ -267,22 +307,24 @@ func TestUnlockHandler_OpensCallersSession(t *testing.T) {
 func TestUnlockHandler_RejectionsLeaveSessionLocked(t *testing.T) {
 	t.Parallel()
 
+	alice := user(tenantA, userA)
+	wrongSecret := passkeyFor(alice)
+	wrongSecret.Secret = make([]byte, 32)
+
 	cases := []struct {
 		name        string
+		enrolled    bool
 		body        string
-		configure   func(*mockPINManager)
 		wantStatus  int
 		wantMessage string
 	}{
-		{"no PIN", `{}`, nil, http.StatusBadRequest, "User PIN is required"},
-		{"no body", ``, nil, http.StatusBadRequest, "User PIN is required"},
-		{"wrong PIN", `{"user_pin":"000000"}`, func(p *mockPINManager) {
-			p.verifyUserErr = errors.New("pin: verification failed, 2 attempts remaining")
-		}, http.StatusUnauthorized, "User PIN verification failed"},
-		{"unprovisioned PIN", `{"user_pin":"` + testUserPIN + `"}`, func(p *mockPINManager) {
-			p.userPINSet = false
-		}, http.StatusPreconditionFailed, "not provisioned"},
-		{"malformed body", `{bad`, nil, http.StatusBadRequest, "Invalid request body"},
+		{"no credential", true, `{}`, http.StatusBadRequest, "Invalid vault credential"},
+		{"no body", true, ``, http.StatusBadRequest, "Invalid vault credential"},
+		{"short passkey secret", true, `{"factor":"passkey","credential_id":"Y3JlZA==","secret":"AAEC"}`, http.StatusBadRequest, "Invalid vault credential"},
+		{"recovery code", true, `{"factor":"recovery","secret":"AAEC"}`, http.StatusBadRequest, "recovery code"},
+		{"wrong passkey secret", true, jsonBody(t, wrongSecret), http.StatusUnauthorized, "Credential rejected"},
+		{"no factor enrolled", false, jsonBody(t, passkeyFor(alice)), http.StatusPreconditionFailed, "enroll a passphrase or passkey first"},
+		{"malformed body", true, `{bad`, http.StatusBadRequest, "Invalid request body"},
 	}
 
 	for _, tc := range cases {
@@ -290,16 +332,15 @@ func TestUnlockHandler_RejectionsLeaveSessionLocked(t *testing.T) {
 			t.Parallel()
 
 			f := newPasswordFixture(t)
-			if tc.configure != nil {
-				tc.configure(f.pin)
+			if tc.enrolled {
+				f.unlock(t, alice)
+				f.lock(t, alice)
 			}
 
-			w := f.do(t, user(tenantA, userA), http.MethodPost, "/api/v1/passwords/unlock", tc.body)
+			w := f.do(t, alice, http.MethodPost, "/api/v1/passwords/unlock", tc.body)
 
 			assert.Equal(t, tc.wantStatus, w.Code)
-			msg := errorMessage(t, w)
-			assert.Contains(t, msg, tc.wantMessage)
-			assert.NotContains(t, msg, "attempts remaining", "PIN backend detail must not leak")
+			assert.Contains(t, errorMessage(t, w), tc.wantMessage)
 
 			locked, err := f.manager.IsUserLocked(tenantA, userA)
 			require.NoError(t, err)
@@ -315,7 +356,7 @@ func TestUnlockHandler_AlreadyUnlocked(t *testing.T) {
 	alice := user(tenantA, userA)
 	f.unlock(t, alice)
 
-	w := f.do(t, alice, http.MethodPost, "/api/v1/passwords/unlock", `{"user_pin":"`+testUserPIN+`"}`)
+	w := f.do(t, alice, http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, passkeyFor(alice)))
 
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
@@ -326,7 +367,7 @@ func TestUnlockHandler_NoIdentityIsNotImplemented(t *testing.T) {
 
 	f := newPasswordFixture(t)
 
-	w := f.do(t, nil, http.MethodPost, "/api/v1/passwords/unlock", `{"user_pin":"`+testUserPIN+`"}`)
+	w := f.do(t, nil, http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, passkeyFor(user("", "nobody"))))
 
 	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
@@ -355,7 +396,9 @@ func TestUnlockHandler_TenantErrors(t *testing.T) {
 		f := newPasswordFixture(t)
 		require.NoError(t, f.registry.SealTenant(tenantA))
 
-		w := f.do(t, user(tenantA, userA), http.MethodPost, "/api/v1/passwords/unlock", `{"user_pin":"`+testUserPIN+`"}`)
+		alice := user(tenantA, userA)
+
+		w := f.do(t, alice, http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, passkeyFor(alice)))
 
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	})
@@ -365,7 +408,7 @@ func TestUnlockHandler_TenantErrors(t *testing.T) {
 
 		f := newPasswordFixture(t)
 
-		w := f.do(t, user("no-such-tenant", userA), http.MethodPost, "/api/v1/passwords/unlock", `{"user_pin":"`+testUserPIN+`"}`)
+		w := f.do(t, user("no-such-tenant", userA), http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, passkeyFor(user("no-such-tenant", userA))))
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
@@ -374,7 +417,7 @@ func TestUnlockHandler_TenantErrors(t *testing.T) {
 		t.Parallel()
 
 		router := passwordRouter(NewPasswordHandlers(&xkms.XKMSService{}))
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", strings.NewReader(`{"user_pin":"1"}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", strings.NewReader(`{"factor":"passphrase","passphrase":"correct horse"}`))
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -1096,8 +1139,10 @@ func TestPasswordWriteUnlockError_Mapping(t *testing.T) {
 		err  error
 		want int
 	}{
-		{xkms.ErrPasswordStoreUserPINRequired, http.StatusBadRequest},
-		{xkms.ErrPasswordStoreUserPINNotProvisioned, http.StatusPreconditionFailed},
+		{staticpw.ErrVaultInvalidCredential, http.StatusBadRequest},
+		{staticpw.ErrVaultRecoveryFactor, http.StatusBadRequest},
+		{staticpw.ErrVaultNotInitialized, http.StatusPreconditionFailed},
+		{staticpw.ErrVaultCredentialRejected, http.StatusUnauthorized},
 		{staticpw.ErrStoreNotLocked, http.StatusConflict},
 		{staticpw.ErrInvalidUserID, http.StatusBadRequest},
 		{seal.ErrTenantSealed, http.StatusServiceUnavailable},
@@ -1106,7 +1151,7 @@ func TestPasswordWriteUnlockError_Mapping(t *testing.T) {
 		{xkms.ErrNilRequest, http.StatusBadRequest},
 		{xkms.ErrNotConfigured, http.StatusServiceUnavailable},
 		{xkms.ErrOperationNotSupported, http.StatusNotImplemented},
-		{errors.New("pin: 1 attempt remaining"), http.StatusUnauthorized},
+		{errors.New("backend detail: disk offline"), http.StatusInternalServerError},
 	}
 
 	for _, tc := range cases {
@@ -1116,7 +1161,7 @@ func TestPasswordWriteUnlockError_Mapping(t *testing.T) {
 			w := httptest.NewRecorder()
 			passwordWriteUnlockError(w, tc.err)
 			assert.Equal(t, tc.want, w.Code)
-			assert.NotContains(t, errorMessage(t, w), "attempt remaining")
+			assert.NotContains(t, errorMessage(t, w), "disk offline", "an unclassified error's detail must not leak")
 		})
 	}
 }

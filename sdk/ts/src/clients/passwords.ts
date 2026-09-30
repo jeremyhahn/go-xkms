@@ -26,6 +26,11 @@ import type {
   PasswordStoreUnlockRequest,
   PasswordUpdateRequest,
   PasswordUpdateResponse,
+  PasswordVaultEnrollRequest,
+  PasswordVaultEnrollResponse,
+  PasswordVaultRecoverRequest,
+  PasswordVaultRotateRequest,
+  PasswordVaultStatusResponse,
 } from '../types/passwords.js';
 
 const BASE = '/api/v1/passwords';
@@ -59,9 +64,37 @@ export class PasswordsClient {
     return this.http.request('DELETE', `${BASE}/${encodeURIComponent(id)}`);
   }
 
-  /** POST /api/v1/passwords/unlock */
+  /** POST /api/v1/passwords/unlock -- opens the caller's session with one of their vault factors. */
   unlock(req: PasswordStoreUnlockRequest): Promise<PasswordStoreStatusResponse> {
     return this.http.request('POST', `${BASE}/unlock`, { body: req });
+  }
+
+  /** GET /api/v1/passwords/vault */
+  vaultStatus(): Promise<PasswordVaultStatusResponse> {
+    return this.http.request('GET', `${BASE}/vault`);
+  }
+
+  /**
+   * POST /api/v1/passwords/vault/factors -- the first enrollment initializes
+   * the vault, opens the session and returns the one-time recovery code.
+   */
+  vaultEnroll(req: PasswordVaultEnrollRequest): Promise<PasswordVaultEnrollResponse> {
+    return this.http.request('POST', `${BASE}/vault/factors`, { body: req });
+  }
+
+  /** PUT /api/v1/passwords/vault/factors/{id} */
+  vaultRotate(factorId: string, req: PasswordVaultRotateRequest): Promise<PasswordVaultEnrollResponse> {
+    return this.http.request('PUT', `${BASE}/vault/factors/${encodeURIComponent(factorId)}`, { body: req });
+  }
+
+  /** DELETE /api/v1/passwords/vault/factors/{id} (204 No Content) */
+  async vaultRemoveFactor(factorId: string): Promise<void> {
+    await this.http.request<void>('DELETE', `${BASE}/vault/factors/${encodeURIComponent(factorId)}`);
+  }
+
+  /** POST /api/v1/passwords/vault/recover -- returns the replacement recovery code. */
+  vaultRecover(req: PasswordVaultRecoverRequest): Promise<PasswordVaultEnrollResponse> {
+    return this.http.request('POST', `${BASE}/vault/recover`, { body: req });
   }
 
   /** POST /api/v1/passwords/lock */

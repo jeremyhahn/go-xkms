@@ -400,6 +400,26 @@ func (m *mockClient) PasswordUpdate(context.Context, *transport.PasswordUpdateRe
 func (m *mockClient) PasswordDelete(context.Context, *transport.PasswordDeleteRequest) error {
 	panic("not implemented")
 }
+func (m *mockClient) PasswordVaultStatus(context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockClient) PasswordVaultEnroll(context.Context, *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (m *mockClient) PasswordVaultRotate(context.Context, *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (m *mockClient) PasswordVaultRemoveFactor(context.Context, *transport.PasswordVaultRemoveFactorRequest) error {
+	return nil
+}
+
+func (m *mockClient) PasswordVaultRecover(context.Context, *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
 func (m *mockClient) PasswordStoreUnlock(context.Context, *transport.PasswordStoreUnlockRequest) error {
 	panic("not implemented")
 }

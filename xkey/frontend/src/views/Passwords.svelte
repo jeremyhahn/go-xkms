@@ -13,9 +13,10 @@
   import PasswordImportDialog from '$lib/components/PasswordImportDialog.svelte';
   import FolderManageDialog from '$lib/components/FolderManageDialog.svelte';
   import Modal from '$lib/components/Modal.svelte';
+  import PasswordVaultPanel from '$lib/components/PasswordVaultPanel.svelte';
   import TeamManageDialog from '$lib/components/TeamManageDialog.svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import { mdiPlus, mdiLockOutline, mdiDownload, mdiUpload, mdiImport, mdiAccountGroup, mdiPencil, mdiDelete } from '$lib/utils/icons';
+  import { mdiPlus, mdiLockOutline, mdiDownload, mdiUpload, mdiImport, mdiAccountGroup, mdiPencil, mdiDelete, mdiShieldLockOutline } from '$lib/utils/icons';
   import { addNotification } from '$lib/stores/notifications';
   import { isWailsAvailable, notifyBackendUnavailable, callBackend, callBackendVoid, TeamService } from '$lib/api/backend';
   import type {
@@ -58,6 +59,10 @@
 
   // Import dialog state (KeePass, CSV, XML)
   let showImportDialog = false;
+
+  // Personal vault dialog state (xkmsd server vault factors)
+  let showVaultDialog = false;
+  let vaultHoldsRecoveryCode = false;
 
   // Team state
   let teams: TeamInfo[] = [];
@@ -519,6 +524,7 @@
   <GradientHeader title="Passwords" subtitle="Static password management" />
 
   <ViewToolbar>
+    <Button icon={mdiShieldLockOutline} variant="outline" on:click={() => { showVaultDialog = true; }}>Vault</Button>
     <Button icon={mdiImport} variant="outline" on:click={openImportDialog}>Import</Button>
     <Button icon={mdiUpload} variant="outline" on:click={openRestoreDialog}>Restore</Button>
     <Button icon={mdiDownload} variant="outline" on:click={openBackupDialog}>Backup</Button>
@@ -679,6 +685,12 @@
     onClose={() => { showImportDialog = false; }}
     onImported={loadPasswords}
   />
+
+  <Modal title="Personal Vault" maxWidth="560px" persistent={vaultHoldsRecoveryCode} bind:open={showVaultDialog}>
+    {#if showVaultDialog}
+      <PasswordVaultPanel bind:holdsRecoveryCode={vaultHoldsRecoveryCode} />
+    {/if}
+  </Modal>
 
   <Modal title="Backup Passwords" bind:open={showBackupDialog}>
     <div class="backup-body">

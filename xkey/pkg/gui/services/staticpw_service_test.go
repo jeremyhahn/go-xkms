@@ -1156,9 +1156,18 @@ type mockPasswordStoreClient struct {
 	generatePW  string
 	generateErr error
 
-	lastUnlockPIN string
-	lastMode      string
-	lastGenReq    *transport.PasswordGenerateRequest
+	vaultStatusResp *transport.PasswordVaultStatusResponse
+	vaultStatusErr  error
+	vaultEnrollResp *transport.PasswordVaultEnrollResponse
+	vaultEnrollErr  error
+	vaultRemoveErr  error
+	lastUnlockReq   *transport.PasswordStoreUnlockRequest
+	lastMode        string
+	lastGenReq      *transport.PasswordGenerateRequest
+	lastEnrollReq   *transport.PasswordVaultEnrollRequest
+	lastRotateReq   *transport.PasswordVaultRotateRequest
+	lastRemoveReq   *transport.PasswordVaultRemoveFactorRequest
+	lastRecoverReq  *transport.PasswordVaultRecoverRequest
 }
 
 func newMockPasswordStoreClient() *mockPasswordStoreClient {
@@ -1174,8 +1183,32 @@ func newMockPasswordStoreClient() *mockPasswordStoreClient {
 }
 
 func (m *mockPasswordStoreClient) PasswordStoreUnlock(_ context.Context, req *transport.PasswordStoreUnlockRequest) error {
-	m.lastUnlockPIN = req.UserPIN
+	m.lastUnlockReq = req
 	return m.unlockErr
+}
+
+func (m *mockPasswordStoreClient) PasswordVaultStatus(_ context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return m.vaultStatusResp, m.vaultStatusErr
+}
+
+func (m *mockPasswordStoreClient) PasswordVaultEnroll(_ context.Context, req *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	m.lastEnrollReq = req
+	return m.vaultEnrollResp, m.vaultEnrollErr
+}
+
+func (m *mockPasswordStoreClient) PasswordVaultRotate(_ context.Context, req *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	m.lastRotateReq = req
+	return m.vaultEnrollResp, m.vaultEnrollErr
+}
+
+func (m *mockPasswordStoreClient) PasswordVaultRemoveFactor(_ context.Context, req *transport.PasswordVaultRemoveFactorRequest) error {
+	m.lastRemoveReq = req
+	return m.vaultRemoveErr
+}
+
+func (m *mockPasswordStoreClient) PasswordVaultRecover(_ context.Context, req *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	m.lastRecoverReq = req
+	return m.vaultEnrollResp, m.vaultEnrollErr
 }
 
 func (m *mockPasswordStoreClient) PasswordStoreLock(_ context.Context) error {
@@ -1253,9 +1286,19 @@ func TestStaticPasswordService_GetContext_Set(t *testing.T) {
 func TestStaticPasswordService_Unlock(t *testing.T) {
 	svc, mock := newTestStaticPWServiceWithClient(t)
 
-	err := svc.Unlock("1234")
+	err := svc.Unlock("correct horse")
 	require.NoError(t, err)
-	assert.Equal(t, "1234", mock.lastUnlockPIN)
+	require.NotNil(t, mock.lastUnlockReq)
+	assert.Equal(t, "passphrase", mock.lastUnlockReq.Factor)
+	assert.Equal(t, "correct horse", mock.lastUnlockReq.Passphrase)
+}
+
+func TestStaticPasswordService_Unlock_EmptyPassphrase(t *testing.T) {
+	svc, mock := newTestStaticPWServiceWithClient(t)
+
+	err := svc.Unlock("")
+	assert.ErrorIs(t, err, ErrStaticPWPassphraseRequired)
+	assert.Nil(t, mock.lastUnlockReq, "an empty passphrase must not reach the server")
 }
 
 func TestStaticPasswordService_Unlock_NoClient(t *testing.T) {
@@ -1268,11 +1311,11 @@ func TestStaticPasswordService_Unlock_NoClient(t *testing.T) {
 
 func TestStaticPasswordService_Unlock_ClientError(t *testing.T) {
 	svc, mock := newTestStaticPWServiceWithClient(t)
-	mock.unlockErr = errors.New("invalid pin")
+	mock.unlockErr = errors.New("credential rejected")
 
 	err := svc.Unlock("wrong")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid pin")
+	assert.Contains(t, err.Error(), "credential rejected")
 }
 
 // ---------------------------------------------------------------------------
@@ -1371,37 +1414,6 @@ func TestStaticPasswordService_SetAccessMode_ClientError(t *testing.T) {
 	err := svc.SetAccessMode("invalid-mode")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "mode not supported")
-}
-
-// ---------------------------------------------------------------------------
-// TryAutoUnlock
-// ---------------------------------------------------------------------------
-
-func TestStaticPasswordService_TryAutoUnlock(t *testing.T) {
-	svc, mock := newTestStaticPWServiceWithClient(t)
-
-	err := svc.TryAutoUnlock()
-	require.NoError(t, err)
-
-	// Verify empty PIN was sent.
-	assert.Equal(t, "", mock.lastUnlockPIN)
-}
-
-func TestStaticPasswordService_TryAutoUnlock_NoClient(t *testing.T) {
-	svc := NewStaticPasswordService(nil)
-	svc.SetContext(context.Background())
-
-	err := svc.TryAutoUnlock()
-	assert.ErrorIs(t, err, ErrStaticPWNoClient)
-}
-
-func TestStaticPasswordService_TryAutoUnlock_ClientError(t *testing.T) {
-	svc, mock := newTestStaticPWServiceWithClient(t)
-	mock.unlockErr = errors.New("auto-unseal not available")
-
-	err := svc.TryAutoUnlock()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "auto-unseal not available")
 }
 
 // ---------------------------------------------------------------------------

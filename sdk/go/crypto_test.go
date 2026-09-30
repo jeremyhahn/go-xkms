@@ -748,6 +748,21 @@ func (n *noopClient) PasswordStoreSetAccessMode(context.Context, *transport.Pass
 func (n *noopClient) PasswordGenerate(context.Context, *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error) {
 	return nil, nil
 }
+func (n *noopClient) PasswordVaultStatus(context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) PasswordVaultEnroll(context.Context, *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) PasswordVaultRotate(context.Context, *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) PasswordVaultRemoveFactor(context.Context, *transport.PasswordVaultRemoveFactorRequest) error {
+	return nil
+}
+func (n *noopClient) PasswordVaultRecover(context.Context, *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
 func (n *noopClient) SealStorePut(context.Context, *transport.SealStorePutRequest) error {
 	return nil
 }

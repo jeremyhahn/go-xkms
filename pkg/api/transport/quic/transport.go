@@ -2323,6 +2323,49 @@ func (t *Transport) PasswordGenerate(ctx context.Context, req *transport.Passwor
 	return &resp, nil
 }
 
+// Personal-vault operations are served by wire.PasswordVaultClient, shared
+// with the REST transport, over the REST routes.
+
+// PasswordVaultStatus describes the caller's personal vault.
+func (t *Transport) PasswordVaultStatus(ctx context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.PasswordVaultClient{Do: t.doRawRequest}.PasswordVaultStatus(ctx)
+}
+
+// PasswordVaultEnroll enrolls a passphrase or passkey on the caller's vault.
+func (t *Transport) PasswordVaultEnroll(ctx context.Context, req *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.PasswordVaultClient{Do: t.doRawRequest}.PasswordVaultEnroll(ctx, req)
+}
+
+// PasswordVaultRotate replaces the secret of one of the caller's factors.
+func (t *Transport) PasswordVaultRotate(ctx context.Context, req *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.PasswordVaultClient{Do: t.doRawRequest}.PasswordVaultRotate(ctx, req)
+}
+
+// PasswordVaultRemoveFactor removes one of the caller's factors.
+func (t *Transport) PasswordVaultRemoveFactor(ctx context.Context, req *transport.PasswordVaultRemoveFactorRequest) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return wire.PasswordVaultClient{Do: t.doRawRequest}.PasswordVaultRemoveFactor(ctx, req)
+}
+
+// PasswordVaultRecover uses the caller's recovery code to enroll a new factor.
+func (t *Transport) PasswordVaultRecover(ctx context.Context, req *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.PasswordVaultClient{Do: t.doRawRequest}.PasswordVaultRecover(ctx, req)
+}
+
 // SealStorePut stores a secret in the platform-sealed store.
 func (t *Transport) SealStorePut(ctx context.Context, req *transport.SealStorePutRequest) error {
 	if !t.connected {

@@ -2614,10 +2614,12 @@ func (a *App) applyConnectionEvent(eventType events.EventType, client xkmssdk.Cl
 		a.tenantService.SetClient(client)
 		a.certificateService.SetClient(client)
 		a.tpmPolicyService.SetClient(client)
+		a.staticPWService.SetClient(client)
 	case events.EventServerDisconnected, events.EventServerError:
 		a.pivService.SetClient(nil)
 		a.certificateService.SetClient(nil)
 		a.tpmPolicyService.SetClient(nil)
+		a.staticPWService.SetClient(nil)
 	}
 }
 

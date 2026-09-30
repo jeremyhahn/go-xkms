@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -84,33 +85,28 @@ func passwordTestRegistry(t *testing.T) (*seal.BarrierRegistry, *staticpw.Backen
 }
 
 // passwordServer is an MCP server over a real XKMSService wired with a real
-// TenantPasswordStoreManager, BarrierRegistry and a PIN backend. It holds no
-// package-global state, so tests using it may run in parallel.
+// TenantPasswordStoreManager and BarrierRegistry. It holds no package-global
+// state, so tests using it may run in parallel.
 type passwordServer struct {
 	*Server
 	registry *seal.BarrierRegistry
 	manager  *staticpw.TenantPasswordStoreManager
-	pin      *stubPINBackend
 }
 
-// newPasswordServer builds a passwordServer whose user PIN is provisionedPIN
-// (empty for a deployment with no user PIN).
-func newPasswordServer(t *testing.T, provisionedPIN string) *passwordServer {
+// newPasswordServer builds a passwordServer.
+func newPasswordServer(t *testing.T) *passwordServer {
 	t.Helper()
 
 	registry, systemStore, manager := passwordTestRegistry(t)
-	pin := &stubPINBackend{userPIN: provisionedPIN}
 
 	svc := &xkms.XKMSService{}
 	svc.SetPasswordStore(systemStore)
 	svc.SetPasswordStoreManager(manager)
-	svc.SetPINManager(pin)
 
 	return &passwordServer{
 		Server:   &Server{xkmsService: svc},
 		registry: registry,
 		manager:  manager,
-		pin:      pin,
 	}
 }
 
@@ -131,10 +127,31 @@ func pwRPC(t *testing.T, method string, params interface{}) *JSONRPCRequest {
 	return req
 }
 
-// unlock opens ctx's personal session.
+// pwPasskey returns subject's test passkey. Passkeys unwrap with HKDF,
+// which keeps the many session opens of this suite cheap; the passphrase
+// (Argon2id) path has its own tests.
+func pwPasskey(subject string) transport.PasswordVaultCredential {
+	return vaulttest.Passkey(subject)
+}
+
+// ctxPasskey returns the test passkey of the identity on ctx.
+func ctxPasskey(ctx context.Context) transport.PasswordVaultCredential {
+	return pwPasskey(auth.GetIdentity(ctx).Subject)
+}
+
+// unlock opens ctx's personal session with the caller's passkey: the first
+// time it enrolls the passkey, which initializes the vault and opens the
+// session; afterwards it unlocks.
 func (s *passwordServer) unlock(t *testing.T, ctx context.Context) {
 	t.Helper()
-	_, err := s.handlePasswordUnlock(ctx, pwRPC(t, "password.unlock", map[string]string{"user_pin": unlockTestUserPIN}))
+	result, err := s.handlePasswordVaultStatus(ctx, pwRPC(t, "password.vault.status", nil))
+	require.NoError(t, err)
+	if !result.(*transport.PasswordVaultStatusResponse).Initialized {
+		_, err = s.handlePasswordVaultEnroll(ctx, pwRPC(t, "password.vault.enroll", ctxPasskey(ctx)))
+		require.NoError(t, err)
+		return
+	}
+	_, err = s.handlePasswordUnlock(ctx, pwRPC(t, "password.unlock", ctxPasskey(ctx)))
 	require.NoError(t, err)
 }
 
@@ -284,7 +301,7 @@ func TestPasswordHandlers_ServiceWithoutStore(t *testing.T) {
 
 func TestHandlePasswordAdd(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice := pwCtx(pwTenantA, pwUserA)
 
 	t.Run("adds a shared entry", func(t *testing.T) {
@@ -322,7 +339,7 @@ func TestHandlePasswordAdd(t *testing.T) {
 
 func TestHandlePasswordGet(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice := pwCtx(pwTenantA, pwUserA)
 	s.unlock(t, alice)
 	id := s.add(t, alice, "entry", true)
@@ -355,7 +372,7 @@ func TestHandlePasswordGet(t *testing.T) {
 
 func TestHandlePasswordList(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice := pwCtx(pwTenantA, pwUserA)
 	s.unlock(t, alice)
 	s.add(t, alice, "shared-entry", true)
@@ -375,7 +392,7 @@ func TestHandlePasswordList(t *testing.T) {
 
 func TestHandlePasswordUpdate(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice := pwCtx(pwTenantA, pwUserA)
 	s.unlock(t, alice)
 
@@ -423,7 +440,7 @@ func TestHandlePasswordUpdate(t *testing.T) {
 
 func TestHandlePasswordDelete(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice := pwCtx(pwTenantA, pwUserA)
 	s.unlock(t, alice)
 	id := s.add(t, alice, "entry", true)
@@ -442,7 +459,7 @@ func TestHandlePasswordDelete(t *testing.T) {
 // which no tenant user sees.
 func TestPasswordHandlers_NoIdentityUsesSystemStore(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	id := s.add(t, context.Background(), "internal", false)
 
 	got, err := s.get(t, context.Background(), id)
@@ -460,7 +477,7 @@ func TestPasswordHandlers_NoIdentityUsesSystemStore(t *testing.T) {
 
 func TestHandlePasswordLock(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice := pwCtx(pwTenantA, pwUserA)
 
 	t.Run("already locked", func(t *testing.T) {
@@ -493,30 +510,30 @@ func TestHandlePasswordLock(t *testing.T) {
 
 func TestHandlePasswordUnlock_Errors(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 
 	t.Run("no identity has no session", func(t *testing.T) {
-		_, err := s.handlePasswordUnlock(context.Background(), pwRPC(t, "password.unlock", map[string]string{"user_pin": unlockTestUserPIN}))
+		_, err := s.handlePasswordUnlock(context.Background(), pwRPC(t, "password.unlock", pwPasskey(pwUserA)))
 		requireCode(t, err, ErrCodeMethodNotFound)
 		assert.ErrorIs(t, err, xkms.ErrOperationNotSupported)
 	})
 
 	t.Run("unknown tenant", func(t *testing.T) {
-		_, err := s.handlePasswordUnlock(pwCtx("no-such-tenant", pwUserA), pwRPC(t, "password.unlock", map[string]string{"user_pin": unlockTestUserPIN}))
+		_, err := s.handlePasswordUnlock(pwCtx("no-such-tenant", pwUserA), pwRPC(t, "password.unlock", pwPasskey(pwUserA)))
 		requireCode(t, err, sdkssh.JSONRPCCodeNotFound)
 	})
 
 	t.Run("already unlocked", func(t *testing.T) {
 		alice := pwCtx(pwTenantA, pwUserA)
 		s.unlock(t, alice)
-		_, err := s.handlePasswordUnlock(alice, pwRPC(t, "password.unlock", map[string]string{"user_pin": unlockTestUserPIN}))
+		_, err := s.handlePasswordUnlock(alice, pwRPC(t, "password.unlock", pwPasskey(pwUserA)))
 		requireCode(t, err, ErrCodeInternalError)
 		assert.ErrorIs(t, err, staticpw.ErrStoreNotLocked)
 	})
 
 	t.Run("sealed tenant", func(t *testing.T) {
 		require.NoError(t, s.registry.SealTenant(pwTenantB))
-		_, err := s.handlePasswordUnlock(pwCtx(pwTenantB, pwUserA), pwRPC(t, "password.unlock", map[string]string{"user_pin": unlockTestUserPIN}))
+		_, err := s.handlePasswordUnlock(pwCtx(pwTenantB, pwUserA), pwRPC(t, "password.unlock", pwPasskey(pwUserA)))
 		requireCode(t, err, ErrCodeInternalError)
 		assert.ErrorIs(t, err, seal.ErrTenantSealed)
 	})
@@ -524,7 +541,7 @@ func TestHandlePasswordUnlock_Errors(t *testing.T) {
 
 func TestHandlePasswordStatus(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice := pwCtx(pwTenantA, pwUserA)
 	s.add(t, alice, "shared-one", true)
 
@@ -549,7 +566,7 @@ func TestHandlePasswordStatus(t *testing.T) {
 // (a) A tenant user sees another tenant user's shared entry.
 func TestPasswordIsolation_SharedEntryVisibleToTenantUsers(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice, bob := pwCtx(pwTenantA, pwUserA), pwCtx(pwTenantA, pwUserB)
 	id := s.add(t, bob, "team-wifi", true)
 
@@ -563,7 +580,7 @@ func TestPasswordIsolation_SharedEntryVisibleToTenantUsers(t *testing.T) {
 // (b) A user cannot see or modify another user's personal entry.
 func TestPasswordIsolation_PersonalEntryPrivateToOwner(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice, bob := pwCtx(pwTenantA, pwUserA), pwCtx(pwTenantA, pwUserB)
 	s.unlock(t, alice)
 	s.unlock(t, bob)
@@ -583,7 +600,7 @@ func TestPasswordIsolation_PersonalEntryPrivateToOwner(t *testing.T) {
 // (c) A user cannot update or delete another user's shared entry.
 func TestPasswordIsolation_SharedEntryModifiableOnlyByOwner(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice, bob := pwCtx(pwTenantA, pwUserA), pwCtx(pwTenantA, pwUserB)
 	id := s.add(t, bob, "team-wifi", true)
 
@@ -605,7 +622,7 @@ func TestPasswordIsolation_SharedEntryModifiableOnlyByOwner(t *testing.T) {
 // (d) One tenant cannot reach another tenant's entries.
 func TestPasswordIsolation_TenantsAreSeparate(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice := pwCtx(pwTenantA, pwUserA)
 	mallory := pwCtx(pwTenantB, pwUserA) // same subject, different tenant
 	s.unlock(t, alice)
@@ -626,7 +643,7 @@ func TestPasswordIsolation_TenantsAreSeparate(t *testing.T) {
 // (e) A system-tenant identity gets the system tenant's own store.
 func TestPasswordIsolation_SystemTenantHasOwnStore(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	admin := pwCtx(qrdbsdk.SystemTenantID, "admin")
 	alice := pwCtx(pwTenantA, pwUserA)
 	s.add(t, alice, "a-shared", true)
@@ -645,7 +662,7 @@ func TestPasswordIsolation_SystemTenantHasOwnStore(t *testing.T) {
 // (f) Sessions are per user: one user's unlock and lock never affect another's.
 func TestPasswordIsolation_PerUserSessions(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice, bob := pwCtx(pwTenantA, pwUserA), pwCtx(pwTenantA, pwUserB)
 	s.unlock(t, bob)
 	bobID := s.add(t, bob, "bob-personal", false)
@@ -678,7 +695,7 @@ func TestPasswordIsolation_PerUserSessions(t *testing.T) {
 
 func TestHandlePasswordGenerate(t *testing.T) {
 	t.Parallel()
-	server := newPasswordServer(t, "").Server
+	server := newPasswordServer(t).Server
 	ctx := context.Background()
 
 	t.Run("goes through the service layer", func(t *testing.T) {
@@ -722,7 +739,7 @@ func TestHandlePasswordGenerate(t *testing.T) {
 // SetAccessModeHandler already reports for the same conditions.
 func TestHandlePasswordSetAccessMode(t *testing.T) {
 	t.Parallel()
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	alice := pwCtx(pwTenantA, pwUserA)
 
 	setMode := func(t *testing.T, server *Server, ctx context.Context, mode string) (interface{}, error) {

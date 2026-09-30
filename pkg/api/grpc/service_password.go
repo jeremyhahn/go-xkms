@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/pbconv"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -230,7 +231,8 @@ func (s *Service) PasswordDelete(ctx context.Context, req *pb.PasswordDeleteRequ
 	}, nil
 }
 
-// PasswordStoreUnlock unlocks the tenant password store session.
+// PasswordStoreUnlock opens the caller's personal password session with one
+// of the caller's vault factors (a passphrase or a passkey's PRF output).
 func (s *Service) PasswordStoreUnlock(ctx context.Context, req *pb.PasswordStoreUnlockRequest) (*pb.PasswordStoreStatusResponse, error) {
 	if req == nil {
 		req = &pb.PasswordStoreUnlockRequest{}
@@ -254,11 +256,11 @@ func (s *Service) PasswordStoreUnlock(ctx context.Context, req *pb.PasswordStore
 	}
 
 	transportReq := &transport.PasswordStoreUnlockRequest{
-		UserPIN: req.Pin,
+		PasswordVaultCredential: pbconv.VaultCredentialFromPB(req.GetCredential()),
 	}
 
 	if unlockErr := svc.PasswordStoreUnlock(ctx, transportReq); unlockErr != nil {
-		return nil, mapPasswordUnlockError(unlockErr)
+		return nil, mapPasswordError(unlockErr)
 	}
 
 	// Return updated status
@@ -364,6 +366,7 @@ func (s *Service) PasswordGenerate(ctx context.Context, req *pb.PasswordGenerate
 		Lower:   req.Lower,
 		Digits:  req.Digits,
 		Symbols: req.Symbols,
+		Charset: req.Charset,
 	}
 
 	resp, genErr := svc.PasswordGenerate(ctx, transportReq)
@@ -430,35 +433,6 @@ func mapAccessModeError(err error) error {
 }
 
 // mapPasswordError converts staticpw and xkms errors to appropriate gRPC status codes.
-// mapPasswordUnlockError maps the errors returned by
-// XKMSService.PasswordStoreUnlock. It defers to mapPasswordError for every
-// recognised sentinel and differs only in its fallback: on the unlock path a
-// residual error is a failed PIN verification from the PIN backend, which is
-// PermissionDenied rather than Internal. The backend's message is not echoed
-// because it can carry retry counters and lockout state.
-func mapPasswordUnlockError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	// A wrong PIN produces an error that matches none of the known sentinels,
-	// so mapPasswordError would report it as Internal. Detect that case by
-	// checking whether the mapping fell through to its default.
-	mapped := mapPasswordError(err)
-	if status.Code(mapped) == codes.Internal && !isKnownInternalPasswordError(err) {
-		return status.Error(codes.PermissionDenied, "user PIN verification failed")
-	}
-	return mapped
-}
-
-// isKnownInternalPasswordError reports whether err is one of the genuine
-// internal faults mapPasswordError deliberately maps to codes.Internal, as
-// opposed to an unrecognised error that merely fell through to the default.
-func isKnownInternalPasswordError(err error) bool {
-	return errors.Is(err, staticpw.ErrNilStore) ||
-		errors.Is(err, staticpw.ErrNilBarrierRegistry)
-}
-
 func mapPasswordError(err error) error {
 	if err == nil {
 		return nil
@@ -484,6 +458,8 @@ func mapPasswordError(err error) error {
 		return status.Error(codes.InvalidArgument, "password is required")
 	case errors.Is(err, staticpw.ErrInvalidLength):
 		return status.Error(codes.InvalidArgument, "invalid password length (min 8, max 128)")
+	case errors.Is(err, staticpw.ErrInvalidCharset):
+		return status.Error(codes.InvalidArgument, "invalid charset (a name or the characters to draw from, not both with class flags)")
 	case errors.Is(err, staticpw.ErrInvalidScope):
 		return status.Error(codes.InvalidArgument, "invalid scope (use personal, shared, or all)")
 	case errors.Is(err, staticpw.ErrInvalidTenantID):
@@ -527,14 +503,22 @@ func mapPasswordError(err error) error {
 	case errors.Is(err, xkms.ErrNilRequest):
 		return status.Error(codes.InvalidArgument, "request is required")
 
-	// Password store user-PIN errors. These are distinguished from one another
-	// so an operator can tell "you sent no PIN" from "this deployment has no
-	// PIN to check"; a wrong PIN is reported by the PIN backend and is mapped
-	// by mapPasswordUnlockError, which owns the unlock path.
-	case errors.Is(err, xkms.ErrPasswordStoreUserPINRequired):
-		return status.Error(codes.InvalidArgument, xkms.ErrPasswordStoreUserPINRequired.Error())
-	case errors.Is(err, xkms.ErrPasswordStoreUserPINNotProvisioned):
-		return status.Error(codes.FailedPrecondition, xkms.ErrPasswordStoreUserPINNotProvisioned.Error())
+	// Personal-vault errors: a malformed credential is the caller's mistake,
+	// a vault with no factor needs enrollment first, and a credential that
+	// unwraps no factor is an authentication failure that must not say why.
+	case errors.Is(err, staticpw.ErrVaultInvalidCredential),
+		errors.Is(err, staticpw.ErrVaultRecoveryFactor):
+		return status.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, staticpw.ErrVaultNotInitialized):
+		return status.Error(codes.FailedPrecondition, staticpw.ErrVaultNotInitialized.Error())
+	case errors.Is(err, staticpw.ErrVaultCredentialRejected):
+		return status.Error(codes.Unauthenticated, staticpw.ErrVaultCredentialRejected.Error())
+	case errors.Is(err, staticpw.ErrVaultFactorNotFound):
+		return status.Error(codes.NotFound, staticpw.ErrVaultFactorNotFound.Error())
+	case errors.Is(err, staticpw.ErrVaultLastFactor):
+		return status.Error(codes.FailedPrecondition, staticpw.ErrVaultLastFactor.Error())
+	case errors.Is(err, staticpw.ErrVaultPasskeyExists):
+		return status.Error(codes.AlreadyExists, staticpw.ErrVaultPasskeyExists.Error())
 
 	default:
 		// Check for error message patterns for errors that may be wrapped

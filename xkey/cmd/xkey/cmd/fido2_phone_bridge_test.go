@@ -526,6 +526,26 @@ func (b *baseSDKClient) PasswordDelete(_ context.Context, _ *transport.PasswordD
 	return errNotImplemented
 }
 
+func (b *baseSDKClient) PasswordVaultStatus(context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return nil, nil
+}
+
+func (b *baseSDKClient) PasswordVaultEnroll(context.Context, *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (b *baseSDKClient) PasswordVaultRotate(context.Context, *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (b *baseSDKClient) PasswordVaultRemoveFactor(context.Context, *transport.PasswordVaultRemoveFactorRequest) error {
+	return nil
+}
+
+func (b *baseSDKClient) PasswordVaultRecover(context.Context, *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
 func (b *baseSDKClient) PasswordStoreUnlock(_ context.Context, _ *transport.PasswordStoreUnlockRequest) error {
 	return errNotImplemented
 }

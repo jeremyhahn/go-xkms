@@ -267,6 +267,11 @@ type PasswordServicer interface {
 	PasswordStoreStatus(ctx context.Context) (*PasswordStoreStatusResponse, error)
 	PasswordStoreSetAccessMode(ctx context.Context, req *PasswordStoreSetAccessModeRequest) error
 	PasswordGenerate(ctx context.Context, req *PasswordGenerateRequest) (*PasswordGenerateResponse, error)
+	PasswordVaultStatus(ctx context.Context) (*PasswordVaultStatusResponse, error)
+	PasswordVaultEnroll(ctx context.Context, req *PasswordVaultEnrollRequest) (*PasswordVaultEnrollResponse, error)
+	PasswordVaultRotate(ctx context.Context, req *PasswordVaultRotateRequest) (*PasswordVaultEnrollResponse, error)
+	PasswordVaultRemoveFactor(ctx context.Context, req *PasswordVaultRemoveFactorRequest) error
+	PasswordVaultRecover(ctx context.Context, req *PasswordVaultRecoverRequest) (*PasswordVaultEnrollResponse, error)
 }
 
 // SealStoreServicer handles the local machine sealed credential store.

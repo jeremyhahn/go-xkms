@@ -29,10 +29,10 @@ The core is a set of small, composable stores rather than one type:
 | Generation | `generator.go` |
 | Validation, errors | `validation.go`, `errors.go` |
 
-`pkg/staticpw` has no encrypted-store or PIN-store decorator file: `store.go`'s
-`BackendStore` is the only concrete `Store`, and encryption at rest is a
-property of the `storage.Backend` it is given (see "Component boundaries"
-below), not a wrapper type in this package.
+`store.go`'s `BackendStore` is the only concrete `Store`. Shared entries are
+encrypted at rest by the tenant barrier alone. Personal entries additionally
+pass through `dek_backend.go`, which seals every value with the owner's own
+data key before it reaches the barrier (see "The personal vault" below).
 
 The design decision that shapes everything else is **access mode**
 (`access.go:23`):
@@ -53,9 +53,9 @@ const (
 
 Only `session_based` is a reachable code path today, and a session belongs to
 one **user**, not to the tenant: `TenantPasswordStoreManager.UnlockUser` /
-`LockUser` open and close one user's personal session, with the PIN checked
-one layer up by `XKMSService.verifyPasswordStoreUserPIN`
-(`pkg/xkms/servicer_password.go`). `pin_per_operation` is a defined
+`LockUser` open and close one user's personal session, and the session is
+opened with one of the user's own vault factors (below), never a
+deployment-wide PIN. `pin_per_operation` is a defined
 `AccessMode` constant (`access.go`) with no store implementation behind it.
 Making the mode an explicit, switchable value rather than a hardcoded policy
 is what leaves room for a future per-operation implementation without another
@@ -88,6 +88,50 @@ The vault follows the xkms scope model
 
 Rejected for the lock: a tenant-wide session (the previous design). One user
 locking locked everyone, and one user unlocking opened every user's session.
+
+### The personal vault
+
+Personal entries are sealed with a random per-user **data key (DEK)**
+(`vault.go`, `dek_backend.go`), so reading them takes one of the user's own
+factors: the tenant barrier key alone opens nothing.
+
+```
+personal entry ──AES-256-GCM(DEK, aad = storage key)──▶ tenant barrier
+DEK ──wrapped, once per factor──▶ {tenant}/staticpw-vault/users/{subject}/factors/{id}
+      passphrase: KEK = Argon2id(passphrase, salt)          64 MiB, t=3, p=4 (kdf.DefaultParams)
+      passkey:    KEK = HKDF-SHA256(hmac-secret output, salt) FIDO2 hmac-secret / WebAuthn PRF
+      recovery:   KEK = HKDF-SHA256(recovery code, salt)    160-bit code, one-time
+      wrap = AES-256-GCM(KEK, DEK, aad = tenant|subject|factor id)
+```
+
+- **Enrollment.** A user enrolls a passphrase, a passkey, or both. The first
+  enrollment mints the DEK, wraps it under the factor and under a new
+  **recovery code**, opens the session and returns the code, which is shown
+  exactly once and never stored in the clear. Later enrollments need the
+  session open, so nobody else can add a factor to a user's vault.
+- **Passkeys.** The client asks its FIDO2 authenticator for the hmac-secret
+  (PRF) output of the credential over a 32-byte salt it chose, and sends the
+  credential ID, the salt and the output. The server stores the salt; to
+  unlock, the client reads the credential ID and salt from the vault status,
+  evaluates hmac-secret again and sends the output. xkey drives the
+  authenticator through `pkg/fido2`'s CTAP2 hmac-secret (PIN/UV-authenticated).
+- **Rotation** re-wraps the DEK under a new secret for a factor of the same
+  type and removes the old wrap. **The DEK never changes**, so nothing is
+  re-encrypted.
+- **Recovery** uses the code to enroll a new factor when the others are
+  lost. The code is one-time: recovery replaces it with a new one, shown once.
+  It does not unlock on its own.
+- **Removal** refuses the recovery factor and the last passphrase or passkey.
+- **Lock** zeroes the DEK; sealing the tenant barrier ends every session and
+  zeroes every DEK.
+- The deployment-wide user PIN (PIN management) no longer gates the password
+  store; it remains for the features that use it (the PKCS#11 token, PIN
+  management itself).
+
+Rejected: wrapping the DEK under the tenant barrier only. The barrier would
+then unwrap it, and the tenant key alone would read every personal entry.
+Rejected: a DEK per entry. It adds nothing a per-user key does not give, and
+multiplies the wraps a rotation would have to touch.
 
 Rejected alternatives:
 
@@ -160,9 +204,16 @@ session gate are enforced once.
   unlocked can read that user's personal entries, and any tenant user can
   read the shared ones. `pin_per_operation` is a defined value with no store
   behind it; it re-authenticates nothing today.
-- **Personal entries are not separately encrypted.** They are protected by the
-  tenant barrier and by scope, not by a per-user key: a holder of the tenant
-  barrier key can read them. A per-user DEK is an open design question.
+- **Personal entries need the owner's factor.** Their values are sealed with
+  the owner's DEK, which exists in the clear only in memory while the owner's
+  session is open. A holder of the tenant barrier key reads ciphertext and
+  wrapped DEKs. What the barrier key still reveals: that a user has personal
+  entries, how many, their entry IDs (a hash of name and folder) and their
+  personal folder names, which appear in storage keys.
+- **A factor is only as strong as its secret.** A passphrase is stretched
+  with Argon2id but can be guessed offline by anyone holding the barrier key
+  and the wrapped DEK; a passkey's hmac-secret output and the recovery code
+  are 256 and 160 bits and cannot.
 - **Scope and sharing are access control, not organisation.** `--shared` shares
   an entry with the tenant; `--scope own|shared|all` chooses what a listing
   reveals. There is no team-scoped sharing: a user-group model belongs to
@@ -178,7 +229,8 @@ session gate are enforced once.
 
 ## What this feature deliberately does not do
 
-- **It does not encrypt anything itself.** At-rest protection is the barrier's.
+- **It does not encrypt shared entries itself.** Their at-rest protection is
+  the barrier's; only personal entries carry the owner's own key.
 - **It is not a key store.** Keys are [`../key-management/`](../key-management/architecture.md).
 - **It is not the platform secret store.** Those are
   [`../platform-secrets/`](../platform-secrets/architecture.md) — platform-owned,

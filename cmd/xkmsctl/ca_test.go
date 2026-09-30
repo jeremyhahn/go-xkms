@@ -390,6 +390,21 @@ func (m *mockCAClient) PasswordStoreUnlock(_ context.Context, _ *transport.Passw
 	return nil
 }
 func (m *mockCAClient) PasswordStoreLock(_ context.Context) error { return nil }
+func (m *mockCAClient) PasswordVaultStatus(_ context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return nil, nil
+}
+func (m *mockCAClient) PasswordVaultEnroll(_ context.Context, _ *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+func (m *mockCAClient) PasswordVaultRotate(_ context.Context, _ *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+func (m *mockCAClient) PasswordVaultRemoveFactor(_ context.Context, _ *transport.PasswordVaultRemoveFactorRequest) error {
+	return nil
+}
+func (m *mockCAClient) PasswordVaultRecover(_ context.Context, _ *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
 func (m *mockCAClient) PasswordStoreStatus(_ context.Context) (*transport.PasswordStoreStatusResponse, error) {
 	return nil, nil
 }

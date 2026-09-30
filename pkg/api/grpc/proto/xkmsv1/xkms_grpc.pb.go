@@ -149,6 +149,11 @@ const (
 	KeystoreService_PasswordUpdate_FullMethodName              = "/xkms.v1.KeystoreService/PasswordUpdate"
 	KeystoreService_PasswordDelete_FullMethodName              = "/xkms.v1.KeystoreService/PasswordDelete"
 	KeystoreService_PasswordStoreUnlock_FullMethodName         = "/xkms.v1.KeystoreService/PasswordStoreUnlock"
+	KeystoreService_PasswordVaultStatus_FullMethodName         = "/xkms.v1.KeystoreService/PasswordVaultStatus"
+	KeystoreService_PasswordVaultEnroll_FullMethodName         = "/xkms.v1.KeystoreService/PasswordVaultEnroll"
+	KeystoreService_PasswordVaultRotate_FullMethodName         = "/xkms.v1.KeystoreService/PasswordVaultRotate"
+	KeystoreService_PasswordVaultRemoveFactor_FullMethodName   = "/xkms.v1.KeystoreService/PasswordVaultRemoveFactor"
+	KeystoreService_PasswordVaultRecover_FullMethodName        = "/xkms.v1.KeystoreService/PasswordVaultRecover"
 	KeystoreService_PasswordStoreLock_FullMethodName           = "/xkms.v1.KeystoreService/PasswordStoreLock"
 	KeystoreService_PasswordStoreStatus_FullMethodName         = "/xkms.v1.KeystoreService/PasswordStoreStatus"
 	KeystoreService_PasswordGenerate_FullMethodName            = "/xkms.v1.KeystoreService/PasswordGenerate"
@@ -524,8 +529,25 @@ type KeystoreServiceClient interface {
 	PasswordUpdate(ctx context.Context, in *PasswordUpdateRequest, opts ...grpc.CallOption) (*PasswordUpdateResponse, error)
 	// PasswordDelete removes a password entry from the store.
 	PasswordDelete(ctx context.Context, in *PasswordDeleteRequest, opts ...grpc.CallOption) (*PasswordDeleteResponse, error)
-	// PasswordStoreUnlock unlocks the tenant password store session.
+	// PasswordStoreUnlock opens the caller's personal password session with
+	// one of the caller's own vault factors.
 	PasswordStoreUnlock(ctx context.Context, in *PasswordStoreUnlockRequest, opts ...grpc.CallOption) (*PasswordStoreStatusResponse, error)
+	// PasswordVaultStatus describes the caller's personal vault and its
+	// enrolled factors.
+	PasswordVaultStatus(ctx context.Context, in *PasswordVaultStatusRequest, opts ...grpc.CallOption) (*PasswordVaultStatusResponse, error)
+	// PasswordVaultEnroll enrolls a passphrase or passkey on the caller's
+	// vault; the first enrollment initializes it and returns the recovery
+	// code. Managing one's own vault factors is gated with the session verb,
+	// passwords:unlock.
+	PasswordVaultEnroll(ctx context.Context, in *PasswordVaultEnrollRequest, opts ...grpc.CallOption) (*PasswordVaultEnrollResponse, error)
+	// PasswordVaultRotate re-wraps the caller's DEK under a new secret for a
+	// factor.
+	PasswordVaultRotate(ctx context.Context, in *PasswordVaultRotateRequest, opts ...grpc.CallOption) (*PasswordVaultEnrollResponse, error)
+	// PasswordVaultRemoveFactor removes one of the caller's factors.
+	PasswordVaultRemoveFactor(ctx context.Context, in *PasswordVaultRemoveFactorRequest, opts ...grpc.CallOption) (*PasswordVaultRemoveFactorResponse, error)
+	// PasswordVaultRecover uses the caller's one-time recovery code to enroll a
+	// new factor and returns the replacement code.
+	PasswordVaultRecover(ctx context.Context, in *PasswordVaultRecoverRequest, opts ...grpc.CallOption) (*PasswordVaultEnrollResponse, error)
 	// PasswordStoreLock locks the tenant password store session.
 	PasswordStoreLock(ctx context.Context, in *PasswordStoreLockRequest, opts ...grpc.CallOption) (*PasswordStoreStatusResponse, error)
 	// PasswordStoreStatus returns the current status of the password store.
@@ -1921,6 +1943,56 @@ func (c *keystoreServiceClient) PasswordStoreUnlock(ctx context.Context, in *Pas
 	return out, nil
 }
 
+func (c *keystoreServiceClient) PasswordVaultStatus(ctx context.Context, in *PasswordVaultStatusRequest, opts ...grpc.CallOption) (*PasswordVaultStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PasswordVaultStatusResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PasswordVaultStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PasswordVaultEnroll(ctx context.Context, in *PasswordVaultEnrollRequest, opts ...grpc.CallOption) (*PasswordVaultEnrollResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PasswordVaultEnrollResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PasswordVaultEnroll_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PasswordVaultRotate(ctx context.Context, in *PasswordVaultRotateRequest, opts ...grpc.CallOption) (*PasswordVaultEnrollResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PasswordVaultEnrollResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PasswordVaultRotate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PasswordVaultRemoveFactor(ctx context.Context, in *PasswordVaultRemoveFactorRequest, opts ...grpc.CallOption) (*PasswordVaultRemoveFactorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PasswordVaultRemoveFactorResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PasswordVaultRemoveFactor_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PasswordVaultRecover(ctx context.Context, in *PasswordVaultRecoverRequest, opts ...grpc.CallOption) (*PasswordVaultEnrollResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PasswordVaultEnrollResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PasswordVaultRecover_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) PasswordStoreLock(ctx context.Context, in *PasswordStoreLockRequest, opts ...grpc.CallOption) (*PasswordStoreStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PasswordStoreStatusResponse)
@@ -2870,8 +2942,25 @@ type KeystoreServiceServer interface {
 	PasswordUpdate(context.Context, *PasswordUpdateRequest) (*PasswordUpdateResponse, error)
 	// PasswordDelete removes a password entry from the store.
 	PasswordDelete(context.Context, *PasswordDeleteRequest) (*PasswordDeleteResponse, error)
-	// PasswordStoreUnlock unlocks the tenant password store session.
+	// PasswordStoreUnlock opens the caller's personal password session with
+	// one of the caller's own vault factors.
 	PasswordStoreUnlock(context.Context, *PasswordStoreUnlockRequest) (*PasswordStoreStatusResponse, error)
+	// PasswordVaultStatus describes the caller's personal vault and its
+	// enrolled factors.
+	PasswordVaultStatus(context.Context, *PasswordVaultStatusRequest) (*PasswordVaultStatusResponse, error)
+	// PasswordVaultEnroll enrolls a passphrase or passkey on the caller's
+	// vault; the first enrollment initializes it and returns the recovery
+	// code. Managing one's own vault factors is gated with the session verb,
+	// passwords:unlock.
+	PasswordVaultEnroll(context.Context, *PasswordVaultEnrollRequest) (*PasswordVaultEnrollResponse, error)
+	// PasswordVaultRotate re-wraps the caller's DEK under a new secret for a
+	// factor.
+	PasswordVaultRotate(context.Context, *PasswordVaultRotateRequest) (*PasswordVaultEnrollResponse, error)
+	// PasswordVaultRemoveFactor removes one of the caller's factors.
+	PasswordVaultRemoveFactor(context.Context, *PasswordVaultRemoveFactorRequest) (*PasswordVaultRemoveFactorResponse, error)
+	// PasswordVaultRecover uses the caller's one-time recovery code to enroll a
+	// new factor and returns the replacement code.
+	PasswordVaultRecover(context.Context, *PasswordVaultRecoverRequest) (*PasswordVaultEnrollResponse, error)
 	// PasswordStoreLock locks the tenant password store session.
 	PasswordStoreLock(context.Context, *PasswordStoreLockRequest) (*PasswordStoreStatusResponse, error)
 	// PasswordStoreStatus returns the current status of the password store.
@@ -3384,6 +3473,21 @@ func (UnimplementedKeystoreServiceServer) PasswordDelete(context.Context, *Passw
 }
 func (UnimplementedKeystoreServiceServer) PasswordStoreUnlock(context.Context, *PasswordStoreUnlockRequest) (*PasswordStoreStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PasswordStoreUnlock not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PasswordVaultStatus(context.Context, *PasswordVaultStatusRequest) (*PasswordVaultStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PasswordVaultStatus not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PasswordVaultEnroll(context.Context, *PasswordVaultEnrollRequest) (*PasswordVaultEnrollResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PasswordVaultEnroll not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PasswordVaultRotate(context.Context, *PasswordVaultRotateRequest) (*PasswordVaultEnrollResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PasswordVaultRotate not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PasswordVaultRemoveFactor(context.Context, *PasswordVaultRemoveFactorRequest) (*PasswordVaultRemoveFactorResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PasswordVaultRemoveFactor not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PasswordVaultRecover(context.Context, *PasswordVaultRecoverRequest) (*PasswordVaultEnrollResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PasswordVaultRecover not implemented")
 }
 func (UnimplementedKeystoreServiceServer) PasswordStoreLock(context.Context, *PasswordStoreLockRequest) (*PasswordStoreStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PasswordStoreLock not implemented")
@@ -5866,6 +5970,96 @@ func _KeystoreService_PasswordStoreUnlock_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_PasswordVaultStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PasswordVaultStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PasswordVaultStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PasswordVaultStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PasswordVaultStatus(ctx, req.(*PasswordVaultStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PasswordVaultEnroll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PasswordVaultEnrollRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PasswordVaultEnroll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PasswordVaultEnroll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PasswordVaultEnroll(ctx, req.(*PasswordVaultEnrollRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PasswordVaultRotate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PasswordVaultRotateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PasswordVaultRotate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PasswordVaultRotate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PasswordVaultRotate(ctx, req.(*PasswordVaultRotateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PasswordVaultRemoveFactor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PasswordVaultRemoveFactorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PasswordVaultRemoveFactor(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PasswordVaultRemoveFactor_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PasswordVaultRemoveFactor(ctx, req.(*PasswordVaultRemoveFactorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PasswordVaultRecover_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PasswordVaultRecoverRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PasswordVaultRecover(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PasswordVaultRecover_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PasswordVaultRecover(ctx, req.(*PasswordVaultRecoverRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_PasswordStoreLock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PasswordStoreLockRequest)
 	if err := dec(in); err != nil {
@@ -7528,6 +7722,26 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PasswordStoreUnlock",
 			Handler:    _KeystoreService_PasswordStoreUnlock_Handler,
+		},
+		{
+			MethodName: "PasswordVaultStatus",
+			Handler:    _KeystoreService_PasswordVaultStatus_Handler,
+		},
+		{
+			MethodName: "PasswordVaultEnroll",
+			Handler:    _KeystoreService_PasswordVaultEnroll_Handler,
+		},
+		{
+			MethodName: "PasswordVaultRotate",
+			Handler:    _KeystoreService_PasswordVaultRotate_Handler,
+		},
+		{
+			MethodName: "PasswordVaultRemoveFactor",
+			Handler:    _KeystoreService_PasswordVaultRemoveFactor_Handler,
+		},
+		{
+			MethodName: "PasswordVaultRecover",
+			Handler:    _KeystoreService_PasswordVaultRecover_Handler,
 		},
 		{
 			MethodName: "PasswordStoreLock",

@@ -65,7 +65,6 @@ var (
 	ErrPasswordAccessModeFailed  = errors.New("password: access-mode operation failed")
 	ErrPasswordInvalidMode       = errors.New("password: --mode must be pin_per_operation or session_based")
 	ErrPasswordMissingMode       = errors.New("password: --mode is required")
-	ErrPasswordMissingPIN        = errors.New("password: user PIN is required")
 	ErrPasswordConnectFailed     = errors.New("password: failed to connect to xkmsd")
 
 	// ErrPasswordValuesNotOverIPC indicates --show-passwords was requested
@@ -109,6 +108,11 @@ type PasswordStoreClientService interface {
 	PasswordStoreLock(ctx context.Context) error
 	PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error)
 	PasswordStoreSetAccessMode(ctx context.Context, req *transport.PasswordStoreSetAccessModeRequest) error
+	PasswordVaultStatus(ctx context.Context) (*transport.PasswordVaultStatusResponse, error)
+	PasswordVaultEnroll(ctx context.Context, req *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error)
+	PasswordVaultRotate(ctx context.Context, req *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error)
+	PasswordVaultRemoveFactor(ctx context.Context, req *transport.PasswordVaultRemoveFactorRequest) error
+	PasswordVaultRecover(ctx context.Context, req *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error)
 }
 
 // passwordClientFactory is the function used to create transport clients for
@@ -143,9 +147,9 @@ The store belongs to whoever holds the barrier: the running daemon when one is
 running, the on-disk store directory otherwise. 'list' and 'status' consult
 both in that order and report which answered.
 
-A remote xkmsd server owns the session verbs — 'unlock', 'lock' and
-'access-mode' — and the access mode they configure; those require
---xkmsd-url. It is not where the local store lives.
+A remote xkmsd server owns the session verbs — 'unlock', 'lock',
+'access-mode' and 'vault' — and your personal vault they act on; those
+require --xkmsd-url. It is not where the local store lives.
 
 Examples:
   # Add a password manually
@@ -176,8 +180,11 @@ Examples:
   # Remove a password
   xkey password remove "DatabaseProd"
 
-  # Unlock the password store (session-based access mode)
-  echo 1234 | xkey password unlock --pin-stdin
+  # Enroll a vault passphrase (first time: prints your recovery code once)
+  xkey password vault enroll --passphrase-stdin < passphrase.txt
+
+  # Open your personal session with your vault passphrase
+  xkey password unlock --passphrase-stdin < passphrase.txt
 
   # Lock the password store
   xkey password lock
@@ -324,26 +331,24 @@ Examples:
 // passwordUnlockCmd unlocks the password store session.
 var passwordUnlockCmd = &cobra.Command{
 	Use:   "unlock",
-	Short: "Unlock the password store",
-	Long: `Unlock the password store by providing the user PIN.
+	Short: "Open your personal password session",
+	Long: `Open your personal password session with your vault passphrase.
 
-In session_based access mode, unlocking the store allows subsequent
-password operations without requiring the PIN for each operation.
-The store remains unlocked until explicitly locked or the session expires.
-
-In pin_per_operation mode, this command has no effect since each
-operation requires its own PIN.
+Your personal entries stay sealed until you unlock with one of your own
+vault factors; the session stays open until 'xkey password lock' or until it
+expires. Enroll a passphrase first with 'xkey password vault enroll'; if you
+have lost it, use 'xkey password vault recover' with your recovery code.
 
 This acts on an xkmsd server's session and requires --xkmsd-url.
 
-` + pinUsage + `
+` + vaultPassphraseUsage + `
 
 Examples:
-  # Unlock with the PIN piped on standard input
-  echo 1234 | xkey password unlock --pin-stdin
+  # Unlock with the passphrase piped on standard input
+  xkey password unlock --passphrase-stdin < passphrase.txt
 
-  # Unlock with the PIN from the environment
-  XKEY_PIN=1234 xkey password unlock`,
+  # Unlock with the passphrase from the environment
+  XKEY_VAULT_PASSPHRASE=... xkey password unlock`,
 	RunE: runPasswordUnlock,
 }
 
@@ -351,10 +356,8 @@ Examples:
 var passwordLockCmd = &cobra.Command{
 	Use:   "lock",
 	Short: "Lock the password store",
-	Long: `Lock the password store, ending the current session.
-
-In session_based access mode, locking the store requires the PIN
-to be provided again for subsequent password operations.
+	Long: `Lock the password store, ending your personal session. Your personal
+entries stay sealed until you unlock again with a vault factor.
 
 This acts on an xkmsd server's session and requires --xkmsd-url.
 
@@ -395,8 +398,7 @@ var passwordAccessModeCmd = &cobra.Command{
 	Long: `Set the password store access mode.
 
 Two modes are supported:
-  pin_per_operation  Requires the user PIN for each decrypt operation.
-                     This is the most secure mode.
+  pin_per_operation  Authorizes each decrypt operation individually.
   session_based      A single unlock provides access until the store is
                      explicitly locked. More convenient for batch operations.
 
@@ -406,7 +408,7 @@ Examples:
   # Switch to session-based mode
   xkey password access-mode --mode session_based
 
-  # Switch to per-operation PIN mode
+  # Switch to per-operation authorization
   xkey password access-mode --mode pin_per_operation`,
 	RunE: runPasswordAccessMode,
 }
@@ -819,38 +821,25 @@ func runPasswordType(cmd *cobra.Command, args []string) (err error) {
 	return nil
 }
 
-// runPasswordUnlock executes the password unlock command.
-func runPasswordUnlock(cmd *cobra.Command, args []string) (err error) {
-	pin, err := resolvePINInput(cmd)
+// runPasswordUnlock executes the password unlock command: it opens the
+// caller's personal session with their vault passphrase.
+func runPasswordUnlock(cmd *cobra.Command, args []string) error {
+	passphrase, err := resolveVaultSecret(cmd, vaultPassphraseSource, ErrPasswordMissingPassphrase)
 	if err != nil {
 		return err
 	}
+	defer enclave.Wipe(passphrase)
 
-	if pin == "" {
-		return ErrPasswordMissingPIN
-	}
-
-	client, err := connectPasswordStore()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := client.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+	return withPasswordStore(func(ctx context.Context, client PasswordStoreClientService) error {
+		req := &transport.PasswordStoreUnlockRequest{
+			PasswordVaultCredential: vaultPassphraseCredential(passphrase, ""),
 		}
-	}()
-
-	ctx := context.Background()
-	req := &transport.PasswordStoreUnlockRequest{
-		UserPIN: pin,
-	}
-
-	if err := client.PasswordStoreUnlock(ctx, req); err != nil {
-		return &SentinelCauseError{Sentinel: ErrPasswordUnlockFailed, Cause: err}
-	}
-
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Password store unlocked.")
-	return nil
+		if err := client.PasswordStoreUnlock(ctx, req); err != nil {
+			return &SentinelCauseError{Sentinel: ErrPasswordUnlockFailed, Cause: err}
+		}
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), "Password store unlocked.")
+		return err
+	})
 }
 
 // runPasswordLock executes the password lock command.
@@ -1126,7 +1115,7 @@ func init() {
 	passwordRemoveCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 
 	// password unlock flags.
-	addPINFlags(passwordUnlockCmd)
+	vaultPassphraseSource.addFlags(passwordUnlockCmd)
 
 	// password access-mode flags.
 	passwordAccessModeCmd.Flags().String("mode", "", "Access mode: pin_per_operation or session_based")

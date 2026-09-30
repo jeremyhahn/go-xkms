@@ -322,6 +322,13 @@ var methodPermissions = map[string]permission{
 	"password.status":        {auth.ResourcePasswords, auth.ActionRead},
 	"password.generate":      {auth.ResourcePasswords, auth.ActionGenerate},
 	"password.setAccessMode": {auth.ResourcePasswords, auth.ActionWrite},
+	// The caller's personal vault: reading it is passwords:read, managing
+	// one's own factors is gated with the session verb, passwords:unlock.
+	"password.vault.status":       {auth.ResourcePasswords, auth.ActionRead},
+	"password.vault.enroll":       {auth.ResourcePasswords, auth.ActionUnlock},
+	"password.vault.rotate":       {auth.ResourcePasswords, auth.ActionUnlock},
+	"password.vault.removeFactor": {auth.ResourcePasswords, auth.ActionUnlock},
+	"password.vault.recover":      {auth.ResourcePasswords, auth.ActionUnlock},
 
 	// Platform-sealed store. Secrets sealed here are key-protection
 	// material, so the actions mirror the per-verb keys:* pairs used by

@@ -211,6 +211,16 @@ type PasswordStoreSetAccessModeRequest = pkgtransport.PasswordStoreSetAccessMode
 type PasswordGenerateRequest = pkgtransport.PasswordGenerateRequest
 type PasswordGenerateResponse = pkgtransport.PasswordGenerateResponse
 
+// Personal password vault types.
+type PasswordVaultCredential = pkgtransport.PasswordVaultCredential
+type PasswordVaultFactor = pkgtransport.PasswordVaultFactor
+type PasswordVaultStatusResponse = pkgtransport.PasswordVaultStatusResponse
+type PasswordVaultEnrollRequest = pkgtransport.PasswordVaultEnrollRequest
+type PasswordVaultEnrollResponse = pkgtransport.PasswordVaultEnrollResponse
+type PasswordVaultRotateRequest = pkgtransport.PasswordVaultRotateRequest
+type PasswordVaultRemoveFactorRequest = pkgtransport.PasswordVaultRemoveFactorRequest
+type PasswordVaultRecoverRequest = pkgtransport.PasswordVaultRecoverRequest
+
 // Platform store types.
 type SealStorePutRequest = pkgtransport.SealStorePutRequest
 type SealStoreGetRequest = pkgtransport.SealStoreGetRequest

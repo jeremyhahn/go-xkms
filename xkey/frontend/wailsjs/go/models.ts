@@ -3632,6 +3632,90 @@ export namespace services {
 	        this.password_count = source["password_count"];
 	    }
 	}
+	export class PasswordVaultFactor {
+	    id: string;
+	    factor: string;
+	    label: string;
+	    created_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PasswordVaultFactor(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.factor = source["factor"];
+	        this.label = source["label"];
+	        this.created_at = source["created_at"];
+	    }
+	}
+	export class PasswordVaultEnrollResult {
+	    factor: PasswordVaultFactor;
+	    recovery_code?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PasswordVaultEnrollResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.factor = this.convertValues(source["factor"], PasswordVaultFactor);
+	        this.recovery_code = source["recovery_code"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PasswordVaultStatus {
+	    initialized: boolean;
+	    unlocked: boolean;
+	    factors: PasswordVaultFactor[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PasswordVaultStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.initialized = source["initialized"];
+	        this.unlocked = source["unlocked"];
+	        this.factors = this.convertValues(source["factors"], PasswordVaultFactor);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class PendingEnrollmentInfo {
 	    id: string;
 	    fingerprint: string;

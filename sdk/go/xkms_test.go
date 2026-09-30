@@ -1134,8 +1134,8 @@ func (m *mockXKMSService) PasswordList(ctx context.Context, req *transport.Passw
 	return nil, nil
 }
 
-func (m *mockXKMSService) PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) error {
-	return nil
+func (m *mockXKMSService) PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) (*transport.PasswordGetResponse, error) {
+	return nil, nil
 }
 
 func (m *mockXKMSService) PasswordDelete(ctx context.Context, req *transport.PasswordDeleteRequest) error {
@@ -1159,6 +1159,26 @@ func (m *mockXKMSService) PasswordStoreSetAccessMode(ctx context.Context, req *t
 }
 
 func (m *mockXKMSService) PasswordGenerate(ctx context.Context, req *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) PasswordVaultStatus(context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) PasswordVaultEnroll(context.Context, *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) PasswordVaultRotate(context.Context, *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) PasswordVaultRemoveFactor(context.Context, *transport.PasswordVaultRemoveFactorRequest) error {
+	return nil
+}
+
+func (m *mockXKMSService) PasswordVaultRecover(context.Context, *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
 	return nil, nil
 }
 

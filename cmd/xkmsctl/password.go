@@ -36,8 +36,9 @@ var passwordCmd = &cobra.Command{
 	Long: `Manage the server-side static password store.
 
 Password entries are encrypted at rest behind the cryptographic barrier.
-The store supports per-operation PIN authorization or session-based
-access; see "password access-mode".
+Your personal entries are additionally sealed with a key only your own
+vault factors unwrap: enroll one with "password vault enroll", then open
+your session with "password unlock".
 
 Subcommands:
   add          Add a new password entry
@@ -45,8 +46,9 @@ Subcommands:
   list         List password entries
   update       Update a password entry
   delete       Delete a password entry
-  unlock       Unlock the password store
+  unlock       Open your personal session with a vault factor
   lock         Lock the password store
+  vault        Manage your personal vault factors and recovery
   status       Show password store status
   access-mode  Set the store access mode
   generate     Generate a random password`,
@@ -264,34 +266,39 @@ Example:
 	},
 }
 
-// passwordUnlockCmd unlocks the password store.
+// passwordUnlockCmd opens the caller's personal password session.
 var passwordUnlockCmd = &cobra.Command{
 	Use:   "unlock",
-	Short: "Unlock the password store",
-	Long: `Unlock the password store for session-based access.
+	Short: "Open your personal password session",
+	Long: `Open your personal password session with your vault passphrase.
 
-The user PIN is taken from --user-pin, from stdin when --user-pin is
-"-", or from an interactive no-echo prompt when the flag is omitted.
+The passphrase is taken from --passphrase, from stdin when --passphrase is
+"-", or from an interactive no-echo prompt when the flag is omitted. Enroll
+a passphrase first with "password vault enroll"; if you have lost it, use
+"password vault recover" with your recovery code.
 
-Example:
-  xkmsctl password unlock`,
+Examples:
+  xkmsctl password unlock
+  printf '%s' "$PASSPHRASE" | xkmsctl password unlock --passphrase -`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
 		fr := newFlagReader(cmd)
-		userPIN := fr.String("user-pin")
+		passphraseFlag := fr.String("passphrase")
 		if err := fr.Err(); err != nil {
 			handleError(err)
 			return
 		}
-		pin, err := resolvePIN(userPIN, "User PIN")
+		passphrase, err := resolveVaultPassphrase(passphraseFlag)
 		if err != nil {
 			handleError(err)
 			return
 		}
 
-		passwordUnlock(cfg, printer, &client.PasswordStoreUnlockRequest{UserPIN: pin})
+		passwordUnlock(cfg, printer, &client.PasswordStoreUnlockRequest{
+			PasswordVaultCredential: vaultPassphraseCredential(passphrase, ""),
+		})
 	},
 }
 
@@ -333,7 +340,7 @@ var passwordAccessModeCmd = &cobra.Command{
 	Long: `Set the password store access-control strategy.
 
 Valid modes:
-  pin_per_operation  Require the user PIN on every password operation
+  pin_per_operation  Authorize every password operation individually
   session_based      Unlock once per session ("password unlock")
 
 Example:
@@ -565,14 +572,14 @@ func passwordUnlock(cfg *Config, printer *Printer, req *client.PasswordStoreUnlo
 	}
 	defer cleanup()
 
-	printVerbose("Unlocking password store")
+	printVerbose("Opening personal password session")
 
 	if err := cl.PasswordStoreUnlock(context.Background(), req); err != nil {
 		handleError(&WrappedError{Sentinel: ErrUnlockPasswordStoreFailed, Err: err})
 		return
 	}
 
-	if err := printer.PrintSuccess("Password store unlocked"); err != nil {
+	if err := printer.PrintSuccess("Personal password session unlocked"); err != nil {
 		handleError(err)
 	}
 }
@@ -755,7 +762,7 @@ func init() {
 	passwordDeleteCmd.Flags().String("tenant-id", "", "tenant scope for the entry")
 
 	// password unlock flags
-	passwordUnlockCmd.Flags().String("user-pin", "", "user PIN ('-' reads stdin; prompted when omitted)")
+	passwordUnlockCmd.Flags().String("passphrase", "", "vault passphrase ('-' reads stdin; prompted when omitted)")
 
 	// password generate flags
 	passwordGenerateCmd.Flags().Int("length", 0, "password length (0 = server default)")

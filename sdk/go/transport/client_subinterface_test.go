@@ -310,6 +310,26 @@ func (s *stubClient) PasswordGenerate(context.Context, *PasswordGenerateRequest)
 	panic("stub")
 }
 
+func (s *stubClient) PasswordVaultStatus(context.Context) (*PasswordVaultStatusResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) PasswordVaultEnroll(context.Context, *PasswordVaultEnrollRequest) (*PasswordVaultEnrollResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) PasswordVaultRotate(context.Context, *PasswordVaultRotateRequest) (*PasswordVaultEnrollResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) PasswordVaultRemoveFactor(context.Context, *PasswordVaultRemoveFactorRequest) error {
+	panic("stub")
+}
+
+func (s *stubClient) PasswordVaultRecover(context.Context, *PasswordVaultRecoverRequest) (*PasswordVaultEnrollResponse, error) {
+	panic("stub")
+}
+
 func (s *stubClient) SealStorePut(context.Context, *SealStorePutRequest) error {
 	panic("stub")
 }

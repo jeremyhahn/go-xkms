@@ -43,6 +43,16 @@ type mockPasswordClient struct {
 	genResp    *transport.PasswordGenerateResponse
 	genErr     error
 
+	vaultStatusResp  *transport.PasswordVaultStatusResponse
+	vaultStatusErr   error
+	vaultEnrollResp  *transport.PasswordVaultEnrollResponse
+	vaultEnrollErr   error
+	vaultRotateResp  *transport.PasswordVaultEnrollResponse
+	vaultRotateErr   error
+	vaultRemoveErr   error
+	vaultRecoverResp *transport.PasswordVaultEnrollResponse
+	vaultRecoverErr  error
+
 	// Captured requests for assertion.
 	gotAddReq     *transport.PasswordAddRequest
 	gotGetReq     *transport.PasswordGetRequest
@@ -52,6 +62,10 @@ type mockPasswordClient struct {
 	gotUnlockReq  *transport.PasswordStoreUnlockRequest
 	gotSetModeReq *transport.PasswordStoreSetAccessModeRequest
 	gotGenReq     *transport.PasswordGenerateRequest
+	gotEnrollReq  *transport.PasswordVaultEnrollRequest
+	gotRotateReq  *transport.PasswordVaultRotateRequest
+	gotRemoveReq  *transport.PasswordVaultRemoveFactorRequest
+	gotRecoverReq *transport.PasswordVaultRecoverRequest
 	lockCalled    bool
 }
 
@@ -102,6 +116,30 @@ func (m *mockPasswordClient) PasswordStoreSetAccessMode(_ context.Context, req *
 func (m *mockPasswordClient) PasswordGenerate(_ context.Context, req *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error) {
 	m.gotGenReq = req
 	return m.genResp, m.genErr
+}
+
+func (m *mockPasswordClient) PasswordVaultStatus(_ context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	return m.vaultStatusResp, m.vaultStatusErr
+}
+
+func (m *mockPasswordClient) PasswordVaultEnroll(_ context.Context, req *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	m.gotEnrollReq = req
+	return m.vaultEnrollResp, m.vaultEnrollErr
+}
+
+func (m *mockPasswordClient) PasswordVaultRotate(_ context.Context, req *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	m.gotRotateReq = req
+	return m.vaultRotateResp, m.vaultRotateErr
+}
+
+func (m *mockPasswordClient) PasswordVaultRemoveFactor(_ context.Context, req *transport.PasswordVaultRemoveFactorRequest) error {
+	m.gotRemoveReq = req
+	return m.vaultRemoveErr
+}
+
+func (m *mockPasswordClient) PasswordVaultRecover(_ context.Context, req *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	m.gotRecoverReq = req
+	return m.vaultRecoverResp, m.vaultRecoverErr
 }
 
 func newPasswordConfig(mock *mockPasswordClient) *Config {
@@ -210,7 +248,7 @@ func TestPasswordGetCmd_UserPINFlagRemoved(t *testing.T) {
 func TestPasswordCmd_Registered(t *testing.T) {
 	for _, verb := range []string{
 		"add", "get", "list", "update", "delete",
-		"unlock", "lock", "status", "access-mode", "generate",
+		"unlock", "lock", "status", "access-mode", "generate", "vault",
 	} {
 		if _, _, err := rootCmd.Find([]string{"password", verb}); err != nil {
 			t.Errorf("password %s missing: %v", verb, err)

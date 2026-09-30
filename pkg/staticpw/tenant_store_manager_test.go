@@ -150,10 +150,25 @@ func scoped(t *testing.T, mgr *TenantPasswordStoreManager, tenantID, userID stri
 	return s
 }
 
-// unlocked opens userID's session in tenantID and returns its store.
+// pass returns userID's test passphrase credential.
+func pass(userID string) VaultCredential {
+	return VaultCredential{Type: FactorPassphrase, Secret: []byte("passphrase-of-" + userID)}
+}
+
+// unlocked opens userID's session in tenantID -- enrolling its passphrase
+// on first use -- and returns its store.
 func unlocked(t *testing.T, mgr *TenantPasswordStoreManager, tenantID, userID string) *ScopedStore {
 	t.Helper()
-	require.NoError(t, mgr.UnlockUser(tenantID, userID))
+	ctx := context.Background()
+	status, err := mgr.VaultStatus(ctx, tenantID, userID)
+	require.NoError(t, err)
+	switch {
+	case !status.Initialized:
+		_, err = mgr.EnrollFactor(ctx, tenantID, userID, pass(userID))
+		require.NoError(t, err)
+	case !status.Unlocked:
+		require.NoError(t, mgr.UnlockUser(ctx, tenantID, userID, pass(userID)))
+	}
 	s := scoped(t, mgr, tenantID, userID)
 	require.False(t, s.PersonalLocked())
 	return s
@@ -255,12 +270,12 @@ func TestUserSessions_AreIndependent(t *testing.T) {
 	mgr, reg := newTestManager(t)
 	registerAndInitTenant(t, reg, "tenant-a")
 
-	require.NoError(t, mgr.UnlockUser("tenant-a", "alice"))
+	unlocked(t, mgr, "tenant-a", "alice")
 	bobLocked, err := mgr.IsUserLocked("tenant-a", "bob")
 	require.NoError(t, err)
 	assert.True(t, bobLocked, "alice unlocking must not unlock bob")
 
-	require.NoError(t, mgr.UnlockUser("tenant-a", "bob"))
+	unlocked(t, mgr, "tenant-a", "bob")
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
 	bobLocked, err = mgr.IsUserLocked("tenant-a", "bob")
 	require.NoError(t, err)
@@ -299,15 +314,17 @@ func TestUserSessions_LockHidesPersonalEntries(t *testing.T) {
 func TestUserSessions_Errors(t *testing.T) {
 	mgr, reg := newTestManager(t)
 	registerAndInitTenant(t, reg, "tenant-a")
+	ctx := context.Background()
 
-	require.NoError(t, mgr.UnlockUser("tenant-a", "alice"))
-	assert.ErrorIs(t, mgr.UnlockUser("tenant-a", "alice"), ErrStoreNotLocked)
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass("alice")), ErrVaultNotInitialized)
+	unlocked(t, mgr, "tenant-a", "alice")
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass("alice")), ErrStoreNotLocked)
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
 	assert.ErrorIs(t, mgr.LockUser("tenant-a", "alice"), ErrStoreAlreadyLocked)
 
-	assert.ErrorIs(t, mgr.UnlockUser("tenant-a", "bad/user"), ErrInvalidUserID)
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "bad/user", pass("x")), ErrInvalidUserID)
 	assert.ErrorIs(t, mgr.LockUser("tenant-a", ""), ErrInvalidUserID)
-	assert.ErrorIs(t, mgr.UnlockUser("nonexistent", "alice"), seal.ErrTenantNotFound)
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "nonexistent", "alice", pass("alice")), seal.ErrTenantNotFound)
 	assert.ErrorIs(t, mgr.LockUser("nonexistent", "alice"), seal.ErrTenantNotFound)
 	_, err := mgr.IsUserLocked("nonexistent", "alice")
 	assert.ErrorIs(t, err, seal.ErrTenantNotFound)
@@ -316,12 +333,12 @@ func TestUserSessions_Errors(t *testing.T) {
 func TestUserSessions_SealingEndsThem(t *testing.T) {
 	mgr, reg := newTestManager(t)
 	registerAndInitTenant(t, reg, "tenant-a")
-	require.NoError(t, mgr.UnlockUser("tenant-a", "alice"))
+	unlocked(t, mgr, "tenant-a", "alice")
 
 	require.NoError(t, reg.SealTenant("tenant-a"))
 	_, err := mgr.ResolveScopedStore("tenant-a", "alice")
 	assert.ErrorIs(t, err, seal.ErrTenantSealed)
-	assert.ErrorIs(t, mgr.UnlockUser("tenant-a", "alice"), seal.ErrTenantSealed)
+	assert.ErrorIs(t, mgr.UnlockUser(context.Background(), "tenant-a", "alice", pass("alice")), seal.ErrTenantSealed)
 	locked, err := mgr.IsUserLocked("tenant-a", "alice")
 	require.NoError(t, err)
 	assert.True(t, locked)
@@ -436,7 +453,7 @@ func TestClose_ClosesStoresAndEndsSessions(t *testing.T) {
 
 	require.NoError(t, mgr.Close())
 	assert.ErrorIs(t, s.shared.Add(entry("late", true)), ErrStoreClosed)
-	assert.ErrorIs(t, s.personal.Add(entry("late", false)), ErrStoreClosed)
+	assert.Error(t, s.personal.Add(entry("late", false)), "the personal store writes through the closed tenant barrier")
 	locked, err := mgr.IsUserLocked("tenant-a", "alice")
 	require.NoError(t, err)
 	assert.True(t, locked, "Close ends every session")

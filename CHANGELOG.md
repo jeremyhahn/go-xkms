@@ -19,8 +19,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - It is xkms-owned and `ScopeSelf`, and is granted to Admin and Owner.
   - It is checked below the transport gate through `XKMSService.AuthorizeCaller`.
 
+- **Personal password vault: personal entries are sealed with each user's own key.**
+  - Each user's personal entries are encrypted with a random per-user DEK. The DEK is wrapped under factors the user controls:
+    - a passphrase (Argon2id, 64 MiB, t=3, p=4);
+    - a passkey (FIDO2 hmac-secret / WebAuthn PRF output, HKDF-SHA256);
+    - a one-time recovery code, shown once on first enrollment and replaced on every recovery.
+  - The tenant barrier key alone reads none of it.
+  - Rotating a factor re-wraps the DEK; the DEK never changes.
+  - Every surface carries it:
+    - gRPC `PasswordVault{Status,Enroll,Rotate,RemoveFactor,Recover}`;
+    - REST `/api/v1/passwords/vault[...]`;
+    - MCP `password.vault.*`;
+    - every client transport and the Go and TS SDKs;
+    - `xkmsctl password vault ...` and `xkey password vault ...`;
+    - the xkey GUI vault panel.
+  - Clients unlock with a passphrase today; passkey factors are served by the API, but no client can drive them yet.
+
+### Removed
+
+- **The deployment-wide user PIN no longer unlocks the password store.** `PasswordStoreUnlockRequest` carries a vault credential instead of `UserPIN`, and `ErrPasswordStoreUserPINRequired` / `ErrPasswordStoreUserPINNotProvisioned` are removed. The PIN remains for the features that use it.
+- **The unwired team-sharing code:** REST team handlers and DTOs, `TenantDAOMiddleware`, `staticpw.TenantDAOFactory`, the password `DAOStore`/`PasswordEntity` and `TeamScopedStore`. xkey's local team list is kept.
+- **The xkey GUI's `TryAutoUnlock`.**
+
 ### Changed
 
+- **SSH storage uses the scope layout:** `{tenant}/ssh/shared/`, `{tenant}/ssh/users/{subject}/`, `{tenant}/ssh/services/{owner}/`. The platform partition is `system/`. No migration.
+- **The password service layer:**
+  - `PasswordUpdate` returns the updated entry, so gRPC answers a rename with the new ID;
+  - REST and MCP `generate` go through it, with a `Charset` field.
 - **SSH scope binding follows `pkg/scope`.**
   - `scope=user` assets are reachable only by their owner, now including system-tenant callers.
   - `scope=service` assets are reachable only with `ssh:service`, in the caller's own tenant, for any workload owner.

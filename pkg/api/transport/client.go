@@ -409,11 +409,34 @@ type PasswordService interface {
 	// PasswordDelete deletes a password entry.
 	PasswordDelete(ctx context.Context, req *PasswordDeleteRequest) error
 
-	// PasswordStoreUnlock unlocks the password store.
+	// PasswordStoreUnlock opens the caller's personal session with one of the
+	// caller's own vault factors (a passphrase or a passkey).
 	PasswordStoreUnlock(ctx context.Context, req *PasswordStoreUnlockRequest) error
 
-	// PasswordStoreLock locks the password store.
+	// PasswordStoreLock closes the caller's personal session.
 	PasswordStoreLock(ctx context.Context) error
+
+	// PasswordVaultStatus describes the caller's personal vault: whether a
+	// factor is enrolled, whether the session is open, and the factors (a
+	// passkey's credential ID and PRF salt are what a client evaluates
+	// hmac-secret with before unlocking).
+	PasswordVaultStatus(ctx context.Context) (*PasswordVaultStatusResponse, error)
+
+	// PasswordVaultEnroll enrolls a passphrase or passkey. The first
+	// enrollment initializes the vault and returns the one-time recovery
+	// code; later enrollments need the caller's session open.
+	PasswordVaultEnroll(ctx context.Context, req *PasswordVaultEnrollRequest) (*PasswordVaultEnrollResponse, error)
+
+	// PasswordVaultRotate re-wraps the caller's key under a new secret for a
+	// factor of the same type.
+	PasswordVaultRotate(ctx context.Context, req *PasswordVaultRotateRequest) (*PasswordVaultEnrollResponse, error)
+
+	// PasswordVaultRemoveFactor removes one of the caller's factors.
+	PasswordVaultRemoveFactor(ctx context.Context, req *PasswordVaultRemoveFactorRequest) error
+
+	// PasswordVaultRecover uses the caller's one-time recovery code to enroll
+	// a new factor, and returns the replacement code.
+	PasswordVaultRecover(ctx context.Context, req *PasswordVaultRecoverRequest) (*PasswordVaultEnrollResponse, error)
 
 	// PasswordStoreStatus returns the password store status.
 	PasswordStoreStatus(ctx context.Context) (*PasswordStoreStatusResponse, error)

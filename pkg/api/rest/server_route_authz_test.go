@@ -127,6 +127,11 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodPost, "/api/v1/passwords/lock", "passwords", "lock"},
 	{http.MethodGet, "/api/v1/passwords/status", "passwords", "read"},
 	{http.MethodPost, "/api/v1/passwords/generate", "passwords", "generate"},
+	{http.MethodGet, "/api/v1/passwords/vault", "passwords", "read"},
+	{http.MethodPost, "/api/v1/passwords/vault/factors", "passwords", "unlock"},
+	{http.MethodPut, "/api/v1/passwords/vault/factors/f1", "passwords", "unlock"},
+	{http.MethodDelete, "/api/v1/passwords/vault/factors/f1", "passwords", "unlock"},
+	{http.MethodPost, "/api/v1/passwords/vault/recover", "passwords", "unlock"},
 
 	// Credentials — the MCP credentials.* methods.
 	{http.MethodPost, "/api/v1/credentials/submit", "credentials", "submit"},

@@ -296,8 +296,8 @@ func (m *mockService) PasswordList(ctx context.Context, req *PasswordListRequest
 	return nil, nil
 }
 
-func (m *mockService) PasswordUpdate(ctx context.Context, req *PasswordUpdateRequest) error {
-	return nil
+func (m *mockService) PasswordUpdate(ctx context.Context, req *PasswordUpdateRequest) (*PasswordGetResponse, error) {
+	return nil, nil
 }
 
 func (m *mockService) PasswordDelete(ctx context.Context, req *PasswordDeleteRequest) error {
@@ -321,6 +321,26 @@ func (m *mockService) PasswordStoreSetAccessMode(ctx context.Context, req *Passw
 }
 
 func (m *mockService) PasswordGenerate(ctx context.Context, req *PasswordGenerateRequest) (*PasswordGenerateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PasswordVaultStatus(context.Context) (*PasswordVaultStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PasswordVaultEnroll(context.Context, *PasswordVaultEnrollRequest) (*PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PasswordVaultRotate(context.Context, *PasswordVaultRotateRequest) (*PasswordVaultEnrollResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PasswordVaultRemoveFactor(context.Context, *PasswordVaultRemoveFactorRequest) error {
+	return nil
+}
+
+func (m *mockService) PasswordVaultRecover(context.Context, *PasswordVaultRecoverRequest) (*PasswordVaultEnrollResponse, error) {
 	return nil, nil
 }
 

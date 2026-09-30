@@ -1270,6 +1270,43 @@ var (
 	// ErrGeneratePasswordFailed is the sentinel error "failed to generate password".
 	ErrGeneratePasswordFailed = errors.New("failed to generate password")
 
+	// Personal password vault errors
+
+	// ErrVaultPassphraseRequired is returned when no vault passphrase could
+	// be resolved from the flag, stdin, or the interactive prompt.
+	ErrVaultPassphraseRequired = errors.New("vault passphrase is required")
+
+	// ErrVaultPassphraseMismatch is returned when the interactively
+	// confirmed new passphrase does not match the first entry.
+	ErrVaultPassphraseMismatch = errors.New("vault passphrases do not match")
+
+	// ErrVaultRecoveryCodeRequired is returned when no recovery code could
+	// be resolved from the flag, stdin, or the interactive prompt.
+	ErrVaultRecoveryCodeRequired = errors.New("vault recovery code is required")
+
+	// ErrVaultFactorIDRequired is returned when a vault verb that acts on
+	// one factor is not given --factor-id.
+	ErrVaultFactorIDRequired = errors.New("vault factor id is required (--factor-id; see \"password vault status\")")
+
+	// ErrVaultSingleStdin is returned when more than one secret flag is
+	// "-": standard input can carry only one secret per invocation.
+	ErrVaultSingleStdin = errors.New("only one of --recovery-code and --passphrase may read standard input (\"-\")")
+
+	// ErrVaultStatusFailed is the sentinel error "failed to get vault status".
+	ErrVaultStatusFailed = errors.New("failed to get vault status")
+
+	// ErrVaultEnrollFailed is the sentinel error "failed to enroll vault factor".
+	ErrVaultEnrollFailed = errors.New("failed to enroll vault factor")
+
+	// ErrVaultRotateFailed is the sentinel error "failed to rotate vault factor".
+	ErrVaultRotateFailed = errors.New("failed to rotate vault factor")
+
+	// ErrVaultRemoveFactorFailed is the sentinel error "failed to remove vault factor".
+	ErrVaultRemoveFactorFailed = errors.New("failed to remove vault factor")
+
+	// ErrVaultRecoverFailed is the sentinel error "failed to recover vault".
+	ErrVaultRecoverFailed = errors.New("failed to recover vault")
+
 	// Platform store errors
 
 	// ErrPlatformSecretNameRequired is returned when a platform secret name is missing.

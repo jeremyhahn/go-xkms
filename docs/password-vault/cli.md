@@ -18,12 +18,39 @@ until you unlock your own session (shared entries need no unlock; the session
 is per user, so it neither opens nor closes anyone else's):
 
 ```
-xkmsctl password unlock --user-pin -
+xkmsctl password unlock --passphrase -
 xkmsctl password status -o json
 xkmsctl password lock
 ```
 
-`--user-pin` accepts `-` for stdin and prompts when omitted.
+`--passphrase` is your own vault passphrase (not a deployment PIN). It
+accepts `-` for stdin and prompts without echo when omitted.
+
+## `password vault`
+
+Your personal entries are sealed with your own key, wrapped under the
+factors you enroll. The first enrollment creates the vault, opens your
+session and prints a one-time **recovery code**: store it immediately, it is
+never shown again.
+
+| Verb | Flags | Does |
+|---|---|---|
+| `vault status` | | whether your vault exists and is unlocked, and your factors (ID, type, label) |
+| `vault enroll` | `--passphrase <v\|->`, `--label` | enroll a passphrase; the first enrollment prints the recovery code; later ones need your session unlocked |
+| `vault rotate` | `--factor-id`, `--passphrase <v\|->`, `--label` | replace a passphrase with a new one; the old one stops working, your entries are untouched |
+| `vault remove` | `--factor-id` | remove a factor; the last passphrase or passkey and the recovery code cannot be removed |
+| `vault recover` | `--recovery-code <v\|->`, `--passphrase <v\|->`, `--label` | lost your factors: enroll a new passphrase with the recovery code, which is replaced by a new one (printed once) |
+
+A new passphrase is asked twice when prompted; at most one flag may read
+stdin. Passkey enrollment and unlock are served by the API (see
+[`api.md`](api.md)) but not yet by this CLI.
+
+```
+xkmsctl password vault enroll --label laptop
+xkmsctl password vault status -o json
+xkmsctl password vault rotate --factor-id 3fa2c1d09b7e4a55
+xkmsctl password vault recover --recovery-code - < code.txt
+```
 
 ## `password add <name>`
 
@@ -130,7 +157,7 @@ now, and which access mode is in force.
 
 ## Exit codes
 
-`0` on success. Non-zero for a locked store, a missing or wrong PIN, or an
+`0` on success. Non-zero for a locked session, a missing or wrong credential, or an
 unknown ID. An entry outside your scope reports as **not found**, not
 forbidden — so a 404 here is not proof the entry does not exist somewhere.
 

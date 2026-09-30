@@ -2795,7 +2795,7 @@ func (t *Transport) PasswordStoreUnlock(ctx context.Context, req *transport.Pass
 	}
 
 	pbReq := &pb.PasswordStoreUnlockRequest{
-		Pin: req.UserPIN,
+		Credential: pbconv.VaultCredentialToPB(req.PasswordVaultCredential),
 	}
 
 	_, err := t.client.PasswordStoreUnlock(ctx, pbReq)
@@ -2862,6 +2862,7 @@ func (t *Transport) PasswordGenerate(ctx context.Context, req *transport.Passwor
 		Lower:   req.Lower,
 		Digits:  req.Digits,
 		Symbols: req.Symbols,
+		Charset: req.Charset,
 	}
 
 	resp, err := t.client.PasswordGenerate(ctx, pbReq)
@@ -2872,6 +2873,49 @@ func (t *Transport) PasswordGenerate(ctx context.Context, req *transport.Passwor
 	return &transport.PasswordGenerateResponse{
 		Password: resp.Password,
 	}, nil
+}
+
+// Personal-vault operations are served by pbconv.PasswordVaultClient, shared
+// with the Unix-socket transport, once this transport holds a connection.
+
+// PasswordVaultStatus describes the caller's personal vault.
+func (t *Transport) PasswordVaultStatus(ctx context.Context) (*transport.PasswordVaultStatusResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.PasswordVaultClient{Client: t.client}.PasswordVaultStatus(ctx)
+}
+
+// PasswordVaultEnroll enrolls a passphrase or passkey on the caller's vault.
+func (t *Transport) PasswordVaultEnroll(ctx context.Context, req *transport.PasswordVaultEnrollRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.PasswordVaultClient{Client: t.client}.PasswordVaultEnroll(ctx, req)
+}
+
+// PasswordVaultRotate replaces the secret of one of the caller's factors.
+func (t *Transport) PasswordVaultRotate(ctx context.Context, req *transport.PasswordVaultRotateRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.PasswordVaultClient{Client: t.client}.PasswordVaultRotate(ctx, req)
+}
+
+// PasswordVaultRemoveFactor removes one of the caller's factors.
+func (t *Transport) PasswordVaultRemoveFactor(ctx context.Context, req *transport.PasswordVaultRemoveFactorRequest) error {
+	if t.client == nil {
+		return ErrNotConnected
+	}
+	return pbconv.PasswordVaultClient{Client: t.client}.PasswordVaultRemoveFactor(ctx, req)
+}
+
+// PasswordVaultRecover uses the caller's recovery code to enroll a new factor.
+func (t *Transport) PasswordVaultRecover(ctx context.Context, req *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.PasswordVaultClient{Client: t.client}.PasswordVaultRecover(ctx, req)
 }
 
 // ==================== Platform Store Operations ====================

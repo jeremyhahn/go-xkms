@@ -1,6 +1,6 @@
 # Static Passwords — Engineering
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
 
 See [architecture.md](architecture.md) for the store hierarchy and the
 "store location vs. session state" split before reading this document.
@@ -107,11 +107,17 @@ func (s *StaticPasswordService) ImportPasswords(params ImportParams) (*ImportRes
 func (s *StaticPasswordService) GetSupportedImportFormats() []string
 
 // Session (talks to an xkmsd server via transport.Client, same as the CLI)
-func (s *StaticPasswordService) Unlock(pin string) error
+func (s *StaticPasswordService) Unlock(passphrase string) error
 func (s *StaticPasswordService) Lock() error
 func (s *StaticPasswordService) GetStoreStatus() (*PasswordStoreStatus, error)
 func (s *StaticPasswordService) SetAccessMode(mode string) error
-func (s *StaticPasswordService) TryAutoUnlock() error
+
+// Personal vault (staticpw_vault.go)
+func (s *StaticPasswordService) VaultStatus() (*PasswordVaultStatus, error)
+func (s *StaticPasswordService) EnrollPassphrase(passphrase, label string) (*PasswordVaultEnrollResult, error)
+func (s *StaticPasswordService) RotatePassphrase(factorID, passphrase, label string) (*PasswordVaultEnrollResult, error)
+func (s *StaticPasswordService) RemoveVaultFactor(factorID string) error
+func (s *StaticPasswordService) RecoverWithPassphrase(recoveryCode, passphrase, label string) (*PasswordVaultEnrollResult, error)
 ```
 
 ### Encrypted backup format (go-xkms#1202)
@@ -201,7 +207,7 @@ type constants shared with the extension protocol.
 | `ErrPasswordTypeFailed` | `type`/`touch` IPC failure |
 | `ErrPasswordUnlockFailed`, `ErrPasswordLockFailed`, `ErrPasswordStatusFailed`, `ErrPasswordAccessModeFailed` | Session verb failures against `xkmsd` |
 | `ErrPasswordInvalidMode`, `ErrPasswordMissingMode` | `access-mode` argument validation |
-| `ErrPasswordMissingPIN` | `unlock` called with no `--pin` |
+| `ErrPasswordMissingPassphrase`, `ErrPasswordPassphraseStdinEmpty` | `unlock` or a `vault` verb with no passphrase |
 | `ErrPasswordConnectFailed` | Could not connect to the `xkmsd` session server |
 | `ErrPasswordValuesNotOverIPC` | `--show-passwords` requested against the daemon; re-run with `--source disk` |
 

@@ -691,6 +691,15 @@ var goldenMethodPermissions = map[string]string{
 	"password.unlock":        "passwords:unlock",
 	"password.update":        "passwords:write",
 
+	// Personal vault: reading it is passwords:read, managing one's own
+	// factors is gated with the session verb, passwords:unlock -- the pairs
+	// of gRPC's PasswordVault* RPCs and REST's /passwords/vault routes.
+	"password.vault.status":       "passwords:read",
+	"password.vault.enroll":       "passwords:unlock",
+	"password.vault.rotate":       "passwords:unlock",
+	"password.vault.removeFactor": "passwords:unlock",
+	"password.vault.recover":      "passwords:unlock",
+
 	// Platform-sealed store — pkg/api/mcp/handlers_seal_store.go. Same
 	// per-verb keys:* pairs as the PKCS#11 remote-state RPCs on every other
 	// transport, since both persist key-protection material.

@@ -503,6 +503,16 @@ type (
 	PasswordGenerateRequest           = transport.PasswordGenerateRequest
 	PasswordGenerateResponse          = transport.PasswordGenerateResponse
 
+	// Personal password vault
+	PasswordVaultCredential          = transport.PasswordVaultCredential
+	PasswordVaultFactor              = transport.PasswordVaultFactor
+	PasswordVaultStatusResponse      = transport.PasswordVaultStatusResponse
+	PasswordVaultEnrollRequest       = transport.PasswordVaultEnrollRequest
+	PasswordVaultEnrollResponse      = transport.PasswordVaultEnrollResponse
+	PasswordVaultRotateRequest       = transport.PasswordVaultRotateRequest
+	PasswordVaultRemoveFactorRequest = transport.PasswordVaultRemoveFactorRequest
+	PasswordVaultRecoverRequest      = transport.PasswordVaultRecoverRequest
+
 	// Platform Store Operations
 	SealStorePutRequest     = transport.SealStorePutRequest
 	SealStoreGetRequest     = transport.SealStoreGetRequest

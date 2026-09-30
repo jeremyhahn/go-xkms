@@ -208,12 +208,13 @@ func TestPasswordUnlockCmd_Success(t *testing.T) {
 	t.Cleanup(func() { resetCmdFlags(t, passwordUnlockCmd) })
 	mock := &mockPasswordClient{}
 	withGlobalConfig(t, newPasswordConfig(mock))
-	_ = passwordUnlockCmd.Flags().Set("user-pin", "1234")
+	_ = passwordUnlockCmd.Flags().Set("passphrase", "correct horse")
 
 	captureStdout(t, func() {
 		passwordUnlockCmd.Run(passwordUnlockCmd, nil)
 	})
-	if mock.gotUnlockReq == nil || mock.gotUnlockReq.UserPIN != "1234" {
+	if mock.gotUnlockReq == nil || mock.gotUnlockReq.Factor != "passphrase" ||
+		mock.gotUnlockReq.Passphrase != "correct horse" {
 		t.Errorf("PasswordStoreUnlock request mismatch: %+v", mock.gotUnlockReq)
 	}
 }
@@ -222,7 +223,7 @@ func TestPasswordUnlockCmd_Error(t *testing.T) {
 	resetCmdFlags(t, passwordUnlockCmd)
 	t.Cleanup(func() { resetCmdFlags(t, passwordUnlockCmd) })
 	withGlobalConfig(t, newPasswordConfig(&mockPasswordClient{unlockErr: errPasswordRunBoom}))
-	_ = passwordUnlockCmd.Flags().Set("user-pin", "1234")
+	_ = passwordUnlockCmd.Flags().Set("passphrase", "correct horse")
 
 	code := captureExit(t, func() {
 		passwordUnlockCmd.Run(passwordUnlockCmd, nil)

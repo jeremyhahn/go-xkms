@@ -1,6 +1,6 @@
 # Static Passwords — User Guide
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
 
 ## Store a password
 
@@ -69,10 +69,11 @@ These three verbs manage a password session on a remote `xkmsd` server, not
 the local store's location:
 
 ```bash
-# Switch to session mode: one PIN entry unlocks everything until locked
-xkey password access-mode --mode session_based --xkmsd-url https://xkms.example.com
+# First time: create your personal vault (prints a one-time recovery code)
+XKEY_VAULT_PASSPHRASE=... xkey password vault enroll --xkmsd-url https://xkms.example.com
 
-XKEY_PIN="1234" xkey password unlock --xkmsd-url https://xkms.example.com
+# Unlock your personal entries with your own passphrase until you lock
+XKEY_VAULT_PASSPHRASE=... xkey password unlock --xkmsd-url https://xkms.example.com
 xkey password lock --xkmsd-url https://xkms.example.com
 
 # See the session's access mode and lock state

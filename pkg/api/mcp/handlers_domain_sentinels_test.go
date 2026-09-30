@@ -169,11 +169,15 @@ func TestInvokeMethod_BarrierDomainSentinel_AlreadyInitialized(t *testing.T) {
 // InvokeMethod dispatch. It used to be refused as cross-tenant: the system
 // tenant had no password store of its own.
 func TestInvokeMethod_PasswordUnlock_SystemTenant(t *testing.T) {
-	s := newPasswordServer(t, unlockTestUserPIN)
+	s := newPasswordServer(t)
 	s.authorizer = auth.NewAuthorizer(nil)
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "webauthn-user", TenantID: "system"})
+	s.unlock(t, ctx)
+	s.lock(t, ctx)
+	passkey, err := json.Marshal(ctxPasskey(ctx))
+	require.NoError(t, err)
 
-	result, err := s.InvokeMethod(ctx, "password.unlock", json.RawMessage(`{"user_pin":"`+unlockTestUserPIN+`"}`))
+	result, err := s.InvokeMethod(ctx, "password.unlock", passkey)
 
 	require.NoError(t, err)
 	status, ok := result.(PasswordStoreStatusResult)

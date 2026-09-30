@@ -17,7 +17,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -556,7 +558,10 @@ func (s *mockKeystoreServer) PasswordDelete(_ context.Context, _ *pb.PasswordDel
 	return &pb.PasswordDeleteResponse{}, nil
 }
 
-func (s *mockKeystoreServer) PasswordStoreUnlock(_ context.Context, _ *pb.PasswordStoreUnlockRequest) (*pb.PasswordStoreStatusResponse, error) {
+func (s *mockKeystoreServer) PasswordStoreUnlock(_ context.Context, req *pb.PasswordStoreUnlockRequest) (*pb.PasswordStoreStatusResponse, error) {
+	if req.GetCredential().GetPassphrase() == "" {
+		return nil, status.Error(codes.InvalidArgument, "credential is required")
+	}
 	return &pb.PasswordStoreStatusResponse{IsLocked: false}, nil
 }
 
@@ -570,7 +575,11 @@ func (s *mockKeystoreServer) PasswordStoreStatus(_ context.Context, _ *pb.Passwo
 	}, nil
 }
 
-func (s *mockKeystoreServer) PasswordGenerate(_ context.Context, _ *pb.PasswordGenerateRequest) (*pb.PasswordGenerateResponse, error) {
+func (s *mockKeystoreServer) PasswordGenerate(_ context.Context, req *pb.PasswordGenerateRequest) (*pb.PasswordGenerateResponse, error) {
+	if req.GetCharset() != "" {
+		// Echo the charset so a test can prove it crossed the wire.
+		return &pb.PasswordGenerateResponse{Password: req.GetCharset()}, nil
+	}
 	return &pb.PasswordGenerateResponse{Password: "Rand0m!P@ssw0rd"}, nil
 }
 
@@ -1483,7 +1492,9 @@ func TestPasswordDelete_Connected(t *testing.T) {
 func TestPasswordStoreUnlock_Connected(t *testing.T) {
 	tr, cleanup := newBufconnTransport(t)
 	defer cleanup()
-	require.NoError(t, tr.PasswordStoreUnlock(context.Background(), &transport.PasswordStoreUnlockRequest{UserPIN: "1234"}))
+	require.NoError(t, tr.PasswordStoreUnlock(context.Background(), &transport.PasswordStoreUnlockRequest{
+		PasswordVaultCredential: transport.PasswordVaultCredential{Factor: "passphrase", Passphrase: "correct horse"},
+	}))
 }
 
 func TestPasswordStoreLock_Connected(t *testing.T) {

@@ -18,7 +18,6 @@ import (
 	"errors"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -377,28 +376,29 @@ func (s *Server) handlePasswordDelete(ctx context.Context, req *JSONRPCRequest) 
 }
 
 // handlePasswordUnlock handles the password.unlock method. It opens the
-// caller's personal password session; sessions are per user, so this never
-// opens another user's personal entries.
+// caller's personal password session with one of the caller's vault factors;
+// sessions are per user, so this never opens another user's personal
+// entries.
 //
-// The servicer verifies the caller's user PIN before opening the session. A
-// request without an identity has no personal session and is answered with
-// Method not found by the servicer's ErrOperationNotSupported.
+// The params are a transport.PasswordVaultCredential ("factor",
+// "passphrase", or "credential_id" and "secret" for a passkey, byte fields
+// base64). A request without an identity has no personal vault and is
+// answered with Method not found by the servicer's ErrOperationNotSupported.
 func (s *Server) handlePasswordUnlock(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc, err := s.passwordService()
 	if err != nil {
 		return nil, err
 	}
 
-	// The user PIN is optional on the wire so an unprovisioned deployment gets
-	// the servicer's precise "not provisioned" answer rather than a decode
-	// failure. Absent params are an unlock attempt with no PIN, which the
-	// servicer rejects.
+	// Absent params are an unlock attempt with no credential, which the
+	// servicer rejects as an invalid credential.
 	var unlockReq transport.PasswordStoreUnlockRequest
 	if len(req.Params) > 0 {
 		if err := decodeParams(req, &unlockReq); err != nil {
 			return nil, err
 		}
 	}
+	defer clear(unlockReq.Secret)
 
 	if err := svc.PasswordStoreUnlock(ctx, &unlockReq); err != nil {
 		return nil, mapPasswordUnlockError(err)
@@ -590,38 +590,18 @@ func mapPasswordError(err error) error {
 
 // mapPasswordUnlockError converts an error returned by
 // XKMSService.PasswordStoreUnlock into a *KeyOpError carrying the JSON-RPC
-// code InvokeMethod should report. It reuses the KeyOpError envelope so the
-// dispatcher does not collapse a missing-PIN rejection into a generic internal
-// error, which would make an unlock denial indistinguishable from a crash.
-//
-// A failed PIN verification reports Invalid params without echoing the PIN
-// backend's message, which can carry retry counters and lockout state.
+// code InvokeMethod should report. An already open session and a sealed
+// tenant barrier are precondition failures on the internal floor; everything
+// else is a vault error (mapPasswordVaultError), so a rejected credential is
+// Unauthorized and never says why.
 func mapPasswordUnlockError(err error) error {
 	if err == nil {
 		return nil
 	}
-
-	switch {
-	case errors.Is(err, xkms.ErrPasswordStoreUserPINRequired),
-		errors.Is(err, xkms.ErrPasswordStoreUserPINNotProvisioned):
-		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
-	case errors.Is(err, xkms.ErrOperationNotSupported):
-		// A request without an identity has no personal session: a
-		// capability boundary, reported as REST's 501 is.
-		return &KeyOpError{Code: ErrCodeMethodNotFound, Err: err}
-	case errors.Is(err, xkms.ErrNilRequest):
-		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
-	case errors.Is(err, xkms.ErrNotConfigured),
-		errors.Is(err, staticpw.ErrInvalidUserID),
-		errors.Is(err, staticpw.ErrNoSystemBarrier),
-		errors.Is(err, seal.ErrTenantNotFound):
-		return mapPasswordStoreError(err)
-	case errors.Is(err, staticpw.ErrStoreNotLocked),
-		errors.Is(err, seal.ErrTenantSealed):
+	if errors.Is(err, staticpw.ErrStoreNotLocked) || errors.Is(err, seal.ErrTenantSealed) {
 		return classified(ErrCodeInternalError, err)
-	default:
-		return &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "user PIN verification failed"}}
 	}
+	return mapPasswordVaultError(err)
 }
 
 // mapPasswordLockError converts an error returned by

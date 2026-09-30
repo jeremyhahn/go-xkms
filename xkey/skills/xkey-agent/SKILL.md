@@ -223,14 +223,18 @@ xkey password remove --force [name...]
 xkey password status
 ```
 
-The browser extension matches entries to sites by `--url`. The `unlock`, `lock` and `access-mode` verbs act on an xkmsd session and need `--xkmsd-url`. There is no `--password` or `--pin` value flag -- a value on the command line is visible to every other process on the host via `ps` -- so the password and PIN come from `--password-stdin`/`XKEY_STATIC_PASSWORD` and `--pin-stdin`/`XKEY_PIN`.
+The browser extension matches entries to sites by `--url`. The `unlock`, `lock`, `access-mode` and `vault` verbs act on an xkmsd session and need `--xkmsd-url`. Personal entries unlock with the caller's own vault passphrase, never the user PIN. There is no `--password` or `--passphrase` value flag -- a value on the command line is visible to every other process on the host via `ps` -- so the password comes from `--password-stdin`/`XKEY_STATIC_PASSWORD`, the vault passphrase from `--passphrase-stdin`/`XKEY_VAULT_PASSPHRASE`, and the recovery code from `--recovery-code-stdin`/`XKEY_VAULT_RECOVERY_CODE`.
 
 ```bash
 xkey password access-mode --mode session_based --xkmsd-url <url>   # or pin_per_operation
-XKEY_PIN="$PIN" xkey password unlock --xkmsd-url <url>
+XKEY_VAULT_PASSPHRASE="$PASSPHRASE" xkey password vault enroll --label ci --xkmsd-url <url>   # first time: prints the recovery code ONCE
+XKEY_VAULT_PASSPHRASE="$PASSPHRASE" xkey password unlock --xkmsd-url <url>
+xkey password vault status --xkmsd-url <url>
 xkey password lock --xkmsd-url <url>
 xkey password status --source xkmsd --xkmsd-url <url>
 ```
+
+Storing the recovery code that `vault enroll` and `vault recover` print is a human-only step: it is shown exactly once.
 
 ## Secrets (platform store)
 

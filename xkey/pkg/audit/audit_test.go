@@ -507,6 +507,10 @@ func TestOperationType_Constants(t *testing.T) {
 		OpPasswordCreated,
 		OpPasswordDeleted,
 		OpPasswordUpdated,
+		OpPasswordVaultFactorEnrolled,
+		OpPasswordVaultFactorRotated,
+		OpPasswordVaultFactorRemoved,
+		OpPasswordVaultRecovered,
 		OpAutofillRequested,
 		OpAutofillDenied,
 
