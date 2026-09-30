@@ -81,15 +81,18 @@ func TestKeyVersionTools_EndToEnd(t *testing.T) {
 	assert.Equal(t, uint32(2), listed.CurrentVersion)
 	require.Len(t, listed.Versions, 2)
 
-	for method, want := range map[string]string{
-		"xkms.disableKeyVersion": transport.KeyVersionDisabled,
-		"xkms.enableKeyVersion":  transport.KeyVersionEnabled,
+	// Ordered: disable then enable, so version 1 ends enabled for the
+	// disable-all/enable-all round below. A map here iterated in random order
+	// and left version 1 disabled about half the time.
+	for _, step := range []struct{ method, want string }{
+		{"xkms.disableKeyVersion", transport.KeyVersionDisabled},
+		{"xkms.enableKeyVersion", transport.KeyVersionEnabled},
 	} {
-		raw, err = invokeAs(t, server, "", method, transport.KeyVersionRequest{Backend: "software", KeyID: "k", Version: 1})
-		require.NoError(t, err, method)
+		raw, err = invokeAs(t, server, "", step.method, transport.KeyVersionRequest{Backend: "software", KeyID: "k", Version: 1})
+		require.NoError(t, err, step.method)
 		var state transport.KeyVersionStateResponse
 		require.NoError(t, json.Unmarshal(raw, &state))
-		assert.Equal(t, want, state.State, method)
+		assert.Equal(t, step.want, state.State, step.method)
 	}
 	for _, method := range []string{"xkms.disableAllKeyVersions", "xkms.enableAllKeyVersions"} {
 		raw, err = invokeAs(t, server, "", method, transport.AllKeyVersionsRequest{Backend: "software", KeyID: "k"})
