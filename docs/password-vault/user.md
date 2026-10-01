@@ -1,6 +1,6 @@
 # Password Vault — User Guide
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 ## What goes in here
 
@@ -36,8 +36,20 @@ xkmsctl password status -o json
 You can use your FIDO2 security key instead of, or as well as, a passphrase:
 `xkmsctl password vault enroll --passkey` adds it (you are asked for the
 key's PIN and to touch it), and `xkmsctl password unlock --passkey` unlocks
-with it. A key enrolled from one tool -- xkmsctl, xkey, or the xkey app --
-works in all of them.
+with it. A key enrolled from one tool -- xkmsctl, xkey, the xkey app, or the
+web console -- works in all of them. Passkeys belong to the server's web
+console domain; a server without a WebAuthn relying party configured offers
+none.
+
+You can also unlock with a key you already hold: a **PIV card** (its key
+management slot, 9d), a **certificate's key** (a client certificate, in a
+file, on a token or in a TPM), or a **TPM key** bound to a named TPM policy,
+which opens only on that machine in the state the policy expects. Enroll it
+with `xkmsctl password vault enroll --key-factor piv|certificate|tpm ...`,
+`xkey password vault enroll --key-factor ...` or *Add key* in the xkey app;
+unlock with `--key`, *Unlock with key*, or, in the web console, *Unlock with
+xKey*. The key never leaves its card, token or TPM, and the server cannot
+open your vault with it alone.
 
 Nobody else can open your personal entries: not another user, not a tenant
 administrator, not someone holding the tenant's key. If you forget your
@@ -49,9 +61,18 @@ or your recovery code, your personal entries cannot be recovered.
 vault* with a passphrase and shows the recovery code once. A locked vault
 unlocks with your passphrase, or with *Use recovery code*, which takes the code
 and a new passphrase and shows your next code. While unlocked, *Vault factors*
-lists your factors and lets you add a passphrase, change one, or remove a
-factor (the last passphrase or passkey, and the recovery code, cannot be
-removed).
+lists your factors and lets you add a passphrase or a passkey, change a
+passphrase, or remove a factor (the last unlock factor, and the recovery code,
+cannot be removed). *Create with a passkey*, *Unlock with passkey* and
+*Recover with a new passkey* use your security key or platform passkey; a
+browser or key without the WebAuthn PRF extension is told so, and you use your
+passphrase instead.
+
+A PIV card, certificate key or TPM key never enters the browser. *Unlock with
+xKey* asks the xKey browser extension, which asks the xKey app; xKey shows the
+request -- the page's address and the key -- and unlocks your vault itself
+once you approve. Without the extension the console says the factor needs it.
+Add such keys with xKey or xkmsctl.
 
 You unlock once and your personal entries are readable until you lock again.
 The session is yours alone: unlocking does not open anyone else's personal

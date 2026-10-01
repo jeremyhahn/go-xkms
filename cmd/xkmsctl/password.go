@@ -787,6 +787,7 @@ func init() {
 	passwordUnlockCmd.Flags().String("passphrase", "", "vault passphrase ('-' reads stdin; prompted when omitted)")
 	passwordUnlockCmd.Flags().Bool("passkey", false, "unlock with a vault passkey on the attached FIDO2 security key")
 	addPINFlags(passwordUnlockCmd)
+	addKeyFactorUnlockFlags(passwordUnlockCmd)
 
 	// password generate flags
 	passwordGenerateCmd.Flags().Int("length", 0, "password length (0 = server default)")

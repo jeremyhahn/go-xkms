@@ -1572,44 +1572,9 @@ func (a *App) buildXKMSBackendConfigs() map[xkmssdk.ServiceBackendType]map[strin
 		a.log.Debug("unified config not available for backend configs", "error", err)
 		return configs
 	}
-
-	for _, lb := range ucfg.Backends.Local {
-		switch lb.Category {
-		case "tpm2":
-			if lb.TPM2 != nil {
-				cfg := make(map[string]interface{})
-				if lb.TPM2.Device != "" {
-					cfg["device"] = lb.TPM2.Device
-				}
-				if lb.TPM2.Simulator {
-					cfg["use_simulator"] = true
-				}
-				configs[xkmssdk.BackendTPM2] = cfg
-			}
-		case "pkcs11":
-			if lb.PKCS11 != nil {
-				cfg := make(map[string]interface{})
-				if lb.PKCS11.LibraryPath != "" {
-					cfg["library"] = lb.PKCS11.LibraryPath
-				}
-				if lb.PKCS11.SlotID != 0 {
-					cfg["slot"] = lb.PKCS11.SlotID
-				}
-				configs[xkmssdk.BackendPKCS11] = cfg
-			}
-		}
+	for name, cfg := range ucfg.KeyBackendConfigs() {
+		configs[xkmssdk.ServiceBackendType(name)] = cfg
 	}
-
-	// Fall back to the shared TPM config for the device path when no
-	// explicit TPM2 local backend entry exists in the backends section.
-	if _, hasTPM2 := configs[xkmssdk.BackendTPM2]; !hasTPM2 {
-		if ucfg.TPM.Device != "" {
-			configs[xkmssdk.BackendTPM2] = map[string]interface{}{
-				"device": ucfg.TPM.Device,
-			}
-		}
-	}
-
 	return configs
 }
 
@@ -2125,6 +2090,8 @@ func NewApp(cfg *GUIConfig) *App {
 	sealProtSvc.SetAuditLogger(auditStore)
 	appSvc.SetAuditLogger(auditStore)
 	staticPWSvc.SetAuditLogger(auditStore)
+	// Browser-extension vault requests are shown in the app for approval.
+	staticPWSvc.SetEventEmitter(a.EmitEvent)
 	trustSvc.SetAuditLogger(auditStore)
 	if apiExplorerSvc != nil {
 		apiExplorerSvc.SetAuditLogger(auditStore)
@@ -3322,6 +3289,22 @@ func (h *guiIPCHandler) HandleAutofillIgnoreDomain(domain string) (*ipc.Autofill
 func (h *guiIPCHandler) HandleAutofillFocus() (*ipc.AutofillResult, error) {
 	h.app.ShowWindow()
 	return &ipc.AutofillResult{}, nil
+}
+
+// HandleVaultUnlockKeyFactor serves the browser extension's request to
+// unlock the password vault with a key factor for the web console at origin
+// (the origin the browser reported). The password service checks the origin
+// against the connected server's console, asks the user to approve, and
+// unlocks the vault over xKey's own connection; nothing secret is returned.
+func (h *guiIPCHandler) HandleVaultUnlockKeyFactor(origin string, fingerprints []string) (*ipc.VaultResult, error) {
+	ctx := h.app.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := h.app.staticPWService.BrowserUnlockWithKeyFactor(ctx, origin, fingerprints); err != nil {
+		return nil, err
+	}
+	return &ipc.VaultResult{Unlocked: true}, nil
 }
 
 // HandleUnlock implements ipc.UnlockHandler by delegating to AppLockService.

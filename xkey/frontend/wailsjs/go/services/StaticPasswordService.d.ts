@@ -80,3 +80,13 @@ export function UnlockWithPasskey(arg1:string):Promise<void>;
 export function UpdatePassword(arg1:services.UpdatePasswordParams):Promise<void>;
 
 export function VaultStatus():Promise<services.PasswordVaultStatus>;
+
+export function EnrollKeyFactor(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<services.PasswordVaultEnrollResult>;
+
+export function RecoverWithKeyFactor(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<services.PasswordVaultEnrollResult>;
+
+export function UnlockWithKeyFactor():Promise<void>;
+
+export function ApproveBrowserVaultRequest(arg1:string):Promise<void>;
+
+export function DenyBrowserVaultRequest(arg1:string):Promise<void>;

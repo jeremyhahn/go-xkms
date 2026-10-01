@@ -1,6 +1,6 @@
 # Static Passwords — Engineering
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-10-01
 
 See [architecture.md](architecture.md) for the store hierarchy and the
 "store location vs. session state" split before reading this document.

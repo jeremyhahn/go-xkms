@@ -1385,4 +1385,37 @@ if (observeTarget) {
         subtree: true,
     });
 }
+function replyToConsole(message) {
+    window.postMessage({ source: 'xkey-extension', ...message }, window.location.origin);
+}
+window.addEventListener('message', (event) => {
+    if (event.source !== window || event.origin !== window.location.origin)
+        return;
+    const data = event.data;
+    if (!data || data.source !== 'xkms-console' || typeof data.requestId !== 'string')
+        return;
+    if (data.type === 'xkey-ping') {
+        replyToConsole({ type: 'xkey-pong', requestId: data.requestId });
+        return;
+    }
+    if (data.type !== 'xkey-vault-unlock')
+        return;
+    const requestId = data.requestId;
+    chrome.runtime
+        .sendMessage({ type: 'vault_unlock_key_factor', fingerprints: data.fingerprints })
+        .then((response) => {
+        if (response?.type === 'vault_unlock_result') {
+            replyToConsole({ type: 'xkey-vault-unlock-result', requestId, unlocked: response.unlocked === true, error: response.error });
+        }
+        else if (response?.type === 'pairing_status') {
+            replyToConsole({ type: 'xkey-vault-unlock-result', requestId, unlocked: false, error: 'Pair the xKey extension with the xKey app first (open the extension popup).' });
+        }
+        else {
+            replyToConsole({ type: 'xkey-vault-unlock-result', requestId, unlocked: false, error: response?.message || 'The xKey extension could not reach xKey.' });
+        }
+    })
+        .catch((err) => {
+        replyToConsole({ type: 'xkey-vault-unlock-result', requestId, unlocked: false, error: err instanceof Error ? err.message : String(err) });
+    });
+});
 //# sourceMappingURL=content.js.map

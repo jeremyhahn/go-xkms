@@ -559,10 +559,16 @@ export interface BackendTPMKey {
 /** One enrolled factor of the caller's personal password vault (no key material). */
 export interface PasswordVaultFactor {
   id: string;
-  /** "passphrase" or "passkey". */
+  /** "passphrase", "passkey", "piv", "certificate", "tpm" or "recovery". */
   factor: string;
   label: string;
   created_at: string;
+  /** Key factors: the key's fingerprint and where it lives in xKey. */
+  key_fingerprint?: string;
+  key_backend?: string;
+  key_id?: string;
+  tpm_policy?: string;
+  certificate_subject?: string;
 }
 
 /** The caller's personal password vault on the connected xkmsd server. */

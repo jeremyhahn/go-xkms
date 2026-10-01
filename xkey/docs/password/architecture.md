@@ -1,6 +1,6 @@
 # Static Passwords — Architecture
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-10-01
 
 ## Scope
 
@@ -125,6 +125,26 @@ opens only with the user's own factor.
 4. Later, the browser extension's `AutoFillService.SearchCredentials`
    matches page domains against `URL`/`MatchPatterns` via
    `xkms.AutoFillMatchesEntry` — see [autofill/architecture.md](../autofill/architecture.md).
+
+## Vault key factors and the browser bridge
+
+The server-vault key factors (PIV slot 9d, certificate key, TPM key) are
+go-xkms `pkg/vaultkey` and `pkg/vaulttoken` over xKey's own key backends:
+`StaticPasswordService.EnrollKeyFactor` / `RecoverWithKeyFactor` /
+`UnlockWithKeyFactor` in the app, `--key-factor` / `--key` on the CLI (which
+opens the same barrier-protected local key store, built from the same
+`config.KeyBackendConfigs`).
+
+The web console unlocks with one through the extension: content script ->
+worker (adds the browser-attributed origin) -> encrypted native messaging ->
+native host -> IPC `vault` message -> `guiIPCHandler.HandleVaultUnlockKeyFactor`
+-> `StaticPasswordService.BrowserUnlockWithKeyFactor`, which checks the
+origin against the connected server's console domain (its WebAuthn relying
+party), checks the page's factors are in the vault xKey reads itself,
+raises `vault:browser_unlock_request` for the user's approval, and unlocks
+over xKey's own connection. The reply is `{unlocked: true}` and nothing
+else. See go-xkms `docs/password-vault/architecture.md` ("The browser
+bridge").
 
 ## Rejected alternatives
 

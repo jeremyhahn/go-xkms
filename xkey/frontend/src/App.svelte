@@ -6,6 +6,7 @@
   import Toast from '$lib/components/Toast.svelte';
   import ShutdownOverlay from '$lib/components/ShutdownOverlay.svelte';
   import ExtensionPairingDialog from '$lib/components/ExtensionPairingDialog.svelte';
+  import VaultBrowserRequestDialog from '$lib/components/VaultBrowserRequestDialog.svelte';
   import AppLockOverlay from '$lib/components/AppLockOverlay.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import XKeyBrandIcon from '$lib/components/XKeyBrandIcon.svelte';
@@ -90,6 +91,10 @@
   let startupState: StartupState | null = null;
 
   // Extension pairing dialog state (driven by Wails events).
+  let vaultRequestOpen = false;
+  let vaultRequestId = '';
+  let vaultRequestOrigin = '';
+  let vaultRequestFactors: string[] = [];
   let extensionPairingOpen = false;
   let extensionPairingCode = '';
   let extensionPairingOrigin = '';
@@ -167,6 +172,21 @@
         extensionPairingOrigin = payload?.origin || '';
         extensionPairingSuccess = false;
         extensionPairingOpen = true;
+      });
+      // A web console asks to unlock the password vault with a key factor
+      // through the browser extension; the user approves or denies it here.
+      (window as any).runtime.EventsOn('vault:browser_unlock_request', (data: any) => {
+        const payload = data?.payload || data;
+        vaultRequestId = payload?.id || '';
+        vaultRequestOrigin = payload?.origin || '';
+        vaultRequestFactors = payload?.factors || [];
+        vaultRequestOpen = true;
+      });
+      (window as any).runtime.EventsOn('vault:browser_unlock_resolved', (data: any) => {
+        const payload = data?.payload || data;
+        if (payload?.id === vaultRequestId) {
+          vaultRequestOpen = false;
+        }
       });
       (window as any).runtime.EventsOn('extension:paired', (data: any) => {
         extensionPairingSuccess = true;
@@ -457,6 +477,13 @@
 <Toast />
 <AppLockOverlay />
 <ShutdownOverlay />
+<VaultBrowserRequestDialog
+  bind:open={vaultRequestOpen}
+  requestId={vaultRequestId}
+  origin={vaultRequestOrigin}
+  factors={vaultRequestFactors}
+  onClose={() => { vaultRequestOpen = false; }}
+/>
 <ExtensionPairingDialog
   bind:open={extensionPairingOpen}
   code={extensionPairingCode}

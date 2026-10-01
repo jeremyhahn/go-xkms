@@ -16,6 +16,7 @@
 //   - Pairing flow when native host requires extension registration.
 import { SessionCrypto } from './crypto.js';
 import { ExtensionIdentity } from './identity.js';
+import { buildVaultUnlockRequest, senderOrigin, VAULT_REQUEST_TIMEOUT_MS, vaultUnlockResult } from './vaultBridge.js';
 // ---------------------------------------------------------------------------
 // Inline types (background runs as ES module, but we keep it self-contained
 // to avoid bundling complexity)
@@ -335,8 +336,10 @@ async function sendRequest(request) {
     };
     // Determine timeout based on request type.
     // Fill requests need longer timeout for PIN entry + touch.
+    // Vault requests wait for the user's approval in xKey.
     const isGetAction = request.autofill?.action === 'get';
-    const timeoutMs = isGetAction ? 45000 : 10000;
+    const isVault = request.type === 'vault';
+    const timeoutMs = isVault ? VAULT_REQUEST_TIMEOUT_MS : isGetAction ? 45000 : 10000;
     // Wait for the response.
     const responsePromise = new Promise((resolve, reject) => {
         // Only one request at a time (serial protocol).
@@ -578,6 +581,84 @@ async function handleMessage(message, _sender) {
                     autofill: { action: 'status' },
                 });
                 return { type: 'status_result', data: resp.autofill?.status };
+            }
+            case 'check_credential': {
+                // Search for any credential matching this domain + username.
+                // Returns exists:true when at least one match is found so the
+                // content script knows not to offer a duplicate save prompt.
+                const resp = await sendRequest({
+                    type: 'autofill',
+                    autofill: { action: 'search', domain: message.domain },
+                });
+                const creds = resp.autofill?.credentials ?? [];
+                const exists = creds.some((c) => c.username === message.username);
+                return { type: 'check_result', exists };
+            }
+            case 'save_credential': {
+                // Forward the save request to the native host.
+                // Extra fields (username, password, title) are sent as top-level
+                // properties on the autofill envelope; the native host reads them
+                // alongside the standard action/domain fields.
+                const saveReq = {
+                    type: 'autofill',
+                    autofill: {
+                        action: 'save',
+                        domain: message.domain,
+                        username: message.username,
+                        password: message.password,
+                        title: message.title,
+                    },
+                };
+                const resp = await sendRequest(saveReq);
+                const success = resp.status === 'ok';
+                return { type: 'save_result', success };
+            }
+            case 'ignore_domain': {
+                // Ask the native host to suppress save prompts for this domain.
+                const resp = await sendRequest({
+                    type: 'autofill',
+                    autofill: { action: 'ignore_domain', domain: message.domain },
+                });
+                const success = resp.status === 'ok';
+                return { type: 'save_result', success };
+            }
+            case 'unlock': {
+                const unlockMsg = message;
+                const resp = await sendRequest({
+                    type: 'unlock',
+                    unlock: { pin: unlockMsg.pin },
+                });
+                const unlockResult = resp.unlock;
+                if (unlockResult?.success) {
+                    return { type: 'unlock_result', success: true };
+                }
+                return { type: 'unlock_result', success: false, error: unlockResult?.error || resp.error || 'Unlock failed' };
+            }
+            case 'vault_unlock_key_factor': {
+                // The console asks xKey to unlock the password vault with a key
+                // factor. The origin is the browser's, never the page's; xKey
+                // refuses any page that is not the console, asks the user, and
+                // unlocks over its own connection -- nothing secret comes back.
+                const request = buildVaultUnlockRequest(senderOrigin(_sender), message.fingerprints);
+                const resp = await sendRequest(request);
+                if (resp.status === 'ok') {
+                    await focusSenderWindow(_sender);
+                }
+                return { type: 'vault_unlock_result', ...vaultUnlockResult(resp) };
+            }
+            case 'reconnect': {
+                // connect() was already called above when !connected.
+                const status = await sendRequest({ type: 'autofill', autofill: { action: 'status' } });
+                const locked = status.autofill?.status?.app_locked ?? false;
+                if (locked) {
+                    try {
+                        await sendRequest({ type: 'autofill', autofill: { action: 'focus' } });
+                    }
+                    catch {
+                        // Best-effort: bring xKey to foreground so the user can unlock.
+                    }
+                }
+                return { type: 'reconnect_result', connected: true, locked };
             }
             default: {
                 return { type: 'error', message: 'Unknown message type' };

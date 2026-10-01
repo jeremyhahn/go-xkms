@@ -77,6 +77,12 @@ var (
 	// the reason, rather than presenting a stale answer as the live one.
 	ErrStateUnsupported = errors.New("ipc: daemon does not report live state")
 
+	// ErrVaultUnsupported is returned for a password-vault request to a
+	// daemon with no UI to approve it with (the headless extension server).
+	// Unlocking the vault with a key factor for a web page always needs the
+	// user's approval in the xKey app.
+	ErrVaultUnsupported = errors.New("ipc: this xKey has no app to approve a vault request in; start the xKey app")
+
 	// ErrStateOperation is returned when a live-state query fails inside the
 	// daemon.
 	ErrStateOperation = errors.New("ipc: state query failed")

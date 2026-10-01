@@ -1,6 +1,6 @@
 # Static Passwords — API
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-10-01
 
 Two separate transports, matching the "store location vs. session state"
 split in [architecture.md](architecture.md):

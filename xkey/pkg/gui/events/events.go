@@ -180,6 +180,32 @@ const (
 	EventExtensionUnpaired       EventType = "extension:unpaired"
 )
 
+// Password vault browser-bridge events.
+const (
+	// EventVaultBrowserUnlockRequest asks the user to approve a browser
+	// console's request to unlock the vault with a key factor.
+	EventVaultBrowserUnlockRequest EventType = "vault:browser_unlock_request"
+	// EventVaultBrowserUnlockResolved reports the request was approved,
+	// denied or timed out.
+	EventVaultBrowserUnlockResolved EventType = "vault:browser_unlock_resolved"
+)
+
+// VaultBrowserUnlockRequestPayload carries data for the
+// vault:browser_unlock_request event: the page's origin and the key factors
+// xKey would use.
+type VaultBrowserUnlockRequestPayload struct {
+	ID      string   `json:"id"`
+	Origin  string   `json:"origin"`
+	Factors []string `json:"factors"`
+}
+
+// VaultBrowserUnlockResolvedPayload carries data for the
+// vault:browser_unlock_resolved event.
+type VaultBrowserUnlockResolvedPayload struct {
+	ID       string `json:"id"`
+	Approved bool   `json:"approved"`
+}
+
 // DataDirInitializedPayload carries data for the storage:data_dir_initialized event.
 type DataDirInitializedPayload struct {
 	DataDir string `json:"data_dir"`

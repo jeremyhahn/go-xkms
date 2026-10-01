@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-import { enrollVaultPasskey, unlockVaultPasskey } from "@go-xkms/sdk";
+import { enrollVaultPasskey, keyFactorFingerprints, unlockVaultPasskey, unlockWithXkey } from "@go-xkms/sdk";
 import type {
   PasswordVaultCredential,
   PasswordVaultFactor,
@@ -57,4 +57,20 @@ export function unlockPasskey(factors: PasswordVaultFactor[]): Promise<PasswordV
 /** hasPasskey reports whether the vault lists a passkey factor. */
 export function hasPasskey(status: PasswordVaultStatusResponse | null): boolean {
   return status?.factors.some((f) => f.factor === "passkey") ?? false;
+}
+
+/** hasKeyFactor reports whether the vault lists a PIV, certificate or TPM factor. */
+export function hasKeyFactor(status: PasswordVaultStatusResponse | null): boolean {
+  return status ? keyFactorFingerprints(status.factors).length > 0 : false;
+}
+
+/**
+ * unlockWithKeyFactor asks xKey, through its browser extension, to unlock
+ * the vault with one of its PIV, certificate or TPM factors. xKey unlocks
+ * the vault itself after the user approves; nothing secret reaches this
+ * page. It throws the SDK's XkeyExtensionUnavailableError without the
+ * extension and XkeyBridgeError when xKey refuses.
+ */
+export function unlockWithKeyFactor(status: PasswordVaultStatusResponse): Promise<void> {
+  return unlockWithXkey(keyFactorFingerprints(status.factors));
 }

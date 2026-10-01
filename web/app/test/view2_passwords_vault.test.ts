@@ -52,10 +52,12 @@ vi.mock("../src/stores/toast.svelte.ts", () => ({
 
 const enrollPasskey = vi.fn();
 const unlockPasskey = vi.fn();
+const unlockWithKeyFactor = vi.fn();
 vi.mock("../src/lib/vault.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/lib/vault.ts")>()),
   enrollPasskey: (...args: unknown[]) => enrollPasskey(...args),
   unlockPasskey: (...args: unknown[]) => unlockPasskey(...args),
+  unlockWithKeyFactor: (...args: unknown[]) => unlockWithKeyFactor(...args),
 }));
 
 import PasswordsView from "../src/views/PasswordsView.svelte";
@@ -299,5 +301,45 @@ describe("PasswordsView passkeys", () => {
     await fireEvent.click(within(dialog).getByRole("button", { name: "Add passkey", hidden: true }));
     await waitFor(() => expect(vaultEnroll).toHaveBeenCalledWith(passkeyCred));
     expect(toasts).toContainEqual({ kind: "success", message: "Passkey added." });
+  });
+});
+
+describe("PasswordsView key factors through xKey", () => {
+  const keyVault = {
+    initialized: true,
+    unlocked: false,
+    factors: [{ id: "k1", factor: "piv" as const, created_at: "", key_fingerprint: "a".repeat(64) }],
+  };
+
+  it("asks xKey to unlock and reloads; the page sends no credential itself", async () => {
+    status.mockResolvedValueOnce(lockedStatus);
+    vaultStatus.mockResolvedValue(keyVault);
+    unlockWithKeyFactor.mockResolvedValue(undefined);
+    status.mockResolvedValue(unlockedStatus);
+
+    render(PasswordsView);
+    await fireEvent.click(await screen.findByRole("button", { name: "Unlock with xKey" }));
+
+    await waitFor(() => expect(unlockWithKeyFactor).toHaveBeenCalledWith(keyVault));
+    expect(unlock).not.toHaveBeenCalled();
+    expect(toasts).toContainEqual({ kind: "success", message: "Vault unlocked by xKey." });
+  });
+
+  it("says the factor needs the xKey extension when there is none", async () => {
+    status.mockResolvedValue(lockedStatus);
+    vaultStatus.mockResolvedValue(keyVault);
+    unlockWithKeyFactor.mockRejectedValue(new Error("Unlocking with a PIV card, certificate or TPM key needs the xKey browser extension and the xKey app."));
+
+    render(PasswordsView);
+    await fireEvent.click(await screen.findByRole("button", { name: "Unlock with xKey" }));
+    await waitFor(() => expect(toasts.some((t) => t.kind === "error" && t.message.includes("xKey browser extension"))).toBe(true));
+  });
+
+  it("offers no xKey unlock without a key factor", async () => {
+    status.mockResolvedValue(lockedStatus);
+    vaultStatus.mockResolvedValue({ initialized: true, unlocked: false, factors: [] });
+    render(PasswordsView);
+    await screen.findByRole("button", { name: "Unlock" });
+    expect(screen.queryByRole("button", { name: "Unlock with xKey" })).toBeNull();
   });
 });

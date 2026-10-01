@@ -153,3 +153,23 @@ export function UpdatePassword(arg1) {
 export function VaultStatus() {
   return window['go']['services']['StaticPasswordService']['VaultStatus']();
 }
+
+export function EnrollKeyFactor(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['services']['StaticPasswordService']['EnrollKeyFactor'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function RecoverWithKeyFactor(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['services']['StaticPasswordService']['RecoverWithKeyFactor'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
+export function UnlockWithKeyFactor() {
+  return window['go']['services']['StaticPasswordService']['UnlockWithKeyFactor']();
+}
+
+export function ApproveBrowserVaultRequest(arg1) {
+  return window['go']['services']['StaticPasswordService']['ApproveBrowserVaultRequest'](arg1);
+}
+
+export function DenyBrowserVaultRequest(arg1) {
+  return window['go']['services']['StaticPasswordService']['DenyBrowserVaultRequest'](arg1);
+}

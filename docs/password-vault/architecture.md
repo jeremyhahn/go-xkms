@@ -1,6 +1,6 @@
 # Password Vault — Architecture
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 ## The problem
 
@@ -102,6 +102,8 @@ DEK ──wrapped, once per factor──▶ {tenant}/staticpw-vault/users/{subje
       passphrase: KEK = Argon2id(passphrase, salt)          64 MiB, t=3, p=4 (kdf.DefaultParams)
       passkey:    KEK = HKDF-SHA256(hmac-secret output, salt) FIDO2 hmac-secret / WebAuthn PRF
       recovery:   KEK = HKDF-SHA256(recovery code, salt)    160-bit code, one-time
+      piv / certificate / tpm (key factors):
+                  KEK = HKDF-SHA256(S, salt, info|fingerprint) S sealed to the key (pkg/vaultkey)
       wrap = AES-256-GCM(KEK, DEK, aad = tenant|subject|factor id)
 ```
 
@@ -118,6 +120,80 @@ DEK ──wrapped, once per factor──▶ {tenant}/staticpw-vault/users/{subje
   "Passkey salt handling".
 - **Rotation of a passkey** is enrolling a new passkey and removing the old
   one: a passkey's secret is bound to its credential.
+- **Key factors** -- a PIV card's key-management key (slot 9d), a
+  certificate's key (in software, on a PKCS#11 token or in a TPM), or a TPM
+  key under a named TPM policy -- are described in "Key factors".
+
+### Key factors
+
+A key factor's secret is one only the holder of a private key can recover.
+The design keeps the DEK on the server at every step (owner-approved
+2026-10-01):
+
+| Step | Who | What |
+|---|---|---|
+| Enroll | client | sends the key's **public key** (PKIX DER) or **certificate**, and where it keeps the key (`key_ref`: backend, key ID, TPM policy) |
+| Enroll | server | draws a fresh 32-byte secret **S** sealed to the public key (`vaultkey.Seal`), wraps the DEK under `HKDF-SHA256(S, salt, "xkms/staticpw/vault/v1/key|" + fingerprint)`, stores the sealed form (`key_challenge`), a key-check value and the SPKI SHA-256 `key_fingerprint`, and forgets S |
+| Unlock | client | recovers S from `key_challenge` with the private key (`vaultkey.Open`) and sends `{factor, key_fingerprint, secret: S}` |
+| Unlock | server | unwraps the DEK with S |
+
+- **Algorithms.** EC keys (P-256/P-384/P-521): ECDH-ES -- the challenge is
+  an ephemeral public key, S = `HKDF-SHA256(Z, no salt, info, 32)` with Z the
+  ECDH x-coordinate, computed by `types.KDFParams.Derive`, the derivation
+  every xkms backend's `DeriveKeyECDH` applies. RSA keys (2048 bits or
+  more): S is random and the challenge is its RSA-OAEP-256 encryption.
+- **The server cannot unlock alone.** It never holds the private key and
+  keeps only the sealed form of S; `TestKeyFactor_ServerCannotUnlockAlone`
+  scans the barrier for S.
+- **The DEK never leaves the server**, and neither the factor's key nor the
+  DEK ever reaches a browser.
+- **Fingerprint and key-check.** The fingerprint selects the factor and its
+  token; the key-check value (HMAC of S) lets a client tell "this is another
+  key" (`vaultkey.ErrWrongKey`) from a rejected credential before it sends.
+- **Self-test before enrollment.** Every client seals a throwaway secret to
+  the token's own key and opens it (`vaulttoken.SelfTest`) before enrolling,
+  so a token that cannot perform the algorithm -- e.g. SoftHSM 2.6, whose
+  RSA-OAEP is SHA-1 only -- is refused before the user relies on it.
+- **One implementation, every client.** `pkg/vaultkey` is the wire format,
+  `pkg/vaulttoken` the client side over xkms key backends (PIV through the
+  PIV backends' slot 9d key, PKCS#11 tokens, TPM 2.0, software). xkmsctl,
+  the xkey CLI, the xkey GUI and the browser bridge all use it.
+- **TPM.** RSA decryption runs `TPM2_RSA_Decrypt` and EC agreement
+  `TPM2_ECDH_ZGen`, each authorized by the key's own policy session, so a key
+  under a named TPM policy recovers S only on that machine in the state the
+  policy expects.
+
+### The browser bridge (key factors in the web console)
+
+A browser never receives a private key or a certificate upload. The console
+unlocks with a key factor through the **xKey browser extension**:
+
+```
+console page --postMessage--> extension content script --runtime message-->
+extension worker (adds the browser-attributed origin, top frame only)
+  --native messaging, encrypted, paired--> xKey native host --IPC--> xKey app:
+     1. origin must be the console: https on the server's WebAuthn relying
+        party (vault status passkey_rp_id) or a subdomain; http only on localhost
+     2. the page's key factors must be in the vault xKey reads itself from the
+        server (same user)
+     3. the user approves the request in xKey (2-minute timeout)
+     4. xKey recovers S with its own key backend and UNLOCKS THE VAULT ITSELF
+        over its authenticated connection
+  <-- {unlocked: true} -- no key, no S, no DEK reaches the page
+```
+
+- The origin the extension forwards is the browser's (`MessageSender`),
+  never a value the page wrote; a sub-frame is refused.
+- A request from any other origin is refused before the user is asked.
+- A daemon with no app to approve in (`xkey extension serve`) answers the
+  request unsupported.
+- Without the extension the console says the factor needs it
+  (`XkeyExtensionUnavailableError`).
+- Rejected: returning the factor secret (or the DEK) to the page for the page
+  to post. The vault session is per user, so xKey unlocking over its own
+  connection opens the console's session -- and nothing unlock-capable ever
+  exists in the page.
+- Enrolling a key factor happens in xKey or xkmsctl, which hold the key.
 
 ### The passkey relying party
 
@@ -196,7 +272,8 @@ them:
 - **Recovery** uses the code to enroll a new factor when the others are
   lost. The code is one-time: recovery replaces it with a new one, shown once.
   It does not unlock on its own.
-- **Removal** refuses the recovery factor and the last passphrase or passkey.
+- **Removal** refuses the recovery factor and the last unlock factor
+  (passphrase, passkey or key factor).
 - **Lock** zeroes the DEK; sealing the tenant barrier ends every session and
   zeroes every DEK.
 - The deployment-wide user PIN (PIN management) no longer gates the password

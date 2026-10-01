@@ -332,8 +332,10 @@ Examples:
 var passwordUnlockCmd = &cobra.Command{
 	Use:   "unlock",
 	Short: "Open your personal password session",
-	Long: `Open your personal password session with your vault passphrase, or with
---passkey with a vault passkey on your FIDO2 security key.
+	Long: `Open your personal password session with your vault passphrase, with
+--passkey with a vault passkey on your FIDO2 security key, or with --key with a
+PIV, certificate or TPM key factor whose key is in xKey's key backends (xKey's
+key store opens with the barrier password).
 
 Your personal entries stay sealed until you unlock with one of your own
 vault factors; the session stays open until 'xkey password lock' or until it
@@ -354,7 +356,10 @@ Examples:
   XKEY_VAULT_PASSPHRASE=... xkey password unlock
 
   # Unlock with your security key
-  xkey password unlock --passkey --pin-stdin < pin.txt`,
+  xkey password unlock --passkey --pin-stdin < pin.txt
+
+  # Unlock with a key factor (PIV card, certificate key, TPM key)
+  xkey password unlock --key`,
 	RunE: runPasswordUnlock,
 }
 
@@ -1126,6 +1131,7 @@ func init() {
 	// password unlock flags.
 	vaultPassphraseSource.addFlags(passwordUnlockCmd)
 	addVaultPasskeyFlags(passwordUnlockCmd, "Unlock with a vault passkey on the attached FIDO2 security key")
+	addVaultUnlockKeyFlag(passwordUnlockCmd)
 
 	// password access-mode flags.
 	passwordAccessModeCmd.Flags().String("mode", "", "Access mode: pin_per_operation or session_based")

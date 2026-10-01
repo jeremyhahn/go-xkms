@@ -23,7 +23,10 @@ const USERNAME_SELECTORS = [
     'input[id="login"]',
     'input[id="email"]',
     'input[type="email"]',
-    'input[type="text"]',
+    // NOTE: input[type="text"] intentionally excluded — it is too broad and
+    // matches search boxes, comment fields, and other non-login inputs.
+    // Candidate text inputs are picked up via findUsernameInContainer()
+    // only after passing the isExcludedField() guard.
 ];
 /** TOTP / MFA input selectors. */
 const TOTP_SELECTORS = [
@@ -70,9 +73,13 @@ const LOGIN_BUTTON_TEXT_PATTERNS = [
  * Determine whether a username input field sits in a "login context".
  *
  * A field is in a login context when ANY of these hold:
- *  - It lives inside a <form> element.
- *  - A submit-like button is nearby (same form or nearest container).
  *  - The page URL path contains a common login keyword.
+ *  - It lives inside a <form> that looks like a login form (has a password
+ *    field, has a login-like action/id/class, or has a login submit button).
+ *  - A submit-like button is nearby in a login-flavoured container.
+ *
+ * Plain <form> membership is NOT sufficient — search forms and comment
+ * forms are also wrapped in <form> elements.
  */
 function isLoginContext(field) {
     // URL path heuristic.
@@ -81,15 +88,136 @@ function isLoginContext(field) {
         if (pathname.includes(pattern))
             return true;
     }
-    // Inside a <form> element.
+    // Inside a <form> — but only if that form looks like a login form.
     const form = field.closest('form');
-    if (form)
-        return true;
-    // Look for a submit button in the nearest meaningful container.
-    const container = field.closest('[role="form"], [role="dialog"], section, main, [class*="login"], [class*="auth"], [id*="login"], [id*="auth"]') ||
-        field.parentElement;
+    if (form) {
+        // Form contains a password field → definitely a login form.
+        if (form.querySelector('input[type="password"]'))
+            return true;
+        // Form action, id, or class suggests authentication.
+        const formStr = (form.action || '') +
+            ' ' +
+            (form.id || '') +
+            ' ' +
+            (form.className || '');
+        if (/login|signin|sign.?in|auth|sso|log.?in/i.test(formStr))
+            return true;
+        // Form has a login-flavoured submit button.
+        if (hasLoginButton(form))
+            return true;
+        // Generic form (e.g. search, comment) — do not assume login.
+    }
+    // Look for a submit button in the nearest meaningful login-flavoured container.
+    const container = field.closest('[role="form"], [role="dialog"], [class*="login"], [class*="auth"], [id*="login"], [id*="auth"]');
     if (container && hasLoginButton(container))
         return true;
+    return false;
+}
+/**
+ * Patterns in field name/id/placeholder that indicate the field is NOT a
+ * login username — search inputs, comment fields, personal details, etc.
+ */
+const EXCLUDED_FIELD_PATTERNS = [
+    /\bsearch\b/i,
+    /\bquery\b/i,
+    /^q$/i,
+    /\bkeyword/i,
+    /\bfind\b/i,
+    /\bcomment/i,
+    /\bmessage/i,
+    /\bnote\b/i,
+    /\bdescription/i,
+    /\bcontent\b/i,
+    /\bbody\b/i,
+    /\baddress/i,
+    /\bstreet/i,
+    /\bcity\b/i,
+    /\bstate\b/i,
+    /\bzip\b/i,
+    /\bpostal/i,
+    /\bcountry/i,
+    /\bcompany/i,
+    /\borganization/i,
+    /\borg\b/i,
+    /\btitle\b/i,
+    /\bsubject\b/i,
+    /\btopic\b/i,
+    /first.?name/i,
+    /last.?name/i,
+    /full.?name/i,
+    /display.?name/i,
+    /\bcoupon/i,
+    /\bpromo\b/i,
+    /\bdiscount/i,
+    /\bvoucher/i,
+    /\bcaptcha/i,
+    /\brecaptcha/i,
+    /\bamount\b/i,
+    /\bprice\b/i,
+    /\bquantity\b/i,
+    /\bqty\b/i,
+];
+/** autocomplete attribute values that identify non-login fields. */
+const EXCLUDED_AUTOCOMPLETE_VALUES = new Set([
+    'off',
+    'name',
+    'given-name',
+    'family-name',
+    'additional-name',
+    'address-line1',
+    'address-line2',
+    'address-level1',
+    'address-level2',
+    'postal-code',
+    'country',
+    'country-name',
+    'tel',
+    'tel-national',
+    'organization',
+    'organization-title',
+    'cc-name',
+    'cc-number',
+    'cc-exp',
+    'cc-csc',
+    'bday',
+    'sex',
+    'url',
+    'photo',
+    'search',
+]);
+/**
+ * Return true when a field should NEVER receive an xKey icon.
+ *
+ * Covers:
+ *  - Non-text input types (number, date, range, color, file, …)
+ *  - Search / combobox ARIA roles
+ *  - Fields whose name / id / placeholder match non-login patterns
+ *  - Fields with autocomplete values that identify non-login data
+ */
+function isExcludedField(field) {
+    const type = field.type.toLowerCase();
+    // Allow only the input types that can hold a username or password.
+    if (type !== 'text' && type !== 'email' && type !== 'tel' && type !== 'password') {
+        return true;
+    }
+    // ARIA role exclusion.
+    const role = field.getAttribute('role') || '';
+    if (role === 'search' || role === 'combobox')
+        return true;
+    if (field.closest('[role="search"]'))
+        return true;
+    // autocomplete attribute exclusion.
+    const autocomplete = (field.getAttribute('autocomplete') || '').toLowerCase().trim();
+    if (EXCLUDED_AUTOCOMPLETE_VALUES.has(autocomplete))
+        return true;
+    // Name / id / placeholder pattern exclusion.
+    const name = (field.name || '').toLowerCase();
+    const id = (field.id || '').toLowerCase();
+    const placeholder = (field.placeholder || '').toLowerCase();
+    for (const pattern of EXCLUDED_FIELD_PATTERNS) {
+        if (pattern.test(name) || pattern.test(id) || pattern.test(placeholder))
+            return true;
+    }
     return false;
 }
 /**
@@ -189,9 +317,32 @@ function findUsernameInContainer(container, passwordField) {
         // Skip TOTP/OTP fields — they should not be treated as username inputs.
         if (isTOTPField(candidate))
             continue;
+        // Skip search boxes, comment fields, address fields, etc.
+        if (isExcludedField(candidate))
+            continue;
         // Must appear before the password field in document order.
         if (passwordField.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_PRECEDING) {
             bestCandidate = candidate;
+        }
+    }
+    // If no match from the named/typed selectors, scan ALL visible text inputs
+    // in the container that precede the password field, applying the exclusion
+    // guard. This handles sites that use generic <input type="text"> for the
+    // username without any identifying attributes.
+    if (!bestCandidate) {
+        const allTextInputs = container.querySelectorAll('input[type="text"]');
+        for (const candidate of allTextInputs) {
+            if (candidate === passwordField)
+                continue;
+            if (!isVisible(candidate))
+                continue;
+            if (isTOTPField(candidate))
+                continue;
+            if (isExcludedField(candidate))
+                continue;
+            if (passwordField.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_PRECEDING) {
+                bestCandidate = candidate;
+            }
         }
     }
     return bestCandidate;
@@ -256,16 +407,26 @@ function detectUsernameOnlyForms() {
             return [];
     }
     const forms = [];
-    const selectorStr = USERNAME_SELECTORS.join(',');
+    // Combine named/typed selectors with a plain text-input sweep so that
+    // sites using generic <input type="text"> without identifying attributes
+    // are still covered. Deduplication via a Set prevents double-processing.
+    const selectorStr = USERNAME_SELECTORS.join(',') + ', input[type="text"]';
+    const seen = new Set();
     const candidates = document.querySelectorAll(selectorStr);
     for (const candidate of candidates) {
+        if (seen.has(candidate))
+            continue;
+        seen.add(candidate);
         if (candidate.type === 'hidden' || !isVisible(candidate))
             continue;
         // Skip fields that match TOTP selectors — these are OTP/MFA inputs,
         // not username fields (e.g. Google Authenticator OTP field on Okta).
         if (isTOTPField(candidate))
             continue;
-        // Must be in a login context (inside form, near submit button, or login URL).
+        // Skip search boxes, comment fields, address fields, etc.
+        if (isExcludedField(candidate))
+            continue;
+        // Must be in a login context (inside login form, near submit button, or login URL).
         if (!isLoginContext(candidate))
             continue;
         // Only inject on the first qualifying field to avoid duplicate icons.
@@ -505,6 +666,30 @@ function showLockedHint() {
     document.body.appendChild(host);
     setTimeout(() => host.remove(), 5000);
 }
+/**
+ * Show a hint when xKey is not running or was restarted.
+ * Auto-dismisses after 5 seconds.
+ */
+function showReconnectingHint() {
+    if (document.getElementById('xkey-reconnect-hint'))
+        return;
+    const host = document.createElement('div');
+    host.id = 'xkey-reconnect-hint';
+    host.style.cssText = 'position:fixed;top:16px;right:16px;z-index:2147483647;pointer-events:auto;';
+    const shadow = host.attachShadow({ mode: 'closed' });
+    const card = document.createElement('div');
+    card.style.cssText = 'background:#DBEAFE;border:1px solid #93C5FD;border-radius:8px;padding:12px 16px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:300px;box-shadow:0 4px 12px rgba(0,0,0,0.15);';
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:14px;font-weight:600;color:#1E40AF;margin-bottom:4px;';
+    title.textContent = 'xKey: Not Connected';
+    const body = document.createElement('div');
+    body.style.cssText = 'font-size:12px;color:#1E3A5F;';
+    body.textContent = 'xKey is not running or was restarted. Click the icon again after xKey is ready.';
+    card.append(title, body);
+    shadow.appendChild(card);
+    document.body.appendChild(host);
+    setTimeout(() => host.remove(), 5000);
+}
 function showWaitingIndicator() {
     const host = document.createElement('div');
     host.id = 'xkey-waiting-host';
@@ -604,12 +789,15 @@ async function requestCredentials(usernameOnly = false, targetField) {
     }
     if (response.type === 'error') {
         console.error('[xKey]', response.message);
-        const msg = response.message ?? '';
+        const msg = (response.message ?? '').toLowerCase();
         if (msg.includes('extension disabled') || msg.includes('disabled')) {
             showDisabledHint();
         }
         else if (msg.includes('app is locked')) {
             showLockedHint();
+        }
+        else if (msg.includes('not connected') || msg.includes('disconnected') || msg.includes('handshake')) {
+            showReconnectingHint();
         }
         return;
     }
@@ -656,6 +844,10 @@ async function fillCredential(id) {
     catch (err) {
         dismissWaiting();
         console.error('[xKey] Failed to fill credential:', err);
+        const errMsg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+        if (errMsg.includes('not connected') || errMsg.includes('disconnected') || errMsg.includes('handshake')) {
+            showReconnectingHint();
+        }
         return;
     }
     dismissWaiting();
@@ -720,6 +912,10 @@ async function fillTOTP(domain) {
     }
     catch (err) {
         console.error('[xKey] Failed to get TOTP:', err);
+        const errMsg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+        if (errMsg.includes('not connected') || errMsg.includes('disconnected') || errMsg.includes('handshake')) {
+            showReconnectingHint();
+        }
         return;
     }
     if (response.type === 'totp_result' && response.data) {
@@ -848,6 +1044,238 @@ function escKeyHandler(e) {
     }
 }
 // ---------------------------------------------------------------------------
+// Save-on-submit: detect new credentials and prompt to save
+// ---------------------------------------------------------------------------
+/** Auto-dismiss timeout for the save prompt in milliseconds. */
+const SAVE_PROMPT_DISMISS_MS = 30000;
+/**
+ * Show a fixed banner at the top of the page asking the user whether
+ * they want to save the submitted credentials in xKey.
+ *
+ * Uses Shadow DOM for style isolation (same pattern as the other hint
+ * banners in this file).
+ *
+ * @param domain - The hostname the credentials were submitted to.
+ * @param username - The username captured from the form.
+ * @param password - The password captured from the form.
+ * @param pageTitle - The document title at submission time (used as the
+ *   credential title suggestion).
+ */
+function showSavePrompt(domain, username, password, pageTitle) {
+    // Only one save prompt at a time.
+    if (document.getElementById('xkey-save-prompt'))
+        return;
+    const host = document.createElement('div');
+    host.id = 'xkey-save-prompt';
+    host.style.cssText =
+        'position:fixed;top:16px;right:16px;z-index:2147483647;pointer-events:auto;';
+    const shadow = host.attachShadow({ mode: 'closed' });
+    const card = document.createElement('div');
+    card.style.cssText = [
+        'background:#F0FDF4',
+        'border:1px solid #86EFAC',
+        'border-radius:8px',
+        'padding:14px 16px',
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+        'max-width:320px',
+        'box-shadow:0 4px 12px rgba(0,0,0,0.15)',
+    ].join(';');
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:14px;font-weight:600;color:#166534;margin-bottom:6px;';
+    title.textContent = 'xKey: Save password?';
+    const body = document.createElement('div');
+    body.style.cssText = 'font-size:12px;color:#14532D;margin-bottom:10px;word-break:break-all;';
+    body.textContent = `Save credentials for ${username} on ${domain}?`;
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+    function dismiss() {
+        clearTimeout(autoTimer);
+        host.remove();
+    }
+    const saveBtn = document.createElement('button');
+    saveBtn.style.cssText = [
+        'padding:6px 14px',
+        'background:#16A34A',
+        'color:white',
+        'border:none',
+        'border-radius:5px',
+        'font-size:12px',
+        'font-weight:600',
+        'cursor:pointer',
+    ].join(';');
+    saveBtn.textContent = 'Save';
+    saveBtn.addEventListener('click', () => {
+        dismiss();
+        chrome.runtime
+            .sendMessage({
+            type: 'save_credential',
+            domain,
+            username,
+            password,
+            title: pageTitle || domain,
+        })
+            .catch((err) => {
+            console.error('[xKey] Failed to save credential:', err);
+        });
+    });
+    const neverBtn = document.createElement('button');
+    neverBtn.style.cssText = [
+        'padding:6px 14px',
+        'background:white',
+        'color:#6B7280',
+        'border:1px solid #D1D5DB',
+        'border-radius:5px',
+        'font-size:12px',
+        'cursor:pointer',
+    ].join(';');
+    neverBtn.textContent = 'Never for this site';
+    neverBtn.addEventListener('click', () => {
+        dismiss();
+        chrome.runtime
+            .sendMessage({ type: 'ignore_domain', domain })
+            .catch((err) => {
+            console.error('[xKey] Failed to ignore domain:', err);
+        });
+    });
+    const dismissBtn = document.createElement('button');
+    dismissBtn.style.cssText = [
+        'padding:6px 10px',
+        'background:transparent',
+        'color:#9CA3AF',
+        'border:none',
+        'font-size:12px',
+        'cursor:pointer',
+    ].join(';');
+    dismissBtn.textContent = 'Dismiss';
+    dismissBtn.addEventListener('click', dismiss);
+    btnRow.append(saveBtn, neverBtn, dismissBtn);
+    card.append(title, body, btnRow);
+    shadow.appendChild(card);
+    document.body.appendChild(host);
+    const autoTimer = setTimeout(dismiss, SAVE_PROMPT_DISMISS_MS);
+}
+/**
+ * Try to find the username and password field values in a submitted form.
+ *
+ * Returns null when no password field is found (non-login form).
+ */
+function captureFormCredentials(form) {
+    // Require a password field — non-login forms are filtered out here.
+    let passwordField = null;
+    let usernameField = null;
+    if (form) {
+        const inputs = form.querySelectorAll('input');
+        for (const input of inputs) {
+            if (input.type === 'password' && isVisible(input)) {
+                passwordField = input;
+                continue;
+            }
+            if (!passwordField && !usernameField) {
+                // Collect candidate username field (evaluated below).
+                if (!isExcludedField(input) && !isTOTPField(input) && isVisible(input)) {
+                    usernameField = input;
+                }
+            }
+        }
+    }
+    else {
+        // SPA submit without a <form> — scan the whole page.
+        const detectedForms = detectForms();
+        if (detectedForms.length > 0) {
+            passwordField = detectedForms[0].passwordField;
+            usernameField = detectedForms[0].usernameField;
+        }
+    }
+    if (!passwordField || !passwordField.value)
+        return null;
+    return {
+        username: usernameField?.value ?? '',
+        password: passwordField.value,
+    };
+}
+/**
+ * Check whether xKey already has a credential for this domain + username,
+ * then show a save prompt if it does not.
+ *
+ * Sends a `check_credential` message to the background and waits for a
+ * `check_result` response.  Falls back to showing the prompt on any error
+ * so that a communication failure doesn't silently swallow the save offer.
+ */
+async function maybeOfferSave(domain, username, password, pageTitle) {
+    let response;
+    try {
+        response = await chrome.runtime.sendMessage({
+            type: 'check_credential',
+            domain,
+            username,
+        });
+    }
+    catch {
+        // Background not reachable — don't block the user, silently skip.
+        return;
+    }
+    if (!response || response.type !== 'check_result')
+        return;
+    if (response.exists)
+        return; // Already saved — nothing to do.
+    showSavePrompt(domain, username, password, pageTitle);
+}
+/**
+ * Register capture-phase listeners on the document to detect form
+ * submissions (both native <form> submits and SPA button/Enter triggers).
+ *
+ * Three signal sources are monitored:
+ *  1. `submit` events on forms that contain a password field.
+ *  2. Click events on submit buttons inside a login form.
+ *  3. Enter keypress on password fields.
+ *
+ * All three paths call `maybeOfferSave` with the captured values.
+ */
+function monitorFormSubmissions() {
+    const domain = window.location.hostname;
+    // --- Signal 1: native form submit ---
+    document.addEventListener('submit', (e) => {
+        const form = e.target instanceof HTMLFormElement ? e.target : null;
+        const creds = captureFormCredentials(form);
+        if (!creds)
+            return;
+        maybeOfferSave(domain, creds.username, creds.password, document.title).catch((err) => void console.error('[xKey] maybeOfferSave error:', err));
+    }, true);
+    // --- Signal 2: click on a submit button inside a login form ---
+    document.addEventListener('click', (e) => {
+        const target = e.target;
+        if (!target)
+            return;
+        // Must be a button or role="button" inside a <form> with a password field.
+        const btn = target.closest('button, [role="button"], input[type="submit"]');
+        if (!btn)
+            return;
+        const form = btn.closest('form');
+        if (!form || !form.querySelector('input[type="password"]'))
+            return;
+        // Only trigger on visually submit-like buttons.
+        if (!hasLoginButton(form))
+            return;
+        const creds = captureFormCredentials(form);
+        if (!creds)
+            return;
+        maybeOfferSave(domain, creds.username, creds.password, document.title).catch((err) => void console.error('[xKey] maybeOfferSave error:', err));
+    }, true);
+    // --- Signal 3: Enter key on a password field ---
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter')
+            return;
+        const target = e.target;
+        if (!(target instanceof HTMLInputElement) || target.type !== 'password')
+            return;
+        const form = target.closest('form');
+        const creds = captureFormCredentials(form);
+        if (!creds)
+            return;
+        maybeOfferSave(domain, creds.username, creds.password, document.title).catch((err) => void console.error('[xKey] maybeOfferSave error:', err));
+    }, true);
+}
+// ---------------------------------------------------------------------------
 // Handle fill requests from popup
 // ---------------------------------------------------------------------------
 chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
@@ -891,6 +1319,8 @@ function initialize() {
     if (totpForms.length > 0) {
         injectFieldIcons(totpForms);
     }
+    // Monitor form submissions to offer saving new credentials.
+    monitorFormSubmissions();
 }
 // Run on DOM ready.
 if (document.readyState === 'loading') {
@@ -955,4 +1385,37 @@ if (observeTarget) {
         subtree: true,
     });
 }
+function replyToConsole(message) {
+    window.postMessage({ source: 'xkey-extension', ...message }, window.location.origin);
+}
+window.addEventListener('message', (event) => {
+    if (event.source !== window || event.origin !== window.location.origin)
+        return;
+    const data = event.data;
+    if (!data || data.source !== 'xkms-console' || typeof data.requestId !== 'string')
+        return;
+    if (data.type === 'xkey-ping') {
+        replyToConsole({ type: 'xkey-pong', requestId: data.requestId });
+        return;
+    }
+    if (data.type !== 'xkey-vault-unlock')
+        return;
+    const requestId = data.requestId;
+    chrome.runtime
+        .sendMessage({ type: 'vault_unlock_key_factor', fingerprints: data.fingerprints })
+        .then((response) => {
+        if (response?.type === 'vault_unlock_result') {
+            replyToConsole({ type: 'xkey-vault-unlock-result', requestId, unlocked: response.unlocked === true, error: response.error });
+        }
+        else if (response?.type === 'pairing_status') {
+            replyToConsole({ type: 'xkey-vault-unlock-result', requestId, unlocked: false, error: 'Pair the xKey extension with the xKey app first (open the extension popup).' });
+        }
+        else {
+            replyToConsole({ type: 'xkey-vault-unlock-result', requestId, unlocked: false, error: response?.message || 'The xKey extension could not reach xKey.' });
+        }
+    })
+        .catch((err) => {
+        replyToConsole({ type: 'xkey-vault-unlock-result', requestId, unlocked: false, error: err instanceof Error ? err.message : String(err) });
+    });
+});
 //# sourceMappingURL=content.js.map

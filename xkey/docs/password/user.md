@@ -1,6 +1,6 @@
 # Static Passwords — User Guide
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-10-01
 
 ## Store a password
 
@@ -79,6 +79,24 @@ xkey password lock --xkmsd-url https://xkms.example.com
 # See the session's access mode and lock state
 xkey password status --source xkmsd --xkmsd-url https://xkms.example.com
 ```
+
+## Unlock your server vault with a key
+
+Your personal vault on an `xkmsd` server can open with a key xKey holds: a
+PIV card (slot 9d), a certificate's key, or a TPM key bound to a named TPM
+policy. In the app's vault panel, *Add key* enrolls one (pick the factor,
+the xKey backend and the key) and *Unlock with key* uses it; on the command
+line, `xkey password vault enroll --key-factor ...` and
+`xkey password unlock --key`.
+
+**From the web console.** The console's *Unlock with xKey* reaches the app
+through the xKey browser extension. The app shows *Unlock your password
+vault?* with the page's address and the key; approve it only if you just
+asked the console to unlock. xKey then unlocks the vault itself -- the page
+never receives a key or a secret. A page that is not your server's console
+is refused without asking you, and a request nobody approves expires after
+two minutes. The headless `xkey extension serve` has no window to ask in and
+refuses these requests; run the app.
 
 ## Back up the vault from the GUI
 

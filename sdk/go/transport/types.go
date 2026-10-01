@@ -214,6 +214,7 @@ type PasswordGenerateResponse = pkgtransport.PasswordGenerateResponse
 // Personal password vault types.
 type PasswordVaultCredential = pkgtransport.PasswordVaultCredential
 type PasswordVaultFactor = pkgtransport.PasswordVaultFactor
+type PasswordVaultKeyRef = pkgtransport.PasswordVaultKeyRef
 type PasswordVaultStatusResponse = pkgtransport.PasswordVaultStatusResponse
 type PasswordVaultEnrollRequest = pkgtransport.PasswordVaultEnrollRequest
 type PasswordVaultEnrollResponse = pkgtransport.PasswordVaultEnrollResponse

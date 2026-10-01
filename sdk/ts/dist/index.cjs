@@ -57,6 +57,10 @@ __export(index_exports, {
   VaultPasskeyPrfUnsupportedError: () => VaultPasskeyPrfUnsupportedError,
   VaultPasskeyUnavailableError: () => VaultPasskeyUnavailableError,
   WebAuthnEnvelopeError: () => WebAuthnEnvelopeError,
+  XKEY_PING_TIMEOUT_MS: () => XKEY_PING_TIMEOUT_MS,
+  XKEY_UNLOCK_TIMEOUT_MS: () => XKEY_UNLOCK_TIMEOUT_MS,
+  XkeyBridgeError: () => XkeyBridgeError,
+  XkeyExtensionUnavailableError: () => XkeyExtensionUnavailableError,
   XkmsApiError: () => XkmsApiError,
   XkmsClient: () => XkmsClient,
   XkmsNetworkError: () => XkmsNetworkError,
@@ -65,6 +69,7 @@ __export(index_exports, {
   bufferToBase64url: () => bufferToBase64url,
   buildURL: () => buildURL,
   createClient: () => createClient,
+  detectXkeyExtension: () => detectXkeyExtension,
   encodeAssertionResponse: () => encodeAssertionResponse,
   encodeAttestationResponse: () => encodeAttestationResponse,
   encodeHostKeyResponse: () => encodeHostKeyResponse,
@@ -72,6 +77,7 @@ __export(index_exports, {
   encodeResize: () => encodeResize,
   enrollVaultPasskey: () => enrollVaultPasskey,
   isWailsRuntime: () => isWailsRuntime,
+  keyFactorFingerprints: () => keyFactorFingerprints,
   parseControl: () => parseControl,
   parseCreationOptions: () => parseCreationOptions,
   parseErrorEnvelope: () => parseErrorEnvelope,
@@ -79,7 +85,8 @@ __export(index_exports, {
   pcrBranch: () => pcrBranch,
   relyingPartyServes: () => relyingPartyServes,
   resolveAuthPaths: () => resolveAuthPaths,
-  unlockVaultPasskey: () => unlockVaultPasskey
+  unlockVaultPasskey: () => unlockVaultPasskey,
+  unlockWithXkey: () => unlockWithXkey
 });
 module.exports = __toCommonJS(index_exports);
 
@@ -2076,6 +2083,72 @@ async function evaluate(credentials, rpId, candidates, platform) {
   }
   return { id: asserted.rawId, secret };
 }
+
+// src/vaultBridge.ts
+var XkeyExtensionUnavailableError = class extends Error {
+  constructor() {
+    super(
+      "Unlocking with a PIV card, certificate or TPM key needs the xKey browser extension and the xKey app. Install the extension, pair it with xKey, and connect xKey to this server."
+    );
+    this.name = "XkeyExtensionUnavailableError";
+  }
+};
+var XkeyBridgeError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "XkeyBridgeError";
+  }
+};
+var XKEY_PING_TIMEOUT_MS = 800;
+var XKEY_UNLOCK_TIMEOUT_MS = 135e3;
+var KEY_FACTORS = /* @__PURE__ */ new Set(["piv", "certificate", "tpm"]);
+function keyFactorFingerprints(factors) {
+  return factors.filter((f) => KEY_FACTORS.has(f.factor) && f.key_fingerprint).map((f) => f.key_fingerprint);
+}
+function newRequestId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+function exchange(win, request, replyType, timeoutMs) {
+  const requestId = newRequestId();
+  return new Promise((resolve) => {
+    const onMessage = (event) => {
+      const data = event.data;
+      if (event.origin !== win.location.origin || !data || data.source !== "xkey-extension") return;
+      if (data.type !== replyType || data.requestId !== requestId) return;
+      cleanup();
+      resolve(data);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(void 0);
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      win.removeEventListener("message", onMessage);
+    };
+    win.addEventListener("message", onMessage);
+    win.postMessage({ source: "xkms-console", requestId, ...request }, win.location.origin);
+  });
+}
+async function detectXkeyExtension(win = window, timeoutMs = XKEY_PING_TIMEOUT_MS) {
+  return await exchange(win, { type: "xkey-ping" }, "xkey-pong", timeoutMs) !== void 0;
+}
+async function unlockWithXkey(fingerprints, win = window, timeoutMs = XKEY_UNLOCK_TIMEOUT_MS) {
+  if (fingerprints.length === 0) {
+    throw new XkeyBridgeError("Your vault has no PIV, certificate or TPM factor.");
+  }
+  if (!await detectXkeyExtension(win)) {
+    throw new XkeyExtensionUnavailableError();
+  }
+  const reply = await exchange(win, { type: "xkey-vault-unlock", fingerprints }, "xkey-vault-unlock-result", timeoutMs);
+  if (!reply) {
+    throw new XkeyBridgeError("xKey did not answer in time.");
+  }
+  if (reply.unlocked !== true) {
+    throw new XkeyBridgeError(typeof reply.error === "string" && reply.error ? reply.error : "xKey did not unlock the vault.");
+  }
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   AuditClient,
@@ -2113,6 +2186,10 @@ async function evaluate(credentials, rpId, candidates, platform) {
   VaultPasskeyPrfUnsupportedError,
   VaultPasskeyUnavailableError,
   WebAuthnEnvelopeError,
+  XKEY_PING_TIMEOUT_MS,
+  XKEY_UNLOCK_TIMEOUT_MS,
+  XkeyBridgeError,
+  XkeyExtensionUnavailableError,
   XkmsApiError,
   XkmsClient,
   XkmsNetworkError,
@@ -2121,6 +2198,7 @@ async function evaluate(credentials, rpId, candidates, platform) {
   bufferToBase64url,
   buildURL,
   createClient,
+  detectXkeyExtension,
   encodeAssertionResponse,
   encodeAttestationResponse,
   encodeHostKeyResponse,
@@ -2128,6 +2206,7 @@ async function evaluate(credentials, rpId, candidates, platform) {
   encodeResize,
   enrollVaultPasskey,
   isWailsRuntime,
+  keyFactorFingerprints,
   parseControl,
   parseCreationOptions,
   parseErrorEnvelope,
@@ -2135,6 +2214,7 @@ async function evaluate(credentials, rpId, candidates, platform) {
   pcrBranch,
   relyingPartyServes,
   resolveAuthPaths,
-  unlockVaultPasskey
+  unlockVaultPasskey,
+  unlockWithXkey
 });
 //# sourceMappingURL=index.cjs.map

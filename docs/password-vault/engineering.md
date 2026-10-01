@@ -1,6 +1,6 @@
 # Password Vault — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 ## Exported surface — `pkg/staticpw`
 
@@ -30,7 +30,8 @@ store is always `AccessSessionBased`.
 ### The personal vault (`vault.go`, `dek_backend.go`)
 
 ```go
-type FactorType string // FactorPassphrase, FactorPasskey, FactorRecovery
+type FactorType string // FactorPassphrase, FactorPasskey, FactorRecovery,
+                        // FactorPIV, FactorCertificate, FactorTPM (IsKeyFactor)
 
 type VaultCredential struct {
 	Type         FactorType
@@ -56,6 +57,26 @@ Constants: `MinPassphraseLength` 8 (NIST SP 800-63B), `PasskeySecretLength`
 KEKs: HKDF-SHA256 with a per-factor salt and a domain-separated info string.
 Every wrap and every personal entry is AES-256-GCM with associated data
 binding it to its tenant, user and factor (wraps) or storage key (entries).
+
+Key factors (`vault.go`, `pkg/vaultkey`, `pkg/vaulttoken`): `wrap` seals a
+fresh secret to the factor's public key (`vaultkey.Seal`) and keeps only
+`KeyAlgorithm`, `KeyChallenge`, `KeyCheck` and `KeyFingerprint`; `kek`
+derives the KEK with `HKDF-SHA256(secret, salt, "xkms/staticpw/vault/v1/key|"
++ fingerprint)`; `unwrapWith` matches a key-factor credential by type and
+fingerprint. `VaultKeyError` (matches `ErrVaultInvalidCredential`) reports a
+key that does not parse or is unsupported; `ErrVaultKeyExists` a key already
+enrolled. Client side, `vaulttoken.Resolve` finds the key in an xkms backend
+(PIV: the backend's slot 9d key, `xkms.PivSlotCN("9d")`), `SelfTest` proves
+the token can open a secret sealed to it, `EnrollCredential` builds the
+enrollment, and `Find`/`UnlockCredential` recover a vault factor's secret.
+The TPM 2.0 backend's `Decrypter` decrypts RSA-OAEP-SHA-256 through
+`TPM2.RSADecryptKey`, authorized by the key's own policy session.
+
+Passkey relying party: `WithPasskeyRelyingParty(rpID)` on
+`NewTenantPasswordStoreManager` (compose `Deps.PasskeyRelyingParty`, xkmsd's
+`webauthn.rp_id`, the module's `WithPasswordVaultRelyingParty`); without it
+passkey enrollment answers `ErrVaultPasskeyUnavailable`, and a passkey for
+another relying party `ErrVaultRelyingPartyMismatch`.
 
 Personal names (`names.go`): a personal store's `entryNames` is keyed with
 `HKDF-SHA256(DEK, "xkms/staticpw/personal/v1/names")`, so its entry IDs and
@@ -208,6 +229,30 @@ pre-release, so old layouts are not carried forward).
   personal storage key or value contains an entry name, folder, alias or
   public `GenerateID` of them, that IDs are keyed per user and stable across
   sessions, and that lookups, folders, aliases, moves and renames still work.
+- **Key factors** — `vault_keyfactor_test.go` (every key factor type, EC and
+  RSA: enroll, unlock, wrong token, forged secret, duplicate key, rotate,
+  remove, recover, and a barrier scan proving the server holds no secret);
+  `pkg/vaultkey` (seal/open on the software backend for P-256/384/521 and
+  RSA, wrong key, unsupported keys); `pkg/vaulttoken` (every factor through
+  a real vault service, wrong and missing tokens, self-test), with
+  `vaulttoken_tpm_sim_test.go` (`-tags tpm_simulator`: TPM2_ECDH_ZGen and
+  TPM2_RSA_Decrypt under the platform policy) and
+  `vaulttoken_pkcs11_test.go` (`-tags pkcs11`, SoftHSM: PIV slot 9d and
+  certificate keys, a token without RSA-OAEP-256 caught by the self-test,
+  another token refused). Run the tagged suites with
+  `go test -tags 'codec_json pkcs11 tpm_simulator' ./pkg/vaulttoken/ ./cmd/xkmsctl/`.
+- **Passkeys** — `pkg/vaultpasskey` (relying party recorded and required,
+  cross-surface secret vectors), `sdk/ts/src/vaultPasskey.test.ts` (WebAuthn
+  PRF over a fake authenticator, typed errors, the same vectors), and the
+  console's Playwright `e2e/password-vault-passkey.spec.ts` (Chrome's
+  WebAuthn stack with a CDP virtual authenticator with PRF).
+- **Browser bridge** — xkey `pkg/gui/services/staticpw_vault_bridge*_test.go`
+  (origin rules, approval, denial, timeout, user mismatch, and the whole
+  chain extension -> encrypted native host -> IPC -> service -> vault),
+  `pkg/ipc/server_vault_test.go`, the extension's `npm test`
+  (`src/vaultBridge.test.ts`: browser-attributed origin, top frame only,
+  validated fingerprints), `sdk/ts/src/vaultBridge.test.ts`, and the
+  console's `e2e/password-vault-xkey.spec.ts`.
 - **Transport** — `pkg/api/rest/password_handlers_test.go`;
   `pkg/api/mcp/handlers_password_test.go`, `handlers_password_unlock_test.go`;
   `pkg/xkms/servicer_password_test.go`.

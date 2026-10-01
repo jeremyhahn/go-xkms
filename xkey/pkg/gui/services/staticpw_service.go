@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/jeremyhahn/go-xkms/sdk/go/vaulttoken"
 	"math"
 	"os"
 	"strings"
@@ -142,6 +143,14 @@ type StaticPasswordService struct {
 	// passkey runs on. Nil opens the attached security key over HID (see
 	// openVaultAuthenticator); tests set a simulated authenticator.
 	vaultAuthenticatorOpener func() (vaultAuthenticator, error)
+
+	// keyLookup resolves the key backends a vault key factor's token is in.
+	// Nil uses xKey's running xkms backends; tests set their own.
+	keyLookup vaulttoken.Lookup
+
+	// browser holds the browser-extension vault requests awaiting the
+	// user's approval (staticpw_vault_bridge.go).
+	browser browserVaultBridge
 }
 
 // NewStaticPasswordService creates a new StaticPasswordService. If store is nil,

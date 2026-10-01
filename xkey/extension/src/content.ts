@@ -1589,3 +1589,55 @@ if (observeTarget) {
     subtree: true,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Password-vault bridge (the web console's key-factor unlock)
+// ---------------------------------------------------------------------------
+//
+// The console page talks to the extension with window.postMessage, tagged
+// source "xkms-console"; replies are tagged "xkey-extension" and posted only
+// to this page's own origin. The page can ask two things: whether the
+// extension is here (ping), and to unlock the vault with a key factor. The
+// unlock request goes to the background worker, which attaches the
+// browser-attributed origin -- not anything the page wrote -- and asks xKey,
+// which refuses any page that is not the console and asks the user first.
+// The answer carries no secret: xKey unlocks the vault itself.
+
+interface ConsoleVaultMessage {
+  source: 'xkms-console';
+  type: 'xkey-ping' | 'xkey-vault-unlock';
+  requestId: string;
+  fingerprints?: unknown;
+}
+
+function replyToConsole(message: Record<string, unknown>): void {
+  window.postMessage({ source: 'xkey-extension', ...message }, window.location.origin);
+}
+
+window.addEventListener('message', (event: MessageEvent) => {
+  if (event.source !== window || event.origin !== window.location.origin) return;
+  const data = event.data as Partial<ConsoleVaultMessage> | null;
+  if (!data || data.source !== 'xkms-console' || typeof data.requestId !== 'string') return;
+
+  if (data.type === 'xkey-ping') {
+    replyToConsole({ type: 'xkey-pong', requestId: data.requestId });
+    return;
+  }
+  if (data.type !== 'xkey-vault-unlock') return;
+
+  const requestId = data.requestId;
+  chrome.runtime
+    .sendMessage({ type: 'vault_unlock_key_factor', fingerprints: data.fingerprints })
+    .then((response: { type?: string; unlocked?: boolean; error?: string; message?: string; required?: boolean }) => {
+      if (response?.type === 'vault_unlock_result') {
+        replyToConsole({ type: 'xkey-vault-unlock-result', requestId, unlocked: response.unlocked === true, error: response.error });
+      } else if (response?.type === 'pairing_status') {
+        replyToConsole({ type: 'xkey-vault-unlock-result', requestId, unlocked: false, error: 'Pair the xKey extension with the xKey app first (open the extension popup).' });
+      } else {
+        replyToConsole({ type: 'xkey-vault-unlock-result', requestId, unlocked: false, error: response?.message || 'The xKey extension could not reach xKey.' });
+      }
+    })
+    .catch((err: unknown) => {
+      replyToConsole({ type: 'xkey-vault-unlock-result', requestId, unlocked: false, error: err instanceof Error ? err.message : String(err) });
+    });
+});

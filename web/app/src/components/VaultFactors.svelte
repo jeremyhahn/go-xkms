@@ -123,6 +123,10 @@
     </tbody>
   </table>
 
+  <p class="text-xs text-base-content/70 mb-3">
+    PIV cards, certificate keys and TPM keys are added with xKey or xkmsctl, which hold the key; this page never receives a private key or a certificate.
+  </p>
+
   <div class="space-y-2">
     <h4 class="font-medium text-sm">{changing ? `Change "${name(changing)}"` : "Add a passphrase"}</h4>
     <input type="password" class="input input-bordered w-full" aria-label="New passphrase" placeholder={`New passphrase (${MIN_PASSPHRASE_LENGTH}+ characters)`} bind:value={passphrase} />

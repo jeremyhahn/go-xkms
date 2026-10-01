@@ -1,6 +1,6 @@
 # Password Vault — API
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-30 (#1249)
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -61,22 +61,40 @@ REST, gRPC, QUIC, MCP and embedded:
 | unlock or factor management before any enrollment | not initialized (REST 412, gRPC FailedPrecondition) |
 | credential unwraps no factor | rejected (REST 401, gRPC Unauthenticated) — never says which part was wrong |
 | factor ID unknown | not found (REST 404) |
-| removing the last passphrase or passkey | refused (REST 409, gRPC FailedPrecondition) |
+| removing the last unlock factor | refused (REST 409, gRPC FailedPrecondition) |
 | enrolling a passkey credential already enrolled | refused (REST 409, gRPC AlreadyExists) |
+| enrolling a key already enrolled (any key factor type) | `ErrVaultKeyExists` (REST 409, gRPC AlreadyExists, MCP duplicate) |
+| a passkey enrolled for another relying party than the server's | `ErrVaultRelyingPartyMismatch` (REST 400, gRPC InvalidArgument) |
+| a passkey on a server with no WebAuthn relying party configured | `ErrVaultPasskeyUnavailable` (REST 412, gRPC FailedPrecondition) |
+| a key factor's key that does not parse or is not RSA ≥ 2048 / EC P-256/384/521 | invalid (REST 400, gRPC InvalidArgument) |
 
 The unlock body and every vault credential is a `PasswordVaultCredential`:
 
 ```json
 {"factor": "passphrase", "passphrase": "…"}
 {"factor": "passkey", "credential_id": "<b64>", "secret": "<b64 32-byte hmac-secret output>",
- "prf_salt": "<b64 32 bytes, enrollment only>", "label": "laptop key"}
+ "prf_salt": "<b64 32 bytes, enrollment only>", "rp_id": "<the server's passkey_rp_id, enrollment only>",
+ "label": "laptop key"}
+{"factor": "piv" | "certificate" | "tpm",
+ "public_key": "<b64 PKIX DER>" | "certificate": "<b64 DER; a certificate factor needs it>",
+ "key_ref": {"backend": "pkcs11", "key_id": "piv-9d", "tpm_policy": "platform"}, "label": "desk card"}
+{"factor": "piv" | "certificate" | "tpm", "key_fingerprint": "<hex SPKI SHA-256>",
+ "secret": "<b64 32-byte secret the private key recovered>"}            (key-factor unlock)
 ```
 
 Enroll and recover answer `{"factor": {...}, "recovery_code": "ABCD-…"}`; the
 code is present only on the first enrollment and on every recovery, and is
 never returned again. Vault status lists each factor's `id`, `factor`,
-`label`, `created_at` and, for a passkey, its `credential_id` and `prf_salt`
-(what a client needs to evaluate hmac-secret before unlocking). Rotate takes
+`label`, `created_at`; for a passkey its `credential_id`, `prf_salt` and
+`rp_id` (what a client needs to evaluate hmac-secret before unlocking); for a
+key factor its `key_fingerprint`, `key_algorithm` (`ECDH-ES+HKDF-SHA256` or
+`RSA-OAEP-256`), `key_challenge`, `key_check`, `key_ref` and, for a
+certificate, `certificate_subject` (what a client needs to recover the secret
+with its private key, pkg/vaultkey). The status also carries `passkey_rp_id`,
+the relying party a new passkey must be created for, absent when the server
+offers no passkeys. The same fields are in the proto (`PasswordVaultCredential`
+fields 7-11, `PasswordVaultKeyRef`, `PasswordVaultFactor` fields 7-13,
+`PasswordVaultStatusResponse.passkey_rp_id`). Rotate takes
 `{"factor_id": …}` in the path plus a new credential of the same type; recover
 takes `{"recovery_code": …}` plus the new credential.
 

@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node node_modules/typescript/lib/tsc.js && cp src/popup.html dist/ && cp manifest.json dist/ && mkdir -p dist/icons && (cp -r src/icons/* dist/icons/ 2>/dev/null || true)",
     "watch": "node node_modules/typescript/lib/tsc.js --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "node --test src/*.test.ts"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

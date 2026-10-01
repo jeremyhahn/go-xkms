@@ -5,6 +5,7 @@ import PasswordVaultPanel from './PasswordVaultPanel.svelte';
 
 const factor = { id: 'f-1', factor: 'passphrase', label: 'laptop', created_at: '2026-09-30T00:00:00Z' };
 const passkey = { id: 'f-2', factor: 'passkey', label: 'yubikey', created_at: '2026-09-30T00:00:00Z' };
+const keyFactor = { id: 'f-3', factor: 'tpm', label: 'this laptop', created_at: '2026-09-30T00:00:00Z', key_backend: 'tpm2', key_id: 'vault-tpm', tpm_policy: 'platform' };
 
 function installMock(status: Record<string, unknown> | Error) {
   const svc = {
@@ -16,6 +17,9 @@ function installMock(status: Record<string, unknown> | Error) {
     UnlockWithPasskey: vi.fn().mockResolvedValue(undefined),
     RecoverWithPasskey: vi.fn().mockResolvedValue({ factor: passkey, recovery_code: 'NEW-CODE-0002' }),
     RemoveVaultFactor: vi.fn().mockResolvedValue(undefined),
+    EnrollKeyFactor: vi.fn().mockResolvedValue({ factor: keyFactor, recovery_code: 'KEY-CODE-0001' }),
+    RecoverWithKeyFactor: vi.fn().mockResolvedValue({ factor: keyFactor, recovery_code: 'KEY-CODE-0002' }),
+    UnlockWithKeyFactor: vi.fn().mockResolvedValue(undefined),
     Unlock: vi.fn().mockResolvedValue(undefined),
     Lock: vi.fn().mockResolvedValue(undefined),
   };
@@ -135,6 +139,7 @@ describe('PasswordVaultPanel', () => {
 
   it('rotates a passphrase factor keeping its label, and removes a factor', async () => {
     const passkey = { id: 'f-2', factor: 'passkey', label: 'yubikey', created_at: '2026-09-30T00:00:00Z' };
+const keyFactor = { id: 'f-3', factor: 'tpm', label: 'this laptop', created_at: '2026-09-30T00:00:00Z', key_backend: 'tpm2', key_id: 'vault-tpm', tpm_policy: 'platform' };
     const svc = installMock({ initialized: true, unlocked: true, factors: [factor, passkey] });
     const view = render(PasswordVaultPanel);
     await waitFor(() => view.getByText('laptop'));
@@ -276,5 +281,67 @@ describe('PasswordVaultPanel', () => {
       await waitFor(() => expect(view.getByText('yubikey')).toBeInTheDocument());
       expect(view.queryByTestId('vault-recovery-code')).not.toBeInTheDocument();
     });
+  });
+});
+
+describe('PasswordVaultPanel key factors', () => {
+  it('creates the vault with a TPM key under a named policy', async () => {
+    const svc = installMock({ initialized: false, unlocked: false, factors: [] });
+    const view = render(PasswordVaultPanel);
+    await waitFor(() => view.getByText('Use a key'));
+    await fireEvent.click(view.getByText('Use a key'));
+
+    await fireEvent.change(view.container.querySelector('#vault-key-factor') as HTMLSelectElement, { target: { value: 'tpm' } });
+    await type('vault-key-backend', 'tpm2');
+    await type('vault-key-id', 'vault-tpm');
+    await type('vault-key-policy', 'platform');
+    await type('vault-label', 'this laptop');
+    svc.VaultStatus.mockResolvedValue({ initialized: true, unlocked: true, factors: [keyFactor] });
+    await fireEvent.click(view.getByText('Create vault'));
+
+    await waitFor(() => expect(view.getByTestId('vault-recovery-code')).toHaveTextContent('KEY-CODE-0001'));
+    expect(svc.EnrollKeyFactor).toHaveBeenCalledWith('tpm', 'tpm2', 'vault-tpm', 'platform', 'this laptop');
+  });
+
+  it('refuses a key factor without a backend before calling xKey', async () => {
+    const svc = installMock({ initialized: false, unlocked: false, factors: [] });
+    const view = render(PasswordVaultPanel);
+    await waitFor(() => view.getByText('Use a key'));
+    await fireEvent.click(view.getByText('Use a key'));
+    await fireEvent.click(view.getByText('Create vault'));
+    await waitFor(() => view.getByRole('alert'));
+    expect(view.getByRole('alert')).toHaveTextContent('backend');
+    expect(svc.EnrollKeyFactor).not.toHaveBeenCalled();
+  });
+
+  it('unlocks with a key when the vault has a key factor, and shows the reason when it cannot', async () => {
+    const svc = installMock({ initialized: true, unlocked: false, factors: [factor, keyFactor] });
+    const view = render(PasswordVaultPanel);
+    await waitFor(() => view.getByText('Unlock with key'));
+    svc.UnlockWithKeyFactor.mockRejectedValueOnce(new Error('none of the vault\'s key factors has its token here'));
+    await fireEvent.click(view.getByText('Unlock with key'));
+    await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('token here'));
+
+    svc.VaultStatus.mockResolvedValue({ initialized: true, unlocked: true, factors: [factor, keyFactor] });
+    await fireEvent.click(view.getByText('Unlock with key'));
+    await waitFor(() => view.getByText('Unlocked'));
+    expect(svc.UnlockWithKeyFactor).toHaveBeenCalledTimes(2);
+  });
+
+  it('offers no key unlock without a key factor', async () => {
+    installMock({ initialized: true, unlocked: false, factors: [factor] });
+    const view = render(PasswordVaultPanel);
+    await waitFor(() => view.getByText('Use recovery code'));
+    expect(view.queryByText('Unlock with key')).toBeNull();
+  });
+
+  it('adds a PIV key while unlocked and recovers with one while locked', async () => {
+    const svc = installMock({ initialized: true, unlocked: true, factors: [factor] });
+    const view = render(PasswordVaultPanel);
+    await waitFor(() => view.getByText('Add key'));
+    await fireEvent.click(view.getByText('Add key'));
+    await type('vault-key-backend', 'pkcs11');
+    await fireEvent.click(view.getByText('Add'));
+    await waitFor(() => expect(svc.EnrollKeyFactor).toHaveBeenCalledWith('piv', 'pkcs11', '', '', ''));
   });
 });

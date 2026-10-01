@@ -1,6 +1,6 @@
 # Password Vault — CLI
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 Binary: `xkmsctl`, group `password` (`cmd/xkmsctl/password.go`). Global flags:
 [`../key-management/cli.md`](../key-management/cli.md).
@@ -35,10 +35,10 @@ never shown again.
 
 | Verb | Flags | Does |
 |---|---|---|
-| `vault status` | | whether your vault exists and is unlocked, and your factors (ID, type, label) |
+| `vault status` | | whether your vault exists and is unlocked, your factors (ID, type, label; a key factor's backend, key and fingerprint), and the passkey relying party |
 | `vault enroll` | `--passphrase <v\|->`, `--label` | enroll a passphrase; the first enrollment prints the recovery code; later ones need your session unlocked |
 | `vault rotate` | `--factor-id`, `--passphrase <v\|->`, `--label` | replace a passphrase with a new one; the old one stops working, your entries are untouched |
-| `vault remove` | `--factor-id` | remove a factor; the last passphrase or passkey and the recovery code cannot be removed |
+| `vault remove` | `--factor-id` | remove a factor; the last unlock factor and the recovery code cannot be removed |
 | `vault recover` | `--recovery-code <v\|->`, `--passphrase <v\|->`, `--label` | lost your factors: enroll a new passphrase with the recovery code, which is replaced by a new one (printed once) |
 
 A new passphrase is asked twice when prompted; at most one flag may read
@@ -61,6 +61,29 @@ xkmsctl password vault rotate --factor-id 3fa2c1d09b7e4a55
 xkmsctl password vault recover --recovery-code - < code.txt
 xkmsctl password vault enroll --passkey --label "yubikey"
 xkmsctl password unlock --passkey
+```
+
+**Key factors.** `--key-factor piv|certificate|tpm` replaces `--passphrase` on
+`vault enroll` and `vault recover`, and `--key` unlocks with one. The factor's
+secret is sealed by the server to the key's public half, and xkmsctl recovers
+it with the private key, which never leaves its token. Exactly one key source:
+
+| Source | Flags | Notes |
+|---|---|---|
+| software key (PEM) | `--key-file`, `--cert-file` | e.g. a client certificate's key; a `certificate` factor needs `--cert-file`, and it must be the key's |
+| PKCS#11 token | `--key-pkcs11-module`, `--key-pkcs11-token`, `--key-pin <v\|->`, `--key-id` | a PIV card's module (slot 9d by default for `piv`), an HSM, SoftHSM. Needs an xkmsctl built with `-tags pkcs11`; the CGO-free release build answers `ErrVaultPKCS11Unavailable` |
+| TPM 2.0 | `--tpm-device`, `--tpm-keystore <dir>`, `--key-id`, `--tpm-create`, `--tpm-policy` | key blobs in `--tpm-keystore`; `--tpm-create` makes the key under the built-in `platform` policy. A key under a named policy is made with xkey, which runs the policy registry (`ErrVaultTPMNamedPolicy`) |
+
+Before enrolling, xkmsctl seals a throwaway secret to the token's own key and
+opens it; a token that cannot (`vaulttoken.SelfTest`) is refused and nothing
+is enrolled.
+
+```
+xkmsctl password vault enroll --key-factor certificate --key-file client.key --cert-file client.pem
+xkmsctl password unlock --key --key-file client.key
+xkmsctl password vault enroll --key-factor piv --key-pkcs11-module /usr/lib/libykcs11.so --key-pkcs11-token "YubiKey PIV" --key-pin -
+xkmsctl password vault enroll --key-factor tpm --tpm-keystore ~/.xkmsctl/tpm-keys --key-id vault --tpm-create
+xkmsctl password unlock --key --tpm-keystore ~/.xkmsctl/tpm-keys
 ```
 
 ## `password add <name>`

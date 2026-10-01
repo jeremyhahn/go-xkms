@@ -112,7 +112,9 @@ var passwordVaultCmd = &cobra.Command{
 xkmsd server (requires --xkmsd-url).
 
 Your personal entries are sealed with a key only your own factors unwrap: a
-passphrase you choose, or a passkey on your FIDO2 security key (--passkey).
+passphrase you choose, a passkey on your FIDO2 security key (--passkey), or a
+key in one of xKey's key backends -- a PIV card, a certificate's key, a TPM
+key (--key-factor).
 The first enrollment initializes the vault, opens your session, and prints a
 one-time recovery code -- store it somewhere safe, it is shown exactly once
 and is the only way back in if you lose every factor. Recovering with it
@@ -154,9 +156,13 @@ to create the passkey and once to derive its secret.
 
 ` + vaultPasskeyUsage + `
 
+` + vaultKeyFactorUsage + `
+
 Examples:
   xkey password vault enroll --passphrase-stdin --label laptop < passphrase.txt
-  xkey password vault enroll --passkey --pin-stdin --label yubikey < pin.txt`,
+  xkey password vault enroll --passkey --pin-stdin --label yubikey < pin.txt
+  xkey password vault enroll --key-factor tpm --key-backend tpm2 --key-id vault --tpm-policy platform
+  xkey password vault enroll --key-factor piv --key-backend pkcs11`,
 	RunE: runPasswordVaultEnroll,
 }
 
@@ -206,8 +212,11 @@ of them.
 
 ` + vaultPasskeyUsage + `
 
+` + vaultKeyFactorUsage + `
+
 Examples:
   XKEY_VAULT_PASSPHRASE=... xkey password vault recover --recovery-code-stdin < code.txt
+  xkey password vault recover --key-factor piv --key-backend pkcs11 --recovery-code-stdin < code.txt
   XKEY_PIN=... xkey password vault recover --passkey --recovery-code-stdin < code.txt`,
 	RunE: runPasswordVaultRecover,
 }
@@ -432,7 +441,17 @@ func writeVaultStatus(out io.Writer, resp *transport.PasswordVaultStatusResponse
 		fmt.Fprintf(&b, "    %-36s %-10s %-20s %s\n", "ID", "FACTOR", "LABEL", "CREATED")
 		for _, f := range resp.Factors {
 			fmt.Fprintf(&b, "    %-36s %-10s %-20s %s\n", f.ID, f.Factor, f.Label, f.CreatedAt)
+			if f.KeyFingerprint != "" {
+				fmt.Fprintf(&b, "      key %s/%s  fingerprint %s", f.KeyRef.Backend, f.KeyRef.KeyID, f.KeyFingerprint[:16])
+				if f.KeyRef.TPMPolicy != "" {
+					fmt.Fprintf(&b, "  policy %s", f.KeyRef.TPMPolicy)
+				}
+				b.WriteString("\n")
+			}
 		}
+	}
+	if resp.PasskeyRPID != "" {
+		fmt.Fprintf(&b, "  Passkeys for: %s\n", resp.PasskeyRPID)
 	}
 	_, err := io.WriteString(out, b.String())
 	return err
@@ -449,6 +468,9 @@ func writeVaultEnrollResult(out io.Writer, heading string, resp *transport.Passw
 		fmt.Fprintf(&b, "  Label:    %s\n", resp.Factor.Label)
 	}
 	fmt.Fprintf(&b, "  Created:  %s\n", resp.Factor.CreatedAt)
+	if resp.Factor.KeyFingerprint != "" {
+		fmt.Fprintf(&b, "  Key:      %s/%s (fingerprint %s)\n", resp.Factor.KeyRef.Backend, resp.Factor.KeyRef.KeyID, resp.Factor.KeyFingerprint)
+	}
 	if resp.RecoveryCode != "" {
 		b.WriteString("\n================================ RECOVERY CODE ================================\n")
 		fmt.Fprintf(&b, "  %s\n\n", resp.RecoveryCode)
@@ -471,6 +493,7 @@ func init() {
 	vaultPassphraseSource.addFlags(passwordVaultEnrollCmd)
 	passwordVaultEnrollCmd.Flags().String("label", "", "Label naming the factor (e.g. the device it is used on)")
 	addVaultPasskeyFlags(passwordVaultEnrollCmd, "Enroll a passkey on the attached FIDO2 security key instead of a passphrase")
+	addVaultKeyFactorFlags(passwordVaultEnrollCmd)
 
 	passwordVaultRotateCmd.Flags().String("factor-id", "", "ID of the factor to rotate (see 'xkey password vault status')")
 	vaultPassphraseSource.addFlags(passwordVaultRotateCmd)
@@ -482,4 +505,5 @@ func init() {
 	vaultPassphraseSource.addFlags(passwordVaultRecoverCmd)
 	passwordVaultRecoverCmd.Flags().String("label", "", "Label naming the new factor")
 	addVaultPasskeyFlags(passwordVaultRecoverCmd, "Enroll a passkey on the attached FIDO2 security key instead of a passphrase")
+	addVaultKeyFactorFlags(passwordVaultRecoverCmd)
 }

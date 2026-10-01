@@ -77,6 +77,14 @@ type PasswordVaultFactor struct {
 	Factor    string `json:"factor"`
 	Label     string `json:"label"`
 	CreatedAt string `json:"created_at"`
+
+	// Key factors (piv, certificate, tpm): the key's fingerprint, where it
+	// lives, and a certificate's subject.
+	KeyFingerprint     string `json:"key_fingerprint,omitempty"`
+	KeyBackend         string `json:"key_backend,omitempty"`
+	KeyID              string `json:"key_id,omitempty"`
+	TPMPolicy          string `json:"tpm_policy,omitempty"`
+	CertificateSubject string `json:"certificate_subject,omitempty"`
 }
 
 // PasswordVaultStatus is the frontend-facing state of the caller's vault.
@@ -84,6 +92,10 @@ type PasswordVaultStatus struct {
 	Initialized bool                  `json:"initialized"`
 	Unlocked    bool                  `json:"unlocked"`
 	Factors     []PasswordVaultFactor `json:"factors"`
+
+	// PasskeyRPID is the relying party a new passkey is created for; empty
+	// when the server offers no passkeys.
+	PasskeyRPID string `json:"passkey_rp_id,omitempty"`
 }
 
 // PasswordVaultEnrollResult is an enrolled factor and, on the first
@@ -131,6 +143,7 @@ func (s *StaticPasswordService) VaultStatus() (*PasswordVaultStatus, error) {
 		Initialized: resp.Initialized,
 		Unlocked:    resp.Unlocked,
 		Factors:     factors,
+		PasskeyRPID: resp.PasskeyRPID,
 	}, nil
 }
 
@@ -394,5 +407,11 @@ func toVaultFactor(f transport.PasswordVaultFactor) PasswordVaultFactor {
 		Factor:    f.Factor,
 		Label:     f.Label,
 		CreatedAt: f.CreatedAt,
+
+		KeyFingerprint:     f.KeyFingerprint,
+		KeyBackend:         f.KeyRef.Backend,
+		KeyID:              f.KeyRef.KeyID,
+		TPMPolicy:          f.KeyRef.TPMPolicy,
+		CertificateSubject: f.CertificateSubject,
 	}
 }

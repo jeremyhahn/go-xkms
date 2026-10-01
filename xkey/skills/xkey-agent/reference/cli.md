@@ -1604,6 +1604,9 @@ Usage: `xkey password unlock [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
+| `--key` | bool | false | Unlock with a PIV, certificate or TPM key factor whose key is in xKey's key backends |
 | `--passkey` | bool | false | Unlock with a vault passkey on the attached FIDO2 security key |
 | `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
 | `--pin-stdin` | bool | false | Read the PIN from standard input |
@@ -1622,10 +1625,16 @@ Usage: `xkey password vault enroll [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
+| `--key-backend` | string |  | xKey key backend holding the key (e.g. pkcs11, tpm2, software) |
+| `--key-factor` | string |  | Enroll a key factor instead: piv, certificate or tpm |
+| `--key-id` | string |  | ID of the key in the backend (certificate, tpm; piv uses slot 9d) |
 | `--label` | string |  | Label naming the factor (e.g. the device it is used on) |
 | `--passkey` | bool | false | Enroll a passkey on the attached FIDO2 security key instead of a passphrase |
 | `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
 | `--pin-stdin` | bool | false | Read the PIN from standard input |
+| `--tpm-policy` | string |  | Named TPM policy the TPM key is bound to (recorded on the factor) |
 
 ## xkey password vault recover
 
@@ -1635,11 +1644,17 @@ Usage: `xkey password vault recover [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
+| `--key-backend` | string |  | xKey key backend holding the key (e.g. pkcs11, tpm2, software) |
+| `--key-factor` | string |  | Enroll a key factor instead: piv, certificate or tpm |
+| `--key-id` | string |  | ID of the key in the backend (certificate, tpm; piv uses slot 9d) |
 | `--label` | string |  | Label naming the new factor |
 | `--passkey` | bool | false | Enroll a passkey on the attached FIDO2 security key instead of a passphrase |
 | `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
 | `--pin-stdin` | bool | false | Read the PIN from standard input |
 | `--recovery-code-stdin` | bool | false | Read the recovery code from standard input |
+| `--tpm-policy` | string |  | Named TPM policy the TPM key is bound to (recorded on the factor) |
 
 ## xkey password vault remove
 

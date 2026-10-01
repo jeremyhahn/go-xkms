@@ -149,6 +149,17 @@ func resolveVaultCredentialSource(cmd *cobra.Command, label string, purpose vaul
 		return nil, nil, &SentinelCauseError{Sentinel: ErrPINInputFlagsMissing, Cause: err}
 	}
 
+	keySource, err := resolveVaultKeySource(cmd, label, purpose)
+	if err != nil {
+		return nil, nil, err
+	}
+	if keySource != nil {
+		if usePasskey || passphraseFromStdin {
+			return nil, nil, ErrPasswordKeyFactorConflict
+		}
+		return keySource, func() {}, nil
+	}
+
 	if !usePasskey {
 		if pinFromStdin {
 			return nil, nil, ErrPasswordPINWithoutPasskey

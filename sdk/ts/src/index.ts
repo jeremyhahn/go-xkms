@@ -90,6 +90,17 @@ export {
   type VaultPasskeyPlatform,
 } from './vaultPasskey.js';
 
+export {
+  XKEY_PING_TIMEOUT_MS,
+  XKEY_UNLOCK_TIMEOUT_MS,
+  XkeyBridgeError,
+  XkeyExtensionUnavailableError,
+  detectXkeyExtension,
+  keyFactorFingerprints,
+  unlockWithXkey,
+  type BridgeWindow,
+} from './vaultBridge.js';
+
 // ---------------------------------------------------------------------------
 // Domain clients
 // ---------------------------------------------------------------------------

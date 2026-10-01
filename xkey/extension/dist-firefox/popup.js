@@ -32,6 +32,7 @@ function escapeHtml(str) {
 async function init() {
     // Wire up pairing submit handler.
     initPairing();
+    initUnlock();
     // Determine current tab domain.
     let domain = '';
     try {
@@ -61,10 +62,14 @@ async function init() {
     }
     updateStatus(statusResp);
     // If error or locked, stop here.
-    if (statusResp.type === 'error')
+    if (statusResp.type === 'error') {
+        showConnectButton();
         return;
-    if (statusResp.data?.app_locked)
+    }
+    if (statusResp.data?.app_locked) {
+        showUnlockSection();
         return;
+    }
     if (!domain)
         return;
     // Search for credentials matching this domain.
@@ -459,6 +464,174 @@ async function handlePairingRetry() {
     // Hide pairing section and re-run init for a fresh connection attempt.
     hidePairingSection();
     init();
+}
+// ---------------------------------------------------------------------------
+// Unlock flow
+// ---------------------------------------------------------------------------
+/**
+ * Initialize the unlock submit button event listener.
+ */
+function initUnlock() {
+    const submitBtn = document.getElementById('unlock-submit');
+    if (submitBtn) {
+        submitBtn.addEventListener('click', handleUnlockSubmit);
+    }
+    const pinInput = document.getElementById('unlock-pin');
+    if (pinInput) {
+        pinInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                handleUnlockSubmit();
+            }
+        });
+    }
+}
+/**
+ * Show the unlock section and hide credential-related UI.
+ */
+function showUnlockSection() {
+    const unlockSection = document.getElementById('unlock-section');
+    const credentialsList = document.getElementById('credentials-list');
+    const totpSection = document.getElementById('totp-section');
+    if (unlockSection)
+        unlockSection.style.display = 'block';
+    if (credentialsList)
+        credentialsList.style.display = 'none';
+    if (totpSection)
+        totpSection.style.display = 'none';
+    // Focus the PIN input.
+    const pinInput = document.getElementById('unlock-pin');
+    if (pinInput) {
+        setTimeout(() => pinInput.focus(), 100);
+    }
+}
+/**
+ * Hide the unlock section and restore credential UI.
+ */
+function hideUnlockSection() {
+    const unlockSection = document.getElementById('unlock-section');
+    const credentialsList = document.getElementById('credentials-list');
+    if (unlockSection)
+        unlockSection.style.display = 'none';
+    if (credentialsList)
+        credentialsList.style.display = 'block';
+}
+/**
+ * Handle unlock PIN submission.
+ */
+async function handleUnlockSubmit() {
+    const pinInput = document.getElementById('unlock-pin');
+    const errorEl = document.getElementById('unlock-error');
+    const submitBtn = document.getElementById('unlock-submit');
+    if (!pinInput)
+        return;
+    const pin = pinInput.value;
+    if (!pin) {
+        if (errorEl) {
+            errorEl.textContent = 'Please enter your PIN';
+            errorEl.style.display = 'block';
+        }
+        return;
+    }
+    // Hide any previous error, disable submit.
+    if (errorEl)
+        errorEl.style.display = 'none';
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Unlocking...';
+    }
+    try {
+        const resp = await chrome.runtime.sendMessage({
+            type: 'unlock',
+            pin,
+        });
+        if (resp.type === 'unlock_result' && resp.success) {
+            // Unlock succeeded — hide unlock section and re-initialize.
+            hideUnlockSection();
+            pinInput.value = '';
+            init();
+        }
+        else {
+            // Prefer unlock-specific error, then generic error/message fields.
+            const errMsg = resp.error || resp.message || 'Invalid PIN';
+            if (errorEl) {
+                errorEl.textContent = errMsg;
+                errorEl.style.display = 'block';
+            }
+            pinInput.value = '';
+            pinInput.focus();
+        }
+    }
+    catch (err) {
+        if (errorEl) {
+            errorEl.textContent = String(err);
+            errorEl.style.display = 'block';
+        }
+    }
+    finally {
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Unlock';
+        }
+    }
+}
+// ---------------------------------------------------------------------------
+// Reconnect flow
+// ---------------------------------------------------------------------------
+/**
+ * Show a "Connect" button in the status bar so the user can manually
+ * trigger a reconnect after xKey restarts.
+ */
+function showConnectButton() {
+    const statusBar = document.getElementById('status-bar');
+    if (!statusBar)
+        return;
+    // Avoid adding a duplicate button if one already exists.
+    if (document.getElementById('connect-btn'))
+        return;
+    const btn = document.createElement('button');
+    btn.id = 'connect-btn';
+    btn.textContent = 'Connect';
+    btn.addEventListener('click', handleConnect);
+    statusBar.appendChild(btn);
+}
+/**
+ * Handle the "Connect" button click.
+ * Sends a reconnect message to the background and refreshes the popup on success.
+ */
+async function handleConnect() {
+    const btn = document.getElementById('connect-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Connecting...';
+    }
+    try {
+        const resp = await chrome.runtime.sendMessage({ type: 'reconnect' });
+        if (resp.type === 'reconnect_result' && resp.connected) {
+            btn?.remove();
+            if (resp.locked) {
+                showUnlockSection();
+            }
+            init();
+        }
+        else {
+            const errMsg = resp.message || 'Could not connect to xKey';
+            showError(errMsg);
+            if (btn) {
+                btn.textContent = 'Retry';
+            }
+        }
+    }
+    catch (err) {
+        showError(String(err));
+        if (btn) {
+            btn.textContent = 'Retry';
+        }
+    }
+    finally {
+        if (btn) {
+            btn.disabled = false;
+        }
+    }
 }
 // ---------------------------------------------------------------------------
 // Entry point

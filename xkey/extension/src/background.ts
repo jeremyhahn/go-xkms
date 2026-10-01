@@ -17,6 +17,7 @@
 
 import { SessionCrypto } from './crypto.js';
 import { ExtensionIdentity } from './identity.js';
+import { buildVaultUnlockRequest, senderOrigin, VAULT_REQUEST_TIMEOUT_MS, vaultUnlockResult } from './vaultBridge.js';
 
 // ---------------------------------------------------------------------------
 // Inline types (background runs as ES module, but we keep it self-contained
@@ -483,8 +484,10 @@ async function sendRequest(request: NativeRequest): Promise<NativeResponse> {
 
   // Determine timeout based on request type.
   // Fill requests need longer timeout for PIN entry + touch.
+  // Vault requests wait for the user's approval in xKey.
   const isGetAction = request.autofill?.action === 'get';
-  const timeoutMs = isGetAction ? 45000 : 10000;
+  const isVault = request.type === 'vault';
+  const timeoutMs = isVault ? VAULT_REQUEST_TIMEOUT_MS : isGetAction ? 45000 : 10000;
 
   // Wait for the response.
   const responsePromise = new Promise<unknown>((resolve, reject) => {
@@ -645,6 +648,7 @@ interface SaveCredentialMessage {
 interface IgnoreDomainMessage { type: 'ignore_domain'; domain: string }
 interface UnlockMessage { type: 'unlock'; pin: string }
 interface ReconnectMessage { type: 'reconnect' }
+interface VaultUnlockMessage { type: 'vault_unlock_key_factor'; fingerprints: unknown }
 
 type IncomingMessage =
   | SearchMessage
@@ -658,7 +662,8 @@ type IncomingMessage =
   | SaveCredentialMessage
   | IgnoreDomainMessage
   | UnlockMessage
-  | ReconnectMessage;
+  | ReconnectMessage
+  | VaultUnlockMessage;
 
 /**
  * Handle a message from the content script or popup.
@@ -853,6 +858,19 @@ async function handleMessage(
           return { type: 'unlock_result', success: true };
         }
         return { type: 'unlock_result', success: false, error: unlockResult?.error || resp.error || 'Unlock failed' };
+      }
+
+      case 'vault_unlock_key_factor': {
+        // The console asks xKey to unlock the password vault with a key
+        // factor. The origin is the browser's, never the page's; xKey
+        // refuses any page that is not the console, asks the user, and
+        // unlocks over its own connection -- nothing secret comes back.
+        const request = buildVaultUnlockRequest(senderOrigin(_sender), (message as VaultUnlockMessage).fingerprints);
+        const resp = await sendRequest(request as unknown as NativeRequest);
+        if (resp.status === 'ok') {
+          await focusSenderWindow(_sender);
+        }
+        return { type: 'vault_unlock_result', ...vaultUnlockResult(resp as never) };
       }
 
       case 'reconnect': {

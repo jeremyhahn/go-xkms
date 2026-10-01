@@ -274,6 +274,9 @@ const (
 // resolved from passphraseFlag -- confirmed on a terminal when it sets a new
 // factor. The returned cleanup destroys the sealed PIN.
 func resolveVaultCredentialSource(cmd *cobra.Command, cfg *Config, printer *Printer, usePasskey bool, passphraseFlag, label string, purpose vaultCredentialPurpose) (vaultCredentialSource, func(), error) {
+	if keySource, cleanup, err := resolveVaultKeySource(cmd, label, purpose); err != nil || keySource != nil {
+		return keySource, cleanup, err
+	}
 	if usePasskey {
 		if passphraseFlag != "" {
 			return nil, nil, ErrVaultPasskeyWithPassphrase
@@ -370,6 +373,13 @@ func passwordVaultStatus(cfg *Config, printer *Printer) {
 		for _, f := range resp.Factors {
 			printer.printf("    %-36s %-10s %-20s %s\n",
 				truncateString(f.ID, 36), f.Factor, truncateString(f.Label, 20), f.CreatedAt)
+			if f.KeyFingerprint != "" {
+				printer.printf("      key %s/%s  fingerprint %s  %s\n",
+					f.KeyRef.Backend, f.KeyRef.KeyID, truncateString(f.KeyFingerprint, 16), f.KeyRef.TPMPolicy)
+			}
+		}
+		if resp.PasskeyRPID != "" {
+			printer.printf("  Passkeys for: %s\n", resp.PasskeyRPID)
 		}
 	}
 	if err := printer.Err(); err != nil {
@@ -565,6 +575,7 @@ func init() {
 	passwordVaultEnrollCmd.Flags().String("label", "", "label naming the factor (e.g. the device it is used on)")
 	passwordVaultEnrollCmd.Flags().Bool("passkey", false, "enroll a passkey on the attached FIDO2 security key instead of a passphrase")
 	addPINFlags(passwordVaultEnrollCmd)
+	addKeyFactorEnrollFlags(passwordVaultEnrollCmd)
 
 	passwordVaultRotateCmd.Flags().String("factor-id", "", "ID of the factor to rotate (see \"password vault status\")")
 	passwordVaultRotateCmd.Flags().String("passphrase", "", "new passphrase ('-' reads stdin; prompted twice when omitted)")
@@ -577,6 +588,7 @@ func init() {
 	passwordVaultRecoverCmd.Flags().String("label", "", "label naming the new factor")
 	passwordVaultRecoverCmd.Flags().Bool("passkey", false, "enroll a passkey on the attached FIDO2 security key instead of a passphrase")
 	addPINFlags(passwordVaultRecoverCmd)
+	addKeyFactorEnrollFlags(passwordVaultRecoverCmd)
 
 	passwordVaultCmd.AddCommand(passwordVaultStatusCmd)
 	passwordVaultCmd.AddCommand(passwordVaultEnrollCmd)

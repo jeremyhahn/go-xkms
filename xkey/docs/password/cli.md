@@ -1,6 +1,6 @@
 # Static Passwords — CLI
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-10-01
 
 Every flag below is read from `cmd/xkey/cmd/password.go`/`touch.go`'s
 `init()` and matches `xkey password <verb> --help`/`xkey touch --help`
@@ -118,10 +118,10 @@ entries' key is wrapped under. Requires `--xkmsd-url`.
 | Verb | Flags | Does |
 |---|---|---|
 | `vault status` | | whether your vault exists and is unlocked, and your factors |
-| `vault enroll` | `--passphrase-stdin`, `--label` | enroll a passphrase; the first enrollment prints the one-time recovery code |
+| `vault enroll` | `--passphrase-stdin`, `--passkey`, `--key-factor`, `--label` | enroll a passphrase, passkey or key; the first enrollment prints the one-time recovery code |
 | `vault rotate` | `--factor-id`, `--passphrase-stdin`, `--label` | replace a passphrase (the label is kept unless given) |
-| `vault remove` | `--factor-id` | remove a factor (not the recovery code, not the last passphrase or passkey) |
-| `vault recover` | `--recovery-code-stdin`, `--passphrase-stdin`, `--label` | enroll a new passphrase with the recovery code; prints the replacement code once |
+| `vault remove` | `--factor-id` | remove a factor (not the recovery code, not the last unlock factor) |
+| `vault recover` | `--recovery-code-stdin`, `--passphrase-stdin`, `--passkey`, `--key-factor`, `--label` | enroll a new factor with the recovery code; prints the replacement code once |
 
 Secrets come from `--passphrase-stdin` / `XKEY_VAULT_PASSPHRASE` and
 `--recovery-code-stdin` / `XKEY_VAULT_RECOVERY_CODE`; at most one may read
@@ -134,6 +134,22 @@ go-xkms `docs/password-vault/architecture.md`). The key's PIN is always
 required and comes from `--pin-stdin` or `XKEY_PIN`; a PIN given without
 `--passkey` is refused. A passkey cannot be rotated: enroll a new one and
 remove the old one.
+
+`--key-factor piv|certificate|tpm` enrolls (or recovers with) a key held in
+one of xKey's key backends -- the same local key store the xkey app runs,
+opened with the barrier password (`--barrier-password-stdin`,
+`--barrier-password-file`, `XKEY_BARRIER_PASSWORD`):
+
+| Flag | Meaning |
+|---|---|
+| `--key-factor` | `piv` (the backend's slot 9d key), `certificate` (key `--key-id` with its certificate in the backend) or `tpm` (TPM key `--key-id`) |
+| `--key-backend` | the xKey key backend holding the key (e.g. `pkcs11`, `tpm2`, `software`) |
+| `--key-id` | the key's ID in the backend (`piv` defaults to slot 9d) |
+| `--tpm-policy` | the named TPM policy the TPM key is bound to, recorded on the factor |
+
+`xkey password unlock --key` unlocks with the first of the vault's key
+factors whose key is in xKey's backends. The token is self-tested before
+enrollment; the key never leaves its backend.
 
 ```bash
 XKEY_VAULT_PASSPHRASE=... xkey password vault enroll --label laptop

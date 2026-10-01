@@ -6,7 +6,9 @@
    * recovery with the one-time recovery code. Each of create, unlock, add and
    * recover takes either a passphrase or -- "Use security key" -- a passkey on
    * a FIDO2 security key, verified with the key's PIN. While a passkey call
-   * is pending the panel asks the user to touch the key.
+   * is pending the panel asks the user to touch the key. "Use a key" takes a
+   * key factor instead: the slot 9d key of a PIV backend, a certificate's
+   * key, or a TPM key under a named policy, held in one of xKey's backends.
    *
    * The recovery code the server returns on the first enrollment and on every
    * recovery is shown exactly once; the panel keeps it on screen until the
@@ -52,6 +54,14 @@
   // a security key; touching is true while a passkey call waits for a touch.
   let usePasskey = false;
   let touching = false;
+
+  // useKey switches the current form to a key factor (PIV, certificate,
+  // TPM) held in one of xKey's key backends.
+  let useKey = false;
+  let keyFactor: 'piv' | 'certificate' | 'tpm' = 'piv';
+  let keyBackend = '';
+  let keyID = '';
+  let keyPolicy = '';
 
   // Sub-views of the locked and unlocked states.
   let recovering = false;
@@ -99,6 +109,34 @@
     label = '';
     error = '';
     usePasskey = false;
+    useKey = false;
+    keyBackend = '';
+    keyID = '';
+    keyPolicy = '';
+  }
+
+  /** hasKeyFactor is true when the vault lists a PIV, certificate or TPM factor. */
+  function hasKeyFactor(factors: PasswordVaultFactor[]): boolean {
+    return factors.some((f) => f.factor === 'piv' || f.factor === 'certificate' || f.factor === 'tpm');
+  }
+
+  function setUseKey(value: boolean): void {
+    clearSecrets();
+    error = '';
+    usePasskey = false;
+    useKey = value;
+  }
+
+  /** keyFactorError validates the key factor being set, or returns ''. */
+  function keyFactorError(): string {
+    if (!keyBackend) return 'Name the xKey backend that holds the key.';
+    if (keyFactor !== 'piv' && !keyID) return 'Name the key.';
+    return '';
+  }
+
+  /** keyArgs are EnrollKeyFactor's key arguments: factor, backend, key, policy. */
+  function keyArgs(): [string, string, string, string] {
+    return [keyFactor, keyBackend, keyID, keyFactor === 'tpm' ? keyPolicy : ''];
   }
 
   function setUsePasskey(value: boolean): void {
@@ -151,6 +189,15 @@
   }
 
   async function enroll(): Promise<void> {
+    if (useKey) {
+      error = keyFactorError();
+      if (error) return;
+      await finishWithResult(
+        callBackendWithError<PasswordVaultEnrollResult>(SERVICE, 'EnrollKeyFactor', ...keyArgs(), label),
+        'Key enrolled',
+      );
+      return;
+    }
     error = newFactorError();
     if (error) return;
     if (usePasskey) {
@@ -180,6 +227,15 @@
     error = '';
     if (!recoveryCodeInput) {
       error = 'Enter your recovery code.';
+      return;
+    }
+    if (useKey) {
+      error = keyFactorError();
+      if (error) return;
+      await finishWithResult(
+        callBackendWithError<PasswordVaultEnrollResult>(SERVICE, 'RecoverWithKeyFactor', recoveryCodeInput, ...keyArgs(), label),
+        'Vault recovered',
+      );
       return;
     }
     error = newFactorError();
@@ -219,6 +275,19 @@
     await load();
   }
 
+  async function unlockWithKey(): Promise<void> {
+    error = '';
+    busy = true;
+    const res = await callBackendVoidWithError(SERVICE, 'UnlockWithKeyFactor');
+    busy = false;
+    if (!res.ok) {
+      error = res.error || 'Failed to unlock the vault with a key.';
+      return;
+    }
+    addNotification('success', 'Vault unlocked');
+    await load();
+  }
+
   async function lock(): Promise<void> {
     error = '';
     busy = true;
@@ -251,11 +320,12 @@
     rotating = factor;
   }
 
-  function startAdd(passkey: boolean): void {
+  function startAdd(kind: 'passphrase' | 'passkey' | 'key'): void {
     resetForm();
     rotating = null;
     adding = true;
-    usePasskey = passkey;
+    usePasskey = kind === 'passkey';
+    useKey = kind === 'key';
   }
 
   function cancelSubview(): void {
@@ -316,7 +386,21 @@
         key only your own factors unlock.
       {/if}
     </p>
-    {#if usePasskey}
+    {#if useKey}
+      <label class="text-body-medium" for="vault-key-factor">Key</label>
+      <select id="vault-key-factor" bind:value={keyFactor}>
+        <option value="piv">PIV card (slot 9d)</option>
+        <option value="certificate">Certificate key</option>
+        <option value="tpm">TPM key</option>
+      </select>
+      <Input id="vault-key-backend" label="xKey backend" placeholder="e.g. pkcs11, tpm2, software" bind:value={keyBackend} />
+      {#if keyFactor !== 'piv'}
+        <Input id="vault-key-id" label="Key ID" bind:value={keyID} />
+      {/if}
+      {#if keyFactor === 'tpm'}
+        <Input id="vault-key-policy" label="TPM policy" placeholder="e.g. platform" bind:value={keyPolicy} />
+      {/if}
+    {:else if usePasskey}
       <Input id="vault-pin" type="password" label="Security key PIN" bind:value={pin} />
     {:else}
       <Input id="vault-new-passphrase" type="password" label="Passphrase" bind:value={passphrase} />
@@ -324,6 +408,9 @@
     {/if}
     <Input id="vault-label" label="Label (optional)" placeholder={usePasskey ? 'e.g. yubikey' : 'e.g. laptop'} bind:value={label} />
     <div class="actions">
+      <Button variant="text" icon={mdiShieldKeyOutline} on:click={() => setUseKey(!useKey)}>
+        {useKey ? 'Use a passphrase' : 'Use a key'}
+      </Button>
       <Button variant="text" icon={usePasskey ? mdiShieldLockOutline : mdiFingerprint} on:click={() => setUsePasskey(!usePasskey)}>
         {usePasskey ? 'Use a passphrase' : 'Use security key'}
       </Button>
@@ -336,7 +423,21 @@
         vault. You will receive a new recovery code; the old one stops working.
       </p>
       <Input id="vault-recovery-code" type="password" label="Recovery code" monospace bind:value={recoveryCodeInput} />
-      {#if usePasskey}
+      {#if useKey}
+      <label class="text-body-medium" for="vault-key-factor">Key</label>
+      <select id="vault-key-factor" bind:value={keyFactor}>
+        <option value="piv">PIV card (slot 9d)</option>
+        <option value="certificate">Certificate key</option>
+        <option value="tpm">TPM key</option>
+      </select>
+      <Input id="vault-key-backend" label="xKey backend" placeholder="e.g. pkcs11, tpm2, software" bind:value={keyBackend} />
+      {#if keyFactor !== 'piv'}
+        <Input id="vault-key-id" label="Key ID" bind:value={keyID} />
+      {/if}
+      {#if keyFactor === 'tpm'}
+        <Input id="vault-key-policy" label="TPM policy" placeholder="e.g. platform" bind:value={keyPolicy} />
+      {/if}
+      {:else if usePasskey}
         <Input id="vault-pin" type="password" label="Security key PIN" bind:value={pin} />
       {:else}
         <Input id="vault-new-passphrase" type="password" label="New passphrase" bind:value={passphrase} />
@@ -346,6 +447,9 @@
       <div class="actions">
         <Button variant="text" icon={usePasskey ? mdiShieldLockOutline : mdiFingerprint} on:click={() => setUsePasskey(!usePasskey)}>
           {usePasskey ? 'Use a passphrase' : 'Use security key'}
+        </Button>
+        <Button variant="text" icon={mdiShieldKeyOutline} on:click={() => setUseKey(!useKey)}>
+          {useKey ? 'Use a passphrase' : 'Use a key'}
         </Button>
         <Button variant="text" on:click={cancelSubview}>Cancel</Button>
         <Button variant="primary" icon={mdiLockReset} loading={busy} on:click={recover}>Recover</Button>
@@ -364,6 +468,9 @@
           {usePasskey ? 'Use a passphrase' : 'Use security key'}
         </Button>
         <Button variant="text" on:click={() => { resetForm(); recovering = true; }}>Use recovery code</Button>
+        {#if hasKeyFactor(status.factors)}
+          <Button variant="outline" icon={mdiShieldKeyOutline} loading={busy} on:click={unlockWithKey}>Unlock with key</Button>
+        {/if}
         <Button variant="primary" icon={mdiLockOpenOutline} loading={busy} on:click={unlock}>Unlock</Button>
       </div>
     {/if}
@@ -377,7 +484,9 @@
         <li class="factor-row">
           <div class="factor-info">
             <span class="text-title-small">{factor.label || factor.factor}</span>
-            <span class="text-body-small muted">{factor.factor} · added {factor.created_at}</span>
+            <span class="text-body-small muted">
+              {factor.factor}{factor.key_backend ? ` · ${factor.key_backend}${factor.key_id ? `/${factor.key_id}` : ''}` : ''}{factor.tpm_policy ? ` · policy ${factor.tpm_policy}` : ''} · added {factor.created_at}
+            </span>
           </div>
           <div class="actions">
             {#if factor.factor === 'passphrase'}
@@ -393,13 +502,29 @@
         <span class="text-title-small">
           {#if rotating}
             New passphrase for {rotating.label || rotating.factor}
+          {:else if useKey}
+            Add a key
           {:else if usePasskey}
             Add a security key
           {:else}
             Add a passphrase
           {/if}
         </span>
-        {#if usePasskey}
+        {#if useKey}
+      <label class="text-body-medium" for="vault-key-factor">Key</label>
+      <select id="vault-key-factor" bind:value={keyFactor}>
+        <option value="piv">PIV card (slot 9d)</option>
+        <option value="certificate">Certificate key</option>
+        <option value="tpm">TPM key</option>
+      </select>
+      <Input id="vault-key-backend" label="xKey backend" placeholder="e.g. pkcs11, tpm2, software" bind:value={keyBackend} />
+      {#if keyFactor !== 'piv'}
+        <Input id="vault-key-id" label="Key ID" bind:value={keyID} />
+      {/if}
+      {#if keyFactor === 'tpm'}
+        <Input id="vault-key-policy" label="TPM policy" placeholder="e.g. platform" bind:value={keyPolicy} />
+      {/if}
+        {:else if usePasskey}
           <Input id="vault-pin" type="password" label="Security key PIN" bind:value={pin} />
         {:else}
           <Input id="vault-new-passphrase" type="password" label="New passphrase" bind:value={passphrase} />
@@ -417,8 +542,9 @@
       </div>
     {:else}
       <div class="actions">
-        <Button variant="outline" size="sm" icon={mdiPlus} on:click={() => startAdd(false)}>Add passphrase</Button>
-        <Button variant="outline" size="sm" icon={mdiShieldKeyOutline} on:click={() => startAdd(true)}>Add security key</Button>
+        <Button variant="outline" size="sm" icon={mdiPlus} on:click={() => startAdd('passphrase')}>Add passphrase</Button>
+        <Button variant="outline" size="sm" icon={mdiShieldKeyOutline} on:click={() => startAdd('passkey')}>Add security key</Button>
+        <Button variant="outline" size="sm" icon={mdiShieldKeyOutline} on:click={() => startAdd('key')}>Add key</Button>
       </div>
     {/if}
   {/if}

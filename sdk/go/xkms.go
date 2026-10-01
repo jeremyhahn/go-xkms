@@ -506,6 +506,7 @@ type (
 	// Personal password vault
 	PasswordVaultCredential          = transport.PasswordVaultCredential
 	PasswordVaultFactor              = transport.PasswordVaultFactor
+	PasswordVaultKeyRef              = transport.PasswordVaultKeyRef
 	PasswordVaultStatusResponse      = transport.PasswordVaultStatusResponse
 	PasswordVaultEnrollRequest       = transport.PasswordVaultEnrollRequest
 	PasswordVaultEnrollResponse      = transport.PasswordVaultEnrollResponse

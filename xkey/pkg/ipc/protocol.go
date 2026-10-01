@@ -25,6 +25,7 @@ const (
 	MessageTypePairing      = "pairing"
 	MessageTypeUnlock       = "unlock"
 	MessageTypeState        = "state"
+	MessageTypeVault        = "vault"
 )
 
 // Response statuses indicate success or failure.
@@ -72,6 +73,7 @@ var validMessageTypes = map[string]bool{
 	MessageTypePairing:      true,
 	MessageTypeUnlock:       true,
 	MessageTypeState:        true,
+	MessageTypeVault:        true,
 }
 
 // Message is sent from the client to the server over the Unix domain socket.
@@ -83,6 +85,7 @@ type Message struct {
 	Pairing  *PairingPayload  `json:"pairing,omitempty"`  // pairing payload (for pairing)
 	Unlock   *UnlockPayload   `json:"unlock,omitempty"`   // unlock payload (for unlock)
 	State    *StatePayload    `json:"state,omitempty"`    // live-state payload (for state)
+	Vault    *VaultPayload    `json:"vault,omitempty"`    // password-vault payload (for vault)
 }
 
 // Response is sent from the server to the client over the Unix domain socket.
@@ -95,6 +98,7 @@ type Response struct {
 	Pairing  *PairingResult  `json:"pairing,omitempty"`  // pairing result (for pairing responses)
 	Unlock   *UnlockResult   `json:"unlock,omitempty"`   // unlock result (for unlock responses)
 	State    *StateResult    `json:"state,omitempty"`    // live-state result (for state responses)
+	Vault    *VaultResult    `json:"vault,omitempty"`    // password-vault result (for vault responses)
 	Storage  *StorageResult  `json:"storage,omitempty"`  // credential store description (for status responses)
 }
 
@@ -135,6 +139,12 @@ func (m *Message) Validate() error {
 	}
 	if m.Type == MessageTypeTypePassword && m.Name == "" {
 		return &DetailError{Err: ErrInvalidMessage, Detail: ": name is required for type_password"}
+	}
+	if m.Type == MessageTypeVault {
+		if m.Vault == nil {
+			return &DetailError{Err: ErrInvalidMessage, Detail: ": vault payload is required"}
+		}
+		return m.Vault.Validate()
 	}
 	if m.Type == MessageTypePKCS11 {
 		if m.PKCS11 == nil {

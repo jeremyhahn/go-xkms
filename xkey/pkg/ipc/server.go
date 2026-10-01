@@ -96,6 +96,14 @@ type StateHandler interface {
 	HandleStatePasswordList() (*PasswordListResult, error)
 }
 
+// VaultHandler processes the browser extension's password-vault requests:
+// unlocking the vault with a key factor for the web console, after the
+// user approves it in xKey. A daemon without a UI to approve with does not
+// implement it.
+type VaultHandler interface {
+	HandleVaultUnlockKeyFactor(origin string, fingerprints []string) (*VaultResult, error)
+}
+
 // UnlockHandler processes app unlock IPC requests. Implementations
 // verify the user PIN and transition the app to the unlocked state.
 type UnlockHandler interface {
@@ -174,6 +182,26 @@ var handlers = map[string]dispatchFunc{
 			return nil, err
 		}
 		return dispatchState(stateHandler, m.State)
+	},
+	MessageTypeVault: func(h Handler, m *Message) (*Response, error) {
+		vaultHandler, ok := h.(VaultHandler)
+		if !ok {
+			return &Response{Status: StatusError, Action: ActionUnsupported, Error: ErrVaultUnsupported.Error()}, nil
+		}
+		if m.Vault == nil {
+			return nil, &DetailError{Err: ErrInvalidMessage, Detail: ": vault payload is required"}
+		}
+		if err := m.Vault.Validate(); err != nil {
+			return nil, err
+		}
+		result, err := vaultHandler.HandleVaultUnlockKeyFactor(m.Vault.Origin, m.Vault.Fingerprints)
+		if err != nil {
+			// The reason travels in band: the console tells the user why
+			// (wrong origin, denied, timed out, no token), which a generic
+			// handler failure would hide.
+			return &Response{Status: StatusError, Error: err.Error(), Vault: &VaultResult{}}, nil
+		}
+		return &Response{Status: StatusOK, Vault: result}, nil
 	},
 	MessageTypeUnlock: func(h Handler, m *Message) (*Response, error) {
 		unlockHandler, ok := h.(UnlockHandler)

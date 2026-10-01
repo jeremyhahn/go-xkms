@@ -193,6 +193,23 @@
       font-weight: 500;
       margin-top: 8px;
     }
+    #connect-btn {
+      margin-left: auto;
+      font-size: 11px;
+      padding: 4px 10px;
+      background: #4F46E5;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #connect-btn:hover {
+      background: #4338CA;
+    }
+    #connect-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
@@ -222,6 +239,16 @@
       </div>
       <button class="btn" id="totp-copy" title="Copy TOTP code">Copy</button>
     </div>
+  </div>
+  <div class="pairing-section" id="unlock-section" style="display:none">
+    <div class="pairing-header">Unlock xKey</div>
+    <div class="pairing-info">Enter your PIN to unlock</div>
+    <div class="pairing-input-row">
+      <input type="password" id="unlock-pin" maxlength="128"
+             placeholder="PIN" autocomplete="off">
+      <button class="btn btn-primary" id="unlock-submit">Unlock</button>
+    </div>
+    <div id="unlock-error" class="error-text" style="display:none"></div>
   </div>
   <div class="pairing-section" id="pairing-section" style="display:none">
     <div class="pairing-header">Extension Pairing</div>

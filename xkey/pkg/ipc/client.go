@@ -137,6 +137,15 @@ func (c *Client) Unlock(pin string) (*Response, error) {
 	})
 }
 
+// VaultUnlockKeyFactor asks xKey to unlock the password vault with a key
+// factor for the web console at origin.
+func (c *Client) VaultUnlockKeyFactor(origin string, fingerprints []string) (*Response, error) {
+	return c.send(&Message{
+		Type:  MessageTypeVault,
+		Vault: &VaultPayload{Action: ActionVaultUnlockKeyFactor, Origin: origin, Fingerprints: fingerprints},
+	})
+}
+
 // StatePIN asks the daemon for its live PIN configuration and lockout state.
 func (c *Client) StatePIN() (*PINStateResult, error) {
 	result, err := c.state(ActionStatePIN)

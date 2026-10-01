@@ -5,7 +5,7 @@
   import Modal from "$components/Modal.svelte";
   import Alert from "$components/Alert.svelte";
   import VaultFactors from "$components/VaultFactors.svelte";
-  import { MIN_PASSPHRASE_LENGTH, enrollPasskey, hasPasskey, unlockPasskey } from "$lib/vault.ts";
+  import { MIN_PASSPHRASE_LENGTH, enrollPasskey, hasKeyFactor, hasPasskey, unlockPasskey, unlockWithKeyFactor } from "$lib/vault.ts";
   import { getSDKClient } from "$stores/sdkClient.ts";
   import { showToast } from "$stores/toast.svelte.ts";
   import type { PasswordInfo, PasswordStoreStatusResponse, PasswordVaultCredential, PasswordVaultStatusResponse } from "@go-xkms/sdk";
@@ -78,6 +78,16 @@
       const cred = await unlockPasskey(vault!.factors);
       await getSDKClient().passwords.unlock(cred);
       showToast("success", "Vault unlocked.");
+      await load();
+    });
+  }
+
+  // A PIV card, certificate or TPM key never comes into the browser: xKey,
+  // through its extension, unlocks the vault after the user approves there.
+  function unlockWithXkey(): Promise<void> {
+    return withPasskey(async () => {
+      await unlockWithKeyFactor(vault!);
+      showToast("success", "Vault unlocked by xKey.");
       await load();
     });
   }
@@ -270,6 +280,9 @@
           <button class="btn btn-primary btn-sm" onclick={unlock} disabled={busy || passphrase === ""}>Unlock</button>
           {#if hasPasskey(vault)}
             <button class="btn btn-sm" onclick={unlockWithPasskey} disabled={busy}>Unlock with passkey</button>
+          {/if}
+          {#if hasKeyFactor(vault)}
+            <button class="btn btn-sm" onclick={unlockWithXkey} disabled={busy}>Unlock with xKey</button>
           {/if}
           <button class="btn btn-ghost btn-sm" onclick={() => (recovering = true)} disabled={busy}>Use recovery code</button>
         </div>
