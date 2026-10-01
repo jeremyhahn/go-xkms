@@ -1,1 +1,0 @@
-- **A system-tenant identity no longer gets "Tenant not found" from the password routes.** The system tenant has its own shared and personal store under the system barrier.

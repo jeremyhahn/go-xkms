@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.0-alpha] - 2026-09-30
+
+### Added
+
+- **Personal password vault: personal entries are sealed with each user's own key.**
+  - Each user's personal entries are encrypted with a random per-user DEK. The DEK is wrapped under factors the user controls:
+    - a passphrase (Argon2id, 64 MiB, t=3, p=4);
+    - a passkey (FIDO2 hmac-secret / WebAuthn PRF output, HKDF-SHA256);
+    - a one-time recovery code, shown once on first enrollment and replaced on every recovery.
+  - The tenant barrier key alone reads none of it.
+  - Rotating a factor re-wraps the DEK; the DEK never changes.
+  - Every surface carries it:
+    - gRPC `PasswordVault{Status,Enroll,Rotate,RemoveFactor,Recover}`;
+    - REST `/api/v1/passwords/vault[...]`;
+    - MCP `password.vault.*`;
+    - every client transport and the Go and TS SDKs;
+    - `xkmsctl password vault ...` and `xkey password vault ...`;
+    - the xkey GUI vault panel.
+  - Passkeys work on every client: `--passkey` on `xkmsctl` / `xkey password unlock|vault enroll|vault recover`, and "Use security key" in the xkey GUI. Every client goes through `pkg/vaultpasskey`:
+    - RP ID `xkms-password-vault`;
+    - the WebAuthn prf salt transform `SHA-256("WebAuthn PRF" || 0x00 || salt)`, so a passkey enrolled on any surface (or in a browser) unlocks on every other;
+    - user verification by PIN, always.
+  - `pkg/fido2` adds `FIDO2Handler.DeriveHMACSecret` (the raw hmac-secret), `EnrollmentConfig.PIN` / `AuthenticationConfig.PIN`, and `WebAuthnPRFSalt`, all re-exported in `sdk/go/fido2`.
+- **`pkg/scope`: one ownership model for every feature.**
+  - Scopes: `tenant` (shared: every user of the tenant), `user` (personal: the owner only) and `service` (workload-owned: explicit permission).
+  - Keyspace: `{tenant}/{feature}/shared/`, `{tenant}/{feature}/users/{subject}/` and `{tenant}/{feature}/services/{owner}/`.
+  - `Principal.Authorize` is the single access rule. It refuses cross-tenant, cross-user and unpermitted service access with typed errors that match `scope.ErrRefused`.
+  - The system tenant is an ordinary tenant named `system`.
+  - The password vault, TPM policies (`tpmpolicy.ScopeName` is replaced by `scope.TenantName`) and SSH all use it.
+- **`ssh:service`**: the explicit permission a `scope=service` SSH address requires.
+  - It is xkms-owned and `ScopeSelf`, and is granted to Admin and Owner.
+  - It is checked below the transport gate through `XKMSService.AuthorizeCaller`.
+
+### Changed
+
+- **The password transport DTOs carry `Title`.**
+- **The password service layer:**
+  - `PasswordUpdate` returns the updated entry, so gRPC answers a rename with the new ID;
+  - REST and MCP `generate` go through it, with a `Charset` field.
+- **Password vault sessions are per user.**
+  - Unlocking or locking opens or closes only the caller's personal session (`TenantPasswordStoreManager.UnlockUser` / `LockUser` / `IsUserLocked` / `UserStoreStatus`, replacing the tenant-wide `UnlockTenant` / `LockTenant` / `IsLocked` / `TenantStoreStatus` / `StoreForTenant` / `ResolveStore`).
+  - Shared entries are usable whenever the tenant barrier is unsealed.
+  - Personal operations on a locked session return `ErrStoreLocked`.
+  - Sealing the tenant barrier ends its sessions.
+- **SSH scope binding follows `pkg/scope`.**
+  - `scope=user` assets are reachable only by their owner, now including system-tenant callers.
+  - `scope=service` assets are reachable only with `ssh:service`, in the caller's own tenant, for any workload owner.
+  - `OwnerBindingError` gains a diagnostic `Cause`.
+  - `compose.BuildSSHClient` takes the permission checker.
+- **SSH storage uses the scope layout:** `{tenant}/ssh/shared/`, `{tenant}/ssh/users/{subject}/`, `{tenant}/ssh/services/{owner}/`. The platform partition is `system/`. No migration.
+
+### Removed
+
+- **Dead ACME rate-limiter helper constructors removed, including the
+  spoofable `TenantRateLimiterFromHeader` (#742).** The RFC 8555 §6.6
+  regression they were left over from is already fixed: xkmsd
+  (`cmd/xkmsd/acme.go`) and the standalone TrustedCA
+  (`pkg/acme/client/trustedca.go`) both wire their per-client, per-tenant and
+  per-category limiters through `pkg/acme/server.NewClientRateLimiterMiddleware`,
+  `NewAccountRateLimiter`, and the tenant-aware `NewTenant{Order,Certificate,
+  FailedValidation}RateLimiter` + `TenantRateLimiterFromRequestContext`, which
+  resolves the tenant only from a verified JWS "kid". Deleted for having zero
+  production callers: `pkg/acme/server.NewOrderRateLimiter`,
+  `CertificateRateLimiter`, `OverallRateLimiter`, `FailedValidationRateLimiter`,
+  `NewTenantAccountRateLimiter`, `NewTenantOverallRateLimiter`,
+  `TenantRateLimiterFromHeader` (took the tenant from a client-supplied HTTP
+  header) and `TenantRateLimiterFromContext` (a generic, unused
+  context-value extractor), plus their tests.
+- **`xkey/pkg/ca`, an unwired local-CA bridge, is deleted (#729).** It
+  duplicated the canonical `pkg/xkms/servicer_ca*` CA implementation behind
+  an `xkms.TCGCA`-backed `Service`, but had zero importers anywhere in the
+  xkey module: `xkey`'s CLI (`cmd/xkey/cmd/ca.go`) and its `getSDKClient`
+  are remote-mode only by design — "xkey never runs an in-process CA" — and
+  reach the canonical servicer over the SDK transport against a running
+  xkmsd. A local-CA mode for xkey is not built as part of this cleanup and
+  awaits a separate owner ruling.
+- **The deployment-wide user PIN no longer unlocks the password store.** `PasswordStoreUnlockRequest` carries a vault credential instead of `UserPIN`, and `ErrPasswordStoreUserPINRequired` / `ErrPasswordStoreUserPINNotProvisioned` are removed. The PIN remains for the features that use it.
+- **The unwired team-sharing code:** REST team handlers and DTOs, `TenantDAOMiddleware`, `staticpw.TenantDAOFactory`, the password `DAOStore`/`PasswordEntity` and `TeamScopedStore`. xkey's local team list is kept.
+- **The xkey GUI's `TryAutoUnlock`.**
+
+### Fixed
+
+- **A system-tenant identity no longer gets "Tenant not found" from the password routes.** The system tenant has its own shared and personal store under the system barrier.
+- **Two xkey AES-GCM call sites and the PKCS#11 test token work under
+  `GODEBUG=fips140=only` (go-xkms#23).** The password-vault backup envelope
+  (`xkey/pkg/gui/services/staticpw_backup.go`) and the in-process key wrapper
+  (`xkey/pkg/authenticator/key_wrapper.go`) now use
+  `cipher.NewGCMWithRandomNonce`; FIPS mode refuses a caller-chosen GCM nonce
+  even when it is random. `pkg/testing/pkcs11test`'s mock token selects its
+  CKM_AES_GCM AEAD through `pkg/crypto/aead`, so a token-generated IV works
+  in FIPS mode as it does on the real backends.
+  - **Breaking:** the password backup envelope is now version 2, with the
+    nonce folded into `ciphertext`. A version 1 backup is refused with
+    `ErrRestoreUnsupportedVersion`. The key wrapper's format is unchanged.
+
 ## [0.45.0-alpha] - 2026-09-30
 
 ### Added

@@ -1,3 +1,0 @@
-- **The password service layer:**
-  - `PasswordUpdate` returns the updated entry, so gRPC answers a rename with the new ID;
-  - REST and MCP `generate` go through it, with a `Charset` field.

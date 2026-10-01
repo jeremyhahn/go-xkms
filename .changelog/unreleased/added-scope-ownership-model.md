@@ -1,6 +1,0 @@
-- **`pkg/scope`: one ownership model for every feature.**
-  - Scopes: `tenant` (shared: every user of the tenant), `user` (personal: the owner only) and `service` (workload-owned: explicit permission).
-  - Keyspace: `{tenant}/{feature}/shared/`, `{tenant}/{feature}/users/{subject}/` and `{tenant}/{feature}/services/{owner}/`.
-  - `Principal.Authorize` is the single access rule. It refuses cross-tenant, cross-user and unpermitted service access with typed errors that match `scope.ErrRefused`.
-  - The system tenant is an ordinary tenant named `system`.
-  - The password vault, TPM policies (`tpmpolicy.ScopeName` is replaced by `scope.TenantName`) and SSH all use it.

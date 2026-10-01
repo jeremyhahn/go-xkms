@@ -1,1 +1,0 @@
-- **The unwired team-sharing code:** REST team handlers and DTOs, `TenantDAOMiddleware`, `staticpw.TenantDAOFactory`, the password `DAOStore`/`PasswordEntity` and `TeamScopedStore`. xkey's local team list is kept.

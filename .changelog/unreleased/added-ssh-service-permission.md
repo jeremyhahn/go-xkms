@@ -1,3 +1,0 @@
-- **`ssh:service`**: the explicit permission a `scope=service` SSH address requires.
-  - It is xkms-owned and `ScopeSelf`, and is granted to Admin and Owner.
-  - It is checked below the transport gate through `XKMSService.AuthorizeCaller`.
