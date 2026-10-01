@@ -2812,6 +2812,13 @@ integration-test-xkey-ssh:
 		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && for i in 1 2 3 4 5 6 7 8 9 10; do [ -S $(XKMS_UNIX_SOCKET) ] && break; echo 'Waiting for socket... ('$$i'/10)'; sleep 2; done && cd xkey && $(GO) test -v -tags='integration' ./test/integration/ssh/... -timeout 5m"; \
 	fi
 
+.PHONY: integration-test-oidc-credentials
+## integration-test-oidc-credentials: Server-side OIDC credentials end to end (devcontainer):
+## a real xkmsd on every transport driven by xkey and xkmsctl, and the
+## refresh lock and scheduler election over a real raft qrdb node
+integration-test-oidc-credentials:
+	$(call run_in_devcontainer,$(GO) test -v -count=1 -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/oidccredentials/... -timeout 20m,integration-test-oidc-credentials)
+
 .PHONY: integration-test-xkey-ctap
 ## integration-test-xkey-ctap: Run FIDO2 CTAP protocol integration tests (MakeCredential, GetAssertion, etc.)
 ## Tests the full CTAP2 protocol through the UHID virtual device
