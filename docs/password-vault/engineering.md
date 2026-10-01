@@ -52,8 +52,19 @@ LockUser(tenant, subject) error
 
 Constants: `MinPassphraseLength` 8 (NIST SP 800-63B), `PasskeySecretLength`
 32, `PRFSaltLength` 32. Passphrase KEK: Argon2id at `kdf.DefaultParams`
-(64 MiB, t=3, p=4), the cost recorded on each factor. Passkey and recovery
-KEKs: HKDF-SHA256 with a per-factor salt and a domain-separated info string.
+(64 MiB, t=3, p=4) by default, the cost recorded on each factor so changing
+it only affects new wraps. `NewTenantPasswordStoreManager` takes functional
+`Option`s; `WithPassphraseKDFParams(func() *kdf.KDFParams)` overrides the
+default. Production callers never need it. Tests across every package that
+builds a manager do: `pkg/testutil/kdftest.CheapPassphraseParams` is a cost
+cheap enough that enrolling and unlocking a passphrase factor many times, in
+parallel, does not dominate a suite's runtime or memory while still
+exercising the production wrap/unwrap path. `kdftest` imports only
+`pkg/crypto/kdf`, not `pkg/staticpw`, so that a fixture package the
+transports' tests use (`pkg/testutil/vaulttest`) does not pull `staticpw`'s
+dependency chain back into a transport's own test package and form an
+import cycle. Passkey and recovery KEKs: HKDF-SHA256 with a per-factor salt
+and a domain-separated info string.
 Every wrap and every personal entry is AES-256-GCM with associated data
 binding it to its tenant, user and factor (wraps) or storage key (entries).
 

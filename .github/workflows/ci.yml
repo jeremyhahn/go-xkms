@@ -288,6 +288,21 @@ jobs:
     # narrower `test-changed` job instead.
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
 
+    # ci-template v1.6: the Go toolchain is cgroup-unaware -- in a ~12 GB job
+    # container it sees the HOST's 24 cores and 94 GB, same as the Security
+    # Scan job below (2026-08-18). Here it showed up as pkg/api/mcp's
+    # password-vault tests (go-xkms run 21639): -race plus unbounded
+    # t.Parallel() fan-out spawned enough concurrent Argon2id-sealed barrier
+    # fixtures that the job was OOM-killed ("signal: killed") even after the
+    # per-test KDF cost was fixed to run cheap in tests (pkg/staticpw
+    # WithPassphraseKDFParams) -- measured 2026-10-01: the same binary peaks
+    # at ~20 GB RSS with GOMAXPROCS unset vs ~6.7 GB at GOMAXPROCS=8. GOMEMLIMIT
+    # makes the GC respect the container budget; GOMAXPROCS bounds the worker
+    # fan-out, exactly as for Security Scan.
+    env:
+      GOMEMLIMIT: 10GiB
+      GOMAXPROCS: 8
+
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

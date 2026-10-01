@@ -322,9 +322,9 @@ func TestVault_InvalidCredentials(t *testing.T) {
 // user's keyring does not open there, even with the right secret.
 func TestVault_WrapsAreBoundToTheirUser(t *testing.T) {
 	_, _, raw := vaultFixture(t)
-	alice, err := newVaultKeyring(raw, "tenant-a", "alice")
+	alice, err := newVaultKeyring(raw, "tenant-a", "alice", cheapKDFParams)
 	require.NoError(t, err)
-	bob, err := newVaultKeyring(raw, "tenant-a", "bob")
+	bob, err := newVaultKeyring(raw, "tenant-a", "bob", cheapKDFParams)
 	require.NoError(t, err)
 
 	dek := bytes.Repeat([]byte{7}, dekLength)

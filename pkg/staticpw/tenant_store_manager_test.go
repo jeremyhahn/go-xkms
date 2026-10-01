@@ -19,6 +19,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -26,6 +27,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// cheapKDFParams is the Argon2id cost this package's vault tests wrap
+// passphrase factors with: the vault tests enroll and unlock many times, and
+// the production cost (kdf.DefaultParams: 64 MiB, t=3) would make every
+// derivation dominate the suite. The cost is recorded on each factor, so the
+// code path exercised is the production one.
+func cheapKDFParams() *kdf.KDFParams {
+	return &kdf.KDFParams{Algorithm: kdf.AlgorithmArgon2id, Memory: 64, Time: 1, Threads: 1, KeyLength: 32}
+}
 
 // testBarrierConfig returns a BarrierConfig suitable for test barriers.
 func testBarrierConfig() seal.BarrierConfig {
@@ -87,7 +97,7 @@ func newTestManager(t *testing.T) (*TenantPasswordStoreManager, *seal.BarrierReg
 	t.Helper()
 	reg := newTestRegistry(t)
 	systemStore := NewStore(storage.New())
-	mgr, err := NewTenantPasswordStoreManager(reg, systemStore)
+	mgr, err := NewTenantPasswordStoreManager(reg, systemStore, WithPassphraseKDFParams(cheapKDFParams))
 	require.NoError(t, err)
 	return mgr, reg
 }
