@@ -1954,6 +1954,62 @@ func (t *Transport) TenantVTPMStop(ctx context.Context, tenantID string) (*trans
 	return &result, nil
 }
 
+// BackupService methods (go-xkms#728).
+
+// CreateBackup initiates a new backup with the specified options.
+func (t *Transport) CreateBackup(ctx context.Context, req *transport.BackupRequest) (*transport.BackupInfo, error) {
+	var result transport.BackupInfo
+	if err := t.rpcCall(ctx, "xkms.createBackup", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListBackups returns metadata for all available backups.
+func (t *Transport) ListBackups(ctx context.Context) ([]transport.BackupInfo, error) {
+	var result transport.ListBackupsResponse
+	if err := t.rpcCall(ctx, "xkms.listBackups", nil, &result); err != nil {
+		return nil, err
+	}
+	return result.Backups, nil
+}
+
+// GetBackup returns metadata for a specific backup by ID.
+func (t *Transport) GetBackup(ctx context.Context, id string) (*transport.BackupInfo, error) {
+	params := map[string]string{"id": id}
+	var result transport.BackupInfo
+	if err := t.rpcCall(ctx, "xkms.getBackup", params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteBackup removes a backup by ID.
+func (t *Transport) DeleteBackup(ctx context.Context, id string) error {
+	params := map[string]string{"id": id}
+	return t.rpcCall(ctx, "xkms.deleteBackup", params, nil)
+}
+
+// RestoreBackup restores data from a backup.
+func (t *Transport) RestoreBackup(ctx context.Context, req *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	var result transport.RestoreResult
+	if err := t.rpcCall(ctx, "xkms.restoreBackup", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// VerifyBackup verifies the integrity of a backup by computing and comparing
+// checksums.
+func (t *Transport) VerifyBackup(ctx context.Context, id string) (*transport.VerifyResult, error) {
+	params := map[string]string{"id": id}
+	var result transport.VerifyResult
+	if err := t.rpcCall(ctx, "xkms.verifyBackup", params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // CustodianGroupService methods.
 
 // CreateCustodianGroup creates a new custodian group.

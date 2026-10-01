@@ -559,6 +559,18 @@ type (
 	AuditFilter = transport.AuditFilter
 	AuditPage   = transport.AuditPage
 
+	// Backup Operations
+	CompressionType     = transport.CompressionType
+	EncryptionType      = transport.EncryptionType
+	BackupStatus        = transport.BackupStatus
+	BackupRequest       = transport.BackupRequest
+	BackupInfo          = transport.BackupInfo
+	RestoreRequest      = transport.RestoreRequest
+	RestoreResult       = transport.RestoreResult
+	ShardError          = transport.ShardError
+	VerifyResult        = transport.VerifyResult
+	ListBackupsResponse = transport.ListBackupsResponse
+
 	// Custodian Group Operations
 	CustodianGroupInfo           = transport.CustodianGroupInfo
 	CustodianMemberInfo          = transport.CustodianMemberInfo

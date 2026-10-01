@@ -444,6 +444,22 @@ func (m *mockClient) RevokeEscrow(context.Context, string) error {
 	panic("not implemented")
 }
 
+// Backup operations (go-xkms#728)
+func (m *mockClient) CreateBackup(context.Context, *transport.BackupRequest) (*transport.BackupInfo, error) {
+	return nil, nil
+}
+func (m *mockClient) ListBackups(context.Context) ([]transport.BackupInfo, error) { return nil, nil }
+func (m *mockClient) GetBackup(context.Context, string) (*transport.BackupInfo, error) {
+	return nil, nil
+}
+func (m *mockClient) DeleteBackup(context.Context, string) error { return nil }
+func (m *mockClient) RestoreBackup(context.Context, *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	return nil, nil
+}
+func (m *mockClient) VerifyBackup(context.Context, string) (*transport.VerifyResult, error) {
+	return nil, nil
+}
+
 // Custodian group operations
 func (m *mockClient) CreateCustodianGroup(context.Context, *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
 	return nil, nil

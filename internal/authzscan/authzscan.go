@@ -170,6 +170,7 @@ func Constants() map[string]string {
 		"ResourceCA":            auth.ResourceCA,
 		"ResourceBootstrap":     auth.ResourceBootstrap,
 		"ResourceTPMPolicy":     auth.ResourceTPMPolicy,
+		"ResourceBackup":        auth.ResourceBackup,
 
 		"ActionSign":               auth.ActionSign,
 		"ActionVerify":             auth.ActionVerify,
@@ -220,6 +221,7 @@ func Constants() map[string]string {
 		"ActionStrategy":           auth.ActionStrategy,
 		"ActionLock":               auth.ActionLock,
 		"ActionUnlock":             auth.ActionUnlock,
+		"ActionRestore":            auth.ActionRestore,
 	}
 }
 

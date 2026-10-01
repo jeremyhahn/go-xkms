@@ -2612,6 +2612,95 @@ func (t *Transport) TenantVTPMStop(ctx context.Context, tenantID string) (*trans
 	return wire.TPMPolicyClient{Do: t.doRawRequest}.TenantVTPMStop(ctx, tenantID)
 }
 
+// BackupService methods.
+
+// CreateBackup initiates a new backup with the specified options.
+func (t *Transport) CreateBackup(ctx context.Context, req *transport.BackupRequest) (*transport.BackupInfo, error) {
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/backups", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.BackupInfo
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
+// ListBackups returns metadata for all available backups.
+func (t *Transport) ListBackups(ctx context.Context) ([]transport.BackupInfo, error) {
+	data, err := t.doRawRequest(ctx, http.MethodGet, "/api/v1/backups", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Backups []transport.BackupInfo `json:"backups"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return resp.Backups, nil
+}
+
+// GetBackup returns metadata for a specific backup by ID.
+func (t *Transport) GetBackup(ctx context.Context, id string) (*transport.BackupInfo, error) {
+	path := fmt.Sprintf("/api/v1/backups/%s", url.PathEscape(id))
+	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.BackupInfo
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
+// DeleteBackup removes a backup by ID.
+func (t *Transport) DeleteBackup(ctx context.Context, id string) error {
+	path := fmt.Sprintf("/api/v1/backups/%s", url.PathEscape(id))
+	_, err := t.doRawRequest(ctx, http.MethodDelete, path, nil)
+	return err
+}
+
+// RestoreBackup restores data from a backup.
+func (t *Transport) RestoreBackup(ctx context.Context, req *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/backups/restore", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.RestoreResult
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
+// VerifyBackup verifies the integrity of a backup by computing and comparing
+// checksums.
+func (t *Transport) VerifyBackup(ctx context.Context, id string) (*transport.VerifyResult, error) {
+	path := fmt.Sprintf("/api/v1/backups/%s/verify", url.PathEscape(id))
+	data, err := t.doRawRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.VerifyResult
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
 // CustodianGroupService methods.
 
 // CreateCustodianGroup creates a new custodian group.

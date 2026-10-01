@@ -1639,6 +1639,25 @@ func (m *mockPIVClient) RevokeEscrow(_ context.Context, _ string) error {
 	return errMockNotImplemented
 }
 
+// Backup operations stub implementations for mockPIVClient (go-xkms#728)
+
+func (m *mockPIVClient) CreateBackup(_ context.Context, _ *transport.BackupRequest) (*transport.BackupInfo, error) {
+	return nil, errMockNotImplemented
+}
+func (m *mockPIVClient) ListBackups(_ context.Context) ([]transport.BackupInfo, error) {
+	return nil, errMockNotImplemented
+}
+func (m *mockPIVClient) GetBackup(_ context.Context, _ string) (*transport.BackupInfo, error) {
+	return nil, errMockNotImplemented
+}
+func (m *mockPIVClient) DeleteBackup(_ context.Context, _ string) error { return errMockNotImplemented }
+func (m *mockPIVClient) RestoreBackup(_ context.Context, _ *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	return nil, errMockNotImplemented
+}
+func (m *mockPIVClient) VerifyBackup(_ context.Context, _ string) (*transport.VerifyResult, error) {
+	return nil, errMockNotImplemented
+}
+
 // Policy operations stub implementations for mockPIVClient
 
 func (m *mockPIVClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {

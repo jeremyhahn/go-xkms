@@ -936,6 +936,48 @@ func (m *mockService) TenantVTPMStop(context.Context, string) (*transport.Tenant
 	return &transport.TenantVTPMStatusResponse{}, nil
 }
 
+func (m *mockService) CreateBackup(_ context.Context, _ *transport.BackupRequest) (*transport.BackupInfo, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.BackupInfo{}, nil
+}
+
+func (m *mockService) ListBackups(_ context.Context) ([]transport.BackupInfo, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return nil, nil
+}
+
+func (m *mockService) GetBackup(_ context.Context, _ string) (*transport.BackupInfo, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.BackupInfo{}, nil
+}
+
+func (m *mockService) DeleteBackup(_ context.Context, _ string) error {
+	if m.shouldFail {
+		return errMock
+	}
+	return nil
+}
+
+func (m *mockService) RestoreBackup(_ context.Context, _ *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.RestoreResult{}, nil
+}
+
+func (m *mockService) VerifyBackup(_ context.Context, _ string) (*transport.VerifyResult, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.VerifyResult{}, nil
+}
+
 func (m *mockService) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
 	if m.shouldFail {
 		return nil, errMock

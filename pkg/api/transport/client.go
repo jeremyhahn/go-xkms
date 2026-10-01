@@ -544,6 +544,30 @@ type CredentialManagementService interface {
 	GetCredentialStrategy(ctx context.Context) (*CredentialStrategyResponse, error)
 }
 
+// BackupService provides whole-node backup and restore operations over the
+// embedded go-qrdb node's shard-snapshot capability (owner ruling
+// 2026-09-30, go-xkms#728).
+type BackupService interface {
+	// CreateBackup initiates a new backup with the specified options.
+	CreateBackup(ctx context.Context, req *BackupRequest) (*BackupInfo, error)
+
+	// ListBackups returns metadata for all available backups.
+	ListBackups(ctx context.Context) ([]BackupInfo, error)
+
+	// GetBackup returns metadata for a specific backup by ID.
+	GetBackup(ctx context.Context, id string) (*BackupInfo, error)
+
+	// DeleteBackup removes a backup by ID.
+	DeleteBackup(ctx context.Context, id string) error
+
+	// RestoreBackup restores data from a backup.
+	RestoreBackup(ctx context.Context, req *RestoreRequest) (*RestoreResult, error)
+
+	// VerifyBackup verifies the integrity of a backup by computing and
+	// comparing checksums.
+	VerifyBackup(ctx context.Context, id string) (*VerifyResult, error)
+}
+
 // CustodianGroupService handles custodian group management for Shamir
 // secret sharing ceremonies.
 type CustodianGroupService interface {
@@ -696,6 +720,7 @@ type Client interface {
 	AuditService
 	BootstrapService
 	InviteService
+	BackupService
 }
 
 // InviteService redeems administrator-issued account-activation

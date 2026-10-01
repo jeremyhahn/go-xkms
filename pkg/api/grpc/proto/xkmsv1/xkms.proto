@@ -560,6 +560,43 @@ service KeystoreService {
     option (qrdb.v1.permission) = "piv:use";
   }
 
+  // ==================== Backup Operations ====================
+  //
+  // Whole-node backup/restore over the embedded go-qrdb node's shard-snapshot
+  // capability (owner ruling 2026-09-30, go-xkms#728). The permission names
+  // mirror go-qrdb's own backup:* family verbatim.
+
+  // CreateBackup initiates a new backup with the specified options.
+  rpc CreateBackup(BackupRequest) returns (BackupInfo) {
+    option (qrdb.v1.permission) = "backup:create";
+  }
+
+  // ListBackups returns metadata for all available backups.
+  rpc ListBackups(google.protobuf.Empty) returns (ListBackupsResponse) {
+    option (qrdb.v1.permission) = "backup:list";
+  }
+
+  // GetBackup returns metadata for a specific backup by ID.
+  rpc GetBackup(GetBackupRequest) returns (BackupInfo) {
+    option (qrdb.v1.permission) = "backup:read";
+  }
+
+  // DeleteBackup removes a backup by ID.
+  rpc DeleteBackup(DeleteBackupRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "backup:delete";
+  }
+
+  // RestoreBackup restores data from a backup, overwriting live shard state.
+  rpc RestoreBackup(RestoreRequest) returns (RestoreResult) {
+    option (qrdb.v1.permission) = "backup:restore";
+  }
+
+  // VerifyBackup verifies the integrity of a backup by computing and
+  // comparing checksums.
+  rpc VerifyBackup(VerifyBackupRequest) returns (VerifyResult) {
+    option (qrdb.v1.permission) = "backup:verify";
+  }
+
   // ==================== Custodian Group Operations ====================
 
   // CreateCustodianGroup creates a new custodian group for Shamir threshold ceremonies.
@@ -3077,6 +3114,94 @@ message CustodianGroup {
   repeated CustodianMember members = 5;
   string created_at = 6;
   string updated_at = 7;
+}
+
+// ===========================================================================
+// Backup messages (go-xkms#728)
+//
+// compression is one of "none", "zstd", "snappy"; encryption is one of
+// "none", "aes256"; status is one of "pending", "running", "complete",
+// "failed". These mirror go-qrdb's string-typed service enums verbatim.
+// ===========================================================================
+
+// BackupRequest describes a backup to capture. An empty shard_ids list backs
+// up every shard on the host.
+message BackupRequest {
+  string destination = 1;
+  string compression = 2;
+  string encryption = 3;
+  bytes encryption_key = 4;
+  map<string, string> metadata = 5;
+  repeated uint64 shard_ids = 6;
+}
+
+// BackupInfo is the metadata describing a stored backup artifact.
+message BackupInfo {
+  string id = 1;
+  int64 timestamp_ns = 2;
+  int64 size = 3;
+  int32 shard_count = 4;
+  string status = 5;
+  string checksum = 6;
+  string destination = 7;
+  string compression = 8;
+  string encryption = 9;
+  map<string, string> metadata = 10;
+  int64 duration_ns = 11;
+  string error_message = 12;
+}
+
+// ListBackupsResponse enumerates stored backups. Artifact contents are
+// never returned by enumeration.
+message ListBackupsResponse {
+  repeated BackupInfo backups = 1;
+}
+
+// GetBackupRequest names a backup by ID.
+message GetBackupRequest {
+  string id = 1;
+}
+
+// DeleteBackupRequest names a backup to remove.
+message DeleteBackupRequest {
+  string id = 1;
+}
+
+// RestoreRequest restores shards from a stored backup. An empty
+// target_shards list restores every shard captured in the backup.
+message RestoreRequest {
+  string backup_id = 1;
+  repeated uint64 target_shards = 2;
+  bool validate_first = 3;
+  bytes decryption_key = 4;
+}
+
+// BackupShardError reports a per-shard failure during restore.
+message BackupShardError {
+  uint64 shard_id = 1;
+  string message = 2;
+}
+
+// RestoreResult reports the outcome of a restore.
+message RestoreResult {
+  string backup_id = 1;
+  int32 shards_restored = 2;
+  int64 duration_ns = 3;
+  repeated BackupShardError errors = 4;
+}
+
+// VerifyBackupRequest names a backup to verify.
+message VerifyBackupRequest {
+  string id = 1;
+}
+
+// VerifyResult reports backup integrity-check results.
+message VerifyResult {
+  bool valid = 1;
+  bool checksum_match = 2;
+  string expected_checksum = 3;
+  string actual_checksum = 4;
+  repeated string errors = 5;
 }
 
 // CreateCustodianGroupRequest requests creation of a new custodian group.

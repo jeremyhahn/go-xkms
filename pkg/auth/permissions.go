@@ -106,6 +106,15 @@ const (
 	// holding certs:generate must not imply authority to mint a signing CA.
 	ResourceCA = "ca"
 
+	// ResourceBackup is whole-node backup and restore: capturing shard
+	// snapshots of the embedded go-qrdb node's replicated state, listing and
+	// inspecting them, verifying their integrity, and restoring from one.
+	// Mirrors go-qrdb's canonical permission.Backup* family verbatim
+	// (pkg/permission/constants.go), which is ScopeSelf — a tenant's grant
+	// reaches only its own tenant's backups — so this resource carries no
+	// local xkms scoping declaration (pkg/apimodule/module_scopes.go).
+	ResourceBackup = "backup"
+
 	// Key actions.
 	ActionSign    = "sign"
 	ActionVerify  = "verify"
@@ -225,4 +234,10 @@ const (
 	// Password vault actions.
 	ActionLock   = "lock"
 	ActionUnlock = "unlock"
+
+	// ActionRestore overwrites live state from a backup (backup:restore). It
+	// is the most destructive backup action, so qrdb grants it separately
+	// from backup:create/backup:read. Mirrors go-qrdb permission.BackupRestore
+	// verbatim.
+	ActionRestore = "restore"
 )

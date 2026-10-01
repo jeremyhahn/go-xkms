@@ -371,6 +371,16 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"xkms.getLockoutStatus": (*Server).handleGetLockoutStatus,
 	"xkms.resetLockout":     (*Server).handleResetLockout,
 
+	// Whole-node backup/restore (owner ruling 2026-09-30, go-xkms#728).
+	// Delegates entirely to the embedded go-qrdb node's BackupClient through
+	// the XKMS service.
+	"xkms.createBackup":  (*Server).handleCreateBackup,
+	"xkms.listBackups":   (*Server).handleListBackups,
+	"xkms.getBackup":     (*Server).handleGetBackup,
+	"xkms.deleteBackup":  (*Server).handleDeleteBackup,
+	"xkms.restoreBackup": (*Server).handleRestoreBackup,
+	"xkms.verifyBackup":  (*Server).handleVerifyBackup,
+
 	// Custodian groups (Shamir share custody roster). Custodian state lives
 	// in the embedded go-qrdb node, reached through the XKMS service
 	// (go-xkms#773).

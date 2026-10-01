@@ -874,6 +874,21 @@ func (n *noopClient) TenantVTPMStop(context.Context, string) (*transport.TenantV
 	return nil, nil
 }
 
+func (n *noopClient) CreateBackup(context.Context, *transport.BackupRequest) (*transport.BackupInfo, error) {
+	return nil, nil
+}
+func (n *noopClient) ListBackups(context.Context) ([]transport.BackupInfo, error) { return nil, nil }
+func (n *noopClient) GetBackup(context.Context, string) (*transport.BackupInfo, error) {
+	return nil, nil
+}
+func (n *noopClient) DeleteBackup(context.Context, string) error { return nil }
+func (n *noopClient) RestoreBackup(context.Context, *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	return nil, nil
+}
+func (n *noopClient) VerifyBackup(context.Context, string) (*transport.VerifyResult, error) {
+	return nil, nil
+}
+
 func (n *noopClient) CreateCustodianGroup(context.Context, *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
 	return nil, nil
 }
