@@ -39,6 +39,12 @@ auth:
 barrier:
   enabled: true
   strategy: "passphrase"
+  # The nodes boot sealed and serve the pre-unseal window until the harness
+  # initializes and unseals them. Listening beyond loopback is acceptable
+  # here only because the window is reachable solely on the private compose
+  # network (cluster-net); a deployment binds it to loopback or a trusted
+  # management interface.
+  sealed_window_allow_remote: true
 
 ratelimit:
   enabled: false

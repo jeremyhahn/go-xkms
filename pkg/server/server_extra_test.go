@@ -351,14 +351,15 @@ func TestBuildXKMSQRDBConfig_StandaloneUsesMemory(t *testing.T) {
 func TestBuildXKMSQRDBConfig_ClusterFields(t *testing.T) {
 	cfg := &config.Config{
 		Cluster: config.ClusterConfig{
-			Enabled:       true,
-			NodeID:        42,
-			ShardID:       7,
-			DeploymentID:  99,
-			RaftAddress:   "10.0.0.1:63001",
-			ListenAddress: "0.0.0.0:63001",
-			Peers:         "1=10.0.0.1:63001",
-			Join:          false,
+			Enabled:          true,
+			NodeID:           42,
+			ShardID:          7,
+			DeploymentID:     99,
+			RaftAddress:      "10.0.0.1:63001",
+			ListenAddress:    "0.0.0.0:63001",
+			Peers:            "1=10.0.0.1:63001",
+			MemberIdentities: "2=spki:ab12,3=spki:cd34",
+			Join:             false,
 		},
 	}
 	s := newMinimalServer(t, cfg)
@@ -370,6 +371,7 @@ func TestBuildXKMSQRDBConfig_ClusterFields(t *testing.T) {
 	assert.Equal(t, "10.0.0.1:63001", qcfg.Raft.RaftAddress)
 	assert.Equal(t, "0.0.0.0:63001", qcfg.Raft.ListenAddress)
 	assert.Equal(t, "1=10.0.0.1:63001", qcfg.Raft.Peers)
+	assert.Equal(t, "2=spki:ab12,3=spki:cd34", qcfg.Raft.MemberIdentities)
 	assert.False(t, qcfg.Raft.Join)
 }
 

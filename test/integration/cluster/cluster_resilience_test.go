@@ -19,15 +19,41 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 )
 
-// nodeContainer maps a 1-based node index to its docker container name.
-func nodeContainer(nodeIdx int) string {
-	return fmt.Sprintf("cluster-node%d", nodeIdx)
+// nodeContainer returns the docker container of the 1-based node index: the
+// container of compose service node<idx> in the test container's own compose
+// project, so concurrent runs of the suite never touch each other's nodes.
+func nodeContainer(t *testing.T, nodeIdx int) string {
+	t.Helper()
+	self, err := os.Hostname()
+	if err != nil {
+		t.Fatalf("test container hostname: %v", err)
+	}
+	project := dockerOutput(t, "inspect", "--format", `{{index .Config.Labels "com.docker.compose.project"}}`, self)
+	container := dockerOutput(t, "ps", "--all", "--quiet",
+		"--filter", "label=com.docker.compose.project="+project,
+		"--filter", fmt.Sprintf("label=com.docker.compose.service=node%d", nodeIdx))
+	if container == "" {
+		t.Fatalf("no container for service node%d in compose project %q", nodeIdx, project)
+	}
+	return container
+}
+
+// dockerOutput runs a docker command and returns its trimmed output, failing
+// the test on error.
+func dockerOutput(t *testing.T, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("docker", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker %s: %v (%s)", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // requireDocker asserts that the docker CLI and the daemon socket are reachable
@@ -76,21 +102,28 @@ func leaderNodeIndex(t *testing.T, ctx context.Context, nodes [3]string) int {
 	return idx
 }
 
-// waitContainerHealthy waits until the given node's REST /health answers 200,
-// i.e. the (restarted) process is serving again.
-func waitContainerHealthy(t *testing.T, ctx context.Context, url string) {
+// startNode starts the stopped node nodeIdx, unseals the barrier it boots
+// sealed with, and waits until it is ready again.
+func startNode(t *testing.T, ctx context.Context, nodes [3]string, nodeIdx int) {
 	t.Helper()
+	dockerAction(t, "start", nodeContainer(t, nodeIdx))
+	if err := openBarrier(nodes[nodeIdx-1], fmt.Sprintf("/node%d-data", nodeIdx)); err != nil {
+		t.Fatalf("unseal restarted node%d: %v", nodeIdx, err)
+	}
 	poll(t, 90*time.Second, 1*time.Second, func() (bool, string) {
-		return isReady(ctx, url), fmt.Sprintf("%s not healthy yet", url)
+		return isReady(ctx, nodes[nodeIdx-1]), fmt.Sprintf("node%d not ready yet", nodeIdx)
 	})
 }
 
-// restoreCluster restarts a container (idempotent — `docker start` on a running
-// container is a no-op) and waits for the whole cluster to be healthy with a
-// single agreed leader, so a chaos test never leaves the cluster degraded for
-// the tests that follow.
-func restoreCluster(t *testing.T, ctx context.Context, nodes [3]string, container string) {
-	_, _ = exec.Command("docker", "start", container).CombinedOutput()
+// restoreCluster restarts node nodeIdx if a test left it stopped, and waits
+// for the whole cluster to be ready with a single agreed leader, so a chaos
+// test never leaves the cluster degraded for the tests that follow.
+func restoreCluster(t *testing.T, ctx context.Context, nodes [3]string, nodeIdx int) {
+	t.Helper()
+	running := dockerOutput(t, "inspect", "--format", "{{.State.Running}}", nodeContainer(t, nodeIdx))
+	if running != "true" {
+		startNode(t, ctx, nodes, nodeIdx)
+	}
 	waitAllReady(t, ctx, nodes)
 	_ = waitLeader(t, ctx, nodes)
 }
@@ -113,11 +146,10 @@ func TestCluster_LeaderFailover(t *testing.T) {
 	waitKeyReplicated(t, ctx, nodes, keyID)
 
 	oldLeaderIdx := leaderNodeIndex(t, ctx, nodes)
-	leaderContainer := nodeContainer(oldLeaderIdx)
-	t.Cleanup(func() { restoreCluster(t, ctx, nodes, leaderContainer) })
+	t.Cleanup(func() { restoreCluster(t, ctx, nodes, oldLeaderIdx) })
 
 	// Kill the leader.
-	dockerAction(t, "kill", leaderContainer)
+	dockerAction(t, "kill", nodeContainer(t, oldLeaderIdx))
 
 	// The survivors must elect a NEW leader (different node id).
 	var newLeaderIdx int
@@ -157,12 +189,11 @@ func TestCluster_NodeRestartRejoin(t *testing.T) {
 	for followerIdx == leaderIdx {
 		followerIdx++
 	}
-	followerContainer := nodeContainer(followerIdx)
 	followerURLStr := nodes[followerIdx-1]
-	t.Cleanup(func() { restoreCluster(t, ctx, nodes, followerContainer) })
+	t.Cleanup(func() { restoreCluster(t, ctx, nodes, followerIdx) })
 
 	// Kill the follower.
-	dockerAction(t, "kill", followerContainer)
+	dockerAction(t, "kill", nodeContainer(t, followerIdx))
 
 	// Commit new state on the surviving 2-node majority.
 	keyID := fmt.Sprintf("rejoin-key-%d", time.Now().UnixNano())
@@ -184,9 +215,8 @@ func TestCluster_NodeRestartRejoin(t *testing.T) {
 	}
 	t.Logf("committed %q on the surviving majority while node%d was down", keyID, followerIdx)
 
-	// Restart the follower and wait for it to serve again.
-	dockerAction(t, "start", followerContainer)
-	waitContainerHealthy(t, ctx, followerURLStr)
+	// Restart the follower, unseal it, and wait for it to serve again.
+	startNode(t, ctx, nodes, followerIdx)
 
 	// It must catch up: the key written while it was down becomes present.
 	poll(t, 60*time.Second, 1*time.Second, func() (bool, string) {

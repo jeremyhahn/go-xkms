@@ -214,8 +214,22 @@ type clusterPeers struct {
 
 // isReady returns true when the node at baseURL responds 200 to /health/ready.
 func isReady(ctx context.Context, baseURL string) bool {
-	code, _, err := get(ctx, baseURL+"/health/ready")
-	return err == nil && code == http.StatusOK
+	ready, _ := readiness(ctx, baseURL)
+	return ready
+}
+
+// readiness reports whether baseURL's /health/ready answers 200 and, when it
+// does not, why, so a readiness poll that times out names its cause.
+func readiness(ctx context.Context, baseURL string) (bool, string) {
+	code, body, err := get(ctx, baseURL+"/health/ready")
+	switch {
+	case err != nil:
+		return false, fmt.Sprintf("%s not ready: %v", baseURL, err)
+	case code != http.StatusOK:
+		return false, fmt.Sprintf("%s not ready: status %d: %s", baseURL, code, body)
+	default:
+		return true, ""
+	}
 }
 
 // fetchPeers reads the qrdb admin-plane peer list from baseURL.
@@ -283,15 +297,6 @@ func leaderURL(ctx context.Context, nodes [3]string) string {
 		}
 	}
 	return ""
-}
-
-// generateKeyRequest is the JSON body for POST /api/v1/keys. The cluster nodes
-// default to the pkcs8 backend; the handler requires key_id, backend, and
-// key_type, with curve selecting the ECDSA curve.
-func generateKeyRequest(keyID string) string {
-	return fmt.Sprintf(
-		`{"key_id":%q,"backend":%q,"key_type":"ecdsa","curve":"P-256"}`,
-		keyID, backendName)
 }
 
 // keyExists returns true when GET /api/v1/keys/{id}?backend=pkcs8 returns 200.
@@ -508,7 +513,7 @@ func TestCluster_WriteReplication(t *testing.T) {
 	leader := waitLeader(t, ctx, nodes)
 
 	keyID := fmt.Sprintf("cluster-write-repl-%d", time.Now().UnixNano())
-	code, body, err := post(ctx, leader+"/api/v1/keys", generateKeyRequest(keyID))
+	code, body, err := genKey(ctx, leader, cryptoKeySpecs[0], keyID)
 
 	if err == nil && (code == http.StatusOK || code == http.StatusCreated) {
 		// Live path: the write committed; assert it replicates everywhere.

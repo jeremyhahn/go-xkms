@@ -109,6 +109,7 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 		qcfg.Raft.RaftAddress = s.config.Cluster.RaftAddress
 		qcfg.Raft.ListenAddress = s.config.Cluster.ListenAddress
 		qcfg.Raft.Peers = s.config.Cluster.Peers
+		qcfg.Raft.MemberIdentities = s.config.Cluster.MemberIdentities
 		qcfg.Raft.Join = s.config.Cluster.Join
 	}
 

@@ -46,6 +46,10 @@ import (
 func TestMain(m *testing.M) {
 	urls := trustBootstrapURLs()
 	if len(urls) > 0 {
+		if err := openBarriers(); err != nil {
+			fmt.Fprintf(os.Stderr, "cluster harness barrier unseal failed: %v\n", err)
+			os.Exit(1)
+		}
 		pool := x509.NewCertPool()
 		if err := fetchClusterRoots(urls, pool); err != nil {
 			fmt.Fprintf(os.Stderr, "cluster harness trust bootstrap failed: %v\n", err)
@@ -91,7 +95,7 @@ func loadAdminCredential(dirs []string) (tls.Certificate, error) {
 	var lastErr error
 	for {
 		for _, dir := range dirs {
-			cert, err := tls.LoadX509KeyPair(dir+"/admin-cert.pem", dir+"/admin-key.pem")
+			cert, err := tls.LoadX509KeyPair(datastore(dir)+"/admin-cert.pem", datastore(dir)+"/admin-key.pem")
 			if err == nil {
 				return cert, nil
 			}

@@ -820,6 +820,17 @@ type ClusterConfig struct {
 	// Must include this node's own NodeID=RaftAddress when bootstrapping.
 	Peers string `yaml:"peers"`
 
+	// MemberIdentities lists the Raft member identities of the OTHER
+	// replicas as comma-separated "nodeID=identity" pairs (e.g.,
+	// "2=spki:3f9a…,3=spki:c01d…"). An identity is "spki:" plus the hex
+	// `qrdbd node-identity` prints it for the certificate file. go-quicraft admits a member by
+	// `qrdbd node-identity --cert` prints it. go-quicraft admits a member by
+	// its identity and nothing else, so every multi-node replica needs it: a
+	// bootstrapping node names every initial member, a joining node at least
+	// one existing member. This node's own entry is derived from its
+	// certificate. Passed through to go-qrdb's raft.member_identities.
+	MemberIdentities string `yaml:"member_identities"`
+
 	// Join indicates this node is joining an existing cluster rather than
 	// bootstrapping a new one.
 	Join bool `yaml:"join"`

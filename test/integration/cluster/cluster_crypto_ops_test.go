@@ -24,9 +24,6 @@ import (
 	"time"
 )
 
-// rsaSpec is the RSA key spec (asymmetric encrypt/decrypt requires RSA).
-var rsaSpec = keySpec{name: "rsa-2048", keyType: "rsa", bits: 2048}
-
 // TestCluster_AsymEncryptDecrypt_AcrossNodes proves asymmetric encryption round
 // trips across the cluster: an RSA key is generated on the leader and
 // replicated; plaintext is encrypted to its PUBLIC key on a FOLLOWER and
@@ -40,7 +37,7 @@ func TestCluster_AsymEncryptDecrypt_AcrossNodes(t *testing.T) {
 	follower := followerURL(t, ctx, nodes, leader)
 
 	keyID := fmt.Sprintf("cluster-asym-%d", time.Now().UnixNano())
-	code, body, err := genKey(ctx, leader, rsaSpec, keyID)
+	code, body, err := genKey(ctx, leader, rsaEncryptionSpec, keyID)
 	if err != nil || (code != http.StatusOK && code != http.StatusCreated) {
 		t.Fatalf("gen rsa key on leader: status=%d err=%v body=%s", code, err, body)
 	}

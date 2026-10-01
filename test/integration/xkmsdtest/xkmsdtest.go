@@ -28,7 +28,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -352,39 +351,27 @@ func (s *Server) wait(deadline time.Time) error {
 }
 
 // initializeBarrier initializes the passphrase barrier through the pre-boot
-// sealed-window listener, which serves the TLS certificate xkmsd persisted
-// in its data directory before any CA exists.
+// sealed-window listener (InitializeBarrier), giving up when xkmsd exits or
+// startTimeout passes.
 func (s *Server) initializeBarrier(data string) error {
-	deadline := time.Now().Add(startTimeout)
-	certPath := filepath.Join(data, "unified-tls", "cert.pem")
-	var client *http.Client
-	for client == nil {
-		if pem, err := os.ReadFile(certPath); err == nil {
-			pool := x509.NewCertPool()
-			if pool.AppendCertsFromPEM(pem) {
-				client = &http.Client{
-					Timeout:   15 * time.Second,
-					Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13}},
-				}
-				break
-			}
+	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
+	defer cancel()
+	go func() {
+		select {
+		case <-s.exited:
+			cancel()
+		case <-ctx.Done():
 		}
-		if err := s.wait(deadline); err != nil {
-			return err
-		}
+	}()
+	client, err := SealedWindowClient(ctx, filepath.Join(data, "unified-tls", "cert.pem"))
+	if err == nil {
+		err = InitializeBarrier(ctx, client, s.URL, []byte(barrierPassphrase))
 	}
-	body, err := json.Marshal(map[string][]byte{"secret": []byte(barrierPassphrase)})
-	if err != nil {
+	select {
+	case <-s.exited:
+		return errors.Join(ErrExited, s.err, err)
+	default:
 		return err
-	}
-	for {
-		resp, err := client.Post(s.URL+"/v1/barrier/initialize", "application/json", bytes.NewReader(body))
-		if err == nil {
-			return drain(resp, http.StatusNoContent)
-		}
-		if err := s.wait(deadline); err != nil {
-			return err
-		}
 	}
 }
 

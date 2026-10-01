@@ -123,31 +123,38 @@ func rotateKey(ctx context.Context, baseURL, keyID string) (string, int, error) 
 	return resp.PublicKeyPEM, code, nil
 }
 
-// keySpec describes a key to generate. Curve applies to ECDSA; Bits to RSA.
+// keySpec describes a key to generate: its purpose (the REST key_type, e.g.
+// "signing" or "encryption"), its algorithm, and the curve (ECDSA) or key
+// size (RSA) where the algorithm takes one.
 type keySpec struct {
-	name    string
-	keyType string
-	curve   string
-	bits    int
+	name      string
+	purpose   string
+	algorithm string
+	curve     string
+	keySize   int
 }
 
-// cryptoKeySpecs is the matrix of key algorithms exercised end-to-end. All are
-// supported by the pkcs8 backend the cluster/standalone nodes run.
+// cryptoKeySpecs is the matrix of signing key algorithms exercised
+// end-to-end. All are supported by the pkcs8 backend the cluster/standalone
+// nodes run.
 var cryptoKeySpecs = []keySpec{
-	{name: "ecdsa-p256", keyType: "ecdsa", curve: "P-256"},
-	{name: "ecdsa-p384", keyType: "ecdsa", curve: "P-384"},
-	{name: "ed25519", keyType: "ed25519"},
-	{name: "rsa-2048", keyType: "rsa", bits: 2048},
+	{name: "ecdsa-p256", purpose: "signing", algorithm: "ecdsa", curve: "P-256"},
+	{name: "ecdsa-p384", purpose: "signing", algorithm: "ecdsa", curve: "P-384"},
+	{name: "ed25519", purpose: "signing", algorithm: "ed25519"},
+	{name: "rsa-2048", purpose: "signing", algorithm: "rsa", keySize: 2048},
 }
+
+// rsaEncryptionSpec is the RSA key the asymmetric encrypt/decrypt tests use.
+var rsaEncryptionSpec = keySpec{name: "rsa-2048", purpose: "encryption", algorithm: "rsa", keySize: 2048}
 
 // genKeyReq builds the POST /api/v1/keys body for a spec.
 func (s keySpec) genKeyReq(keyID string) string {
-	m := map[string]any{"key_id": keyID, "backend": backendName, "key_type": s.keyType}
+	m := map[string]any{"key_id": keyID, "backend": backendName, "key_type": s.purpose, "algorithm": s.algorithm}
 	if s.curve != "" {
 		m["curve"] = s.curve
 	}
-	if s.bits > 0 {
-		m["bits"] = s.bits
+	if s.keySize > 0 {
+		m["key_size"] = s.keySize
 	}
 	b, _ := json.Marshal(m)
 	return string(b)

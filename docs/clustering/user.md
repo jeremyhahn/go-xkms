@@ -52,7 +52,20 @@ cluster:
   # are reached over different addresses.
   advertise_host: "10.0.0.1"
   peers: "1=10.0.0.1:63001,2=10.0.0.2:63001,3=10.0.0.3:63001"
+  # Required on every multi-node replica: go-quicraft admits a Raft member by
+  # its identity and nothing else. "spki:" + hex SHA-256 of each OTHER
+  # member's Raft certificate SubjectPublicKeyInfo (this node's own entry is
+  # derived from its certificate). A bootstrapping node names every initial
+  # member; a joining node at least one existing member.
+  member_identities: "2=spki:936038a9…,3=spki:c01d77e2…"
   join: false  # First node bootstraps
+```
+
+Compute an identity from a member's Raft certificate with
+`qrdbd node-identity` (given the certificate file), or with OpenSSL:
+
+```bash
+openssl x509 -in node2.crt -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum
 ```
 
 Nodes 2 and 3 use identical YAML except:
@@ -87,6 +100,7 @@ export XKMS_CLUSTER_SHARD_ID=1
 export XKMS_CLUSTER_RAFT_ADDRESS=node1:63001
 export XKMS_CLUSTER_LISTEN_ADDRESS=node1:63001
 export XKMS_CLUSTER_PEERS=1=node1:63001,2=node2:63001,3=node3:63001
+export XKMS_CLUSTER_MEMBER_IDENTITIES=2=spki:936038a9…,3=spki:c01d77e2…
 export XKMS_CLUSTER_JOIN=false
 xkmsd
 ```
@@ -96,7 +110,16 @@ Nodes 2 and 3: identical, with their own `NODE_ID`, `RAFT_ADDRESS`,
 (`storage.backend: qrdb` is required) can be shared across all three nodes
 unchanged, with only the per-node identity supplied through environment
 variables — see `test/integration/cluster/config.node.yaml` and
-`docker-compose.yml` in this repository for a complete, working example.
+`docker-compose.yml` in this repository for a complete, working example
+(`gen-certs.sh` there derives `XKMS_CLUSTER_MEMBER_IDENTITIES` from the
+per-node Raft certificates).
+
+A node with a `passphrase` or `shamir` barrier boots sealed and serves only
+its sealed-window listener until an operator initializes (first boot) or
+unseals it through `POST /v1/barrier/initialize` / `POST /v1/barrier/unseal`
+— every node, after every restart. The window binds loopback unless
+`barrier.sealed_window_allow_remote: true`; the cluster harness sets that
+only because its nodes are reachable solely on a private compose network.
 
 If every node sets `join: true`, they block waiting for a leader that never
 appears. If more than one sets `join: false`, the cluster may not form

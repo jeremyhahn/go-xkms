@@ -40,6 +40,9 @@ services:
       - node1-data:/data
       - ./config.node.yaml:/etc/xkms/xkmsd.yaml:ro
       - ./certs:/certs:ro
+    # The Raft member identities gen-certs.sh derives from the per-node certs.
+    env_file:
+      - ./certs/cluster.env
     environment:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOGGING_LEVEL=debug
@@ -83,6 +86,9 @@ services:
       - node2-data:/data
       - ./config.node.yaml:/etc/xkms/xkmsd.yaml:ro
       - ./certs:/certs:ro
+    # The Raft member identities gen-certs.sh derives from the per-node certs.
+    env_file:
+      - ./certs/cluster.env
     environment:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOGGING_LEVEL=debug
@@ -128,6 +134,9 @@ services:
       - node3-data:/data
       - ./config.node.yaml:/etc/xkms/xkmsd.yaml:ro
       - ./certs:/certs:ro
+    # The Raft member identities gen-certs.sh derives from the per-node certs.
+    env_file:
+      - ./certs/cluster.env
     environment:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOGGING_LEVEL=debug
@@ -175,6 +184,10 @@ services:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOGGING_LEVEL=debug
       - XKMS_STORAGE_PATH=/data
+      # The suite reaches it as https://standalone:8443. A cluster node's
+      # certificate names the node from its Raft address; a standalone node
+      # has none, so its service name is configured as a SAN.
+      - XKMS_TLS_EXTRA_SANS=standalone
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--no-check-certificate", "https://localhost:8443/health"]
       interval: 5s
@@ -193,15 +206,18 @@ services:
       dockerfile: test/integration/cluster/Dockerfile.test
       secrets:
         - gomodauth
+    # The nodes boot sealed (passphrase barrier) and turn healthy only once
+    # unsealed, which is this container's first job (TestMain), so it waits
+    # for them to start rather than for health.
     depends_on:
       node1:
-        condition: service_healthy
+        condition: service_started
       node2:
-        condition: service_healthy
+        condition: service_started
       node3:
-        condition: service_healthy
+        condition: service_started
       standalone:
-        condition: service_healthy
+        condition: service_started
     volumes:
       # The resilience (chaos) tests drive docker directly to kill/restart nodes.
       - /var/run/docker.sock:/var/run/docker.sock

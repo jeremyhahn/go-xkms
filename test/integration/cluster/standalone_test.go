@@ -44,7 +44,7 @@ func TestStandalone_Ready(t *testing.T) {
 	url := standaloneURL(t)
 	ctx := context.Background()
 	poll(t, 60*time.Second, 1*time.Second, func() (bool, string) {
-		return isReady(ctx, url), "standalone server not ready yet"
+		return readiness(ctx, url)
 	})
 	for _, path := range []string{"/health", "/health/live", "/health/ready"} {
 		code, _, err := get(ctx, url+path)
@@ -71,7 +71,7 @@ func TestStandalone_KeyGenSignVerify(t *testing.T) {
 	url := standaloneURL(t)
 	ctx := context.Background()
 	poll(t, 60*time.Second, 1*time.Second, func() (bool, string) {
-		return isReady(ctx, url), "standalone server not ready yet"
+		return readiness(ctx, url)
 	})
 
 	for _, spec := range cryptoKeySpecs {
@@ -133,12 +133,12 @@ func TestStandalone_AsymEncryptDecryptRotate(t *testing.T) {
 	url := standaloneURL(t)
 	ctx := context.Background()
 	poll(t, 60*time.Second, 1*time.Second, func() (bool, string) {
-		return isReady(ctx, url), "standalone server not ready yet"
+		return readiness(ctx, url)
 	})
 
 	// Asymmetric encrypt/decrypt round-trip (RSA).
 	rsaID := fmt.Sprintf("standalone-asym-%d", time.Now().UnixNano())
-	code, body, err := genKey(ctx, url, keySpec{name: "rsa-2048", keyType: "rsa", bits: 2048}, rsaID)
+	code, body, err := genKey(ctx, url, rsaEncryptionSpec, rsaID)
 	if err != nil || (code != http.StatusOK && code != http.StatusCreated) {
 		t.Fatalf("gen rsa key: status=%d err=%v body=%s", code, err, body)
 	}
