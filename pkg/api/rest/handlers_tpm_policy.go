@@ -62,18 +62,27 @@ var classToHTTPStatus = map[apierrors.Class]int{
 	apierrors.ClassResourceExhausted:  http.StatusTooManyRequests,
 }
 
-// writeTPMPolicyError writes the response for a TPM policy API error,
-// classified through apierrors.TPMPolicyClassOf -- the classification the
-// gRPC and MCP handlers of the same API read. An unclassified error is a 500
-// whose text is withheld.
-func writeTPMPolicyError(w http.ResponseWriter, err error) {
+// classifier classifies an error of one API: an apierrors *ClassOf
+// function, the classification every transport of that API reads.
+type classifier func(error) (apierrors.Class, bool)
+
+// writeClassifiedError writes the response for an API error, classified
+// through classOf. An unclassified error is a 500 whose text is withheld.
+func writeClassifiedError(w http.ResponseWriter, err error, classOf classifier) {
 	status := http.StatusInternalServerError
-	if class, ok := apierrors.TPMPolicyClassOf(err); ok {
+	if class, ok := classOf(err); ok {
 		if mapped, known := classToHTTPStatus[class]; known {
 			status = mapped
 		}
 	}
 	writeError(w, err, status)
+}
+
+// writeTPMPolicyError writes the response for a TPM policy API error,
+// classified through apierrors.TPMPolicyClassOf -- the classification the
+// gRPC and MCP handlers of the same API read.
+func writeTPMPolicyError(w http.ResponseWriter, err error) {
+	writeClassifiedError(w, err, apierrors.TPMPolicyClassOf)
 }
 
 // decodeOptionalJSON decodes r's JSON body into v. An empty body leaves v
@@ -93,10 +102,16 @@ func tenantQuery(r *http.Request) string {
 	return r.URL.Query().Get("tenant_id")
 }
 
-// respond writes resp with status, or the error's response.
+// respond writes resp with status, or the TPM policy error's response.
 func respond[R any](w http.ResponseWriter, resp R, err error, status int) {
+	respondClassified(w, resp, err, status, apierrors.TPMPolicyClassOf)
+}
+
+// respondClassified writes resp with status, or the response of err
+// classified through classOf.
+func respondClassified[R any](w http.ResponseWriter, resp R, err error, status int, classOf classifier) {
 	if err != nil {
-		writeTPMPolicyError(w, err)
+		writeClassifiedError(w, err, classOf)
 		return
 	}
 	writeJSON(w, resp, status)

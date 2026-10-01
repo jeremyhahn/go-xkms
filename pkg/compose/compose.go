@@ -21,10 +21,12 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
+	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
@@ -90,6 +92,17 @@ type Deps struct {
 	// owns its barrier keeps it out of xkms's reach.
 	ServeBarrier bool
 
+	// Leases is the host qrdb node's lease primitive
+	// (qrdbsdk.Client.Coordination()), which serializes OIDC credential
+	// refreshes and elects their scheduler's leader across a cluster. The
+	// OIDC credential feature needs it. On a standalone node qrdb refuses
+	// the lease family with a typed error, which the credential service
+	// reads as the single process it is.
+	Leases credential.Leases
+
+	// Audit receives the OIDC credential events. Nil logs them only.
+	Audit audit.Logger
+
 	// Logger receives one line per feature built or left off. Nil selects
 	// slog.Default().
 	Logger *slog.Logger
@@ -125,6 +138,10 @@ type Stores struct {
 
 	// KeyVersions is the key-version record store.
 	KeyVersions *keyversion.Store
+
+	// OIDCCredentials is the server-side OIDC credential service, its
+	// refresh scheduler running.
+	OIDCCredentials *credential.Service
 
 	// Barrier is the system barrier the barrier routes operate on.
 	Barrier *seal.Barrier
@@ -230,6 +247,18 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 		b.logger.Info("xkms feature on", "feature", FeatureCustody)
 	}
 
+	if b.need(FeatureOIDCCredentials, d.BarrierRegistry != nil, "barrier registry") &&
+		b.need(FeatureOIDCCredentials, d.Leases != nil, "qrdb coordination") {
+		st.OIDCCredentials = built(b, FeatureOIDCCredentials, func() (*credential.Service, error) {
+			return BuildOIDCCredentialService(OIDCCredentialParams{
+				Registry: d.BarrierRegistry,
+				Leases:   d.Leases,
+				Audit:    d.Audit,
+				Logger:   b.logger,
+			})
+		})
+	}
+
 	if b.need(FeatureInvite, d.Storage != nil, "storage") {
 		st.Invite = built(b, FeatureInvite, func() (xkms.InviteStore, error) {
 			return BuildInviteStore(d.Storage)
@@ -263,6 +292,9 @@ func (st *Stores) Wire(svc *xkms.XKMSService) {
 	}
 	if st.KeyVersions != nil {
 		svc.SetKeyVersionStore(st.KeyVersions)
+	}
+	if st.OIDCCredentials != nil {
+		svc.SetOIDCCredentialService(st.OIDCCredentials)
 	}
 	// ca.TrustedCA does not carry the transport-shaped *Raw methods; the
 	// concrete CA satisfies provider.CA through them (pkg/ca
@@ -359,14 +391,18 @@ func TPM2Backend(svc *xkms.XKMSService) *tpm2backend.Backend {
 	return tpm
 }
 
-// Close releases what the stores hold open beyond their storage: the TPM
-// policy service's scopes and vTPMs. The owner of the stores calls it at
-// shutdown.
+// Close releases what the stores hold open beyond their storage: the OIDC
+// credential scheduler, and the TPM policy service's scopes and vTPMs. The
+// owner of the stores calls it at shutdown.
 func (st *Stores) Close() error {
-	if st.TPMPolicies == nil {
-		return nil
+	var errs []error
+	if st.OIDCCredentials != nil {
+		errs = append(errs, st.OIDCCredentials.Close())
 	}
-	return st.TPMPolicies.Close()
+	if st.TPMPolicies != nil {
+		errs = append(errs, st.TPMPolicies.Close())
+	}
+	return errors.Join(errs...)
 }
 
 // backendForStore resolves each CA key's keystore from svc's backends by

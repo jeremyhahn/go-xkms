@@ -17,12 +17,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
+	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	sshbackend "github.com/jeremyhahn/go-xkms/pkg/ssh/backend"
@@ -372,6 +374,50 @@ func BuildTPMPolicyService(p TPMPolicyParams) (*tpmpolicy.Service, error) {
 		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: err}
 	}
 	p.Backend.SetScopeProvider(svc)
+	return svc, nil
+}
+
+// OIDCCredentialParams are BuildOIDCCredentialService's inputs.
+type OIDCCredentialParams struct {
+	// Registry holds the tenant barriers credentials are sealed on.
+	// Required.
+	Registry *seal.BarrierRegistry
+
+	// Leases is the qrdb lease primitive (qrdbsdk.Client.Coordination()).
+	// Required.
+	Leases credential.Leases
+
+	// Audit receives credential events; nil logs them only.
+	Audit audit.Logger
+
+	// SchedulerInterval is how often the leader looks for credentials due
+	// for refresh; zero is credential.DefaultSchedulerInterval.
+	SchedulerInterval time.Duration
+
+	// Logger receives the service's log lines.
+	Logger *slog.Logger
+}
+
+// BuildOIDCCredentialService builds the server-side OIDC credential service
+// (pkg/oidc/credential) over the tenant barriers and starts its refresh
+// scheduler. The caller closes the service at shutdown, which stops the
+// scheduler.
+func BuildOIDCCredentialService(p OIDCCredentialParams) (*credential.Service, error) {
+	if p.Registry == nil {
+		return nil, &NilDependencyError{Feature: FeatureOIDCCredentials, Dependency: "barrier registry"}
+	}
+	if p.Leases == nil {
+		return nil, &NilDependencyError{Feature: FeatureOIDCCredentials, Dependency: "qrdb coordination"}
+	}
+	opts := []credential.Option{credential.WithLogger(orDefault(p.Logger)), credential.WithLeases(p.Leases)}
+	if p.Audit != nil {
+		opts = append(opts, credential.WithAudit(p.Audit))
+	}
+	svc, err := credential.New(credential.RegistryBarriers(p.Registry), opts...)
+	if err != nil {
+		return nil, &FeatureBuildError{Feature: FeatureOIDCCredentials, Err: err}
+	}
+	svc.Start(p.SchedulerInterval)
 	return svc, nil
 }
 

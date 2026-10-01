@@ -1275,6 +1275,12 @@ OpenID Connect authentication
 
 Usage: `xkey oidc`
 
+Inherited by subcommands:
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--local` | bool | false | use the local OIDC backend even when an xkmsd server is configured |
+
 ## xkey oidc aws
 
 AWS Console OIDC login
@@ -1299,6 +1305,23 @@ Usage: `xkey oidc aws [flags]`
 | `--region`, `-r` | string |  | AWS region (required) |
 | `--session-store` | string | ~/.xkey/aws-session.json | Path to session store |
 
+## xkey oidc import
+
+Import an existing login as a server OIDC credential
+
+Usage: `xkey oidc import <name> [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--access-token` | string |  | access token; '-' reads it from stdin |
+| `--codex-auth` | string |  | import the ChatGPT login of a codex auth.json |
+| `--create` | bool | false | create the credential before importing |
+| `--owner` | string |  | owner of a personal server credential (default: you) |
+| `--refresh-token` | string |  | refresh token; '-' reads it from stdin |
+| `--scope` | string |  | server credential scope: user (personal, default) or tenant (shared) |
+| `--template` | string |  | provider template of a created credential |
+| `--tenant` | string |  | tenant holding the server credential (default: your own) |
+
 ## xkey oidc login
 
 Interactive browser-based login
@@ -1321,9 +1344,12 @@ Usage: `xkey oidc login [flags]`
 | `--jwks-uri` | string |  | Manual JWKS URI (skips discovery; requires --authorization-endpoint and --token-endpoint) |
 | `--log-file` | string |  | Log file for background refresh (default: auto-generated) |
 | `--no-browser` | bool | false | Don't open browser, print URL instead |
+| `--owner` | string |  | owner of a personal server credential (default: you) |
 | `--provider` | string |  | Use saved provider configuration by name |
 | `--redirect-url` | string |  | Callback URL (default: http://localhost:<oidc.callback_port>/callback) |
+| `--scope` | string |  | server credential scope: user (personal, default) or tenant (shared) |
 | `--scopes` | string | openid,profile,email | Scopes to request (comma-separated) |
+| `--tenant` | string |  | tenant holding the server credential (default: your own) |
 | `--token-encoding` | string |  | Token request body encoding: form (default) or json |
 | `--token-endpoint` | string |  | Manual token endpoint (skips discovery; requires --authorization-endpoint and --jwks-uri) |
 | `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
@@ -1365,17 +1391,23 @@ Usage: `xkey oidc providers add [flags]`
 | `--client-secret` | string |  | OAuth2 client secret (optional) |
 | `--credentials-file` | string | ~/.aws/credentials | AWS credentials file path |
 | `--cross-device` | bool | false | Enable AWS cross-device authentication |
+| `--device-endpoint` | string |  | server credential device authorization endpoint |
+| `--device-style` | string |  | server credential device login protocol: rfc8628 (default) or openai |
 | `--exec` | string |  | Script to execute after login |
 | `--issuer` | string |  | OIDC provider issuer URL (required for type=oidc) |
 | `--jwks-uri` | string |  | Manual JWKS URI (skips discovery; requires --authorization-endpoint and --token-endpoint) |
 | `--log-file` | string |  | Log file for background refresh |
 | `--name` | string |  | Provider name (required) |
 | `--output`, `-o` | string | aws-credentials | AWS output mode: aws-credentials, json, exec, none |
+| `--owner` | string |  | owner of a personal server credential (default: you) |
 | `--profile` | string | default | AWS profile name |
 | `--redirect-url` | string |  | Callback URL (default: http://localhost:<oidc.callback_port>/callback) |
 | `--region`, `-r` | string |  | AWS region (required for type=aws) |
+| `--scope` | string |  | server credential scope: user (personal, default) or tenant (shared) |
 | `--scopes` | string |  | Scopes to request (comma-separated) |
 | `--session-store` | string | ~/.xkey/aws-session.json | AWS session store path |
+| `--template` | string |  | server credential provider template (openai, anthropic, google, ...) |
+| `--tenant` | string |  | tenant holding the server credential (default: your own) |
 | `--token-encoding` | string |  | Token request body encoding: form (default) or json |
 | `--token-endpoint` | string |  | Manual token endpoint (skips discovery; requires --authorization-endpoint and --jwks-uri) |
 | `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
@@ -1392,6 +1424,7 @@ Aliases: ls
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--tenant` | string |  | tenant whose server credentials to list (default: your own) |
 | `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
 
 ## xkey oidc providers remove
@@ -1404,6 +1437,9 @@ Aliases: rm, delete
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--owner` | string |  | owner of a personal server credential (default: you) |
+| `--scope` | string |  | server credential scope: user (personal, default) or tenant (shared) |
+| `--tenant` | string |  | tenant holding the server credential (default: your own) |
 | `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
 
 ## xkey oidc refresh
@@ -1416,7 +1452,10 @@ Usage: `xkey oidc refresh [flags]`
 |---|---|---|---|
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
+| `--owner` | string |  | owner of a personal server credential (default: you) |
 | `--provider` | string |  | Use saved provider configuration by name (required for manual-endpoint providers) |
+| `--scope` | string |  | server credential scope: user (personal, default) or tenant (shared) |
+| `--tenant` | string |  | tenant holding the server credential (default: your own) |
 | `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
 
 ## xkey oidc status
@@ -1450,7 +1489,12 @@ Usage: `xkey oidc token [flags]`
 |---|---|---|---|
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
+| `--codex-auth-out` | string |  | write a codex auth.json (chatgptAuthTokens mode) for the server credential to this path |
+| `--owner` | string |  | owner of a personal server credential (default: you) |
+| `--provider` | string |  | server credential name (with an xkmsd configured) |
+| `--scope` | string |  | server credential scope: user (personal, default) or tenant (shared) |
 | `--show-full` | bool | false | Show full token values |
+| `--tenant` | string |  | tenant holding the server credential (default: your own) |
 | `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
 
 ## xkey password

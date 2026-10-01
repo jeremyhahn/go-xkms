@@ -100,6 +100,19 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionDelete),
 		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionRotate),
 
+		// oidc_credentials:* is server-side OIDC credential management
+		// (pkg/oidc/credential). Every call acts in the identity's own
+		// tenant, and a system-tenant identity may address any tenant's
+		// SHARED credentials -- never a personal one, which the credential
+		// service refuses to everyone but its owner -- which is ScopeSelf.
+		// qrdb does not declare this name; xkms owns it.
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionCreate),
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionUpdate),
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionDelete),
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionToken),
+
 		// ssh:service admits a caller to service-scoped SSH assets, which no
 		// user owns (pkg/scope Service; checked in pkg/ssh/tenancy). It is
 		// ScopeSelf like its siblings ssh:read/write/delete, which qrdb

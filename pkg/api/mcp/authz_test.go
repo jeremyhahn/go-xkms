@@ -730,6 +730,17 @@ var goldenMethodPermissions = map[string]string{
 	"xkms.tenantVTPMStart":      "tenants:set_tpm_mode",
 	"xkms.tenantVTPMStop":       "tenants:set_tpm_mode",
 
+	// Server-side OIDC credentials — pkg/api/grpc's OIDCCredential* RPCs.
+	"oidc.credential.create":       "oidc_credentials:create",
+	"oidc.credential.import":       "oidc_credentials:update",
+	"oidc.credential.get":          "oidc_credentials:get",
+	"oidc.credential.list":         "oidc_credentials:list",
+	"oidc.credential.delete":       "oidc_credentials:delete",
+	"oidc.credential.refresh":      "oidc_credentials:update",
+	"oidc.credential.token":        "oidc_credentials:token",
+	"oidc.credential.device.start": "oidc_credentials:update",
+	"oidc.credential.device.poll":  "oidc_credentials:update",
+
 	// SSH key, known-host, and authorized-key stores —
 	// pkg/api/quic/handlers_ssh.go.
 	"ssh.authorizedKeys.add":    "ssh:write",
@@ -829,8 +840,9 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceBarrier: {}, auth.ResourceCeremony: {},
 		auth.ResourceCredentials: {}, auth.ResourcePasswords: {},
 		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
-		auth.ResourceTPMPolicy: {},
-		auth.ResourcePIN:       {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
+		auth.ResourceTPMPolicy:       {},
+		auth.ResourceOIDCCredentials: {},
+		auth.ResourcePIN:             {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
 		auth.ResourceUsers: {},
 	}
 

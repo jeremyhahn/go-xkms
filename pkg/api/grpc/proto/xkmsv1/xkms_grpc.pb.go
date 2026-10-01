@@ -23,201 +23,210 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	KeystoreService_Health_FullMethodName                      = "/xkms.v1.KeystoreService/Health"
-	KeystoreService_ListBackends_FullMethodName                = "/xkms.v1.KeystoreService/ListBackends"
-	KeystoreService_GetBackendInfo_FullMethodName              = "/xkms.v1.KeystoreService/GetBackendInfo"
-	KeystoreService_GenerateKey_FullMethodName                 = "/xkms.v1.KeystoreService/GenerateKey"
-	KeystoreService_ListKeys_FullMethodName                    = "/xkms.v1.KeystoreService/ListKeys"
-	KeystoreService_GetKey_FullMethodName                      = "/xkms.v1.KeystoreService/GetKey"
-	KeystoreService_Sign_FullMethodName                        = "/xkms.v1.KeystoreService/Sign"
-	KeystoreService_Verify_FullMethodName                      = "/xkms.v1.KeystoreService/Verify"
-	KeystoreService_DeleteKey_FullMethodName                   = "/xkms.v1.KeystoreService/DeleteKey"
-	KeystoreService_RotateKey_FullMethodName                   = "/xkms.v1.KeystoreService/RotateKey"
-	KeystoreService_ListKeyVersions_FullMethodName             = "/xkms.v1.KeystoreService/ListKeyVersions"
-	KeystoreService_EnableKeyVersion_FullMethodName            = "/xkms.v1.KeystoreService/EnableKeyVersion"
-	KeystoreService_DisableKeyVersion_FullMethodName           = "/xkms.v1.KeystoreService/DisableKeyVersion"
-	KeystoreService_EnableAllKeyVersions_FullMethodName        = "/xkms.v1.KeystoreService/EnableAllKeyVersions"
-	KeystoreService_DisableAllKeyVersions_FullMethodName       = "/xkms.v1.KeystoreService/DisableAllKeyVersions"
-	KeystoreService_RetireKeyVersion_FullMethodName            = "/xkms.v1.KeystoreService/RetireKeyVersion"
-	KeystoreService_RotateScopeKeys_FullMethodName             = "/xkms.v1.KeystoreService/RotateScopeKeys"
-	KeystoreService_Encrypt_FullMethodName                     = "/xkms.v1.KeystoreService/Encrypt"
-	KeystoreService_Decrypt_FullMethodName                     = "/xkms.v1.KeystoreService/Decrypt"
-	KeystoreService_EncryptAsym_FullMethodName                 = "/xkms.v1.KeystoreService/EncryptAsym"
-	KeystoreService_DeriveKey_FullMethodName                   = "/xkms.v1.KeystoreService/DeriveKey"
-	KeystoreService_DeriveKeyECDH_FullMethodName               = "/xkms.v1.KeystoreService/DeriveKeyECDH"
-	KeystoreService_DeriveKeyECDHSecure_FullMethodName         = "/xkms.v1.KeystoreService/DeriveKeyECDHSecure"
-	KeystoreService_UseResidentKey_FullMethodName              = "/xkms.v1.KeystoreService/UseResidentKey"
-	KeystoreService_DestroyResidentKey_FullMethodName          = "/xkms.v1.KeystoreService/DestroyResidentKey"
-	KeystoreService_GenerateEphemeralECDH_FullMethodName       = "/xkms.v1.KeystoreService/GenerateEphemeralECDH"
-	KeystoreService_SaveCert_FullMethodName                    = "/xkms.v1.KeystoreService/SaveCert"
-	KeystoreService_GetCert_FullMethodName                     = "/xkms.v1.KeystoreService/GetCert"
-	KeystoreService_DeleteCert_FullMethodName                  = "/xkms.v1.KeystoreService/DeleteCert"
-	KeystoreService_ListCerts_FullMethodName                   = "/xkms.v1.KeystoreService/ListCerts"
-	KeystoreService_CertExists_FullMethodName                  = "/xkms.v1.KeystoreService/CertExists"
-	KeystoreService_SaveCertChain_FullMethodName               = "/xkms.v1.KeystoreService/SaveCertChain"
-	KeystoreService_GetCertChain_FullMethodName                = "/xkms.v1.KeystoreService/GetCertChain"
-	KeystoreService_GetTLSCertificate_FullMethodName           = "/xkms.v1.KeystoreService/GetTLSCertificate"
-	KeystoreService_GetImportParameters_FullMethodName         = "/xkms.v1.KeystoreService/GetImportParameters"
-	KeystoreService_WrapKey_FullMethodName                     = "/xkms.v1.KeystoreService/WrapKey"
-	KeystoreService_UnwrapKey_FullMethodName                   = "/xkms.v1.KeystoreService/UnwrapKey"
-	KeystoreService_WrapKeyByID_FullMethodName                 = "/xkms.v1.KeystoreService/WrapKeyByID"
-	KeystoreService_UnwrapKeyByID_FullMethodName               = "/xkms.v1.KeystoreService/UnwrapKeyByID"
-	KeystoreService_ImportKey_FullMethodName                   = "/xkms.v1.KeystoreService/ImportKey"
-	KeystoreService_ExportKey_FullMethodName                   = "/xkms.v1.KeystoreService/ExportKey"
-	KeystoreService_ExportKeyMaterial_FullMethodName           = "/xkms.v1.KeystoreService/ExportKeyMaterial"
-	KeystoreService_CopyKey_FullMethodName                     = "/xkms.v1.KeystoreService/CopyKey"
-	KeystoreService_Seal_FullMethodName                        = "/xkms.v1.KeystoreService/Seal"
-	KeystoreService_Unseal_FullMethodName                      = "/xkms.v1.KeystoreService/Unseal"
-	KeystoreService_CanSeal_FullMethodName                     = "/xkms.v1.KeystoreService/CanSeal"
-	KeystoreService_AttestKey_FullMethodName                   = "/xkms.v1.KeystoreService/AttestKey"
-	KeystoreService_FrostGenerateKey_FullMethodName            = "/xkms.v1.KeystoreService/FrostGenerateKey"
-	KeystoreService_FrostImportKey_FullMethodName              = "/xkms.v1.KeystoreService/FrostImportKey"
-	KeystoreService_FrostListKeys_FullMethodName               = "/xkms.v1.KeystoreService/FrostListKeys"
-	KeystoreService_FrostGetKey_FullMethodName                 = "/xkms.v1.KeystoreService/FrostGetKey"
-	KeystoreService_FrostDeleteKey_FullMethodName              = "/xkms.v1.KeystoreService/FrostDeleteKey"
-	KeystoreService_FrostGenerateNonces_FullMethodName         = "/xkms.v1.KeystoreService/FrostGenerateNonces"
-	KeystoreService_FrostSignRound_FullMethodName              = "/xkms.v1.KeystoreService/FrostSignRound"
-	KeystoreService_FrostAggregate_FullMethodName              = "/xkms.v1.KeystoreService/FrostAggregate"
-	KeystoreService_FrostVerify_FullMethodName                 = "/xkms.v1.KeystoreService/FrostVerify"
-	KeystoreService_GetCABundle_FullMethodName                 = "/xkms.v1.KeystoreService/GetCABundle"
-	KeystoreService_GetCACertificate_FullMethodName            = "/xkms.v1.KeystoreService/GetCACertificate"
-	KeystoreService_SignCSR_FullMethodName                     = "/xkms.v1.KeystoreService/SignCSR"
-	KeystoreService_IssueCertificate_FullMethodName            = "/xkms.v1.KeystoreService/IssueCertificate"
-	KeystoreService_RevokeCertificate_FullMethodName           = "/xkms.v1.KeystoreService/RevokeCertificate"
-	KeystoreService_GenerateCRL_FullMethodName                 = "/xkms.v1.KeystoreService/GenerateCRL"
-	KeystoreService_IsRevoked_FullMethodName                   = "/xkms.v1.KeystoreService/IsRevoked"
-	KeystoreService_IssueEKCertificate_FullMethodName          = "/xkms.v1.KeystoreService/IssueEKCertificate"
-	KeystoreService_IssueAKCertificate_FullMethodName          = "/xkms.v1.KeystoreService/IssueAKCertificate"
-	KeystoreService_SignTCGCSR_FullMethodName                  = "/xkms.v1.KeystoreService/SignTCGCSR"
-	KeystoreService_EnrollDevice_FullMethodName                = "/xkms.v1.KeystoreService/EnrollDevice"
-	KeystoreService_BarrierInitialize_FullMethodName           = "/xkms.v1.KeystoreService/BarrierInitialize"
-	KeystoreService_BarrierUnseal_FullMethodName               = "/xkms.v1.KeystoreService/BarrierUnseal"
-	KeystoreService_BarrierSeal_FullMethodName                 = "/xkms.v1.KeystoreService/BarrierSeal"
-	KeystoreService_BarrierStatus_FullMethodName               = "/xkms.v1.KeystoreService/BarrierStatus"
-	KeystoreService_BarrierInitializeShamir_FullMethodName     = "/xkms.v1.KeystoreService/BarrierInitializeShamir"
-	KeystoreService_BarrierUnsealShare_FullMethodName          = "/xkms.v1.KeystoreService/BarrierUnsealShare"
-	KeystoreService_BarrierUnsealShares_FullMethodName         = "/xkms.v1.KeystoreService/BarrierUnsealShares"
-	KeystoreService_BarrierRekey_FullMethodName                = "/xkms.v1.KeystoreService/BarrierRekey"
-	KeystoreService_BarrierGenerateRecoveryKeys_FullMethodName = "/xkms.v1.KeystoreService/BarrierGenerateRecoveryKeys"
-	KeystoreService_BarrierRecoverWithKeys_FullMethodName      = "/xkms.v1.KeystoreService/BarrierRecoverWithKeys"
-	KeystoreService_BarrierDeleteRecoveryKeys_FullMethodName   = "/xkms.v1.KeystoreService/BarrierDeleteRecoveryKeys"
-	KeystoreService_BarrierHasRecoveryKeys_FullMethodName      = "/xkms.v1.KeystoreService/BarrierHasRecoveryKeys"
-	KeystoreService_BarrierGenerateRootToken_FullMethodName    = "/xkms.v1.KeystoreService/BarrierGenerateRootToken"
-	KeystoreService_BarrierEnableEncryption_FullMethodName     = "/xkms.v1.KeystoreService/BarrierEnableEncryption"
-	KeystoreService_BootstrapListenerKeys_FullMethodName       = "/xkms.v1.KeystoreService/BootstrapListenerKeys"
-	KeystoreService_SetSOPIN_FullMethodName                    = "/xkms.v1.KeystoreService/SetSOPIN"
-	KeystoreService_SetUserPIN_FullMethodName                  = "/xkms.v1.KeystoreService/SetUserPIN"
-	KeystoreService_ChangeSOPIN_FullMethodName                 = "/xkms.v1.KeystoreService/ChangeSOPIN"
-	KeystoreService_ChangeUserPIN_FullMethodName               = "/xkms.v1.KeystoreService/ChangeUserPIN"
-	KeystoreService_VerifySOPIN_FullMethodName                 = "/xkms.v1.KeystoreService/VerifySOPIN"
-	KeystoreService_VerifyUserPIN_FullMethodName               = "/xkms.v1.KeystoreService/VerifyUserPIN"
-	KeystoreService_GetLockoutStatus_FullMethodName            = "/xkms.v1.KeystoreService/GetLockoutStatus"
-	KeystoreService_ResetLockout_FullMethodName                = "/xkms.v1.KeystoreService/ResetLockout"
-	KeystoreService_ListPIVSlots_FullMethodName                = "/xkms.v1.KeystoreService/ListPIVSlots"
-	KeystoreService_GetPIVCertificate_FullMethodName           = "/xkms.v1.KeystoreService/GetPIVCertificate"
-	KeystoreService_StorePIVCertificate_FullMethodName         = "/xkms.v1.KeystoreService/StorePIVCertificate"
-	KeystoreService_DeletePIVCertificate_FullMethodName        = "/xkms.v1.KeystoreService/DeletePIVCertificate"
-	KeystoreService_GeneratePIVKey_FullMethodName              = "/xkms.v1.KeystoreService/GeneratePIVKey"
-	KeystoreService_ImportPIVCertificate_FullMethodName        = "/xkms.v1.KeystoreService/ImportPIVCertificate"
-	KeystoreService_ExportPIVCertificate_FullMethodName        = "/xkms.v1.KeystoreService/ExportPIVCertificate"
-	KeystoreService_GeneratePIVCSR_FullMethodName              = "/xkms.v1.KeystoreService/GeneratePIVCSR"
-	KeystoreService_CreateCustodianGroup_FullMethodName        = "/xkms.v1.KeystoreService/CreateCustodianGroup"
-	KeystoreService_GetCustodianGroup_FullMethodName           = "/xkms.v1.KeystoreService/GetCustodianGroup"
-	KeystoreService_ListCustodianGroups_FullMethodName         = "/xkms.v1.KeystoreService/ListCustodianGroups"
-	KeystoreService_DeleteCustodianGroup_FullMethodName        = "/xkms.v1.KeystoreService/DeleteCustodianGroup"
-	KeystoreService_AddCustodianMember_FullMethodName          = "/xkms.v1.KeystoreService/AddCustodianMember"
-	KeystoreService_RemoveCustodianMember_FullMethodName       = "/xkms.v1.KeystoreService/RemoveCustodianMember"
-	KeystoreService_DistributeShares_FullMethodName            = "/xkms.v1.KeystoreService/DistributeShares"
-	KeystoreService_Algorithms_FullMethodName                  = "/xkms.v1.KeystoreService/Algorithms"
-	KeystoreService_SubmitShare_FullMethodName                 = "/xkms.v1.KeystoreService/SubmitShare"
-	KeystoreService_ListShares_FullMethodName                  = "/xkms.v1.KeystoreService/ListShares"
-	KeystoreService_GetShare_FullMethodName                    = "/xkms.v1.KeystoreService/GetShare"
-	KeystoreService_DeleteShare_FullMethodName                 = "/xkms.v1.KeystoreService/DeleteShare"
-	KeystoreService_GetShareCollectionStatus_FullMethodName    = "/xkms.v1.KeystoreService/GetShareCollectionStatus"
-	KeystoreService_CreateTenant_FullMethodName                = "/xkms.v1.KeystoreService/CreateTenant"
-	KeystoreService_GetTenant_FullMethodName                   = "/xkms.v1.KeystoreService/GetTenant"
-	KeystoreService_ListTenants_FullMethodName                 = "/xkms.v1.KeystoreService/ListTenants"
-	KeystoreService_DeleteTenant_FullMethodName                = "/xkms.v1.KeystoreService/DeleteTenant"
-	KeystoreService_TenantBarrierInit_FullMethodName           = "/xkms.v1.KeystoreService/TenantBarrierInit"
-	KeystoreService_TenantBarrierUnseal_FullMethodName         = "/xkms.v1.KeystoreService/TenantBarrierUnseal"
-	KeystoreService_TenantBarrierStatus_FullMethodName         = "/xkms.v1.KeystoreService/TenantBarrierStatus"
-	KeystoreService_UpdateTenantEntitlements_FullMethodName    = "/xkms.v1.KeystoreService/UpdateTenantEntitlements"
-	KeystoreService_UpdateTenantQuotas_FullMethodName          = "/xkms.v1.KeystoreService/UpdateTenantQuotas"
-	KeystoreService_PasswordAdd_FullMethodName                 = "/xkms.v1.KeystoreService/PasswordAdd"
-	KeystoreService_PasswordGet_FullMethodName                 = "/xkms.v1.KeystoreService/PasswordGet"
-	KeystoreService_PasswordList_FullMethodName                = "/xkms.v1.KeystoreService/PasswordList"
-	KeystoreService_PasswordUpdate_FullMethodName              = "/xkms.v1.KeystoreService/PasswordUpdate"
-	KeystoreService_PasswordDelete_FullMethodName              = "/xkms.v1.KeystoreService/PasswordDelete"
-	KeystoreService_PasswordStoreUnlock_FullMethodName         = "/xkms.v1.KeystoreService/PasswordStoreUnlock"
-	KeystoreService_PasswordVaultStatus_FullMethodName         = "/xkms.v1.KeystoreService/PasswordVaultStatus"
-	KeystoreService_PasswordVaultEnroll_FullMethodName         = "/xkms.v1.KeystoreService/PasswordVaultEnroll"
-	KeystoreService_PasswordVaultRotate_FullMethodName         = "/xkms.v1.KeystoreService/PasswordVaultRotate"
-	KeystoreService_PasswordVaultRemoveFactor_FullMethodName   = "/xkms.v1.KeystoreService/PasswordVaultRemoveFactor"
-	KeystoreService_PasswordVaultRecover_FullMethodName        = "/xkms.v1.KeystoreService/PasswordVaultRecover"
-	KeystoreService_PasswordStoreLock_FullMethodName           = "/xkms.v1.KeystoreService/PasswordStoreLock"
-	KeystoreService_PasswordStoreStatus_FullMethodName         = "/xkms.v1.KeystoreService/PasswordStoreStatus"
-	KeystoreService_PasswordGenerate_FullMethodName            = "/xkms.v1.KeystoreService/PasswordGenerate"
-	KeystoreService_PasswordStoreSetAccessMode_FullMethodName  = "/xkms.v1.KeystoreService/PasswordStoreSetAccessMode"
-	KeystoreService_TPMPolicyCreate_FullMethodName             = "/xkms.v1.KeystoreService/TPMPolicyCreate"
-	KeystoreService_TPMPolicyGet_FullMethodName                = "/xkms.v1.KeystoreService/TPMPolicyGet"
-	KeystoreService_TPMPolicyList_FullMethodName               = "/xkms.v1.KeystoreService/TPMPolicyList"
-	KeystoreService_TPMPolicyUpdate_FullMethodName             = "/xkms.v1.KeystoreService/TPMPolicyUpdate"
-	KeystoreService_TPMPolicyRevoke_FullMethodName             = "/xkms.v1.KeystoreService/TPMPolicyRevoke"
-	KeystoreService_TPMPolicyVerify_FullMethodName             = "/xkms.v1.KeystoreService/TPMPolicyVerify"
-	KeystoreService_TPMPolicyDelete_FullMethodName             = "/xkms.v1.KeystoreService/TPMPolicyDelete"
-	KeystoreService_TPMPolicyObjects_FullMethodName            = "/xkms.v1.KeystoreService/TPMPolicyObjects"
-	KeystoreService_TPMPolicySetAutoUnseal_FullMethodName      = "/xkms.v1.KeystoreService/TPMPolicySetAutoUnseal"
-	KeystoreService_TPMPolicySetDescription_FullMethodName     = "/xkms.v1.KeystoreService/TPMPolicySetDescription"
-	KeystoreService_TPMObjectPolicy_FullMethodName             = "/xkms.v1.KeystoreService/TPMObjectPolicy"
-	KeystoreService_TPMPolicyRotateAuthority_FullMethodName    = "/xkms.v1.KeystoreService/TPMPolicyRotateAuthority"
-	KeystoreService_GetTenantTPMMode_FullMethodName            = "/xkms.v1.KeystoreService/GetTenantTPMMode"
-	KeystoreService_SetTenantTPMMode_FullMethodName            = "/xkms.v1.KeystoreService/SetTenantTPMMode"
-	KeystoreService_TenantVTPMStatus_FullMethodName            = "/xkms.v1.KeystoreService/TenantVTPMStatus"
-	KeystoreService_TenantVTPMStart_FullMethodName             = "/xkms.v1.KeystoreService/TenantVTPMStart"
-	KeystoreService_TenantVTPMStop_FullMethodName              = "/xkms.v1.KeystoreService/TenantVTPMStop"
-	KeystoreService_PKCS11StatePut_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StatePut"
-	KeystoreService_PKCS11StatePutIfAbsent_FullMethodName      = "/xkms.v1.KeystoreService/PKCS11StatePutIfAbsent"
-	KeystoreService_PKCS11StateCAS_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StateCAS"
-	KeystoreService_PKCS11StateCAD_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StateCAD"
-	KeystoreService_PKCS11StateGet_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StateGet"
-	KeystoreService_PKCS11StateDelete_FullMethodName           = "/xkms.v1.KeystoreService/PKCS11StateDelete"
-	KeystoreService_PKCS11StateList_FullMethodName             = "/xkms.v1.KeystoreService/PKCS11StateList"
-	KeystoreService_SealStorePut_FullMethodName                = "/xkms.v1.KeystoreService/SealStorePut"
-	KeystoreService_SealStoreGet_FullMethodName                = "/xkms.v1.KeystoreService/SealStoreGet"
-	KeystoreService_SealStoreDelete_FullMethodName             = "/xkms.v1.KeystoreService/SealStoreDelete"
-	KeystoreService_SealStoreList_FullMethodName               = "/xkms.v1.KeystoreService/SealStoreList"
-	KeystoreService_SealStoreReseal_FullMethodName             = "/xkms.v1.KeystoreService/SealStoreReseal"
-	KeystoreService_SealStoreStatus_FullMethodName             = "/xkms.v1.KeystoreService/SealStoreStatus"
-	KeystoreService_CreateUser_FullMethodName                  = "/xkms.v1.KeystoreService/CreateUser"
-	KeystoreService_ListUsers_FullMethodName                   = "/xkms.v1.KeystoreService/ListUsers"
-	KeystoreService_GetUser_FullMethodName                     = "/xkms.v1.KeystoreService/GetUser"
-	KeystoreService_DeleteUser_FullMethodName                  = "/xkms.v1.KeystoreService/DeleteUser"
-	KeystoreService_EnableUser_FullMethodName                  = "/xkms.v1.KeystoreService/EnableUser"
-	KeystoreService_DisableUser_FullMethodName                 = "/xkms.v1.KeystoreService/DisableUser"
-	KeystoreService_BindUserCert_FullMethodName                = "/xkms.v1.KeystoreService/BindUserCert"
-	KeystoreService_ListUserCredentials_FullMethodName         = "/xkms.v1.KeystoreService/ListUserCredentials"
-	KeystoreService_BeginRegistration_FullMethodName           = "/xkms.v1.KeystoreService/BeginRegistration"
-	KeystoreService_FinishRegistration_FullMethodName          = "/xkms.v1.KeystoreService/FinishRegistration"
-	KeystoreService_BeginAuthentication_FullMethodName         = "/xkms.v1.KeystoreService/BeginAuthentication"
-	KeystoreService_FinishAuthentication_FullMethodName        = "/xkms.v1.KeystoreService/FinishAuthentication"
-	KeystoreService_GetInvite_FullMethodName                   = "/xkms.v1.KeystoreService/GetInvite"
-	KeystoreService_BeginInviteRegistration_FullMethodName     = "/xkms.v1.KeystoreService/BeginInviteRegistration"
-	KeystoreService_FinishInviteRegistration_FullMethodName    = "/xkms.v1.KeystoreService/FinishInviteRegistration"
-	KeystoreService_ActivateInvitePIV_FullMethodName           = "/xkms.v1.KeystoreService/ActivateInvitePIV"
-	KeystoreService_SSHGenerateKey_FullMethodName              = "/xkms.v1.KeystoreService/SSHGenerateKey"
-	KeystoreService_SSHImportKey_FullMethodName                = "/xkms.v1.KeystoreService/SSHImportKey"
-	KeystoreService_SSHListKeys_FullMethodName                 = "/xkms.v1.KeystoreService/SSHListKeys"
-	KeystoreService_SSHGetKey_FullMethodName                   = "/xkms.v1.KeystoreService/SSHGetKey"
-	KeystoreService_SSHDeleteKey_FullMethodName                = "/xkms.v1.KeystoreService/SSHDeleteKey"
-	KeystoreService_SSHExportPublic_FullMethodName             = "/xkms.v1.KeystoreService/SSHExportPublic"
-	KeystoreService_SSHSign_FullMethodName                     = "/xkms.v1.KeystoreService/SSHSign"
-	KeystoreService_SSHAddKnownHost_FullMethodName             = "/xkms.v1.KeystoreService/SSHAddKnownHost"
-	KeystoreService_SSHListKnownHosts_FullMethodName           = "/xkms.v1.KeystoreService/SSHListKnownHosts"
-	KeystoreService_SSHRemoveKnownHost_FullMethodName          = "/xkms.v1.KeystoreService/SSHRemoveKnownHost"
-	KeystoreService_SSHAddAuthorizedKey_FullMethodName         = "/xkms.v1.KeystoreService/SSHAddAuthorizedKey"
-	KeystoreService_SSHListAuthorizedKeys_FullMethodName       = "/xkms.v1.KeystoreService/SSHListAuthorizedKeys"
-	KeystoreService_SSHRemoveAuthorizedKey_FullMethodName      = "/xkms.v1.KeystoreService/SSHRemoveAuthorizedKey"
-	KeystoreService_QueryAudit_FullMethodName                  = "/xkms.v1.KeystoreService/QueryAudit"
+	KeystoreService_Health_FullMethodName                       = "/xkms.v1.KeystoreService/Health"
+	KeystoreService_ListBackends_FullMethodName                 = "/xkms.v1.KeystoreService/ListBackends"
+	KeystoreService_GetBackendInfo_FullMethodName               = "/xkms.v1.KeystoreService/GetBackendInfo"
+	KeystoreService_GenerateKey_FullMethodName                  = "/xkms.v1.KeystoreService/GenerateKey"
+	KeystoreService_ListKeys_FullMethodName                     = "/xkms.v1.KeystoreService/ListKeys"
+	KeystoreService_GetKey_FullMethodName                       = "/xkms.v1.KeystoreService/GetKey"
+	KeystoreService_Sign_FullMethodName                         = "/xkms.v1.KeystoreService/Sign"
+	KeystoreService_Verify_FullMethodName                       = "/xkms.v1.KeystoreService/Verify"
+	KeystoreService_DeleteKey_FullMethodName                    = "/xkms.v1.KeystoreService/DeleteKey"
+	KeystoreService_RotateKey_FullMethodName                    = "/xkms.v1.KeystoreService/RotateKey"
+	KeystoreService_ListKeyVersions_FullMethodName              = "/xkms.v1.KeystoreService/ListKeyVersions"
+	KeystoreService_EnableKeyVersion_FullMethodName             = "/xkms.v1.KeystoreService/EnableKeyVersion"
+	KeystoreService_DisableKeyVersion_FullMethodName            = "/xkms.v1.KeystoreService/DisableKeyVersion"
+	KeystoreService_EnableAllKeyVersions_FullMethodName         = "/xkms.v1.KeystoreService/EnableAllKeyVersions"
+	KeystoreService_DisableAllKeyVersions_FullMethodName        = "/xkms.v1.KeystoreService/DisableAllKeyVersions"
+	KeystoreService_RetireKeyVersion_FullMethodName             = "/xkms.v1.KeystoreService/RetireKeyVersion"
+	KeystoreService_RotateScopeKeys_FullMethodName              = "/xkms.v1.KeystoreService/RotateScopeKeys"
+	KeystoreService_Encrypt_FullMethodName                      = "/xkms.v1.KeystoreService/Encrypt"
+	KeystoreService_Decrypt_FullMethodName                      = "/xkms.v1.KeystoreService/Decrypt"
+	KeystoreService_EncryptAsym_FullMethodName                  = "/xkms.v1.KeystoreService/EncryptAsym"
+	KeystoreService_DeriveKey_FullMethodName                    = "/xkms.v1.KeystoreService/DeriveKey"
+	KeystoreService_DeriveKeyECDH_FullMethodName                = "/xkms.v1.KeystoreService/DeriveKeyECDH"
+	KeystoreService_DeriveKeyECDHSecure_FullMethodName          = "/xkms.v1.KeystoreService/DeriveKeyECDHSecure"
+	KeystoreService_UseResidentKey_FullMethodName               = "/xkms.v1.KeystoreService/UseResidentKey"
+	KeystoreService_DestroyResidentKey_FullMethodName           = "/xkms.v1.KeystoreService/DestroyResidentKey"
+	KeystoreService_GenerateEphemeralECDH_FullMethodName        = "/xkms.v1.KeystoreService/GenerateEphemeralECDH"
+	KeystoreService_SaveCert_FullMethodName                     = "/xkms.v1.KeystoreService/SaveCert"
+	KeystoreService_GetCert_FullMethodName                      = "/xkms.v1.KeystoreService/GetCert"
+	KeystoreService_DeleteCert_FullMethodName                   = "/xkms.v1.KeystoreService/DeleteCert"
+	KeystoreService_ListCerts_FullMethodName                    = "/xkms.v1.KeystoreService/ListCerts"
+	KeystoreService_CertExists_FullMethodName                   = "/xkms.v1.KeystoreService/CertExists"
+	KeystoreService_SaveCertChain_FullMethodName                = "/xkms.v1.KeystoreService/SaveCertChain"
+	KeystoreService_GetCertChain_FullMethodName                 = "/xkms.v1.KeystoreService/GetCertChain"
+	KeystoreService_GetTLSCertificate_FullMethodName            = "/xkms.v1.KeystoreService/GetTLSCertificate"
+	KeystoreService_GetImportParameters_FullMethodName          = "/xkms.v1.KeystoreService/GetImportParameters"
+	KeystoreService_WrapKey_FullMethodName                      = "/xkms.v1.KeystoreService/WrapKey"
+	KeystoreService_UnwrapKey_FullMethodName                    = "/xkms.v1.KeystoreService/UnwrapKey"
+	KeystoreService_WrapKeyByID_FullMethodName                  = "/xkms.v1.KeystoreService/WrapKeyByID"
+	KeystoreService_UnwrapKeyByID_FullMethodName                = "/xkms.v1.KeystoreService/UnwrapKeyByID"
+	KeystoreService_ImportKey_FullMethodName                    = "/xkms.v1.KeystoreService/ImportKey"
+	KeystoreService_ExportKey_FullMethodName                    = "/xkms.v1.KeystoreService/ExportKey"
+	KeystoreService_ExportKeyMaterial_FullMethodName            = "/xkms.v1.KeystoreService/ExportKeyMaterial"
+	KeystoreService_CopyKey_FullMethodName                      = "/xkms.v1.KeystoreService/CopyKey"
+	KeystoreService_Seal_FullMethodName                         = "/xkms.v1.KeystoreService/Seal"
+	KeystoreService_Unseal_FullMethodName                       = "/xkms.v1.KeystoreService/Unseal"
+	KeystoreService_CanSeal_FullMethodName                      = "/xkms.v1.KeystoreService/CanSeal"
+	KeystoreService_AttestKey_FullMethodName                    = "/xkms.v1.KeystoreService/AttestKey"
+	KeystoreService_FrostGenerateKey_FullMethodName             = "/xkms.v1.KeystoreService/FrostGenerateKey"
+	KeystoreService_FrostImportKey_FullMethodName               = "/xkms.v1.KeystoreService/FrostImportKey"
+	KeystoreService_FrostListKeys_FullMethodName                = "/xkms.v1.KeystoreService/FrostListKeys"
+	KeystoreService_FrostGetKey_FullMethodName                  = "/xkms.v1.KeystoreService/FrostGetKey"
+	KeystoreService_FrostDeleteKey_FullMethodName               = "/xkms.v1.KeystoreService/FrostDeleteKey"
+	KeystoreService_FrostGenerateNonces_FullMethodName          = "/xkms.v1.KeystoreService/FrostGenerateNonces"
+	KeystoreService_FrostSignRound_FullMethodName               = "/xkms.v1.KeystoreService/FrostSignRound"
+	KeystoreService_FrostAggregate_FullMethodName               = "/xkms.v1.KeystoreService/FrostAggregate"
+	KeystoreService_FrostVerify_FullMethodName                  = "/xkms.v1.KeystoreService/FrostVerify"
+	KeystoreService_GetCABundle_FullMethodName                  = "/xkms.v1.KeystoreService/GetCABundle"
+	KeystoreService_GetCACertificate_FullMethodName             = "/xkms.v1.KeystoreService/GetCACertificate"
+	KeystoreService_SignCSR_FullMethodName                      = "/xkms.v1.KeystoreService/SignCSR"
+	KeystoreService_IssueCertificate_FullMethodName             = "/xkms.v1.KeystoreService/IssueCertificate"
+	KeystoreService_RevokeCertificate_FullMethodName            = "/xkms.v1.KeystoreService/RevokeCertificate"
+	KeystoreService_GenerateCRL_FullMethodName                  = "/xkms.v1.KeystoreService/GenerateCRL"
+	KeystoreService_IsRevoked_FullMethodName                    = "/xkms.v1.KeystoreService/IsRevoked"
+	KeystoreService_IssueEKCertificate_FullMethodName           = "/xkms.v1.KeystoreService/IssueEKCertificate"
+	KeystoreService_IssueAKCertificate_FullMethodName           = "/xkms.v1.KeystoreService/IssueAKCertificate"
+	KeystoreService_SignTCGCSR_FullMethodName                   = "/xkms.v1.KeystoreService/SignTCGCSR"
+	KeystoreService_EnrollDevice_FullMethodName                 = "/xkms.v1.KeystoreService/EnrollDevice"
+	KeystoreService_BarrierInitialize_FullMethodName            = "/xkms.v1.KeystoreService/BarrierInitialize"
+	KeystoreService_BarrierUnseal_FullMethodName                = "/xkms.v1.KeystoreService/BarrierUnseal"
+	KeystoreService_BarrierSeal_FullMethodName                  = "/xkms.v1.KeystoreService/BarrierSeal"
+	KeystoreService_BarrierStatus_FullMethodName                = "/xkms.v1.KeystoreService/BarrierStatus"
+	KeystoreService_BarrierInitializeShamir_FullMethodName      = "/xkms.v1.KeystoreService/BarrierInitializeShamir"
+	KeystoreService_BarrierUnsealShare_FullMethodName           = "/xkms.v1.KeystoreService/BarrierUnsealShare"
+	KeystoreService_BarrierUnsealShares_FullMethodName          = "/xkms.v1.KeystoreService/BarrierUnsealShares"
+	KeystoreService_BarrierRekey_FullMethodName                 = "/xkms.v1.KeystoreService/BarrierRekey"
+	KeystoreService_BarrierGenerateRecoveryKeys_FullMethodName  = "/xkms.v1.KeystoreService/BarrierGenerateRecoveryKeys"
+	KeystoreService_BarrierRecoverWithKeys_FullMethodName       = "/xkms.v1.KeystoreService/BarrierRecoverWithKeys"
+	KeystoreService_BarrierDeleteRecoveryKeys_FullMethodName    = "/xkms.v1.KeystoreService/BarrierDeleteRecoveryKeys"
+	KeystoreService_BarrierHasRecoveryKeys_FullMethodName       = "/xkms.v1.KeystoreService/BarrierHasRecoveryKeys"
+	KeystoreService_BarrierGenerateRootToken_FullMethodName     = "/xkms.v1.KeystoreService/BarrierGenerateRootToken"
+	KeystoreService_BarrierEnableEncryption_FullMethodName      = "/xkms.v1.KeystoreService/BarrierEnableEncryption"
+	KeystoreService_BootstrapListenerKeys_FullMethodName        = "/xkms.v1.KeystoreService/BootstrapListenerKeys"
+	KeystoreService_SetSOPIN_FullMethodName                     = "/xkms.v1.KeystoreService/SetSOPIN"
+	KeystoreService_SetUserPIN_FullMethodName                   = "/xkms.v1.KeystoreService/SetUserPIN"
+	KeystoreService_ChangeSOPIN_FullMethodName                  = "/xkms.v1.KeystoreService/ChangeSOPIN"
+	KeystoreService_ChangeUserPIN_FullMethodName                = "/xkms.v1.KeystoreService/ChangeUserPIN"
+	KeystoreService_VerifySOPIN_FullMethodName                  = "/xkms.v1.KeystoreService/VerifySOPIN"
+	KeystoreService_VerifyUserPIN_FullMethodName                = "/xkms.v1.KeystoreService/VerifyUserPIN"
+	KeystoreService_GetLockoutStatus_FullMethodName             = "/xkms.v1.KeystoreService/GetLockoutStatus"
+	KeystoreService_ResetLockout_FullMethodName                 = "/xkms.v1.KeystoreService/ResetLockout"
+	KeystoreService_ListPIVSlots_FullMethodName                 = "/xkms.v1.KeystoreService/ListPIVSlots"
+	KeystoreService_GetPIVCertificate_FullMethodName            = "/xkms.v1.KeystoreService/GetPIVCertificate"
+	KeystoreService_StorePIVCertificate_FullMethodName          = "/xkms.v1.KeystoreService/StorePIVCertificate"
+	KeystoreService_DeletePIVCertificate_FullMethodName         = "/xkms.v1.KeystoreService/DeletePIVCertificate"
+	KeystoreService_GeneratePIVKey_FullMethodName               = "/xkms.v1.KeystoreService/GeneratePIVKey"
+	KeystoreService_ImportPIVCertificate_FullMethodName         = "/xkms.v1.KeystoreService/ImportPIVCertificate"
+	KeystoreService_ExportPIVCertificate_FullMethodName         = "/xkms.v1.KeystoreService/ExportPIVCertificate"
+	KeystoreService_GeneratePIVCSR_FullMethodName               = "/xkms.v1.KeystoreService/GeneratePIVCSR"
+	KeystoreService_CreateCustodianGroup_FullMethodName         = "/xkms.v1.KeystoreService/CreateCustodianGroup"
+	KeystoreService_GetCustodianGroup_FullMethodName            = "/xkms.v1.KeystoreService/GetCustodianGroup"
+	KeystoreService_ListCustodianGroups_FullMethodName          = "/xkms.v1.KeystoreService/ListCustodianGroups"
+	KeystoreService_DeleteCustodianGroup_FullMethodName         = "/xkms.v1.KeystoreService/DeleteCustodianGroup"
+	KeystoreService_AddCustodianMember_FullMethodName           = "/xkms.v1.KeystoreService/AddCustodianMember"
+	KeystoreService_RemoveCustodianMember_FullMethodName        = "/xkms.v1.KeystoreService/RemoveCustodianMember"
+	KeystoreService_DistributeShares_FullMethodName             = "/xkms.v1.KeystoreService/DistributeShares"
+	KeystoreService_Algorithms_FullMethodName                   = "/xkms.v1.KeystoreService/Algorithms"
+	KeystoreService_SubmitShare_FullMethodName                  = "/xkms.v1.KeystoreService/SubmitShare"
+	KeystoreService_ListShares_FullMethodName                   = "/xkms.v1.KeystoreService/ListShares"
+	KeystoreService_GetShare_FullMethodName                     = "/xkms.v1.KeystoreService/GetShare"
+	KeystoreService_DeleteShare_FullMethodName                  = "/xkms.v1.KeystoreService/DeleteShare"
+	KeystoreService_GetShareCollectionStatus_FullMethodName     = "/xkms.v1.KeystoreService/GetShareCollectionStatus"
+	KeystoreService_CreateTenant_FullMethodName                 = "/xkms.v1.KeystoreService/CreateTenant"
+	KeystoreService_GetTenant_FullMethodName                    = "/xkms.v1.KeystoreService/GetTenant"
+	KeystoreService_ListTenants_FullMethodName                  = "/xkms.v1.KeystoreService/ListTenants"
+	KeystoreService_DeleteTenant_FullMethodName                 = "/xkms.v1.KeystoreService/DeleteTenant"
+	KeystoreService_TenantBarrierInit_FullMethodName            = "/xkms.v1.KeystoreService/TenantBarrierInit"
+	KeystoreService_TenantBarrierUnseal_FullMethodName          = "/xkms.v1.KeystoreService/TenantBarrierUnseal"
+	KeystoreService_TenantBarrierStatus_FullMethodName          = "/xkms.v1.KeystoreService/TenantBarrierStatus"
+	KeystoreService_UpdateTenantEntitlements_FullMethodName     = "/xkms.v1.KeystoreService/UpdateTenantEntitlements"
+	KeystoreService_UpdateTenantQuotas_FullMethodName           = "/xkms.v1.KeystoreService/UpdateTenantQuotas"
+	KeystoreService_PasswordAdd_FullMethodName                  = "/xkms.v1.KeystoreService/PasswordAdd"
+	KeystoreService_PasswordGet_FullMethodName                  = "/xkms.v1.KeystoreService/PasswordGet"
+	KeystoreService_PasswordList_FullMethodName                 = "/xkms.v1.KeystoreService/PasswordList"
+	KeystoreService_PasswordUpdate_FullMethodName               = "/xkms.v1.KeystoreService/PasswordUpdate"
+	KeystoreService_PasswordDelete_FullMethodName               = "/xkms.v1.KeystoreService/PasswordDelete"
+	KeystoreService_PasswordStoreUnlock_FullMethodName          = "/xkms.v1.KeystoreService/PasswordStoreUnlock"
+	KeystoreService_PasswordVaultStatus_FullMethodName          = "/xkms.v1.KeystoreService/PasswordVaultStatus"
+	KeystoreService_PasswordVaultEnroll_FullMethodName          = "/xkms.v1.KeystoreService/PasswordVaultEnroll"
+	KeystoreService_PasswordVaultRotate_FullMethodName          = "/xkms.v1.KeystoreService/PasswordVaultRotate"
+	KeystoreService_PasswordVaultRemoveFactor_FullMethodName    = "/xkms.v1.KeystoreService/PasswordVaultRemoveFactor"
+	KeystoreService_PasswordVaultRecover_FullMethodName         = "/xkms.v1.KeystoreService/PasswordVaultRecover"
+	KeystoreService_PasswordStoreLock_FullMethodName            = "/xkms.v1.KeystoreService/PasswordStoreLock"
+	KeystoreService_PasswordStoreStatus_FullMethodName          = "/xkms.v1.KeystoreService/PasswordStoreStatus"
+	KeystoreService_PasswordGenerate_FullMethodName             = "/xkms.v1.KeystoreService/PasswordGenerate"
+	KeystoreService_PasswordStoreSetAccessMode_FullMethodName   = "/xkms.v1.KeystoreService/PasswordStoreSetAccessMode"
+	KeystoreService_TPMPolicyCreate_FullMethodName              = "/xkms.v1.KeystoreService/TPMPolicyCreate"
+	KeystoreService_TPMPolicyGet_FullMethodName                 = "/xkms.v1.KeystoreService/TPMPolicyGet"
+	KeystoreService_TPMPolicyList_FullMethodName                = "/xkms.v1.KeystoreService/TPMPolicyList"
+	KeystoreService_TPMPolicyUpdate_FullMethodName              = "/xkms.v1.KeystoreService/TPMPolicyUpdate"
+	KeystoreService_TPMPolicyRevoke_FullMethodName              = "/xkms.v1.KeystoreService/TPMPolicyRevoke"
+	KeystoreService_TPMPolicyVerify_FullMethodName              = "/xkms.v1.KeystoreService/TPMPolicyVerify"
+	KeystoreService_TPMPolicyDelete_FullMethodName              = "/xkms.v1.KeystoreService/TPMPolicyDelete"
+	KeystoreService_TPMPolicyObjects_FullMethodName             = "/xkms.v1.KeystoreService/TPMPolicyObjects"
+	KeystoreService_TPMPolicySetAutoUnseal_FullMethodName       = "/xkms.v1.KeystoreService/TPMPolicySetAutoUnseal"
+	KeystoreService_TPMPolicySetDescription_FullMethodName      = "/xkms.v1.KeystoreService/TPMPolicySetDescription"
+	KeystoreService_TPMObjectPolicy_FullMethodName              = "/xkms.v1.KeystoreService/TPMObjectPolicy"
+	KeystoreService_TPMPolicyRotateAuthority_FullMethodName     = "/xkms.v1.KeystoreService/TPMPolicyRotateAuthority"
+	KeystoreService_GetTenantTPMMode_FullMethodName             = "/xkms.v1.KeystoreService/GetTenantTPMMode"
+	KeystoreService_SetTenantTPMMode_FullMethodName             = "/xkms.v1.KeystoreService/SetTenantTPMMode"
+	KeystoreService_TenantVTPMStatus_FullMethodName             = "/xkms.v1.KeystoreService/TenantVTPMStatus"
+	KeystoreService_TenantVTPMStart_FullMethodName              = "/xkms.v1.KeystoreService/TenantVTPMStart"
+	KeystoreService_TenantVTPMStop_FullMethodName               = "/xkms.v1.KeystoreService/TenantVTPMStop"
+	KeystoreService_OIDCCredentialCreate_FullMethodName         = "/xkms.v1.KeystoreService/OIDCCredentialCreate"
+	KeystoreService_OIDCCredentialImport_FullMethodName         = "/xkms.v1.KeystoreService/OIDCCredentialImport"
+	KeystoreService_OIDCCredentialGet_FullMethodName            = "/xkms.v1.KeystoreService/OIDCCredentialGet"
+	KeystoreService_OIDCCredentialList_FullMethodName           = "/xkms.v1.KeystoreService/OIDCCredentialList"
+	KeystoreService_OIDCCredentialDelete_FullMethodName         = "/xkms.v1.KeystoreService/OIDCCredentialDelete"
+	KeystoreService_OIDCCredentialRefresh_FullMethodName        = "/xkms.v1.KeystoreService/OIDCCredentialRefresh"
+	KeystoreService_OIDCCredentialGetAccessToken_FullMethodName = "/xkms.v1.KeystoreService/OIDCCredentialGetAccessToken"
+	KeystoreService_OIDCCredentialDeviceStart_FullMethodName    = "/xkms.v1.KeystoreService/OIDCCredentialDeviceStart"
+	KeystoreService_OIDCCredentialDevicePoll_FullMethodName     = "/xkms.v1.KeystoreService/OIDCCredentialDevicePoll"
+	KeystoreService_PKCS11StatePut_FullMethodName               = "/xkms.v1.KeystoreService/PKCS11StatePut"
+	KeystoreService_PKCS11StatePutIfAbsent_FullMethodName       = "/xkms.v1.KeystoreService/PKCS11StatePutIfAbsent"
+	KeystoreService_PKCS11StateCAS_FullMethodName               = "/xkms.v1.KeystoreService/PKCS11StateCAS"
+	KeystoreService_PKCS11StateCAD_FullMethodName               = "/xkms.v1.KeystoreService/PKCS11StateCAD"
+	KeystoreService_PKCS11StateGet_FullMethodName               = "/xkms.v1.KeystoreService/PKCS11StateGet"
+	KeystoreService_PKCS11StateDelete_FullMethodName            = "/xkms.v1.KeystoreService/PKCS11StateDelete"
+	KeystoreService_PKCS11StateList_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StateList"
+	KeystoreService_SealStorePut_FullMethodName                 = "/xkms.v1.KeystoreService/SealStorePut"
+	KeystoreService_SealStoreGet_FullMethodName                 = "/xkms.v1.KeystoreService/SealStoreGet"
+	KeystoreService_SealStoreDelete_FullMethodName              = "/xkms.v1.KeystoreService/SealStoreDelete"
+	KeystoreService_SealStoreList_FullMethodName                = "/xkms.v1.KeystoreService/SealStoreList"
+	KeystoreService_SealStoreReseal_FullMethodName              = "/xkms.v1.KeystoreService/SealStoreReseal"
+	KeystoreService_SealStoreStatus_FullMethodName              = "/xkms.v1.KeystoreService/SealStoreStatus"
+	KeystoreService_CreateUser_FullMethodName                   = "/xkms.v1.KeystoreService/CreateUser"
+	KeystoreService_ListUsers_FullMethodName                    = "/xkms.v1.KeystoreService/ListUsers"
+	KeystoreService_GetUser_FullMethodName                      = "/xkms.v1.KeystoreService/GetUser"
+	KeystoreService_DeleteUser_FullMethodName                   = "/xkms.v1.KeystoreService/DeleteUser"
+	KeystoreService_EnableUser_FullMethodName                   = "/xkms.v1.KeystoreService/EnableUser"
+	KeystoreService_DisableUser_FullMethodName                  = "/xkms.v1.KeystoreService/DisableUser"
+	KeystoreService_BindUserCert_FullMethodName                 = "/xkms.v1.KeystoreService/BindUserCert"
+	KeystoreService_ListUserCredentials_FullMethodName          = "/xkms.v1.KeystoreService/ListUserCredentials"
+	KeystoreService_BeginRegistration_FullMethodName            = "/xkms.v1.KeystoreService/BeginRegistration"
+	KeystoreService_FinishRegistration_FullMethodName           = "/xkms.v1.KeystoreService/FinishRegistration"
+	KeystoreService_BeginAuthentication_FullMethodName          = "/xkms.v1.KeystoreService/BeginAuthentication"
+	KeystoreService_FinishAuthentication_FullMethodName         = "/xkms.v1.KeystoreService/FinishAuthentication"
+	KeystoreService_GetInvite_FullMethodName                    = "/xkms.v1.KeystoreService/GetInvite"
+	KeystoreService_BeginInviteRegistration_FullMethodName      = "/xkms.v1.KeystoreService/BeginInviteRegistration"
+	KeystoreService_FinishInviteRegistration_FullMethodName     = "/xkms.v1.KeystoreService/FinishInviteRegistration"
+	KeystoreService_ActivateInvitePIV_FullMethodName            = "/xkms.v1.KeystoreService/ActivateInvitePIV"
+	KeystoreService_SSHGenerateKey_FullMethodName               = "/xkms.v1.KeystoreService/SSHGenerateKey"
+	KeystoreService_SSHImportKey_FullMethodName                 = "/xkms.v1.KeystoreService/SSHImportKey"
+	KeystoreService_SSHListKeys_FullMethodName                  = "/xkms.v1.KeystoreService/SSHListKeys"
+	KeystoreService_SSHGetKey_FullMethodName                    = "/xkms.v1.KeystoreService/SSHGetKey"
+	KeystoreService_SSHDeleteKey_FullMethodName                 = "/xkms.v1.KeystoreService/SSHDeleteKey"
+	KeystoreService_SSHExportPublic_FullMethodName              = "/xkms.v1.KeystoreService/SSHExportPublic"
+	KeystoreService_SSHSign_FullMethodName                      = "/xkms.v1.KeystoreService/SSHSign"
+	KeystoreService_SSHAddKnownHost_FullMethodName              = "/xkms.v1.KeystoreService/SSHAddKnownHost"
+	KeystoreService_SSHListKnownHosts_FullMethodName            = "/xkms.v1.KeystoreService/SSHListKnownHosts"
+	KeystoreService_SSHRemoveKnownHost_FullMethodName           = "/xkms.v1.KeystoreService/SSHRemoveKnownHost"
+	KeystoreService_SSHAddAuthorizedKey_FullMethodName          = "/xkms.v1.KeystoreService/SSHAddAuthorizedKey"
+	KeystoreService_SSHListAuthorizedKeys_FullMethodName        = "/xkms.v1.KeystoreService/SSHListAuthorizedKeys"
+	KeystoreService_SSHRemoveAuthorizedKey_FullMethodName       = "/xkms.v1.KeystoreService/SSHRemoveAuthorizedKey"
+	KeystoreService_QueryAudit_FullMethodName                   = "/xkms.v1.KeystoreService/QueryAudit"
 )
 
 // KeystoreServiceClient is the client API for KeystoreService service.
@@ -596,6 +605,30 @@ type KeystoreServiceClient interface {
 	TenantVTPMStart(ctx context.Context, in *TenantVTPMRequest, opts ...grpc.CallOption) (*TenantVTPMStatusResponse, error)
 	// TenantVTPMStop stops a vtpm-mode tenant's virtual TPM. System scope only.
 	TenantVTPMStop(ctx context.Context, in *TenantVTPMRequest, opts ...grpc.CallOption) (*TenantVTPMStatusResponse, error)
+	// OIDCCredentialCreate creates a credential, with tokens when they are at
+	// hand or pending a device login or an import otherwise.
+	OIDCCredentialCreate(ctx context.Context, in *OIDCCredentialCreateRequest, opts ...grpc.CallOption) (*OIDCCredential, error)
+	// OIDCCredentialImport replaces a credential's login with tokens obtained
+	// elsewhere and makes it active.
+	OIDCCredentialImport(ctx context.Context, in *OIDCCredentialImportRequest, opts ...grpc.CallOption) (*OIDCCredential, error)
+	// OIDCCredentialGet returns a credential's public view (no tokens).
+	OIDCCredentialGet(ctx context.Context, in *OIDCCredentialRef, opts ...grpc.CallOption) (*OIDCCredential, error)
+	// OIDCCredentialList returns the credentials of a tenant the caller can
+	// see.
+	OIDCCredentialList(ctx context.Context, in *OIDCCredentialListRequest, opts ...grpc.CallOption) (*OIDCCredentialListResponse, error)
+	// OIDCCredentialDelete deletes a credential.
+	OIDCCredentialDelete(ctx context.Context, in *OIDCCredentialRef, opts ...grpc.CallOption) (*OIDCCredentialDeleteResponse, error)
+	// OIDCCredentialRefresh refreshes a credential now.
+	OIDCCredentialRefresh(ctx context.Context, in *OIDCCredentialRef, opts ...grpc.CallOption) (*OIDCCredential, error)
+	// OIDCCredentialGetAccessToken returns a current access token, refreshing
+	// first when the token is inside its refresh margin.
+	OIDCCredentialGetAccessToken(ctx context.Context, in *OIDCCredentialRef, opts ...grpc.CallOption) (*OIDCAccessToken, error)
+	// OIDCCredentialDeviceStart starts a device login; the returned
+	// credential's device_login carries the user code.
+	OIDCCredentialDeviceStart(ctx context.Context, in *OIDCCredentialRef, opts ...grpc.CallOption) (*OIDCCredential, error)
+	// OIDCCredentialDevicePoll polls the device login once: the credential
+	// stays pending until the user approves.
+	OIDCCredentialDevicePoll(ctx context.Context, in *OIDCCredentialRef, opts ...grpc.CallOption) (*OIDCCredential, error)
 	PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(ctx context.Context, in *PKCS11StatePutIfAbsentRequest, opts ...grpc.CallOption) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(ctx context.Context, in *PKCS11StateCASRequest, opts ...grpc.CallOption) (*PKCS11StateCASResponse, error)
@@ -2203,6 +2236,96 @@ func (c *keystoreServiceClient) TenantVTPMStop(ctx context.Context, in *TenantVT
 	return out, nil
 }
 
+func (c *keystoreServiceClient) OIDCCredentialCreate(ctx context.Context, in *OIDCCredentialCreateRequest, opts ...grpc.CallOption) (*OIDCCredential, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OIDCCredential)
+	err := c.cc.Invoke(ctx, KeystoreService_OIDCCredentialCreate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) OIDCCredentialImport(ctx context.Context, in *OIDCCredentialImportRequest, opts ...grpc.CallOption) (*OIDCCredential, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OIDCCredential)
+	err := c.cc.Invoke(ctx, KeystoreService_OIDCCredentialImport_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) OIDCCredentialGet(ctx context.Context, in *OIDCCredentialRef, opts ...grpc.CallOption) (*OIDCCredential, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OIDCCredential)
+	err := c.cc.Invoke(ctx, KeystoreService_OIDCCredentialGet_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) OIDCCredentialList(ctx context.Context, in *OIDCCredentialListRequest, opts ...grpc.CallOption) (*OIDCCredentialListResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OIDCCredentialListResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_OIDCCredentialList_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) OIDCCredentialDelete(ctx context.Context, in *OIDCCredentialRef, opts ...grpc.CallOption) (*OIDCCredentialDeleteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OIDCCredentialDeleteResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_OIDCCredentialDelete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) OIDCCredentialRefresh(ctx context.Context, in *OIDCCredentialRef, opts ...grpc.CallOption) (*OIDCCredential, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OIDCCredential)
+	err := c.cc.Invoke(ctx, KeystoreService_OIDCCredentialRefresh_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) OIDCCredentialGetAccessToken(ctx context.Context, in *OIDCCredentialRef, opts ...grpc.CallOption) (*OIDCAccessToken, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OIDCAccessToken)
+	err := c.cc.Invoke(ctx, KeystoreService_OIDCCredentialGetAccessToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) OIDCCredentialDeviceStart(ctx context.Context, in *OIDCCredentialRef, opts ...grpc.CallOption) (*OIDCCredential, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OIDCCredential)
+	err := c.cc.Invoke(ctx, KeystoreService_OIDCCredentialDeviceStart_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) OIDCCredentialDevicePoll(ctx context.Context, in *OIDCCredentialRef, opts ...grpc.CallOption) (*OIDCCredential, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OIDCCredential)
+	err := c.cc.Invoke(ctx, KeystoreService_OIDCCredentialDevicePoll_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PKCS11StatePutResponse)
@@ -3009,6 +3132,30 @@ type KeystoreServiceServer interface {
 	TenantVTPMStart(context.Context, *TenantVTPMRequest) (*TenantVTPMStatusResponse, error)
 	// TenantVTPMStop stops a vtpm-mode tenant's virtual TPM. System scope only.
 	TenantVTPMStop(context.Context, *TenantVTPMRequest) (*TenantVTPMStatusResponse, error)
+	// OIDCCredentialCreate creates a credential, with tokens when they are at
+	// hand or pending a device login or an import otherwise.
+	OIDCCredentialCreate(context.Context, *OIDCCredentialCreateRequest) (*OIDCCredential, error)
+	// OIDCCredentialImport replaces a credential's login with tokens obtained
+	// elsewhere and makes it active.
+	OIDCCredentialImport(context.Context, *OIDCCredentialImportRequest) (*OIDCCredential, error)
+	// OIDCCredentialGet returns a credential's public view (no tokens).
+	OIDCCredentialGet(context.Context, *OIDCCredentialRef) (*OIDCCredential, error)
+	// OIDCCredentialList returns the credentials of a tenant the caller can
+	// see.
+	OIDCCredentialList(context.Context, *OIDCCredentialListRequest) (*OIDCCredentialListResponse, error)
+	// OIDCCredentialDelete deletes a credential.
+	OIDCCredentialDelete(context.Context, *OIDCCredentialRef) (*OIDCCredentialDeleteResponse, error)
+	// OIDCCredentialRefresh refreshes a credential now.
+	OIDCCredentialRefresh(context.Context, *OIDCCredentialRef) (*OIDCCredential, error)
+	// OIDCCredentialGetAccessToken returns a current access token, refreshing
+	// first when the token is inside its refresh margin.
+	OIDCCredentialGetAccessToken(context.Context, *OIDCCredentialRef) (*OIDCAccessToken, error)
+	// OIDCCredentialDeviceStart starts a device login; the returned
+	// credential's device_login carries the user code.
+	OIDCCredentialDeviceStart(context.Context, *OIDCCredentialRef) (*OIDCCredential, error)
+	// OIDCCredentialDevicePoll polls the device login once: the credential
+	// stays pending until the user approves.
+	OIDCCredentialDevicePoll(context.Context, *OIDCCredentialRef) (*OIDCCredential, error)
 	PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(context.Context, *PKCS11StatePutIfAbsentRequest) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(context.Context, *PKCS11StateCASRequest) (*PKCS11StateCASResponse, error)
@@ -3551,6 +3698,33 @@ func (UnimplementedKeystoreServiceServer) TenantVTPMStart(context.Context, *Tena
 }
 func (UnimplementedKeystoreServiceServer) TenantVTPMStop(context.Context, *TenantVTPMRequest) (*TenantVTPMStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TenantVTPMStop not implemented")
+}
+func (UnimplementedKeystoreServiceServer) OIDCCredentialCreate(context.Context, *OIDCCredentialCreateRequest) (*OIDCCredential, error) {
+	return nil, status.Error(codes.Unimplemented, "method OIDCCredentialCreate not implemented")
+}
+func (UnimplementedKeystoreServiceServer) OIDCCredentialImport(context.Context, *OIDCCredentialImportRequest) (*OIDCCredential, error) {
+	return nil, status.Error(codes.Unimplemented, "method OIDCCredentialImport not implemented")
+}
+func (UnimplementedKeystoreServiceServer) OIDCCredentialGet(context.Context, *OIDCCredentialRef) (*OIDCCredential, error) {
+	return nil, status.Error(codes.Unimplemented, "method OIDCCredentialGet not implemented")
+}
+func (UnimplementedKeystoreServiceServer) OIDCCredentialList(context.Context, *OIDCCredentialListRequest) (*OIDCCredentialListResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OIDCCredentialList not implemented")
+}
+func (UnimplementedKeystoreServiceServer) OIDCCredentialDelete(context.Context, *OIDCCredentialRef) (*OIDCCredentialDeleteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OIDCCredentialDelete not implemented")
+}
+func (UnimplementedKeystoreServiceServer) OIDCCredentialRefresh(context.Context, *OIDCCredentialRef) (*OIDCCredential, error) {
+	return nil, status.Error(codes.Unimplemented, "method OIDCCredentialRefresh not implemented")
+}
+func (UnimplementedKeystoreServiceServer) OIDCCredentialGetAccessToken(context.Context, *OIDCCredentialRef) (*OIDCAccessToken, error) {
+	return nil, status.Error(codes.Unimplemented, "method OIDCCredentialGetAccessToken not implemented")
+}
+func (UnimplementedKeystoreServiceServer) OIDCCredentialDeviceStart(context.Context, *OIDCCredentialRef) (*OIDCCredential, error) {
+	return nil, status.Error(codes.Unimplemented, "method OIDCCredentialDeviceStart not implemented")
+}
+func (UnimplementedKeystoreServiceServer) OIDCCredentialDevicePoll(context.Context, *OIDCCredentialRef) (*OIDCCredential, error) {
+	return nil, status.Error(codes.Unimplemented, "method OIDCCredentialDevicePoll not implemented")
 }
 func (UnimplementedKeystoreServiceServer) PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PKCS11StatePut not implemented")
@@ -6438,6 +6612,168 @@ func _KeystoreService_TenantVTPMStop_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_OIDCCredentialCreate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OIDCCredentialCreateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).OIDCCredentialCreate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_OIDCCredentialCreate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).OIDCCredentialCreate(ctx, req.(*OIDCCredentialCreateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_OIDCCredentialImport_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OIDCCredentialImportRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).OIDCCredentialImport(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_OIDCCredentialImport_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).OIDCCredentialImport(ctx, req.(*OIDCCredentialImportRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_OIDCCredentialGet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OIDCCredentialRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).OIDCCredentialGet(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_OIDCCredentialGet_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).OIDCCredentialGet(ctx, req.(*OIDCCredentialRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_OIDCCredentialList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OIDCCredentialListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).OIDCCredentialList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_OIDCCredentialList_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).OIDCCredentialList(ctx, req.(*OIDCCredentialListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_OIDCCredentialDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OIDCCredentialRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).OIDCCredentialDelete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_OIDCCredentialDelete_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).OIDCCredentialDelete(ctx, req.(*OIDCCredentialRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_OIDCCredentialRefresh_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OIDCCredentialRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).OIDCCredentialRefresh(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_OIDCCredentialRefresh_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).OIDCCredentialRefresh(ctx, req.(*OIDCCredentialRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_OIDCCredentialGetAccessToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OIDCCredentialRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).OIDCCredentialGetAccessToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_OIDCCredentialGetAccessToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).OIDCCredentialGetAccessToken(ctx, req.(*OIDCCredentialRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_OIDCCredentialDeviceStart_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OIDCCredentialRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).OIDCCredentialDeviceStart(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_OIDCCredentialDeviceStart_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).OIDCCredentialDeviceStart(ctx, req.(*OIDCCredentialRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_OIDCCredentialDevicePoll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OIDCCredentialRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).OIDCCredentialDevicePoll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_OIDCCredentialDevicePoll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).OIDCCredentialDevicePoll(ctx, req.(*OIDCCredentialRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_PKCS11StatePut_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PKCS11StatePutRequest)
 	if err := dec(in); err != nil {
@@ -7826,6 +8162,42 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TenantVTPMStop",
 			Handler:    _KeystoreService_TenantVTPMStop_Handler,
+		},
+		{
+			MethodName: "OIDCCredentialCreate",
+			Handler:    _KeystoreService_OIDCCredentialCreate_Handler,
+		},
+		{
+			MethodName: "OIDCCredentialImport",
+			Handler:    _KeystoreService_OIDCCredentialImport_Handler,
+		},
+		{
+			MethodName: "OIDCCredentialGet",
+			Handler:    _KeystoreService_OIDCCredentialGet_Handler,
+		},
+		{
+			MethodName: "OIDCCredentialList",
+			Handler:    _KeystoreService_OIDCCredentialList_Handler,
+		},
+		{
+			MethodName: "OIDCCredentialDelete",
+			Handler:    _KeystoreService_OIDCCredentialDelete_Handler,
+		},
+		{
+			MethodName: "OIDCCredentialRefresh",
+			Handler:    _KeystoreService_OIDCCredentialRefresh_Handler,
+		},
+		{
+			MethodName: "OIDCCredentialGetAccessToken",
+			Handler:    _KeystoreService_OIDCCredentialGetAccessToken_Handler,
+		},
+		{
+			MethodName: "OIDCCredentialDeviceStart",
+			Handler:    _KeystoreService_OIDCCredentialDeviceStart_Handler,
+		},
+		{
+			MethodName: "OIDCCredentialDevicePoll",
+			Handler:    _KeystoreService_OIDCCredentialDevicePoll_Handler,
 		},
 		{
 			MethodName: "PKCS11StatePut",

@@ -35,6 +35,7 @@ the folder in the same commit that changes the behavior.
 | [luks](luks/) | The root module's `pkg/luks`: FIPS-aware LUKS volume lifecycle (`Manager`/`Executor`) and TPM 2.0 passphrase sealing (`TPMSealer`); `xkey`'s own LUKS2 implementation is documented separately in `xkey/docs/luks/` |
 | [multi-tenancy](multi-tenancy/) | Per-tenant isolation, tenant barriers, tenant-scoped keys |
 | [observability](observability/) | Prometheus instrumentation — operation counters/histograms, backend health, keys/certs totals, connection tracking |
+| [oidc-credentials](oidc-credentials/) | Server-side OIDC credentials: named OAuth/OIDC logins on the tenant barrier, tenant-shared or personal, kept fresh by a leader-elected scheduler; rotating refresh tokens under a per-credential lock with compare-and-swap; device-flow and import logins; `GetAccessToken` by reference and the codex `chatgptAuthTokens` projection — alongside xkey's unchanged local OIDC on the shared `pkg/oidc` core |
 | [password-vault](password-vault/) | Stored password credentials and their access modes |
 | [pin-management](pin-management/) | The PIN service and its TPM 2.0 backend |
 | [piv-smartcard](piv-smartcard/) | PIV slot operations as a factor and as a CLI/SDK verb |

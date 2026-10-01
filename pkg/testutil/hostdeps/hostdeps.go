@@ -22,7 +22,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"log/slog"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -33,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/pinadapter"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -65,32 +65,14 @@ func NewService(t *testing.T) *xkms.XKMSService {
 // unsealed in-memory system barrier.
 func NewBarrierRegistry(t *testing.T) *seal.BarrierRegistry {
 	t.Helper()
-	backend, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
-	barrier, err := seal.NewBarrier(slog.Default(), backend, seal.BarrierConfig{
-		RootKeyPath:     "root-key",
-		PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-	}, seal.NewSoftwareStrategy())
-	require.NoError(t, err)
-
-	creds := seal.MustCredentials([]byte("host-barrier-passphrase"))
-	defer creds.Secret.Destroy()
-	require.NoError(t, barrier.Initialize(context.Background(), creds))
-
-	registry, err := seal.NewBarrierRegistry(barrier)
-	require.NoError(t, err)
-	return registry
+	return barriertest.NewRegistry(t)
 }
 
 // RegisterTenant registers tenantID in registry with an initialized,
 // unsealed tenant barrier.
 func RegisterTenant(t *testing.T, registry *seal.BarrierRegistry, tenantID string) {
 	t.Helper()
-	_, err := registry.RegisterTenant(tenantID)
-	require.NoError(t, err)
-	creds := seal.MustCredentials([]byte(tenantID + "-passphrase"))
-	defer creds.Secret.Destroy()
-	require.NoError(t, registry.InitializeTenant(context.Background(), tenantID, creds))
+	barriertest.RegisterTenant(t, registry, tenantID)
 }
 
 // NewPINBackend returns an in-memory software PIN backend with soPIN and

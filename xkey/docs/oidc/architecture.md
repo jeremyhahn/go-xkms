@@ -2,9 +2,22 @@
 
 Status: current. Last verified: 2026-09-29.
 
+## Two backends
+
+xkey's OIDC has a **local** backend — everything below: providers, browser
+logins, refresh loops and tokens on this host — and, when an xkmsd is
+configured (`--xkmsd-url`, `XKMSD_URL` or the config), a **server** backend:
+the same `xkey oidc` commands then act on the server's OIDC credentials,
+which xkmsd holds and refreshes ([docs/oidc-credentials](../../../docs/oidc-credentials/)).
+`providers list` shows both; `--local` keeps a command on the local backend.
+Without an xkmsd the local backend is exactly what it always was. Both run
+on the one OIDC core, the root module's `pkg/oidc`
+(`xkey/cmd/xkey/cmd/oidc_server.go` holds the server-mode dispatch).
+
 ## Scope
 
-xkey's `pkg/oidc` package is an OpenID Connect relying party: PKCE
+The root module's `pkg/oidc` package (moved there from xkey so xkmsd shares
+it) is an OpenID Connect relying party: PKCE
 authorization-code login against any OIDC-compliant provider, an AWS Console
 native DPoP login, provider configuration management, and an access/refresh
 token lifecycle including a background auto-refresh worker. This document

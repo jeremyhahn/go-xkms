@@ -53,6 +53,16 @@ func mockHandler() http.Handler {
 				Name: strings.TrimPrefix(path, "/api/v1/tpm/policies/"), TenantID: r.URL.Query().Get("tenant_id"),
 				Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{7})}, Approved: true,
 			})
+		case strings.HasPrefix(path, "/api/v1/oidc/credentials/") && strings.HasSuffix(path, "/token") && r.Method == http.MethodPost:
+			respond(transport.OIDCAccessToken{AccessToken: "at-" + r.URL.Query().Get("owner"), TokenType: "Bearer"})
+		case strings.HasPrefix(path, "/api/v1/oidc/credentials/") && r.Method == http.MethodGet:
+			scope, name, _ := strings.Cut(strings.TrimPrefix(path, "/api/v1/oidc/credentials/"), "/")
+			respond(transport.OIDCCredential{
+				OIDCCredentialRef: transport.OIDCCredentialRef{
+					TenantID: r.URL.Query().Get("tenant_id"), Scope: scope, Owner: r.URL.Query().Get("owner"), Name: name,
+				},
+				Status: transport.OIDCCredentialStatusActive,
+			})
 		case path == "/api/v1/backends" && r.Method == http.MethodGet:
 			respond(transport.ListBackendsResponse{
 				Backends: []transport.BackendInfo{{ID: "software", Type: "software"}},

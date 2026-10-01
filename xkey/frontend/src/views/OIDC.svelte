@@ -15,6 +15,7 @@
   import OIDCProviderCard from '$lib/components/OIDCProviderCard.svelte';
   import OIDCProviderDialog from '$lib/components/OIDCProviderDialog.svelte';
   import OIDCScriptDialog from '$lib/components/OIDCScriptDialog.svelte';
+  import OIDCServerCredentials from '$lib/components/OIDCServerCredentials.svelte';
   import {
     mdiPlus, mdiOpenInApp, mdiRefresh, mdiContentCopy, mdiPlay, mdiCodeBraces
   } from '$lib/utils/icons';
@@ -274,6 +275,8 @@
         <LoadingSpinner size={40} />
       </div>
     {:else if activeTab === 'providers'}
+      <!-- Rendered only while an xkmsd is connected: its server-side credentials. -->
+      <OIDCServerCredentials />
       {#if providers.length === 0}
         <EmptyState
           icon={mdiOpenInApp}

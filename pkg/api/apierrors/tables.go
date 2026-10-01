@@ -22,6 +22,9 @@ import (
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
+	"github.com/jeremyhahn/go-xkms/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
@@ -230,6 +233,67 @@ var TPMPolicySentinelClasses = []SentinelClass{
 	{tpm2backend.ErrReservedObject, ClassInvalidArgument},
 	{tpm2backend.ErrSymmetricKeysUnsupported, ClassUnimplemented},
 	{tpm2backend.ErrTenantImportUnsupported, ClassUnimplemented},
+}
+
+// OIDCCredentialSentinelClasses classifies the sentinel errors of the OIDC
+// credential API (pkg/xkms's OIDCCredential* servicer methods over
+// pkg/oidc/credential). Its typed errors are classified by
+// OIDCCredentialClassOf, which every transport reads.
+var OIDCCredentialSentinelClasses = []SentinelClass{
+	{xkms.ErrNotConfigured, ClassUnavailable},
+	{xkms.ErrNilRequest, ClassInvalidArgument},
+	{credential.ErrNotFound, ClassNotFound},
+	{credential.ErrExists, ClassAlreadyExists},
+	{credential.ErrInvalidName, ClassInvalidArgument},
+	{credential.ErrScopeUnsupported, ClassInvalidArgument},
+	{credential.ErrInvalidConfig, ClassInvalidArgument},
+	{credential.ErrInvalidTokens, ClassInvalidArgument},
+	{scope.ErrRefused, ClassPermissionDenied},
+	// A rejected refresh token is the credential's state, not a fault in
+	// the request: the caller re-logs in or imports.
+	{credential.ErrReloginRequired, ClassFailedPrecondition},
+	{credential.ErrNoLogin, ClassFailedPrecondition},
+	{credential.ErrTokenExpired, ClassFailedPrecondition},
+	{credential.ErrNotRefreshable, ClassFailedPrecondition},
+	{credential.ErrNoDeviceLogin, ClassFailedPrecondition},
+	{credential.ErrFlowUnsupported, ClassFailedPrecondition},
+	{credential.ErrConcurrentUpdate, ClassFailedPrecondition},
+	{credential.ErrCorruptRecord, ClassDataLoss},
+	{oidc.ErrDeviceFlowUnsupported, ClassFailedPrecondition},
+	{oidc.ErrDeviceAccessDenied, ClassFailedPrecondition},
+	{oidc.ErrDeviceCodeExpired, ClassFailedPrecondition},
+	{oidc.ErrDeviceAuthorizationFailed, ClassUnavailable},
+	{seal.ErrSealed, ClassUnavailable},
+	// The tenant has no barrier registered: the target reads as not found.
+	{qrdbsdk.ErrTenantMissing, ClassNotFound},
+}
+
+// OIDCCredentialTypedClasses classifies the typed errors of the OIDC
+// credential API. A refresh the provider failed for a reason a retry may
+// overcome is the upstream being unavailable; a configuration or a path
+// segment the service refused is the request's fault.
+var OIDCCredentialTypedClasses = []TypedClass{
+	{As[*credential.ConfigError], ClassInvalidArgument},
+	{As[*scope.InvalidSegmentError], ClassInvalidArgument},
+	{As[*scope.InvalidScopeError], ClassInvalidArgument},
+	{func(err error) bool {
+		var refresh *credential.RefreshError
+		return errors.As(err, &refresh) && !refresh.Relogin
+	}, ClassUnavailable},
+}
+
+// OIDCCredentialClassOf classifies an error of the OIDC credential API: its
+// typed errors first, then its sentinels.
+func OIDCCredentialClassOf(err error) (Class, bool) {
+	if err == nil {
+		return ClassInternal, false
+	}
+	for _, entry := range OIDCCredentialTypedClasses {
+		if entry.Match(err) {
+			return entry.Class, true
+		}
+	}
+	return ClassOf(OIDCCredentialSentinelClasses, err)
 }
 
 // TypedClass classifies a typed error: Match reports whether an error's

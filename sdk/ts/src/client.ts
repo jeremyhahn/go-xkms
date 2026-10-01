@@ -28,6 +28,7 @@ import { FrostClient } from './clients/frost.js';
 import { HealthClient } from './clients/health.js';
 import { InitClient } from './clients/init.js';
 import { KeysClient } from './clients/keys.js';
+import { OidcCredentialClient } from './clients/oidcCredential.js';
 import { PasswordsClient } from './clients/passwords.js';
 import { PinClient } from './clients/pin.js';
 import { PivClient } from './clients/piv.js';
@@ -65,6 +66,7 @@ export class XkmsClient {
   readonly shares: SharesClient;
   readonly tenants: TenantsClient;
   readonly passwords: PasswordsClient;
+  readonly oidcCredentials: OidcCredentialClient;
   readonly platform: PlatformClient;
   readonly tpmPolicies: TpmPolicyClient;
   readonly init: InitClient;
@@ -95,6 +97,7 @@ export class XkmsClient {
     this.shares = new SharesClient(this.http);
     this.tenants = new TenantsClient(this.http);
     this.passwords = new PasswordsClient(this.http);
+    this.oidcCredentials = new OidcCredentialClient(this.http);
     this.platform = new PlatformClient(this.http);
     this.tpmPolicies = new TpmPolicyClient(this.http);
     this.init = new InitClient(this.http);

@@ -861,6 +861,35 @@ func (n *noopClient) TPMPolicySetDescription(context.Context, *transport.TPMPoli
 	return nil, nil
 }
 
+// OIDC credential operations are not exercised by this double.
+func (*noopClient) OIDCCredentialCreate(context.Context, *transport.OIDCCredentialCreateRequest) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*noopClient) OIDCCredentialImport(context.Context, *transport.OIDCCredentialImportRequest) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*noopClient) OIDCCredentialGet(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*noopClient) OIDCCredentialList(context.Context, *transport.OIDCCredentialListRequest) (*transport.OIDCCredentialListResponse, error) {
+	return nil, nil
+}
+func (*noopClient) OIDCCredentialDelete(context.Context, *transport.OIDCCredentialRef) error {
+	return nil
+}
+func (*noopClient) OIDCCredentialRefresh(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*noopClient) OIDCCredentialGetAccessToken(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCAccessToken, error) {
+	return nil, nil
+}
+func (*noopClient) OIDCCredentialDeviceStart(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*noopClient) OIDCCredentialDevicePoll(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+
 func (n *noopClient) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	return nil, nil
 }

@@ -43,6 +43,10 @@ func storeReaders(ctx context.Context, svc *xkms.XKMSService) map[string]func() 
 		"custody":     func() error { _, err := svc.ListCustodianGroups(ctx); return err },
 		"shares":      func() error { _, err := svc.ListShares(ctx); return err },
 		"credentials": func() error { _, err := svc.ListCredentials(ctx); return err },
+		"oidc credentials": func() error {
+			_, err := svc.OIDCCredentialList(ctx, &transport.OIDCCredentialListRequest{})
+			return err
+		},
 		"ca": func() error {
 			_, err := svc.GetCACertificate(ctx, &transport.GetCACertificateRequest{})
 			return err
@@ -62,6 +66,7 @@ func TestWire_ConcurrentWithServiceReads(t *testing.T) {
 	st, err := Build(context.Background(), fullDeps(t, svc))
 	require.NoError(t, err)
 	require.Len(t, st.Disabled, 1, "only the TPM policy service, which needs a TPM, is off")
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
 
 	ctx := platformCtx()
 	readers := storeReaders(ctx, svc)

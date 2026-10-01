@@ -135,16 +135,28 @@ func mapPINError(err error, operation string) error {
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
 }
 
-// mapTPMPolicyError converts a TPM policy API error into a *KeyOpError,
-// classifying it through apierrors.TPMPolicyClassOf -- the classification
+// mapClassifiedError converts an API error into a *KeyOpError, classifying
+// it through classOf -- an apierrors *ClassOf function, the classification
 // pkg/api/grpc and pkg/api/rest read for the same API. Anything it does not
 // classify is an internal fault.
-func mapTPMPolicyError(err error, operation string) error {
+func mapClassifiedError(err error, operation string, classOf func(error) (apierrors.Class, bool)) error {
 	if err == nil {
 		return nil
 	}
-	if class, ok := apierrors.TPMPolicyClassOf(err); ok {
+	if class, ok := classOf(err); ok {
 		return classified(jsonRPCCodeForClass(class), &errs.Wrapped{Msg: operation, Err: err})
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
+}
+
+// mapTPMPolicyError converts a TPM policy API error into a *KeyOpError
+// through apierrors.TPMPolicyClassOf.
+func mapTPMPolicyError(err error, operation string) error {
+	return mapClassifiedError(err, operation, apierrors.TPMPolicyClassOf)
+}
+
+// mapOIDCCredentialError converts an OIDC credential API error into a
+// *KeyOpError through apierrors.OIDCCredentialClassOf.
+func mapOIDCCredentialError(err error, operation string) error {
+	return mapClassifiedError(err, operation, apierrors.OIDCCredentialClassOf)
 }

@@ -155,6 +155,13 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 	if m.resolveQRDBClient != nil {
 		if client := m.resolveQRDBClient(); client != nil {
 			deps.Storage = hostStorage(client)
+			// The host node's lease primitive serializes OIDC credential
+			// refreshes and elects their scheduler across the host's
+			// cluster. A client whose transport carries no coordination
+			// leaves the feature off, with its reason recorded.
+			if coord, err := client.Coordination(); err == nil {
+				deps.Leases = coord
+			}
 			if m.barrierRoutes {
 				deps.Custodians = client.CustodianGroups()
 				deps.Shares = client.Shares()

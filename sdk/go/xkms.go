@@ -564,6 +564,18 @@ type (
 	SetTenantTPMModeRequest     = transport.SetTenantTPMModeRequest
 	TenantVTPMStatusResponse    = transport.TenantVTPMStatusResponse
 
+	// OIDC Credential Operations
+	OIDCCredential              = transport.OIDCCredential
+	OIDCCredentialRef           = transport.OIDCCredentialRef
+	OIDCCredentialConfig        = transport.OIDCCredentialConfig
+	OIDCCredentialTokens        = transport.OIDCCredentialTokens
+	OIDCCredentialCreateRequest = transport.OIDCCredentialCreateRequest
+	OIDCCredentialImportRequest = transport.OIDCCredentialImportRequest
+	OIDCCredentialListRequest   = transport.OIDCCredentialListRequest
+	OIDCCredentialListResponse  = transport.OIDCCredentialListResponse
+	OIDCDeviceLogin             = transport.OIDCDeviceLogin
+	OIDCAccessToken             = transport.OIDCAccessToken
+
 	// Audit Operations
 	AuditEvent  = transport.AuditEvent
 	AuditFilter = transport.AuditFilter

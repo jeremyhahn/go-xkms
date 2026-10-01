@@ -29,8 +29,15 @@ import (
 // tpmPolicyCall decodes a P from req and runs call with it, mapping its
 // error through the TPM policy classification.
 func tpmPolicyCall[P, R any](s *Server, ctx context.Context, req *JSONRPCRequest, op string, call func(context.Context, *P) (R, error)) (interface{}, error) {
+	return servicerCall(s, ctx, req, op, mapTPMPolicyError, call)
+}
+
+// servicerCall decodes a P from req and runs call -- an XKMSService method
+// -- with it, mapping its error, and the absence of the service, through
+// mapErr.
+func servicerCall[P, R any](s *Server, ctx context.Context, req *JSONRPCRequest, op string, mapErr func(error, string) error, call func(context.Context, *P) (R, error)) (interface{}, error) {
 	if s.xkmsService == nil {
-		return nil, mapTPMPolicyError(xkms.ErrNotConfigured, op)
+		return nil, mapErr(xkms.ErrNotConfigured, op)
 	}
 	var params P
 	if err := decodeParams(req, &params); err != nil {
@@ -38,7 +45,7 @@ func tpmPolicyCall[P, R any](s *Server, ctx context.Context, req *JSONRPCRequest
 	}
 	resp, err := call(ctx, &params)
 	if err != nil {
-		return nil, mapTPMPolicyError(err, op)
+		return nil, mapErr(err, op)
 	}
 	return resp, nil
 }

@@ -814,3 +814,55 @@ func (t *Transport) TenantVTPMStart(_ context.Context, _ string) (*transport.Ten
 func (t *Transport) TenantVTPMStop(_ context.Context, _ string) (*transport.TenantVTPMStatusResponse, error) {
 	return nil, ErrNotSupported
 }
+
+// OIDC Credential Operations
+//
+// The xkey Android companion app holds no server-side OIDC credentials: the
+// API is unavailable over this transport for the structural reason the TPM
+// policy surface is. Serving it would need a phone-side (xkey Android)
+// change, outside this repository.
+
+// OIDCCredentialCreate creates a server-side OIDC credential. It is not available over USB.
+func (t *Transport) OIDCCredentialCreate(_ context.Context, _ *transport.OIDCCredentialCreateRequest) (*transport.OIDCCredential, error) {
+	return nil, ErrNotSupported
+}
+
+// OIDCCredentialImport imports tokens into an OIDC credential. It is not available over USB.
+func (t *Transport) OIDCCredentialImport(_ context.Context, _ *transport.OIDCCredentialImportRequest) (*transport.OIDCCredential, error) {
+	return nil, ErrNotSupported
+}
+
+// OIDCCredentialGet returns an OIDC credential's public view. It is not available over USB.
+func (t *Transport) OIDCCredentialGet(_ context.Context, _ *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, ErrNotSupported
+}
+
+// OIDCCredentialList returns the OIDC credentials of a tenant the caller can see. It is not available over USB.
+func (t *Transport) OIDCCredentialList(_ context.Context, _ *transport.OIDCCredentialListRequest) (*transport.OIDCCredentialListResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// OIDCCredentialDelete deletes an OIDC credential. It is not available over USB.
+func (t *Transport) OIDCCredentialDelete(_ context.Context, _ *transport.OIDCCredentialRef) error {
+	return ErrNotSupported
+}
+
+// OIDCCredentialRefresh refreshes an OIDC credential now. It is not available over USB.
+func (t *Transport) OIDCCredentialRefresh(_ context.Context, _ *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, ErrNotSupported
+}
+
+// OIDCCredentialGetAccessToken returns a current access token of an OIDC credential. It is not available over USB.
+func (t *Transport) OIDCCredentialGetAccessToken(_ context.Context, _ *transport.OIDCCredentialRef) (*transport.OIDCAccessToken, error) {
+	return nil, ErrNotSupported
+}
+
+// OIDCCredentialDeviceStart starts a device login for an OIDC credential. It is not available over USB.
+func (t *Transport) OIDCCredentialDeviceStart(_ context.Context, _ *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, ErrNotSupported
+}
+
+// OIDCCredentialDevicePoll polls an OIDC credential's device login once. It is not available over USB.
+func (t *Transport) OIDCCredentialDevicePoll(_ context.Context, _ *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, ErrNotSupported
+}

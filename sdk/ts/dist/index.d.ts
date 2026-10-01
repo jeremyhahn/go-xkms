@@ -2030,6 +2030,186 @@ declare class KeysClient {
     unwrapById(req: UnwrapKeyByIDRequest): Promise<UnwrapKeyByIDResponse>;
 }
 
+/**
+ * Server-side OIDC credential DTOs. Mirrors
+ * pkg/api/transport/types_oidc_credential.go — served over REST at
+ * /api/v1/oidc/credentials and /api/v1/oidc/credentials/{scope}/{name}.
+ *
+ * A credential is a named OAuth/OIDC login xkmsd holds on the tenant barrier
+ * and refreshes itself. Consumers ask for a current access token by
+ * reference; the server never hands out the refresh token.
+ */
+
+/** Credential scope: "tenant" (shared) or "user" (personal, owner-only). */
+type OIDCCredentialScope = 'tenant' | 'user';
+/** Credential status (pkg/api/transport OIDCCredentialStatus*). */
+type OIDCCredentialStatus = 'pending' | 'active' | 'relogin_required' | 'expired';
+/** Mirrors transport.OIDCCredentialRef: names a credential. */
+interface OIDCCredentialRef {
+    /** The tenant holding the credential; empty is the caller's. */
+    tenant_id?: string;
+    scope: OIDCCredentialScope;
+    /** The owning subject of a personal credential; empty is the caller. */
+    owner?: string;
+    name: string;
+}
+/**
+ * Mirrors transport.OIDCCredentialConfig: a credential's provider
+ * configuration. A template fills every field left empty; endpoints left
+ * empty are discovered from the issuer at creation.
+ */
+interface OIDCCredentialConfig {
+    template?: string;
+    issuer?: string;
+    client_id?: string;
+    /** Write-only: never returned on a credential's public view. */
+    client_secret?: string;
+    scopes?: string[];
+    authorization_endpoint?: string;
+    token_endpoint?: string;
+    device_authorization_endpoint?: string;
+    /** "form" (default) or "json". */
+    token_encoding?: 'form' | 'json';
+    /** "rfc8628" (default) or "openai". */
+    device_style?: 'rfc8628' | 'openai';
+    /** A provider whose tokens cannot be refreshed. */
+    no_refresh?: boolean;
+    /** Dates an imported opaque token of a no_refresh provider. */
+    token_lifetime_seconds?: number;
+    /** How long before expiry the server refreshes; 0 is five minutes. */
+    refresh_margin_seconds?: number;
+}
+/** Mirrors transport.OIDCCredentialTokens: tokens imported into a credential. */
+interface OIDCCredentialTokens {
+    access_token: string;
+    refresh_token?: string;
+    id_token?: string;
+    token_type?: string;
+    scope?: string;
+    /** Absent: read from a JWT access token or the template's token lifetime. */
+    expires_at?: RFC3339;
+}
+/** Mirrors transport.OIDCCredentialCreateRequest. */
+interface OIDCCredentialCreateRequest extends OIDCCredentialRef {
+    config: OIDCCredentialConfig;
+    /** Present for an import-at-create; absent leaves the credential pending. */
+    tokens?: OIDCCredentialTokens;
+}
+/** Mirrors transport.OIDCDeviceLogin: what the user needs to approve a device login. */
+interface OIDCDeviceLogin {
+    user_code: string;
+    verification_uri: string;
+    verification_uri_complete?: string;
+    interval_seconds: number;
+    expires_at: RFC3339;
+}
+/** Mirrors transport.OIDCCredential: a credential's public view (no tokens, no client secret). */
+interface OIDCCredential extends OIDCCredentialRef {
+    config: OIDCCredentialConfig;
+    status: OIDCCredentialStatus;
+    status_reason?: string;
+    expires_at?: RFC3339;
+    refreshable: boolean;
+    last_refresh?: RFC3339;
+    last_error?: string;
+    device_login?: OIDCDeviceLogin;
+    created_at: RFC3339;
+    updated_at: RFC3339;
+    created_by?: string;
+}
+/** Mirrors transport.OIDCCredentialListResponse. */
+interface OIDCCredentialListResponse {
+    credentials: OIDCCredential[];
+}
+/** Mirrors transport.OIDCAccessToken: a current access token of a credential. */
+interface OIDCAccessToken {
+    access_token: string;
+    token_type: string;
+    expires_at?: RFC3339;
+    /** The login's ID token, when it has one. */
+    id_token?: string;
+    scope?: string;
+}
+
+/** Why waitForDeviceLogin gave up on a device login that is still pending. */
+type OIDCDeviceLoginFailure = 'expired' | 'not_started';
+/**
+ * OIDCDeviceLoginError is thrown by waitForDeviceLogin when a credential is
+ * still pending but no approval can arrive: its device login passed its
+ * expiry ("expired"), or it has no device login in progress
+ * ("not_started").
+ */
+declare class OIDCDeviceLoginError extends Error {
+    readonly reason: OIDCDeviceLoginFailure;
+    constructor(reason: OIDCDeviceLoginFailure, name: string);
+}
+/** Options of OidcCredentialClient.waitForDeviceLogin. */
+interface WaitForDeviceLoginOptions {
+    /** Aborts the wait; the promise rejects with the signal's reason. */
+    signal?: AbortSignal;
+    /** Called with each poll's credential while it is still pending. */
+    onPending?: (credential: OIDCCredential) => void;
+}
+/**
+ * Server-side OIDC credentials: named OAuth/OIDC logins xkmsd holds on the
+ * tenant barrier and refreshes itself, tenant-shared (scope "tenant") or
+ * personal (scope "user", visible only to its owner). Consumers get a current
+ * access token by reference; the server never hands out the refresh token.
+ * Mirrors pkg/api/rest/handlers_oidc_credential.go.
+ */
+declare class OidcCredentialClient {
+    private readonly http;
+    constructor(http: HttpCore);
+    /** GET /api/v1/oidc/credentials?tenant_id= — the shared credentials and the caller's personal ones. */
+    list(tenantId?: string): Promise<OIDCCredentialListResponse>;
+    /**
+     * POST /api/v1/oidc/credentials (201). With tokens the credential is
+     * active at once; without, it is pending a device login or an import.
+     */
+    create(req: OIDCCredentialCreateRequest): Promise<OIDCCredential>;
+    /** GET /api/v1/oidc/credentials/{scope}/{name}?tenant_id=&owner= — the public view (no tokens). */
+    get(ref: OIDCCredentialRef): Promise<OIDCCredential>;
+    /** DELETE /api/v1/oidc/credentials/{scope}/{name}?tenant_id=&owner= (204). */
+    delete(ref: OIDCCredentialRef): Promise<void>;
+    /**
+     * POST /api/v1/oidc/credentials/{scope}/{name}/import — replaces the
+     * credential's login with tokens obtained elsewhere and makes it active.
+     */
+    importTokens(ref: OIDCCredentialRef, tokens: OIDCCredentialTokens): Promise<OIDCCredential>;
+    /** POST /api/v1/oidc/credentials/{scope}/{name}/refresh — refreshes now. */
+    refresh(ref: OIDCCredentialRef): Promise<OIDCCredential>;
+    /**
+     * POST /api/v1/oidc/credentials/{scope}/{name}/token — a current access
+     * token, refreshed first when inside its refresh margin. The answer is a
+     * bearer secret: hold it no longer than its use.
+     */
+    getAccessToken(ref: OIDCCredentialRef): Promise<OIDCAccessToken>;
+    /**
+     * POST /api/v1/oidc/credentials/{scope}/{name}/device — starts a device
+     * login; the returned credential's device_login carries the user code and
+     * verification URI.
+     */
+    startDeviceLogin(ref: OIDCCredentialRef): Promise<OIDCCredential>;
+    /**
+     * POST /api/v1/oidc/credentials/{scope}/{name}/device/poll — polls the
+     * device login once; the credential stays pending until the user approves.
+     */
+    pollDeviceLogin(ref: OIDCCredentialRef): Promise<OIDCCredential>;
+    /**
+     * waitForDeviceLogin polls a device login until the credential leaves
+     * "pending" and resolves with it — "active" once the user approved, or
+     * whatever status the server settled on. It waits the device login's
+     * interval_seconds before every poll (re-read from each poll, so a
+     * server-side slow-down is honoured), and never polls in a busy loop.
+     *
+     * Pass the credential startDeviceLogin returned so the first wait uses its
+     * interval. Rejects with OIDCDeviceLoginError when the credential is still
+     * pending past its device login's expiry or has no device login, with the
+     * signal's reason when aborted, and with the poll's error when one fails.
+     */
+    waitForDeviceLogin(credential: OIDCCredentialRef | OIDCCredential, opts?: WaitForDeviceLoginOptions): Promise<OIDCCredential>;
+}
+
 /** Password store DTOs. Mirrors pkg/api/rest/password_handlers.go. */
 
 interface PasswordAddRequest {
@@ -3157,6 +3337,7 @@ declare class XkmsClient {
     readonly shares: SharesClient;
     readonly tenants: TenantsClient;
     readonly passwords: PasswordsClient;
+    readonly oidcCredentials: OidcCredentialClient;
     readonly platform: PlatformClient;
     readonly tpmPolicies: TpmPolicyClient;
     readonly init: InitClient;
@@ -3170,4 +3351,4 @@ declare class XkmsClient {
 /** createClient constructs an XkmsClient from a config. */
 declare function createClient(config: XkmsClientConfig): XkmsClient;
 
-export { type AddCustodianMemberRequest, type AddCustodianMemberResponse, type AlgorithmInfo, type AlgorithmsResponse, type AllKeyVersionsResponse, type AssertionCredentialJSON, type AttestKeyRequest, type AttestKeyResponse, type AttestationCredentialJSON, AuditClient, type AuditEvent, type AuditFilter, type AuditPage, AuthClient, type AuthFactorAddRequest, type AuthFactorAddResponse, type AuthFactorGetResponse, type AuthFactorListResponse, type AuthFactorLoginRequest, type AuthFactorLoginResponse, type AuthFactorRecord, type AuthFactorRelabelRequest, type AuthFactorRelabelResponse, type AuthFactorRemoveResponse, type AuthFactorRotateRequest, type AuthFactorRotateResponse, type AuthFactorType, type AuthMeResponse, type AuthPaths, type AuthValidateResponse, type BackendCapabilities, type BackendInfo, BackendsClient, BarrierClient, type BarrierEnableEncryptionRequest, type BarrierEnableEncryptionResponse, type BarrierGenerateRecoveryKeysRequest, type BarrierGenerateRootTokenRequest, type BarrierInitializeRequest, type BarrierInitializeShamirRequest, type BarrierRecoverWithKeysRequest, type BarrierRekeyRequest, type BarrierStatusResponse, type BarrierUnsealRequest, type BarrierUnsealShareRequest, type BarrierUnsealSharesRequest, type Base64, type BindUserCertRequest, CaClient, type CanSealResponse, CapabilitiesClient, type CertificateInfo, CertsClient, type ChangeSOPINRequest, type ChangeUserPINRequest, type ClaimCertBeginRequest, type ClaimCertBeginResponse, type ClaimCertCompleteRequest, type ClaimCertCompleteResponse, type ClaimShareBeginRequest, type ClaimShareBeginResponse, type ClaimShareCompleteRequest, type ClaimShareCompleteResponse, ClusterClient, type ClusterMemberInfo, type ClusterStatusInfo, type ClusterStatusResponse, type CopyKeyRequest, type CopyKeyResponse, type CreateCustodianGroupRequest, type CreateCustodianGroupResponse, type CreateTenantRequest, type CreateUserRequest, type CredentialStrategyResponse, type CredentialSubmitRequest, type CredentialSubmitResponse, CredentialsClient, CustodianClient, type CustodianGroupInfo, type CustodianMemberInfo, DEFAULT_AUTH_PATHS, type DecryptRequest, type DecryptResponse, type DeleteKeyResponse, type DeriveKeyECDHRequest, type DeriveKeyECDHResponse, type DistributeSharesResponse, type EncryptAsymRequest, type EncryptAsymResponse, type EncryptRequest, type EncryptResponse, type EnrollDeviceRequest, type EnrollDeviceResponse, type ErrorEnvelope, type ExportKeyMaterialResponse, type ExportKeyRequest, type ExportKeyResponse, FactorsClient, type FrostAggregateRequest, type FrostAggregateResponse, FrostClient, type FrostCommitment, type FrostDeleteKeyResponse, type FrostGenerateKeyRequest, type FrostGenerateKeyResponse, type FrostGenerateNoncesResponse, type FrostImportKeyRequest, type FrostImportKeyResponse, type FrostKeyInfo, type FrostKeyPackage, type FrostListKeysResponse, type FrostSignRoundRequest, type FrostSignRoundResponse, type FrostSignatureShare, type FrostVerifyRequest, type FrostVerifyResponse, type GenerateCRLRequest, type GenerateCRLResponse, type GenerateKeyRequest, type GenerateKeyResponse, type GeneratePIVCSRRequest, type GeneratePIVCSRResponse, type GeneratePIVKeyRequest, type GeneratePIVKeyResponse, type GetCABundleResponse, type GetCACertificateResponse, type GetCertChainResponse, type GetCertResponse, type GetCustodianGroupResponse, type GetImportParametersRequest, type GetImportParametersResponse, type GetKeyResponse, type GetPIVCertificateResponse, type GetTLSCertificateResponse, HEADER_SESSION_ID, type HealthCheckResponse, type HealthCheckResult, HealthClient, type HealthResponse, type HostKeyMode, HttpCore, type HttpMethod, type HttpResult, type ImportKeyRequest, type ImportKeyResponse, InitClient, type InitStatusResponse, type IsRevokedResponse, type IssueAKCertificateRequest, type IssueAKCertificateResponse, type IssueCertificateRequest, type IssueCertificateResponse, type IssueEKCertificateRequest, type IssueEKCertificateResponse, type KeyInfo, type KeyRotationResult, type KeyRotationState, type KeyVersionInfo, type KeyVersionState, type KeyVersionStateResponse, KeyVersionsClient, KeysClient, type ListBackendsResponse, type ListCertsResponse, type ListClusterMembersResponse, type ListCustodianGroupsResponse, type ListKeyVersionsResponse, type ListKeysResponse, type ListPIVSlotsResponse, type ListSharesResponse, type ListTenantsResponse, type ListUserCredentialsResponse, type ListUsersResponse, type LockoutStatusResponse, type PIVSlotStatus, type PageQuery, type PageResponse, type PasswordAddRequest, type PasswordAddResponse, type PasswordDeleteResponse, type PasswordDetailResponse, type PasswordGenerateRequest, type PasswordGenerateResponse, type PasswordInfo, type PasswordListResponse, type PasswordStoreAccessModeRequest, type PasswordStoreAccessModeResponse, type PasswordStoreStatusResponse, type PasswordStoreUnlockRequest, type PasswordUpdateRequest, type PasswordUpdateResponse, type PasswordVaultCredential, type PasswordVaultEnrollRequest, type PasswordVaultEnrollResponse, type PasswordVaultFactor, type PasswordVaultFactorType, type PasswordVaultRecoverRequest, type PasswordVaultRotateRequest, type PasswordVaultStatusResponse, PasswordsClient, PinClient, PivClient, PlatformClient, type QueryParams, type QuorumProgress, type RFC3339, type RecoveryKeyResult, type RefreshRequest, type RequestOptions, type ResetLockoutRequest, type RevokeCertificateRequest, type RevokeCertificateResponse, type RootToken, type RotateKeyResponse, type RotateScopeKeysResponse, type SSHAddAuthorizedKeyRequest, type SSHAddKnownHostRequest, type SSHAuthorizedEntry, type SSHAuthorizedListResponse, type SSHEmitRequest, type SSHEmitResponse, type SSHGenerateKeyRequest, type SSHImportKeyRequest, type SSHKey, type SSHKeyListResponse, type SSHPin, type SSHPinListResponse, type SSHPublicKey, type SSHSignRequest, type SSHSignResponse, type SSHVerifyAuthorizedRequest, type SSHVerifyKnownHostRequest, type SaveCertChainRequest, type SaveCertRequest, SealClient, type SealRequest, type SealResponse, type SealStoreDeleteResponse, type SealStoreGetResponse, type SealStoreListResponse, type SealStorePutRequest, type SealStorePutResponse, type SealStoreResealResponse, type SealStoreStatusResponse, type ServerControl, type SetSOPINRequest, type SetTenantTPMModeRequest, type SetUserPINRequest, type ShamirInitParams, type ShamirInitResult, type ShareCollectionStatusResponse, type ShareStatusResponse, SharesClient, type SignCSRInitRequest, type SignCSRInitResponse, type SignCSRRequest, type SignCSRResponse, type SignRequest, type SignResponse, type SignTCGCSRRequest, type SignTCGCSRResponse, SshClient, type StorePIVCertificateRequest, type SubmitShareRequest, type SuccessResponse, type TPMAuthorityRotateResponse, type TPMObjectKind, type TPMObjectPolicyResponse, type TPMPolicy, type TPMPolicyBranch, type TPMPolicyBranchVerification, type TPMPolicyCondition, type TPMPolicyConditionType, type TPMPolicyCreateRequest, type TPMPolicyDeleteRequest, type TPMPolicyListResponse, type TPMPolicyObjectsResponse, type TPMPolicyVerifyResponse, type TenantBarrierInitRequest, type TenantBarrierStatusResponse, type TenantBarrierUnsealRequest, type TenantEntitlements, type TenantInfo, type TenantInfoResponse, type TenantQuotas, type TenantTPMModeResponse, type TenantVTPMStatusResponse, TenantsClient, type TokenProvider, type TokenResponse, TpmPolicyClient, type UnsealRequest, type UnsealResponse, type UnwrapKeyByIDRequest, type UnwrapKeyByIDResponse, type UnwrapKeyRequest, type UnwrapKeyResponse, type UpdateTenantEntitlementsRequest, type UpdateTenantEntitlementsResponse, type UpdateTenantQuotasRequest, type UpdateTenantQuotasResponse, type UserCredentialItem, type UserInfo, type UserStatusResponse, UsersClient, type VerifyPINRequest, type VerifyRequest, type VerifyResponse, type WebAuthnAuthResponse, type WebAuthnBeginLoginRequest, type WebAuthnBeginRegistrationRequest, type WebAuthnCeremonyStart, WebAuthnEnvelopeError, type WrapKeyByIDRequest, type WrapKeyByIDResponse, type WrapKeyRequest, type WrapKeyResponse, type WrappedTenantResponse, XkmsApiError, XkmsClient, type XkmsClientConfig, XkmsNetworkError, base64urlToBuffer, bufferToBase64url, buildURL, createClient, encodeAssertionResponse, encodeAttestationResponse, encodeHostKeyResponse, encodePathSegment, encodeResize, isWailsRuntime, parseControl, parseCreationOptions, parseErrorEnvelope, parseRequestOptions, pcrBranch, resolveAuthPaths };
+export { type AddCustodianMemberRequest, type AddCustodianMemberResponse, type AlgorithmInfo, type AlgorithmsResponse, type AllKeyVersionsResponse, type AssertionCredentialJSON, type AttestKeyRequest, type AttestKeyResponse, type AttestationCredentialJSON, AuditClient, type AuditEvent, type AuditFilter, type AuditPage, AuthClient, type AuthFactorAddRequest, type AuthFactorAddResponse, type AuthFactorGetResponse, type AuthFactorListResponse, type AuthFactorLoginRequest, type AuthFactorLoginResponse, type AuthFactorRecord, type AuthFactorRelabelRequest, type AuthFactorRelabelResponse, type AuthFactorRemoveResponse, type AuthFactorRotateRequest, type AuthFactorRotateResponse, type AuthFactorType, type AuthMeResponse, type AuthPaths, type AuthValidateResponse, type BackendCapabilities, type BackendInfo, BackendsClient, BarrierClient, type BarrierEnableEncryptionRequest, type BarrierEnableEncryptionResponse, type BarrierGenerateRecoveryKeysRequest, type BarrierGenerateRootTokenRequest, type BarrierInitializeRequest, type BarrierInitializeShamirRequest, type BarrierRecoverWithKeysRequest, type BarrierRekeyRequest, type BarrierStatusResponse, type BarrierUnsealRequest, type BarrierUnsealShareRequest, type BarrierUnsealSharesRequest, type Base64, type BindUserCertRequest, CaClient, type CanSealResponse, CapabilitiesClient, type CertificateInfo, CertsClient, type ChangeSOPINRequest, type ChangeUserPINRequest, type ClaimCertBeginRequest, type ClaimCertBeginResponse, type ClaimCertCompleteRequest, type ClaimCertCompleteResponse, type ClaimShareBeginRequest, type ClaimShareBeginResponse, type ClaimShareCompleteRequest, type ClaimShareCompleteResponse, ClusterClient, type ClusterMemberInfo, type ClusterStatusInfo, type ClusterStatusResponse, type CopyKeyRequest, type CopyKeyResponse, type CreateCustodianGroupRequest, type CreateCustodianGroupResponse, type CreateTenantRequest, type CreateUserRequest, type CredentialStrategyResponse, type CredentialSubmitRequest, type CredentialSubmitResponse, CredentialsClient, CustodianClient, type CustodianGroupInfo, type CustodianMemberInfo, DEFAULT_AUTH_PATHS, type DecryptRequest, type DecryptResponse, type DeleteKeyResponse, type DeriveKeyECDHRequest, type DeriveKeyECDHResponse, type DistributeSharesResponse, type EncryptAsymRequest, type EncryptAsymResponse, type EncryptRequest, type EncryptResponse, type EnrollDeviceRequest, type EnrollDeviceResponse, type ErrorEnvelope, type ExportKeyMaterialResponse, type ExportKeyRequest, type ExportKeyResponse, FactorsClient, type FrostAggregateRequest, type FrostAggregateResponse, FrostClient, type FrostCommitment, type FrostDeleteKeyResponse, type FrostGenerateKeyRequest, type FrostGenerateKeyResponse, type FrostGenerateNoncesResponse, type FrostImportKeyRequest, type FrostImportKeyResponse, type FrostKeyInfo, type FrostKeyPackage, type FrostListKeysResponse, type FrostSignRoundRequest, type FrostSignRoundResponse, type FrostSignatureShare, type FrostVerifyRequest, type FrostVerifyResponse, type GenerateCRLRequest, type GenerateCRLResponse, type GenerateKeyRequest, type GenerateKeyResponse, type GeneratePIVCSRRequest, type GeneratePIVCSRResponse, type GeneratePIVKeyRequest, type GeneratePIVKeyResponse, type GetCABundleResponse, type GetCACertificateResponse, type GetCertChainResponse, type GetCertResponse, type GetCustodianGroupResponse, type GetImportParametersRequest, type GetImportParametersResponse, type GetKeyResponse, type GetPIVCertificateResponse, type GetTLSCertificateResponse, HEADER_SESSION_ID, type HealthCheckResponse, type HealthCheckResult, HealthClient, type HealthResponse, type HostKeyMode, HttpCore, type HttpMethod, type HttpResult, type ImportKeyRequest, type ImportKeyResponse, InitClient, type InitStatusResponse, type IsRevokedResponse, type IssueAKCertificateRequest, type IssueAKCertificateResponse, type IssueCertificateRequest, type IssueCertificateResponse, type IssueEKCertificateRequest, type IssueEKCertificateResponse, type KeyInfo, type KeyRotationResult, type KeyRotationState, type KeyVersionInfo, type KeyVersionState, type KeyVersionStateResponse, KeyVersionsClient, KeysClient, type ListBackendsResponse, type ListCertsResponse, type ListClusterMembersResponse, type ListCustodianGroupsResponse, type ListKeyVersionsResponse, type ListKeysResponse, type ListPIVSlotsResponse, type ListSharesResponse, type ListTenantsResponse, type ListUserCredentialsResponse, type ListUsersResponse, type LockoutStatusResponse, type OIDCAccessToken, type OIDCCredential, type OIDCCredentialConfig, type OIDCCredentialCreateRequest, type OIDCCredentialListResponse, type OIDCCredentialRef, type OIDCCredentialScope, type OIDCCredentialStatus, type OIDCCredentialTokens, type OIDCDeviceLogin, OIDCDeviceLoginError, type OIDCDeviceLoginFailure, OidcCredentialClient, type PIVSlotStatus, type PageQuery, type PageResponse, type PasswordAddRequest, type PasswordAddResponse, type PasswordDeleteResponse, type PasswordDetailResponse, type PasswordGenerateRequest, type PasswordGenerateResponse, type PasswordInfo, type PasswordListResponse, type PasswordStoreAccessModeRequest, type PasswordStoreAccessModeResponse, type PasswordStoreStatusResponse, type PasswordStoreUnlockRequest, type PasswordUpdateRequest, type PasswordUpdateResponse, type PasswordVaultCredential, type PasswordVaultEnrollRequest, type PasswordVaultEnrollResponse, type PasswordVaultFactor, type PasswordVaultFactorType, type PasswordVaultRecoverRequest, type PasswordVaultRotateRequest, type PasswordVaultStatusResponse, PasswordsClient, PinClient, PivClient, PlatformClient, type QueryParams, type QuorumProgress, type RFC3339, type RecoveryKeyResult, type RefreshRequest, type RequestOptions, type ResetLockoutRequest, type RevokeCertificateRequest, type RevokeCertificateResponse, type RootToken, type RotateKeyResponse, type RotateScopeKeysResponse, type SSHAddAuthorizedKeyRequest, type SSHAddKnownHostRequest, type SSHAuthorizedEntry, type SSHAuthorizedListResponse, type SSHEmitRequest, type SSHEmitResponse, type SSHGenerateKeyRequest, type SSHImportKeyRequest, type SSHKey, type SSHKeyListResponse, type SSHPin, type SSHPinListResponse, type SSHPublicKey, type SSHSignRequest, type SSHSignResponse, type SSHVerifyAuthorizedRequest, type SSHVerifyKnownHostRequest, type SaveCertChainRequest, type SaveCertRequest, SealClient, type SealRequest, type SealResponse, type SealStoreDeleteResponse, type SealStoreGetResponse, type SealStoreListResponse, type SealStorePutRequest, type SealStorePutResponse, type SealStoreResealResponse, type SealStoreStatusResponse, type ServerControl, type SetSOPINRequest, type SetTenantTPMModeRequest, type SetUserPINRequest, type ShamirInitParams, type ShamirInitResult, type ShareCollectionStatusResponse, type ShareStatusResponse, SharesClient, type SignCSRInitRequest, type SignCSRInitResponse, type SignCSRRequest, type SignCSRResponse, type SignRequest, type SignResponse, type SignTCGCSRRequest, type SignTCGCSRResponse, SshClient, type StorePIVCertificateRequest, type SubmitShareRequest, type SuccessResponse, type TPMAuthorityRotateResponse, type TPMObjectKind, type TPMObjectPolicyResponse, type TPMPolicy, type TPMPolicyBranch, type TPMPolicyBranchVerification, type TPMPolicyCondition, type TPMPolicyConditionType, type TPMPolicyCreateRequest, type TPMPolicyDeleteRequest, type TPMPolicyListResponse, type TPMPolicyObjectsResponse, type TPMPolicyVerifyResponse, type TenantBarrierInitRequest, type TenantBarrierStatusResponse, type TenantBarrierUnsealRequest, type TenantEntitlements, type TenantInfo, type TenantInfoResponse, type TenantQuotas, type TenantTPMModeResponse, type TenantVTPMStatusResponse, TenantsClient, type TokenProvider, type TokenResponse, TpmPolicyClient, type UnsealRequest, type UnsealResponse, type UnwrapKeyByIDRequest, type UnwrapKeyByIDResponse, type UnwrapKeyRequest, type UnwrapKeyResponse, type UpdateTenantEntitlementsRequest, type UpdateTenantEntitlementsResponse, type UpdateTenantQuotasRequest, type UpdateTenantQuotasResponse, type UserCredentialItem, type UserInfo, type UserStatusResponse, UsersClient, type VerifyPINRequest, type VerifyRequest, type VerifyResponse, type WaitForDeviceLoginOptions, type WebAuthnAuthResponse, type WebAuthnBeginLoginRequest, type WebAuthnBeginRegistrationRequest, type WebAuthnCeremonyStart, WebAuthnEnvelopeError, type WrapKeyByIDRequest, type WrapKeyByIDResponse, type WrapKeyRequest, type WrapKeyResponse, type WrappedTenantResponse, XkmsApiError, XkmsClient, type XkmsClientConfig, XkmsNetworkError, base64urlToBuffer, bufferToBase64url, buildURL, createClient, encodeAssertionResponse, encodeAttestationResponse, encodeHostKeyResponse, encodePathSegment, encodeResize, isWailsRuntime, parseControl, parseCreationOptions, parseErrorEnvelope, parseRequestOptions, pcrBranch, resolveAuthPaths };

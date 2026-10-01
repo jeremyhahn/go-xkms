@@ -472,6 +472,17 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"xkms.tenantVTPMStart":      (*Server).handleTenantVTPMStart,
 	"xkms.tenantVTPMStop":       (*Server).handleTenantVTPMStop,
 
+	// Server-side OIDC credentials (pkg/oidc/credential)
+	"oidc.credential.create":       (*Server).handleOIDCCredentialCreate,
+	"oidc.credential.import":       (*Server).handleOIDCCredentialImport,
+	"oidc.credential.get":          (*Server).handleOIDCCredentialGet,
+	"oidc.credential.list":         (*Server).handleOIDCCredentialList,
+	"oidc.credential.delete":       (*Server).handleOIDCCredentialDelete,
+	"oidc.credential.refresh":      (*Server).handleOIDCCredentialRefresh,
+	"oidc.credential.token":        (*Server).handleOIDCCredentialToken,
+	"oidc.credential.device.start": (*Server).handleOIDCCredentialDeviceStart,
+	"oidc.credential.device.poll":  (*Server).handleOIDCCredentialDevicePoll,
+
 	// SSH key operations
 	"ssh.keys.generate": (*Server).handleSSHKeysGenerate,
 	"ssh.keys.import":   (*Server).handleSSHKeysImport,

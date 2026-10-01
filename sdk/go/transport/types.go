@@ -278,6 +278,28 @@ type TenantTPMModeResponse = pkgtransport.TenantTPMModeResponse
 type SetTenantTPMModeRequest = pkgtransport.SetTenantTPMModeRequest
 type TenantVTPMStatusResponse = pkgtransport.TenantVTPMStatusResponse
 
+// OIDC credential types (server-side OIDC credentials).
+type OIDCCredential = pkgtransport.OIDCCredential
+type OIDCCredentialRef = pkgtransport.OIDCCredentialRef
+type OIDCCredentialConfig = pkgtransport.OIDCCredentialConfig
+type OIDCCredentialTokens = pkgtransport.OIDCCredentialTokens
+type OIDCCredentialCreateRequest = pkgtransport.OIDCCredentialCreateRequest
+type OIDCCredentialImportRequest = pkgtransport.OIDCCredentialImportRequest
+type OIDCCredentialListRequest = pkgtransport.OIDCCredentialListRequest
+type OIDCCredentialListResponse = pkgtransport.OIDCCredentialListResponse
+type OIDCDeviceLogin = pkgtransport.OIDCDeviceLogin
+type OIDCAccessToken = pkgtransport.OIDCAccessToken
+
+// OIDC credential scopes and statuses.
+const (
+	OIDCCredentialScopeTenant           = pkgtransport.OIDCCredentialScopeTenant
+	OIDCCredentialScopeUser             = pkgtransport.OIDCCredentialScopeUser
+	OIDCCredentialStatusPending         = pkgtransport.OIDCCredentialStatusPending
+	OIDCCredentialStatusActive          = pkgtransport.OIDCCredentialStatusActive
+	OIDCCredentialStatusReloginRequired = pkgtransport.OIDCCredentialStatusReloginRequired
+	OIDCCredentialStatusExpired         = pkgtransport.OIDCCredentialStatusExpired
+)
+
 // TPM object kinds a policy is assigned to.
 const (
 	TPMObjectKindKey    = pkgtransport.TPMObjectKindKey

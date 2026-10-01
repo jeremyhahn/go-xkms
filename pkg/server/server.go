@@ -66,6 +66,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
+	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -310,6 +311,12 @@ type Server struct {
 	// passwordManager routes Password Manager entries to per-tenant stores.
 	// One instance serves the XKMSService and the REST surface.
 	passwordManager *staticpw.TenantPasswordStoreManager
+
+	// oidcCredentials is the server-side OIDC credential service
+	// (pkg/oidc/credential) with its refresh scheduler running, or nil when
+	// xkmsd has no barrier registry. Built in composedStores, closed at
+	// shutdown.
+	oidcCredentials *credential.Service
 
 	// PKCS#11 remote-state store — persists a remote-mode PKCS#11 module's token
 	// and object state in the embedded qrdb node. Nil unless enabled.
@@ -992,6 +999,7 @@ func (s *Server) composedStores() *compose.Stores {
 			s.passwordManager = manager
 		}
 	}
+	s.buildOIDCCredentials()
 	stores := &compose.Stores{
 		PasswordStore:   s.passwordStore,
 		PasswordManager: s.passwordManager,
@@ -1001,6 +1009,7 @@ func (s *Server) composedStores() *compose.Stores {
 		CA:              s.ca,
 		TPMPolicies:     s.tpmPolicies,
 		KeyVersions:     s.keyVersions,
+		OIDCCredentials: s.oidcCredentials,
 		Barrier:         s.barrier,
 	}
 	// xkmsd serves share custody over its own node whenever it has one.
@@ -3920,6 +3929,7 @@ func (s *Server) shutdown() error {
 // shared qrdb storage backend. closeQRDBStorage is idempotent, so callers may
 // invoke closeBackends on any error path without double-close concerns.
 func (s *Server) closeBackends() {
+	s.closeOIDCCredentials()
 	s.closeTPMPolicies()
 	for name, backend := range s.keyProviders {
 		s.logger.Info("Closing key provider...", "key_provider", name)

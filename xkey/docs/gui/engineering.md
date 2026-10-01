@@ -1,6 +1,6 @@
 # xKey Desktop GUI — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
 
 ## Exported surface — `*App` itself
 
@@ -55,7 +55,8 @@ call — it blocks until the application exits.
 | `SealProtectionService` | `sealProtectionSvc` | UI-level access gating for seal operations |
 | `AutoUnsealService` | `autoUnsealService` | Orchestrates sealed auto-unseal, coordinating `SealService` + `StorageService` |
 | `BarrierAutoUnsealService` | `barrierAutoUnsealService` | Barrier auto-unseal through a named TPM policy the TPM enforces |
-| `OIDCService` | `oidcService` | — |
+| `OIDCService` | `oidcService` | xKey's local OIDC providers, browser logins and refresh loops; unaffected by a server connection |
+| `OIDCServerService` | `oidcServerService` | The connected xkmsd's server-side OIDC credentials; follows the server connection through `applyConnectionEvent` and copies access tokens through `ClipboardService` |
 | `ClipboardService` | `clipboardService` | — |
 | `TrustService` | `trustService` | Trust store operations |
 | `SetupWizardService` | `setupWizardService` | First-run setup, composing `StorageService`/`TPMService`/`PINService`/etc. |
@@ -89,6 +90,16 @@ beyond the type name.)
   `apiExplorerService` are only appended when non-nil rather than always
   included (`app.go:2650-2660`): those three can fail to initialize on some
   platforms.
+- **Local and server OIDC never mix.** `OIDCService` keeps xKey's local
+  providers exactly as without a server; `OIDCServerService` reaches only the
+  connected xkmsd (`SetClient` on `server:connected`, `SetClient(nil)` on
+  disconnect or error) and holds no token: `CopyServerAccessToken` fetches a
+  current access token and writes it straight to the clipboard, and
+  `ImportCodexAuth` parses the pasted auth.json with `xkms.ParseCodexAuth`
+  and never logs it. Its sentinels are `ErrOIDCServerNotConnected`,
+  `ErrOIDCServerNameRequired`, `ErrOIDCServerScopeInvalid`,
+  `ErrOIDCServerAccessTokenRequired`, `ErrOIDCServerExpiryInvalid`,
+  `ErrOIDCServerCodexAuthRequired` and `ErrOIDCServerClipboardUnavailable`.
 - **`App` is a composition root, not a place for business logic.** Its job
   is wiring (`SetXxx` calls during startup) and the thin top-level methods
   above; feature behavior lives in the service the method delegates to.

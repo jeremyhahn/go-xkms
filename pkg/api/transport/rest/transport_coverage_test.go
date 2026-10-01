@@ -325,6 +325,12 @@ func newFullMockServer(t *testing.T) *httptest.Server {
 				Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{7})}, Approved: true,
 			})
 
+		// --- OIDC credentials ---
+		case strings.HasPrefix(path, "/api/v1/oidc/credentials/") && strings.HasSuffix(path, "/token") && r.Method == http.MethodPost:
+			json.NewEncoder(w).Encode(transport.OIDCAccessToken{AccessToken: "at-" + r.URL.Query().Get("owner"), TokenType: "Bearer"})
+		case strings.HasPrefix(path, "/api/v1/oidc/credentials/") && r.Method == http.MethodGet:
+			json.NewEncoder(w).Encode(mockOIDCCredential(r))
+
 		default:
 			// Catch-all: return valid JSON for any unhandled path
 			json.NewEncoder(w).Encode(map[string]string{"result": "ok"})
@@ -1467,4 +1473,16 @@ func TestGetCredentialStrategy_Connected(t *testing.T) {
 	resp, err := tr.GetCredentialStrategy(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "manual", resp.Strategy)
+}
+
+// mockOIDCCredential answers a request for the credential its
+// /api/v1/oidc/credentials/{scope}/{name} path and query name.
+func mockOIDCCredential(r *http.Request) transport.OIDCCredential {
+	scope, name, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/v1/oidc/credentials/"), "/")
+	return transport.OIDCCredential{
+		OIDCCredentialRef: transport.OIDCCredentialRef{
+			TenantID: r.URL.Query().Get("tenant_id"), Scope: scope, Owner: r.URL.Query().Get("owner"), Name: name,
+		},
+		Status: transport.OIDCCredentialStatusActive,
+	}
 }

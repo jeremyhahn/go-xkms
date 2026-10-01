@@ -3042,3 +3042,32 @@ func TestMessageRouter_ReceiveLoop_ClosedDuringRead(t *testing.T) {
 	initiatorTransport.Close()
 	router.Stop()
 }
+
+// The bridge does not serve OIDC credentials; these tests never call them.
+func (*mockTransportClient) OIDCCredentialCreate(context.Context, *transport.OIDCCredentialCreateRequest) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockTransportClient) OIDCCredentialImport(context.Context, *transport.OIDCCredentialImportRequest) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockTransportClient) OIDCCredentialGet(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockTransportClient) OIDCCredentialList(context.Context, *transport.OIDCCredentialListRequest) (*transport.OIDCCredentialListResponse, error) {
+	return nil, nil
+}
+func (*mockTransportClient) OIDCCredentialDelete(context.Context, *transport.OIDCCredentialRef) error {
+	return nil
+}
+func (*mockTransportClient) OIDCCredentialRefresh(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockTransportClient) OIDCCredentialGetAccessToken(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCAccessToken, error) {
+	return nil, nil
+}
+func (*mockTransportClient) OIDCCredentialDeviceStart(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockTransportClient) OIDCCredentialDevicePoll(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, nil
+}

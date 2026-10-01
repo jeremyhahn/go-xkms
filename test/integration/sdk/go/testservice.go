@@ -1271,6 +1271,35 @@ func (s *TestXKMSService) TPMPolicySetDescription(context.Context, *xkms.TPMPoli
 	return nil, ErrNotImplemented
 }
 
+// OIDC credential operations are not exercised by this double.
+func (*TestXKMSService) OIDCCredentialCreate(context.Context, *xkms.OIDCCredentialCreateRequest) (*xkms.OIDCCredential, error) {
+	return nil, ErrNotImplemented
+}
+func (*TestXKMSService) OIDCCredentialImport(context.Context, *xkms.OIDCCredentialImportRequest) (*xkms.OIDCCredential, error) {
+	return nil, ErrNotImplemented
+}
+func (*TestXKMSService) OIDCCredentialGet(context.Context, *xkms.OIDCCredentialRef) (*xkms.OIDCCredential, error) {
+	return nil, ErrNotImplemented
+}
+func (*TestXKMSService) OIDCCredentialList(context.Context, *xkms.OIDCCredentialListRequest) (*xkms.OIDCCredentialListResponse, error) {
+	return nil, ErrNotImplemented
+}
+func (*TestXKMSService) OIDCCredentialDelete(context.Context, *xkms.OIDCCredentialRef) error {
+	return ErrNotImplemented
+}
+func (*TestXKMSService) OIDCCredentialRefresh(context.Context, *xkms.OIDCCredentialRef) (*xkms.OIDCCredential, error) {
+	return nil, ErrNotImplemented
+}
+func (*TestXKMSService) OIDCCredentialGetAccessToken(context.Context, *xkms.OIDCCredentialRef) (*xkms.OIDCAccessToken, error) {
+	return nil, ErrNotImplemented
+}
+func (*TestXKMSService) OIDCCredentialDeviceStart(context.Context, *xkms.OIDCCredentialRef) (*xkms.OIDCCredential, error) {
+	return nil, ErrNotImplemented
+}
+func (*TestXKMSService) OIDCCredentialDevicePoll(context.Context, *xkms.OIDCCredentialRef) (*xkms.OIDCCredential, error) {
+	return nil, ErrNotImplemented
+}
+
 func (s *TestXKMSService) TPMObjectPolicy(context.Context, *xkms.TPMObjectPolicyRequest) (*xkms.TPMObjectPolicyResponse, error) {
 	return nil, ErrNotImplemented
 }

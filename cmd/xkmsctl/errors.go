@@ -1370,6 +1370,57 @@ var (
 	// ErrPlatformStoreStatusFailed is the sentinel error "failed to get platform store status".
 	ErrPlatformStoreStatusFailed = errors.New("failed to get platform store status")
 
+	// OIDC credential errors
+
+	// ErrOIDCCredentialCreateFailed is the sentinel error "failed to create OIDC credential".
+	ErrOIDCCredentialCreateFailed = errors.New("failed to create OIDC credential")
+
+	// ErrOIDCCredentialImportFailed is the sentinel error "failed to import OIDC credential".
+	ErrOIDCCredentialImportFailed = errors.New("failed to import OIDC credential")
+
+	// ErrOIDCCredentialListFailed is the sentinel error "failed to list OIDC credentials".
+	ErrOIDCCredentialListFailed = errors.New("failed to list OIDC credentials")
+
+	// ErrOIDCCredentialGetFailed is the sentinel error "failed to get OIDC credential".
+	ErrOIDCCredentialGetFailed = errors.New("failed to get OIDC credential")
+
+	// ErrOIDCCredentialRefreshFailed is the sentinel error "failed to refresh OIDC credential".
+	ErrOIDCCredentialRefreshFailed = errors.New("failed to refresh OIDC credential")
+
+	// ErrOIDCCredentialDeleteFailed is the sentinel error "failed to delete OIDC credential".
+	ErrOIDCCredentialDeleteFailed = errors.New("failed to delete OIDC credential")
+
+	// ErrOIDCTokenFailed is the sentinel error "failed to get an OIDC access token".
+	ErrOIDCTokenFailed = errors.New("failed to get an OIDC access token")
+
+	// ErrOIDCLoginFailed is the sentinel error "OIDC device login failed".
+	ErrOIDCLoginFailed = errors.New("OIDC device login failed")
+
+	// ErrOIDCLoginExpired is returned when a device login is not approved
+	// before it expires.
+	ErrOIDCLoginExpired = errors.New("OIDC device login was not approved in time")
+
+	// ErrOIDCNoDeviceLogin is returned when the server starts no device
+	// login for the credential.
+	ErrOIDCNoDeviceLogin = errors.New("the server returned no device login")
+
+	// ErrOIDCAccessTokenRequired is returned by import without
+	// --access-token or --codex-auth.
+	ErrOIDCAccessTokenRequired = errors.New("import needs --access-token or --codex-auth")
+
+	// ErrOIDCImportSourceConflict is returned when --codex-auth is combined
+	// with token flags.
+	ErrOIDCImportSourceConflict = errors.New("--codex-auth cannot be combined with --access-token, --refresh-token or --id-token")
+
+	// ErrOIDCCodexAuthRead is returned when the codex auth.json cannot be read.
+	ErrOIDCCodexAuthRead = errors.New("failed to read codex auth.json")
+
+	// ErrOIDCCodexAuthWrite is returned when the codex auth.json cannot be written.
+	ErrOIDCCodexAuthWrite = errors.New("failed to write codex auth.json")
+
+	// ErrOIDCInvalidExpiry is returned for an --expires-at that is not RFC 3339.
+	ErrOIDCInvalidExpiry = errors.New("invalid --expires-at (want RFC 3339)")
+
 	// TPM policy errors
 
 	// ErrTPMPolicyDescribeFailed is the sentinel error "failed to set TPM policy description".

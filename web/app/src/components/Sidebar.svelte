@@ -22,6 +22,7 @@
     Fingerprint,
     Snowflake,
     ScrollText,
+    LogIn,
   } from "lucide-svelte";
   import { navSections, type NavItem } from "$lib/nav.ts";
   import { routerStore, navigateTo } from "$stores/router.svelte.ts";
@@ -32,7 +33,7 @@
     LayoutDashboard, Server, Key, ShieldCheck, FileBadge, Landmark, Lock,
     KeyRound, CreditCard, TerminalSquare, Vault, FolderLock, Sparkles,
     Users, Building2, UsersRound, Split, Network, Settings,
-    Fingerprint, Snowflake, ScrollText,
+    Fingerprint, Snowflake, ScrollText, LogIn,
   };
 
   // An item is visible when its RBAC gate (if any) and capability gate (if

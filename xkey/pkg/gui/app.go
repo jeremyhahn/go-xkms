@@ -121,6 +121,7 @@ type App struct {
 	autoUnsealService        *services.AutoUnsealService
 	barrierAutoUnsealService *services.BarrierAutoUnsealService
 	oidcService              *services.OIDCService
+	oidcServerService        *services.OIDCServerService
 	clipboardService         *services.ClipboardService
 	trustService             *services.TrustService
 	setupWizardService       *services.SetupWizardService
@@ -1963,6 +1964,7 @@ func NewApp(cfg *GUIConfig) *App {
 		autoUnsealService:        autoUnsealSvc,
 		barrierAutoUnsealService: barrierAutoUnsealSvc,
 		oidcService:              oidcSvc,
+		oidcServerService:        services.NewOIDCServerService(clipboardSvc),
 		clipboardService:         clipboardSvc,
 		trustService:             trustSvc,
 		certificateService:       certSvc,
@@ -2615,11 +2617,13 @@ func (a *App) applyConnectionEvent(eventType events.EventType, client xkmssdk.Cl
 		a.certificateService.SetClient(client)
 		a.tpmPolicyService.SetClient(client)
 		a.staticPWService.SetClient(client)
+		a.oidcServerService.SetClient(client)
 	case events.EventServerDisconnected, events.EventServerError:
 		a.pivService.SetClient(nil)
 		a.certificateService.SetClient(nil)
 		a.tpmPolicyService.SetClient(nil)
 		a.staticPWService.SetClient(nil)
+		a.oidcServerService.SetClient(nil)
 	}
 }
 
@@ -2726,6 +2730,7 @@ func (a *App) Run() error {
 		a.tpmPolicyService,
 		a.autoUnsealService,
 		a.oidcService,
+		a.oidcServerService,
 		a.clipboardService,
 		a.trustService,
 		a.setupWizardService,
@@ -2832,6 +2837,7 @@ func (a *App) startup(ctx context.Context) {
 	a.tpmPolicyService.SetContext(ctx)
 	a.autoUnsealService.SetContext(ctx)
 	a.oidcService.SetContext(ctx)
+	a.oidcServerService.SetContext(ctx)
 	a.clipboardService.SetContext(ctx)
 	a.setupWizardService.SetContext(ctx)
 	a.trustService.SetContext(ctx)

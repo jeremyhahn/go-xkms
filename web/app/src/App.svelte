@@ -19,6 +19,7 @@
   import UsersView from "$views/UsersView.svelte";
   import TenantsView from "$views/TenantsView.svelte";
   import PasswordsView from "$views/PasswordsView.svelte";
+  import OidcCredentialsView from "$views/OidcCredentialsView.svelte";
   import PlatformView from "$views/PlatformView.svelte";
   import PivView from "$views/PivView.svelte";
   import CaView from "$views/CaView.svelte";
@@ -86,6 +87,8 @@
       <SharesView />
     {:else if routerStore.name === "passwords"}
       <PasswordsView />
+    {:else if routerStore.name === "oidcCredentials"}
+      <OidcCredentialsView />
     {:else if routerStore.name === "platform"}
       <PlatformView />
     {:else if routerStore.name === "ceremony"}

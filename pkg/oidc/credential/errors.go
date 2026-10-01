@@ -77,9 +77,6 @@ var (
 	// ErrCorruptRecord is returned when a stored credential cannot be
 	// decoded.
 	ErrCorruptRecord = errors.New("oidc credential: corrupt record")
-
-	// ErrClosed is returned after the service was closed.
-	ErrClosed = errors.New("oidc credential: service closed")
 )
 
 // RefreshError reports a refresh that failed. Relogin is true when the

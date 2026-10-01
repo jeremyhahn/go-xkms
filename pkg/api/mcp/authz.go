@@ -368,6 +368,22 @@ var methodPermissions = map[string]permission{
 	"xkms.tenantVTPMStart":  {auth.ResourceTenants, auth.ActionSetTPMMode},
 	"xkms.tenantVTPMStop":   {auth.ResourceTenants, auth.ActionSetTPMMode},
 
+	// Server-side OIDC credentials (pkg/oidc/credential) --
+	// pkg/auth.ResourceOIDCCredentials, an xkms-owned resource family scoped
+	// in pkg/apimodule/module_scopes.go. Mirrors the gRPC OIDCCredential*
+	// RPCs' (qrdb.v1.permission) options one-for-one: importing tokens,
+	// refreshing and a device login all change the login (update), and
+	// reading a current access token is its own action, token.
+	"oidc.credential.create":       {auth.ResourceOIDCCredentials, auth.ActionCreate},
+	"oidc.credential.import":       {auth.ResourceOIDCCredentials, auth.ActionUpdate},
+	"oidc.credential.get":          {auth.ResourceOIDCCredentials, auth.ActionGet},
+	"oidc.credential.list":         {auth.ResourceOIDCCredentials, auth.ActionList},
+	"oidc.credential.delete":       {auth.ResourceOIDCCredentials, auth.ActionDelete},
+	"oidc.credential.refresh":      {auth.ResourceOIDCCredentials, auth.ActionUpdate},
+	"oidc.credential.token":        {auth.ResourceOIDCCredentials, auth.ActionToken},
+	"oidc.credential.device.start": {auth.ResourceOIDCCredentials, auth.ActionUpdate},
+	"oidc.credential.device.poll":  {auth.ResourceOIDCCredentials, auth.ActionUpdate},
+
 	// SSH keys.
 	"ssh.keys.generate": {auth.ResourceSSH, auth.ActionWrite},
 	"ssh.keys.import":   {auth.ResourceSSH, auth.ActionWrite},

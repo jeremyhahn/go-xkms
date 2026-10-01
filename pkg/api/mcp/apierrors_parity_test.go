@@ -14,12 +14,15 @@
 package mcp
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
+	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -58,16 +61,20 @@ var wireExpectationForClass = map[apierrors.Class]wireExpectation{
 	apierrors.ClassResourceExhausted:  {"resource exhausted", ErrCodeInternalError},
 }
 
+// errParityUpstream stands in for a provider failure under a RefreshError.
+var errParityUpstream = errors.New("test: upstream failed")
+
 // TestClassification_MatchesSharedTables walks every sentinel in
 // apierrors.ImportExportSentinelClasses, PIVSentinelClasses,
 // BarrierSentinelClasses, SealStoreSentinelClasses, PINSentinelClasses,
-// CustodianSentinelClasses and TPMPolicySentinelClasses and asserts this
-// package's mapImportExportError / mapPIVError / mapBarrierError /
-// mapSealStoreError / mapPINError / mapCustodianError / mapTPMPolicyError
-// renders the JSON-RPC code wireExpectationForClass names for that
-// sentinel's Class. It is the MCP half of the cross-transport parity
-// pinned by go-xkms#912; see pkg/api/grpc/apierrors_parity_test.go for the
-// gRPC half.
+// CustodianSentinelClasses, TPMPolicySentinelClasses and
+// OIDCCredentialSentinelClasses (with the OIDC credential typed errors) and
+// asserts this package's mapImportExportError / mapPIVError /
+// mapBarrierError / mapSealStoreError / mapPINError / mapCustodianError /
+// mapTPMPolicyError / mapOIDCCredentialError renders the JSON-RPC code
+// wireExpectationForClass names for that sentinel's Class. It is the MCP
+// half of the cross-transport parity pinned by go-xkms#912; see
+// pkg/api/grpc/apierrors_parity_test.go for the gRPC half.
 func TestClassification_MatchesSharedTables(t *testing.T) {
 	t.Run("import/export", func(t *testing.T) {
 		for _, entry := range apierrors.ImportExportSentinelClasses {
@@ -156,6 +163,36 @@ func TestClassification_MatchesSharedTables(t *testing.T) {
 				var keyErr *KeyOpError
 				require.ErrorAs(t, err, &keyErr)
 				assert.Equal(t, want.mcpCode, keyErr.Code)
+			})
+		}
+	})
+
+	t.Run("oidc credential", func(t *testing.T) {
+		for _, entry := range apierrors.OIDCCredentialSentinelClasses {
+			want, ok := wireExpectationForClass[entry.Class]
+			require.True(t, ok, "no wire expectation for class %v", entry.Class)
+			t.Run(want.name, func(t *testing.T) {
+				err := mapOIDCCredentialError(entry.Sentinel, "op")
+				var keyErr *KeyOpError
+				require.ErrorAs(t, err, &keyErr)
+				assert.Equal(t, want.mcpCode, keyErr.Code)
+			})
+		}
+		typed := map[string]struct {
+			err   error
+			class apierrors.Class
+		}{
+			"config":          {&credential.ConfigError{Detail: "d"}, apierrors.ClassInvalidArgument},
+			"scope":           {&scope.InvalidScopeError{Value: "galaxy"}, apierrors.ClassInvalidArgument},
+			"retryable fault": {&credential.RefreshError{Name: "ci", Err: errParityUpstream}, apierrors.ClassUnavailable},
+			"relogin":         {&credential.RefreshError{Name: "ci", Relogin: true, Err: errParityUpstream}, apierrors.ClassFailedPrecondition},
+		}
+		for name, tc := range typed {
+			t.Run(name, func(t *testing.T) {
+				err := mapOIDCCredentialError(tc.err, "op")
+				var keyErr *KeyOpError
+				require.ErrorAs(t, err, &keyErr)
+				assert.Equal(t, wireExpectationForClass[tc.class].mcpCode, keyErr.Code)
 			})
 		}
 	})

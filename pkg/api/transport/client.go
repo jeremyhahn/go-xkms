@@ -711,6 +711,7 @@ type Client interface {
 	PasswordService
 	SealStoreService
 	TPMPolicyService
+	OIDCCredentialService
 	CustodianGroupService
 	ShareService
 	TenantService

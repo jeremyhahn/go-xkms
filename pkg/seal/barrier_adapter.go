@@ -98,32 +98,30 @@ func (g guardedStorageBackend) CompareAndDelete(ctx context.Context, key string,
 	return cad.CompareAndDelete(ctx, key, expected)
 }
 
-// CompareAndSwap forwards the OTHER optional capability, which this type would
-// otherwise hide.
+// CompareAndSwap gives a barrier over an xkms backend its guarded swap.
 //
-// Embedding storage.Backend narrows the value to that interface's method set, so
-// a wrapped backend stops satisfying storage.CompareAndSwapper even when the
-// backend underneath implements it. Nothing in this repository asserts for it on
-// a wrapped value today, so this is not a live defect — but a wrapper that
-// silently drops a capability is precisely the hazard of a design where
-// capabilities are discovered by type assertion, and every other wrapper here
-// (PrefixBackend, FileStorage, luks.Backend) forwards rather than masks. This
-// one should not be the exception.
+// go-qrdb's StorageBarrier.CompareAndSwap compares the DECRYPTED value with the
+// caller's expectation, then hands its base the ciphertext it read as the
+// guard -- through go-qrdb's guardedSwapBackend, whose shape is
+// CompareAndSwap(...) (bool, error). xkms's own optional capability,
+// storage.CompareAndSwapper, returns (swapped, current, err). This method
+// adapts the one to the other, dropping current: the barrier only needs to
+// know whether the swap landed, and a caller that lost reads again.
 //
-// It keeps xkms's THREE-value signature, which is deliberately not go-qrdb's.
-// go-qrdb's guardedSwapBackend wants CompareAndSwap(...) (bool, error); xkms's
-// CompareAndSwapper returns (swapped, current, err) so a read-modify-write
-// caller can recompute against the value it lost to. Those shapes have never
-// matched, so a barrier's own CompareAndSwap has always reported
-// ErrGuardedSwapUnsupported over an xkms backend, both before and after this
-// wrapper existed. Adapting between them would newly enable a path that has
-// never worked, which is a behaviour change and not this change's business.
-func (g guardedStorageBackend) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, []byte, error) {
+// Before this adaptation the two shapes never met, and a barrier over an xkms
+// backend -- xkmsd's system barrier among them -- answered every swap with
+// ErrGuardedSwapUnsupported. A read-modify-write on the barrier (the OIDC
+// credential service persists rotating refresh tokens this way) needs it.
+// A backend without the capability still reports
+// storage.ErrCompareAndSwapUnsupported: the guard never degrades to a read
+// followed by an unguarded write.
+func (g guardedStorageBackend) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
 	cas, ok := g.Backend.(storage.CompareAndSwapper)
 	if !ok {
-		return false, nil, storage.ErrCompareAndSwapUnsupported
+		return false, storage.ErrCompareAndSwapUnsupported
 	}
-	return cas.CompareAndSwap(ctx, key, expected, next)
+	swapped, _, err := cas.CompareAndSwap(ctx, key, expected, next)
+	return swapped, err
 }
 
 // Barrier is a type alias for qrdbsdk.StorageBarrier. An xkms storage.Backend

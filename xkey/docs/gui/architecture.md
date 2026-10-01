@@ -1,6 +1,6 @@
 # xKey Desktop GUI — Architecture
 
-> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
 
 This file replaces the pre-convention `gui/architecture.md`. The other files
 in this folder — `README.md`, `features.md`, `design-system.md`,
@@ -55,7 +55,7 @@ groups naturally by domain:
 | Credentials & backends | `FIDO2Service`, `FIDO2DeviceService`, `OATHService`, `PIVService`, `StaticPasswordService`, `SSHService`/`SSHProfileService`/`SSHConnectService`/`SSHConsoleService`/`SSHLocalService`, `PKCS11Service`, `TPMService`, `TPMPolicyService`, `KeyService`, `CertificateService` |
 | Phone | `PhoneService` — see [../phone/](../phone/architecture.md) |
 | Barrier / seal / lock | `SealService`, `SealProtectionService`, `BarrierService`, `BarrierAutoUnsealService`, `AutoUnsealService`, `AppLockService`, `PasswordProtectionService`, `PINService` |
-| Identity & auth | `AuthService`, `SecurityFactorService`, `OIDCService`, `PairingService` (extension pairing) |
+| Identity & auth | `AuthService`, `SecurityFactorService`, `OIDCService` (local providers), `OIDCServerService` (the connected xkmsd's server-side OIDC credentials, shown beside the local providers only while connected), `PairingService` (extension pairing) |
 | Admin & multi-tenant | `AdminService`, `TrustService`, `TenantService`, `TeamService`, `AgentService`, `ConnectionService` |
 | Browser | `BrowserService`, `SecureBrowserService`, `AutoFillService` (all three appended only when non-nil, `app.go:2650-2659`) |
 | Storage, audit, misc | `StorageService`, `AuditService`, `NotificationService`, `ClipboardService`, `SetupWizardService`, `ShareService`, `CustodianService`, `APIExplorerService`, `AppService` |

@@ -402,6 +402,35 @@ func (s *stubClient) TPMPolicySetDescription(context.Context, *TPMPolicyDescript
 	panic("stub")
 }
 
+// OIDC credential operations are not exercised by this double.
+func (*stubClient) OIDCCredentialCreate(context.Context, *OIDCCredentialCreateRequest) (*OIDCCredential, error) {
+	panic("stub")
+}
+func (*stubClient) OIDCCredentialImport(context.Context, *OIDCCredentialImportRequest) (*OIDCCredential, error) {
+	panic("stub")
+}
+func (*stubClient) OIDCCredentialGet(context.Context, *OIDCCredentialRef) (*OIDCCredential, error) {
+	panic("stub")
+}
+func (*stubClient) OIDCCredentialList(context.Context, *OIDCCredentialListRequest) (*OIDCCredentialListResponse, error) {
+	panic("stub")
+}
+func (*stubClient) OIDCCredentialDelete(context.Context, *OIDCCredentialRef) error {
+	panic("stub")
+}
+func (*stubClient) OIDCCredentialRefresh(context.Context, *OIDCCredentialRef) (*OIDCCredential, error) {
+	panic("stub")
+}
+func (*stubClient) OIDCCredentialGetAccessToken(context.Context, *OIDCCredentialRef) (*OIDCAccessToken, error) {
+	panic("stub")
+}
+func (*stubClient) OIDCCredentialDeviceStart(context.Context, *OIDCCredentialRef) (*OIDCCredential, error) {
+	panic("stub")
+}
+func (*stubClient) OIDCCredentialDevicePoll(context.Context, *OIDCCredentialRef) (*OIDCCredential, error) {
+	panic("stub")
+}
+
 func (s *stubClient) TPMObjectPolicy(context.Context, *TPMObjectPolicyRequest) (*TPMObjectPolicyResponse, error) {
 	panic("stub")
 }

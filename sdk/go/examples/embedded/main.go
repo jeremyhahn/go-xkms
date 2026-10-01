@@ -749,6 +749,35 @@ func (m *MockXKMSService) TPMPolicySetDescription(context.Context, *transport.TP
 	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
+// OIDC credential operations are not exercised by this double.
+func (*MockXKMSService) OIDCCredentialCreate(context.Context, *transport.OIDCCredentialCreateRequest) (*transport.OIDCCredential, error) {
+	return nil, &mockUnsupportedError{capability: "oidc credentials"}
+}
+func (*MockXKMSService) OIDCCredentialImport(context.Context, *transport.OIDCCredentialImportRequest) (*transport.OIDCCredential, error) {
+	return nil, &mockUnsupportedError{capability: "oidc credentials"}
+}
+func (*MockXKMSService) OIDCCredentialGet(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, &mockUnsupportedError{capability: "oidc credentials"}
+}
+func (*MockXKMSService) OIDCCredentialList(context.Context, *transport.OIDCCredentialListRequest) (*transport.OIDCCredentialListResponse, error) {
+	return nil, &mockUnsupportedError{capability: "oidc credentials"}
+}
+func (*MockXKMSService) OIDCCredentialDelete(context.Context, *transport.OIDCCredentialRef) error {
+	return &mockUnsupportedError{capability: "oidc credentials"}
+}
+func (*MockXKMSService) OIDCCredentialRefresh(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, &mockUnsupportedError{capability: "oidc credentials"}
+}
+func (*MockXKMSService) OIDCCredentialGetAccessToken(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCAccessToken, error) {
+	return nil, &mockUnsupportedError{capability: "oidc credentials"}
+}
+func (*MockXKMSService) OIDCCredentialDeviceStart(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, &mockUnsupportedError{capability: "oidc credentials"}
+}
+func (*MockXKMSService) OIDCCredentialDevicePoll(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, &mockUnsupportedError{capability: "oidc credentials"}
+}
+
 func (m *MockXKMSService) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	return nil, &mockUnsupportedError{capability: "policy"}
 }

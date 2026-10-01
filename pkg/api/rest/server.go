@@ -59,22 +59,23 @@ type Server struct {
 	rbacMiddleware  *RBACMiddleware
 
 	// Custodian handlers
-	custodianHandlers   *CustodianHandlers
-	shareHandlers       *ShareHandlers
-	tenantHandlers      *TenantHandlers
-	passwordHandlers    *PasswordHandlers
-	pkcs11StateHandlers *PKCS11StateHandlers
-	platformHandlers    *SealStoreHandlers
-	tpmPolicyHandlers   *TPMPolicyHandlers
-	initHandlers        *InitHandlers
-	credentialHandlers  *CredentialHandlers
-	authFactorHandlers  *AuthFactorHandlers
-	auditHandlers       *AuditHandlers
-	bootstrapHandlers   *BootstrapHandlers
-	caHandlers          *CAHandlers
-	sshHandlers         *SSHHandlers
-	sshClient           sdkssh.Client
-	clusterHandlers     *ClusterHandlers
+	custodianHandlers      *CustodianHandlers
+	shareHandlers          *ShareHandlers
+	tenantHandlers         *TenantHandlers
+	passwordHandlers       *PasswordHandlers
+	pkcs11StateHandlers    *PKCS11StateHandlers
+	platformHandlers       *SealStoreHandlers
+	tpmPolicyHandlers      *TPMPolicyHandlers
+	oidcCredentialHandlers *OIDCCredentialHandlers
+	initHandlers           *InitHandlers
+	credentialHandlers     *CredentialHandlers
+	authFactorHandlers     *AuthFactorHandlers
+	auditHandlers          *AuditHandlers
+	bootstrapHandlers      *BootstrapHandlers
+	caHandlers             *CAHandlers
+	sshHandlers            *SSHHandlers
+	sshClient              sdkssh.Client
+	clusterHandlers        *ClusterHandlers
 
 	// cors carries the CORS policy for the router; nil disables CORS
 	// entirely (no headers emitted — correct for the same-origin web UI).
@@ -528,15 +529,16 @@ func NewServer(cfg *Config) (*Server, error) {
 		server.pkcs11StateHandlers = NewPKCS11StateHandlers(cfg.XKMSService)
 	}
 
-	// The platform store, TPM policy and credential handlers are enabled
-	// whenever the service is present, exactly as the PKCS#11 remote-state
-	// handlers are: they reach their subsystem only through the service, whose
-	// requirePlatformScope refuses a tenant-scoped caller (go-xkms#1226,
-	// #1227) and which answers ErrNotConfigured (503) for a subsystem this
-	// deployment does not compose.
+	// The platform store, TPM policy, credential and OIDC credential
+	// handlers are enabled whenever the service is present, exactly as the
+	// PKCS#11 remote-state handlers are: they reach their subsystem only
+	// through the service, whose requirePlatformScope refuses a tenant-scoped
+	// caller (go-xkms#1226, #1227) and which answers ErrNotConfigured (503)
+	// for a subsystem this deployment does not compose.
 	if cfg.XKMSService != nil {
 		server.platformHandlers = NewSealStoreHandlers(cfg.XKMSService)
 		server.tpmPolicyHandlers = NewTPMPolicyHandlers(cfg.XKMSService)
+		server.oidcCredentialHandlers = NewOIDCCredentialHandlers(cfg.XKMSService)
 		server.credentialHandlers = NewCredentialHandlers(cfg.XKMSService, log)
 	}
 

@@ -51,6 +51,7 @@ const ROUTES: Array<[string, string]> = [
   ['/custodians', 'Custodians'],
   ['/shares', 'Shares'],
   ['/passwords', 'Passwords'],
+  ['/oidc/credentials', 'OIDC Credentials'],
   ['/platform', 'Platform Secrets'],
   ['/ceremony', 'Init & Ceremony'],
   ['/cluster', 'Cluster'],

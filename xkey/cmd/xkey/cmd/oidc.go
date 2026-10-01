@@ -463,6 +463,9 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	if backgroundWorker {
 		return runBackgroundWorker(cmd, args)
 	}
+	if handled, err := runOnOIDCServer(cmd, func() error { return runOIDCServerLogin(cmd) }); handled {
+		return err
+	}
 
 	providerName, _ := cmd.Flags().GetString("provider")
 	issuer, _ := cmd.Flags().GetString("issuer")
@@ -790,6 +793,9 @@ func writeOIDCIdentity(out io.Writer, claims *OIDCIDTokenClaims, layout string) 
 
 // runOIDCToken displays current token information.
 func runOIDCToken(cmd *cobra.Command, args []string) error {
+	if handled, err := runOnOIDCServer(cmd, func() error { return runOIDCServerToken(cmd) }); handled {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	tokenStore, _ := cmd.Flags().GetString("token-store")
 	showFull, _ := cmd.Flags().GetBool("show-full")
@@ -851,6 +857,9 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 
 // runOIDCRefresh refreshes the access token.
 func runOIDCRefresh(cmd *cobra.Command, args []string) error {
+	if handled, err := runOnOIDCServer(cmd, func() error { return runOIDCServerRefresh(cmd) }); handled {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	tokenStore, _ := cmd.Flags().GetString("token-store")
 	providerName, _ := cmd.Flags().GetString("provider")
@@ -944,6 +953,9 @@ func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 // equivalent: both remove that one stored entry. --all is kept only for
 // CLI-surface compatibility with earlier releases' flag set.
 func runOIDCLogout(cmd *cobra.Command, args []string) error {
+	if handled, err := runOnOIDCServer(cmd, func() error { return ErrOIDCServerLogout }); handled {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	tokenStore, _ := cmd.Flags().GetString("token-store")
 	all, _ := cmd.Flags().GetBool("all")
@@ -974,6 +986,14 @@ func runOIDCLogout(cmd *cobra.Command, args []string) error {
 // runOIDCProvidersList lists configured providers.
 func runOIDCProvidersList(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
+	// With an xkmsd configured, the server's credentials are listed first,
+	// then this host's local providers: xkey sees both backends.
+	if handled, err := runOnOIDCServer(cmd, func() error { return printServerOIDCCredentials(cmd) }); handled {
+		if err != nil {
+			return err
+		}
+		writeLine(out, "Local OIDC providers:")
+	}
 	tokenStore, _ := cmd.Flags().GetString("token-store")
 	configPath := getConfigPath(tokenStore)
 
@@ -1057,6 +1077,9 @@ func runOIDCProvidersList(cmd *cobra.Command, args []string) error {
 
 // runOIDCProvidersAdd adds a new provider.
 func runOIDCProvidersAdd(cmd *cobra.Command, args []string) error {
+	if handled, err := runOnOIDCServer(cmd, func() error { return runOIDCServerProvidersAdd(cmd) }); handled {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	name, _ := cmd.Flags().GetString("name")
 	providerType, _ := cmd.Flags().GetString("type")
@@ -1227,6 +1250,9 @@ func runOIDCProvidersAdd(cmd *cobra.Command, args []string) error {
 
 // runOIDCProvidersRemove removes a provider.
 func runOIDCProvidersRemove(cmd *cobra.Command, args []string) error {
+	if handled, err := runOnOIDCServer(cmd, func() error { return runOIDCServerProvidersRemove(cmd, args[0]) }); handled {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	name := args[0]
 	tokenStore, _ := cmd.Flags().GetString("token-store")

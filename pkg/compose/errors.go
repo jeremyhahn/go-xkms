@@ -57,6 +57,10 @@ const (
 	// each rotated key has and which one is current (pkg/keyversion).
 	FeatureKeyVersions Feature = "key-versions"
 
+	// FeatureOIDCCredentials is the server-side OIDC credential service
+	// (pkg/oidc/credential) and its refresh scheduler.
+	FeatureOIDCCredentials Feature = "oidc-credentials"
+
 	// FeatureBarrier is the system barrier served by the barrier routes.
 	FeatureBarrier Feature = "barrier"
 

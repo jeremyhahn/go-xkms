@@ -24,7 +24,8 @@ const (
 	TPMAuthorityRotatePath = "/api/v1/tpm/authority/rotate"
 )
 
-// ErrNilRequest is returned by TPMPolicyClient for a nil request.
+// ErrNilRequest is returned by the API clients (TPMPolicyClient,
+// OIDCCredentialClient) for a nil request.
 var ErrNilRequest = errors.New("wire: request is nil")
 
 // DecodeError reports a response body that is not the expected JSON.

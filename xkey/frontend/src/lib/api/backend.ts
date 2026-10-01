@@ -914,6 +914,79 @@ export interface OIDCProviderTemplateInfo {
   dpop?: boolean;
 }
 
+/** A server credential's scope: shared with the tenant, or personal. */
+export type OIDCServerScope = 'tenant' | 'user';
+
+/** A server credential's status (transport.OIDCCredentialStatus*). */
+export type OIDCServerStatus = 'pending' | 'active' | 'relogin_required' | 'expired';
+
+/** Names a server credential (transport.OIDCCredentialRef). */
+export interface OIDCServerCredentialRef {
+  tenant_id?: string;
+  scope: OIDCServerScope;
+  owner?: string;
+  name: string;
+}
+
+/** A server credential's provider configuration (transport.OIDCCredentialConfig). */
+export interface OIDCServerCredentialConfig {
+  template?: string;
+  issuer?: string;
+  client_id?: string;
+  client_secret?: string;
+  scopes?: string[];
+  device_authorization_endpoint?: string;
+}
+
+/** Tokens imported into a server credential (services.OIDCServerTokens). */
+export interface OIDCServerTokens {
+  access_token: string;
+  refresh_token?: string;
+  id_token?: string;
+  /** RFC 3339; empty lets the server date the token. */
+  expires_at?: string;
+}
+
+/** A device login in progress (services.OIDCServerDeviceLogin). */
+export interface OIDCServerDeviceLogin {
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete?: string;
+  interval_seconds: number;
+  expires_at: string;
+}
+
+/** A server credential's public view (services.OIDCServerCredentialInfo); it never carries a token. */
+export interface OIDCServerCredentialInfo extends OIDCServerCredentialRef {
+  template?: string;
+  issuer?: string;
+  client_id?: string;
+  scopes?: string[];
+  status: OIDCServerStatus;
+  status_reason?: string;
+  expires_at?: string;
+  refreshable: boolean;
+  last_refresh?: string;
+  last_error?: string;
+  device_login?: OIDCServerDeviceLogin;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: string;
+  supports_device: boolean;
+}
+
+/** A template a server credential can be created from (services.OIDCServerTemplateInfo). */
+export interface OIDCServerTemplateInfo {
+  name: string;
+  description: string;
+  issuer?: string;
+  scopes?: string[];
+  requires_issuer: boolean;
+  supports_device: boolean;
+  supports_import: boolean;
+  no_refresh: boolean;
+}
+
 export interface OIDCTokenInfo {
   provider: string;
   issuer: string;

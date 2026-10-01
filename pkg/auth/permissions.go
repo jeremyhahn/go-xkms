@@ -56,6 +56,15 @@ const (
 	// its tenancy scope (pkg/apimodule/module_scopes.go).
 	ResourceTPMPolicy = "tpm_policy"
 
+	// ResourceOIDCCredentials is server-side OIDC credential management
+	// (pkg/oidc/credential): named OAuth/OIDC logins the server holds and
+	// refreshes. Its token action (oidc_credentials:token) serves a current
+	// access token, so it is granted apart from reading a credential's
+	// metadata. go-qrdb's canonical registry has no permission family for
+	// it, so xkms owns the name and declares its tenancy scope
+	// (pkg/apimodule/module_scopes.go).
+	ResourceOIDCCredentials = "oidc_credentials"
+
 	// Hardware and vault resources. Each is its own qrdb resource family so a
 	// deployment can mint a role that reaches, for example, the PIV slots
 	// without also reaching the password vault.
@@ -156,6 +165,11 @@ const (
 	// xkms owns and declares (pkg/apimodule/module_scopes.go); qrdb does not
 	// know it.
 	ActionSetTPMMode = "set_tpm_mode"
+
+	// ActionToken reads a credential's current access token
+	// (oidc_credentials:token). It is the secret-bearing read, distinct
+	// from oidc_credentials:get, which returns metadata only.
+	ActionToken = "token"
 
 	// ActionWrite is the coarse mutating action of the resource families that
 	// do not model create/update separately (piv:write, ssh:write,

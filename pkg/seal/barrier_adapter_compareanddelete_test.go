@@ -104,15 +104,9 @@ type qrdbShapedSwap interface {
 	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
 }
 
-// A wrapper must not silently DROP a capability. Embedding storage.Backend
-// narrows the value to that interface's method set, so without explicit
-// forwarding a wrapped backend stops satisfying storage.CompareAndSwapper even
-// though the backend underneath implements it.
-//
-// In a design where capabilities are discovered by type assertion, a wrapper
-// that quietly removes one is the characteristic failure: nothing breaks at
-// compile time, and the capability just stops being found.
-func TestGuardedStorageBackend_PreservesTheSwapCapability(t *testing.T) {
+// The wrapper gives go-qrdb's barrier the guarded swap of an xkms backend in
+// the barrier's own two-value shape, forwarded to the real backend.
+func TestGuardedStorageBackend_ForwardsTheSwapInQRDBShape(t *testing.T) {
 	ctx := context.Background()
 	mem := storage.NewMemory()
 	t.Cleanup(func() { _ = mem.Close() })
@@ -120,21 +114,17 @@ func TestGuardedStorageBackend_PreservesTheSwapCapability(t *testing.T) {
 		"the fixture must have the capability, or this test proves nothing")
 
 	var wrapped any = guardedStorageBackend{mem}
-	cas, ok := wrapped.(storage.CompareAndSwapper)
-	require.True(t, ok, "wrapping must not hide storage.CompareAndSwapper")
+	cas, ok := wrapped.(qrdbShapedSwap)
+	require.True(t, ok, "the barrier type-asserts its base against go-qrdb's swap shape")
 
-	// Forwarded, not merely declared: it has to reach the real backend, and the
-	// third return value -- the current value on a failed swap -- has to survive.
 	const key = "keys/swap"
 	require.NoError(t, mem.Put(ctx, key, []byte("A")))
 
-	swapped, current, err := cas.CompareAndSwap(ctx, key, []byte("WRONG"), []byte("B"))
+	swapped, err := cas.CompareAndSwap(ctx, key, []byte("WRONG"), []byte("B"))
 	require.NoError(t, err)
 	assert.False(t, swapped)
-	assert.Equal(t, []byte("A"), current,
-		"xkms's three-value shape is preserved, so a read-modify-write caller can retry")
 
-	swapped, _, err = cas.CompareAndSwap(ctx, key, []byte("A"), []byte("B"))
+	swapped, err = cas.CompareAndSwap(ctx, key, []byte("A"), []byte("B"))
 	require.NoError(t, err)
 	assert.True(t, swapped)
 
@@ -143,30 +133,41 @@ func TestGuardedStorageBackend_PreservesTheSwapCapability(t *testing.T) {
 	assert.Equal(t, []byte("B"), got)
 }
 
-// CHARACTERIZATION, and the reason the forwarding above keeps xkms's signature
-// rather than adapting to go-qrdb's.
-//
-// go-qrdb's guardedSwapBackend wants CompareAndSwap(...) (bool, error); xkms's
-// CompareAndSwapper returns (swapped, current, err). Those shapes have never
-// matched, so a barrier's own CompareAndSwap has always reported
-// ErrGuardedSwapUnsupported over an xkms backend — before this wrapper existed
-// and after. Adapting between them would newly enable a path that has never
-// worked, which is a behaviour change and not this change's business.
-//
-// Pinned on the BARE backend as well as the wrapped one, because that is what
-// makes it a pre-existing property rather than something the wrapper caused.
-func TestGuardedStorageBackend_QRDBShapedSwapWasNeverSatisfied(t *testing.T) {
-	mem := storage.NewMemory()
-	t.Cleanup(func() { _ = mem.Close() })
+// A base without the capability is refused, never approximated by a read and
+// an unguarded write.
+func TestGuardedStorageBackend_SwapUnsupportedIsRefused(t *testing.T) {
+	var wrapped any = guardedStorageBackend{noSwapBackend{storage.NewMemory()}}
+	cas, ok := wrapped.(qrdbShapedSwap)
+	require.True(t, ok)
+	_, err := cas.CompareAndSwap(context.Background(), "k", []byte("a"), []byte("b"))
+	assert.ErrorIs(t, err, storage.ErrCompareAndSwapUnsupported)
+}
 
-	var bare any = mem
-	_, bareOK := bare.(qrdbShapedSwap)
-	assert.False(t, bareOK,
-		"an xkms backend has never matched go-qrdb's two-value swap shape")
+// noSwapBackend hides its base's optional capabilities.
+type noSwapBackend struct{ storage.Backend }
 
-	var wrapped any = guardedStorageBackend{mem}
-	_, wrappedOK := wrapped.(qrdbShapedSwap)
-	assert.False(t, wrappedOK, "and wrapping does not change that either way")
+// A barrier over an xkms backend swaps end to end: it compares the decrypted
+// value and lands the new one, and refuses a stale expectation.
+func TestBarrierOverXKMSBackend_CompareAndSwap(t *testing.T) {
+	ctx := context.Background()
+	base := storage.NewMemory()
+	t.Cleanup(func() { _ = base.Close() })
+	barrier, err := NewBarrier(testLogger(), base, BarrierConfig{RootKeyPath: "test/root-key"}, NewSoftwareStrategy())
+	require.NoError(t, err)
+	creds := MustCredentials([]byte("swap-test-passphrase"))
+	defer creds.Secret.Destroy()
+	require.NoError(t, barrier.Initialize(ctx, creds))
+
+	require.NoError(t, barrier.Put(ctx, "k", []byte("v1")))
+	swapped, err := barrier.CompareAndSwap(ctx, "k", []byte("stale"), []byte("v2"))
+	require.NoError(t, err)
+	assert.False(t, swapped)
+	swapped, err = barrier.CompareAndSwap(ctx, "k", []byte("v1"), []byte("v2"))
+	require.NoError(t, err)
+	assert.True(t, swapped)
+	got, err := barrier.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("v2"), got)
 }
 
 // BarrierBackend claims the capability, so it is held to the same conformance

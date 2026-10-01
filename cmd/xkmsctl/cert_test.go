@@ -3177,6 +3177,35 @@ func (m *mockCertClient) TPMPolicySetDescription(context.Context, *transport.TPM
 	return nil, nil
 }
 
+// OIDC credential operations are not exercised by this double.
+func (*mockCertClient) OIDCCredentialCreate(context.Context, *transport.OIDCCredentialCreateRequest) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockCertClient) OIDCCredentialImport(context.Context, *transport.OIDCCredentialImportRequest) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockCertClient) OIDCCredentialGet(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockCertClient) OIDCCredentialList(context.Context, *transport.OIDCCredentialListRequest) (*transport.OIDCCredentialListResponse, error) {
+	return nil, nil
+}
+func (*mockCertClient) OIDCCredentialDelete(context.Context, *transport.OIDCCredentialRef) error {
+	return nil
+}
+func (*mockCertClient) OIDCCredentialRefresh(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockCertClient) OIDCCredentialGetAccessToken(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCAccessToken, error) {
+	return nil, nil
+}
+func (*mockCertClient) OIDCCredentialDeviceStart(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockCertClient) OIDCCredentialDevicePoll(context.Context, *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	return nil, nil
+}
+
 func (m *mockCertClient) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	return nil, nil
 }

@@ -456,6 +456,35 @@ func (m *mockService) TPMPolicySetDescription(context.Context, *TPMPolicyDescrip
 	return nil, nil
 }
 
+// OIDC credential operations are not exercised by this double.
+func (*mockService) OIDCCredentialCreate(context.Context, *OIDCCredentialCreateRequest) (*OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockService) OIDCCredentialImport(context.Context, *OIDCCredentialImportRequest) (*OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockService) OIDCCredentialGet(context.Context, *OIDCCredentialRef) (*OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockService) OIDCCredentialList(context.Context, *OIDCCredentialListRequest) (*OIDCCredentialListResponse, error) {
+	return nil, nil
+}
+func (*mockService) OIDCCredentialDelete(context.Context, *OIDCCredentialRef) error {
+	return nil
+}
+func (*mockService) OIDCCredentialRefresh(context.Context, *OIDCCredentialRef) (*OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockService) OIDCCredentialGetAccessToken(context.Context, *OIDCCredentialRef) (*OIDCAccessToken, error) {
+	return nil, nil
+}
+func (*mockService) OIDCCredentialDeviceStart(context.Context, *OIDCCredentialRef) (*OIDCCredential, error) {
+	return nil, nil
+}
+func (*mockService) OIDCCredentialDevicePoll(context.Context, *OIDCCredentialRef) (*OIDCCredential, error) {
+	return nil, nil
+}
+
 func (m *mockService) TPMObjectPolicy(context.Context, *TPMObjectPolicyRequest) (*TPMObjectPolicyResponse, error) {
 	return nil, nil
 }

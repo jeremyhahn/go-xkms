@@ -1,6 +1,6 @@
 # OIDC — User Guide
 
-Status: current. Last verified: 2026-09-29.
+Status: current. Last verified: 2026-09-30.
 
 ## Log in to a standard OIDC provider
 
@@ -108,3 +108,34 @@ xkey oidc login --provider google --token-store /tmp/scratch-tokens.json
 An explicit `--token-store <path>` always writes that exact plain file,
 whether or not a barrier is initialized — useful for a throwaway or
 scripted session you don't want mixed in with your normal one.
+
+## Server credentials in the GUI
+
+With the xKey GUI connected to an xkmsd, the OIDC view's Providers tab shows a
+**Server credentials** section above your local providers. These are logins
+the server holds on its tenant barrier and refreshes itself; your local
+providers below are untouched and keep working as before. When no server is
+connected the section is not shown.
+
+- **Add server credential** — pick a provider template (openai, anthropic,
+  google, ...; or a custom provider with its issuer, client ID, scopes and
+  device endpoint) and a scope: *Personal* (only you) or *Shared with the
+  tenant*. The credential is pending until it has a login.
+- **Device login** — for providers that support it (openai): the dialog shows
+  the user code and the verification URL; approve it on any device. The GUI
+  polls the server at the provider's interval until the credential is active,
+  and stops when the login expires or you close the dialog.
+- **Import login** — paste tokens (access token, optional refresh token and
+  expiry), or the content of a codex `auth.json` (imported as an openai
+  credential). Tick *Create the credential* to create it in the same step.
+  The pasted secrets are cleared from the form as soon as you submit.
+- **Refresh**, **Delete**, and **Copy token** — Copy token asks the server
+  for a current access token when you click it and puts it on the clipboard,
+  which clears itself after the configured timeout.
+
+A credential whose status is *Re-login required* or *Expired* is marked in the
+list: run a device login again, or import a new login. anthropic tokens are
+imported and never refreshed, so they expire on their own date.
+
+The same credentials are reachable from the CLI with `xkey oidc` while an
+xkmsd is configured — see [cli.md](cli.md#server-mode-an-xkmsd-configured).

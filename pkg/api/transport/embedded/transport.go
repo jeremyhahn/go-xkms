@@ -1249,6 +1249,80 @@ func (t *Transport) TenantVTPMStop(ctx context.Context, tenantID string) (*trans
 	return t.service.TenantVTPMStop(ctx, tenantID)
 }
 
+// OIDC Credential Operations
+
+// OIDCCredentialCreate creates a server-side OIDC credential.
+func (t *Transport) OIDCCredentialCreate(ctx context.Context, req *transport.OIDCCredentialCreateRequest) (*transport.OIDCCredential, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.OIDCCredentialCreate(ctx, req)
+}
+
+// OIDCCredentialImport imports tokens into an OIDC credential.
+func (t *Transport) OIDCCredentialImport(ctx context.Context, req *transport.OIDCCredentialImportRequest) (*transport.OIDCCredential, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.OIDCCredentialImport(ctx, req)
+}
+
+// OIDCCredentialGet returns an OIDC credential's public view.
+func (t *Transport) OIDCCredentialGet(ctx context.Context, req *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.OIDCCredentialGet(ctx, req)
+}
+
+// OIDCCredentialList returns the OIDC credentials of a tenant the caller can see.
+func (t *Transport) OIDCCredentialList(ctx context.Context, req *transport.OIDCCredentialListRequest) (*transport.OIDCCredentialListResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.OIDCCredentialList(ctx, req)
+}
+
+// OIDCCredentialDelete deletes an OIDC credential.
+func (t *Transport) OIDCCredentialDelete(ctx context.Context, req *transport.OIDCCredentialRef) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.service.OIDCCredentialDelete(ctx, req)
+}
+
+// OIDCCredentialRefresh refreshes an OIDC credential now.
+func (t *Transport) OIDCCredentialRefresh(ctx context.Context, req *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.OIDCCredentialRefresh(ctx, req)
+}
+
+// OIDCCredentialGetAccessToken returns a current access token of an OIDC credential.
+func (t *Transport) OIDCCredentialGetAccessToken(ctx context.Context, req *transport.OIDCCredentialRef) (*transport.OIDCAccessToken, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.OIDCCredentialGetAccessToken(ctx, req)
+}
+
+// OIDCCredentialDeviceStart starts a device login for an OIDC credential.
+func (t *Transport) OIDCCredentialDeviceStart(ctx context.Context, req *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.OIDCCredentialDeviceStart(ctx, req)
+}
+
+// OIDCCredentialDevicePoll polls an OIDC credential's device login once.
+func (t *Transport) OIDCCredentialDevicePoll(ctx context.Context, req *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.OIDCCredentialDevicePoll(ctx, req)
+}
+
 // CreateCustodianGroup creates a new custodian group.
 func (t *Transport) CreateCustodianGroup(ctx context.Context, req *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
 	if !t.connected {

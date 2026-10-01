@@ -43,6 +43,10 @@ type mockCAClient struct {
 	// Fake serves the TPM policy API, which these tests do not exercise.
 	*tpmpolicyfake.Fake
 
+	// OIDCCredentialService completes transport.Client; these tests never
+	// call it.
+	transport.OIDCCredentialService
+
 	getCACertificateResp  *transport.GetCACertificateResponse
 	getCACertificateErr   error
 	issueCertificateResp  *transport.IssueCertificateResponse

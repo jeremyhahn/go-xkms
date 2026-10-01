@@ -267,6 +267,26 @@ var collectionRouteCases = []collectionRouteCase{
 			return err
 		},
 	},
+	{
+		name:   "OIDCCredentialCreate",
+		method: http.MethodPost,
+		base:   "/api/v1/oidc/credentials",
+		call: func(ctx context.Context, tr *Transport) error {
+			_, err := tr.OIDCCredentialCreate(ctx, &transport.OIDCCredentialCreateRequest{
+				OIDCCredentialRef: transport.OIDCCredentialRef{Scope: transport.OIDCCredentialScopeTenant, Name: "ci"},
+			})
+			return err
+		},
+	},
+	{
+		name:   "OIDCCredentialList",
+		method: http.MethodGet,
+		base:   "/api/v1/oidc/credentials",
+		call: func(ctx context.Context, tr *Transport) error {
+			_, err := tr.OIDCCredentialList(ctx, &transport.OIDCCredentialListRequest{})
+			return err
+		},
+	},
 }
 
 // TestTransport_CollectionRootRoutes_MatchRegisteredPaths is the #1087

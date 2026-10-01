@@ -85,5 +85,8 @@ func TestServiceModule_HostCompositionThroughSDK(t *testing.T) {
 		ServiceModuleFeatureTenantPasswords,
 		ServiceModuleFeaturePlatformStore,
 		ServiceModuleFeatureTPMPolicies,
+		// The test host's fake qrdb transport carries no coordination
+		// (leases), which OIDC credentials need.
+		ServiceModuleFeatureOIDCCredentials,
 	}, off)
 }

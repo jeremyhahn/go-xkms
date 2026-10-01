@@ -21,8 +21,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc"
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 // OIDCCallbackPortError reports a --callback-port outside 1-65535.

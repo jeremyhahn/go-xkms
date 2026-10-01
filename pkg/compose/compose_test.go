@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/hostdeps"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -84,6 +85,7 @@ func fullDeps(t *testing.T, svc *xkms.XKMSService) Deps {
 		Custodians:         custodians{},
 		Shares:             shares{},
 		ServeBarrier:       true,
+		Leases:             barriertest.NewStandaloneCoordinator(t),
 	}
 }
 
@@ -122,10 +124,23 @@ func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
 	assert.NotNil(t, st.Custodians)
 	assert.NotNil(t, st.Shares)
 	assert.NotNil(t, st.Invite)
+	assert.NotNil(t, st.OIDCCredentials)
 	assert.Equal(t, "barrier", st.Credentials.Strategy())
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
 
 	st.Wire(svc)
 	ctx := platformCtx()
+
+	// The OIDC credential service is wired over the host's barriers.
+	_, err = svc.OIDCCredentialCreate(ctx, &transport.OIDCCredentialCreateRequest{
+		OIDCCredentialRef: transport.OIDCCredentialRef{Scope: "tenant", Name: "claude"},
+		Config:            transport.OIDCCredentialConfig{Template: "anthropic"},
+		Tokens:            &transport.OIDCCredentialTokens{AccessToken: "sk-ant-oat01-x"},
+	})
+	require.NoError(t, err)
+	tok, err := svc.OIDCCredentialGetAccessToken(ctx, &transport.OIDCCredentialRef{Scope: "tenant", Name: "claude"})
+	require.NoError(t, err)
+	assert.Equal(t, "sk-ant-oat01-x", tok.AccessToken)
 
 	require.NoError(t, svc.SealStorePut(ctx, &transport.SealStorePutRequest{Name: "k", Secret: []byte("v")}))
 	got, err := svc.SealStoreGet(ctx, &transport.SealStoreGetRequest{Name: "k"})
@@ -172,17 +187,18 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 		}
 	}
 	assert.Equal(t, map[Feature]string{
-		FeaturePasswords:     "storage",
-		FeaturePIN:           "PIN backend",
-		FeaturePlatformStore: "storage",
-		FeatureCredentials:   "barrier registry",
-		FeatureSSH:           "storage",
-		FeatureCA:            "CA configuration",
-		FeatureTPMPolicies:   "TPM2 backend",
-		FeatureKeyVersions:   "storage",
-		FeatureBarrier:       "barrier registry",
-		FeatureCustody:       "custody clients",
-		FeatureInvite:        "storage",
+		FeaturePasswords:       "storage",
+		FeaturePIN:             "PIN backend",
+		FeaturePlatformStore:   "storage",
+		FeatureCredentials:     "barrier registry",
+		FeatureSSH:             "storage",
+		FeatureCA:              "CA configuration",
+		FeatureTPMPolicies:     "TPM2 backend",
+		FeatureKeyVersions:     "storage",
+		FeatureOIDCCredentials: "barrier registry",
+		FeatureBarrier:         "barrier registry",
+		FeatureCustody:         "custody clients",
+		FeatureInvite:          "storage",
 	}, missing)
 
 	assert.Nil(t, st.PasswordStore)

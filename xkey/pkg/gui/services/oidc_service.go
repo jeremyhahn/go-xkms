@@ -33,11 +33,11 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
-	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/pkg/urlsafety"
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	oidcaws "github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/handlers"
-	"github.com/jeremyhahn/go-xkms/pkg/urlsafety"
 	"github.com/pkg/browser"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )

@@ -17,10 +17,10 @@ import (
 	"context"
 	"testing"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 )
 
 // TestLockerOnRealStandaloneNode boots a real in-memory standalone qrdb node
@@ -29,21 +29,7 @@ import (
 // locker recognises a single-process node from qrdb itself rather than
 // from configuration it could be handed wrong.
 func TestLockerOnRealStandaloneNode(t *testing.T) {
-	cfg := qrdbsdk.DefaultDaemonConfig()
-	cfg.Raft.DataDir = t.TempDir()
-	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.Unix = false
-	cfg.Protocols.MCP = false
-	cfg.Seal.Enabled = false
-
-	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, node.Close()) })
-	coord, err := node.Client().Coordination()
-	require.NoError(t, err)
+	coord := barriertest.NewStandaloneCoordinator(t)
 
 	l := newLocker(coord, discardLogger())
 	unlock, err := l.lock(context.Background(), "tenant/oidc/shared/x.json")

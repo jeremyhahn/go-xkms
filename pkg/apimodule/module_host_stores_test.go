@@ -239,14 +239,22 @@ func TestModule_HostMount_EveryStoreAnswers(t *testing.T) {
 	})
 
 	// The host's service has no TPM2 backend (the simulator tests in
-	// pkg/compose cover that composition), so the TPM policy service is the
-	// one feature off, with its typed reason.
+	// pkg/compose cover that composition), and the fake qrdb transport
+	// carries no coordination (leases), which the OIDC credential service
+	// needs (pkg/compose covers it over a real node). Those two are off,
+	// each with its typed reason; every other feature is on.
 	stores := h.module.HostStores()
 	require.NotNil(t, stores)
-	require.Len(t, stores.Disabled, 1, "a host supplying every dependency but a TPM gets every other feature")
-	var disabled *compose.FeatureDisabledError
-	require.ErrorAs(t, stores.Disabled[0], &disabled)
-	assert.Equal(t, compose.FeatureTPMPolicies, disabled.Feature)
+	missing := map[compose.Feature]string{}
+	for _, reason := range stores.Disabled {
+		var disabled *compose.FeatureDisabledError
+		require.ErrorAs(t, reason, &disabled)
+		missing[disabled.Feature] = disabled.Missing
+	}
+	assert.Equal(t, map[compose.Feature]string{
+		compose.FeatureTPMPolicies:     "TPM2 backend",
+		compose.FeatureOIDCCredentials: "qrdb coordination",
+	}, missing)
 }
 
 // TestModule_HostMount_MissingDependenciesAreTypedAndOff proves a host that
@@ -276,6 +284,7 @@ func TestModule_HostMount_MissingDependenciesAreTypedAndOff(t *testing.T) {
 		compose.FeaturePlatformStore:   "platform sealer",
 		compose.FeatureCA:              "CA configuration",
 		compose.FeatureTPMPolicies:     "TPM2 backend",
+		compose.FeatureOIDCCredentials: "barrier registry",
 	}, missing)
 
 	w = h.call(t, http.MethodGet, "/api/v1/ca/certificate", "/api/v1/ca/certificate", nil, nil)

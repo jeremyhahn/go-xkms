@@ -43,6 +43,10 @@ type mockPIVClient struct {
 	// Fake serves the TPM policy API, which these tests do not exercise.
 	*tpmpolicyfake.Fake
 
+	// OIDCCredentialService completes transport.Client; these tests never
+	// call it.
+	transport.OIDCCredentialService
+
 	listPIVSlotsResp *transport.ListPIVSlotsResponse
 	listPIVSlotsErr  error
 

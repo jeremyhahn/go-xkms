@@ -40,6 +40,23 @@ func newConnectionWiringApp() *App {
 		certificateService: services.NewCertificateService(),
 		tpmPolicyService:   services.NewTPMPolicyService(),
 		staticPWService:    services.NewStaticPasswordService(nil),
+		oidcServerService:  services.NewOIDCServerService(nil),
+	}
+}
+
+func TestApplyConnectionEvent_ServerOIDCCredentialsFollowTheConnection(t *testing.T) {
+	a := newConnectionWiringApp()
+	assert.False(t, a.oidcServerService.Connected(), "before a connection there are no server credentials")
+
+	a.applyConnectionEvent(events.EventServerConnected, &connectedClient{})
+	assert.True(t, a.oidcServerService.Connected())
+
+	for _, eventType := range []events.EventType{events.EventServerDisconnected, events.EventServerError} {
+		a.applyConnectionEvent(events.EventServerConnected, &connectedClient{})
+		a.applyConnectionEvent(eventType, nil)
+		assert.False(t, a.oidcServerService.Connected(), "%s detaches the server credentials", eventType)
+		_, err := a.oidcServerService.ListServerCredentials("")
+		assert.ErrorIs(t, err, services.ErrOIDCServerNotConnected)
 	}
 }
 

@@ -864,6 +864,65 @@ service KeystoreService {
     option (qrdb.v1.permission) = "tenants:set_tpm_mode";
   }
 
+  // ==================== OIDC Credential Operations ====================
+  // Server-side OIDC credentials (pkg/oidc/credential): named OAuth/OIDC
+  // logins held on the tenant barrier and refreshed by the server,
+  // tenant-shared or personal. oidc_credentials:* is an xkms-owned
+  // permission family (pkg/auth.ResourceOIDCCredentials); a consumer reads
+  // a current access token with oidc_credentials:token and never holds the
+  // refresh token.
+
+  // OIDCCredentialCreate creates a credential, with tokens when they are at
+  // hand or pending a device login or an import otherwise.
+  rpc OIDCCredentialCreate(OIDCCredentialCreateRequest) returns (OIDCCredential) {
+    option (qrdb.v1.permission) = "oidc_credentials:create";
+  }
+
+  // OIDCCredentialImport replaces a credential's login with tokens obtained
+  // elsewhere and makes it active.
+  rpc OIDCCredentialImport(OIDCCredentialImportRequest) returns (OIDCCredential) {
+    option (qrdb.v1.permission) = "oidc_credentials:update";
+  }
+
+  // OIDCCredentialGet returns a credential's public view (no tokens).
+  rpc OIDCCredentialGet(OIDCCredentialRef) returns (OIDCCredential) {
+    option (qrdb.v1.permission) = "oidc_credentials:get";
+  }
+
+  // OIDCCredentialList returns the credentials of a tenant the caller can
+  // see.
+  rpc OIDCCredentialList(OIDCCredentialListRequest) returns (OIDCCredentialListResponse) {
+    option (qrdb.v1.permission) = "oidc_credentials:list";
+  }
+
+  // OIDCCredentialDelete deletes a credential.
+  rpc OIDCCredentialDelete(OIDCCredentialRef) returns (OIDCCredentialDeleteResponse) {
+    option (qrdb.v1.permission) = "oidc_credentials:delete";
+  }
+
+  // OIDCCredentialRefresh refreshes a credential now.
+  rpc OIDCCredentialRefresh(OIDCCredentialRef) returns (OIDCCredential) {
+    option (qrdb.v1.permission) = "oidc_credentials:update";
+  }
+
+  // OIDCCredentialGetAccessToken returns a current access token, refreshing
+  // first when the token is inside its refresh margin.
+  rpc OIDCCredentialGetAccessToken(OIDCCredentialRef) returns (OIDCAccessToken) {
+    option (qrdb.v1.permission) = "oidc_credentials:token";
+  }
+
+  // OIDCCredentialDeviceStart starts a device login; the returned
+  // credential's device_login carries the user code.
+  rpc OIDCCredentialDeviceStart(OIDCCredentialRef) returns (OIDCCredential) {
+    option (qrdb.v1.permission) = "oidc_credentials:update";
+  }
+
+  // OIDCCredentialDevicePoll polls the device login once: the credential
+  // stays pending until the user approves.
+  rpc OIDCCredentialDevicePoll(OIDCCredentialRef) returns (OIDCCredential) {
+    option (qrdb.v1.permission) = "oidc_credentials:update";
+  }
+
   // ==================== PKCS#11 State Operations ====================
   // Durable token and object state for a PKCS#11 module running with
   // StorageType "remote". Values are opaque module-serialised records.
@@ -3941,6 +4000,117 @@ message TenantVTPMStatusResponse {
   int64 pid = 3;
   string socket = 4;
   int64 restarts = 5;
+}
+
+// ==================== OIDC Credential Operations ====================
+
+// OIDCCredentialRef names a credential. tenant_id empty is the caller's
+// tenant; scope is "tenant" (shared) or "user" (personal); owner is the
+// owning subject of a personal credential, empty for the caller.
+message OIDCCredentialRef {
+  string tenant_id = 1;
+  string scope = 2;
+  string owner = 3;
+  string name = 4;
+}
+
+// OIDCCredentialConfig is a credential's provider configuration. A template
+// fills every field left empty; endpoints left empty are discovered from the
+// issuer at creation. client_secret is accepted on create and never
+// returned. token_encoding is "form" (default) or "json"; device_style is
+// "rfc8628" (default) or "openai".
+message OIDCCredentialConfig {
+  string template = 1;
+  string issuer = 2;
+  string client_id = 3;
+  string client_secret = 4;
+  repeated string scopes = 5;
+  string authorization_endpoint = 6;
+  string token_endpoint = 7;
+  string device_authorization_endpoint = 8;
+  string token_encoding = 9;
+  string device_style = 10;
+  bool no_refresh = 11;
+  int64 token_lifetime_seconds = 12;
+  int64 refresh_margin_seconds = 13;
+}
+
+// OIDCCredentialTokens are tokens imported into a credential. expires_at
+// absent reads the expiry from a JWT access token or the template's token
+// lifetime.
+message OIDCCredentialTokens {
+  string access_token = 1;
+  string refresh_token = 2;
+  string id_token = 3;
+  string token_type = 4;
+  string scope = 5;
+  google.protobuf.Timestamp expires_at = 6;
+}
+
+// OIDCCredentialCreateRequest creates a credential; tokens absent leaves it
+// pending a device login or an import.
+message OIDCCredentialCreateRequest {
+  OIDCCredentialRef ref = 1;
+  OIDCCredentialConfig config = 2;
+  OIDCCredentialTokens tokens = 3;
+}
+
+// OIDCCredentialImportRequest imports tokens into a credential.
+message OIDCCredentialImportRequest {
+  OIDCCredentialRef ref = 1;
+  OIDCCredentialTokens tokens = 2;
+}
+
+// OIDCCredentialListRequest lists a tenant's credentials; tenant_id empty is
+// the caller's tenant.
+message OIDCCredentialListRequest {
+  string tenant_id = 1;
+}
+
+// OIDCCredentialListResponse holds the credentials the caller can see.
+message OIDCCredentialListResponse {
+  repeated OIDCCredential credentials = 1;
+}
+
+// OIDCCredentialDeleteResponse confirms a credential was deleted.
+message OIDCCredentialDeleteResponse {}
+
+// OIDCDeviceLogin is a device login in progress: what the user needs to
+// approve it.
+message OIDCDeviceLogin {
+  string user_code = 1;
+  string verification_uri = 2;
+  string verification_uri_complete = 3;
+  int64 interval_seconds = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+// OIDCCredential is a credential's public view: everything but its tokens
+// and client secret. status is "pending", "active", "relogin_required" or
+// "expired"; expires_at and last_refresh are absent when unknown.
+message OIDCCredential {
+  OIDCCredentialRef ref = 1;
+  OIDCCredentialConfig config = 2;
+  string status = 3;
+  string status_reason = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  bool refreshable = 6;
+  google.protobuf.Timestamp last_refresh = 7;
+  string last_error = 8;
+  OIDCDeviceLogin device_login = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+  string created_by = 12;
+}
+
+// OIDCAccessToken is a current access token of a credential, with the
+// login's ID token when it has one.
+message OIDCAccessToken {
+  string access_token = 1;
+  string token_type = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  string id_token = 4;
+  string scope = 5;
 }
 
 // ==================== FIDO2/WebAuthn Registration ====================

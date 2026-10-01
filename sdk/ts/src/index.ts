@@ -96,6 +96,12 @@ export { CustodianClient } from './clients/custodian.js';
 export { SharesClient } from './clients/shares.js';
 export { TenantsClient } from './clients/tenants.js';
 export { PasswordsClient } from './clients/passwords.js';
+export {
+  OidcCredentialClient,
+  OIDCDeviceLoginError,
+  type OIDCDeviceLoginFailure,
+  type WaitForDeviceLoginOptions,
+} from './clients/oidcCredential.js';
 export { PlatformClient } from './clients/platform.js';
 export { TpmPolicyClient, pcrBranch } from './clients/tpmPolicy.js';
 export { InitClient } from './clients/init.js';
@@ -126,6 +132,7 @@ export type * from './types/custodian.js';
 export type * from './types/shares.js';
 export type * from './types/tenants.js';
 export type * from './types/passwords.js';
+export type * from './types/oidcCredential.js';
 export type * from './types/platform.js';
 export type * from './types/tpmPolicy.js';
 export type * from './types/init.js';

@@ -8,6 +8,31 @@ manages the resulting session and saved provider configurations. See
 [architecture.md](architecture.md) for where the session is stored and why;
 this document is the flag reference.
 
+## Server mode (an xkmsd configured)
+
+With `--xkmsd-url`, `XKMSD_URL` or the config set, the commands act on the
+server's OIDC credentials instead of this host's; `--local` (on every
+`xkey oidc` command) keeps the local backend.
+
+| Command | Server behaviour |
+|---|---|
+| `providers add --name N [--template T] [--scope user\|tenant] [--issuer/--client-id/--client-secret/--scopes/--token-endpoint/--authorization-endpoint/--device-endpoint/--token-encoding/--device-style]` | Creates server credential N |
+| `providers list [--tenant T]` | Server credentials, then the local providers |
+| `providers remove N [--scope ...]` | Deletes server credential N |
+| `login --provider N [--scope ...]` | The provider's device login, run by the server; prints the code and URL and waits |
+| `token --provider N [--show-full] [--codex-auth-out PATH]` | A current access token; or a codex `auth.json` (`chatgptAuthTokens` mode, no refresh token) |
+| `refresh --provider N` | Refreshes now |
+| `import N (--codex-auth PATH \| --access-token V [--refresh-token V]) [--create] [--template T]` | Imports a login (server only) |
+| `logout` | Refused: remove the credential, or add `--local` |
+
+`--scope` is `user` (personal, default) or `tenant` (shared); `--owner` and
+`--tenant` address another owner's or tenant's credential where allowed.
+Flags that only mean something to the local backend (`--exec`,
+`--auto-refresh`, `--background`, `--no-browser`, `--redirect-url`,
+`--jwks-uri`, the AWS flags, ...) are refused in server mode with a pointer
+to `--local`. The full server reference is
+[docs/oidc-credentials/cli.md](../../../docs/oidc-credentials/cli.md).
+
 ## Session storage flags (login, token, refresh, logout)
 
 | Flag | Default | Meaning |

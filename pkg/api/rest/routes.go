@@ -433,6 +433,25 @@ func Routes() []RouteSpec {
 	permIf("POST", "/tenants/{tenantID}/tpm/vtpm/start", auth.ResourceTenants, auth.ActionSetTPMMode, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.VTPMStartHandler })
 	permIf("POST", "/tenants/{tenantID}/tpm/vtpm/stop", auth.ResourceTenants, auth.ActionSetTPMMode, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.VTPMStopHandler })
 
+	// --- Server-side OIDC credentials (pkg/oidc/credential).
+	// oidc_credentials:* is an xkms-owned permission family
+	// (pkg/auth.ResourceOIDCCredentials) whose tenancy scope
+	// pkg/apimodule/module_scopes.go declares; the credential service binds
+	// each call to the caller's tenant and a personal credential to its
+	// owner. Reading a current access token is its own action, token, so a
+	// consumer can be granted tokens without managing credentials; the
+	// token route is a POST so a token never answers a cacheable GET. ---
+	hasOIDCCredentials := func(s *Server) bool { return s.oidcCredentialHandlers != nil }
+	permIf("POST", "/oidc/credentials", auth.ResourceOIDCCredentials, auth.ActionCreate, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.CreateHandler })
+	permIf("GET", "/oidc/credentials", auth.ResourceOIDCCredentials, auth.ActionList, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.ListHandler })
+	permIf("GET", "/oidc/credentials/{scope}/{name}", auth.ResourceOIDCCredentials, auth.ActionGet, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.GetHandler })
+	permIf("DELETE", "/oidc/credentials/{scope}/{name}", auth.ResourceOIDCCredentials, auth.ActionDelete, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.DeleteHandler })
+	permIf("POST", "/oidc/credentials/{scope}/{name}/import", auth.ResourceOIDCCredentials, auth.ActionUpdate, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.ImportHandler })
+	permIf("POST", "/oidc/credentials/{scope}/{name}/refresh", auth.ResourceOIDCCredentials, auth.ActionUpdate, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.RefreshHandler })
+	permIf("POST", "/oidc/credentials/{scope}/{name}/token", auth.ResourceOIDCCredentials, auth.ActionToken, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.TokenHandler })
+	permIf("POST", "/oidc/credentials/{scope}/{name}/device", auth.ResourceOIDCCredentials, auth.ActionUpdate, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.DeviceStartHandler })
+	permIf("POST", "/oidc/credentials/{scope}/{name}/device/poll", auth.ResourceOIDCCredentials, auth.ActionUpdate, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.DevicePollHandler })
+
 	// --- Init ceremony. status and the claim-* halves are reachable
 	// without an account while the ceremony has not reached the
 	// operational state (publicCeremonyPaths in middleware_init_public.go

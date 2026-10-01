@@ -2004,6 +2004,115 @@ func (t *Transport) TenantVTPMStop(ctx context.Context, tenantID string) (*trans
 	return &result, nil
 }
 
+// OIDC Credential Operations
+//
+// Each method calls the oidc.credential.* tool of the same name with the
+// request as its parameters.
+
+// OIDCCredentialCreate creates a server-side OIDC credential.
+func (t *Transport) OIDCCredentialCreate(ctx context.Context, req *transport.OIDCCredentialCreateRequest) (*transport.OIDCCredential, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.OIDCCredential
+	if err := t.rpcCall(ctx, "oidc.credential.create", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// OIDCCredentialImport imports tokens into an OIDC credential.
+func (t *Transport) OIDCCredentialImport(ctx context.Context, req *transport.OIDCCredentialImportRequest) (*transport.OIDCCredential, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.OIDCCredential
+	if err := t.rpcCall(ctx, "oidc.credential.import", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// OIDCCredentialGet returns an OIDC credential's public view.
+func (t *Transport) OIDCCredentialGet(ctx context.Context, req *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.OIDCCredential
+	if err := t.rpcCall(ctx, "oidc.credential.get", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// OIDCCredentialList returns the OIDC credentials of a tenant the caller can see.
+func (t *Transport) OIDCCredentialList(ctx context.Context, req *transport.OIDCCredentialListRequest) (*transport.OIDCCredentialListResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.OIDCCredentialListResponse
+	if err := t.rpcCall(ctx, "oidc.credential.list", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// OIDCCredentialDelete deletes an OIDC credential.
+func (t *Transport) OIDCCredentialDelete(ctx context.Context, req *transport.OIDCCredentialRef) error {
+	if !t.IsConnected() {
+		return ErrNotConnected
+	}
+	return t.rpcCall(ctx, "oidc.credential.delete", req, nil)
+}
+
+// OIDCCredentialRefresh refreshes an OIDC credential now.
+func (t *Transport) OIDCCredentialRefresh(ctx context.Context, req *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.OIDCCredential
+	if err := t.rpcCall(ctx, "oidc.credential.refresh", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// OIDCCredentialGetAccessToken returns a current access token of an OIDC credential.
+func (t *Transport) OIDCCredentialGetAccessToken(ctx context.Context, req *transport.OIDCCredentialRef) (*transport.OIDCAccessToken, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.OIDCAccessToken
+	if err := t.rpcCall(ctx, "oidc.credential.token", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// OIDCCredentialDeviceStart starts a device login for an OIDC credential.
+func (t *Transport) OIDCCredentialDeviceStart(ctx context.Context, req *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.OIDCCredential
+	if err := t.rpcCall(ctx, "oidc.credential.device.start", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// OIDCCredentialDevicePoll polls an OIDC credential's device login once.
+func (t *Transport) OIDCCredentialDevicePoll(ctx context.Context, req *transport.OIDCCredentialRef) (*transport.OIDCCredential, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.OIDCCredential
+	if err := t.rpcCall(ctx, "oidc.credential.device.poll", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // CustodianGroupService methods.
 
 // CreateCustodianGroup creates a new custodian group.

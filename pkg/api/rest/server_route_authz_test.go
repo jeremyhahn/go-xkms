@@ -154,6 +154,17 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodGet, "/api/v1/tenants/tenant-b/tpm/vtpm", "tenants", "read"},
 	{http.MethodPost, "/api/v1/tenants/tenant-b/tpm/vtpm/start", "tenants", "set_tpm_mode"},
 	{http.MethodPost, "/api/v1/tenants/tenant-b/tpm/vtpm/stop", "tenants", "set_tpm_mode"},
+
+	// OIDC credentials — the gRPC OIDCCredential* RPCs.
+	{http.MethodPost, "/api/v1/oidc/credentials", "oidc_credentials", "create"},
+	{http.MethodGet, "/api/v1/oidc/credentials", "oidc_credentials", "list"},
+	{http.MethodGet, "/api/v1/oidc/credentials/tenant/ci", "oidc_credentials", "get"},
+	{http.MethodDelete, "/api/v1/oidc/credentials/tenant/ci", "oidc_credentials", "delete"},
+	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/import", "oidc_credentials", "update"},
+	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/refresh", "oidc_credentials", "update"},
+	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/token", "oidc_credentials", "token"},
+	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/device", "oidc_credentials", "update"},
+	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/device/poll", "oidc_credentials", "update"},
 }
 
 // sessionOnlyRoutes is the golden set of REST routes that still require only

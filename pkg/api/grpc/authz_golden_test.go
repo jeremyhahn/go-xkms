@@ -155,6 +155,19 @@ var goldenRPCPermissions = map[string]string{
 	"TPMPolicySetDescription":  "tpm_policy:update",
 	"TPMObjectPolicy":          "tpm_policy:get",
 	"TPMPolicyRotateAuthority": "tpm_policy:rotate",
+	// Server-side OIDC credentials (pkg/oidc/credential) --
+	// pkg/auth.ResourceOIDCCredentials, an xkms-owned resource family. A
+	// login change (import, refresh, device login) is an update; reading a
+	// current access token is its own action, token.
+	"OIDCCredentialCreate":         "oidc_credentials:create",
+	"OIDCCredentialImport":         "oidc_credentials:update",
+	"OIDCCredentialGet":            "oidc_credentials:get",
+	"OIDCCredentialList":           "oidc_credentials:list",
+	"OIDCCredentialDelete":         "oidc_credentials:delete",
+	"OIDCCredentialRefresh":        "oidc_credentials:update",
+	"OIDCCredentialGetAccessToken": "oidc_credentials:token",
+	"OIDCCredentialDeviceStart":    "oidc_credentials:update",
+	"OIDCCredentialDevicePoll":     "oidc_credentials:update",
 	// A tenant's TPM mode and vTPM (system scope only; tenants:set_tpm_mode
 	// is a cross-tenant permission xkms declares).
 	"GetTenantTPMMode": "tenants:read",

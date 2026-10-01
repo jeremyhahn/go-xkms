@@ -144,6 +144,20 @@ func newCatchAllMCPServer(t *testing.T) (string, func()) {
 				"key_id": "k1", "certificate_pem": "cert-pem", "chain_pem": []string{"chain1"},
 			})
 			return jsonrpcResponse{Result: d}
+		case "oidc.credential.get", "oidc.credential.token":
+			var ref transport.OIDCCredentialRef
+			if err := json.Unmarshal(req.Params, &ref); err != nil {
+				return jsonrpcResponse{ErrorText: err.Error()}
+			}
+			var result any = transport.OIDCCredential{OIDCCredentialRef: ref, Status: transport.OIDCCredentialStatusActive}
+			if req.Method == "oidc.credential.token" {
+				result = transport.OIDCAccessToken{AccessToken: "at-" + ref.Owner, TokenType: "Bearer"}
+			}
+			d, err := json.Marshal(result)
+			if err != nil {
+				return jsonrpcResponse{ErrorText: err.Error()}
+			}
+			return jsonrpcResponse{Result: d}
 		default:
 			// Return empty valid result for all other methods
 			return jsonrpcResponse{Result: json.RawMessage(`{}`)}

@@ -80,7 +80,24 @@ func registerRoleGrants() {
 
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perms...)
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.RoleNameOwner, perms...)
+
+		// A tenant's shared OIDC credentials are visible to every user of
+		// the tenant, so the User role consumes them: it reads their
+		// metadata and current access tokens. Creating, changing and
+		// deleting credentials stays with Admin and Owner, as passwords:write
+		// does for the password vault.
+		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleUser, userPermissions()...)
 	})
+}
+
+// userPermissions returns the xkms-owned permissions the built-in User role
+// holds: the consuming slice of oidc_credentials.
+func userPermissions() []qrdbsdk.Permission {
+	return []qrdbsdk.Permission{
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionToken),
+	}
 }
 
 // belowGatePermissions returns the permissions xkms checks below the

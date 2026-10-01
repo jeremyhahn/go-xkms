@@ -68,6 +68,10 @@ func (m *mockCloserTransport) Close() error {
 type baseSDKClient struct {
 	// Fake serves the TPM policy API, which these tests do not exercise.
 	*tpmpolicyfake.Fake
+
+	// OIDCCredentialService is never called by these tests; a nil embed
+	// completes the client's method set.
+	transport.OIDCCredentialService
 }
 
 func (b *baseSDKClient) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {

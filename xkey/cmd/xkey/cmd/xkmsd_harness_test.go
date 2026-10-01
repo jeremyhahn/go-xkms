@@ -141,8 +141,13 @@ func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
 // wiring pkg/server's startUnix uses in production (go-xkms#951).
 func startTestXKMSd(t *testing.T) (address string, cleanup func()) {
 	t.Helper()
+	return startTestXKMSdService(t, newTestXKMSService(t))
+}
 
-	svc := newTestXKMSService(t)
+// startTestXKMSdService is startTestXKMSd over a caller-built service, for a
+// test that wires a subsystem into it first.
+func startTestXKMSdService(t *testing.T, svc *pkgxkms.XKMSService) (address string, cleanup func()) {
+	t.Helper()
 
 	// The unix gRPC server refuses a group- or world-writable socket
 	// directory (#1299), so the socket lives in a private directory.

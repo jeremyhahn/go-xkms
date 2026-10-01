@@ -31,7 +31,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/testutil/hostdeps"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 )
 
 // fakeIdP is an OAuth 2.0 / OIDC provider for the tests: discovery, RFC 8628
@@ -215,9 +215,9 @@ const (
 
 func newEnv(t *testing.T, opts ...Option) *env {
 	t.Helper()
-	registry := hostdeps.NewBarrierRegistry(t)
-	hostdeps.RegisterTenant(t, registry, tenantA)
-	hostdeps.RegisterTenant(t, registry, tenantB)
+	registry := barriertest.NewRegistry(t)
+	barriertest.RegisterTenant(t, registry, tenantA)
+	barriertest.RegisterTenant(t, registry, tenantB)
 	idp := newFakeIdP(t)
 	clock := &testClock{}
 	all := append([]Option{WithHTTPClient(idp.srv.Client()), WithClock(clock.now)}, opts...)

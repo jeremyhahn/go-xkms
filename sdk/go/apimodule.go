@@ -206,6 +206,7 @@ const (
 	ServiceModuleFeatureSSH             = compose.FeatureSSH
 	ServiceModuleFeatureCA              = compose.FeatureCA
 	ServiceModuleFeatureTPMPolicies     = compose.FeatureTPMPolicies
+	ServiceModuleFeatureOIDCCredentials = compose.FeatureOIDCCredentials
 	ServiceModuleFeatureBarrier         = compose.FeatureBarrier
 	ServiceModuleFeatureCustody         = compose.FeatureCustody
 )

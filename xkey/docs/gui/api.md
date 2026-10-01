@@ -1,6 +1,6 @@
 # xKey Desktop GUI — API
 
-> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
 
 The GUI's API is the set of Go types Wails binds to the frontend — there is
 no separate network protocol for it (the Unix-socket IPC server is a
@@ -49,6 +49,7 @@ full method-by-method detail instead of repeating it.
 | `AutoUnsealService` | `GetStatus`, `Enable`, `Disable`, `TryAutoUnseal`, `Reseal` | `auto_unseal_service.go` |
 | `BarrierAutoUnsealService` | `GetAutoUnsealStatus`, `EnableAutoUnseal` (seals the barrier password under a named TPM policy), `DisableAutoUnseal`, `TryAutoUnseal` | `barrier_auto_unseal.go` |
 | `OIDCService` | Provider CRUD/discovery; login/logout, token info/refresh/auto-refresh; script-based token post-processing (execute/save/list/delete) | `oidc_service.go` |
+| `OIDCServerService` | The connected xkmsd's server-side OIDC credentials ([../oidc/user.md](../oidc/user.md#server-credentials-in-the-gui)): `Connected`, `ServerTemplates` (every built-in template but the region-bound AWS ones), `ListServerCredentials(tenantID)`, `CreateServerCredential(ref, config)`, `ImportServerTokens(ref, tokens, template, create)`, `ImportCodexAuth(ref, authJSON, create)`, `StartServerDeviceLogin`, `PollServerDeviceLogin` (one poll; the frontend repeats it at `interval_seconds`), `RefreshServerCredential`, `DeleteServerCredential`, `CopyServerAccessToken` (puts a current access token on the self-clearing clipboard; no token is returned to the frontend). `ref` is `{tenant_id, scope: "tenant"\|"user", owner, name}`; an empty scope is `user`. Every method fails with `ErrOIDCServerNotConnected` while no server is connected | `oidc_server_service.go` |
 | `ClipboardService` | `Copy`, `CopyWithClear`, `ClearClipboard`, timeout get/set | `clipboard_service.go` |
 | `TrustService` | Certificate list/add/remove/import/export (PEM/DER); browser trust bundle export; system install/remove | `trust_service.go` |
 | `PINService` | PIN status, set/change/verify SO and user PIN, lockout status/reset, FIDO2 hash verify | `pin_service.go` |

@@ -38,6 +38,7 @@ describe("parseHash", () => {
       ["#/piv", "piv"],
       ["#/ssh", "ssh"],
       ["#/passwords", "passwords"],
+      ["#/oidc/credentials", "oidcCredentials"],
       ["#/platform", "platform"],
       ["#/tpm/policies", "tpmPolicies"],
       ["#/users", "users"],

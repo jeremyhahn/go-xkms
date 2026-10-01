@@ -288,6 +288,18 @@ var canonicalCapabilities = map[string]capability{
 	"users.listCredentials":    {GRPC: "ListUserCredentials", MCP: "user.listCredentials", REST: "GET /api/v1/users/{username}/credentials"},
 	"users.disable":            {GRPC: "DisableUser", MCP: "user.disable", REST: "POST /api/v1/users/{username}/disable"},
 	"users.enable":             {GRPC: "EnableUser", MCP: "user.enable", REST: "POST /api/v1/users/{username}/enable"},
+
+	// Server-side OIDC credentials (pkg/oidc/credential): one capability per
+	// verb, served on all three transports.
+	"oidc.credential.create":      {GRPC: "OIDCCredentialCreate", MCP: "oidc.credential.create", REST: "POST /api/v1/oidc/credentials"},
+	"oidc.credential.import":      {GRPC: "OIDCCredentialImport", MCP: "oidc.credential.import", REST: "POST /api/v1/oidc/credentials/{scope}/{name}/import"},
+	"oidc.credential.get":         {GRPC: "OIDCCredentialGet", MCP: "oidc.credential.get", REST: "GET /api/v1/oidc/credentials/{scope}/{name}"},
+	"oidc.credential.list":        {GRPC: "OIDCCredentialList", MCP: "oidc.credential.list", REST: "GET /api/v1/oidc/credentials"},
+	"oidc.credential.delete":      {GRPC: "OIDCCredentialDelete", MCP: "oidc.credential.delete", REST: "DELETE /api/v1/oidc/credentials/{scope}/{name}"},
+	"oidc.credential.refresh":     {GRPC: "OIDCCredentialRefresh", MCP: "oidc.credential.refresh", REST: "POST /api/v1/oidc/credentials/{scope}/{name}/refresh"},
+	"oidc.credential.token":       {GRPC: "OIDCCredentialGetAccessToken", MCP: "oidc.credential.token", REST: "POST /api/v1/oidc/credentials/{scope}/{name}/token"},
+	"oidc.credential.deviceStart": {GRPC: "OIDCCredentialDeviceStart", MCP: "oidc.credential.device.start", REST: "POST /api/v1/oidc/credentials/{scope}/{name}/device"},
+	"oidc.credential.devicePoll":  {GRPC: "OIDCCredentialDevicePoll", MCP: "oidc.credential.device.poll", REST: "POST /api/v1/oidc/credentials/{scope}/{name}/device/poll"},
 }
 
 // scan re-derives the three transports' wire tables from their own source,

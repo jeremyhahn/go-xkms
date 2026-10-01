@@ -31,7 +31,7 @@ try {
 
 Domain clients: `health`, `capabilities`, `auth`, `backends`, `keys`, `certs`,
 `seal`, `frost`, `barrier`, `pin`, `piv`, `ca`, `cluster`, `custodian`,
-`shares`, `tenants`, `passwords`, `platform`, `tpmPolicies`, `init`,
+`shares`, `tenants`, `passwords`, `oidcCredentials`, `platform`, `tpmPolicies`, `init`,
 `credentials`, `users`, `ssh`. Every request/response type mirrors the Go
 DTO json tags exactly; Go `[]byte` members are standard-base64 strings.
 
@@ -40,6 +40,40 @@ the keys/sealed objects bound to them) are `tpmPolicies` — see
 `docs/tpm-policies/api.md`. A tenant's TPM mode and its vTPM are system-scope
 operations on `tenants` (`getTPMMode`, `setTPMMode`, `vtpmStatus`,
 `vtpmStart`, `vtpmStop`).
+
+### OIDC credentials
+
+`oidcCredentials` manages server-side OIDC credentials: named OAuth/OIDC
+logins xkmsd holds on the tenant barrier and refreshes itself. A credential is
+tenant-shared (`scope: 'tenant'`) or personal (`scope: 'user'`, visible only
+to its owner). Consumers fetch a current access token by reference; the server
+never returns the refresh token or client secret.
+
+```ts
+const ref = { scope: 'tenant', name: 'codex' } as const;
+
+// Create pending, then log in with the device flow.
+await xkms.oidcCredentials.create({ ...ref, config: { template: 'openai' } });
+const started = await xkms.oidcCredentials.startDeviceLogin(ref);
+show(started.device_login!.user_code, started.device_login!.verification_uri);
+const done = await xkms.oidcCredentials.waitForDeviceLogin(started, { signal });
+// done.status: 'active' once approved, or the status the server settled on.
+
+// Or import tokens obtained elsewhere (e.g. a codex auth.json).
+await xkms.oidcCredentials.importTokens(ref, { access_token, refresh_token, id_token });
+
+const { access_token } = await xkms.oidcCredentials.getAccessToken(ref);
+```
+
+Methods: `list(tenantId?)`, `create`, `get`, `delete`, `importTokens`,
+`refresh`, `getAccessToken`, `startDeviceLogin`, `pollDeviceLogin`, and
+`waitForDeviceLogin`, which polls at the device login's `interval_seconds`
+(re-read on every poll) until the credential leaves `pending`. It rejects with
+`OIDCDeviceLoginError` (`reason: 'expired' | 'not_started'`) when no approval
+can arrive, and with the signal's reason when aborted. Every reference takes
+optional `tenant_id` and `owner`; empty means the caller's own. Provider
+templates: `openai` (device login or import), `anthropic` (import only, never
+refreshed), `google`, `microsoft`, `okta`, `auth0`, `keycloak`.
 
 ### Authentication
 

@@ -1854,6 +1854,136 @@ export namespace services {
 	
 	    }
 	}
+	export class OIDCServerCredentialInfo {
+	    tenant_id?: string;
+	    scope: string;
+	    owner?: string;
+	    name: string;
+	    template?: string;
+	    issuer?: string;
+	    client_id?: string;
+	    scopes?: string[];
+	    status: string;
+	    status_reason?: string;
+	    expires_at?: string;
+	    refreshable: boolean;
+	    last_refresh?: string;
+	    last_error?: string;
+	    device_login?: OIDCServerDeviceLogin;
+	    created_at?: string;
+	    updated_at?: string;
+	    created_by?: string;
+	    supports_device: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new OIDCServerCredentialInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tenant_id = source["tenant_id"];
+	        this.scope = source["scope"];
+	        this.owner = source["owner"];
+	        this.name = source["name"];
+	        this.template = source["template"];
+	        this.issuer = source["issuer"];
+	        this.client_id = source["client_id"];
+	        this.scopes = source["scopes"];
+	        this.status = source["status"];
+	        this.status_reason = source["status_reason"];
+	        this.expires_at = source["expires_at"];
+	        this.refreshable = source["refreshable"];
+	        this.last_refresh = source["last_refresh"];
+	        this.last_error = source["last_error"];
+	        this.device_login = this.convertValues(source["device_login"], OIDCServerDeviceLogin);
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	        this.created_by = source["created_by"];
+	        this.supports_device = source["supports_device"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class OIDCServerDeviceLogin {
+	    user_code: string;
+	    verification_uri: string;
+	    verification_uri_complete?: string;
+	    interval_seconds: number;
+	    expires_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new OIDCServerDeviceLogin(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.user_code = source["user_code"];
+	        this.verification_uri = source["verification_uri"];
+	        this.verification_uri_complete = source["verification_uri_complete"];
+	        this.interval_seconds = source["interval_seconds"];
+	        this.expires_at = source["expires_at"];
+	    }
+	}
+	export class OIDCServerTemplateInfo {
+	    name: string;
+	    description: string;
+	    issuer?: string;
+	    scopes?: string[];
+	    requires_issuer: boolean;
+	    supports_device: boolean;
+	    supports_import: boolean;
+	    no_refresh: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new OIDCServerTemplateInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.issuer = source["issuer"];
+	        this.scopes = source["scopes"];
+	        this.requires_issuer = source["requires_issuer"];
+	        this.supports_device = source["supports_device"];
+	        this.supports_import = source["supports_import"];
+	        this.no_refresh = source["no_refresh"];
+	    }
+	}
+	export class OIDCServerTokens {
+	    access_token: string;
+	    refresh_token?: string;
+	    id_token?: string;
+	    expires_at?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new OIDCServerTokens(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.access_token = source["access_token"];
+	        this.refresh_token = source["refresh_token"];
+	        this.id_token = source["id_token"];
+	        this.expires_at = source["expires_at"];
+	    }
+	}
 	export class SealerInfo {
 	    id: string;
 	    available: boolean;
@@ -5455,6 +5585,60 @@ export namespace transport {
 	        this.status = source["status"];
 	        this.version = source["version"];
 	        this.message = source["message"];
+	    }
+	}
+	export class OIDCCredentialConfig {
+	    template?: string;
+	    issuer?: string;
+	    client_id?: string;
+	    client_secret?: string;
+	    scopes?: string[];
+	    authorization_endpoint?: string;
+	    token_endpoint?: string;
+	    device_authorization_endpoint?: string;
+	    token_encoding?: string;
+	    device_style?: string;
+	    no_refresh?: boolean;
+	    token_lifetime_seconds?: number;
+	    refresh_margin_seconds?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new OIDCCredentialConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.template = source["template"];
+	        this.issuer = source["issuer"];
+	        this.client_id = source["client_id"];
+	        this.client_secret = source["client_secret"];
+	        this.scopes = source["scopes"];
+	        this.authorization_endpoint = source["authorization_endpoint"];
+	        this.token_endpoint = source["token_endpoint"];
+	        this.device_authorization_endpoint = source["device_authorization_endpoint"];
+	        this.token_encoding = source["token_encoding"];
+	        this.device_style = source["device_style"];
+	        this.no_refresh = source["no_refresh"];
+	        this.token_lifetime_seconds = source["token_lifetime_seconds"];
+	        this.refresh_margin_seconds = source["refresh_margin_seconds"];
+	    }
+	}
+	export class OIDCCredentialRef {
+	    tenant_id?: string;
+	    scope: string;
+	    owner?: string;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new OIDCCredentialRef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tenant_id = source["tenant_id"];
+	        this.scope = source["scope"];
+	        this.owner = source["owner"];
+	        this.name = source["name"];
 	    }
 	}
 	export class ShareCollectionStatus {

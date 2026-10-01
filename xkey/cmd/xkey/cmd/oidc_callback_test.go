@@ -33,8 +33,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc"
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 // withLoadedConfig installs cfg as the loaded configuration for the test.

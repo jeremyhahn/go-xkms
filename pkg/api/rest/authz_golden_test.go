@@ -252,6 +252,15 @@ var goldenRESTPermissions = map[string]string{
 	"GET /api/v1/tenants/{tenantID}/tpm/vtpm":                    "tenants:read",
 	"POST /api/v1/tenants/{tenantID}/tpm/vtpm/start":             "tenants:set_tpm_mode",
 	"POST /api/v1/tenants/{tenantID}/tpm/vtpm/stop":              "tenants:set_tpm_mode",
+	"POST /api/v1/oidc/credentials":                              "oidc_credentials:create",
+	"GET /api/v1/oidc/credentials":                               "oidc_credentials:list",
+	"GET /api/v1/oidc/credentials/{scope}/{name}":                "oidc_credentials:get",
+	"DELETE /api/v1/oidc/credentials/{scope}/{name}":             "oidc_credentials:delete",
+	"POST /api/v1/oidc/credentials/{scope}/{name}/import":        "oidc_credentials:update",
+	"POST /api/v1/oidc/credentials/{scope}/{name}/refresh":       "oidc_credentials:update",
+	"POST /api/v1/oidc/credentials/{scope}/{name}/token":         "oidc_credentials:token",
+	"POST /api/v1/oidc/credentials/{scope}/{name}/device":        "oidc_credentials:update",
+	"POST /api/v1/oidc/credentials/{scope}/{name}/device/poll":   "oidc_credentials:update",
 }
 
 // TestRESTPermissions_MatchWireContract pins the resource:action pair of

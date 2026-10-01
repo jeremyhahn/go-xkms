@@ -66,6 +66,7 @@ export const ALL_PERMISSIONS: Record<string, boolean> = {
   'users:delete': true,
   'audit:read': true,
   'tenants:list': true,
+  'oidc_credentials:list': true,
 };
 
 /** Every capability flag nav.ts gates on, all wired. */
@@ -75,6 +76,7 @@ export const ALL_CAPABILITIES: Record<string, boolean> = {
   ca: true,
   ssh: true,
   passwords: true,
+  oidc_credentials: true,
   platform: true,
   ceremony: true,
   factors: true,
