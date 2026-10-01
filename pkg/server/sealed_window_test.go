@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"log/slog"
 	"net"
@@ -330,6 +331,10 @@ func TestServeSealedWindow_NetworkServingUsesUnifiedTLS(t *testing.T) {
 	require.True(t, node.IsSealed())
 	served, err := s.ensureBootstrapCert()
 	require.NoError(t, err)
+	leaf, err := x509.ParseCertificate(served.Certificate[0])
+	require.NoError(t, err)
+	roots := x509.NewCertPool()
+	roots.AddCert(leaf)
 
 	done := make(chan error, 1)
 	go func() { done <- s.serveSealedWindow(node) }()
@@ -339,7 +344,7 @@ func TestServeSealedWindow_NetworkServingUsesUnifiedTLS(t *testing.T) {
 	var conn *tls.Conn
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		conn, err = tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}) // insecure-ok: the test inspects the served certificate itself
+		conn, err = tls.Dial("tcp", addr, &tls.Config{RootCAs: roots, ServerName: "127.0.0.1", MinVersion: tls.VersionTLS13})
 		if err == nil {
 			break
 		}
