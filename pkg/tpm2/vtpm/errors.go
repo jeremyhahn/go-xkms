@@ -49,7 +49,32 @@ var (
 	// ErrResponseTooLarge is returned when a vTPM response header declares a
 	// size beyond the TPM 2.0 maximum.
 	ErrResponseTooLarge = errors.New("vtpm: response exceeds the maximum TPM response size")
+
+	// errBinaryNotExecutable is BinaryError's sentinel cause when the
+	// resolved path exists but is not a regular, executable file (a
+	// directory, a socket, a file with no execute bit).
+	errBinaryNotExecutable = errors.New("not a regular, executable file")
 )
+
+// BinaryError reports that Config.Binary could not be resolved to a regular,
+// executable file at Manager construction: a bare name exec.LookPath could
+// not find on PATH, or an absolute path that does not exist, is a directory,
+// or lacks an execute bit. NewManager checks this once, at construction,
+// rather than deferring to the first Start, so a vTPM-enabled node fails
+// closed at startup instead of launching whatever a later PATH lookup
+// resolves the name to.
+type BinaryError struct {
+	Binary string
+	Err    error
+}
+
+// Error implements the error interface.
+func (e *BinaryError) Error() string {
+	return fmt.Sprintf("vtpm: Config.Binary %q: %v", e.Binary, e.Err)
+}
+
+// Unwrap returns the underlying cause.
+func (e *BinaryError) Unwrap() error { return e.Err }
 
 // StateKeyError wraps a failure obtaining a tenant's state-encryption key.
 type StateKeyError struct {

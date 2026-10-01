@@ -188,24 +188,24 @@ func TestCommandNotifier_NotifyTouchRequired(t *testing.T) {
 	err = n.NotifyTouchRequired(req)
 	require.NoError(t, err)
 
-	deadline := time.Now().Add(5 * time.Second)
-	var argData []byte
-	for time.Now().Before(deadline) {
-		argData, err = os.ReadFile(argOut)
-		if err == nil && len(argData) > 0 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	require.NoError(t, err, "argv output file should exist")
+	// The command runs in NotifyTouchRequired's own goroutine (see its doc
+	// comment) and dump-argv.sh writes argOut before it starts the
+	// env|grep|sort pipeline that produces envOut -- two separate writes,
+	// separated by a fork/exec each test has no way to wait on directly.
+	// Waiting on argOut alone and then reading envOut once, unconditionally,
+	// was a race (go-xkms xkey#notify-flake): on a loaded runner argOut can
+	// turn up non-empty well before the script's second pipeline has created
+	// envOut at all, so the single os.ReadFile(envOut) below hit ENOENT and
+	// failed the test even though the script went on to write it moments
+	// later. Both files are now awaited the same way.
+	argData := waitForNonEmptyFile(t, argOut, 5*time.Second)
 
 	// argv is exactly the operator's split template: request data never
 	// reaches it.
 	args := splitNullTerminated(argData)
 	require.Equal(t, []string{"fixed-arg"}, args)
 
-	envData, err := os.ReadFile(envOut)
-	require.NoError(t, err)
+	envData := waitForNonEmptyFile(t, envOut, 5*time.Second)
 	envStr := string(envData)
 	assert.Contains(t, envStr, "XKEY_OPERATION=register")
 	assert.Contains(t, envStr, "XKEY_RP_ID=example.com")
@@ -274,6 +274,34 @@ func writeArgvDumpScript(t *testing.T, dir string) string {
 
 	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
 	return path
+}
+
+// waitForNonEmptyFile polls path until it exists and is non-empty, or fails
+// the test once deadline elapses. It is the synchronization seam for
+// asserting on output written by a process NotifyTouchRequired launched in
+// its own goroutine: the caller has no handle to wait on directly, only the
+// file the process eventually produces.
+func waitForNonEmptyFile(t *testing.T, path string, timeout time.Duration) []byte {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	var data []byte
+	var err error
+	for {
+		data, err = os.ReadFile(path)
+		if err == nil && len(data) > 0 {
+			return data
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		require.NoError(t, err, "%s should exist within %s", path, timeout)
+	}
+	require.NotEmpty(t, data, "%s should be non-empty within %s", path, timeout)
+	return data
 }
 
 func splitNullTerminated(data []byte) []string {
