@@ -76,7 +76,7 @@ func Wire(t testing.TB, svc *xkms.XKMSService) *seal.BarrierRegistry {
 	require.NoError(t, registry.InitializeTenant(ctx, Tenant, tenantCreds))
 
 	systemStore := staticpw.NewStore(storage.NewMemory())
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore)
+	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"))
 	require.NoError(t, err)
 
 	svc.SetPasswordStore(systemStore)

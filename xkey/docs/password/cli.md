@@ -129,7 +129,7 @@ standard input.
 
 `--passkey` replaces the passphrase on `unlock`, `vault enroll` and
 `vault recover`: the factor is a credential on your FIDO2 security key
-(relying party `xkms-password-vault`, WebAuthn prf salt transform; see
+(relying party: the server's `passkey_rp_id`, WebAuthn prf salt transform; see
 go-xkms `docs/password-vault/architecture.md`). The key's PIN is always
 required and comes from `--pin-stdin` or `XKEY_PIN`; a PIN given without
 `--passkey` is refused. A passkey cannot be rotated: enroll a new one and

@@ -27,7 +27,23 @@ func VaultCredentialToPB(c transport.PasswordVaultCredential) *pb.PasswordVaultC
 		PrfSalt:      c.PRFSalt,
 		Secret:       c.Secret,
 		Label:        c.Label,
+		RpId:         c.RPID,
+
+		PublicKey:      c.PublicKey,
+		Certificate:    c.Certificate,
+		KeyFingerprint: c.KeyFingerprint,
+		KeyRef:         vaultKeyRefToPB(c.KeyRef),
 	}
+}
+
+// vaultKeyRefToPB converts a key factor's key reference to the wire.
+func vaultKeyRefToPB(r transport.PasswordVaultKeyRef) *pb.PasswordVaultKeyRef {
+	return &pb.PasswordVaultKeyRef{Backend: r.Backend, KeyId: r.KeyID, TpmPolicy: r.TPMPolicy}
+}
+
+// vaultKeyRefFromPB converts a key factor's key reference from the wire.
+func vaultKeyRefFromPB(r *pb.PasswordVaultKeyRef) transport.PasswordVaultKeyRef {
+	return transport.PasswordVaultKeyRef{Backend: r.GetBackend(), KeyID: r.GetKeyId(), TPMPolicy: r.GetTpmPolicy()}
 }
 
 // VaultCredentialFromPB converts a personal-vault credential from the wire.
@@ -43,6 +59,12 @@ func VaultCredentialFromPB(c *pb.PasswordVaultCredential) transport.PasswordVaul
 		PRFSalt:      c.GetPrfSalt(),
 		Secret:       c.GetSecret(),
 		Label:        c.GetLabel(),
+		RPID:         c.GetRpId(),
+
+		PublicKey:      c.GetPublicKey(),
+		Certificate:    c.GetCertificate(),
+		KeyFingerprint: c.GetKeyFingerprint(),
+		KeyRef:         vaultKeyRefFromPB(c.GetKeyRef()),
 	}
 }
 
@@ -55,6 +77,14 @@ func VaultFactorToPB(f transport.PasswordVaultFactor) *pb.PasswordVaultFactor {
 		CreatedAt:    f.CreatedAt,
 		CredentialId: f.CredentialID,
 		PrfSalt:      f.PRFSalt,
+		RpId:         f.RPID,
+
+		KeyFingerprint:     f.KeyFingerprint,
+		KeyAlgorithm:       f.KeyAlgorithm,
+		KeyChallenge:       f.KeyChallenge,
+		KeyCheck:           f.KeyCheck,
+		KeyRef:             vaultKeyRefToPB(f.KeyRef),
+		CertificateSubject: f.CertificateSubject,
 	}
 }
 
@@ -70,6 +100,14 @@ func VaultFactorFromPB(f *pb.PasswordVaultFactor) transport.PasswordVaultFactor 
 		CreatedAt:    f.GetCreatedAt(),
 		CredentialID: f.GetCredentialId(),
 		PRFSalt:      f.GetPrfSalt(),
+		RPID:         f.GetRpId(),
+
+		KeyFingerprint:     f.GetKeyFingerprint(),
+		KeyAlgorithm:       f.GetKeyAlgorithm(),
+		KeyChallenge:       f.GetKeyChallenge(),
+		KeyCheck:           f.GetKeyCheck(),
+		KeyRef:             vaultKeyRefFromPB(f.GetKeyRef()),
+		CertificateSubject: f.GetCertificateSubject(),
 	}
 }
 
@@ -83,6 +121,7 @@ func VaultStatusToPB(s *transport.PasswordVaultStatusResponse) *pb.PasswordVault
 		Initialized: s.Initialized,
 		Unlocked:    s.Unlocked,
 		Factors:     factors,
+		PasskeyRpId: s.PasskeyRPID,
 	}
 }
 
@@ -96,6 +135,7 @@ func VaultStatusFromPB(s *pb.PasswordVaultStatusResponse) *transport.PasswordVau
 		Initialized: s.GetInitialized(),
 		Unlocked:    s.GetUnlocked(),
 		Factors:     factors,
+		PasskeyRPID: s.GetPasskeyRpId(),
 	}
 }
 

@@ -50,6 +50,14 @@ vi.mock("../src/stores/toast.svelte.ts", () => ({
   },
 }));
 
+const enrollPasskey = vi.fn();
+const unlockPasskey = vi.fn();
+vi.mock("../src/lib/vault.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/vault.ts")>()),
+  enrollPasskey: (...args: unknown[]) => enrollPasskey(...args),
+  unlockPasskey: (...args: unknown[]) => unlockPasskey(...args),
+}));
+
 import PasswordsView from "../src/views/PasswordsView.svelte";
 
 const unlockedStatus: PasswordStoreStatusResponse = { available: true, is_locked: false, barrier_sealed: false, password_count: 0, message: "" };
@@ -154,13 +162,13 @@ describe("PasswordsView vault factors", () => {
 
   it("shows the server's refusal to remove the last factor inside the dialog", async () => {
     status.mockResolvedValue(unlockedStatus);
-    vaultRemoveFactor.mockRejectedValue(new Error("cannot remove the last passphrase or passkey"));
+    vaultRemoveFactor.mockRejectedValue(new Error("cannot remove the last unlock factor"));
     const dialog = await openFactors();
 
     const rows = within(dialog).getAllByRole("row").slice(1);
     await fireEvent.click(within(rows[0]!).getByRole("button", { name: "Remove web console", hidden: true }));
 
-    expect(await within(dialog).findByText("cannot remove the last passphrase or passkey")).toBeInTheDocument();
+    expect(await within(dialog).findByText("cannot remove the last unlock factor")).toBeInTheDocument();
   });
 });
 
@@ -208,5 +216,88 @@ describe("PasswordsView recovery", () => {
 
     expect(await screen.findByText("vault credential rejected")).toBeInTheDocument();
     expect(screen.getByLabelText("Recovery code")).toBeInTheDocument();
+  });
+});
+
+const passkeyCred = { factor: "passkey" as const, credential_id: "Y3JlZA==", prf_salt: "c2FsdA==", secret: "c2VjcmV0", rp_id: "kms.example.com" };
+
+describe("PasswordsView passkeys", () => {
+  it("creates the vault with a passkey for the server's relying party", async () => {
+    status.mockResolvedValueOnce(lockedStatus);
+    vaultStatus.mockResolvedValue({ initialized: false, unlocked: false, factors: [], passkey_rp_id: "kms.example.com" });
+    enrollPasskey.mockResolvedValue(passkeyCred);
+    vaultEnroll.mockResolvedValue({ factor: { id: "f1", factor: "passkey", created_at: "" }, recovery_code: "CODE-1" });
+    status.mockResolvedValue(unlockedStatus);
+
+    render(PasswordsView);
+    await fireEvent.click(await screen.findByRole("button", { name: "Create with a passkey" }));
+
+    await waitFor(() => expect(vaultEnroll).toHaveBeenCalledWith(passkeyCred));
+    expect(enrollPasskey.mock.calls[0]![0]).toMatchObject({ passkey_rp_id: "kms.example.com" });
+    expect(await screen.findByText("CODE-1")).toBeInTheDocument();
+  });
+
+  it("offers no passkey when the server has no relying party", async () => {
+    status.mockResolvedValue(lockedStatus);
+    vaultStatus.mockResolvedValue({ initialized: false, unlocked: false, factors: [] });
+
+    render(PasswordsView);
+    await screen.findByRole("button", { name: "Create vault" });
+    expect(screen.queryByRole("button", { name: "Create with a passkey" })).toBeNull();
+  });
+
+  it("unlocks with a passkey from the vault's factors", async () => {
+    status.mockResolvedValueOnce(lockedStatus);
+    const vault = { initialized: true, unlocked: false, factors: [{ id: "f1", factor: "passkey" as const, created_at: "", rp_id: "kms.example.com" }] };
+    vaultStatus.mockResolvedValue(vault);
+    unlockPasskey.mockResolvedValue({ factor: "passkey", credential_id: "Y3JlZA==", secret: "c2VjcmV0" });
+    unlock.mockResolvedValue(unlockedStatus);
+    status.mockResolvedValue(unlockedStatus);
+
+    render(PasswordsView);
+    await fireEvent.click(await screen.findByRole("button", { name: "Unlock with passkey" }));
+
+    await waitFor(() => expect(unlock).toHaveBeenCalledWith({ factor: "passkey", credential_id: "Y3JlZA==", secret: "c2VjcmV0" }));
+    expect(unlockPasskey).toHaveBeenCalledWith(vault.factors);
+  });
+
+  it("shows the typed PRF error and does not unlock", async () => {
+    status.mockResolvedValue(lockedStatus);
+    vaultStatus.mockResolvedValue({ initialized: true, unlocked: false, factors: [{ id: "f1", factor: "passkey", created_at: "" }] });
+    unlockPasskey.mockRejectedValue(new Error("This browser or security key does not support the WebAuthn PRF extension"));
+
+    render(PasswordsView);
+    await fireEvent.click(await screen.findByRole("button", { name: "Unlock with passkey" }));
+
+    await waitFor(() => expect(toasts.some((t) => t.kind === "error" && t.message.includes("PRF extension"))).toBe(true));
+    expect(unlock).not.toHaveBeenCalled();
+  });
+
+  it("recovers with a new passkey", async () => {
+    status.mockResolvedValueOnce(lockedStatus);
+    vaultStatus.mockResolvedValue({ initialized: true, unlocked: false, factors: [], passkey_rp_id: "kms.example.com" });
+    enrollPasskey.mockResolvedValue(passkeyCred);
+    vaultRecover.mockResolvedValue({ factor: { id: "f2", factor: "passkey", created_at: "" }, recovery_code: "CODE-2" });
+    status.mockResolvedValue(unlockedStatus);
+
+    render(PasswordsView);
+    await fireEvent.click(await screen.findByRole("button", { name: "Use recovery code" }));
+    await fireEvent.input(screen.getByLabelText("Recovery code"), { target: { value: "OLD-CODE" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Recover with a new passkey" }));
+
+    await waitFor(() => expect(vaultRecover).toHaveBeenCalledWith({ recovery_code: "OLD-CODE", ...passkeyCred }));
+    expect(await screen.findByText("CODE-2")).toBeInTheDocument();
+  });
+
+  it("adds a passkey from the factors dialog", async () => {
+    status.mockResolvedValue(unlockedStatus);
+    vaultStatus.mockResolvedValue({ ...factors, passkey_rp_id: "kms.example.com" });
+    enrollPasskey.mockResolvedValue(passkeyCred);
+    vaultEnroll.mockResolvedValue({ factor: { id: "f5", factor: "passkey", created_at: "" } });
+    const dialog = await openFactors();
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Add passkey", hidden: true }));
+    await waitFor(() => expect(vaultEnroll).toHaveBeenCalledWith(passkeyCred));
+    expect(toasts).toContainEqual({ kind: "success", message: "Passkey added." });
   });
 });

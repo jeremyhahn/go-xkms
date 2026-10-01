@@ -2079,9 +2079,10 @@ type PasswordDeleteRequest struct {
 
 // PasswordVaultCredential is a factor of the caller's personal vault: a
 // passphrase, a passkey (a FIDO2 credential with the hmac-secret / WebAuthn
-// PRF extension), or -- for recovery only -- the recovery code.
+// PRF extension), or a key factor -- a PIV slot 9d key, a certificate's key
+// or a TPM key, whose secret only the private key recovers (pkg/vaultkey).
 type PasswordVaultCredential struct {
-	// Factor is "passphrase" or "passkey".
+	// Factor is "passphrase", "passkey", "piv", "certificate" or "tpm".
 	Factor string `json:"factor"`
 
 	// Passphrase is the passphrase (Factor "passphrase").
@@ -2095,11 +2096,38 @@ type PasswordVaultCredential struct {
 	// reported by PasswordVaultStatus.
 	PRFSalt []byte `json:"prf_salt,omitempty"`
 
-	// Secret is the 32-byte hmac-secret (PRF) output (Factor "passkey").
+	// Secret is the 32-byte hmac-secret (PRF) output (Factor "passkey"),
+	// or the 32-byte secret a key factor's private key recovered from its
+	// challenge (unlocking with a key factor).
 	Secret []byte `json:"secret,omitempty"`
 
 	// Label names an enrolled factor.
 	Label string `json:"label,omitempty"`
+
+	// RPID is the WebAuthn relying party ID the passkey was created for;
+	// required to enroll a passkey, and it must be the server's
+	// (PasswordVaultStatusResponse.PasskeyRPID).
+	RPID string `json:"rp_id,omitempty"`
+
+	// PublicKey (PKIX DER) or Certificate (DER) enrolls a key factor; a
+	// certificate factor needs Certificate.
+	PublicKey   []byte `json:"public_key,omitempty"`
+	Certificate []byte `json:"certificate,omitempty"`
+
+	// KeyFingerprint selects the key factor a key-factor unlock opens.
+	KeyFingerprint string `json:"key_fingerprint,omitempty"`
+
+	// KeyRef records where the client keeps a key factor's private key.
+	KeyRef PasswordVaultKeyRef `json:"key_ref,omitzero"`
+}
+
+// PasswordVaultKeyRef is where a key factor's private key lives on the
+// client: the xkms backend, the key's ID there, and a TPM key's named TPM
+// policy. A hint for finding the token; the fingerprint proves the key.
+type PasswordVaultKeyRef struct {
+	Backend   string `json:"backend,omitempty"`
+	KeyID     string `json:"key_id,omitempty"`
+	TPMPolicy string `json:"tpm_policy,omitempty"`
 }
 
 // PasswordStoreUnlockRequest opens the caller's personal password session
@@ -2116,6 +2144,20 @@ type PasswordVaultFactor struct {
 	CreatedAt    string `json:"created_at"`
 	CredentialID []byte `json:"credential_id,omitempty"`
 	PRFSalt      []byte `json:"prf_salt,omitempty"`
+
+	// RPID is the relying party ID a passkey was created for: every
+	// client evaluates it for this ID.
+	RPID string `json:"rp_id,omitempty"`
+
+	// Key factors: what a client needs to recover the factor's secret with
+	// its private key (pkg/vaultkey.Factor), where the key is kept, and a
+	// certificate's subject for display.
+	KeyFingerprint     string              `json:"key_fingerprint,omitempty"`
+	KeyAlgorithm       string              `json:"key_algorithm,omitempty"`
+	KeyChallenge       []byte              `json:"key_challenge,omitempty"`
+	KeyCheck           []byte              `json:"key_check,omitempty"`
+	KeyRef             PasswordVaultKeyRef `json:"key_ref,omitzero"`
+	CertificateSubject string              `json:"certificate_subject,omitempty"`
 }
 
 // PasswordVaultStatusResponse describes the caller's personal vault.
@@ -2123,6 +2165,11 @@ type PasswordVaultStatusResponse struct {
 	Initialized bool                  `json:"initialized"`
 	Unlocked    bool                  `json:"unlocked"`
 	Factors     []PasswordVaultFactor `json:"factors"`
+
+	// PasskeyRPID is the WebAuthn relying party ID a new passkey must be
+	// created for -- the domain the web console is served from. Empty when
+	// the deployment offers no passkeys.
+	PasskeyRPID string `json:"passkey_rp_id,omitempty"`
 }
 
 // PasswordVaultEnrollRequest enrolls a factor. The first enrollment

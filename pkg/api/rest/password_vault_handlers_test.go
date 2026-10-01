@@ -188,7 +188,7 @@ func TestVaultHandlers_RemoveFactor(t *testing.T) {
 
 	last := f.do(t, alice, http.MethodDelete, "/api/v1/password-vault/factors/"+first.Factor.ID, "")
 	assert.Equal(t, http.StatusConflict, last.Code)
-	assert.Equal(t, "Cannot remove the last passphrase or passkey", errorMessage(t, last))
+	assert.Equal(t, "Cannot remove the last unlock factor", errorMessage(t, last))
 
 	gone := f.do(t, alice, http.MethodDelete, "/api/v1/password-vault/factors/"+second.Factor.ID, "")
 	assert.Equal(t, http.StatusNotFound, gone.Code)

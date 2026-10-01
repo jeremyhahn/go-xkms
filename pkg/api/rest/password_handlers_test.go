@@ -82,7 +82,7 @@ func testPasswordSetup(t *testing.T) (*seal.BarrierRegistry, *staticpw.BackendSt
 	}
 
 	systemStore := staticpw.NewStore(storage.NewMemory())
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore)
+	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"))
 	require.NoError(t, err)
 
 	return registry, systemStore, manager

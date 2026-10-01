@@ -142,15 +142,16 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 	}
 
 	deps := compose.Deps{
-		Service:            x,
-		PIN:                m.pinBackend,
-		PlatformSealer:     m.platformSealer,
-		CredentialStrategy: m.credentialStrategy,
-		CA:                 m.caConfig,
-		TPMBackend:         compose.TPM2Backend(x),
-		VTPM:               m.vtpm,
-		ServeBarrier:       m.barrierRoutes,
-		Logger:             slog.Default().With("module", ModuleName),
+		Service:             x,
+		PIN:                 m.pinBackend,
+		PlatformSealer:      m.platformSealer,
+		CredentialStrategy:  m.credentialStrategy,
+		CA:                  m.caConfig,
+		TPMBackend:          compose.TPM2Backend(x),
+		VTPM:                m.vtpm,
+		ServeBarrier:        m.barrierRoutes,
+		PasskeyRelyingParty: m.passwordVaultRelyingParty(),
+		Logger:              slog.Default().With("module", ModuleName),
 	}
 	if m.resolveQRDBClient != nil {
 		if client := m.resolveQRDBClient(); client != nil {

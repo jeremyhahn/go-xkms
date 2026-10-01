@@ -403,9 +403,9 @@ func TestBuilders_RejectNilDependencies(t *testing.T) {
 
 	_, err := BuildPasswordStore(nil)
 	assert.ErrorAs(t, err, &nilDep)
-	_, err = BuildTenantPasswordManager(nil, nil)
+	_, err = BuildTenantPasswordManager(nil, nil, "")
 	assert.ErrorAs(t, err, &nilDep)
-	_, err = BuildTenantPasswordManager(hostdeps.NewBarrierRegistry(t), nil)
+	_, err = BuildTenantPasswordManager(hostdeps.NewBarrierRegistry(t), nil, "")
 	assert.ErrorAs(t, err, &nilDep)
 	_, err = BuildPlatformStore(nil, nil, PlatformSealer{})
 	assert.ErrorAs(t, err, &nilDep)

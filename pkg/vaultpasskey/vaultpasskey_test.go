@@ -38,6 +38,9 @@ type simAuthenticator = vaulttest.SimulatedKey
 
 func newSimAuthenticator(pin string) *simAuthenticator { return vaulttest.NewSimulatedKey(pin) }
 
+// testRP is the relying party the test vault service creates passkeys for.
+const testRP = "kms.example.com"
+
 func pinSecret(t *testing.T, pin string) *secure.Secret {
 	t.Helper()
 	s, err := secure.NewSecret([]byte(pin))
@@ -47,12 +50,12 @@ func pinSecret(t *testing.T, pin string) *secure.Secret {
 
 func TestEnroll_BuildsThePasskeyCredential(t *testing.T) {
 	sim := newSimAuthenticator("123456")
-	cred, err := Enroll(sim, Options{PIN: pinSecret(t, "123456"), Label: "laptop key"})
+	cred, err := Enroll(sim, Options{PIN: pinSecret(t, "123456"), Label: "laptop key", RelyingPartyID: testRP})
 	require.NoError(t, err)
 
 	assert.Equal(t, Factor, cred.Factor)
 	assert.Equal(t, "laptop key", cred.Label)
-	_, onVaultRP := sim.Evaluate(RelyingPartyID, cred.CredentialID, nil)
+	_, onVaultRP := sim.Evaluate(testRP, cred.CredentialID, nil)
 	assert.True(t, onVaultRP, "the credential is created for the vault relying party")
 	require.Len(t, cred.PRFSalt, 32)
 	require.Len(t, cred.Secret, 32)
@@ -67,20 +70,20 @@ func TestEnroll_PINRefusals(t *testing.T) {
 	sim := newSimAuthenticator("123456")
 	_, err := Enroll(sim, Options{})
 	assert.ErrorIs(t, err, ErrPINRequired)
-	_, err = Enroll(sim, Options{PIN: pinSecret(t, "000000")})
+	_, err = Enroll(sim, Options{PIN: pinSecret(t, "000000"), RelyingPartyID: testRP})
 	assert.ErrorIs(t, err, fido2.ErrInvalidPIN)
 	assert.Empty(t, sim.Received, "a refused enrollment evaluates nothing")
 }
 
 func TestUnlock_SelectsThisAuthenticatorsPasskey(t *testing.T) {
 	sim := newSimAuthenticator("123456")
-	enrolled, err := Enroll(sim, Options{PIN: pinSecret(t, "123456")})
+	enrolled, err := Enroll(sim, Options{PIN: pinSecret(t, "123456"), RelyingPartyID: testRP})
 	require.NoError(t, err)
 
 	factors := []transport.PasswordVaultFactor{
 		{ID: "p", Factor: "passphrase"},
-		{ID: "other", Factor: Factor, CredentialID: []byte("another key"), PRFSalt: bytes.Repeat([]byte{1}, 32)},
-		{ID: "mine", Factor: Factor, CredentialID: enrolled.CredentialID, PRFSalt: enrolled.PRFSalt},
+		{ID: "other", Factor: Factor, CredentialID: []byte("another key"), PRFSalt: bytes.Repeat([]byte{1}, 32), RPID: testRP},
+		{ID: "mine", Factor: Factor, CredentialID: enrolled.CredentialID, PRFSalt: enrolled.PRFSalt, RPID: testRP},
 	}
 	cred, err := Unlock(sim, factors, Options{PIN: pinSecret(t, "123456")})
 	require.NoError(t, err)
@@ -91,9 +94,9 @@ func TestUnlock_SelectsThisAuthenticatorsPasskey(t *testing.T) {
 
 func TestUnlock_Refusals(t *testing.T) {
 	sim := newSimAuthenticator("123456")
-	enrolled, err := Enroll(sim, Options{PIN: pinSecret(t, "123456")})
+	enrolled, err := Enroll(sim, Options{PIN: pinSecret(t, "123456"), RelyingPartyID: testRP})
 	require.NoError(t, err)
-	mine := []transport.PasswordVaultFactor{{Factor: Factor, CredentialID: enrolled.CredentialID, PRFSalt: enrolled.PRFSalt}}
+	mine := []transport.PasswordVaultFactor{{Factor: Factor, CredentialID: enrolled.CredentialID, PRFSalt: enrolled.PRFSalt, RPID: testRP}}
 
 	_, err = Unlock(sim, mine, Options{})
 	assert.ErrorIs(t, err, ErrPINRequired)
@@ -101,8 +104,25 @@ func TestUnlock_Refusals(t *testing.T) {
 	assert.ErrorIs(t, err, fido2.ErrInvalidPIN)
 	_, err = Unlock(sim, []transport.PasswordVaultFactor{{Factor: "passphrase"}}, Options{PIN: pinSecret(t, "123456")})
 	assert.ErrorIs(t, err, ErrNoPasskeyEnrolled)
-	_, err = Unlock(sim, []transport.PasswordVaultFactor{{Factor: Factor, CredentialID: []byte("x"), PRFSalt: []byte("s")}}, Options{PIN: pinSecret(t, "123456")})
+	_, err = Unlock(sim, []transport.PasswordVaultFactor{{Factor: Factor, CredentialID: []byte("x"), PRFSalt: []byte("s"), RPID: testRP}}, Options{PIN: pinSecret(t, "123456")})
 	assert.ErrorIs(t, err, ErrNoMatchingPasskey)
+
+	// A passkey is evaluated for the relying party its factor records:
+	// recorded for another one, this authenticator does not hold it.
+	elsewhere := []transport.PasswordVaultFactor{{Factor: Factor, CredentialID: enrolled.CredentialID, PRFSalt: enrolled.PRFSalt, RPID: "other.example.com"}}
+	_, err = Unlock(sim, elsewhere, Options{PIN: pinSecret(t, "123456")})
+	assert.ErrorIs(t, err, ErrNoMatchingPasskey)
+}
+
+func TestEnroll_NeedsTheServersRelyingParty(t *testing.T) {
+	sim := newSimAuthenticator("123456")
+	_, err := Enroll(sim, Options{PIN: pinSecret(t, "123456")})
+	assert.ErrorIs(t, err, ErrNoRelyingParty)
+	assert.Empty(t, sim.Received)
+
+	cred, err := Enroll(sim, Options{PIN: pinSecret(t, "123456"), RelyingPartyID: testRP})
+	require.NoError(t, err)
+	assert.Equal(t, testRP, cred.RPID, "the credential names the relying party it was created for")
 }
 
 // shortOutputAuthenticator answers with a truncated hmac-secret output.
@@ -119,7 +139,7 @@ func (s shortOutputAuthenticator) DeriveHMACSecret(cfg *fido2.AuthenticationConf
 
 func TestEnroll_RefusesAShortOutput(t *testing.T) {
 	sim := shortOutputAuthenticator{newSimAuthenticator("123456")}
-	_, err := Enroll(sim, Options{PIN: pinSecret(t, "123456")})
+	_, err := Enroll(sim, Options{PIN: pinSecret(t, "123456"), RelyingPartyID: testRP})
 	assert.ErrorIs(t, err, ErrUnexpectedOutput)
 }
 
@@ -150,11 +170,11 @@ func TestCrossSurface_CLIAndBrowserProduceTheSamePRFInput(t *testing.T) {
 		require.NoError(t, err)
 
 		sim := newSimAuthenticator("123456")
-		enrolled, err := Enroll(sim, Options{PIN: pinSecret(t, "123456")})
+		enrolled, err := Enroll(sim, Options{PIN: pinSecret(t, "123456"), RelyingPartyID: testRP})
 		require.NoError(t, err)
 		sim.Received = nil
 
-		_, err = Unlock(sim, []transport.PasswordVaultFactor{{Factor: Factor, CredentialID: enrolled.CredentialID, PRFSalt: prfSalt}}, Options{PIN: pinSecret(t, "123456")})
+		_, err = Unlock(sim, []transport.PasswordVaultFactor{{Factor: Factor, CredentialID: enrolled.CredentialID, PRFSalt: prfSalt, RPID: testRP}}, Options{PIN: pinSecret(t, "123456")})
 		require.NoError(t, err)
 		require.Len(t, sim.Received, 1)
 		assert.Equal(t, v.PRFInput, hex.EncodeToString(sim.Received[0]), "CLI path, salt %s", v.Salt)
@@ -171,7 +191,10 @@ func TestCrossSurface_EnrolledHereUnlocksInABrowser(t *testing.T) {
 	sim := newSimAuthenticator("123456")
 	pin := Options{PIN: pinSecret(t, "123456")}
 
-	cred, err := Enroll(sim, Options{PIN: pin.PIN, Label: "laptop key"})
+	before, err := svc.PasswordVaultStatus(ctx)
+	require.NoError(t, err)
+	require.Equal(t, testRP, before.PasskeyRPID, "the server advertises its relying party")
+	cred, err := Enroll(sim, Options{PIN: pin.PIN, Label: "laptop key", RelyingPartyID: before.PasskeyRPID})
 	require.NoError(t, err)
 	_, err = svc.PasswordVaultEnroll(ctx, &transport.PasswordVaultEnrollRequest{PasswordVaultCredential: cred})
 	require.NoError(t, err)
@@ -186,9 +209,10 @@ func TestCrossSurface_EnrolledHereUnlocksInABrowser(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, stored.PRFSalt)
+	require.Equal(t, testRP, stored.RPID, "the factor records the relying party")
 
 	// A browser: prf with eval.first = the stored salt.
-	browserSecret, ok := sim.BrowserPRF(RelyingPartyID, stored.CredentialID, stored.PRFSalt)
+	browserSecret, ok := sim.BrowserPRF(stored.RPID, stored.CredentialID, stored.PRFSalt)
 	require.True(t, ok)
 	browser := transport.PasswordVaultCredential{Factor: Factor, CredentialID: stored.CredentialID, Secret: browserSecret}
 	require.NoError(t, svc.PasswordStoreUnlock(ctx, &transport.PasswordStoreUnlockRequest{PasswordVaultCredential: browser}))
@@ -201,9 +225,43 @@ func TestCrossSurface_EnrolledHereUnlocksInABrowser(t *testing.T) {
 
 	// A secret evaluated over the raw salt -- no transform -- is refused.
 	require.NoError(t, svc.PasswordStoreLock(ctx))
-	rawSecret, ok := sim.Evaluate(RelyingPartyID, stored.CredentialID, stored.PRFSalt)
+	rawSecret, ok := sim.Evaluate(testRP, stored.CredentialID, stored.PRFSalt)
 	require.True(t, ok)
 	raw := transport.PasswordVaultCredential{Factor: Factor, CredentialID: stored.CredentialID, Secret: rawSecret}
 	err = svc.PasswordStoreUnlock(ctx, &transport.PasswordStoreUnlockRequest{PasswordVaultCredential: raw})
 	assert.ErrorIs(t, err, staticpw.ErrVaultCredentialRejected)
+}
+
+// TestCrossSurface_SecretVectors is the Go half of the vault passkey secret
+// vectors (pkg/fido2/testdata/vault_passkey_secret_vectors.json): for an
+// authenticator credential with a known secret, Unlock yields exactly the
+// factor secret a browser's prf evaluation yields; sdk/ts proves the browser
+// half against the same file.
+func TestCrossSurface_SecretVectors(t *testing.T) {
+	data, err := os.ReadFile("../fido2/testdata/vault_passkey_secret_vectors.json")
+	require.NoError(t, err)
+	var vectors struct {
+		Vectors []struct {
+			CredRandom string `json:"cred_random"`
+			PRFSalt    string `json:"prf_salt"`
+			Secret     string `json:"secret"`
+		} `json:"vectors"`
+	}
+	require.NoError(t, json.Unmarshal(data, &vectors))
+	require.NotEmpty(t, vectors.Vectors)
+
+	for i, v := range vectors.Vectors {
+		credRandom, err := hex.DecodeString(v.CredRandom)
+		require.NoError(t, err)
+		prfSalt, err := hex.DecodeString(v.PRFSalt)
+		require.NoError(t, err)
+		sim := newSimAuthenticator("123456")
+		credentialID := []byte{byte(i), 0xc1}
+		sim.Seed(testRP, credentialID, credRandom)
+
+		factor := transport.PasswordVaultFactor{Factor: Factor, CredentialID: credentialID, PRFSalt: prfSalt, RPID: testRP}
+		cred, err := Unlock(sim, []transport.PasswordVaultFactor{factor}, Options{PIN: pinSecret(t, "123456")})
+		require.NoError(t, err)
+		assert.Equal(t, v.Secret, hex.EncodeToString(cred.Secret), "vector %d", i)
+	}
 }

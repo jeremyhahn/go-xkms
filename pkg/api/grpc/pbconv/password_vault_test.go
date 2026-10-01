@@ -29,9 +29,15 @@ import (
 func TestVaultCredential_RoundTrip(t *testing.T) {
 	in := transport.PasswordVaultCredential{
 		Factor: "passkey", Passphrase: "p", CredentialID: []byte("cred"),
-		PRFSalt: []byte("salt"), Secret: []byte("secret"), Label: "key",
+		PRFSalt: []byte("salt"), Secret: []byte("secret"), Label: "key", RPID: "kms.example.com",
 	}
 	assert.Equal(t, in, VaultCredentialFromPB(VaultCredentialToPB(in)))
+
+	key := transport.PasswordVaultCredential{
+		Factor: "tpm", PublicKey: []byte("spki"), Certificate: []byte("cert"), KeyFingerprint: "ab12",
+		Secret: []byte("secret"), KeyRef: transport.PasswordVaultKeyRef{Backend: "tpm2", KeyID: "vault", TPMPolicy: "platform"},
+	}
+	assert.Equal(t, key, VaultCredentialFromPB(VaultCredentialToPB(key)), "every key-factor field crosses the wire")
 	assert.Equal(t, transport.PasswordVaultCredential{}, VaultCredentialFromPB(nil), "a nil credential is the zero credential")
 }
 
@@ -41,8 +47,13 @@ func TestVaultStatus_RoundTrip(t *testing.T) {
 		Unlocked:    true,
 		Factors: []transport.PasswordVaultFactor{
 			{ID: "f1", Factor: "passphrase", Label: "pp", CreatedAt: "2026-01-02T03:04:05Z"},
-			{ID: "f2", Factor: "passkey", CredentialID: []byte("cred"), PRFSalt: []byte("salt")},
+			{ID: "f2", Factor: "passkey", CredentialID: []byte("cred"), PRFSalt: []byte("salt"), RPID: "kms.example.com"},
+			{
+				ID: "f3", Factor: "piv", KeyFingerprint: "ab12", KeyAlgorithm: "RSA-OAEP-256", KeyChallenge: []byte("ct"),
+				KeyCheck: []byte("kcv"), KeyRef: transport.PasswordVaultKeyRef{Backend: "pkcs11", KeyID: "piv-9d"}, CertificateSubject: "CN=alice",
+			},
 		},
+		PasskeyRPID: "kms.example.com",
 	}
 	assert.Equal(t, in, VaultStatusFromPB(VaultStatusToPB(in)))
 

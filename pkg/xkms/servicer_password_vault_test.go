@@ -34,6 +34,7 @@ func testPasskey(output byte) transport.PasswordVaultCredential {
 		PRFSalt:      bytes.Repeat([]byte{0x5a}, staticpw.PRFSaltLength),
 		Secret:       bytes.Repeat([]byte{output}, staticpw.PasskeySecretLength),
 		Label:        "laptop key",
+		RPID:         "kms.example.com",
 	}
 }
 

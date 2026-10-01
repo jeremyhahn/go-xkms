@@ -86,10 +86,14 @@ func newTestManager(t *testing.T) (*TenantPasswordStoreManager, *seal.BarrierReg
 	t.Helper()
 	reg := newTestRegistry(t)
 	systemStore := NewStore(storage.New())
-	mgr, err := NewTenantPasswordStoreManager(reg, systemStore)
+	mgr, err := NewTenantPasswordStoreManager(reg, systemStore, WithPasskeyRelyingParty(testRelyingParty))
 	require.NoError(t, err)
 	return mgr, reg
 }
+
+// testRelyingParty is the WebAuthn relying party the test managers create
+// vault passkeys for.
+const testRelyingParty = "kms.example.com"
 
 // --- NewTenantPasswordStoreManager ---
 

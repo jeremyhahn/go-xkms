@@ -75,6 +75,22 @@ export {
 } from './webauthn.js';
 
 // ---------------------------------------------------------------------------
+// Password-vault passkeys in the browser (WebAuthn PRF)
+// ---------------------------------------------------------------------------
+
+export {
+  VAULT_PASSKEY_RP_NAME,
+  VaultPasskeyPrfUnsupportedError,
+  VaultPasskeyUnavailableError,
+  bufferToBase64,
+  enrollVaultPasskey,
+  relyingPartyServes,
+  unlockVaultPasskey,
+  type EnrollVaultPasskeyOptions,
+  type VaultPasskeyPlatform,
+} from './vaultPasskey.js';
+
+// ---------------------------------------------------------------------------
 // Domain clients
 // ---------------------------------------------------------------------------
 

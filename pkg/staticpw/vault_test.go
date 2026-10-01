@@ -37,6 +37,7 @@ func passkey(id string, output byte) VaultCredential {
 		PRFSalt:      bytes.Repeat([]byte{0x5a}, PRFSaltLength),
 		Secret:       bytes.Repeat([]byte{output}, PasskeySecretLength),
 		Label:        "key " + id,
+		RelyingParty: testRelyingParty,
 	}
 }
 

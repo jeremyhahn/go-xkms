@@ -48,7 +48,7 @@ func newRoundTripPasswordManager(t *testing.T) *staticpw.TenantPasswordStoreMana
 	registry, err := seal.NewBarrierRegistry(barrier)
 	require.NoError(t, err)
 	store := staticpw.NewStore(storage.New())
-	mgr, err := staticpw.NewTenantPasswordStoreManager(registry, store)
+	mgr, err := staticpw.NewTenantPasswordStoreManager(registry, store, staticpw.WithPasskeyRelyingParty("kms.example.com"))
 	require.NoError(t, err)
 	return mgr
 }

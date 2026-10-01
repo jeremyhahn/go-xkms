@@ -46,7 +46,7 @@ stdin.
 
 **Passkeys.** `--passkey` replaces `--passphrase` on `unlock`,
 `vault enroll` and `vault recover`: the factor is a credential on your FIDO2
-security key (relying party `xkms-password-vault`, evaluated with the
+security key (relying party: the server's `passkey_rp_id`, evaluated with the
 WebAuthn prf salt transform -- see
 [`architecture.md`](architecture.md#passkey-salt-handling)). The key's PIN is
 always required and comes from `--pin-stdin`, `XKMS_FIDO2_PIN`, `--pin`, or a

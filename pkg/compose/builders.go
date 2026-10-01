@@ -109,15 +109,17 @@ func BuildKeyVersionStore(open StorageFactory) (*keyversion.Store, error) {
 
 // BuildTenantPasswordManager builds the per-tenant Password Manager routing:
 // tenant-scoped entries go to a store behind that tenant's barrier, system
-// entries to store.
-func BuildTenantPasswordManager(registry *seal.BarrierRegistry, store *staticpw.BackendStore) (*staticpw.TenantPasswordStoreManager, error) {
+// entries to store. passkeyRP is the WebAuthn relying party ID (the web
+// console's domain, webauthn.rp_id) vault passkeys are created for; "" leaves
+// passkey factors unavailable.
+func BuildTenantPasswordManager(registry *seal.BarrierRegistry, store *staticpw.BackendStore, passkeyRP string) (*staticpw.TenantPasswordStoreManager, error) {
 	if registry == nil {
 		return nil, &NilDependencyError{Feature: FeatureTenantPasswords, Dependency: "barrier registry"}
 	}
 	if store == nil {
 		return nil, &NilDependencyError{Feature: FeatureTenantPasswords, Dependency: "password store"}
 	}
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, store)
+	manager, err := staticpw.NewTenantPasswordStoreManager(registry, store, staticpw.WithPasskeyRelyingParty(passkeyRP))
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureTenantPasswords, Err: err}
 	}

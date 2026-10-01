@@ -435,6 +435,6 @@ func TestDefaultVaultAuthenticatorFactory_UsesTheConfiguredEnumerator(t *testing
 	a, err := defaultVaultAuthenticatorFactory(&Config{HIDEnumerator: noHIDEnumerator{}})
 	require.NoError(t, err)
 	defer closeQuietly(a)
-	_, err = vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: testPINSecret(t, "123456")})
+	_, err = vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: testPINSecret(t, "123456"), RelyingPartyID: vaulttest.RelyingParty})
 	assert.ErrorIs(t, err, pkgfido2.ErrNoDeviceFound)
 }

@@ -8,15 +8,16 @@
   import Alert from "$components/Alert.svelte";
   import { getSDKClient } from "$stores/sdkClient.ts";
   import { showToast } from "$stores/toast.svelte.ts";
-  import type { PasswordVaultFactor } from "@go-xkms/sdk";
-  import { MIN_PASSPHRASE_LENGTH, factorTypeLabel } from "$lib/vault.ts";
+  import type { PasswordVaultFactor, PasswordVaultStatusResponse } from "@go-xkms/sdk";
+  import { MIN_PASSPHRASE_LENGTH, enrollPasskey, factorTypeLabel } from "$lib/vault.ts";
 
   interface Props {
     onClose: () => void;
   }
   let { onClose }: Props = $props();
 
-  let factors = $state<PasswordVaultFactor[]>([]);
+  let vault = $state<PasswordVaultStatusResponse | null>(null);
+  const factors = $derived(vault?.factors ?? []);
   let error = $state<string | null>(null);
   let busy = $state(false);
 
@@ -38,7 +39,7 @@
 
   async function load(): Promise<void> {
     try {
-      factors = (await getSDKClient().passwords.vaultStatus()).factors;
+      vault = await getSDKClient().passwords.vaultStatus();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -71,6 +72,16 @@
       () => getSDKClient().passwords.vaultEnroll({ factor: "passphrase", passphrase, label: label || "web console" }),
       "Passphrase added.",
     );
+  }
+
+  // A passkey is created in this browser for the server's relying party;
+  // a browser or key without the PRF extension is reported, never replaced.
+  function addPasskey(): Promise<void> {
+    const status = vault!;
+    return run(async () => {
+      const cred = await enrollPasskey(status, label || "passkey");
+      await getSDKClient().passwords.vaultEnroll(cred);
+    }, "Passkey added.");
   }
 
   function remove(f: PasswordVaultFactor): Promise<void> {
@@ -127,6 +138,9 @@
       <button class="btn btn-primary" onclick={submitPassphrase} disabled={busy || !passphraseOK}>Change passphrase</button>
     {:else}
       <button class="btn btn-ghost" onclick={onClose} disabled={busy}>Close</button>
+      {#if vault?.passkey_rp_id}
+        <button class="btn" onclick={addPasskey} disabled={busy}>Add passkey</button>
+      {/if}
       <button class="btn btn-primary" onclick={submitPassphrase} disabled={busy || !passphraseOK}>Add passphrase</button>
     {/if}
   </div>

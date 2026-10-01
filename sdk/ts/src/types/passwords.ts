@@ -95,7 +95,12 @@ export interface PasswordDeleteResponse {
  * - `passkey`: a FIDO2 credential with the hmac-secret / WebAuthn PRF
  *   extension. Set `credential_id` and `secret` (the 32-byte PRF output the
  *   authenticator evaluated over the factor's 32-byte `prf_salt`); enrolling
- *   a passkey also sets `prf_salt`.
+ *   a passkey also sets `prf_salt` and `rp_id` (the server's
+ *   `passkey_rp_id`). See `vaultPasskey.ts`.
+ * - `piv` / `certificate` / `tpm` (key factors): enrolled by xkey or xkmsctl
+ *   with the key's `public_key` or `certificate`; unlocked with
+ *   `key_fingerprint` and the `secret` the private key recovered -- in a
+ *   browser only through the xkey extension (`vaultBridge.ts`).
  */
 export interface PasswordVaultCredential {
   factor: PasswordVaultFactorType;
@@ -104,10 +109,25 @@ export interface PasswordVaultCredential {
   prf_salt?: Base64;
   secret?: Base64;
   label?: string;
+  rp_id?: string;
+  public_key?: Base64;
+  certificate?: Base64;
+  key_fingerprint?: string;
+  key_ref?: PasswordVaultKeyRef;
 }
 
 /** The vault factor types a client can enroll or unlock with. */
-export type PasswordVaultFactorType = 'passphrase' | 'passkey';
+export type PasswordVaultFactorType = 'passphrase' | 'passkey' | PasswordVaultKeyFactorType;
+
+/** Key factors: a secret only the factor's private key recovers. */
+export type PasswordVaultKeyFactorType = 'piv' | 'certificate' | 'tpm';
+
+/** Where a key factor's private key lives on the client (a selection hint). */
+export interface PasswordVaultKeyRef {
+  backend?: string;
+  key_id?: string;
+  tpm_policy?: string;
+}
 
 /** POST /api/v1/password-vault/unlock opens the caller's session with one of their vault factors. */
 export type PasswordStoreUnlockRequest = PasswordVaultCredential;
@@ -128,6 +148,15 @@ export interface PasswordVaultFactor {
   credential_id?: Base64;
   /** Passkey factors only: the salt to evaluate the PRF over when unlocking. */
   prf_salt?: Base64;
+  /** Passkey factors only: the relying party ID the passkey was created for. */
+  rp_id?: string;
+  /** Key factors only: what the private key's holder recovers the secret from. */
+  key_fingerprint?: string;
+  key_algorithm?: string;
+  key_challenge?: Base64;
+  key_check?: Base64;
+  key_ref?: PasswordVaultKeyRef;
+  certificate_subject?: string;
 }
 
 /** GET /api/v1/password-vault */
@@ -135,6 +164,11 @@ export interface PasswordVaultStatusResponse {
   initialized: boolean;
   unlocked: boolean;
   factors: PasswordVaultFactor[];
+  /**
+   * The relying party ID a new passkey must be created for -- the console's
+   * domain. Absent when the deployment offers no passkeys.
+   */
+  passkey_rp_id?: string;
 }
 
 /** POST /api/v1/password-vault/factors */

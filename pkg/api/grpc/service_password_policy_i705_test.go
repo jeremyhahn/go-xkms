@@ -323,7 +323,7 @@ func newTenantPasswordGRPCService(t *testing.T) (*Service, context.Context) {
 	require.NoError(t, registry.InitializeTenant(ctx, vaultTenant, tenantCreds))
 
 	systemStore := staticpw.NewStore(storage.NewMemory())
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore)
+	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"))
 	require.NoError(t, err)
 
 	xkmsSvc := &xkms.XKMSService{}

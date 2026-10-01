@@ -549,7 +549,7 @@ describe('PasswordsClient personal vault', () => {
     expect(unlockErr).toBeInstanceOf(XkmsApiError);
     expect((unlockErr as XkmsApiError).status).toBe(401);
 
-    const lastFactor = make(newFakeFetch({ status: 409, body: { error: 'Cannot remove the last passphrase or passkey' } }));
+    const lastFactor = make(newFakeFetch({ status: 409, body: { error: 'Cannot remove the last unlock factor' } }));
     const removeErr = await lastFactor.passwords.vaultRemoveFactor('f-1').catch((e: unknown) => e);
     expect(removeErr).toBeInstanceOf(XkmsApiError);
     expect((removeErr as XkmsApiError).status).toBe(409);

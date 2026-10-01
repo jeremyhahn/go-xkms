@@ -507,18 +507,21 @@ func mapPasswordError(err error) error {
 	// a vault with no factor needs enrollment first, and a credential that
 	// unwraps no factor is an authentication failure that must not say why.
 	case errors.Is(err, staticpw.ErrVaultInvalidCredential),
-		errors.Is(err, staticpw.ErrVaultRecoveryFactor):
+		errors.Is(err, staticpw.ErrVaultRecoveryFactor),
+		errors.Is(err, staticpw.ErrVaultRelyingPartyMismatch):
 		return status.Error(codes.InvalidArgument, err.Error())
-	case errors.Is(err, staticpw.ErrVaultNotInitialized):
-		return status.Error(codes.FailedPrecondition, staticpw.ErrVaultNotInitialized.Error())
+	case errors.Is(err, staticpw.ErrVaultNotInitialized),
+		errors.Is(err, staticpw.ErrVaultPasskeyUnavailable):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, staticpw.ErrVaultCredentialRejected):
 		return status.Error(codes.Unauthenticated, staticpw.ErrVaultCredentialRejected.Error())
 	case errors.Is(err, staticpw.ErrVaultFactorNotFound):
 		return status.Error(codes.NotFound, staticpw.ErrVaultFactorNotFound.Error())
 	case errors.Is(err, staticpw.ErrVaultLastFactor):
 		return status.Error(codes.FailedPrecondition, staticpw.ErrVaultLastFactor.Error())
-	case errors.Is(err, staticpw.ErrVaultPasskeyExists):
-		return status.Error(codes.AlreadyExists, staticpw.ErrVaultPasskeyExists.Error())
+	case errors.Is(err, staticpw.ErrVaultPasskeyExists),
+		errors.Is(err, staticpw.ErrVaultKeyExists):
+		return status.Error(codes.AlreadyExists, err.Error())
 
 	default:
 		// Check for error message patterns for errors that may be wrapped

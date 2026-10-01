@@ -79,7 +79,7 @@ func passwordTestRegistry(t *testing.T) (*seal.BarrierRegistry, *staticpw.Backen
 	}
 
 	systemStore := staticpw.NewStore(storage.New())
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore)
+	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"))
 	require.NoError(t, err)
 	return registry, systemStore, manager
 }

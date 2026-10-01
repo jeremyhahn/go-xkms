@@ -43,6 +43,10 @@ type VaultStatus struct {
 	Initialized bool              `json:"initialized"`
 	Unlocked    bool              `json:"unlocked"`
 	Factors     []VaultFactorInfo `json:"factors"`
+
+	// PasskeyRelyingParty is the relying party ID a new passkey must be
+	// created for; "" when the deployment offers no passkeys.
+	PasskeyRelyingParty string `json:"passkey_rp_id,omitempty"`
 }
 
 // EnrollResult is the outcome of enrolling a factor or recovering a vault.
@@ -141,21 +145,67 @@ type TenantPasswordStoreManager struct {
 	registry    *seal.BarrierRegistry
 	systemStore Store
 	tenants     sync.Map // tenant scope name -> *tenantPasswordState
+
+	// passkeyRP is the WebAuthn relying party ID passkey factors are
+	// created for; empty disables passkey enrollment.
+	passkeyRP string
+}
+
+// ManagerOption configures a TenantPasswordStoreManager.
+type ManagerOption func(*TenantPasswordStoreManager)
+
+// WithPasskeyRelyingParty sets the WebAuthn relying party ID -- the domain
+// the web console is served from (webauthn.rp_id) -- that the vault's
+// passkey factors are created for. Every client creates and evaluates a
+// vault passkey for this ID, which is what lets a passkey enrolled in a
+// browser unlock from xkey and xkmsctl, and the reverse. Without it passkey
+// enrollment answers ErrVaultPasskeyUnavailable.
+func WithPasskeyRelyingParty(rpID string) ManagerOption {
+	return func(m *TenantPasswordStoreManager) { m.passkeyRP = rpID }
 }
 
 // NewTenantPasswordStoreManager creates a manager over registry. systemStore
 // serves requests with no identity.
-func NewTenantPasswordStoreManager(registry *seal.BarrierRegistry, systemStore Store) (*TenantPasswordStoreManager, error) {
+func NewTenantPasswordStoreManager(registry *seal.BarrierRegistry, systemStore Store, opts ...ManagerOption) (*TenantPasswordStoreManager, error) {
 	if registry == nil {
 		return nil, ErrNilBarrierRegistry
 	}
 	if systemStore == nil {
 		return nil, ErrNilStore
 	}
-	return &TenantPasswordStoreManager{
+	m := &TenantPasswordStoreManager{
 		registry:    registry,
 		systemStore: systemStore,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m, nil
+}
+
+// PasskeyRelyingParty returns the relying party ID vault passkeys are
+// created for, or "" when passkeys are unavailable.
+func (m *TenantPasswordStoreManager) PasskeyRelyingParty() string {
+	return m.passkeyRP
+}
+
+// validateEnrollment checks a credential presented to enroll, rotate to or
+// recover with: its shape, and for a passkey that it was created for the
+// server's relying party.
+func (m *TenantPasswordStoreManager) validateEnrollment(cred VaultCredential) error {
+	if err := cred.validate(true); err != nil {
+		return err
+	}
+	if cred.Type != FactorPasskey {
+		return nil
+	}
+	if m.passkeyRP == "" {
+		return ErrVaultPasskeyUnavailable
+	}
+	if cred.RelyingParty != m.passkeyRP {
+		return ErrVaultRelyingPartyMismatch
+	}
+	return nil
 }
 
 // SystemStore returns the store that serves requests with no identity.
@@ -268,9 +318,10 @@ func (m *TenantPasswordStoreManager) VaultStatus(ctx context.Context, tenantID, 
 		return nil, err
 	}
 	status := &VaultStatus{
-		Initialized: len(factors) > 0,
-		Unlocked:    state.session(userID) != nil,
-		Factors:     make([]VaultFactorInfo, 0, len(factors)),
+		Initialized:         len(factors) > 0,
+		Unlocked:            state.session(userID) != nil,
+		Factors:             make([]VaultFactorInfo, 0, len(factors)),
+		PasskeyRelyingParty: m.passkeyRP,
 	}
 	for _, f := range factors {
 		status.Factors = append(status.Factors, f.VaultFactorInfo)
@@ -349,6 +400,9 @@ func unwrapWith(keyring *vaultKeyring, factors []*vaultFactor, cred VaultCredent
 		if cred.Type == FactorPasskey && !bytes.Equal(f.CredentialID, cred.CredentialID) {
 			continue
 		}
+		if cred.Type.IsKeyFactor() && f.KeyFingerprint != cred.KeyFingerprint {
+			continue
+		}
 		dek, err := keyring.unwrap(f, cred.Secret)
 		if errors.Is(err, ErrVaultCredentialRejected) {
 			continue
@@ -388,7 +442,7 @@ func (m *TenantPasswordStoreManager) openSession(state *tenantPasswordState, use
 // needs the user's session open: it wraps the same DEK under cred, and the
 // DEK itself never changes.
 func (m *TenantPasswordStoreManager) EnrollFactor(ctx context.Context, tenantID, userID string, cred VaultCredential) (*EnrollResult, error) {
-	if err := cred.validate(true); err != nil {
+	if err := m.validateEnrollment(cred); err != nil {
 		return nil, err
 	}
 	state, err := m.userState(tenantID, userID)
@@ -411,7 +465,7 @@ func (m *TenantPasswordStoreManager) EnrollFactor(ctx context.Context, tenantID,
 	if session == nil {
 		return nil, ErrStoreLocked
 	}
-	if err := checkPasskeyUnique(factors, cred); err != nil {
+	if err := checkUnique(factors, cred, nil); err != nil {
 		return nil, err
 	}
 	f, err := keyring.wrap(cred, session.dek)
@@ -469,15 +523,26 @@ func wrapRecovery(keyring *vaultKeyring, dek []byte) (string, *vaultFactor, erro
 	return code, f, nil
 }
 
-// checkPasskeyUnique refuses enrolling a passkey credential already
-// enrolled.
-func checkPasskeyUnique(factors []*vaultFactor, cred VaultCredential) error {
-	if cred.Type != FactorPasskey {
-		return nil
+// checkUnique refuses enrolling a passkey credential or a key already
+// enrolled. replacing, when rotating, is the factor being replaced: the same
+// passkey or key may re-enroll over itself.
+func checkUnique(factors []*vaultFactor, cred VaultCredential, replacing *vaultFactor) error {
+	var fingerprint string
+	if cred.Type.IsKeyFactor() {
+		var err error
+		if fingerprint, err = cred.keyFingerprint(); err != nil {
+			return err
+		}
 	}
 	for _, f := range factors {
-		if f.Type == FactorPasskey && bytes.Equal(f.CredentialID, cred.CredentialID) {
+		if f == replacing {
+			continue
+		}
+		if cred.Type == FactorPasskey && f.Type == FactorPasskey && bytes.Equal(f.CredentialID, cred.CredentialID) {
 			return ErrVaultPasskeyExists
+		}
+		if fingerprint != "" && f.KeyFingerprint == fingerprint {
+			return ErrVaultKeyExists
 		}
 	}
 	return nil
@@ -487,7 +552,7 @@ func checkPasskeyUnique(factors []*vaultFactor, cred VaultCredential) error {
 // same type: the DEK is re-wrapped under cred and the old wrap removed. The
 // user's session must be open.
 func (m *TenantPasswordStoreManager) RotateFactor(ctx context.Context, tenantID, userID, id string, cred VaultCredential) (*EnrollResult, error) {
-	if err := cred.validate(true); err != nil {
+	if err := m.validateEnrollment(cred); err != nil {
 		return nil, err
 	}
 	state, err := m.userState(tenantID, userID)
@@ -509,10 +574,8 @@ func (m *TenantPasswordStoreManager) RotateFactor(ctx context.Context, tenantID,
 	if old.Type != cred.Type {
 		return nil, ErrVaultInvalidCredential
 	}
-	if cred.Type == FactorPasskey && !bytes.Equal(old.CredentialID, cred.CredentialID) {
-		if err := checkPasskeyUnique(factors, cred); err != nil {
-			return nil, err
-		}
+	if err := checkUnique(factors, cred, old); err != nil {
+		return nil, err
 	}
 	f, err := keyring.wrap(cred, session.dek)
 	if err != nil {
@@ -597,7 +660,7 @@ func managedFactor(factors []*vaultFactor, id string) (*vaultFactor, error) {
 // one-time: it is replaced by a new one, returned in the result and shown
 // once. The personal session is opened.
 func (m *TenantPasswordStoreManager) RecoverVault(ctx context.Context, tenantID, userID string, recoveryCode []byte, cred VaultCredential) (*EnrollResult, error) {
-	if err := cred.validate(true); err != nil {
+	if err := m.validateEnrollment(cred); err != nil {
 		return nil, err
 	}
 	if len(recoveryCode) == 0 {
@@ -634,7 +697,7 @@ func (m *TenantPasswordStoreManager) RecoverVault(ctx context.Context, tenantID,
 	if used == nil {
 		return nil, ErrVaultCredentialRejected
 	}
-	if err := checkPasskeyUnique(factors, cred); err != nil {
+	if err := checkUnique(factors, cred, nil); err != nil {
 		clear(dek)
 		return nil, err
 	}

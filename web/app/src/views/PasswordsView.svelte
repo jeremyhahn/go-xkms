@@ -5,10 +5,10 @@
   import Modal from "$components/Modal.svelte";
   import Alert from "$components/Alert.svelte";
   import VaultFactors from "$components/VaultFactors.svelte";
-  import { MIN_PASSPHRASE_LENGTH } from "$lib/vault.ts";
+  import { MIN_PASSPHRASE_LENGTH, enrollPasskey, hasPasskey, unlockPasskey } from "$lib/vault.ts";
   import { getSDKClient } from "$stores/sdkClient.ts";
   import { showToast } from "$stores/toast.svelte.ts";
-  import type { PasswordInfo, PasswordStoreStatusResponse } from "@go-xkms/sdk";
+  import type { PasswordInfo, PasswordStoreStatusResponse, PasswordVaultCredential, PasswordVaultStatusResponse } from "@go-xkms/sdk";
 
   let status = $state<PasswordStoreStatusResponse | null>(null);
   let entries = $state<PasswordInfo[]>([]);
@@ -16,9 +16,13 @@
   let loading = $state(true);
   let busy = $state(false);
   // The vault is per user: personal entries open with the caller's own
-  // passphrase, never a deployment PIN. vaultInitialized is false until the
-  // caller enrolls a first factor, which also issues a one-time recovery code.
-  let vaultInitialized = $state(true);
+  // passphrase or passkey, never a deployment PIN. vault is the caller's
+  // vault status while locked: whether a first factor exists (enrolling it
+  // issues a one-time recovery code), its factors, and the relying party a
+  // passkey is created for (absent when the server offers no passkeys).
+  let vault = $state<PasswordVaultStatusResponse | null>(null);
+  const vaultInitialized = $derived(vault?.initialized ?? true);
+  const passkeysOffered = $derived(!!vault?.passkey_rp_id);
   let passphrase = $state("");
   let passphraseConfirm = $state("");
   let recoveryCode = $state<string | null>(null);
@@ -40,9 +44,63 @@
 
   async function refreshStatus(): Promise<void> {
     status = await getSDKClient().passwords.status();
-    if (status.is_locked) {
-      vaultInitialized = (await getSDKClient().passwords.vaultStatus()).initialized;
+    vault = status.is_locked ? await getSDKClient().passwords.vaultStatus() : null;
+  }
+
+  /**
+   * withPasskey runs a passkey action and reports its failure -- including
+   * the SDK's typed errors for a browser or key without the PRF extension --
+   * in place, never falling back to another factor.
+   */
+  async function withPasskey(action: () => Promise<void>): Promise<void> {
+    busy = true;
+    try {
+      await action();
+    } catch (e) {
+      showToast("error", e instanceof Error ? e.message : String(e));
+    } finally {
+      busy = false;
     }
+  }
+
+  function createVaultWithPasskey(): Promise<void> {
+    return withPasskey(async () => {
+      const cred = await enrollPasskey(vault!, "web console");
+      const resp = await getSDKClient().passwords.vaultEnroll(cred);
+      recoveryCode = resp.recovery_code ?? null;
+      showToast("success", "Vault created and unlocked.");
+      await load();
+    });
+  }
+
+  function unlockWithPasskey(): Promise<void> {
+    return withPasskey(async () => {
+      const cred = await unlockPasskey(vault!.factors);
+      await getSDKClient().passwords.unlock(cred);
+      showToast("success", "Vault unlocked.");
+      await load();
+    });
+  }
+
+  async function recoverWith(cred: PasswordVaultCredential): Promise<void> {
+    const resp = await getSDKClient().passwords.vaultRecover({ recovery_code: rCode, ...cred });
+    rCode = ""; rPassphrase = ""; rConfirm = "";
+    recovering = false;
+    recoveryCode = resp.recovery_code ?? null;
+    showToast("success", "Vault recovered and unlocked.");
+    await load();
+  }
+
+  function recoverWithPasskey(): Promise<void> {
+    rErr = null;
+    return withPasskey(async () => {
+      try {
+        await recoverWith(await enrollPasskey(vault!, "web console"));
+      } catch (e) {
+        rErr = e instanceof Error ? e.message : String(e);
+        throw e;
+      }
+    });
   }
 
   async function createVault(): Promise<void> {
@@ -97,17 +155,7 @@
     busy = true;
     rErr = null;
     try {
-      const resp = await getSDKClient().passwords.vaultRecover({
-        recovery_code: rCode,
-        factor: "passphrase",
-        passphrase: rPassphrase,
-        label: "web console",
-      });
-      rCode = ""; rPassphrase = ""; rConfirm = "";
-      recovering = false;
-      recoveryCode = resp.recovery_code ?? null;
-      showToast("success", "Vault recovered and unlocked.");
-      await load();
+      await recoverWith({ factor: "passphrase", passphrase: rPassphrase, label: "web console" });
     } catch (e) {
       rErr = e instanceof Error ? e.message : String(e);
     } finally {
@@ -189,6 +237,10 @@
         <input type="password" class="input input-bordered" aria-label="Passphrase" placeholder={`Passphrase (${MIN_PASSPHRASE_LENGTH}+ characters)`} bind:value={passphrase} />
         <input type="password" class="input input-bordered" aria-label="Confirm passphrase" placeholder="Confirm passphrase" bind:value={passphraseConfirm} />
         <button class="btn btn-primary btn-sm w-fit" onclick={createVault} disabled={busy || passphrase.length < MIN_PASSPHRASE_LENGTH || passphrase !== passphraseConfirm}>Create vault</button>
+        {#if passkeysOffered}
+          <div class="divider my-1 text-xs">or</div>
+          <button class="btn btn-sm w-fit" onclick={createVaultWithPasskey} disabled={busy}>Create with a passkey</button>
+        {/if}
       </div>
     </div>
   {:else if status.is_locked && recovering}
@@ -200,8 +252,11 @@
         <input class="input input-bordered font-mono" aria-label="Recovery code" placeholder="ABCD-EFGH-…" autocomplete="off" bind:value={rCode} />
         <input type="password" class="input input-bordered" aria-label="New passphrase" placeholder={`New passphrase (${MIN_PASSPHRASE_LENGTH}+ characters)`} bind:value={rPassphrase} />
         <input type="password" class="input input-bordered" aria-label="Confirm new passphrase" placeholder="Confirm new passphrase" bind:value={rConfirm} />
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
           <button class="btn btn-primary btn-sm" onclick={recover} disabled={busy || rCode.trim() === "" || rPassphrase.length < MIN_PASSPHRASE_LENGTH || rPassphrase !== rConfirm}>Recover vault</button>
+          {#if passkeysOffered}
+            <button class="btn btn-sm" onclick={recoverWithPasskey} disabled={busy || rCode.trim() === ""}>Recover with a new passkey</button>
+          {/if}
           <button class="btn btn-ghost btn-sm" onclick={() => { recovering = false; rErr = null; }} disabled={busy}>Back to unlock</button>
         </div>
       </div>
@@ -211,8 +266,11 @@
       <div class="card-body">
         <h2 class="card-title text-base">Unlock vault</h2>
         <input type="password" class="input input-bordered" aria-label="Passphrase" placeholder="Passphrase" bind:value={passphrase} />
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
           <button class="btn btn-primary btn-sm" onclick={unlock} disabled={busy || passphrase === ""}>Unlock</button>
+          {#if hasPasskey(vault)}
+            <button class="btn btn-sm" onclick={unlockWithPasskey} disabled={busy}>Unlock with passkey</button>
+          {/if}
           <button class="btn btn-ghost btn-sm" onclick={() => (recovering = true)} disabled={busy}>Use recovery code</button>
         </div>
       </div>

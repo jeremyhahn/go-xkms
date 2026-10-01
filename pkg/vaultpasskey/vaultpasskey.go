@@ -51,13 +51,16 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
-// Relying party of every vault passkey. The RP ID scopes the credential on
-// the authenticator: a credential is evaluated only for the RP ID it was
-// created for, so every client must use this one.
-const (
-	RelyingPartyID   = "xkms-password-vault"
-	RelyingPartyName = "xkms password vault"
-)
+// RelyingPartyName is the display name of a vault passkey's relying party.
+//
+// The relying party ID is not fixed: it is the server's WebAuthn relying
+// party -- the domain the web console is served from -- because a browser
+// creates and evaluates a credential only for its own origin's domain. The
+// server advertises it in the vault status (PasskeyRPID) and records it on
+// every passkey factor (RPID); every client enrolls for the advertised ID
+// and unlocks with the recorded one, so a passkey enrolled on any surface,
+// the browser included, evaluates on every other.
+const RelyingPartyName = "xkms password vault"
 
 // prfSaltLength is the length of the application-level PRF salt.
 const prfSaltLength = 32
@@ -70,6 +73,10 @@ var (
 	// ErrPINRequired is returned when no authenticator PIN is supplied: a
 	// vault passkey is always user-verified (see the package doc).
 	ErrPINRequired = errors.New("vaultpasskey: the authenticator PIN is required for a vault passkey")
+
+	// ErrNoRelyingParty is returned by Enroll without a relying party ID:
+	// the server offers no passkeys (its vault status has no PasskeyRPID).
+	ErrNoRelyingParty = errors.New("vaultpasskey: the server offers no passkeys: it has no WebAuthn relying party configured")
 
 	// ErrNoPasskeyEnrolled is returned by Unlock when the vault has no
 	// passkey factor.
@@ -102,10 +109,14 @@ type Options struct {
 
 	// Label names the vault factor (enrollment only).
 	Label string
+
+	// RelyingPartyID is the relying party to create the passkey for: the
+	// vault status's PasskeyRPID (enrollment only; required).
+	RelyingPartyID string
 }
 
 // Enroll creates a vault passkey on a: a new hmac-secret credential for
-// RelyingPartyID, a fresh PRF salt, and the credential's hmac-secret output
+// opts.RelyingPartyID, a fresh PRF salt, and the credential's hmac-secret output
 // over the transformed salt. The result is the credential to send to
 // PasswordVaultEnroll (or PasswordVaultRecover). The caller zeroes its
 // Secret once sent.
@@ -113,12 +124,15 @@ func Enroll(a Authenticator, opts Options) (transport.PasswordVaultCredential, e
 	if opts.PIN == nil {
 		return transport.PasswordVaultCredential{}, ErrPINRequired
 	}
+	if opts.RelyingPartyID == "" {
+		return transport.PasswordVaultCredential{}, ErrNoRelyingParty
+	}
 	userName := opts.UserName
 	if userName == "" {
 		userName = "xkms"
 	}
 	cfg := fido2.DefaultEnrollmentConfig(userName)
-	cfg.RelyingParty = fido2.RelyingParty{ID: RelyingPartyID, Name: RelyingPartyName}
+	cfg.RelyingParty = fido2.RelyingParty{ID: opts.RelyingPartyID, Name: RelyingPartyName}
 	cfg.PIN = opts.PIN
 	enrolled, err := a.EnrollKey(cfg)
 	if err != nil {
@@ -129,7 +143,7 @@ func Enroll(a Authenticator, opts Options) (transport.PasswordVaultCredential, e
 	if _, err := rand.Read(prfSalt); err != nil {
 		return transport.PasswordVaultCredential{}, &RandomError{Err: err}
 	}
-	secret, err := evaluate(a, enrolled.CredentialID, prfSalt, opts.PIN)
+	secret, err := evaluate(a, opts.RelyingPartyID, enrolled.CredentialID, prfSalt, opts.PIN)
 	if err != nil {
 		return transport.PasswordVaultCredential{}, err
 	}
@@ -139,23 +153,25 @@ func Enroll(a Authenticator, opts Options) (transport.PasswordVaultCredential, e
 		PRFSalt:      prfSalt,
 		Secret:       secret,
 		Label:        opts.Label,
+		RPID:         opts.RelyingPartyID,
 	}, nil
 }
 
-// Unlock evaluates the vault's passkey factors on a, in order, and returns
-// the unlock credential of the first one this authenticator holds. factors
-// is the vault status's factor list. The caller zeroes the Secret once sent.
+// Unlock evaluates the vault's passkey factors on a, in order, each for the
+// relying party it was created for, and returns the unlock credential of
+// the first one this authenticator holds. factors is the vault status's
+// factor list. The caller zeroes the Secret once sent.
 func Unlock(a Authenticator, factors []transport.PasswordVaultFactor, opts Options) (transport.PasswordVaultCredential, error) {
 	if opts.PIN == nil {
 		return transport.PasswordVaultCredential{}, ErrPINRequired
 	}
 	tried := false
 	for _, f := range factors {
-		if f.Factor != Factor || len(f.CredentialID) == 0 || len(f.PRFSalt) == 0 {
+		if f.Factor != Factor || len(f.CredentialID) == 0 || len(f.PRFSalt) == 0 || f.RPID == "" {
 			continue
 		}
 		tried = true
-		secret, err := evaluate(a, f.CredentialID, f.PRFSalt, opts.PIN)
+		secret, err := evaluate(a, f.RPID, f.CredentialID, f.PRFSalt, opts.PIN)
 		if errors.Is(err, fido2.ErrCredentialNotFound) {
 			continue // another authenticator's passkey
 		}
@@ -174,11 +190,11 @@ func Unlock(a Authenticator, factors []transport.PasswordVaultFactor, opts Optio
 	return transport.PasswordVaultCredential{}, ErrNoMatchingPasskey
 }
 
-// evaluate returns credentialID's hmac-secret output over the WebAuthn prf
-// transform of prfSalt, user-verified with pin.
-func evaluate(a Authenticator, credentialID, prfSalt []byte, pin *secure.Secret) ([]byte, error) {
+// evaluate returns credentialID's hmac-secret output, for relying party
+// rpID, over the WebAuthn prf transform of prfSalt, user-verified with pin.
+func evaluate(a Authenticator, rpID string, credentialID, prfSalt []byte, pin *secure.Secret) ([]byte, error) {
 	result, err := a.DeriveHMACSecret(&fido2.AuthenticationConfig{
-		RelyingPartyID: RelyingPartyID,
+		RelyingPartyID: rpID,
 		CredentialID:   credentialID,
 		Salt:           fido2.WebAuthnPRFSalt(prfSalt),
 		PIN:            pin,

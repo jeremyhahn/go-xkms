@@ -48,15 +48,24 @@ func (s *XKMSService) vaultCaller(ctx context.Context) (*staticpw.TenantPassword
 // copied, so the caller's request may be zeroed independently.
 func vaultCredential(c transport.PasswordVaultCredential) staticpw.VaultCredential {
 	cred := staticpw.VaultCredential{
-		Type:         staticpw.FactorType(c.Factor),
-		CredentialID: c.CredentialID,
-		PRFSalt:      c.PRFSalt,
-		Label:        c.Label,
+		Type:           staticpw.FactorType(c.Factor),
+		CredentialID:   c.CredentialID,
+		PRFSalt:        c.PRFSalt,
+		Label:          c.Label,
+		RelyingParty:   c.RPID,
+		PublicKey:      c.PublicKey,
+		Certificate:    c.Certificate,
+		KeyFingerprint: c.KeyFingerprint,
+		KeyRef: staticpw.VaultKeyRef{
+			Backend:   c.KeyRef.Backend,
+			KeyID:     c.KeyRef.KeyID,
+			TPMPolicy: c.KeyRef.TPMPolicy,
+		},
 	}
-	switch cred.Type {
-	case staticpw.FactorPassphrase:
+	switch {
+	case cred.Type == staticpw.FactorPassphrase:
 		cred.Secret = []byte(c.Passphrase)
-	case staticpw.FactorPasskey:
+	case cred.Type == staticpw.FactorPasskey, cred.Type.IsKeyFactor():
 		cred.Secret = append([]byte(nil), c.Secret...)
 	}
 	return cred
@@ -71,6 +80,18 @@ func vaultFactor(f staticpw.VaultFactorInfo) transport.PasswordVaultFactor {
 		CreatedAt:    f.CreatedAt.Format(time.RFC3339),
 		CredentialID: f.CredentialID,
 		PRFSalt:      f.PRFSalt,
+		RPID:         f.RelyingParty,
+
+		KeyFingerprint: f.KeyFingerprint,
+		KeyAlgorithm:   f.KeyAlgorithm,
+		KeyChallenge:   f.KeyChallenge,
+		KeyCheck:       f.KeyCheck,
+		KeyRef: transport.PasswordVaultKeyRef{
+			Backend:   f.KeyRef.Backend,
+			KeyID:     f.KeyRef.KeyID,
+			TPMPolicy: f.KeyRef.TPMPolicy,
+		},
+		CertificateSubject: f.CertificateSubject,
 	}
 }
 
@@ -96,6 +117,7 @@ func (s *XKMSService) PasswordVaultStatus(ctx context.Context) (*transport.Passw
 		Initialized: status.Initialized,
 		Unlocked:    status.Unlocked,
 		Factors:     make([]transport.PasswordVaultFactor, 0, len(status.Factors)),
+		PasskeyRPID: status.PasskeyRelyingParty,
 	}
 	for _, f := range status.Factors {
 		resp.Factors = append(resp.Factors, vaultFactor(f))

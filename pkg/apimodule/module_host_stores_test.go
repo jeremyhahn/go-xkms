@@ -86,6 +86,7 @@ func (h *hostMount) fullHostOptions(t *testing.T) []Option {
 		WithPINBackend(hostdeps.NewPINBackend(t, hostSOPIN, hostUserPIN)),
 		WithPlatformSealer("passphrase", hostdeps.NewSealer(t)),
 		WithCA(hostdeps.NewCAConfig("Host Mount Root")),
+		WithPasswordVaultRelyingParty(vaulttest.RelyingParty),
 	}
 }
 

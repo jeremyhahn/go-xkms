@@ -42,6 +42,10 @@ type Client interface {
 	PasswordVaultRecover(ctx context.Context, req *transport.PasswordVaultRecoverRequest) (*transport.PasswordVaultEnrollResponse, error)
 }
 
+// RelyingParty is the WebAuthn relying party ID the test servers create
+// vault passkeys for (staticpw.WithPasskeyRelyingParty).
+const RelyingParty = "kms.example.com"
+
 // Passkey returns name's test passkey: a credential ID, a 32-byte PRF salt
 // and a 32-byte PRF output derived from name, as an authenticator's
 // hmac-secret evaluation would give them.
@@ -54,6 +58,7 @@ func Passkey(name string) transport.PasswordVaultCredential {
 		PRFSalt:      salt[:],
 		Secret:       secret[:],
 		Label:        name,
+		RPID:         RelyingParty,
 	}
 }
 

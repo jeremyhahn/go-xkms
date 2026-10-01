@@ -46,7 +46,7 @@ func TestDeriveHMACSecret_ReturnsTheRawOutput(t *testing.T) {
 	salt := bytes.Repeat([]byte{0x42}, 32)
 
 	result, err := handler.DeriveHMACSecret(&AuthenticationConfig{
-		RelyingPartyID: "xkms-password-vault",
+		RelyingPartyID: "kms.example.com",
 		CredentialID:   sim.credentialID,
 		Salt:           salt,
 	})
@@ -54,7 +54,7 @@ func TestDeriveHMACSecret_ReturnsTheRawOutput(t *testing.T) {
 	assert.Equal(t, sim.hmacOutput(salt), result.HMACSecret)
 	assert.Len(t, result.HMACSecret, 32)
 
-	key, err := handler.UnlockWithKey(&AuthenticationConfig{RelyingPartyID: "xkms-password-vault", CredentialID: sim.credentialID, Salt: salt})
+	key, err := handler.UnlockWithKey(&AuthenticationConfig{RelyingPartyID: "kms.example.com", CredentialID: sim.credentialID, Salt: salt})
 	require.NoError(t, err)
 	assert.Equal(t, expectedUnlockKey(t, sim, salt), key)
 }
@@ -68,7 +68,7 @@ func TestDeriveHMACSecret_WithPIN(t *testing.T) {
 	t.Run("right PIN", func(t *testing.T) {
 		handler, sim := simulatedHandler(t, "123456")
 		result, err := handler.DeriveHMACSecret(&AuthenticationConfig{
-			RelyingPartyID: "xkms-password-vault", CredentialID: sim.credentialID, Salt: salt,
+			RelyingPartyID: "kms.example.com", CredentialID: sim.credentialID, Salt: salt,
 			PIN: testSecret(t, "123456"),
 		})
 		require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestDeriveHMACSecret_WithPIN(t *testing.T) {
 
 	t.Run("missing PIN", func(t *testing.T) {
 		handler, sim := simulatedHandler(t, "123456")
-		_, err := handler.DeriveHMACSecret(&AuthenticationConfig{RelyingPartyID: "xkms-password-vault", CredentialID: sim.credentialID, Salt: salt})
+		_, err := handler.DeriveHMACSecret(&AuthenticationConfig{RelyingPartyID: "kms.example.com", CredentialID: sim.credentialID, Salt: salt})
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrPINRequired)
 	})
@@ -85,7 +85,7 @@ func TestDeriveHMACSecret_WithPIN(t *testing.T) {
 	t.Run("wrong PIN", func(t *testing.T) {
 		handler, sim := simulatedHandler(t, "123456")
 		_, err := handler.DeriveHMACSecret(&AuthenticationConfig{
-			RelyingPartyID: "xkms-password-vault", CredentialID: sim.credentialID, Salt: salt,
+			RelyingPartyID: "kms.example.com", CredentialID: sim.credentialID, Salt: salt,
 			PIN: testSecret(t, "000000"),
 		})
 		require.Error(t, err)
@@ -108,7 +108,7 @@ func TestDeriveHMACSecret_WithPIN(t *testing.T) {
 func TestEnrollKey_WithPIN(t *testing.T) {
 	enroll := func(handler *FIDO2Handler, pin string) (*EnrollmentResult, error) {
 		cfg := DefaultEnrollmentConfig("alice")
-		cfg.RelyingParty = RelyingParty{ID: "xkms-password-vault", Name: "xkms password vault"}
+		cfg.RelyingParty = RelyingParty{ID: "kms.example.com", Name: "xkms password vault"}
 		cfg.PIN = testSecret(t, pin)
 		return handler.EnrollKey(cfg)
 	}

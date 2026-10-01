@@ -104,6 +104,11 @@ var WithServiceModuleWebAuthn = apimodule.WithWebAuthnConfig
 // store's persistence semantics and must not be nil.
 type ServiceModuleWebAuthnCredentialStoreDecorator = rest.WebAuthnCredentialStoreDecorator
 
+// WithServiceModulePasswordVaultRelyingParty sets the WebAuthn relying party
+// ID (the host console's domain) password-vault passkeys are created for;
+// unset, the module uses WithServiceModuleWebAuthn's.
+var WithServiceModulePasswordVaultRelyingParty = apimodule.WithPasswordVaultRelyingParty
+
 // WithServiceModuleWebAuthnCredentialStoreDecorator wraps the module's
 // self-built WebAuthn credential store. Requires
 // WithServiceModuleWebAuthn and WithServiceModuleQRDBClient; unset leaves

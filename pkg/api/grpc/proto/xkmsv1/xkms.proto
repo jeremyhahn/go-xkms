@@ -3698,7 +3698,7 @@ message SealStoreStatusResponse {
 // passphrase, or a passkey (a FIDO2 credential with the hmac-secret / WebAuthn
 // PRF extension).
 message PasswordVaultCredential {
-  // factor is "passphrase" or "passkey".
+  // factor is "passphrase", "passkey", "piv", "certificate" or "tpm".
   string factor = 1;
   // passphrase is the passphrase (factor "passphrase").
   string passphrase = 2;
@@ -3707,10 +3707,32 @@ message PasswordVaultCredential {
   // prf_salt is the 32-byte salt the authenticator evaluated hmac-secret
   // over; required to enroll a passkey.
   bytes prf_salt = 4;
-  // secret is the 32-byte hmac-secret (PRF) output (factor "passkey").
+  // secret is the 32-byte hmac-secret (PRF) output (factor "passkey"), or
+  // the 32-byte secret a key factor's private key recovered (key-factor
+  // unlock).
   bytes secret = 5;
   // label names an enrolled factor.
   string label = 6;
+  // rp_id is the WebAuthn relying party ID the passkey was created for;
+  // required to enroll a passkey, and it must be the server's.
+  string rp_id = 7;
+  // public_key (PKIX DER) or certificate (DER) enrolls a key factor; a
+  // certificate factor needs certificate.
+  bytes public_key = 8;
+  bytes certificate = 9;
+  // key_fingerprint selects the key factor a key-factor unlock opens.
+  string key_fingerprint = 10;
+  // key_ref records where the client keeps a key factor's private key.
+  PasswordVaultKeyRef key_ref = 11;
+}
+
+// PasswordVaultKeyRef is where a key factor's private key lives on the
+// client: the xkms backend, the key's ID there, and a TPM key's named TPM
+// policy.
+message PasswordVaultKeyRef {
+  string backend = 1;
+  string key_id = 2;
+  string tpm_policy = 3;
 }
 
 // PasswordStoreUnlockRequest opens the caller's personal password session
@@ -3727,6 +3749,16 @@ message PasswordVaultFactor {
   string created_at = 4;
   bytes credential_id = 5;
   bytes prf_salt = 6;
+  // rp_id is the relying party ID a passkey was created for.
+  string rp_id = 7;
+  // Key factors: what a client needs to recover the secret with its
+  // private key, where the key is kept, and a certificate's subject.
+  string key_fingerprint = 8;
+  string key_algorithm = 9;
+  bytes key_challenge = 10;
+  bytes key_check = 11;
+  PasswordVaultKeyRef key_ref = 12;
+  string certificate_subject = 13;
 }
 
 // PasswordVaultStatusRequest requests the caller's vault status.
@@ -3737,6 +3769,9 @@ message PasswordVaultStatusResponse {
   bool initialized = 1;
   bool unlocked = 2;
   repeated PasswordVaultFactor factors = 3;
+  // passkey_rp_id is the relying party ID a new passkey must be created
+  // for; empty when the deployment offers no passkeys.
+  string passkey_rp_id = 4;
 }
 
 // PasswordVaultEnrollRequest enrolls a factor; the first enrollment

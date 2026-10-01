@@ -100,6 +100,11 @@ type Deps struct {
 	// reads as the single process it is.
 	Leases credential.Leases
 
+	// PasskeyRelyingParty is the WebAuthn relying party ID -- the web
+	// console's domain -- the password vault's passkey factors are created
+	// for. Empty leaves passkey factors unavailable.
+	PasskeyRelyingParty string
+
 	// Audit receives the OIDC credential events. Nil logs them only.
 	Audit audit.Logger
 
@@ -185,7 +190,7 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 	}
 	if st.PasswordStore != nil && b.need(FeatureTenantPasswords, d.BarrierRegistry != nil, "barrier registry") {
 		st.PasswordManager = built(b, FeatureTenantPasswords, func() (*staticpw.TenantPasswordStoreManager, error) {
-			return BuildTenantPasswordManager(d.BarrierRegistry, st.PasswordStore)
+			return BuildTenantPasswordManager(d.BarrierRegistry, st.PasswordStore, d.PasskeyRelyingParty)
 		})
 	}
 

@@ -32,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/vaultkey"
 )
 
 // The personal vault.
@@ -46,7 +47,13 @@ import (
 //     is the FIDO2 hmac-secret (WebAuthn PRF) the user's authenticator
 //     evaluates over the factor's PRFSalt;
 //   - recovery: KEK = HKDF-SHA256(recovery code, salt). The code is issued on
-//     first enrollment, shown once, and replaced every time it is used.
+//     first enrollment, shown once, and replaced every time it is used;
+//   - piv, certificate, tpm (key factors): KEK = HKDF-SHA256(secret, salt),
+//     where the secret is drawn at enrollment by sealing to the factor's
+//     public key (pkg/vaultkey: ECDH-ES or RSA-OAEP-256). The server keeps
+//     only the sealed form; the holder of the private key recovers the
+//     secret and presents it. The server cannot unlock alone, and the DEK
+//     never leaves it.
 //
 // The wrapped DEKs live in the tenant barrier, so reading a personal entry
 // needs both the tenant barrier and one of the user's own factors: the
@@ -67,7 +74,21 @@ const (
 	FactorPasskey FactorType = "passkey"
 	// FactorRecovery is the one-time recovery code.
 	FactorRecovery FactorType = "recovery"
+	// FactorPIV is the key in a PIV card's key-management slot (9d).
+	FactorPIV FactorType = "piv"
+	// FactorCertificate is a client certificate's key, held in software,
+	// on a PKCS#11 token or in a TPM.
+	FactorCertificate FactorType = "certificate"
+	// FactorTPM is a TPM key under a named TPM policy: it opens only on
+	// that machine, in the state the policy expects.
+	FactorTPM FactorType = "tpm"
 )
+
+// IsKeyFactor reports whether t is a key factor: one whose secret is
+// sealed to a public key (piv, certificate, tpm).
+func (t FactorType) IsKeyFactor() bool {
+	return t == FactorPIV || t == FactorCertificate || t == FactorTPM
+}
 
 // Vault parameters.
 const (
@@ -92,6 +113,7 @@ const (
 	wrapAADPrefix      = "xkms/staticpw/vault/v1"
 	passkeyHKDFInfo    = "xkms/staticpw/vault/v1/passkey"
 	recoveryHKDFInfo   = "xkms/staticpw/vault/v1/recovery"
+	keyHKDFInfo        = "xkms/staticpw/vault/v1/key"
 )
 
 // Vault errors.
@@ -116,7 +138,7 @@ var (
 
 	// ErrVaultLastFactor is returned when removing a factor would leave the
 	// user with no passphrase or passkey.
-	ErrVaultLastFactor = errors.New("staticpw: cannot remove the last passphrase or passkey")
+	ErrVaultLastFactor = errors.New("staticpw: cannot remove the last unlock factor")
 
 	// ErrVaultRecoveryFactor is returned when the recovery factor is named
 	// where a passphrase or passkey is required: it is managed by recovery
@@ -126,6 +148,20 @@ var (
 	// ErrVaultPasskeyExists is returned when a passkey credential ID is
 	// already enrolled.
 	ErrVaultPasskeyExists = errors.New("staticpw: passkey already enrolled")
+
+	// ErrVaultKeyExists is returned when a key factor's key is already
+	// enrolled.
+	ErrVaultKeyExists = errors.New("staticpw: this key is already enrolled")
+
+	// ErrVaultPasskeyUnavailable is returned when a passkey is enrolled on
+	// a deployment with no WebAuthn relying party configured: a passkey is
+	// scoped to the console's domain, so without one it could not unlock
+	// from a browser.
+	ErrVaultPasskeyUnavailable = errors.New("staticpw: passkeys need the server's WebAuthn relying party (webauthn.rp_id) configured")
+
+	// ErrVaultRelyingPartyMismatch is returned when a passkey enrollment
+	// names a relying party other than the server's.
+	ErrVaultRelyingPartyMismatch = errors.New("staticpw: the passkey was created for another relying party")
 )
 
 // passphraseKDFParams returns the Argon2id cost a new passphrase factor is
@@ -155,6 +191,33 @@ type VaultCredential struct {
 
 	// Label names an enrolled factor for the user ("laptop key").
 	Label string
+
+	// RelyingParty is the WebAuthn relying party ID a passkey was created
+	// for. Required to enroll a passkey: it must be the server's.
+	RelyingParty string
+
+	// PublicKey (PKIX DER) or Certificate (DER) is the key a key factor is
+	// enrolled with. A certificate factor needs Certificate.
+	PublicKey   []byte
+	Certificate []byte
+
+	// KeyFingerprint selects the key factor a credential unlocks with
+	// (VaultFactorInfo.KeyFingerprint).
+	KeyFingerprint string
+
+	// KeyRef records, at enrollment, where the client keeps a key factor's
+	// private key, so any client can find it again.
+	KeyRef VaultKeyRef
+}
+
+// VaultKeyRef is where a key factor's private key lives on the client: the
+// xkms backend holding it, its key ID there, and for a TPM key the named
+// TPM policy it is bound to. It is a hint for selecting the token; the
+// fingerprint is what proves the key.
+type VaultKeyRef struct {
+	Backend   string `json:"backend,omitempty"`
+	KeyID     string `json:"key_id,omitempty"`
+	TPMPolicy string `json:"tpm_policy,omitempty"`
 }
 
 // VaultFactorInfo is the public description of a factor: no key material.
@@ -165,6 +228,20 @@ type VaultFactorInfo struct {
 	CreatedAt    time.Time  `json:"created_at"`
 	CredentialID []byte     `json:"credential_id,omitempty"`
 	PRFSalt      []byte     `json:"prf_salt,omitempty"`
+
+	// RelyingParty is the relying party ID a passkey was created for;
+	// every client evaluates the passkey for this ID.
+	RelyingParty string `json:"rp_id,omitempty"`
+
+	// Key factors: the key's fingerprint (vaultkey.Fingerprint), the sealed
+	// secret (KeyAlgorithm, KeyChallenge), its key-check value, where the
+	// client keeps the key, and a certificate's subject for display.
+	KeyFingerprint     string      `json:"key_fingerprint,omitempty"`
+	KeyAlgorithm       string      `json:"key_algorithm,omitempty"`
+	KeyChallenge       []byte      `json:"key_challenge,omitempty"`
+	KeyCheck           []byte      `json:"key_check,omitempty"`
+	KeyRef             VaultKeyRef `json:"key_ref,omitzero"`
+	CertificateSubject string      `json:"certificate_subject,omitempty"`
 }
 
 // vaultFactor is a factor as stored: its public description, the KDF input
@@ -200,11 +277,51 @@ func (c VaultCredential) validate(enrolling bool) error {
 		if len(c.Secret) == 0 {
 			return ErrVaultInvalidCredential
 		}
+	case FactorPIV, FactorCertificate, FactorTPM:
+		if enrolling {
+			if c.Type == FactorCertificate && len(c.Certificate) == 0 {
+				return ErrVaultInvalidCredential
+			}
+			if _, err := c.keyFingerprint(); err != nil {
+				return err
+			}
+			return nil
+		}
+		if c.KeyFingerprint == "" || len(c.Secret) != vaultkey.SecretLength {
+			return ErrVaultInvalidCredential
+		}
 	default:
 		return ErrVaultInvalidCredential
 	}
 	return nil
 }
+
+// keyFingerprint parses an enrolling key factor's key and returns its
+// fingerprint. An unparsable or unsupported key is an invalid credential.
+func (c VaultCredential) keyFingerprint() (string, error) {
+	pub, _, err := vaultkey.ParsePublicKey(c.PublicKey, c.Certificate)
+	if err != nil {
+		return "", &VaultKeyError{Err: err}
+	}
+	return vaultkey.Fingerprint(pub)
+}
+
+// VaultKeyError reports a key factor whose key cannot be enrolled: it does
+// not parse, or it is not RSA (2048 bits or more) or EC P-256/P-384/P-521.
+// It matches ErrVaultInvalidCredential.
+type VaultKeyError struct {
+	Err error
+}
+
+// Error implements the error interface.
+func (e *VaultKeyError) Error() string { return "staticpw: key factor: " + e.Err.Error() }
+
+// Unwrap returns the vaultkey failure.
+func (e *VaultKeyError) Unwrap() error { return e.Err }
+
+// Is matches ErrVaultInvalidCredential, so every transport maps it as a
+// malformed credential.
+func (e *VaultKeyError) Is(target error) bool { return target == ErrVaultInvalidCredential }
 
 // vaultKeyring persists one user's factors in the tenant barrier.
 type vaultKeyring struct {
@@ -293,15 +410,24 @@ func (k *vaultKeyring) wrap(cred VaultCredential, dek []byte) (*vaultFactor, err
 		VaultFactorInfo: VaultFactorInfo{ID: id, Type: cred.Type, Label: cred.Label, CreatedAt: time.Now().UTC()},
 		Salt:            salt,
 	}
-	if cred.Type == FactorPasskey {
+	secret := cred.Secret
+	switch {
+	case cred.Type == FactorPasskey:
 		f.CredentialID = append([]byte(nil), cred.CredentialID...)
 		f.PRFSalt = append([]byte(nil), cred.PRFSalt...)
-	}
-	if cred.Type == FactorPassphrase {
+		f.RelyingParty = cred.RelyingParty
+	case cred.Type == FactorPassphrase:
 		params := passphraseKDFParams()
 		f.ArgonTime, f.ArgonMemory, f.ArgonThreads = params.Time, params.Memory, params.Threads
+	case cred.Type.IsKeyFactor():
+		sealed, err := sealKeyFactor(f, cred)
+		if err != nil {
+			return nil, err
+		}
+		secret = sealed
+		defer clear(sealed)
 	}
-	kek, err := f.kek(cred.Secret)
+	kek, err := f.kek(secret)
 	if err != nil {
 		return nil, err
 	}
@@ -328,6 +454,33 @@ func (k *vaultKeyring) unwrap(f *vaultFactor, secret []byte) ([]byte, error) {
 	return dek, nil
 }
 
+// sealKeyFactor records a key factor's key on f and draws its secret, sealed
+// to the key (vaultkey.Seal). It returns the secret, which the caller wraps
+// the DEK with and then zeroes: only its sealed form is stored.
+func sealKeyFactor(f *vaultFactor, cred VaultCredential) ([]byte, error) {
+	pub, cert, err := vaultkey.ParsePublicKey(cred.PublicKey, cred.Certificate)
+	if err != nil {
+		return nil, &VaultKeyError{Err: err}
+	}
+	fingerprint, err := vaultkey.Fingerprint(pub)
+	if err != nil {
+		return nil, &VaultKeyError{Err: err}
+	}
+	sealed, err := vaultkey.Seal(pub)
+	if err != nil {
+		return nil, &VaultCryptoError{Op: "seal key factor", Err: err}
+	}
+	f.KeyFingerprint = fingerprint
+	f.KeyAlgorithm = sealed.Algorithm
+	f.KeyChallenge = sealed.Challenge
+	f.KeyCheck = sealed.Check
+	f.KeyRef = cred.KeyRef
+	if cert != nil {
+		f.CertificateSubject = cert.Subject.String()
+	}
+	return sealed.Secret, nil
+}
+
 // kek derives the factor's key-encryption key from secret.
 func (f *vaultFactor) kek(secret []byte) ([]byte, error) {
 	switch f.Type {
@@ -340,6 +493,8 @@ func (f *vaultFactor) kek(secret []byte) ([]byte, error) {
 		return hkdfKey(secret, f.Salt, passkeyHKDFInfo)
 	case FactorRecovery:
 		return hkdfKey(secret, f.Salt, recoveryHKDFInfo)
+	case FactorPIV, FactorCertificate, FactorTPM:
+		return hkdfKey(secret, f.Salt, keyHKDFInfo+"|"+f.KeyFingerprint)
 	default:
 		return nil, ErrVaultInvalidCredential
 	}

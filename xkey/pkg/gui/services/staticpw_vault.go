@@ -224,9 +224,7 @@ func (s *StaticPasswordService) EnrollPasskey(label, pin string) (*PasswordVault
 	}
 	defer pinSecret.Destroy()
 
-	cred, err := s.withVaultAuthenticator(func(a vaultpasskey.Authenticator) (transport.PasswordVaultCredential, error) {
-		return vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pinSecret, Label: label})
-	})
+	cred, err := s.enrollPasskey(client, pinSecret, label)
 	if err != nil {
 		return s.auditVaultResult(audit.OpPasswordVaultFactorEnrolled, nil, err)
 	}
@@ -235,6 +233,21 @@ func (s *StaticPasswordService) EnrollPasskey(label, pin string) (*PasswordVault
 		PasswordVaultCredential: cred,
 	})
 	return s.auditVaultResult(audit.OpPasswordVaultFactorEnrolled, resp, enrollErr)
+}
+
+// enrollPasskey creates a vault passkey on the security key for the relying
+// party the server advertises in its vault status.
+func (s *StaticPasswordService) enrollPasskey(client transport.Client, pin *secure.Secret, label string) (transport.PasswordVaultCredential, error) {
+	status, err := client.PasswordVaultStatus(s.getContext())
+	if err != nil {
+		return transport.PasswordVaultCredential{}, err
+	}
+	if status.PasskeyRPID == "" {
+		return transport.PasswordVaultCredential{}, vaultpasskey.ErrNoRelyingParty
+	}
+	return s.withVaultAuthenticator(func(a vaultpasskey.Authenticator) (transport.PasswordVaultCredential, error) {
+		return vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin, Label: label, RelyingPartyID: status.PasskeyRPID})
+	})
 }
 
 // UnlockWithPasskey opens the caller's personal password session with a
@@ -285,9 +298,7 @@ func (s *StaticPasswordService) RecoverWithPasskey(recoveryCode, label, pin stri
 	}
 	defer pinSecret.Destroy()
 
-	cred, err := s.withVaultAuthenticator(func(a vaultpasskey.Authenticator) (transport.PasswordVaultCredential, error) {
-		return vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pinSecret, Label: label})
-	})
+	cred, err := s.enrollPasskey(client, pinSecret, label)
 	if err != nil {
 		return s.auditVaultResult(audit.OpPasswordVaultRecovered, nil, err)
 	}

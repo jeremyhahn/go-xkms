@@ -198,11 +198,19 @@ func resolveVaultPasskeyPIN(cmd *cobra.Command) (*secure.Secret, error) {
 }
 
 // passkeyEnrollSource returns the source of a new vault passkey, created on
-// the security key with label.
+// the security key with label for the relying party the server advertises
+// in its vault status.
 func passkeyEnrollSource(out io.Writer, pin *secure.Secret, label string) vaultCredentialSource {
-	return func(context.Context, PasswordStoreClientService) (transport.PasswordVaultCredential, error) {
+	return func(ctx context.Context, client PasswordStoreClientService) (transport.PasswordVaultCredential, error) {
+		status, err := client.PasswordVaultStatus(ctx)
+		if err != nil {
+			return transport.PasswordVaultCredential{}, &SentinelCauseError{Sentinel: ErrPasswordVaultStatusFailed, Cause: err}
+		}
+		if status.PasskeyRPID == "" {
+			return transport.PasswordVaultCredential{}, vaultpasskey.ErrNoRelyingParty
+		}
 		return withVaultAuthenticator(out, vaultPasskeyEnrollPrompt, func(a vaultpasskey.Authenticator) (transport.PasswordVaultCredential, error) {
-			return vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin, Label: label})
+			return vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin, Label: label, RelyingPartyID: status.PasskeyRPID})
 		})
 	}
 }

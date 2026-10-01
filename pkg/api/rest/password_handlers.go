@@ -589,13 +589,16 @@ func passwordHandleStoreError(w http.ResponseWriter, err error) {
 // with no factor needs enrollment first (412); a credential that unwraps no
 // factor is an authentication failure that must not say why (401).
 var passwordVaultErrorMappings = []passwordErrorMapping{
-	{staticpw.ErrVaultInvalidCredential, "Invalid vault credential: supply a passphrase or a passkey", http.StatusBadRequest},
+	{staticpw.ErrVaultInvalidCredential, "Invalid vault credential", http.StatusBadRequest},
+	{staticpw.ErrVaultRelyingPartyMismatch, "The passkey was created for another relying party: create it for the server's (vault status passkey_rp_id)", http.StatusBadRequest},
+	{staticpw.ErrVaultPasskeyUnavailable, "Passkeys are unavailable: the server has no WebAuthn relying party (webauthn.rp_id) configured", http.StatusPreconditionFailed},
 	{staticpw.ErrVaultRecoveryFactor, "The recovery code is not a removable, rotatable or unlocking factor", http.StatusBadRequest},
 	{staticpw.ErrVaultNotInitialized, "No vault factor is enrolled: enroll a passphrase or passkey first", http.StatusPreconditionFailed},
 	{staticpw.ErrVaultCredentialRejected, "Credential rejected", http.StatusUnauthorized},
 	{staticpw.ErrVaultFactorNotFound, "Vault factor not found", http.StatusNotFound},
-	{staticpw.ErrVaultLastFactor, "Cannot remove the last passphrase or passkey", http.StatusConflict},
+	{staticpw.ErrVaultLastFactor, "Cannot remove the last unlock factor", http.StatusConflict},
 	{staticpw.ErrVaultPasskeyExists, "Passkey already enrolled", http.StatusConflict},
+	{staticpw.ErrVaultKeyExists, "This key is already enrolled", http.StatusConflict},
 	{xkms.ErrOperationNotSupported, "The personal password vault requires an authenticated user", http.StatusNotImplemented},
 }
 

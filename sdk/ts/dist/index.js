@@ -1831,6 +1831,133 @@ function encodeAssertionResponse(credential) {
   }
   return out;
 }
+
+// src/vaultPasskey.ts
+var PRF_LENGTH = 32;
+var VAULT_PASSKEY_RP_NAME = "xkms password vault";
+var VaultPasskeyPrfUnsupportedError = class extends Error {
+  constructor() {
+    super(
+      "This browser or security key does not support the WebAuthn PRF extension (FIDO2 hmac-secret), which a vault passkey needs. Use a security key with hmac-secret and a PIN, in a current Chrome, Edge, Firefox or Safari, or use your passphrase."
+    );
+    this.name = "VaultPasskeyPrfUnsupportedError";
+  }
+};
+var VaultPasskeyUnavailableError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "VaultPasskeyUnavailableError";
+  }
+};
+function defaultPlatform() {
+  return {
+    credentials: globalThis.navigator?.credentials,
+    hostname: globalThis.location?.hostname ?? "",
+    random: (n) => crypto.getRandomValues(new Uint8Array(new ArrayBuffer(n)))
+  };
+}
+function relyingPartyServes(rpId, hostname) {
+  return rpId !== "" && (hostname === rpId || hostname.endsWith("." + rpId));
+}
+function bufferToBase64(buffer) {
+  const url = bufferToBase64url(buffer).replace(/-/g, "+").replace(/_/g, "/");
+  return url + "=".repeat((4 - url.length % 4) % 4);
+}
+function prfFirst(credential) {
+  const prf = credential.getClientExtensionResults().prf;
+  const first = prf?.results?.first;
+  if (first === void 0) return void 0;
+  const bytes = first instanceof ArrayBuffer ? new Uint8Array(first) : new Uint8Array(first.buffer, first.byteOffset, first.byteLength);
+  return bytes.length === PRF_LENGTH ? bytes : void 0;
+}
+function requireCredentials(platform) {
+  if (!platform.credentials) {
+    throw new VaultPasskeyUnavailableError("This browser has no WebAuthn support.");
+  }
+  return platform.credentials;
+}
+async function enrollVaultPasskey(options, platform = defaultPlatform()) {
+  const rpId = options.status.passkey_rp_id ?? "";
+  if (rpId === "") {
+    throw new VaultPasskeyUnavailableError(
+      "The server offers no passkeys: it has no WebAuthn relying party (webauthn.rp_id) configured."
+    );
+  }
+  if (!relyingPartyServes(rpId, platform.hostname)) {
+    throw new VaultPasskeyUnavailableError(
+      `Vault passkeys belong to ${rpId}; open the console there to enroll one.`
+    );
+  }
+  const credentials = requireCredentials(platform);
+  const salt = platform.random(PRF_LENGTH);
+  const userName = options.userName ?? VAULT_PASSKEY_RP_NAME;
+  const created = await credentials.create({
+    publicKey: {
+      rp: { id: rpId, name: VAULT_PASSKEY_RP_NAME },
+      user: { id: platform.random(16), name: userName, displayName: userName },
+      challenge: platform.random(32),
+      pubKeyCredParams: [
+        { type: "public-key", alg: -7 },
+        { type: "public-key", alg: -257 }
+      ],
+      authenticatorSelection: { userVerification: "required", residentKey: "discouraged" },
+      extensions: { prf: { eval: { first: salt } } }
+    }
+  });
+  if (!created) {
+    throw new VaultPasskeyUnavailableError("No passkey was created.");
+  }
+  const prf = created.getClientExtensionResults().prf;
+  if (prf?.enabled !== true) {
+    throw new VaultPasskeyPrfUnsupportedError();
+  }
+  const secret = prfFirst(created) ?? (await evaluate(credentials, rpId, [{ id: created.rawId, salt }], platform)).secret;
+  return {
+    factor: "passkey",
+    credential_id: bufferToBase64(created.rawId),
+    prf_salt: bufferToBase64(salt),
+    secret: bufferToBase64(secret),
+    rp_id: rpId,
+    ...options.label !== void 0 ? { label: options.label } : {}
+  };
+}
+async function unlockVaultPasskey(factors, platform = defaultPlatform()) {
+  const passkeys = factors.filter((f) => f.factor === "passkey" && f.credential_id && f.prf_salt && f.rp_id);
+  if (passkeys.length === 0) {
+    throw new VaultPasskeyUnavailableError("Your vault has no passkey.");
+  }
+  const usable = passkeys.filter((f) => relyingPartyServes(f.rp_id, platform.hostname));
+  if (usable.length === 0) {
+    throw new VaultPasskeyUnavailableError(
+      `Your vault's passkeys belong to ${passkeys.map((f) => f.rp_id).join(", ")}; open the console there, or use xkey.`
+    );
+  }
+  const rpId = usable.map((f) => f.rp_id).sort((a, b) => b.length - a.length)[0];
+  const candidates = usable.filter((f) => f.rp_id === rpId).map((f) => ({ id: base64urlToBuffer(f.credential_id), salt: new Uint8Array(base64urlToBuffer(f.prf_salt)) }));
+  const { id, secret } = await evaluate(requireCredentials(platform), rpId, candidates, platform);
+  return { factor: "passkey", credential_id: bufferToBase64(id), secret: bufferToBase64(secret) };
+}
+async function evaluate(credentials, rpId, candidates, platform) {
+  const evalByCredential = {};
+  for (const c of candidates) evalByCredential[bufferToBase64url(c.id)] = { first: c.salt };
+  const asserted = await credentials.get({
+    publicKey: {
+      rpId,
+      challenge: platform.random(32),
+      allowCredentials: candidates.map((c) => ({ type: "public-key", id: c.id })),
+      userVerification: "required",
+      extensions: { prf: { evalByCredential } }
+    }
+  });
+  if (!asserted) {
+    throw new VaultPasskeyUnavailableError("No passkey was presented.");
+  }
+  const secret = prfFirst(asserted);
+  if (!secret) {
+    throw new VaultPasskeyPrfUnsupportedError();
+  }
+  return { id: asserted.rawId, secret };
+}
 export {
   AuditClient,
   AuthClient,
@@ -1863,11 +1990,15 @@ export {
   TenantsClient,
   TpmPolicyClient,
   UsersClient,
+  VAULT_PASSKEY_RP_NAME,
+  VaultPasskeyPrfUnsupportedError,
+  VaultPasskeyUnavailableError,
   WebAuthnEnvelopeError,
   XkmsApiError,
   XkmsClient,
   XkmsNetworkError,
   base64urlToBuffer,
+  bufferToBase64,
   bufferToBase64url,
   buildURL,
   createClient,
@@ -1876,12 +2007,15 @@ export {
   encodeHostKeyResponse,
   encodePathSegment,
   encodeResize,
+  enrollVaultPasskey,
   isWailsRuntime,
   parseControl,
   parseCreationOptions,
   parseErrorEnvelope,
   parseRequestOptions,
   pcrBranch,
-  resolveAuthPaths
+  relyingPartyServes,
+  resolveAuthPaths,
+  unlockVaultPasskey
 };
 //# sourceMappingURL=index.js.map

@@ -980,6 +980,17 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	return s, nil
 }
 
+// passkeyRelyingParty is the WebAuthn relying party ID the password vault's
+// passkey factors are created for: the configured webauthn.rp_id, the
+// domain the web console is served from. Without one, passkey factors are
+// unavailable (staticpw.ErrVaultPasskeyUnavailable).
+func (s *Server) passkeyRelyingParty() string {
+	if s.config == nil || s.config.WebAuthn == nil {
+		return ""
+	}
+	return s.config.WebAuthn.RPID
+}
+
 // composedStores assembles xkmsd's store-backed features for
 // compose.Stores.Wire -- the publish step an embedding host's module runs
 // too. xkmsd builds each store at its own point of the start-up sequence;
@@ -992,7 +1003,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 // a separate block wiring a server-local type.
 func (s *Server) composedStores() *compose.Stores {
 	if s.passwordStore != nil && s.barrierRegistry != nil {
-		manager, err := compose.BuildTenantPasswordManager(s.barrierRegistry, s.passwordStore)
+		manager, err := compose.BuildTenantPasswordManager(s.barrierRegistry, s.passwordStore, s.passkeyRelyingParty())
 		if err != nil {
 			s.logger.Warn("Per-tenant password routing is off", "error", err)
 		} else {

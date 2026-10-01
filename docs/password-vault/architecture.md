@@ -111,11 +111,39 @@ DEK ──wrapped, once per factor──▶ {tenant}/staticpw-vault/users/{subje
   exactly once and never stored in the clear. Later enrollments need the
   session open, so nobody else can add a factor to a user's vault.
 - **Passkeys.** A passkey factor is a FIDO2 credential with the hmac-secret
-  extension (the CTAP2 primitive behind WebAuthn's prf), on relying party
-  `xkms-password-vault`. Every non-browser client uses one implementation,
-  `pkg/vaultpasskey` (`sdk/go/vaultpasskey`); see "Passkey salt handling".
+  extension (the CTAP2 primitive behind WebAuthn's prf), created for the
+  server's WebAuthn relying party (see "The passkey relying party"). Every
+  non-browser client uses one implementation, `pkg/vaultpasskey`
+  (`sdk/go/vaultpasskey`); the browser uses `sdk/ts` `vaultPasskey.ts`; see
+  "Passkey salt handling".
 - **Rotation of a passkey** is enrolling a new passkey and removing the old
   one: a passkey's secret is bound to its credential.
+
+### The passkey relying party
+
+A browser creates and evaluates a WebAuthn credential only for its own
+origin's domain or a parent of it, and an authenticator answers for a
+credential only under the relying party ID it was created for. So the one
+relying party every surface can share is the domain the web console is
+served from: the server's configured WebAuthn relying party,
+`webauthn.rp_id` (`staticpw.WithPasskeyRelyingParty`; a host module passes
+it with `WithServiceModulePasswordVaultRelyingParty` or its WebAuthn config).
+
+- The vault status advertises it as `passkey_rp_id`; a client creates every
+  new passkey for it, and enrollment refuses another one
+  (`ErrVaultRelyingPartyMismatch`).
+- Each passkey factor records the ID it was created for (`rp_id`), and every
+  client evaluates the passkey for the recorded ID, so changing the
+  deployment's relying party later leaves existing passkeys working where
+  they can.
+- With no relying party configured the deployment offers no passkeys:
+  enrollment answers `ErrVaultPasskeyUnavailable` (REST 412) on every
+  surface, and clients refuse before touching the key
+  (`vaultpasskey.ErrNoRelyingParty`, the browser's
+  `VaultPasskeyUnavailableError`).
+- Rejected: a fixed, non-domain relying party ID (the first design used
+  `xkms-password-vault`). A browser refuses it, so a passkey enrolled from a
+  CLI could never open in the console and the reverse.
 
 ### Passkey salt handling
 
@@ -130,18 +158,22 @@ them:
 | factor secret (sent as `secret`) | the 32-byte hmac-secret output: `HMAC-SHA-256(CredRandomWithUV, hmac-secret salt)` |
 | KEK | `HKDF-SHA256(secret, factor salt, "xkms/staticpw/vault/v1/passkey")` |
 
-- **Enroll:** MakeCredential with hmac-secret for RP `xkms-password-vault`,
-  a fresh 32-byte `prf_salt`, one hmac-secret evaluation over the
-  transformed salt; send `{factor: "passkey", credential_id, prf_salt,
-  secret, label}`.
+- **Enroll:** MakeCredential with hmac-secret for the advertised
+  `passkey_rp_id`, a fresh 32-byte `prf_salt`, one hmac-secret evaluation
+  over the transformed salt; send `{factor: "passkey", credential_id,
+  prf_salt, secret, label, rp_id}`.
 - **Unlock:** read `credential_id` and `prf_salt` from the vault status,
   evaluate hmac-secret over the transformed salt, send `{factor: "passkey",
   credential_id, secret}`. The client tries each passkey factor until one
   is on the authenticator.
-- **A browser** evaluates `navigator.credentials.get` with
-  `extensions: {prf: {eval: {first: prf_salt}}}`, rpId
-  `xkms-password-vault`, and `userVerification: "required"`; the browser
-  applies the transform itself and `results.first` is the `secret`.
+- **A browser** creates with `navigator.credentials.create` (rp `rp_id`,
+  `userVerification: "required"`, `extensions: {prf: {eval: {first:
+  prf_salt}}}`), and evaluates with `navigator.credentials.get` with the
+  factor's `rp_id`, `userVerification: "required"` and
+  `prf.evalByCredential` (each passkey over its own salt, one ceremony); the
+  browser applies the transform itself and `results.first` is the `secret`.
+  A browser or authenticator that returns no PRF result is reported as
+  `VaultPasskeyPrfUnsupportedError`, with guidance; there is no fallback.
 - **User verification is always required.** CTAP2 keys the output with
   `CredRandomWithUV` when the user is verified and `CredRandomWithoutUV` when
   not, so a factor would stop opening if one surface verified and another
@@ -149,11 +181,15 @@ them:
   refuses without a PIN); a security key without a PIN must have one set
   first.
 - **Proof:** `pkg/fido2/testdata/webauthn_prf_salt_vectors.json` holds the
-  transform's vectors; `pkg/fido2` and `pkg/vaultpasskey` (the CLI/GUI path)
-  and `sdk/ts` (WebCrypto, the browser computation) are tested against the
-  same file, and `pkg/vaultpasskey` proves end to end that a passkey enrolled
-  by a client unlocks with a browser-computed prf output while an output over
-  the untransformed salt is refused.
+  transform's vectors and `vault_passkey_secret_vectors.json` the factor
+  secret a credential yields for a salt; `pkg/fido2` and `pkg/vaultpasskey`
+  (the CLI/GUI path) and `sdk/ts` (WebCrypto, the browser computation) are
+  tested against the same files. `pkg/vaultpasskey` proves end to end that a
+  passkey enrolled by a client unlocks with a browser-computed prf output
+  while an output over the untransformed salt is refused, and the console's
+  Playwright suite (`e2e/password-vault-passkey.spec.ts`) runs enroll and
+  unlock through Chrome's real WebAuthn stack with a CDP virtual
+  authenticator that has PRF.
 - **Rotation** re-wraps the DEK under a new secret for a factor of the same
   type and removes the old wrap. **The DEK never changes**, so nothing is
   re-encrypted.

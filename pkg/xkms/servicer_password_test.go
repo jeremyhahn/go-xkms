@@ -671,7 +671,7 @@ func setupServiceWithPasswordManager(t *testing.T) (*XKMSService, *seal.BarrierR
 	systemStore := staticpw.NewStore(systemBackend)
 	svc.SetPasswordStore(systemStore)
 
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore)
+	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"))
 	require.NoError(t, err)
 	svc.SetPasswordStoreManager(manager)
 

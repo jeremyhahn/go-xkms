@@ -83,6 +83,12 @@ func (k *SimulatedKey) EnrollKey(cfg *fido2.EnrollmentConfig) (*fido2.Enrollment
 	return &fido2.EnrollmentResult{CredentialID: id, RelyingParty: cfg.RelyingParty}, nil
 }
 
+// Seed installs a credential with a known per-credential secret (the CTAP2
+// CredRandomWithUV), so a test can check outputs against fixed vectors.
+func (k *SimulatedKey) Seed(rpID string, credentialID, credRandom []byte) {
+	k.credentials[rpID+"/"+string(credentialID)] = bytes.Clone(credRandom)
+}
+
 // DeriveHMACSecret evaluates the credential's hmac-secret over cfg.Salt.
 func (k *SimulatedKey) DeriveHMACSecret(cfg *fido2.AuthenticationConfig) (*fido2.AuthenticationResult, error) {
 	if err := k.checkPIN(cfg.PIN); err != nil {

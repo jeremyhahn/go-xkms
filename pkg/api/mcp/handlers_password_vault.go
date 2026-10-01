@@ -151,7 +151,9 @@ func mapPasswordVaultError(err error) error {
 	switch {
 	case errors.Is(err, staticpw.ErrVaultInvalidCredential),
 		errors.Is(err, staticpw.ErrVaultRecoveryFactor),
-		errors.Is(err, staticpw.ErrVaultNotInitialized):
+		errors.Is(err, staticpw.ErrVaultNotInitialized),
+		errors.Is(err, staticpw.ErrVaultRelyingPartyMismatch),
+		errors.Is(err, staticpw.ErrVaultPasskeyUnavailable):
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
 	case errors.Is(err, staticpw.ErrVaultCredentialRejected):
 		return &KeyOpError{Code: ErrCodeUnauthorized, Err: staticpw.ErrVaultCredentialRejected}
@@ -159,6 +161,8 @@ func mapPasswordVaultError(err error) error {
 		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: staticpw.ErrVaultFactorNotFound}
 	case errors.Is(err, staticpw.ErrVaultPasskeyExists):
 		return &KeyOpError{Code: sdkssh.JSONRPCCodeDuplicate, Err: staticpw.ErrVaultPasskeyExists}
+	case errors.Is(err, staticpw.ErrVaultKeyExists):
+		return &KeyOpError{Code: sdkssh.JSONRPCCodeDuplicate, Err: staticpw.ErrVaultKeyExists}
 	case errors.Is(err, staticpw.ErrVaultLastFactor):
 		return classified(ErrCodeInternalError, staticpw.ErrVaultLastFactor)
 	case errors.Is(err, xkms.ErrOperationNotSupported):

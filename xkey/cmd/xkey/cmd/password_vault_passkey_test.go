@@ -388,7 +388,9 @@ func TestWithVaultAuthenticator_CloseFailureDiscardsTheSecret(t *testing.T) {
 	pin, err := secure.NewSecret([]byte("123456"))
 	require.NoError(t, err)
 	defer pin.Destroy()
-	cred, err := passkeyEnrollSource(new(bytes.Buffer), pin, "")(context.Background(), nil)
+	cred, err := withVaultAuthenticator(new(bytes.Buffer), vaultPasskeyEnrollPrompt, func(a vaultpasskey.Authenticator) (transport.PasswordVaultCredential, error) {
+		return vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin, RelyingPartyID: vaulttest.RelyingParty})
+	})
 	assert.ErrorIs(t, err, errVaultKeyClose)
 	assert.Empty(t, cred.Secret, "a failed close returns no secret")
 }
@@ -405,6 +407,6 @@ func TestNewVaultAuthenticator_UsesTheWebAuthnEnumerator(t *testing.T) {
 	pin, err := secure.NewSecret([]byte("123456"))
 	require.NoError(t, err)
 	defer pin.Destroy()
-	_, err = vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin})
+	_, err = vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin, RelyingPartyID: vaulttest.RelyingParty})
 	assert.ErrorIs(t, err, pkgfido2.ErrNoDeviceFound)
 }

@@ -138,6 +138,30 @@ func WithWebAuthnConfig(cfg *config.WebAuthnConfig) Option {
 	}
 }
 
+// WithPasswordVaultRelyingParty sets the WebAuthn relying party ID -- the
+// domain the host's web console is served from -- that password-vault
+// passkey factors are created for. Unset, the module uses the RPID of
+// WithWebAuthnConfig; with neither, passkey factors are unavailable
+// (staticpw.ErrVaultPasskeyUnavailable). A host serving WebAuthn itself
+// passes its own relying party ID here.
+func WithPasswordVaultRelyingParty(rpID string) Option {
+	return func(m *Module) {
+		m.vaultRelyingParty = rpID
+	}
+}
+
+// passwordVaultRelyingParty is the relying party ID vault passkeys are
+// created for: WithPasswordVaultRelyingParty, else WithWebAuthnConfig's.
+func (m *Module) passwordVaultRelyingParty() string {
+	if m.vaultRelyingParty != "" {
+		return m.vaultRelyingParty
+	}
+	if m.webauthnConfig != nil {
+		return m.webauthnConfig.RPID
+	}
+	return ""
+}
+
 // WithWebAuthnCredentialStoreDecorator wraps the qrdb-backed credential
 // store the module's self-built WebAuthn relying party persists passkeys
 // through, so a composing host can attach its own registration side effects
@@ -307,7 +331,10 @@ type Module struct {
 	// state.
 	webauthnConfig *config.WebAuthnConfig
 	sessionOptions *rest.SessionOptions
-	pivLogin       *rest.PIVLoginOptions
+
+	// vaultRelyingParty is WithPasswordVaultRelyingParty's relying party.
+	vaultRelyingParty string
+	pivLogin          *rest.PIVLoginOptions
 
 	// webauthnCredentialStoreDecorator wraps the credential store the
 	// self-built WebAuthn relying party persists through

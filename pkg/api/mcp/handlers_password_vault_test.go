@@ -190,7 +190,7 @@ func TestVaultMethods_RemoveFactor(t *testing.T) {
 	requireCode(t, err, ErrCodeInternalError)
 	assert.ErrorIs(t, err, staticpw.ErrVaultLastFactor)
 	_, message := ClientError(err)
-	assert.Contains(t, message, "last passphrase or passkey", "a classified refusal tells the caller why")
+	assert.Contains(t, message, "last unlock factor", "a classified refusal tells the caller why")
 
 	_, err = s.invoke(t, alice, "password.vault.removeFactor", transport.PasswordVaultRemoveFactorRequest{FactorID: second.Factor.ID})
 	requireCode(t, err, sdkssh.JSONRPCCodeNotFound)

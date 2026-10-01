@@ -19,9 +19,9 @@ package vaultpasskey
 
 import pkg "github.com/jeremyhahn/go-xkms/pkg/vaultpasskey"
 
-// Relying party every vault passkey is created for.
+// RelyingPartyName names a vault passkey's relying party; its ID is the
+// server's (the vault status's PasskeyRPID).
 const (
-	RelyingPartyID   = pkg.RelyingPartyID
 	RelyingPartyName = pkg.RelyingPartyName
 	Factor           = pkg.Factor
 )
@@ -45,6 +45,7 @@ var (
 
 var (
 	ErrPINRequired       = pkg.ErrPINRequired
+	ErrNoRelyingParty    = pkg.ErrNoRelyingParty
 	ErrNoPasskeyEnrolled = pkg.ErrNoPasskeyEnrolled
 	ErrNoMatchingPasskey = pkg.ErrNoMatchingPasskey
 	ErrUnexpectedOutput  = pkg.ErrUnexpectedOutput
