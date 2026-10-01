@@ -98,15 +98,21 @@ type PromptWriter interface {
 	io.Writer
 }
 
-// EnrollKey enrolls a FIDO2 key
-func (h *FIDO2Handler) EnrollKey(config *EnrollmentConfig) (*EnrollmentResult, error) {
-	// Find a suitable device
+// hmacSession is an open hmac-secret session on the selected authenticator.
+type hmacSession struct {
+	ext   *HMACSecretExtension
+	close func()
+}
+
+// openHMACSession selects a device, opens its CTAP channel, and returns the
+// hmac-secret extension of an authenticator that supports it. timeout, when
+// positive, overrides the configured timeout until the session is closed.
+func (h *FIDO2Handler) openHMACSession(timeout time.Duration) (*hmacSession, error) {
 	device, err := h.selectDevice()
 	if err != nil {
 		return nil, err
 	}
 
-	// Open CTAP device
 	ctapDev, err := NewCTAPHIDDevice(device, h.config)
 	if err != nil {
 		if closeErr := device.Close(); closeErr != nil {
@@ -114,39 +120,50 @@ func (h *FIDO2Handler) EnrollKey(config *EnrollmentConfig) (*EnrollmentResult, e
 		}
 		return nil, &errs.Wrapped{Msg: "failed to initialize CTAP device", Err: err}
 	}
-	defer func() {
+	closeDev := func() {
 		if err := ctapDev.Close(); err != nil {
 			log.Printf("failed to close CTAP device: %v", err)
 		}
-	}()
+	}
 
-	// Create authenticator
 	auth, err := NewAuthenticator(ctapDev, h.config)
 	if err != nil {
+		closeDev()
 		return nil, &errs.Wrapped{Msg: "failed to create authenticator", Err: err}
 	}
-
-	// Check for hmac-secret support
 	if !auth.SupportsHMACSecret() {
+		closeDev()
 		return nil, &errs.Message{Msg: "device does not support hmac-secret extension"}
 	}
-
-	// Create HMAC-secret extension handler
 	hmacExt, err := NewHMACSecretExtension(auth)
 	if err != nil {
+		closeDev()
 		return nil, err
 	}
 
-	// Set timeout if specified
-	if config.Timeout > 0 {
+	restore := func() {}
+	if timeout > 0 {
 		originalTimeout := h.config.Timeout
-		h.config.Timeout = config.Timeout
-		defer func() { h.config.Timeout = originalTimeout }()
+		h.config.Timeout = timeout
+		restore = func() { h.config.Timeout = originalTimeout }
 	}
+	return &hmacSession{ext: hmacExt, close: func() { restore(); closeDev() }}, nil
+}
 
-	// Enroll credential
+// EnrollKey enrolls a FIDO2 key with the hmac-secret extension. A PIN in
+// config authorizes the registration on a PIN-protected key.
+func (h *FIDO2Handler) EnrollKey(config *EnrollmentConfig) (*EnrollmentResult, error) {
+	if config == nil {
+		return nil, ErrEnrollmentConfigNil
+	}
+	session, err := h.openHMACSession(config.Timeout)
+	if err != nil {
+		return nil, err
+	}
+	defer session.close()
+
 	h.logger.Printf("Please touch your security key...")
-	result, err := hmacExt.EnrollCredential(config)
+	result, err := session.ext.EnrollCredential(config)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "enrollment failed", Err: err}
 	}
@@ -155,89 +172,65 @@ func (h *FIDO2Handler) EnrollKey(config *EnrollmentConfig) (*EnrollmentResult, e
 	return result, nil
 }
 
-// UnlockWithKey authenticates using FIDO2 and returns the derived key
-func (h *FIDO2Handler) UnlockWithKey(config *AuthenticationConfig) ([]byte, error) {
-	// Find device
-	device, err := h.selectDevice()
+// DeriveHMACSecret evaluates the credential's hmac-secret over config.Salt
+// (and Salt2) and returns the raw outputs: AuthenticationResult.HMACSecret
+// is the 32-byte HMAC-SHA-256(CredRandom, salt) of CTAP 2.1 12.5, not a key
+// derived from it. A PIN in config makes the assertion user-verified, which
+// selects the authenticator's CredRandomWithUV: supply a PIN on every
+// evaluation that must reproduce an output, or on none. Transient failures
+// (no user presence, timeout) are retried up to Config.RetryCount times.
+func (h *FIDO2Handler) DeriveHMACSecret(config *AuthenticationConfig) (*AuthenticationResult, error) {
+	if config == nil {
+		return nil, ErrAuthenticationConfigNil
+	}
+	session, err := h.openHMACSession(config.Timeout)
 	if err != nil {
 		return nil, err
 	}
+	defer session.close()
 
-	// Open CTAP device
-	ctapDev, err := NewCTAPHIDDevice(device, h.config)
-	if err != nil {
-		if closeErr := device.Close(); closeErr != nil {
-			log.Printf("failed to close device after CTAP init error: %v", closeErr)
-		}
-		return nil, &errs.Wrapped{Msg: "failed to initialize CTAP device", Err: err}
-	}
-	defer func() {
-		if err := ctapDev.Close(); err != nil {
-			log.Printf("failed to close CTAP device: %v", err)
-		}
-	}()
-
-	// Create authenticator
-	auth, err := NewAuthenticator(ctapDev, h.config)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create authenticator", Err: err}
-	}
-
-	// Check for hmac-secret support
-	if !auth.SupportsHMACSecret() {
-		return nil, &errs.Message{Msg: "device does not support hmac-secret extension"}
-	}
-
-	// Create HMAC-secret extension handler
-	hmacExt, err := NewHMACSecretExtension(auth)
-	if err != nil {
-		return nil, err
-	}
-
-	// Set timeout if specified
-	if config.Timeout > 0 {
-		originalTimeout := h.config.Timeout
-		h.config.Timeout = config.Timeout
-		defer func() { h.config.Timeout = originalTimeout }()
-	}
-
-	// Retry logic for user presence
 	var lastErr error
 	for attempt := 0; attempt < h.config.RetryCount; attempt++ {
 		if attempt > 0 {
 			h.logger.Printf("Retry %d/%d - ", attempt+1, h.config.RetryCount)
-			time.Sleep(h.config.RetryDelay)
+			<-time.After(h.config.RetryDelay)
 		}
 
 		h.logger.Printf("Please touch your security key...")
-
-		// Derive secret
-		result, err := hmacExt.DeriveSecret(config)
-		if err != nil {
-			lastErr = err
-			// The sentinel arrives wrapped by the CTAP2 and hmac-secret
-			// layers, so identity comparison would never match and the
-			// retry would never run.
-			if errors.Is(err, ErrUserPresenceRequired) || errors.Is(err, ErrOperationTimeout) {
-				continue // Retry
-			}
+		result, err := session.ext.DeriveSecret(config)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		// The sentinel arrives wrapped by the CTAP2 and hmac-secret layers,
+		// so identity comparison would never match and the retry would
+		// never run.
+		if !errors.Is(err, ErrUserPresenceRequired) && !errors.Is(err, ErrOperationTimeout) {
 			return nil, err // Non-retriable error
 		}
-
-		// Generate derived key from HMAC secret
-		derivedKey, err := GenerateDerivedKey(result.HMACSecret)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to generate derived key", Err: err}
-		}
-
-		return derivedKey, nil
 	}
 
 	if lastErr != nil {
-		return nil, &errs.Wrapped{Msg: fmt.Sprintf("unlock failed after %d attempts", h.config.RetryCount), Err: lastErr}
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("hmac-secret evaluation failed after %d attempts", h.config.RetryCount), Err: lastErr}
 	}
+	return nil, &errs.Message{Msg: fmt.Sprintf("hmac-secret evaluation failed after %d attempts", h.config.RetryCount)}
+}
 
-	return nil, &errs.Message{Msg: fmt.Sprintf("unlock failed after %d attempts", h.config.RetryCount)}
+// UnlockWithKey authenticates using FIDO2 and returns a key derived from the
+// hmac-secret output (GenerateDerivedKey). Use DeriveHMACSecret for the raw
+// output.
+func (h *FIDO2Handler) UnlockWithKey(config *AuthenticationConfig) ([]byte, error) {
+	result, err := h.DeriveHMACSecret(config)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(result.HMACSecret)
+
+	derivedKey, err := GenerateDerivedKey(result.HMACSecret)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to generate derived key", Err: err}
+	}
+	return derivedKey, nil
 }
 
 // ListDevices returns available FIDO2 devices

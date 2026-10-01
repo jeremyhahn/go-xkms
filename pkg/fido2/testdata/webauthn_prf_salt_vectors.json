@@ -1,0 +1,8 @@
+{
+  "description": "WebAuthn PRF salt transform (WebAuthn Level 3, prf extension): the hmac-secret salt an authenticator receives is SHA-256(UTF8(\"WebAuthn PRF\") || 0x00 || salt). Read by pkg/fido2 (the CLI/GUI path) and sdk/ts (the browser path) so both prove the same bytes.",
+  "vectors": [
+    {"salt": "0000000000000000000000000000000000000000000000000000000000000000", "prf_input": "4f24c9221e0ed3b764b4558a0d880ecea08117d62f2bdc13ae2c6c3ea662e3a1"},
+    {"salt": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "prf_input": "dc1f4f3b3d759586245d5de7e2e115d2a056a2df27109db7cef9b4b3a89bb106"},
+    {"salt": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "prf_input": "89fdc07784c512ea06a51d245ce16f8f199ad2b921e2cb325967b292a6bcb2c3"}
+  ]
+}

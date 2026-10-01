@@ -17,6 +17,8 @@ import (
 	"errors"
 	"strconv"
 	"time"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 var (
@@ -93,6 +95,9 @@ var (
 	ErrHMACSecretMissing       = errors.New("fido2: authenticator returned no hmac-secret extension output")
 	ErrHMACSecretOutputInvalid = errors.New("fido2: malformed hmac-secret extension output")
 	ErrAuthenticationConfigNil = errors.New("fido2: authentication configuration required")
+	// ErrEnrollmentConfigNil is returned when EnrollKey is given no
+	// configuration.
+	ErrEnrollmentConfigNil = errors.New("fido2: enrollment configuration required")
 )
 
 // PINAttemptsError reports a PIN failure together with the number of attempts
@@ -356,6 +361,12 @@ type EnrollmentConfig struct {
 	Salt                    []byte
 	RequireUserVerification bool
 	Timeout                 time.Duration
+
+	// PIN is the authenticator's client PIN. Optional: when set, the
+	// MakeCredential request is authorized with a pinUvAuthToken (CTAP 2.1
+	// 6.1.2), which a PIN-protected key requires. It is tagged out of every
+	// serialization format: a PIN is never configuration.
+	PIN *secure.Secret `yaml:"-" json:"-" mapstructure:"-"`
 }
 
 // EnrollmentResult contains enrollment data
@@ -392,6 +403,14 @@ type AuthenticationConfig struct {
 	Challenge               []byte
 	RequireUserVerification bool
 	Timeout                 time.Duration
+
+	// PIN is the authenticator's client PIN. Optional: when set, the
+	// GetAssertion request is authorized with a pinUvAuthToken, so the
+	// assertion is user-verified. CTAP 2.1 12.5 keys the hmac-secret output
+	// with a different per-credential secret when the user was verified
+	// (CredRandomWithUV) than when not (CredRandomWithoutUV): a caller that
+	// needs the same output twice must supply a PIN both times or neither.
+	PIN *secure.Secret `yaml:"-" json:"-" mapstructure:"-"`
 
 	// DerivationMode selects the hmac-secret derivation. It is tagged out
 	// of every serialization format on purpose: the insecure legacy mode

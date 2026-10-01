@@ -38,7 +38,21 @@ type (
 	WebAuthnRegistrationOptions   = pkgfido2.WebAuthnRegistrationOptions
 	EnrollmentConfig              = pkgfido2.EnrollmentConfig
 	AuthenticationConfig          = pkgfido2.AuthenticationConfig
+	AuthenticationResult          = pkgfido2.AuthenticationResult
 	DerivationMode                = pkgfido2.DerivationMode
+)
+
+var (
+	// WebAuthnPRFSalt is the WebAuthn prf salt transform,
+	// SHA-256("WebAuthn PRF" || 0x00 || salt): apply it before an hmac-secret
+	// evaluation so a non-browser client's output matches a browser's prf
+	// output for the same salt.
+	WebAuthnPRFSalt = pkgfido2.WebAuthnPRFSalt
+
+	// ErrEnrollmentConfigNil and ErrAuthenticationConfigNil report a missing
+	// EnrollKey / DeriveHMACSecret configuration.
+	ErrEnrollmentConfigNil     = pkgfido2.ErrEnrollmentConfigNil
+	ErrAuthenticationConfigNil = pkgfido2.ErrAuthenticationConfigNil
 )
 
 // Re-exported hmac-secret derivation modes.

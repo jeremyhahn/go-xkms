@@ -69,6 +69,16 @@ func (h *HMACSecretExtension) EnrollCredential(config *EnrollmentConfig) (*Enrol
 			UV: config.RequireUserVerification,
 		},
 	}
+	if config.PIN != nil {
+		param, protocol, perr := h.auth.AuthorizeWithPIN(config.PIN, clientDataHash)
+		if perr != nil {
+			return nil, perr
+		}
+		req.PinUVAuthParam, req.PinUVAuthProtocol = param, protocol
+		// The pinUvAuthToken IS the user verification and supersedes the
+		// "uv" option, which CTAP 2.1 6.1.2 reserves for a built-in method.
+		req.Options.UV = false
+	}
 
 	// Create credential
 	resp, err := h.auth.MakeCredential(req)
@@ -326,6 +336,14 @@ func (h *HMACSecretExtension) getAssertion(config *AuthenticationConfig, extensi
 			UP: true, // User presence required
 			UV: config.RequireUserVerification,
 		},
+	}
+	if config.PIN != nil {
+		param, protocol, perr := h.auth.AuthorizeWithPIN(config.PIN, req.ClientDataHash)
+		if perr != nil {
+			return nil, perr
+		}
+		req.PinUVAuthParam, req.PinUVAuthProtocol = param, protocol
+		req.Options.UV = false
 	}
 
 	resp, err := h.auth.GetAssertion(req)
