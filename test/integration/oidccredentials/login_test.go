@@ -34,10 +34,10 @@ import (
 // TestXKeyLoginServesEveryTransport logs in once with `xkey auth login
 // --piv` over REST and proves that one stored login authenticates xkey on
 // every transport to the same server: the login is bound to the server's
-// TLS identity, not to the URL it was made through. No XKMSD_TOKEN is
-// given, and no client certificate except where the server still demands
-// one (certOnlyTransports), so the stored login is the credential a call
-// carries; the control run with no login is refused. A decoy server
+// TLS identity, not to the URL it was made through. No XKMSD_TOKEN and no
+// client certificate are given, so the stored login is the only credential
+// a call carries, on every transport (xkmsd verifies it in qrdb's
+// authenticator chain); the control run with no login is refused. A decoy server
 // on the same host with a different certificate never receives the login.
 func TestXKeyLoginServesEveryTransport(t *testing.T) {
 	home := t.TempDir()
@@ -65,9 +65,6 @@ func TestXKeyLoginServesEveryTransport(t *testing.T) {
 	for _, transport := range transports {
 		t.Run(transport, func(t *testing.T) {
 			vars := append(base, "XKMSD_URL="+env.urls[transport], "XKMSD_SERVER_NAME=localhost")
-			if certOnlyTransports[transport] {
-				vars = append(vars, "XKMSD_TLS_CERT="+env.adminCert, "XKMSD_TLS_KEY="+env.adminKey)
-			}
 			out, err := runXKey(vars, "", "oidc", "providers", "list")
 			require.NoError(t, err, "the REST login authenticates %s:\n%s", transport, out)
 		})
@@ -101,15 +98,6 @@ func TestXKeyLoginServesEveryTransport(t *testing.T) {
 		}
 	})
 }
-
-// certOnlyTransports are the transports where the stored login alone does
-// not yet authenticate. xkmsd verifies its session tokens in the embedded
-// qrdb node's auth chain (bearerAuthenticator, through qrdb's
-// WithAuthenticators), which covers gRPC; on MCP qrdb hands the request's
-// Authorization header to authenticators only through a context accessor
-// its SDK does not re-export, so until it does the MCP cell also presents
-// the client certificate the server demands.
-var certOnlyTransports = map[string]bool{"mcp": true}
 
 // pivToken initializes a SoftHSM token private to the test and points
 // xkey's PIV at it through home's xkey config, so the PIV key outlives each

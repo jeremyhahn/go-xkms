@@ -351,6 +351,18 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The session token this mints is accepted on qrdb's chain with an
+	// unobservable login method, so the account's permitted-method policy
+	// is enforced here, by the issuer, for the method that authenticated:
+	// the client certificate (mTLS).
+	if err := auth.CheckAuthMethod(user.Username, user.TenantID, user.AuthMethods, qrdbsdk.MethodMTLS); err != nil {
+		if s.auditAuthDenyOrFail(w, r, user.Username, "auth.login.piv", "method not permitted") {
+			return
+		}
+		writeErrorWithMessage(w, ErrUnauthorized, "authentication failed", http.StatusUnauthorized)
+		return
+	}
+
 	identity := &auth.Identity{
 		Subject:  user.Username,
 		TenantID: user.TenantID,

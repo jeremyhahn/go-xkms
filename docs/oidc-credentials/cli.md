@@ -98,8 +98,9 @@ identity so one login serves every transport (a session token, carried as a
 bearer token on every transport, the Unix socket included; see
 `xkey/docs/usage/quickstart.md`) and, for TLS transports, an mTLS
 client credential in `XKMSD_TLS_CERT` / `XKMSD_TLS_KEY`; `XKMSD_TLS_CA` names
-the CA bundle. The unified server authenticates gRPC and MCP calls by client
-certificate, so those transports need the credential.
+the CA bundle. Every transport accepts the session token on its own: xkmsd
+verifies it in the unified server's authenticator chain as well as on its
+REST routes, so a client certificate is optional.
 
 | Command | Server behaviour |
 |---|---|

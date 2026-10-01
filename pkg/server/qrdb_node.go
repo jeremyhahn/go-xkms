@@ -25,8 +25,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
-	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/webui"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -161,7 +161,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	}
 	nodeOpts := []qrdbnode.NodeOption{
 		qrdbnode.WithLogger(s.logger),
-		qrdbnode.WithAuthenticators(&bearerAuthenticator{live: s.liveAuthenticator}),
+		qrdbnode.WithAuthenticators(newBearerAuthenticator(s.liveAuthenticator)),
 	}
 
 	// The audit sink and the hardware auth-factor registry are wired into the

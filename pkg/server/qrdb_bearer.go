@@ -24,15 +24,10 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
-var (
-	// ErrNoBearerToken is returned when a request carries no bearer token,
-	// so the next authenticator in the qrdb chain decides.
-	ErrNoBearerToken = errors.New("xkmsd: no bearer token")
-
-	// ErrBearerNotAccepted is returned when xkmsd's authentication does not
-	// verify bearer tokens (it is disabled, or not yet initialized).
-	ErrBearerNotAccepted = errors.New("xkmsd: bearer tokens are not accepted")
-)
+// ErrBearerNotAccepted is returned when a request carries a bearer token
+// but xkmsd's authentication does not verify bearer tokens (it is disabled,
+// or not yet initialized). The chain reports it as unauthenticated.
+var ErrBearerNotAccepted = errors.New("xkmsd: bearer tokens are not accepted")
 
 // bearerAuthenticator carries xkmsd's session tokens (the ones its login
 // plane mints, or an operator's external-IdP JWTs) into the embedded qrdb
@@ -47,20 +42,40 @@ var (
 // bearer header into a qrdb identity.
 type bearerAuthenticator struct {
 	live *auth.LiveAuthenticator
+
+	// authorization reads the request's raw Authorization value from its
+	// context: qrdb's accessor, which every transport (the HTTP header on
+	// REST and MCP, the metadata on gRPC and the Unix socket) feeds.
+	authorization func(context.Context) string
 }
 
-// Compile-time check against qrdb's authenticator interface.
-var _ qrdbsdk.Authenticator = (*bearerAuthenticator)(nil)
+// newBearerAuthenticator returns a bearer authenticator over xkmsd's live
+// authenticator, reading Authorization through qrdb's accessor.
+func newBearerAuthenticator(live *auth.LiveAuthenticator) *bearerAuthenticator {
+	return &bearerAuthenticator{live: live, authorization: qrdbsdk.HTTPAuthorizationFromContext}
+}
 
-// Name implements qrdbsdk.Authenticator. It is the method an account's
-// permitted-authentication-method policy is checked against.
+// Compile-time check: a bearer authenticator whose login method qrdb's
+// chain cannot observe.
+var _ qrdbsdk.UnobservableMethodAuthenticator = (*bearerAuthenticator)(nil)
+
+// Name implements qrdbsdk.Authenticator.
 func (b *bearerAuthenticator) Name() string { return "jwt" }
 
-// Authenticate implements qrdbsdk.Authenticator.
+// MethodUnobservable implements qrdbsdk.UnobservableMethodAuthenticator. A
+// session token says who the caller is, not how they logged in, so the
+// chain cannot check the account's permitted-method policy against it; the
+// issuer did, when it minted the token (the PIV login's
+// auth.CheckAuthMethod, the WebAuthn login's account standing).
+func (b *bearerAuthenticator) MethodUnobservable() bool { return true }
+
+// Authenticate implements qrdbsdk.Authenticator. A request without a bearer
+// token is declined with qrdbsdk.ErrUnauthenticated, so the next
+// authenticator in the chain decides.
 func (b *bearerAuthenticator) Authenticate(ctx context.Context) (*qrdbsdk.Identity, error) {
-	header := bearerHeader(ctx)
+	header := bearerValue(b.authorization(ctx))
 	if header == "" {
-		return nil, ErrNoBearerToken
+		return nil, qrdbsdk.ErrUnauthenticated
 	}
 	delegate := b.live.Load()
 	if delegate == nil || delegate.Name() == auth.NewNoOpAuthenticator().Name() {
@@ -69,17 +84,11 @@ func (b *bearerAuthenticator) Authenticate(ctx context.Context) (*qrdbsdk.Identi
 	return delegate.AuthenticateGRPC(ctx, metadata.Pairs("authorization", header))
 }
 
-// bearerHeader returns the request's "Bearer <token>" authorization value,
-// or "" when it carries none. gRPC requests carry it as metadata.
-func bearerHeader(ctx context.Context) string {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return ""
-	}
-	for _, v := range md.Get("authorization") {
-		if strings.HasPrefix(v, "Bearer ") && strings.TrimSpace(strings.TrimPrefix(v, "Bearer ")) != "" {
-			return v
-		}
+// bearerValue returns v when it is a "Bearer <token>" Authorization value,
+// or "" when it carries no bearer token.
+func bearerValue(v string) string {
+	if strings.HasPrefix(v, "Bearer ") && strings.TrimSpace(strings.TrimPrefix(v, "Bearer ")) != "" {
+		return v
 	}
 	return ""
 }

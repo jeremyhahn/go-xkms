@@ -24,7 +24,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/metadata"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -41,6 +42,16 @@ func signedSessionToken(t *testing.T, key *ecdsa.PrivateKey, subject string) str
 	return tok
 }
 
+// authorizationKey carries a request's Authorization value in the tests,
+// standing in for qrdb's carrier, which its transports set.
+type authorizationKey struct{}
+
+// testAuthorization reads the value withAuthorization stored.
+func testAuthorization(ctx context.Context) string {
+	v, _ := ctx.Value(authorizationKey{}).(string)
+	return v
+}
+
 // bearerFixture returns a bearer authenticator whose live delegate verifies
 // tokens signed by the returned key.
 func bearerFixture(t *testing.T) (*bearerAuthenticator, *ecdsa.PrivateKey, *auth.LiveAuthenticator) {
@@ -50,27 +61,38 @@ func bearerFixture(t *testing.T) (*bearerAuthenticator, *ecdsa.PrivateKey, *auth
 	jwtAuth, err := auth.NewJWTAuthenticator(&auth.JWTConfig{PublicKey: &key.PublicKey, Issuer: "xkms"})
 	require.NoError(t, err)
 	live := auth.NewLiveAuthenticator(jwtAuth)
-	return &bearerAuthenticator{live: live}, key, live
+	b := newBearerAuthenticator(live)
+	b.authorization = testAuthorization
+	return b, key, live
 }
 
-// grpcBearer is an incoming gRPC context carrying an authorization value.
+// grpcBearer is a request context carrying an Authorization value, as qrdb
+// hands one to an authenticator on any transport.
 func grpcBearer(value string) context.Context {
-	return metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", value))
+	return context.WithValue(context.Background(), authorizationKey{}, value)
 }
 
-func TestBearerAuthenticator_AcceptsAValidSessionTokenOnGRPC(t *testing.T) {
+func TestBearerAuthenticator_AcceptsAValidSessionToken(t *testing.T) {
 	b, key, _ := bearerFixture(t)
 	id, err := b.Authenticate(grpcBearer("Bearer " + signedSessionToken(t, key, "alice")))
 	require.NoError(t, err)
 	assert.Equal(t, "alice", id.Subject)
-	assert.Equal(t, "jwt", b.Name(), "the method the account's permitted-method policy sees")
+	assert.True(t, b.MethodUnobservable(), "a session token says who, not how: its issuer enforced the method policy")
+}
+
+func TestNewBearerAuthenticator_ReadsQRDBsAccessor(t *testing.T) {
+	b := newBearerAuthenticator(auth.NewLiveAuthenticator(nil))
+	require.NotNil(t, b.authorization)
+	assert.Empty(t, b.authorization(context.Background()), "qrdb's accessor reads nothing from a context qrdb did not fill")
+	_, err := b.Authenticate(context.Background())
+	assert.ErrorIs(t, err, qrdbsdk.ErrUnauthenticated)
 }
 
 func TestBearerAuthenticator_NoBearerFallsThrough(t *testing.T) {
 	b, _, _ := bearerFixture(t)
 	for _, ctx := range []context.Context{context.Background(), grpcBearer(""), grpcBearer("Basic dXNlcjpwdw==")} {
 		_, err := b.Authenticate(ctx)
-		assert.ErrorIs(t, err, ErrNoBearerToken)
+		assert.ErrorIs(t, err, qrdbsdk.ErrUnauthenticated, "declined, so the next authenticator decides")
 	}
 }
 
