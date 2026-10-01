@@ -143,11 +143,11 @@ func gapMockHandler() http.Handler {
 			respond(transport.LockoutStatusResponse{FailedAttempts: 0, IsLocked: false})
 
 		// Password - with optional query params
-		case strings.Contains(path, "/passwords/status"):
+		case strings.Contains(path, "/password-vault/session"):
 			respond(transport.PasswordStoreStatusResponse{AccessMode: "private"})
-		case strings.Contains(path, "/passwords/unlock"):
+		case strings.Contains(path, "/password-vault/unlock"):
 			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/passwords/lock"):
+		case strings.Contains(path, "/password-vault/lock"):
 			w.WriteHeader(http.StatusOK)
 		case strings.Contains(path, "/passwords/generate"):
 			respond(transport.PasswordGenerateResponse{Password: "gen-pw"})

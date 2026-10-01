@@ -385,7 +385,7 @@ func (h *PasswordHandlers) DeletePasswordHandler(w http.ResponseWriter, r *http.
 	}, http.StatusOK)
 }
 
-// UnlockHandler handles POST /api/v1/passwords/unlock requests. It opens the
+// UnlockHandler handles POST /api/v1/password-vault/unlock requests. It opens the
 // caller's personal password session with one of the caller's vault factors;
 // sessions are per user, so this never opens another user's personal entries.
 //
@@ -413,7 +413,7 @@ func (h *PasswordHandlers) UnlockHandler(w http.ResponseWriter, r *http.Request)
 	h.writeStatus(w, r, "Store unlocked successfully", "Store unlocked but failed to get status")
 }
 
-// LockHandler handles POST /api/v1/passwords/lock requests. It closes the
+// LockHandler handles POST /api/v1/password-vault/lock requests. It closes the
 // caller's personal password session; other users' sessions are untouched.
 func (h *PasswordHandlers) LockHandler(w http.ResponseWriter, r *http.Request) {
 	if err := h.servicer.PasswordStoreLock(r.Context()); err != nil {
@@ -424,7 +424,7 @@ func (h *PasswordHandlers) LockHandler(w http.ResponseWriter, r *http.Request) {
 	h.writeStatus(w, r, "Store locked successfully", "Store locked but failed to get status")
 }
 
-// StatusHandler handles GET /api/v1/passwords/status requests. It reports the
+// StatusHandler handles GET /api/v1/password-vault/session requests. It reports the
 // caller's view of its store: whether its personal session is locked, the
 // barrier's seal state, and how many entries it can read now.
 func (h *PasswordHandlers) StatusHandler(w http.ResponseWriter, r *http.Request) {

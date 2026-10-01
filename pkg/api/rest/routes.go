@@ -364,20 +364,23 @@ func Routes() []RouteSpec {
 	permIf("GET", "/passwords/{id}", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.GetPasswordHandler })
 	permIf("PUT", "/passwords/{id}", auth.ResourcePasswords, auth.ActionWrite, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.UpdatePasswordHandler })
 	permIf("DELETE", "/passwords/{id}", auth.ResourcePasswords, auth.ActionDelete, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.DeletePasswordHandler })
-	permIf("POST", "/passwords/unlock", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.UnlockHandler })
-	permIf("POST", "/passwords/lock", auth.ResourcePasswords, auth.ActionLock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.LockHandler })
-	permIf("GET", "/passwords/status", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.StatusHandler })
 	permIf("POST", "/passwords/access-mode", auth.ResourcePasswords, auth.ActionWrite, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.SetAccessModeHandler })
 	permIf("POST", "/passwords/generate", auth.ResourcePasswords, auth.ActionGenerate, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.GeneratePasswordHandler })
-	// The caller's personal vault: reading it is passwords:read, managing
-	// one's own factors is gated with the session verb, passwords:unlock --
-	// the same pairs as gRPC's PasswordVault* RPCs and MCP's
-	// password.vault.* methods.
-	permIf("GET", "/passwords/vault", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.VaultStatusHandler })
-	permIf("POST", "/passwords/vault/factors", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.VaultEnrollHandler })
-	permIf("PUT", "/passwords/vault/factors/{id}", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.VaultRotateHandler })
-	permIf("DELETE", "/passwords/vault/factors/{id}", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.VaultRemoveFactorHandler })
-	permIf("POST", "/passwords/vault/recover", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.VaultRecoverHandler })
+	// The caller's personal vault and its session. They live beside the
+	// entries, not under /passwords, so every entry name -- "vault" and
+	// "status" included -- is fetchable on GET /passwords/{id}. Reading the
+	// vault or the session is passwords:read; opening and closing the
+	// session and managing one's own factors use the session verbs -- the
+	// same pairs as gRPC's PasswordStore*/PasswordVault* RPCs and MCP's
+	// password.unlock/lock/status and password.vault.* methods.
+	permIf("GET", "/password-vault", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.VaultStatusHandler })
+	permIf("GET", "/password-vault/session", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.StatusHandler })
+	permIf("POST", "/password-vault/unlock", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.UnlockHandler })
+	permIf("POST", "/password-vault/lock", auth.ResourcePasswords, auth.ActionLock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.LockHandler })
+	permIf("POST", "/password-vault/factors", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.VaultEnrollHandler })
+	permIf("PUT", "/password-vault/factors/{id}", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.VaultRotateHandler })
+	permIf("DELETE", "/password-vault/factors/{id}", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.VaultRemoveFactorHandler })
+	permIf("POST", "/password-vault/recover", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.VaultRecoverHandler })
 
 	// --- PKCS#11 remote state. Records are a token's key/object state, so
 	// they gate on the keys resource. All POST so opaque binary values

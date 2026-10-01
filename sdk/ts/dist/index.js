@@ -1080,6 +1080,7 @@ var OidcCredentialClient = class {
 
 // src/clients/passwords.ts
 var BASE14 = "/api/v1/passwords";
+var VAULT = "/api/v1/password-vault";
 var PasswordsClient = class {
   constructor(http) {
     __publicField(this, "http", http);
@@ -1104,40 +1105,40 @@ var PasswordsClient = class {
   delete(id) {
     return this.http.request("DELETE", `${BASE14}/${encodeURIComponent(id)}`);
   }
-  /** POST /api/v1/passwords/unlock -- opens the caller's session with one of their vault factors. */
+  /** POST /api/v1/password-vault/unlock -- opens the caller's session with one of their vault factors. */
   unlock(req) {
-    return this.http.request("POST", `${BASE14}/unlock`, { body: req });
+    return this.http.request("POST", `${VAULT}/unlock`, { body: req });
   }
-  /** GET /api/v1/passwords/vault */
+  /** GET /api/v1/password-vault */
   vaultStatus() {
-    return this.http.request("GET", `${BASE14}/vault`);
+    return this.http.request("GET", VAULT);
   }
   /**
-   * POST /api/v1/passwords/vault/factors -- the first enrollment initializes
+   * POST /api/v1/password-vault/factors -- the first enrollment initializes
    * the vault, opens the session and returns the one-time recovery code.
    */
   vaultEnroll(req) {
-    return this.http.request("POST", `${BASE14}/vault/factors`, { body: req });
+    return this.http.request("POST", `${VAULT}/factors`, { body: req });
   }
-  /** PUT /api/v1/passwords/vault/factors/{id} */
+  /** PUT /api/v1/password-vault/factors/{id} */
   vaultRotate(factorId, req) {
-    return this.http.request("PUT", `${BASE14}/vault/factors/${encodeURIComponent(factorId)}`, { body: req });
+    return this.http.request("PUT", `${VAULT}/factors/${encodeURIComponent(factorId)}`, { body: req });
   }
-  /** DELETE /api/v1/passwords/vault/factors/{id} (204 No Content) */
+  /** DELETE /api/v1/password-vault/factors/{id} (204 No Content) */
   async vaultRemoveFactor(factorId) {
-    await this.http.request("DELETE", `${BASE14}/vault/factors/${encodeURIComponent(factorId)}`);
+    await this.http.request("DELETE", `${VAULT}/factors/${encodeURIComponent(factorId)}`);
   }
-  /** POST /api/v1/passwords/vault/recover -- returns the replacement recovery code. */
+  /** POST /api/v1/password-vault/recover -- returns the replacement recovery code. */
   vaultRecover(req) {
-    return this.http.request("POST", `${BASE14}/vault/recover`, { body: req });
+    return this.http.request("POST", `${VAULT}/recover`, { body: req });
   }
-  /** POST /api/v1/passwords/lock */
+  /** POST /api/v1/password-vault/lock */
   lock() {
-    return this.http.request("POST", `${BASE14}/lock`);
+    return this.http.request("POST", `${VAULT}/lock`);
   }
-  /** GET /api/v1/passwords/status */
+  /** GET /api/v1/password-vault/session -- the caller's session and the entries it can read now. */
   status() {
-    return this.http.request("GET", `${BASE14}/status`);
+    return this.http.request("GET", `${VAULT}/session`);
   }
   /** POST /api/v1/passwords/access-mode */
   setAccessMode(req) {

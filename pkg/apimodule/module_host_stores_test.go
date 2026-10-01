@@ -169,16 +169,16 @@ func TestModule_HostMount_EveryStoreAnswers(t *testing.T) {
 		// The caller's personal vault is initialized by enrolling a passkey,
 		// which returns the recovery code and opens the session ...
 		passkey := vaulttest.Passkey(tenantUser.Subject)
-		w := h.callAs(t, tenantUser, http.MethodPost, "/api/v1/passwords/vault/factors", "/api/v1/passwords/vault/factors", nil, passkey)
+		w := h.callAs(t, tenantUser, http.MethodPost, "/api/v1/password-vault/factors", "/api/v1/password-vault/factors", nil, passkey)
 		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 		var enrolled transport.PasswordVaultEnrollResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &enrolled))
 		assert.NotEmpty(t, enrolled.RecoveryCode)
 
 		// ... and, once locked, reopens with that passkey ...
-		w = h.callAs(t, tenantUser, http.MethodPost, "/api/v1/passwords/lock", "/api/v1/passwords/lock", nil, nil)
+		w = h.callAs(t, tenantUser, http.MethodPost, "/api/v1/password-vault/lock", "/api/v1/password-vault/lock", nil, nil)
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-		w = h.callAs(t, tenantUser, http.MethodPost, "/api/v1/passwords/unlock", "/api/v1/passwords/unlock", nil, passkey)
+		w = h.callAs(t, tenantUser, http.MethodPost, "/api/v1/password-vault/unlock", "/api/v1/password-vault/unlock", nil, passkey)
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 		// ... and the entry is routed to the tenant's store behind its own

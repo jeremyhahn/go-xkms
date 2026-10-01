@@ -253,11 +253,11 @@ func newFullMockServer(t *testing.T) *httptest.Server {
 			json.NewEncoder(w).Encode(map[string]string{"id": "pw-id", "name": "test"})
 		case path == "/api/v1/passwords/" && r.Method == http.MethodGet:
 			json.NewEncoder(w).Encode(map[string]interface{}{"passwords": []interface{}{}})
-		case path == "/api/v1/passwords/unlock",
-			path == "/api/v1/passwords/lock",
+		case path == "/api/v1/password-vault/unlock",
+			path == "/api/v1/password-vault/lock",
 			path == "/api/v1/passwords/access-mode":
 			json.NewEncoder(w).Encode(map[string]string{"result": "ok"})
-		case path == "/api/v1/passwords/status":
+		case path == "/api/v1/password-vault/session":
 			json.NewEncoder(w).Encode(map[string]interface{}{"access_mode": "readwrite", "is_locked": false})
 		case path == "/api/v1/passwords/generate":
 			json.NewEncoder(w).Encode(map[string]string{"password": "gen-pass"})

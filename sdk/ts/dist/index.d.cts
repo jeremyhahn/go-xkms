@@ -2296,7 +2296,7 @@ interface PasswordVaultCredential {
 }
 /** The vault factor types a client can enroll or unlock with. */
 type PasswordVaultFactorType = 'passphrase' | 'passkey';
-/** POST /api/v1/passwords/unlock opens the caller's session with one of their vault factors. */
+/** POST /api/v1/password-vault/unlock opens the caller's session with one of their vault factors. */
 type PasswordStoreUnlockRequest = PasswordVaultCredential;
 /** One enrolled vault factor (never key material). */
 interface PasswordVaultFactor {
@@ -2309,13 +2309,13 @@ interface PasswordVaultFactor {
     /** Passkey factors only: the salt to evaluate the PRF over when unlocking. */
     prf_salt?: Base64;
 }
-/** GET /api/v1/passwords/vault */
+/** GET /api/v1/password-vault */
 interface PasswordVaultStatusResponse {
     initialized: boolean;
     unlocked: boolean;
     factors: PasswordVaultFactor[];
 }
-/** POST /api/v1/passwords/vault/factors */
+/** POST /api/v1/password-vault/factors */
 type PasswordVaultEnrollRequest = PasswordVaultCredential;
 /**
  * The enrolled (or rotated, or recovered) factor. `recovery_code` is present
@@ -2325,9 +2325,9 @@ interface PasswordVaultEnrollResponse {
     factor: PasswordVaultFactor;
     recovery_code?: string;
 }
-/** PUT /api/v1/passwords/vault/factors/{id}: a new secret of the same factor type. */
+/** PUT /api/v1/password-vault/factors/{id}: a new secret of the same factor type. */
 type PasswordVaultRotateRequest = PasswordVaultCredential;
-/** POST /api/v1/passwords/vault/recover */
+/** POST /api/v1/password-vault/recover */
 interface PasswordVaultRecoverRequest extends PasswordVaultCredential {
     recovery_code: string;
 }
@@ -2368,24 +2368,24 @@ declare class PasswordsClient {
     update(id: string, req: PasswordUpdateRequest): Promise<PasswordUpdateResponse>;
     /** DELETE /api/v1/passwords/{id} */
     delete(id: string): Promise<PasswordDeleteResponse>;
-    /** POST /api/v1/passwords/unlock -- opens the caller's session with one of their vault factors. */
+    /** POST /api/v1/password-vault/unlock -- opens the caller's session with one of their vault factors. */
     unlock(req: PasswordStoreUnlockRequest): Promise<PasswordStoreStatusResponse>;
-    /** GET /api/v1/passwords/vault */
+    /** GET /api/v1/password-vault */
     vaultStatus(): Promise<PasswordVaultStatusResponse>;
     /**
-     * POST /api/v1/passwords/vault/factors -- the first enrollment initializes
+     * POST /api/v1/password-vault/factors -- the first enrollment initializes
      * the vault, opens the session and returns the one-time recovery code.
      */
     vaultEnroll(req: PasswordVaultEnrollRequest): Promise<PasswordVaultEnrollResponse>;
-    /** PUT /api/v1/passwords/vault/factors/{id} */
+    /** PUT /api/v1/password-vault/factors/{id} */
     vaultRotate(factorId: string, req: PasswordVaultRotateRequest): Promise<PasswordVaultEnrollResponse>;
-    /** DELETE /api/v1/passwords/vault/factors/{id} (204 No Content) */
+    /** DELETE /api/v1/password-vault/factors/{id} (204 No Content) */
     vaultRemoveFactor(factorId: string): Promise<void>;
-    /** POST /api/v1/passwords/vault/recover -- returns the replacement recovery code. */
+    /** POST /api/v1/password-vault/recover -- returns the replacement recovery code. */
     vaultRecover(req: PasswordVaultRecoverRequest): Promise<PasswordVaultEnrollResponse>;
-    /** POST /api/v1/passwords/lock */
+    /** POST /api/v1/password-vault/lock */
     lock(): Promise<PasswordStoreStatusResponse>;
-    /** GET /api/v1/passwords/status */
+    /** GET /api/v1/password-vault/session -- the caller's session and the entries it can read now. */
     status(): Promise<PasswordStoreStatusResponse>;
     /** POST /api/v1/passwords/access-mode */
     setAccessMode(req: PasswordStoreAccessModeRequest): Promise<PasswordStoreAccessModeResponse>;

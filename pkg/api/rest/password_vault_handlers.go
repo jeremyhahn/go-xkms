@@ -22,13 +22,13 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
-// The personal-vault endpoints under /api/v1/passwords/vault. Every one acts
+// The personal-vault endpoints under /api/v1/password-vault. Every one acts
 // on the caller's own vault -- the tenant and subject of the authenticated
 // identity, which the servicer resolves -- so none names a user. Request and
 // response bodies are the transport types; their byte fields (credential_id,
 // prf_salt, secret) are base64 in JSON.
 
-// VaultStatusHandler handles GET /api/v1/passwords/vault. It reports whether
+// VaultStatusHandler handles GET /api/v1/password-vault. It reports whether
 // the caller's vault has a factor, whether the caller's session is open, and
 // the enrolled factors -- a passkey's credential ID and PRF salt are what a
 // client needs to evaluate hmac-secret before unlocking.
@@ -41,7 +41,7 @@ func (h *PasswordHandlers) VaultStatusHandler(w http.ResponseWriter, r *http.Req
 	writeJSON(w, status, http.StatusOK)
 }
 
-// VaultEnrollHandler handles POST /api/v1/passwords/vault/factors. The body is
+// VaultEnrollHandler handles POST /api/v1/password-vault/factors. The body is
 // a transport.PasswordVaultCredential. The first enrollment initializes the
 // vault, opens the session and returns the one-time recovery code; later
 // enrollments need the caller's session open.
@@ -61,7 +61,7 @@ func (h *PasswordHandlers) VaultEnrollHandler(w http.ResponseWriter, r *http.Req
 	writeJSON(w, resp, http.StatusCreated)
 }
 
-// VaultRotateHandler handles PUT /api/v1/passwords/vault/factors/{id}. The body
+// VaultRotateHandler handles PUT /api/v1/password-vault/factors/{id}. The body
 // is a transport.PasswordVaultCredential of the same factor type as factor
 // {id}; the old secret stops working. The caller's session must be open.
 func (h *PasswordHandlers) VaultRotateHandler(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +84,7 @@ func (h *PasswordHandlers) VaultRotateHandler(w http.ResponseWriter, r *http.Req
 }
 
 // VaultRemoveFactorHandler handles DELETE
-// /api/v1/passwords/vault/factors/{id}. The caller's session must be open;
+// /api/v1/password-vault/factors/{id}. The caller's session must be open;
 // the recovery code and the last passphrase or passkey cannot be removed.
 func (h *PasswordHandlers) VaultRemoveFactorHandler(w http.ResponseWriter, r *http.Request) {
 	err := h.servicer.PasswordVaultRemoveFactor(r.Context(), &transport.PasswordVaultRemoveFactorRequest{
@@ -97,7 +97,7 @@ func (h *PasswordHandlers) VaultRemoveFactorHandler(w http.ResponseWriter, r *ht
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// VaultRecoverHandler handles POST /api/v1/passwords/vault/recover. The body
+// VaultRecoverHandler handles POST /api/v1/password-vault/recover. The body
 // is a transport.PasswordVaultRecoverRequest: the recovery code plus the new
 // factor's credential. It enrolls the factor, opens the session and returns
 // the replacement recovery code; the used code stops working.

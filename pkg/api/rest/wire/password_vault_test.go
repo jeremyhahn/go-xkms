@@ -42,22 +42,22 @@ func TestPasswordVaultClient_Routes(t *testing.T) {
 		body   map[string]any
 	}{
 		{"status", func() error { _, err := c.PasswordVaultStatus(ctx); return err },
-			http.MethodGet, "/api/v1/passwords/vault", nil},
+			http.MethodGet, "/api/v1/password-vault", nil},
 		{"enroll", func() error {
 			_, err := c.PasswordVaultEnroll(ctx, &transport.PasswordVaultEnrollRequest{PasswordVaultCredential: cred})
 			return err
-		}, http.MethodPost, "/api/v1/passwords/vault/factors", credBody},
+		}, http.MethodPost, "/api/v1/password-vault/factors", credBody},
 		{"rotate", func() error {
 			_, err := c.PasswordVaultRotate(ctx, &transport.PasswordVaultRotateRequest{FactorID: "a/b", PasswordVaultCredential: cred})
 			return err
-		}, http.MethodPut, "/api/v1/passwords/vault/factors/a%2Fb", credBody},
+		}, http.MethodPut, "/api/v1/password-vault/factors/a%2Fb", credBody},
 		{"remove", func() error {
 			return c.PasswordVaultRemoveFactor(ctx, &transport.PasswordVaultRemoveFactorRequest{FactorID: "f 1"})
-		}, http.MethodDelete, "/api/v1/passwords/vault/factors/f%201", nil},
+		}, http.MethodDelete, "/api/v1/password-vault/factors/f%201", nil},
 		{"recover", func() error {
 			_, err := c.PasswordVaultRecover(ctx, &transport.PasswordVaultRecoverRequest{RecoveryCode: "CODE", PasswordVaultCredential: cred})
 			return err
-		}, http.MethodPost, "/api/v1/passwords/vault/recover", map[string]any{
+		}, http.MethodPost, "/api/v1/password-vault/recover", map[string]any{
 			"recovery_code": "CODE", "factor": "passkey", "credential_id": "aWQ=", "secret": "cw==", "label": "key",
 		}},
 	}

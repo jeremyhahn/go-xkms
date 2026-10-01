@@ -45,7 +45,7 @@ the barrier registry and qrdb client options.
 ## Tenant passwords
 
 A tenant user's Password Manager entries live behind that tenant's barrier.
-The user opens the session with `POST /api/v1/passwords/unlock`
+The user opens the session with `POST /api/v1/password-vault/unlock`
 (`{"user_pin": "..."}`), verified against the PIN backend you supplied.
 Without `WithServiceModulePINBackend`, tenant stores cannot be unlocked.
 

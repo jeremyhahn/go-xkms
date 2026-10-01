@@ -109,7 +109,7 @@ export interface PasswordVaultCredential {
 /** The vault factor types a client can enroll or unlock with. */
 export type PasswordVaultFactorType = 'passphrase' | 'passkey';
 
-/** POST /api/v1/passwords/unlock opens the caller's session with one of their vault factors. */
+/** POST /api/v1/password-vault/unlock opens the caller's session with one of their vault factors. */
 export type PasswordStoreUnlockRequest = PasswordVaultCredential;
 
 /** One enrolled vault factor (never key material). */
@@ -124,14 +124,14 @@ export interface PasswordVaultFactor {
   prf_salt?: Base64;
 }
 
-/** GET /api/v1/passwords/vault */
+/** GET /api/v1/password-vault */
 export interface PasswordVaultStatusResponse {
   initialized: boolean;
   unlocked: boolean;
   factors: PasswordVaultFactor[];
 }
 
-/** POST /api/v1/passwords/vault/factors */
+/** POST /api/v1/password-vault/factors */
 export type PasswordVaultEnrollRequest = PasswordVaultCredential;
 
 /**
@@ -143,10 +143,10 @@ export interface PasswordVaultEnrollResponse {
   recovery_code?: string;
 }
 
-/** PUT /api/v1/passwords/vault/factors/{id}: a new secret of the same factor type. */
+/** PUT /api/v1/password-vault/factors/{id}: a new secret of the same factor type. */
 export type PasswordVaultRotateRequest = PasswordVaultCredential;
 
-/** POST /api/v1/passwords/vault/recover */
+/** POST /api/v1/password-vault/recover */
 export interface PasswordVaultRecoverRequest extends PasswordVaultCredential {
   recovery_code: string;
 }

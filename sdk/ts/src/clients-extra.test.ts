@@ -464,19 +464,28 @@ describe('PasswordsClient (add/get/update/delete/lock/unlock)', () => {
     expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/passwords/p1`);
   });
 
+  it('fetches an entry named after a vault verb from the entries namespace', async () => {
+    const fake = newFakeFetch({ body: {} });
+    const c = make(fake);
+    for (const [i, name] of ['vault', 'status', 'unlock'].entries()) {
+      await c.passwords.get(name);
+      expect(fake.calls[i]?.url).toBe(`${BASE}/api/v1/passwords/${name}`);
+    }
+  });
+
   it('routes unlock/lock/status/access-mode', async () => {
     const fake = newFakeFetch({ body: {} });
     const c = make(fake);
     await c.passwords.unlock({ factor: 'passphrase', passphrase: 'correct horse' });
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/passwords/unlock`);
+    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/password-vault/unlock`);
     expect(fake.calls[0]?.body).toEqual({ factor: 'passphrase', passphrase: 'correct horse' });
 
     await c.passwords.lock();
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/passwords/lock`);
+    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/password-vault/lock`);
     expect(fake.calls[1]?.body).toBeUndefined();
 
     await c.passwords.status();
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/passwords/status`);
+    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/password-vault/session`);
 
     await c.passwords.setAccessMode({ mode: 'shared' });
     expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/passwords/access-mode`);
@@ -490,20 +499,20 @@ describe('PasswordsClient personal vault', () => {
 
     await c.passwords.vaultStatus();
     expect(fake.calls[0]?.method).toBe('GET');
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/passwords/vault`);
+    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/password-vault`);
 
     await c.passwords.vaultEnroll({ factor: 'passphrase', passphrase: 'correct horse', label: 'laptop' });
     expect(fake.calls[1]?.method).toBe('POST');
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/passwords/vault/factors`);
+    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/password-vault/factors`);
     expect(fake.calls[1]?.body).toEqual({ factor: 'passphrase', passphrase: 'correct horse', label: 'laptop' });
 
     await c.passwords.vaultRotate('f 1', { factor: 'passphrase', passphrase: 'rotated' });
     expect(fake.calls[2]?.method).toBe('PUT');
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/passwords/vault/factors/f%201`);
+    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/password-vault/factors/f%201`);
 
     await c.passwords.vaultRecover({ recovery_code: 'OLD-CODE', factor: 'passphrase', passphrase: 'fresh' });
     expect(fake.calls[3]?.method).toBe('POST');
-    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/passwords/vault/recover`);
+    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/password-vault/recover`);
     expect(fake.calls[3]?.body).toEqual({ recovery_code: 'OLD-CODE', factor: 'passphrase', passphrase: 'fresh' });
   });
 
@@ -531,7 +540,7 @@ describe('PasswordsClient personal vault', () => {
     const c = make(fake);
     await expect(c.passwords.vaultRemoveFactor('f-2')).resolves.toBeUndefined();
     expect(fake.calls[0]?.method).toBe('DELETE');
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/passwords/vault/factors/f-2`);
+    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/password-vault/factors/f-2`);
   });
 
   it('surfaces a rejected credential and a refused removal as API errors', async () => {

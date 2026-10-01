@@ -378,11 +378,8 @@ answered with the stored value.
 
 ### REST API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/passwords/unlock` | POST | Unlock tenant session (requires unsealed barrier **and** the user PIN) |
-| `/passwords/lock` | POST | Lock tenant session |
-| `/passwords/status` | GET | Returns lock state, barrier seal state, password count |
+The session and vault routes live under `/api/v1/password-vault`; the
+authoritative table is [api.md](../password-vault/api.md).
 
 ### Error Mapping
 

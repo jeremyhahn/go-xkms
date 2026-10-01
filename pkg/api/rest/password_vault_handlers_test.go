@@ -45,7 +45,7 @@ func passphraseCred(passphrase string) transport.PasswordVaultCredential {
 // enroll enrolls cred on identity's vault, requiring 201.
 func (f *passwordFixture) enroll(t *testing.T, identity *auth.Identity, cred transport.PasswordVaultCredential) transport.PasswordVaultEnrollResponse {
 	t.Helper()
-	w := f.do(t, identity, http.MethodPost, "/api/v1/passwords/vault/factors", jsonBody(t, cred))
+	w := f.do(t, identity, http.MethodPost, "/api/v1/password-vault/factors", jsonBody(t, cred))
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	var resp transport.PasswordVaultEnrollResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
@@ -55,7 +55,7 @@ func (f *passwordFixture) enroll(t *testing.T, identity *auth.Identity, cred tra
 // unlockWith posts an unlock with cred as identity.
 func (f *passwordFixture) unlockWith(t *testing.T, identity *auth.Identity, cred transport.PasswordVaultCredential) *httptest.ResponseRecorder {
 	t.Helper()
-	return f.do(t, identity, http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, cred))
+	return f.do(t, identity, http.MethodPost, "/api/v1/password-vault/unlock", jsonBody(t, cred))
 }
 
 func TestVaultHandlers_PassphraseLifecycle(t *testing.T) {
@@ -125,20 +125,20 @@ func TestVaultHandlers_EnrollErrors(t *testing.T) {
 	f := newPasswordFixture(t)
 	alice := user(tenantA, userA)
 
-	short := f.do(t, alice, http.MethodPost, "/api/v1/passwords/vault/factors", jsonBody(t, passphraseCred("short")))
+	short := f.do(t, alice, http.MethodPost, "/api/v1/password-vault/factors", jsonBody(t, passphraseCred("short")))
 	assert.Equal(t, http.StatusBadRequest, short.Code)
 
-	malformed := f.do(t, alice, http.MethodPost, "/api/v1/passwords/vault/factors", `{bad`)
+	malformed := f.do(t, alice, http.MethodPost, "/api/v1/password-vault/factors", `{bad`)
 	assert.Equal(t, http.StatusBadRequest, malformed.Code)
 	assert.Equal(t, "Invalid request body", errorMessage(t, malformed))
 
 	f.enroll(t, alice, passkeyFor(alice))
-	duplicate := f.do(t, alice, http.MethodPost, "/api/v1/passwords/vault/factors", jsonBody(t, passkeyFor(alice)))
+	duplicate := f.do(t, alice, http.MethodPost, "/api/v1/password-vault/factors", jsonBody(t, passkeyFor(alice)))
 	assert.Equal(t, http.StatusConflict, duplicate.Code)
 	assert.Equal(t, "Passkey already enrolled", errorMessage(t, duplicate))
 
 	f.lock(t, alice)
-	locked := f.do(t, alice, http.MethodPost, "/api/v1/passwords/vault/factors", jsonBody(t, passkeyFor(user(tenantA, "other-key"))))
+	locked := f.do(t, alice, http.MethodPost, "/api/v1/password-vault/factors", jsonBody(t, passkeyFor(user(tenantA, "other-key"))))
 	assert.Equal(t, http.StatusLocked, locked.Code, "a later enrollment needs the session open")
 }
 
@@ -151,7 +151,7 @@ func TestVaultHandlers_Rotate(t *testing.T) {
 
 	rotated := passkeyFor(alice)
 	rotated.Secret = []byte("0123456789abcdef0123456789abcdef")
-	w := f.do(t, alice, http.MethodPut, "/api/v1/passwords/vault/factors/"+enrolled.Factor.ID, jsonBody(t, rotated))
+	w := f.do(t, alice, http.MethodPut, "/api/v1/password-vault/factors/"+enrolled.Factor.ID, jsonBody(t, rotated))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var resp transport.PasswordVaultEnrollResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
@@ -161,17 +161,17 @@ func TestVaultHandlers_Rotate(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, f.unlockWith(t, alice, passkeyFor(alice)).Code, "the old secret stops working")
 	require.Equal(t, http.StatusOK, f.unlockWith(t, alice, rotated).Code)
 
-	unknown := f.do(t, alice, http.MethodPut, "/api/v1/passwords/vault/factors/no-such-factor", jsonBody(t, rotated))
+	unknown := f.do(t, alice, http.MethodPut, "/api/v1/password-vault/factors/no-such-factor", jsonBody(t, rotated))
 	assert.Equal(t, http.StatusNotFound, unknown.Code)
 
-	wrongType := f.do(t, alice, http.MethodPut, "/api/v1/passwords/vault/factors/"+resp.Factor.ID, jsonBody(t, passphraseCred(vaultPassphrase)))
+	wrongType := f.do(t, alice, http.MethodPut, "/api/v1/password-vault/factors/"+resp.Factor.ID, jsonBody(t, passphraseCred(vaultPassphrase)))
 	assert.Equal(t, http.StatusBadRequest, wrongType.Code, "a rotation keeps the factor type")
 
-	malformed := f.do(t, alice, http.MethodPut, "/api/v1/passwords/vault/factors/"+resp.Factor.ID, `{bad`)
+	malformed := f.do(t, alice, http.MethodPut, "/api/v1/password-vault/factors/"+resp.Factor.ID, `{bad`)
 	assert.Equal(t, http.StatusBadRequest, malformed.Code)
 
 	f.lock(t, alice)
-	locked := f.do(t, alice, http.MethodPut, "/api/v1/passwords/vault/factors/"+resp.Factor.ID, jsonBody(t, rotated))
+	locked := f.do(t, alice, http.MethodPut, "/api/v1/password-vault/factors/"+resp.Factor.ID, jsonBody(t, rotated))
 	assert.Equal(t, http.StatusLocked, locked.Code)
 }
 
@@ -183,20 +183,20 @@ func TestVaultHandlers_RemoveFactor(t *testing.T) {
 	first := f.enroll(t, alice, passkeyFor(user(tenantA, "key-one")))
 	second := f.enroll(t, alice, passkeyFor(user(tenantA, "key-two")))
 
-	removed := f.do(t, alice, http.MethodDelete, "/api/v1/passwords/vault/factors/"+second.Factor.ID, "")
+	removed := f.do(t, alice, http.MethodDelete, "/api/v1/password-vault/factors/"+second.Factor.ID, "")
 	assert.Equal(t, http.StatusNoContent, removed.Code, removed.Body.String())
 
-	last := f.do(t, alice, http.MethodDelete, "/api/v1/passwords/vault/factors/"+first.Factor.ID, "")
+	last := f.do(t, alice, http.MethodDelete, "/api/v1/password-vault/factors/"+first.Factor.ID, "")
 	assert.Equal(t, http.StatusConflict, last.Code)
 	assert.Equal(t, "Cannot remove the last passphrase or passkey", errorMessage(t, last))
 
-	gone := f.do(t, alice, http.MethodDelete, "/api/v1/passwords/vault/factors/"+second.Factor.ID, "")
+	gone := f.do(t, alice, http.MethodDelete, "/api/v1/password-vault/factors/"+second.Factor.ID, "")
 	assert.Equal(t, http.StatusNotFound, gone.Code)
 
 	// The recovery code is listed as a factor but is not removable.
 	for _, factor := range f.vaultStatus(t, alice).Factors {
 		if factor.Factor == "recovery" {
-			w := f.do(t, alice, http.MethodDelete, "/api/v1/passwords/vault/factors/"+factor.ID, "")
+			w := f.do(t, alice, http.MethodDelete, "/api/v1/password-vault/factors/"+factor.ID, "")
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 		}
 	}
@@ -211,7 +211,7 @@ func TestVaultHandlers_RecoverIsOneTime(t *testing.T) {
 	f.lock(t, alice)
 
 	recoverWith := func(code string, cred transport.PasswordVaultCredential) *httptest.ResponseRecorder {
-		return f.do(t, alice, http.MethodPost, "/api/v1/passwords/vault/recover",
+		return f.do(t, alice, http.MethodPost, "/api/v1/password-vault/recover",
 			jsonBody(t, transport.PasswordVaultRecoverRequest{RecoveryCode: code, PasswordVaultCredential: cred}))
 	}
 
@@ -230,7 +230,7 @@ func TestVaultHandlers_RecoverIsOneTime(t *testing.T) {
 	empty := recoverWith("", passkeyFor(user(tenantA, "third-key")))
 	assert.Equal(t, http.StatusBadRequest, empty.Code)
 
-	malformed := f.do(t, alice, http.MethodPost, "/api/v1/passwords/vault/recover", `{bad`)
+	malformed := f.do(t, alice, http.MethodPost, "/api/v1/password-vault/recover", `{bad`)
 	assert.Equal(t, http.StatusBadRequest, malformed.Code)
 
 	require.Equal(t, http.StatusOK, f.unlockWith(t, alice, passkeyFor(user(tenantA, "new-key"))).Code)
@@ -249,7 +249,7 @@ func TestVaultHandlers_UsersAreIsolated(t *testing.T) {
 		"Alice's passkey is not a factor of Bob's vault")
 
 	f.enroll(t, bob, passkeyFor(bob))
-	w := f.do(t, bob, http.MethodDelete, "/api/v1/passwords/vault/factors/"+aliceFactor.Factor.ID, "")
+	w := f.do(t, bob, http.MethodDelete, "/api/v1/password-vault/factors/"+aliceFactor.Factor.ID, "")
 	assert.Equal(t, http.StatusNotFound, w.Code, "Bob cannot address Alice's factor")
 
 	// The same subject in another tenant has a vault of its own.
@@ -267,11 +267,11 @@ func TestVaultHandlers_NoIdentityIsNotImplemented(t *testing.T) {
 	cred := jsonBody(t, passkeyFor(user(tenantA, userA)))
 
 	for _, tc := range []struct{ method, path, body string }{
-		{http.MethodGet, "/api/v1/passwords/vault", ""},
-		{http.MethodPost, "/api/v1/passwords/vault/factors", cred},
-		{http.MethodPut, "/api/v1/passwords/vault/factors/f1", cred},
-		{http.MethodDelete, "/api/v1/passwords/vault/factors/f1", ""},
-		{http.MethodPost, "/api/v1/passwords/vault/recover", `{"recovery_code":"c","factor":"passphrase","passphrase":"correct horse"}`},
+		{http.MethodGet, "/api/v1/password-vault", ""},
+		{http.MethodPost, "/api/v1/password-vault/factors", cred},
+		{http.MethodPut, "/api/v1/password-vault/factors/f1", cred},
+		{http.MethodDelete, "/api/v1/password-vault/factors/f1", ""},
+		{http.MethodPost, "/api/v1/password-vault/recover", `{"recovery_code":"c","factor":"passphrase","passphrase":"correct horse"}`},
 	} {
 		w := f.do(t, nil, tc.method, tc.path, tc.body)
 		assert.Equal(t, http.StatusNotImplemented, w.Code, tc.method+" "+tc.path)
@@ -285,7 +285,7 @@ func TestVaultHandlers_NotConfiguredAndSealed(t *testing.T) {
 		t.Parallel()
 
 		router := passwordRouter(NewPasswordHandlers(&xkms.XKMSService{}))
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/passwords/vault", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/password-vault", nil)
 		req = req.WithContext(auth.WithIdentity(req.Context(), user(tenantA, userA)))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -300,8 +300,8 @@ func TestVaultHandlers_NotConfiguredAndSealed(t *testing.T) {
 		require.NoError(t, f.registry.SealTenant(tenantA))
 		alice := user(tenantA, userA)
 
-		assert.Equal(t, http.StatusServiceUnavailable, f.do(t, alice, http.MethodGet, "/api/v1/passwords/vault", "").Code)
-		w := f.do(t, alice, http.MethodPost, "/api/v1/passwords/vault/factors", jsonBody(t, passkeyFor(alice)))
+		assert.Equal(t, http.StatusServiceUnavailable, f.do(t, alice, http.MethodGet, "/api/v1/password-vault", "").Code)
+		w := f.do(t, alice, http.MethodPost, "/api/v1/password-vault/factors", jsonBody(t, passkeyFor(alice)))
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	})
 }

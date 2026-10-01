@@ -2265,7 +2265,7 @@ func (t *Transport) PasswordStoreUnlock(ctx context.Context, req *transport.Pass
 		return ErrNotConnected
 	}
 
-	_, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/passwords/unlock", req)
+	_, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/password-vault/unlock", req)
 	return err
 }
 
@@ -2275,7 +2275,7 @@ func (t *Transport) PasswordStoreLock(ctx context.Context) error {
 		return ErrNotConnected
 	}
 
-	_, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/passwords/lock", nil)
+	_, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/password-vault/lock", nil)
 	return err
 }
 
@@ -2285,7 +2285,7 @@ func (t *Transport) PasswordStoreStatus(ctx context.Context) (*transport.Passwor
 		return nil, ErrNotConnected
 	}
 
-	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/passwords/status", nil)
+	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/password-vault/session", nil)
 	if err != nil {
 		return nil, err
 	}

@@ -38,8 +38,8 @@ var vaultRoutes = []struct {
 	method, pattern string
 	handler         func(*restapi.PasswordHandlers) http.HandlerFunc
 }{
-	{http.MethodPost, "/api/v1/passwords/unlock", func(h *restapi.PasswordHandlers) http.HandlerFunc { return h.UnlockHandler }},
-	{http.MethodPost, "/api/v1/passwords/lock", func(h *restapi.PasswordHandlers) http.HandlerFunc { return h.LockHandler }},
+	{http.MethodPost, "/api/v1/password-vault/unlock", func(h *restapi.PasswordHandlers) http.HandlerFunc { return h.UnlockHandler }},
+	{http.MethodPost, "/api/v1/password-vault/lock", func(h *restapi.PasswordHandlers) http.HandlerFunc { return h.LockHandler }},
 	{http.MethodGet, wire.PasswordVaultPath, func(h *restapi.PasswordHandlers) http.HandlerFunc { return h.VaultStatusHandler }},
 	{http.MethodPost, wire.PasswordVaultFactorsPath, func(h *restapi.PasswordHandlers) http.HandlerFunc { return h.VaultEnrollHandler }},
 	{http.MethodPut, wire.PasswordVaultFactorsPath + "/{id}", func(h *restapi.PasswordHandlers) http.HandlerFunc { return h.VaultRotateHandler }},

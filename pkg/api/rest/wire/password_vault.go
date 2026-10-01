@@ -25,7 +25,7 @@ import (
 // registers the same paths, with an {id} placeholder for a factor.
 const (
 	// PasswordVaultPath is the caller's vault status.
-	PasswordVaultPath = "/api/v1/passwords/vault"
+	PasswordVaultPath = "/api/v1/password-vault"
 
 	// PasswordVaultFactorsPath enrolls a factor.
 	PasswordVaultFactorsPath = PasswordVaultPath + "/factors"

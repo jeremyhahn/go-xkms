@@ -5,8 +5,13 @@
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
 
-Routes are registered under `/api/v1/passwords` on the `hasPasswords`
-predicate. Every route is `RouteAuthPermission` and demands the same
+Entry routes are registered under `/api/v1/passwords`, and the caller's
+vault and its session under `/api/v1/password-vault`, both on the
+`hasPasswords` predicate. The two namespaces are separate so that
+`/api/v1/passwords/{id}` holds entries only: an entry named `vault`,
+`status` or `unlock` is fetched by name like any other. (Before this split
+the vault and session verbs sat under `/api/v1/passwords` and shadowed
+`GET /{id}` for an entry named `vault` or `status`.) Every route is `RouteAuthPermission` and demands the same
 `passwords:*` pair gRPC and MCP enforce for the same operation (the
 **Permission** column), so REST, QUIC, gRPC/Unix and MCP ask for one grant per
 operation. Admin and Owner hold every one of them by default.
@@ -27,14 +32,14 @@ required.
 | Get entry | `GET /api/v1/passwords/{id}` | `PasswordGet` | same as REST | `password.get` | `PasswordGet` | `passwords:read` |
 | Update entry | `PUT /api/v1/passwords/{id}` | `PasswordUpdate` | same as REST | `password.update` | `PasswordUpdate` | `passwords:write` |
 | Delete entry | `DELETE /api/v1/passwords/{id}` | `PasswordDelete` | same as REST | `password.delete` | `PasswordDelete` | `passwords:delete` |
-| Unlock own session | `POST /api/v1/passwords/unlock` | `PasswordStoreUnlock` | same as REST | `password.unlock` | `PasswordStoreUnlock` | `passwords:unlock` |
-| Vault status | `GET /api/v1/passwords/vault` | `PasswordVaultStatus` | same as REST | `password.vault.status` | `PasswordVaultStatus` | `passwords:read` |
-| Enroll factor | `POST /api/v1/passwords/vault/factors` | `PasswordVaultEnroll` | same as REST | `password.vault.enroll` | `PasswordVaultEnroll` | `passwords:unlock` |
-| Rotate factor | `PUT /api/v1/passwords/vault/factors/{id}` | `PasswordVaultRotate` | same as REST | `password.vault.rotate` | `PasswordVaultRotate` | `passwords:unlock` |
-| Remove factor | `DELETE /api/v1/passwords/vault/factors/{id}` | `PasswordVaultRemoveFactor` | same as REST | `password.vault.removeFactor` | `PasswordVaultRemoveFactor` | `passwords:unlock` |
-| Recover | `POST /api/v1/passwords/vault/recover` | `PasswordVaultRecover` | same as REST | `password.vault.recover` | `PasswordVaultRecover` | `passwords:unlock` |
-| Lock store | `POST /api/v1/passwords/lock` | `PasswordStoreLock` | same as REST | `password.lock` | `PasswordStoreLock` | `passwords:lock` |
-| Store status | `GET /api/v1/passwords/status` | `PasswordStoreStatus` | same as REST | `password.status` | `PasswordStoreStatus` | `passwords:read` |
+| Unlock own session | `POST /api/v1/password-vault/unlock` | `PasswordStoreUnlock` | same as REST | `password.unlock` | `PasswordStoreUnlock` | `passwords:unlock` |
+| Vault status | `GET /api/v1/password-vault` | `PasswordVaultStatus` | same as REST | `password.vault.status` | `PasswordVaultStatus` | `passwords:read` |
+| Enroll factor | `POST /api/v1/password-vault/factors` | `PasswordVaultEnroll` | same as REST | `password.vault.enroll` | `PasswordVaultEnroll` | `passwords:unlock` |
+| Rotate factor | `PUT /api/v1/password-vault/factors/{id}` | `PasswordVaultRotate` | same as REST | `password.vault.rotate` | `PasswordVaultRotate` | `passwords:unlock` |
+| Remove factor | `DELETE /api/v1/password-vault/factors/{id}` | `PasswordVaultRemoveFactor` | same as REST | `password.vault.removeFactor` | `PasswordVaultRemoveFactor` | `passwords:unlock` |
+| Recover | `POST /api/v1/password-vault/recover` | `PasswordVaultRecover` | same as REST | `password.vault.recover` | `PasswordVaultRecover` | `passwords:unlock` |
+| Lock store | `POST /api/v1/password-vault/lock` | `PasswordStoreLock` | same as REST | `password.lock` | `PasswordStoreLock` | `passwords:lock` |
+| Store status | `GET /api/v1/password-vault/session` | `PasswordStoreStatus` | same as REST | `password.status` | `PasswordStoreStatus` | `passwords:read` |
 | Set access mode | `POST /api/v1/passwords/access-mode` | `PasswordStoreSetAccessMode` | same as REST | `password.setAccessMode` | `PasswordStoreSetAccessMode` | `passwords:write` |
 | Generate password | `POST /api/v1/passwords/generate` | `PasswordGenerate` | same as REST | `password.generate` | `PasswordGenerate` | `passwords:generate` |
 
@@ -73,9 +78,7 @@ never returned again. Vault status lists each factor's `id`, `factor`,
 `label`, `created_at` and, for a passkey, its `credential_id` and `prf_salt`
 (what a client needs to evaluate hmac-secret before unlocking). Rotate takes
 `{"factor_id": …}` in the path plus a new credential of the same type; recover
-takes `{"recovery_code": …}` plus the new credential. A password entry named
-`vault` or `status` is reachable by ID, not by name, on `GET /{id}`: those
-paths are the vault and status routes.
+takes `{"recovery_code": …}` plus the new credential.
 
 The USB transport forwards `password.unlock` to the paired phone with the
 credential body; the phone side does not implement the vault verbs yet.

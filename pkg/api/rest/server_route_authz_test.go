@@ -123,15 +123,15 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodGet, "/api/v1/passwords/p1", "passwords", "read"},
 	{http.MethodPut, "/api/v1/passwords/p1", "passwords", "write"},
 	{http.MethodDelete, "/api/v1/passwords/p1", "passwords", "delete"},
-	{http.MethodPost, "/api/v1/passwords/unlock", "passwords", "unlock"},
-	{http.MethodPost, "/api/v1/passwords/lock", "passwords", "lock"},
-	{http.MethodGet, "/api/v1/passwords/status", "passwords", "read"},
+	{http.MethodPost, "/api/v1/password-vault/unlock", "passwords", "unlock"},
+	{http.MethodPost, "/api/v1/password-vault/lock", "passwords", "lock"},
+	{http.MethodGet, "/api/v1/password-vault/session", "passwords", "read"},
 	{http.MethodPost, "/api/v1/passwords/generate", "passwords", "generate"},
-	{http.MethodGet, "/api/v1/passwords/vault", "passwords", "read"},
-	{http.MethodPost, "/api/v1/passwords/vault/factors", "passwords", "unlock"},
-	{http.MethodPut, "/api/v1/passwords/vault/factors/f1", "passwords", "unlock"},
-	{http.MethodDelete, "/api/v1/passwords/vault/factors/f1", "passwords", "unlock"},
-	{http.MethodPost, "/api/v1/passwords/vault/recover", "passwords", "unlock"},
+	{http.MethodGet, "/api/v1/password-vault", "passwords", "read"},
+	{http.MethodPost, "/api/v1/password-vault/factors", "passwords", "unlock"},
+	{http.MethodPut, "/api/v1/password-vault/factors/f1", "passwords", "unlock"},
+	{http.MethodDelete, "/api/v1/password-vault/factors/f1", "passwords", "unlock"},
+	{http.MethodPost, "/api/v1/password-vault/recover", "passwords", "unlock"},
 
 	// Credentials — the MCP credentials.* methods.
 	{http.MethodPost, "/api/v1/credentials/submit", "credentials", "submit"},
@@ -337,7 +337,7 @@ func TestGatedRoutes_WrongGrantDenied(t *testing.T) {
 		{gatedRoute{resource: "pin", action: "read"}, gatedRoute{method: http.MethodPost, path: "/api/v1/pin/so/set"}},
 		{gatedRoute{resource: "tenants", action: "read"}, gatedRoute{method: http.MethodDelete, path: "/api/v1/tenants/t1"}},
 		{gatedRoute{resource: "ceremony", action: "status"}, gatedRoute{method: http.MethodPost, path: "/api/v1/custodian/groups/g1/members"}},
-		{gatedRoute{resource: "passwords", action: "read"}, gatedRoute{method: http.MethodPost, path: "/api/v1/passwords/unlock"}},
+		{gatedRoute{resource: "passwords", action: "read"}, gatedRoute{method: http.MethodPost, path: "/api/v1/password-vault/unlock"}},
 	}
 	rbac := &routeAuthzRecordingClient{}
 	server := newGatedRouteServer(t, rbac, auth.NewNoOpAuthenticator(), &mockTCGCAServicer{}, "")
@@ -465,7 +465,7 @@ func TestRoutes_GatedRoutesDeclarePermission(t *testing.T) {
 		"DELETE /api/v1/custodian/groups/{id}/members/{userID}",
 		"DELETE /api/v1/shares/{serverURL}/{groupID}/{shareIndex}",
 		"POST /api/v1/tenants/{tenantID}/barrier/unseal",
-		"POST /api/v1/passwords/unlock",
+		"POST /api/v1/password-vault/unlock",
 		"POST /api/v1/credentials/submit",
 	} {
 		spec, ok := byRoute[pattern]

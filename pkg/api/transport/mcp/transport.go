@@ -171,15 +171,15 @@ var methodMapping = map[string]string{
 	"/v1/pin/lockout/reset":   "xkms.resetLockout",
 
 	// Password Store
-	"/api/v1/passwords":               "password.list",
-	"/api/v1/passwords/unlock":        "password.unlock",
-	"/api/v1/passwords/lock":          "password.lock",
-	"/api/v1/passwords/status":        "password.status",
-	"/api/v1/passwords/access-mode":   "password.setAccessMode",
-	"/api/v1/passwords/generate":      "password.generate",
-	"/api/v1/passwords/vault":         "password.vault.status",
-	"/api/v1/passwords/vault/factors": "password.vault.enroll",
-	"/api/v1/passwords/vault/recover": "password.vault.recover",
+	"/api/v1/passwords":              "password.list",
+	"/api/v1/password-vault/unlock":  "password.unlock",
+	"/api/v1/password-vault/lock":    "password.lock",
+	"/api/v1/password-vault/session": "password.status",
+	"/api/v1/passwords/access-mode":  "password.setAccessMode",
+	"/api/v1/passwords/generate":     "password.generate",
+	"/api/v1/password-vault":         "password.vault.status",
+	"/api/v1/password-vault/factors": "password.vault.enroll",
+	"/api/v1/password-vault/recover": "password.vault.recover",
 
 	// Key derivation
 	"/api/v1/keys/derive":      "xkms.deriveKey",

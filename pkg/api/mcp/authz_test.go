@@ -693,7 +693,7 @@ var goldenMethodPermissions = map[string]string{
 
 	// Personal vault: reading it is passwords:read, managing one's own
 	// factors is gated with the session verb, passwords:unlock -- the pairs
-	// of gRPC's PasswordVault* RPCs and REST's /passwords/vault routes.
+	// of gRPC's PasswordVault* RPCs and REST's /password-vault routes.
 	"password.vault.status":       "passwords:read",
 	"password.vault.enroll":       "passwords:unlock",
 	"password.vault.rotate":       "passwords:unlock",

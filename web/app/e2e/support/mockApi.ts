@@ -60,7 +60,7 @@ export const DEFAULT_RESPONSES: Record<RouteKey, unknown> = {
   'GET /api/v1/custodian/groups/': { groups: [], pagination: { total: 0 } },
 
   'GET /api/v1/passwords/': { passwords: [], total: 0 },
-  'GET /api/v1/passwords/status': {
+  'GET /api/v1/password-vault/session': {
     available: true,
     is_locked: false,
     barrier_sealed: false,

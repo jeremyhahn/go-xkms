@@ -195,7 +195,7 @@ func WithBarrierRegistry(resolve BarrierRegistryResolver) Option {
 
 // WithPINBackend supplies the host's PIN backend (the one its qrdb node was
 // built with, qrdbsdk.WithPINBackend). Its user PIN opens a tenant's
-// Password Manager session (/api/v1/passwords/unlock), so without it tenant
+// Password Manager session (/api/v1/password-vault/unlock), so without it tenant
 // password stores stay locked; it also backs the /api/v1/pin/* routes.
 func WithPINBackend(pin qrdbsdk.PINBackend) Option {
 	return func(m *Module) {

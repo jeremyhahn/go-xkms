@@ -122,19 +122,21 @@ func passwordRouter(h *PasswordHandlers) chi.Router {
 	router.Route("/api/v1/passwords", func(r chi.Router) {
 		r.Post("/", h.AddPasswordHandler)
 		r.Get("/", h.ListPasswordsHandler)
-		r.Post("/unlock", h.UnlockHandler)
-		r.Post("/lock", h.LockHandler)
-		r.Get("/status", h.StatusHandler)
 		r.Post("/access-mode", h.SetAccessModeHandler)
 		r.Post("/generate", h.GeneratePasswordHandler)
-		r.Get("/vault", h.VaultStatusHandler)
-		r.Post("/vault/factors", h.VaultEnrollHandler)
-		r.Put("/vault/factors/{id}", h.VaultRotateHandler)
-		r.Delete("/vault/factors/{id}", h.VaultRemoveFactorHandler)
-		r.Post("/vault/recover", h.VaultRecoverHandler)
 		r.Get("/{id}", h.GetPasswordHandler)
 		r.Put("/{id}", h.UpdatePasswordHandler)
 		r.Delete("/{id}", h.DeletePasswordHandler)
+	})
+	router.Route("/api/v1/password-vault", func(r chi.Router) {
+		r.Get("/", h.VaultStatusHandler)
+		r.Get("/session", h.StatusHandler)
+		r.Post("/unlock", h.UnlockHandler)
+		r.Post("/lock", h.LockHandler)
+		r.Post("/factors", h.VaultEnrollHandler)
+		r.Put("/factors/{id}", h.VaultRotateHandler)
+		r.Delete("/factors/{id}", h.VaultRemoveFactorHandler)
+		r.Post("/recover", h.VaultRecoverHandler)
 	})
 	return router
 }
@@ -186,7 +188,7 @@ func jsonBody(t *testing.T, v any) string {
 // vaultStatus reads identity's vault status through the handler.
 func (f *passwordFixture) vaultStatus(t *testing.T, identity *auth.Identity) transport.PasswordVaultStatusResponse {
 	t.Helper()
-	w := f.do(t, identity, http.MethodGet, "/api/v1/passwords/vault", "")
+	w := f.do(t, identity, http.MethodGet, "/api/v1/password-vault", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var resp transport.PasswordVaultStatusResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
@@ -199,18 +201,18 @@ func (f *passwordFixture) vaultStatus(t *testing.T, identity *auth.Identity) tra
 func (f *passwordFixture) unlock(t *testing.T, identity *auth.Identity) {
 	t.Helper()
 	if !f.vaultStatus(t, identity).Initialized {
-		w := f.do(t, identity, http.MethodPost, "/api/v1/passwords/vault/factors", jsonBody(t, passkeyFor(identity)))
+		w := f.do(t, identity, http.MethodPost, "/api/v1/password-vault/factors", jsonBody(t, passkeyFor(identity)))
 		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 		return
 	}
-	w := f.do(t, identity, http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, passkeyFor(identity)))
+	w := f.do(t, identity, http.MethodPost, "/api/v1/password-vault/unlock", jsonBody(t, passkeyFor(identity)))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
 // lock closes identity's personal session through the handler.
 func (f *passwordFixture) lock(t *testing.T, identity *auth.Identity) {
 	t.Helper()
-	w := f.do(t, identity, http.MethodPost, "/api/v1/passwords/lock", "")
+	w := f.do(t, identity, http.MethodPost, "/api/v1/password-vault/lock", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
@@ -273,7 +275,7 @@ func errorMessage(t *testing.T, w *httptest.ResponseRecorder) string {
 // status reads identity's store status through the handler.
 func (f *passwordFixture) status(t *testing.T, identity *auth.Identity) PasswordStoreStatusResponse {
 	t.Helper()
-	w := f.do(t, identity, http.MethodGet, "/api/v1/passwords/status", "")
+	w := f.do(t, identity, http.MethodGet, "/api/v1/password-vault/session", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var resp PasswordStoreStatusResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
@@ -290,7 +292,7 @@ func TestUnlockHandler_OpensCallersSession(t *testing.T) {
 	f.unlock(t, alice)
 	f.lock(t, alice)
 
-	w := f.do(t, alice, http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, passkeyFor(alice)))
+	w := f.do(t, alice, http.MethodPost, "/api/v1/password-vault/unlock", jsonBody(t, passkeyFor(alice)))
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var resp PasswordStoreStatusResponse
@@ -337,7 +339,7 @@ func TestUnlockHandler_RejectionsLeaveSessionLocked(t *testing.T) {
 				f.lock(t, alice)
 			}
 
-			w := f.do(t, alice, http.MethodPost, "/api/v1/passwords/unlock", tc.body)
+			w := f.do(t, alice, http.MethodPost, "/api/v1/password-vault/unlock", tc.body)
 
 			assert.Equal(t, tc.wantStatus, w.Code)
 			assert.Contains(t, errorMessage(t, w), tc.wantMessage)
@@ -356,7 +358,7 @@ func TestUnlockHandler_AlreadyUnlocked(t *testing.T) {
 	alice := user(tenantA, userA)
 	f.unlock(t, alice)
 
-	w := f.do(t, alice, http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, passkeyFor(alice)))
+	w := f.do(t, alice, http.MethodPost, "/api/v1/password-vault/unlock", jsonBody(t, passkeyFor(alice)))
 
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
@@ -367,7 +369,7 @@ func TestUnlockHandler_NoIdentityIsNotImplemented(t *testing.T) {
 
 	f := newPasswordFixture(t)
 
-	w := f.do(t, nil, http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, passkeyFor(user("", "nobody"))))
+	w := f.do(t, nil, http.MethodPost, "/api/v1/password-vault/unlock", jsonBody(t, passkeyFor(user("", "nobody"))))
 
 	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
@@ -398,7 +400,7 @@ func TestUnlockHandler_TenantErrors(t *testing.T) {
 
 		alice := user(tenantA, userA)
 
-		w := f.do(t, alice, http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, passkeyFor(alice)))
+		w := f.do(t, alice, http.MethodPost, "/api/v1/password-vault/unlock", jsonBody(t, passkeyFor(alice)))
 
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	})
@@ -408,7 +410,7 @@ func TestUnlockHandler_TenantErrors(t *testing.T) {
 
 		f := newPasswordFixture(t)
 
-		w := f.do(t, user("no-such-tenant", userA), http.MethodPost, "/api/v1/passwords/unlock", jsonBody(t, passkeyFor(user("no-such-tenant", userA))))
+		w := f.do(t, user("no-such-tenant", userA), http.MethodPost, "/api/v1/password-vault/unlock", jsonBody(t, passkeyFor(user("no-such-tenant", userA))))
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
@@ -417,7 +419,7 @@ func TestUnlockHandler_TenantErrors(t *testing.T) {
 		t.Parallel()
 
 		router := passwordRouter(NewPasswordHandlers(&xkms.XKMSService{}))
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", strings.NewReader(`{"factor":"passphrase","passphrase":"correct horse"}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/password-vault/unlock", strings.NewReader(`{"factor":"passphrase","passphrase":"correct horse"}`))
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -435,7 +437,7 @@ func TestLockHandler_ClosesCallersSession(t *testing.T) {
 	alice := user(tenantA, userA)
 	f.unlock(t, alice)
 
-	w := f.do(t, alice, http.MethodPost, "/api/v1/passwords/lock", "")
+	w := f.do(t, alice, http.MethodPost, "/api/v1/password-vault/lock", "")
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var resp PasswordStoreStatusResponse
@@ -463,7 +465,7 @@ func TestLockHandler_Errors(t *testing.T) {
 
 			f := newPasswordFixture(t)
 
-			w := f.do(t, tc.identity, http.MethodPost, "/api/v1/passwords/lock", "")
+			w := f.do(t, tc.identity, http.MethodPost, "/api/v1/password-vault/lock", "")
 
 			assert.Equal(t, tc.wantStatus, w.Code)
 		})
@@ -501,7 +503,7 @@ func TestStatusHandler_Errors(t *testing.T) {
 
 		f := newPasswordFixture(t)
 
-		w := f.do(t, user("no-such-tenant", userA), http.MethodGet, "/api/v1/passwords/status", "")
+		w := f.do(t, user("no-such-tenant", userA), http.MethodGet, "/api/v1/password-vault/session", "")
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
@@ -512,7 +514,7 @@ func TestStatusHandler_Errors(t *testing.T) {
 		router := passwordRouter(NewPasswordHandlers(&xkms.XKMSService{}))
 		w := httptest.NewRecorder()
 
-		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/passwords/status", nil))
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/password-vault/session", nil))
 
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	})
@@ -883,7 +885,7 @@ func TestPasswordIsolation_PerUserSessions(t *testing.T) {
 	alice, bob := user(tenantA, userA), user(tenantA, userB)
 	f.unlock(t, bob)
 	bobID := f.add(t, bob, "bob-personal", false)
-	require.Equal(t, http.StatusOK, f.do(t, bob, http.MethodPost, "/api/v1/passwords/lock", "").Code)
+	require.Equal(t, http.StatusOK, f.do(t, bob, http.MethodPost, "/api/v1/password-vault/lock", "").Code)
 
 	// Alice unlocking does not open Bob's personal entries.
 	f.unlock(t, alice)
@@ -892,7 +894,7 @@ func TestPasswordIsolation_PerUserSessions(t *testing.T) {
 
 	// Bob unlocks; Alice locking does not lock Bob.
 	f.unlock(t, bob)
-	require.Equal(t, http.StatusOK, f.do(t, alice, http.MethodPost, "/api/v1/passwords/lock", "").Code)
+	require.Equal(t, http.StatusOK, f.do(t, alice, http.MethodPost, "/api/v1/password-vault/lock", "").Code)
 	assert.Equal(t, "bob-personal", f.detail(t, bob, bobID).Name)
 	assert.False(t, f.status(t, bob).IsLocked)
 

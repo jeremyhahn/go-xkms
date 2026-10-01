@@ -52,12 +52,12 @@ func newVaultTransport(t *testing.T) (*Transport, *[]vaultRequest) {
 
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodGet && rec.path == "/api/v1/passwords/vault":
+		case r.Method == http.MethodGet && rec.path == "/api/v1/password-vault":
 			assert.NoError(t, json.NewEncoder(w).Encode(transport.PasswordVaultStatusResponse{
 				Initialized: true,
 				Factors:     []transport.PasswordVaultFactor{{ID: "f1", Factor: "passkey", CredentialID: []byte("id"), PRFSalt: []byte("salt")}},
 			}))
-		case r.Method == http.MethodDelete && rec.path == "/api/v1/passwords/vault/factors/f1":
+		case r.Method == http.MethodDelete && rec.path == "/api/v1/password-vault/factors/f1":
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusNotFound)
@@ -107,15 +107,15 @@ func TestPasswordVault_ReachesTheServer(t *testing.T) {
 
 	got := *requests
 	require.Len(t, got, 5)
-	assert.Equal(t, vaultRequest{http.MethodGet, "/api/v1/passwords/vault", nil}, got[0])
+	assert.Equal(t, vaultRequest{http.MethodGet, "/api/v1/password-vault", nil}, got[0])
 	assert.Equal(t, http.MethodPost, got[1].method)
-	assert.Equal(t, "/api/v1/passwords/vault/factors", got[1].path)
+	assert.Equal(t, "/api/v1/password-vault/factors", got[1].path)
 	assert.Equal(t, "passkey", got[1].body["factor"])
 	assert.NotEmpty(t, got[1].body["secret"], "the PRF output crosses the wire")
 	assert.Equal(t, http.MethodPut, got[2].method)
-	assert.Equal(t, "/api/v1/passwords/vault/factors/f1", got[2].path)
-	assert.Equal(t, vaultRequest{http.MethodDelete, "/api/v1/passwords/vault/factors/f1", nil}, got[3])
-	assert.Equal(t, "/api/v1/passwords/vault/recover", got[4].path)
+	assert.Equal(t, "/api/v1/password-vault/factors/f1", got[2].path)
+	assert.Equal(t, vaultRequest{http.MethodDelete, "/api/v1/password-vault/factors/f1", nil}, got[3])
+	assert.Equal(t, "/api/v1/password-vault/recover", got[4].path)
 	assert.Equal(t, "CODE", got[4].body["recovery_code"])
 }
 

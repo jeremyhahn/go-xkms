@@ -169,9 +169,9 @@ func fullMockHandler() http.Handler {
 		// Passwords
 		case strings.Contains(path, "/passwords/generate"):
 			respond(transport.PasswordGenerateResponse{Password: "gen-pw"})
-		case strings.Contains(path, "/passwords/status"):
+		case strings.Contains(path, "/password-vault/session"):
 			respond(transport.PasswordStoreStatusResponse{AccessMode: "private", PasswordCount: 5})
-		case strings.Contains(path, "/passwords/unlock"), strings.Contains(path, "/passwords/lock"):
+		case strings.Contains(path, "/password-vault/unlock"), strings.Contains(path, "/password-vault/lock"):
 			w.WriteHeader(http.StatusOK)
 		case path == "/api/v1/passwords" && r.Method == http.MethodGet:
 			respond(transport.PasswordListResponse{
