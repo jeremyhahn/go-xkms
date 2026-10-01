@@ -16,7 +16,6 @@ package services
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -271,21 +270,6 @@ func TestTPMPolicyService_PanicsBecomeErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "ListPolicies")
 }
 
-func TestOpenLocalTPMPolicies_RequiresItsDependencies(t *testing.T) {
-	_, err := OpenLocalTPMPolicies(LocalTPMPolicyParams{})
-	assert.ErrorIs(t, err, ErrLocalTPMPolicyNoTPM)
-	_, err = OpenLocalTPMPolicies(LocalTPMPolicyParams{TPM: defaultMockTPM()})
-	assert.ErrorIs(t, err, ErrLocalTPMPolicyNoKeys)
-
-	store, err := xkms.NewMemoryBackend()
-	require.NoError(t, err)
-	keys := xkms.NewFileBackend(slog.Default(), store)
-	_, err = OpenLocalTPMPolicies(LocalTPMPolicyParams{TPM: defaultMockTPM(), Keys: keys})
-	assert.ErrorIs(t, err, ErrLocalTPMPolicyNoDataDir)
-	_, err = OpenLocalTPMPolicies(LocalTPMPolicyParams{TPM: defaultMockTPM(), Keys: keys, DataDir: t.TempDir()})
-	assert.ErrorIs(t, err, ErrLocalTPMPolicyNoStoreOpener)
-}
-
 func TestObjectName(t *testing.T) {
 	name, err := objectName("tpm2:signing:ecdsa-p256:mykey")
 	require.NoError(t, err)
@@ -401,13 +385,4 @@ func TestTPMPolicyService_ObjectCountErrorsPropagate(t *testing.T) {
 func TestOwnerAuthBytes(t *testing.T) {
 	assert.Nil(t, ownerAuthBytes(""))
 	assert.Equal(t, []byte("owner"), ownerAuthBytes("owner"))
-}
-
-func TestLocalTPMPolicies_AccessorSerializesAndReportsAnUnavailableTPM(t *testing.T) {
-	l := &LocalTPMPolicies{accessor: NewTPMAccessor(func() xkms.TrustedPlatformModule { return nil })}
-	assert.ErrorIs(t, l.Assign(context.Background(), xkms.TPMObjectKindKey, "k1", ""), ErrTPMNotAvailable)
-	_, err := l.AutoUnsealPolicy(context.Background())
-	assert.ErrorIs(t, err, ErrTPMNotAvailable)
-	_, err = l.UnsealObject(context.Background(), "obj")
-	assert.ErrorIs(t, err, ErrTPMNotAvailable)
 }

@@ -20,6 +20,7 @@ import (
 	"log/slog"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
 
@@ -28,38 +29,16 @@ import (
 // opened under the data directory.
 var ErrLocalTPMPoliciesOpenFailed = errors.New("tpm policy: failed to open the local TPM policy service")
 
-// localTPMPolicies is the TPM policy service the CLI runs in-process over
-// this host's TPM, and the TPM it runs on. Close closes both.
-type localTPMPolicies struct {
-	*services.LocalTPMPolicies
-	tpm *openedTPM
-}
-
-// Close closes the policy service, then the TPM and its key store.
-func (l *localTPMPolicies) Close() error {
-	return errors.Join(l.LocalTPMPolicies.Close(), l.tpm.Close())
-}
-
 // openLocalTPMPolicies opens the TPM policy service over this host's TPM --
 // the device at the resolved path, or the in-process simulator -- with its
 // registry under dataDir: the same service, over the same stores, as the
 // xKey GUI's local mode.
-func openLocalTPMPolicies(logger *slog.Logger, dataDir, device string, useSimulator bool) (*localTPMPolicies, error) {
-	opened, err := openTPMWithKeyStore(logger, dataDir, device, useSimulator)
+func openLocalTPMPolicies(logger *slog.Logger, dataDir, device string, useSimulator bool) (*localtpm.Host, error) {
+	host, err := localtpm.OpenHost(tpmDeviceParams(logger, dataDir, device, useSimulator), openEngineStore)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrLocalTPMPoliciesOpenFailed, Cause: err}
 	}
-	local, err := services.OpenLocalTPMPolicies(services.LocalTPMPolicyParams{
-		TPM:       opened.tpm,
-		Keys:      opened.keys(),
-		DataDir:   dataDir,
-		OpenStore: openEngineStore,
-		Logger:    logger,
-	})
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrLocalTPMPoliciesOpenFailed, Cause: errors.Join(err, opened.Close())}
-	}
-	return &localTPMPolicies{LocalTPMPolicies: local, tpm: opened}, nil
+	return host, nil
 }
 
 // openEngineStore opens the store rooted at dir with the storage engine the
@@ -101,10 +80,10 @@ func tryBarrierPolicyAutoUnseal(ctx context.Context, logger *slog.Logger, barrie
 	}
 
 	// A tpm2-strategy barrier unseals its root key with the same TPM.
-	barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return local.tpm.tpm })
+	barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return local.TPM() })
 
 	autoSvc := services.NewBarrierAutoUnsealService(
-		services.WithBarrierAutoUnsealLocal(local.LocalTPMPolicies),
+		services.WithBarrierAutoUnsealLocal(local.Policies),
 		services.WithBarrierAutoUnsealBarrier(barrierSvc),
 		services.WithBarrierAutoUnsealLogger(logger),
 	)

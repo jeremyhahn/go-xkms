@@ -20,12 +20,14 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/localtpm"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/vaultkey"
 	"github.com/jeremyhahn/go-xkms/pkg/vaulttoken"
@@ -34,85 +36,74 @@ import (
 )
 
 // This file is the key-factor half of the vault verbs: a vault factor whose
-// secret only a private key the operator holds recovers -- the slot 9d key
-// of a PIV card or a PKCS#11 token, a certificate's key, or a TPM key. The
-// key is reached through the same xkms key backends xkmsd and xkey use,
-// opened locally from flags; vaulttoken (shared with xkey) does the work.
+// secret only a private key the operator holds recovers -- a certificate's
+// key or a TPM key. The key is reached through the same xkms key backends
+// xkmsd and xkey use, opened locally from flags; vaulttoken (shared with
+// xkey) does the work.
 //
-//   --key-file / --cert-file      a software key (PEM), e.g. a client certificate's
-//   --key-pkcs11-module ...          a PKCS#11 token: a PIV card's module, an HSM, SoftHSM
-//   --tpm-device / --tpm-keystore a TPM 2.0 key under the built-in "platform" policy
+//   --key-file / --cert-file       a software key (PEM), e.g. a client certificate's
+//   --tpm-device / --tpm-data-dir  a TPM 2.0 key, under "platform" or a named policy
+//
+// xkmsctl is built without CGO, so it has no PKCS#11: PIV cards and PKCS#11
+// tokens are xkey's (ErrVaultKeyNeedsXkey).
 
 // Key-factor flags.
 const (
-	keyFactorFlag     = "key-factor"
-	keyUnlockFlag     = "key"
-	keyFileFlag       = "key-file"
-	certFileFlag      = "cert-file"
-	keyIDFlag         = "key-id"
-	pkcs11LibraryFlag = "key-pkcs11-module"
-	pkcs11TokenFlag   = "key-pkcs11-token"
-	keyPINFlag        = "key-pin"
-	tpmDeviceFlag     = "tpm-device"
-	tpmKeystoreFlag   = "tpm-keystore"
-	tpmPolicyFlag     = "tpm-policy"
-	tpmCreateFlag     = "tpm-create"
+	keyFactorFlag  = "key-factor"
+	keyUnlockFlag  = "key"
+	keyFileFlag    = "key-file"
+	certFileFlag   = "cert-file"
+	keyIDFlag      = "key-id"
+	tpmDeviceFlag  = "tpm-device"
+	tpmDataDirFlag = "tpm-data-dir"
+	tpmPolicyFlag  = "tpm-policy"
+	tpmCreateFlag  = "tpm-create"
 )
 
 // Key-factor errors.
 var (
 	// ErrVaultKeyConflict indicates a key factor combined with another
 	// factor, or with more than one key source.
-	ErrVaultKeyConflict = errors.New("vault: a key factor takes exactly one key source (--key-file, --key-pkcs11-module or --tpm-keystore) and no --passkey or --passphrase")
+	ErrVaultKeyConflict = errors.New("vault: a key factor takes exactly one key source (--key-file or --tpm-data-dir) and no --passkey or --passphrase")
 
 	// ErrVaultKeySourceRequired indicates a key factor without a key source.
-	ErrVaultKeySourceRequired = errors.New("vault: name the key: --key-file (software), --key-pkcs11-module (PIV card, PKCS#11 token) or --tpm-keystore (TPM)")
+	ErrVaultKeySourceRequired = errors.New("vault: name the key: --key-file (software) or --tpm-data-dir (TPM)")
 
 	// ErrVaultKeyFileInvalid indicates a key or certificate file that is not
 	// a PEM private key or certificate.
 	ErrVaultKeyFileInvalid = errors.New("vault: not a PEM private key or certificate")
 
-	// ErrVaultPKCS11Unavailable indicates a PKCS#11 key source in an
-	// xkmsctl built without PKCS#11 (the CGO-free release build).
-	ErrVaultPKCS11Unavailable = errors.New("vault: this xkmsctl was built without PKCS#11 support (build with -tags pkcs11), or use xkey")
-
-	// ErrVaultTPMUnavailable indicates an xkmsctl without the TPM 2.0 key
-	// backend.
-	ErrVaultTPMUnavailable = errors.New("vault: this xkmsctl was built without the TPM 2.0 key backend")
-
-	// ErrVaultTPMNamedPolicy indicates --tpm-create with a named TPM policy:
-	// a named policy lives in a policy registry xkmsctl does not run locally.
-	ErrVaultTPMNamedPolicy = errors.New("vault: xkmsctl creates TPM keys under the built-in \"platform\" policy only; create a key under a named policy with xkey")
+	// ErrVaultKeyNeedsXkey indicates a PIV or PKCS#11 key factor: xkmsctl
+	// is built without CGO and so without PKCS#11, and those factors are
+	// xkey's.
+	ErrVaultKeyNeedsXkey = errors.New("vault: use xkey for PIV/PKCS#11 factors")
 )
 
 // addKeyFactorEnrollFlags declares the key-factor flags of enroll and
 // recover.
 func addKeyFactorEnrollFlags(cmd *cobra.Command) {
-	cmd.Flags().String(keyFactorFlag, "", "enroll a key factor instead: piv, certificate or tpm")
+	cmd.Flags().String(keyFactorFlag, "", "enroll a key factor instead: certificate or tpm (piv: use xkey)")
 	addKeySourceFlags(cmd)
-	cmd.Flags().String(tpmPolicyFlag, "", "TPM policy the TPM key is bound to (recorded; --tpm-create supports \"platform\")")
-	cmd.Flags().Bool(tpmCreateFlag, false, "create the TPM key --key-id in --tpm-keystore when it does not exist")
+	cmd.Flags().String(tpmPolicyFlag, "", "TPM policy --tpm-create binds the key to: \"platform\" (default) or a named policy in --tpm-data-dir")
+	cmd.Flags().Bool(tpmCreateFlag, false, "create the TPM key --key-id when it does not exist")
 }
 
 // addKeyFactorUnlockFlags declares --key and the key sources on unlock.
 func addKeyFactorUnlockFlags(cmd *cobra.Command) {
-	cmd.Flags().Bool(keyUnlockFlag, false, "unlock with a PIV, certificate or TPM key factor whose key is given by the key-source flags")
+	cmd.Flags().Bool(keyUnlockFlag, false, "unlock with a certificate or TPM key factor whose key is given by the key-source flags")
 	addKeySourceFlags(cmd)
 }
 
 func addKeySourceFlags(cmd *cobra.Command) {
 	cmd.Flags().String(keyFileFlag, "", "PEM private key of a software key factor (e.g. a client certificate's key)")
 	cmd.Flags().String(certFileFlag, "", "PEM certificate of the key (a certificate factor needs one)")
-	cmd.Flags().String(keyIDFlag, "", "the key's ID (label) in the PKCS#11 token or TPM keystore; piv defaults to slot 9d")
-	cmd.Flags().String(pkcs11LibraryFlag, "", "PKCS#11 module of the PIV card or token")
-	cmd.Flags().String(pkcs11TokenFlag, "", "PKCS#11 token label")
-	cmd.Flags().String(keyPINFlag, "", "user PIN of the PKCS#11 token holding the key ('-' reads stdin; prompted when omitted)")
+	cmd.Flags().String(keyIDFlag, "", "the TPM key's ID (label)")
 	cmd.Flags().String(tpmDeviceFlag, "/dev/tpmrm0", "TPM 2.0 device")
-	cmd.Flags().String(tpmKeystoreFlag, "", "directory holding the TPM key blobs")
+	cmd.Flags().String(tpmDataDirFlag, "", "TPM data directory: the TPM's key store and named-policy registry (xkey's data directory shares them)")
 }
 
 // keySource is a resolved key-factor key source: a token for a software key,
-// or a backend lookup for a PKCS#11 token or TPM.
+// or a backend lookup for a TPM.
 type keySource struct {
 	ref    client.PasswordVaultKeyRef
 	token  vaultkey.Token
@@ -136,6 +127,9 @@ func resolveVaultKeySource(cmd *cobra.Command, label string, purpose vaultCreden
 	if fr.Bool("passkey") || fr.String("passphrase") != "" {
 		return nil, nil, ErrVaultKeyConflict
 	}
+	if factor == vaulttoken.FactorPIV {
+		return nil, nil, ErrVaultKeyNeedsXkey
+	}
 	if err := fr.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -153,28 +147,19 @@ func resolveVaultKeySource(cmd *cobra.Command, label string, purpose vaultCreden
 func openKeySource(cmd *cobra.Command, factor string) (*keySource, error) {
 	fr := newFlagReader(cmd)
 	keyFile, certFile := fr.String(keyFileFlag), fr.String(certFileFlag)
-	library, keystore := fr.String(pkcs11LibraryFlag), fr.String(tpmKeystoreFlag)
-	keyID := fr.String(keyIDFlag)
+	dataDir, keyID := fr.String(tpmDataDirFlag), fr.String(keyIDFlag)
 	if err := fr.Err(); err != nil {
 		return nil, err
 	}
-	sources := 0
-	for _, set := range []bool{keyFile != "", library != "", keystore != ""} {
-		if set {
-			sources++
-		}
-	}
 	switch {
-	case sources > 1:
+	case keyFile != "" && dataDir != "":
 		return nil, ErrVaultKeyConflict
-	case sources == 0:
-		return nil, ErrVaultKeySourceRequired
 	case keyFile != "":
 		return softwareKeySource(keyFile, certFile)
-	case library != "":
-		return pkcs11KeySource(cmd, library, keyID)
+	case dataDir != "":
+		return tpmKeySource(cmd, factor, dataDir, keyID)
 	default:
-		return tpmKeySource(cmd, factor, keystore, keyID)
+		return nil, ErrVaultKeySourceRequired
 	}
 }
 
@@ -197,46 +182,29 @@ func softwareKeySource(keyFile, certFile string) (*keySource, error) {
 	return src, nil
 }
 
-// pkcs11KeySource opens the PKCS#11 token -- a PIV card's module, an HSM,
-// SoftHSM -- as an xkms key backend.
-func pkcs11KeySource(cmd *cobra.Command, library, keyID string) (*keySource, error) {
-	factory, ok := xkms.GetBackendFactory(xkms.BackendPKCS11)
-	if !ok {
-		return nil, ErrVaultPKCS11Unavailable
-	}
-	fr := newFlagReader(cmd)
-	token, pinFlag := fr.String(pkcs11TokenFlag), fr.String(keyPINFlag)
-	if err := fr.Err(); err != nil {
-		return nil, err
-	}
-	pin, err := resolveSecret(pinFlag, "PKCS#11 PIN")
-	if err != nil {
-		return nil, err
-	}
-	kp, err := factory(map[string]interface{}{
-		"library": library, "label": token, "pin": pin,
-		"key_storage": storage.New(), "cert_storage": storage.New(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	if l, ok := kp.(interface{ Login() error }); ok {
-		if err := l.Login(); err != nil {
-			return nil, err
-		}
-	}
-	return backendKeySource(kp, string(xkms.BackendPKCS11), keyID)
+// vaultTPM is the host's TPM as the vault's TPM key source uses it: the
+// key backend of the TPM policy service, and Close.
+type vaultTPM interface {
+	Backend() *tpm2backend.Backend
+	Close() error
 }
 
-// tpmBackendConfig is the TPM 2.0 backend configuration for device with
-// key blobs in blobs. It is a variable so tests can run on the simulator.
-var tpmBackendConfig = func(device string, blobs storage.Backend) map[string]interface{} {
-	return map[string]interface{}{"device": device, "key_storage": blobs}
+// openTPMHost opens the host's TPM and the TPM policy service over it --
+// the same one xkey runs -- with its stores under dataDir. It is a variable
+// so tests can run on the simulator.
+var openTPMHost = func(dataDir, device string) (vaultTPM, error) {
+	return localtpm.OpenHost(localtpm.DeviceParams{DataDir: dataDir, Device: device}, openFileStore)
 }
 
-// tpmKeySource opens the TPM with its key blobs in keystore, creating the
-// key under the built-in platform policy with --tpm-create.
-func tpmKeySource(cmd *cobra.Command, factor, keystore, keyID string) (*keySource, error) {
+// openFileStore opens the file store rooted at dir, the engine xkey uses
+// unless its config selects another.
+func openFileStore(dir string) (storage.Backend, error) {
+	return storage.OpenEngine(storage.EngineConfig{Kind: storage.EngineFile, Path: dir})
+}
+
+// tpmKeySource opens the TPM with its key store and policy registry in
+// dataDir, creating the key under --tpm-policy with --tpm-create.
+func tpmKeySource(cmd *cobra.Command, factor, dataDir, keyID string) (*keySource, error) {
 	fr := newFlagReader(cmd)
 	device := fr.String(tpmDeviceFlag)
 	var create bool
@@ -247,42 +215,30 @@ func tpmKeySource(cmd *cobra.Command, factor, keystore, keyID string) (*keySourc
 	if err := fr.Err(); err != nil {
 		return nil, err
 	}
-	blobs, err := file.New(keystore)
-	if err != nil {
-		return nil, err
+	if policy == "" && factor == vaulttoken.FactorTPM {
+		policy = types.TPMPolicyPlatform
 	}
-	factory, ok := xkms.GetBackendFactory(xkms.BackendTPM2)
-	if !ok {
-		return nil, ErrVaultTPMUnavailable
-	}
-	kp, err := factory(tpmBackendConfig(device, blobs))
+	host, err := openTPMHost(dataDir, device)
 	if err != nil {
 		return nil, err
 	}
 	if create {
-		if policy != "" && policy != types.TPMPolicyPlatform {
-			_ = kp.Close()
-			return nil, ErrVaultTPMNamedPolicy
-		}
-		if err := createTPMKey(kp, keyID); err != nil {
-			_ = kp.Close()
-			return nil, err
+		if err := createTPMKey(host.Backend(), keyID, policy); err != nil {
+			return nil, errors.Join(err, host.Close())
 		}
 	}
-	src, err := backendKeySource(kp, string(xkms.BackendTPM2), keyID)
+	src, err := backendKeySource(host.Backend(), string(xkms.BackendTPM2), keyID, host.Close)
 	if err != nil {
 		return nil, err
 	}
 	src.ref.TPMPolicy = policy
-	if factor == vaulttoken.FactorTPM && src.ref.TPMPolicy == "" {
-		src.ref.TPMPolicy = types.TPMPolicyPlatform
-	}
 	return src, nil
 }
 
-// createTPMKey creates EC P-256 encryption key keyID in the TPM unless it
-// exists.
-func createTPMKey(kp types.KeyProvider, keyID string) error {
+// createTPMKey creates EC P-256 encryption key keyID in the TPM, bound to
+// policy, unless it exists. The TPM policy service records the binding, so
+// the policy lists the key and cannot be deleted under it.
+func createTPMKey(kp types.KeyProvider, keyID, policy string) error {
 	ctx := context.Background()
 	if keys, err := kp.ListKeys(ctx); err == nil {
 		for _, k := range keys {
@@ -293,24 +249,29 @@ func createTPMKey(kp types.KeyProvider, keyID string) error {
 	}
 	_, err := kp.GenerateKey(ctx, &types.KeyAttributes{
 		CN: keyID, KeyAlgorithm: x509.ECDSA, KeyType: types.KeyTypeEncryption,
-		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()}, TPMPolicy: types.TPMPolicyPlatform,
+		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()}, TPMPolicy: policy,
 	})
 	return err
 }
 
 // backendKeySource wraps a key provider as the one xkms backend a key
 // factor resolves through.
-func backendKeySource(kp types.KeyProvider, name, keyID string) (*keySource, error) {
+// The key provider belongs to what opened it, and closeFn -- that owner's
+// Close -- is the source's close.
+func backendKeySource(kp types.KeyProvider, name, keyID string, closeFn func() error) (*keySource, error) {
 	b, err := xkms.New(&xkms.BackendConfig{Backend: kp, CertStorage: storage.New()})
 	if err != nil {
-		_ = kp.Close()
-		return nil, err
+		return nil, errors.Join(err, closeFn())
 	}
 	lookup := func(string) (xkms.Backend, error) { return b, nil }
 	return &keySource{
 		ref:    client.PasswordVaultKeyRef{Backend: name, KeyID: keyID},
 		lookup: lookup,
-		close:  func() { _ = b.Close() },
+		close: func() {
+			if err := closeFn(); err != nil {
+				fmt.Fprintln(os.Stderr, "warning: closing the key backend:", err)
+			}
+		},
 	}, nil
 }
 

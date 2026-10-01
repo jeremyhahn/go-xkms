@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -76,7 +77,7 @@ type BarrierAutoUnsealOption func(*BarrierAutoUnsealService)
 
 // WithBarrierAutoUnsealLocal sets the local TPM policy service over xKey's
 // TPM.
-func WithBarrierAutoUnsealLocal(l *LocalTPMPolicies) BarrierAutoUnsealOption {
+func WithBarrierAutoUnsealLocal(l *localtpm.Policies) BarrierAutoUnsealOption {
 	return func(s *BarrierAutoUnsealService) {
 		s.local.Store(l)
 	}
@@ -112,7 +113,7 @@ func WithBarrierAutoUnsealLogger(l *slog.Logger) BarrierAutoUnsealOption {
 // atomic pointers so the composition root can wire them after construction
 // without racing Wails-bound frontend calls.
 type BarrierAutoUnsealService struct {
-	local   atomic.Pointer[LocalTPMPolicies]
+	local   atomic.Pointer[localtpm.Policies]
 	barrier atomic.Pointer[BarrierService]
 	logger  *slog.Logger
 }
@@ -130,7 +131,7 @@ func NewBarrierAutoUnsealService(opts ...BarrierAutoUnsealOption) *BarrierAutoUn
 }
 
 // SetLocal sets (or replaces) the local TPM policy service.
-func (s *BarrierAutoUnsealService) SetLocal(l *LocalTPMPolicies) {
+func (s *BarrierAutoUnsealService) SetLocal(l *localtpm.Policies) {
 	s.local.Store(l)
 }
 
@@ -141,7 +142,7 @@ func (s *BarrierAutoUnsealService) SetBarrier(b *BarrierService) {
 
 // requireLocal returns the local TPM policy service or
 // ErrBarrierAutoUnsealNoPolicyService.
-func (s *BarrierAutoUnsealService) requireLocal() (*LocalTPMPolicies, error) {
+func (s *BarrierAutoUnsealService) requireLocal() (*localtpm.Policies, error) {
 	l := s.local.Load()
 	if l == nil {
 		return nil, ErrBarrierAutoUnsealNoPolicyService
@@ -196,7 +197,7 @@ func (s *BarrierAutoUnsealService) TryAutoUnseal(ctx context.Context, strategyID
 }
 
 // checkEnrolled confirms the barrier credential is sealed under policy.
-func (s *BarrierAutoUnsealService) checkEnrolled(ctx context.Context, l *LocalTPMPolicies, policy string) error {
+func (s *BarrierAutoUnsealService) checkEnrolled(ctx context.Context, l *localtpm.Policies, policy string) error {
 	assigned, err := l.TPMObjectPolicy(ctx, &transport.TPMObjectPolicyRequest{
 		KeyID: BarrierAutoUnsealObject,
 		Kind:  xkms.TPMObjectKindSealed,

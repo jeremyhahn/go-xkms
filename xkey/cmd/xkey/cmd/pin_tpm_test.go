@@ -15,12 +15,15 @@ package cmd
 
 import (
 	"errors"
+	"io/fs"
 	"log/slog"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 )
 
 // TestOpenTPMModule_DeviceNotFound proves that a hardware-mode open against
@@ -38,9 +41,9 @@ func TestOpenTPMModule_DeviceNotFound(t *testing.T) {
 	assert.Nil(t, tpm)
 	assert.Nil(t, closer)
 
-	var wrapped *WrappedError
-	require.True(t, errors.As(err, &wrapped), "err = %v, want *WrappedError", err)
-	assert.Contains(t, err.Error(), "not found")
+	var devErr *localtpm.DeviceError
+	require.True(t, errors.As(err, &devErr), "err = %v, want *localtpm.DeviceError", err)
+	assert.Equal(t, missingDevice, devErr.Device)
 	assert.Contains(t, err.Error(), missingDevice)
-	require.True(t, errors.Is(err, wrapped.Err), "WrappedError must unwrap to the os.Stat cause")
+	assert.ErrorIs(t, err, fs.ErrNotExist, "the error unwraps to the os.Stat cause")
 }

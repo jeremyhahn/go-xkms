@@ -239,8 +239,25 @@ pre-release, so old layouts are not carried forward).
   TPM2_RSA_Decrypt under the platform policy) and
   `vaulttoken_pkcs11_test.go` (`-tags pkcs11`, SoftHSM: PIV slot 9d and
   certificate keys, a token without RSA-OAEP-256 caught by the self-test,
-  another token refused). Run the tagged suites with
-  `go test -tags 'codec_json pkcs11 tpm_simulator' ./pkg/vaulttoken/ ./cmd/xkmsctl/`.
+  another token refused). xkmsctl's `password_vault_key_tpm_sim_test.go`
+  enrolls and unlocks a TPM key under `platform` and under a named policy
+  created in the data directory's registry (refused once the PCR drifts).
+  `make test` runs them all: `tpm_simulator` is in `TEST_TAGS`, and the
+  `test-pkcs11` lane adds `pkcs11` for `./pkg/vaulttoken/...`.
+- **SoftHSM 2.6 and RSA-OAEP.** SoftHSM 2.6 implements `CKM_RSA_PKCS_OAEP`
+  with SHA-1 only and answers `CKR_ARGUMENTS_BAD` for the SHA-256 OAEP the
+  vault seals RSA factors with (RSA-OAEP-256). This is deliberate: the vault
+  does not fall back to SHA-1. An RSA key on such a token is refused at
+  enrollment by `vaulttoken.SelfTest` (the pkcs11 suite asserts exactly
+  that); EC keys (ECDH-ES) work on it. Hardware PIV cards and HSMs with
+  SHA-256 OAEP are unaffected.
+- **Local TPM policies** -- `pkg/localtpm` is the one implementation of the
+  TPM policy service a client runs over its own TPM (registry, policy
+  authority, NV indexes, approval counter), built exactly as xkmsd builds
+  it. xkey (GUI, `xkey tpm policy`, boot-time auto-unseal) and xkmsctl
+  (`--tpm-data-dir`) both open it; `localtpm_sim_test.go` covers a key
+  created under a named policy, its recorded assignment and its refusal
+  after PCR drift.
 - **Passkeys** — `pkg/vaultpasskey` (relying party recorded and required,
   cross-surface secret vectors), `sdk/ts/src/vaultPasskey.test.ts` (WebAuthn
   PRF over a fake authenticator, typed errors, the same vectors), and the

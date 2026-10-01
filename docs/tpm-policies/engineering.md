@@ -85,10 +85,12 @@ ignores every request's `TenantID`: authorizing the tenant is the caller's
 job. A nil `svc` is `ErrNotConfigured`.
 
 - `XKMSService` binds the caller's tenant (`targetTenant`, `pkg/xkms/tenant_binding.go`) and delegates.
-- xKey's local mode (`xkey/pkg/gui/services/tpm_policy_local.go`) delegates
-  every `TPMPolicy*` method for the system scope, holding the TPM accessor
-  around each call, so local and connected answers are the same types from
-  the same code. `xkms.ParseTPMObjectKind` is the one object-kind parser
+- A client's local mode (`pkg/localtpm`, re-exported as `sdk/go/localtpm`)
+  delegates every `TPMPolicy*` method for the system scope, holding the
+  caller's TPM lock around each call, so local and connected answers are the
+  same types from the same code. xkey (GUI and CLI) and xkmsctl's TPM vault
+  key factor both run it; `localtpm.OpenHost` opens the TPM, its key store
+  and the service over one data directory. `xkms.ParseTPMObjectKind` is the one object-kind parser
   (`*InvalidTPMObjectKindError`).
 
 ## Composite policies

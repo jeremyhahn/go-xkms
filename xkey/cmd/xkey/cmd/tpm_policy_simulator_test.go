@@ -29,30 +29,31 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
 
 // localSimTPMPolicies points the tpm policy commands at the local TPM
 // policy service over a provisioned simulator, with its data directory in
 // dataDir, and returns the service. The simulator stays open for the test.
-func localSimTPMPolicies(t *testing.T, dataDir string) (*localTPMPolicies, *slog.Logger) {
+func localSimTPMPolicies(t *testing.T, dataDir string) (*localtpm.Host, *slog.Logger) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	opened, err := openTPMWithKeyStore(logger, dataDir, "", true)
 	require.NoError(t, err)
-	require.NoError(t, opened.tpm.Provision(nil))
+	require.NoError(t, opened.TPM().Provision(nil))
 	cfg := xkms.DefaultTPMConfig
-	require.NoError(t, xkms.EnrollSimulatorPlatformSRK(opened.tpm, &cfg))
+	require.NoError(t, xkms.EnrollSimulatorPlatformSRK(opened.TPM(), &cfg))
 
-	local, err := services.OpenLocalTPMPolicies(services.LocalTPMPolicyParams{
-		TPM:       opened.tpm,
-		Keys:      opened.keys(),
+	local, err := localtpm.Open(localtpm.Params{
+		TPM:       opened.TPM(),
+		Keys:      opened.Keys(),
 		DataDir:   dataDir,
 		OpenStore: openEngineStore,
 		Logger:    logger,
 	})
 	require.NoError(t, err)
-	session := &localTPMPolicies{LocalTPMPolicies: local, tpm: opened}
+	session := &localtpm.Host{Policies: local, Device: opened}
 	t.Cleanup(func() { assert.NoError(t, session.Close()) })
 
 	previous := tpmPolicySessionFactory
@@ -107,7 +108,7 @@ func TestTPMPolicyAutoUnseal_LocalSealsTheBarrierCredential(t *testing.T) {
 	barrier.SetDataDir(dataDir)
 	require.NoError(t, barrier.Initialize("barrier password", string(xkms.StrategyPassphrase)))
 	require.NoError(t, barrier.Seal())
-	auto := services.NewBarrierAutoUnsealService(services.WithBarrierAutoUnsealLocal(session.LocalTPMPolicies),
+	auto := services.NewBarrierAutoUnsealService(services.WithBarrierAutoUnsealLocal(session.Policies),
 		services.WithBarrierAutoUnsealBarrier(barrier), services.WithBarrierAutoUnsealLogger(logger))
 	ok, err := auto.TryAutoUnseal(context.Background(), string(xkms.StrategyPassphrase))
 	require.NoError(t, err)

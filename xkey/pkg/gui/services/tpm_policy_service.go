@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -166,7 +167,7 @@ type TPMPolicyStatus struct {
 type TPMPolicyService struct {
 	ctx    context.Context
 	log    *slog.Logger
-	local  atomic.Pointer[LocalTPMPolicies]
+	local  atomic.Pointer[localtpm.Policies]
 	client atomic.Pointer[transport.TPMPolicyService]
 }
 
@@ -183,12 +184,16 @@ func (s *TPMPolicyService) SetContext(ctx context.Context) {
 }
 
 // SetLocal sets the in-process service over xKey's own TPM; nil clears it.
-func (s *TPMPolicyService) SetLocal(l *LocalTPMPolicies) {
+// Compile-time check that the local service serves the same operations as a
+// connected xkmsd.
+var _ tpmPolicyBackend = (*localtpm.Policies)(nil)
+
+func (s *TPMPolicyService) SetLocal(l *localtpm.Policies) {
 	s.local.Store(l)
 }
 
 // Local returns the in-process service, or nil.
-func (s *TPMPolicyService) Local() *LocalTPMPolicies {
+func (s *TPMPolicyService) Local() *localtpm.Policies {
 	return s.local.Load()
 }
 

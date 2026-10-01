@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/localtpm"
 	"github.com/jeremyhahn/go-xkms/pkg/vaultkey"
 	"github.com/jeremyhahn/go-xkms/pkg/vaulttoken"
 )
@@ -92,10 +93,10 @@ func TestKeyFactorVault_CertificateEnrollThenUnlockEndToEnd(t *testing.T) {
 
 func TestKeyFactorVault_WrongAndMissingKey(t *testing.T) {
 	server := newVaultServer(t)
-	keyFile, _ := writeKeyPair(t)
+	keyFile, certFile := writeKeyPair(t)
 	otherKey, _ := writeKeyPair(t)
 
-	setFlags(t, passwordVaultEnrollCmd, map[string]string{keyFactorFlag: "piv", keyFileFlag: keyFile})
+	setFlags(t, passwordVaultEnrollCmd, map[string]string{keyFactorFlag: "certificate", keyFileFlag: keyFile, certFileFlag: certFile})
 	source, cleanup, err := resolveVaultKeySource(passwordVaultEnrollCmd, "", vaultNewFactor)
 	require.NoError(t, err)
 	defer cleanup()
@@ -130,10 +131,11 @@ func TestKeyFactorVault_FlagRefusals(t *testing.T) {
 		flags map[string]string
 		want  error
 	}{
-		{"no key source", map[string]string{keyFactorFlag: "piv"}, ErrVaultKeySourceRequired},
-		{"two key sources", map[string]string{keyFactorFlag: "piv", keyFileFlag: keyFile, tpmKeystoreFlag: t.TempDir()}, ErrVaultKeyConflict},
-		{"with a passkey", map[string]string{keyFactorFlag: "piv", keyFileFlag: keyFile, "passkey": "true"}, ErrVaultKeyConflict},
-		{"not a key", map[string]string{keyFactorFlag: "piv", keyFileFlag: junk}, ErrVaultKeyFileInvalid},
+		{"no key source", map[string]string{keyFactorFlag: "tpm"}, ErrVaultKeySourceRequired},
+		{"two key sources", map[string]string{keyFactorFlag: "tpm", keyFileFlag: keyFile, tpmDataDirFlag: t.TempDir()}, ErrVaultKeyConflict},
+		{"with a passkey", map[string]string{keyFactorFlag: "certificate", keyFileFlag: keyFile, "passkey": "true"}, ErrVaultKeyConflict},
+		{"not a key", map[string]string{keyFactorFlag: "certificate", keyFileFlag: junk}, ErrVaultKeyFileInvalid},
+		{"a PIV card is xkey's", map[string]string{keyFactorFlag: "piv", keyFileFlag: keyFile}, ErrVaultKeyNeedsXkey},
 		{"not a certificate", map[string]string{keyFactorFlag: "certificate", keyFileFlag: keyFile, certFileFlag: junk}, ErrVaultKeyFileInvalid},
 	}
 	for _, tc := range cases {
@@ -165,4 +167,17 @@ func TestKeyFactorVault_FlagRefusals(t *testing.T) {
 	source, _, err = resolveVaultKeySource(passwordVaultEnrollCmd, "", vaultNewFactor)
 	assert.NoError(t, err)
 	assert.Nil(t, source)
+}
+
+// TestKeyFactorVault_TPMMissingDevice proves a TPM key source on a host
+// without the TPM device fails with the device named, before any request.
+func TestKeyFactorVault_TPMMissingDevice(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "no-such-tpm")
+	setFlags(t, passwordVaultEnrollCmd, map[string]string{
+		keyFactorFlag: "tpm", tpmDataDirFlag: t.TempDir(), tpmDeviceFlag: missing, keyIDFlag: "k",
+	})
+	_, _, err := resolveVaultKeySource(passwordVaultEnrollCmd, "", vaultNewFactor)
+	var devErr *localtpm.DeviceError
+	require.ErrorAs(t, err, &devErr)
+	assert.Equal(t, missing, devErr.Device)
 }

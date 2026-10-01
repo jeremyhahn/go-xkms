@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 )
 
 // These tests cover BarrierAutoUnsealService without a TPM; the TPM-enforced
@@ -44,7 +45,7 @@ func TestBarrierAutoUnseal_WithoutLocalServiceIsUnavailable(t *testing.T) {
 }
 
 func TestBarrierAutoUnseal_EnableValidatesItsArguments(t *testing.T) {
-	svc := NewBarrierAutoUnsealService(WithBarrierAutoUnsealLocal(&LocalTPMPolicies{}))
+	svc := NewBarrierAutoUnsealService(WithBarrierAutoUnsealLocal(&localtpm.Policies{}))
 
 	assert.ErrorIs(t, svc.EnableAutoUnseal("", "password"), ErrBarrierAutoUnsealEmptyPolicyName)
 	assert.ErrorIs(t, svc.EnableAutoUnseal(xkms.TPMPolicyPlatform, "password"), ErrBarrierAutoUnsealBuiltinPolicy)
@@ -52,7 +53,7 @@ func TestBarrierAutoUnseal_EnableValidatesItsArguments(t *testing.T) {
 }
 
 func TestBarrierAutoUnseal_TryWithoutBarrierFails(t *testing.T) {
-	svc := NewBarrierAutoUnsealService(WithBarrierAutoUnsealLocal(&LocalTPMPolicies{}))
+	svc := NewBarrierAutoUnsealService(WithBarrierAutoUnsealLocal(&localtpm.Policies{}))
 	ok, err := svc.TryAutoUnseal(context.Background(), string(xkms.StrategyPassphrase))
 	assert.False(t, ok)
 	assert.ErrorIs(t, err, ErrBarrierAutoUnsealNoBarrier)
@@ -60,7 +61,7 @@ func TestBarrierAutoUnseal_TryWithoutBarrierFails(t *testing.T) {
 
 func TestBarrierAutoUnseal_SettersReplaceDependencies(t *testing.T) {
 	svc := NewBarrierAutoUnsealService()
-	local := &LocalTPMPolicies{}
+	local := &localtpm.Policies{}
 	svc.SetLocal(local)
 	svc.SetBarrier(NewBarrierService(t.TempDir(), slog.Default()))
 	got, err := svc.requireLocal()

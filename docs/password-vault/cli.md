@@ -63,7 +63,7 @@ xkmsctl password vault enroll --passkey --label "yubikey"
 xkmsctl password unlock --passkey
 ```
 
-**Key factors.** `--key-factor piv|certificate|tpm` replaces `--passphrase` on
+**Key factors.** `--key-factor certificate|tpm` replaces `--passphrase` on
 `vault enroll` and `vault recover`, and `--key` unlocks with one. The factor's
 secret is sealed by the server to the key's public half, and xkmsctl recovers
 it with the private key, which never leaves its token. Exactly one key source:
@@ -71,8 +71,13 @@ it with the private key, which never leaves its token. Exactly one key source:
 | Source | Flags | Notes |
 |---|---|---|
 | software key (PEM) | `--key-file`, `--cert-file` | e.g. a client certificate's key; a `certificate` factor needs `--cert-file`, and it must be the key's |
-| PKCS#11 token | `--key-pkcs11-module`, `--key-pkcs11-token`, `--key-pin <v\|->`, `--key-id` | a PIV card's module (slot 9d by default for `piv`), an HSM, SoftHSM. Needs an xkmsctl built with `-tags pkcs11`; the CGO-free release build answers `ErrVaultPKCS11Unavailable` |
-| TPM 2.0 | `--tpm-device`, `--tpm-keystore <dir>`, `--key-id`, `--tpm-create`, `--tpm-policy` | key blobs in `--tpm-keystore`; `--tpm-create` makes the key under the built-in `platform` policy. A key under a named policy is made with xkey, which runs the policy registry (`ErrVaultTPMNamedPolicy`) |
+| TPM 2.0 | `--tpm-device`, `--tpm-data-dir <dir>`, `--key-id`, `--tpm-create`, `--tpm-policy` | `--tpm-data-dir` holds the TPM's key store (`tpm/`) and named-policy registry (`tpm-policies/`, `tpm-keys/`) -- the layout of xkey's data directory, so pointing it there shares xkey's keys and policies. `--tpm-create` makes the key under `--tpm-policy`: `platform` (the default) or a named policy in that registry, e.g. one made with `xkey tpm policy create`; the registry records the key against the policy, so the policy cannot be deleted under it |
+
+**PIV cards and PKCS#11 tokens are xkey's.** xkmsctl is built without CGO, so
+it has no PKCS#11 and there is no PKCS#11 build of it: `--key-factor piv`
+answers `ErrVaultKeyNeedsXkey` ("use xkey for PIV/PKCS#11 factors"). Enroll
+and unlock those factors with `xkey password vault enroll --key-factor piv`
+or the xkey app; a factor enrolled there unlocks the same vault.
 
 Before enrolling, xkmsctl seals a throwaway secret to the token's own key and
 opens it; a token that cannot (`vaulttoken.SelfTest`) is refused and nothing
@@ -81,9 +86,9 @@ is enrolled.
 ```
 xkmsctl password vault enroll --key-factor certificate --key-file client.key --cert-file client.pem
 xkmsctl password unlock --key --key-file client.key
-xkmsctl password vault enroll --key-factor piv --key-pkcs11-module /usr/lib/libykcs11.so --key-pkcs11-token "YubiKey PIV" --key-pin -
-xkmsctl password vault enroll --key-factor tpm --tpm-keystore ~/.xkmsctl/tpm-keys --key-id vault --tpm-create
-xkmsctl password unlock --key --tpm-keystore ~/.xkmsctl/tpm-keys
+xkmsctl password vault enroll --key-factor tpm --tpm-data-dir ~/.xkmsctl/tpm --key-id vault --tpm-create
+xkmsctl password vault enroll --key-factor tpm --tpm-data-dir ~/.xkey --key-id vault-boot --tpm-create --tpm-policy boot
+xkmsctl password unlock --key --tpm-data-dir ~/.xkmsctl/tpm
 ```
 
 ## `password add <name>`

@@ -27,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
@@ -63,7 +64,7 @@ type tpmPolicySession struct {
 
 	// local is the in-process service over this host's TPM; nil when the
 	// command runs on a connected xkmsd.
-	local *services.LocalTPMPolicies
+	local *localtpm.Policies
 
 	closer io.Closer
 }
@@ -105,8 +106,8 @@ func openTPMPolicySession(cmd *cobra.Command) (*tpmPolicySession, error) {
 	if err != nil {
 		return nil, err
 	}
-	svc.SetLocal(local.LocalTPMPolicies)
-	return &tpmPolicySession{svc: svc, local: local.LocalTPMPolicies, closer: local}, nil
+	svc.SetLocal(local.Policies)
+	return &tpmPolicySession{svc: svc, local: local.Policies, closer: local}, nil
 }
 
 // withTPMPolicies runs fn on the command's TPM policy service and closes it
@@ -509,7 +510,7 @@ func runTPMPolicyAutoUnseal(cmd *cobra.Command, args []string) error {
 
 // enableLocalAutoUnseal reads the barrier password and seals it in the TPM
 // under the named policy, making it the auto-unseal policy.
-func enableLocalAutoUnseal(cmd *cobra.Command, local *services.LocalTPMPolicies, name string) error {
+func enableLocalAutoUnseal(cmd *cobra.Command, local *localtpm.Policies, name string) error {
 	password, err := readBarrierPassword(cmd.ErrOrStderr(), "Enter barrier password: ")
 	if err != nil {
 		return err

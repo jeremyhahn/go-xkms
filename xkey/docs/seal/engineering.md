@@ -205,9 +205,11 @@ TPM refusing the policy session, a mark with nothing sealed under it, or the
 barrier's own `Unseal` rejecting the password.
 
 The local TPM policy service it runs on is
-`services.LocalTPMPolicies` (`tpm_policy_local.go`), opened with
-`OpenLocalTPMPolicies(LocalTPMPolicyParams{TPM, Keys, DataDir, OpenStore,
-Accessor, Logger})` over `sdk/go` `BuildTPMPolicyService`; see
+`localtpm.Policies` (go-xkms `pkg/localtpm`, re-exported as
+`sdk/go/localtpm`, shared with xkmsctl), opened with
+`localtpm.Open(localtpm.Params{TPM, Keys, DataDir, OpenStore, Lock,
+Logger})` -- the GUI passes its `TPMAccessor.Lock` -- or, by the CLI,
+`localtpm.OpenHost`, over `BuildTPMPolicyService`; see
 [docs/tpm-policies/](../../../docs/tpm-policies/) for the policy model and
 the GUI's `TPMPolicyService`.
 

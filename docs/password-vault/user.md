@@ -45,8 +45,10 @@ You can also unlock with a key you already hold: a **PIV card** (its key
 management slot, 9d), a **certificate's key** (a client certificate, in a
 file, on a token or in a TPM), or a **TPM key** bound to a named TPM policy,
 which opens only on that machine in the state the policy expects. Enroll it
-with `xkmsctl password vault enroll --key-factor piv|certificate|tpm ...`,
-`xkey password vault enroll --key-factor ...` or *Add key* in the xkey app;
+with `xkey password vault enroll --key-factor piv|certificate|tpm ...`,
+*Add key* in the xkey app, or -- for a certificate key in a file or a TPM key,
+not a PIV card or PKCS#11 token -- `xkmsctl password vault enroll --key-factor
+certificate|tpm ...`;
 unlock with `--key`, *Unlock with key*, or, in the web console, *Unlock with
 xKey*. The key never leaves its card, token or TPM, and the server cannot
 open your vault with it alone.
@@ -72,7 +74,7 @@ A PIV card, certificate key or TPM key never enters the browser. *Unlock with
 xKey* asks the xKey browser extension, which asks the xKey app; xKey shows the
 request -- the page's address and the key -- and unlocks your vault itself
 once you approve. Without the extension the console says the factor needs it.
-Add such keys with xKey or xkmsctl.
+Add such keys with xKey (or, for a certificate file or TPM key, xkmsctl).
 
 You unlock once and your personal entries are readable until you lock again.
 The session is yours alone: unlocking does not open anyone else's personal

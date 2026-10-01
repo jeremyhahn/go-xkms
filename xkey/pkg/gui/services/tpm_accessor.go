@@ -70,6 +70,16 @@ func (a *TPMAccessor) Release() {
 	a.mu.Unlock()
 }
 
+// Lock acquires the shared TPM for an operation that does not need the TPM
+// instance itself (localtpm.Params.Lock) and returns the function that
+// releases it.
+func (a *TPMAccessor) Lock() (func(), error) {
+	if _, err := a.Acquire(); err != nil {
+		return nil, err
+	}
+	return a.Release, nil
+}
+
 // Shutdown marks the accessor as closed and waits for any in-flight
 // TPM operation to complete. After Shutdown returns, all subsequent
 // Acquire calls will return ErrTPMShuttingDown.

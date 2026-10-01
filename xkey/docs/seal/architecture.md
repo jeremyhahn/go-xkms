@@ -157,8 +157,8 @@ serve is registered.
 xKey does not keep a policy store of its own. Locally it runs the shared
 TPM policy service (`pkg/tpmpolicy`, reached through `sdk/go`
 `BuildTPMPolicyService`) in-process over its own TPM, in the system scope,
-exactly as `xkmsd` does over its TPM — `services.OpenLocalTPMPolicies`
-(`pkg/gui/services/tpm_policy_local.go`). Its registry lives in
+exactly as `xkmsd` does over its TPM — `localtpm.Open` (go-xkms
+`pkg/localtpm`, the same implementation xkmsctl runs for its TPM vault keys). Its registry lives in
 **`<data dir>/tpm-policies`** and tenant object blobs in
 `<data dir>/tpm-keys`, opened with the storage engine the unified config
 selects; the system scope's own objects (its policy authority, its sealed

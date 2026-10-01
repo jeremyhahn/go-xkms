@@ -34,6 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -79,10 +80,10 @@ func openSimTPM(t *testing.T) *simTPM {
 
 // openSimLocal opens the local TPM policy service over the simulator, with
 // its registry in memory, and a TPMPolicyService in local mode over it.
-func openSimLocal(t *testing.T) (*simTPM, *LocalTPMPolicies, *TPMPolicyService) {
+func openSimLocal(t *testing.T) (*simTPM, *localtpm.Policies, *TPMPolicyService) {
 	t.Helper()
 	sim := openSimTPM(t)
-	local, err := OpenLocalTPMPolicies(LocalTPMPolicyParams{
+	local, err := localtpm.Open(localtpm.Params{
 		TPM:       sim.tpm,
 		Keys:      sim.keys,
 		DataDir:   t.TempDir(),
@@ -272,10 +273,10 @@ func TestLocalTPMPolicies_SealedObjectFollowsItsPolicy(t *testing.T) {
 func TestLocalTPMPolicies_ObjectOperationsNeedAName(t *testing.T) {
 	_, local, _ := openSimLocal(t)
 	ctx := context.Background()
-	assert.ErrorIs(t, local.SealObject(ctx, "", "", []byte("x")), ErrTPMObjectNameRequired)
+	assert.ErrorIs(t, local.SealObject(ctx, "", "", []byte("x")), localtpm.ErrObjectNameRequired)
 	_, err := local.UnsealObject(ctx, "")
-	assert.ErrorIs(t, err, ErrTPMObjectNameRequired)
-	assert.ErrorIs(t, local.DeleteObject(ctx, ""), ErrTPMObjectNameRequired)
+	assert.ErrorIs(t, err, localtpm.ErrObjectNameRequired)
+	assert.ErrorIs(t, local.DeleteObject(ctx, ""), localtpm.ErrObjectNameRequired)
 	var kindErr *xkms.InvalidTPMObjectKindError
 	assert.ErrorAs(t, local.Assign(ctx, "bogus", "k", ""), &kindErr)
 	assert.ErrorAs(t, local.Unassign(ctx, "bogus", "k"), &kindErr)
@@ -538,12 +539,12 @@ func TestLocalTPMPolicies_ErrorsFromTheService(t *testing.T) {
 func TestLocalTPMPolicies_SharesTheTPMAccessor(t *testing.T) {
 	sim := openSimTPM(t)
 	accessor := NewTPMAccessor(func() xkms.TrustedPlatformModule { return sim.tpm })
-	local, err := OpenLocalTPMPolicies(LocalTPMPolicyParams{
+	local, err := localtpm.Open(localtpm.Params{
 		TPM:       sim.tpm,
 		Keys:      sim.keys,
 		DataDir:   t.TempDir(),
 		OpenStore: func(string) (xkms.StorageBackend, error) { return xkms.NewStorageMemory(), nil },
-		Accessor:  accessor,
+		Lock:      accessor.Lock,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, local.Close()) })
@@ -561,19 +562,6 @@ func TestLocalTPMPolicies_SharesTheTPMAccessor(t *testing.T) {
 	accessor.Shutdown()
 	_, err = svc.ListPolicies()
 	assert.ErrorIs(t, err, ErrTPMShuttingDown)
-}
-
-func TestOpenLocalTPMPolicies_StoreOpenFailure(t *testing.T) {
-	sim := openSimTPM(t)
-	errStore := errors.New("store unavailable")
-	_, err := OpenLocalTPMPolicies(LocalTPMPolicyParams{
-		TPM:       sim.tpm,
-		Keys:      sim.keys,
-		DataDir:   t.TempDir(),
-		OpenStore: func(string) (xkms.StorageBackend, error) { return nil, errStore },
-	})
-	assert.ErrorIs(t, err, ErrLocalTPMPolicyBuildFailed)
-	assert.ErrorIs(t, err, errStore)
 }
 
 func TestKeyService_UnrecordableKeyIsDeletedAgain(t *testing.T) {

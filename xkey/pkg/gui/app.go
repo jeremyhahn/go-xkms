@@ -40,6 +40,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
@@ -2667,12 +2668,12 @@ func (a *App) ensureLocalTPMPolicies() {
 	if tpm == nil || factory == nil {
 		return
 	}
-	local, err := services.OpenLocalTPMPolicies(services.LocalTPMPolicyParams{
+	local, err := localtpm.Open(localtpm.Params{
 		TPM:       tpm,
 		Keys:      factory.KeyBackend(),
 		DataDir:   a.dataDir,
 		OpenStore: a.openStore,
-		Accessor:  a.tpmAccessor,
+		Lock:      a.tpmAccessor.Lock,
 		Logger:    a.log,
 	})
 	if err != nil {

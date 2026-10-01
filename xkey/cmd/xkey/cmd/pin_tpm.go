@@ -14,14 +14,11 @@
 package cmd
 
 import (
-	"errors"
-	"fmt"
 	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 )
 
 // openTPMModule opens the TPM — the hardware device at the resolved path,
@@ -43,71 +40,27 @@ func openTPMModule(logger *slog.Logger, dataDir, device string, useSimulator boo
 	if err != nil {
 		return nil, nil, err
 	}
-	return opened.tpm, opened.tpm, nil
-}
-
-// openedTPM is a TPM opened by openTPMWithKeyStore together with its own
-// key store: the persistent store of the objects it creates under the
-// Platform SRK, at <dataDir>/tpm.
-type openedTPM struct {
-	tpm     xkms.TrustedPlatformModule
-	factory *xkms.TPMStorageFactory
-}
-
-// keys returns the TPM's own key store.
-func (o *openedTPM) keys() xkms.TPMKeyBackend {
-	return o.factory.KeyBackend()
-}
-
-// Close closes the TPM and then its key store.
-func (o *openedTPM) Close() error {
-	return errors.Join(o.tpm.Close(), o.factory.Close())
+	tpm := opened.TPM()
+	return tpm, opened, nil
 }
 
 // openTPMWithKeyStore is openTPMModule's primitive: it opens the TPM with
-// its key store at <dataDir>/tpm and returns both, for callers -- the local
-// TPM policy service -- that need the store as well as the TPM.
-func openTPMWithKeyStore(logger *slog.Logger, dataDir, device string, useSimulator bool) (*openedTPM, error) {
-	resolvedDevice := resolveTPMDevice(device)
+// its key store at <dataDir>/tpm (localtpm.OpenDevice, the same opener
+// xkmsctl uses) and returns both, for callers -- the local TPM policy
+// service -- that need the store as well as the TPM.
+func openTPMWithKeyStore(logger *slog.Logger, dataDir, device string, useSimulator bool) (*localtpm.Device, error) {
+	return localtpm.OpenDevice(tpmDeviceParams(logger, dataDir, device, useSimulator))
+}
 
-	// The simulator has no backing device file to stat; only hardware mode
-	// requires the device to be present before attempting to open it.
-	if !useSimulator {
-		if _, err := os.Stat(resolvedDevice); err != nil {
-			return nil, &WrappedError{Msg: fmt.Sprintf("tpm device %s not found", resolvedDevice), Err: err}
-		}
+// tpmDeviceParams are the localtpm parameters of this host's TPM: the
+// device at the resolved path, or the in-process simulator.
+func tpmDeviceParams(logger *slog.Logger, dataDir, device string, useSimulator bool) localtpm.DeviceParams {
+	return localtpm.DeviceParams{
+		DataDir:      dataDir,
+		Device:       resolveTPMDevice(device),
+		UseSimulator: useSimulator,
+		Logger:       logger,
 	}
-
-	tpmDataDir := filepath.Join(dataDir, "tpm")
-	factory, err := xkms.NewTPMStorageFactory(logger, tpmDataDir)
-	if err != nil {
-		return nil, &WrappedError{Msg: "tpm storage factory", Err: err}
-	}
-
-	cfg := xkms.DefaultTPMConfig
-	cfg.Device = resolvedDevice
-	cfg.UseSimulator = useSimulator
-
-	tpm, err := xkms.NewTPM2(&xkms.TPMParams{
-		Logger:    logger,
-		Config:    &cfg,
-		BlobStore: factory.BlobStore(),
-		Backend:   factory.KeyBackend(),
-	})
-	if err != nil {
-		// ErrTPMNotInitialized only means the EK/IDevID provisioning workflow
-		// has not run; the returned tpm still has a live transport and can
-		// serve its PlatformKeyStore (see TPM2.CanSeal). Sealing itself still
-		// requires the Platform SRK to be enrolled -- xkms never falls back
-		// to the Shared SRK -- which is what probeTPMSealer's caller checks
-		// before using this TPM for the barrier strategy.
-		if errors.Is(err, xkms.ErrTPMNotInitialized) && tpm != nil {
-			return &openedTPM{tpm: tpm, factory: factory}, nil
-		}
-		return nil, &WrappedError{Msg: "open tpm", Err: errors.Join(err, factory.Close())}
-	}
-
-	return &openedTPM{tpm: tpm, factory: factory}, nil
 }
 
 // newPINTPMProvider builds the pinselect.TPMProvider that `xkey pin` and
