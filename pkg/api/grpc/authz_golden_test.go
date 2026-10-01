@@ -190,7 +190,17 @@ var goldenRPCPermissions = map[string]string{
 	// The audit chain records who did what to the rest of this API, so
 	// reading it carries its own permission rather than riding on keys:* or
 	// users:*. There is no emit gate because there is no emit RPC.
-	"QueryAudit":               "audit:read",
+	"QueryAudit": "audit:read",
+	// Whole-node backup/restore — service_backup.go (owner ruling
+	// 2026-09-30, go-xkms#728). Mirrors go-qrdb's own backup:* permission
+	// family verbatim; restore is gated separately because it overwrites
+	// live shard state.
+	"CreateBackup":             "backup:create",
+	"ListBackups":              "backup:list",
+	"GetBackup":                "backup:read",
+	"DeleteBackup":             "backup:delete",
+	"RestoreBackup":            "backup:restore",
+	"VerifyBackup":             "backup:verify",
 	"RemoveCustodianMember":    "ceremony:revoke_custodian",
 	"ResetLockout":             "pin:write",
 	"RevokeCertificate":        "certs:revoke",

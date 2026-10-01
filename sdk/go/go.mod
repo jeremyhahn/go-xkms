@@ -7,9 +7,11 @@ require (
 	github.com/google/go-tpm v0.9.8
 	github.com/jeremyhahn/go-enclave v0.6.0-alpha
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.20.2-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.20.2-alpha
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
 	github.com/jeremyhahn/go-xkms v0.46.0-alpha
+	github.com/mark3labs/mcp-go v0.45.0
 	github.com/quic-go/quic-go v0.63.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/crypto v0.57.0
@@ -47,6 +49,7 @@ require (
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.59.0 // indirect
 	github.com/RaduBerinde/axisds v0.1.0 // indirect
 	github.com/RaduBerinde/btreemap v0.0.0-20260105202824-d3184786f603 // indirect
+	github.com/anatol/devmapper.go v0.0.0-20250316020617-2671eefd35d7 // indirect
 	github.com/awnumar/memcall v0.5.0 // indirect
 	github.com/awnumar/memguard v0.23.0 // indirect
 	github.com/aws/aws-sdk-go v1.55.8 // indirect
@@ -145,7 +148,7 @@ require (
 	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.20.2-alpha // indirect
+	github.com/jeremyhahn/go-luks2 v0.2.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.11.0-alpha // indirect
 	github.com/jeremyhahn/go-xkms/xkey v0.46.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
@@ -166,7 +169,6 @@ require (
 	github.com/lestrrat-go/option v1.0.1 // indirect
 	github.com/lestrrat-go/strftime v1.2.0 // indirect
 	github.com/mailru/easyjson v0.9.2 // indirect
-	github.com/mark3labs/mcp-go v0.45.0 // indirect
 	github.com/mattn/go-ieproxy v0.0.12 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/miekg/dns v1.1.72 // indirect

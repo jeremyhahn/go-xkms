@@ -302,6 +302,10 @@ jobs:
     env:
       GOMEMLIMIT: 10GiB
       GOMAXPROCS: 8
+      # make coverage runs `go test -race ./...`; -p=2 keeps at most two race
+      # test binaries alive at once (pkg/api/mcp and pkg/api/rest each peak
+      # near 7 GB), the same bound the fast-tier and race jobs carry.
+      GOFLAGS: -p=2
 
     steps:
       - name: Checkout code

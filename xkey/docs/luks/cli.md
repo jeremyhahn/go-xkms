@@ -1,6 +1,6 @@
 # LUKS2 Encrypted Storage — CLI
 
-> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
 
 All LUKS commands live under `xkey luks2` and require root (directly, or via
 `sudo`). They are exempt from the ordinary unlock gate described below —

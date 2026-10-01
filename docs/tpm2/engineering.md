@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## Exported surface — `pkg/tpm2`
 
@@ -241,6 +241,84 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   (`encoding.go:50-66`, sharing `maxPCRIndex` with `ReadPCRs`). The gob
   encoding itself is unchanged: it is the wire format producers already emit.
 
+## Object authorization
+
+Every child object go-xkms creates under an SRK — sealed data (`SealKey`,
+`Seal`, the platform store's sealed PKCS#11 PIN, `tpmpolicy` secrets and vTPM
+state keys, FROST shares, the barrier's `TPM2Strategy` root key), symmetric
+keys, and RSA, ECDSA and AES keys — has its policy bound by `bindObjectPolicy`
+(`object_policy.go:56`) at creation and its USER role answered by
+`objectSession` (`object_policy.go:115`) at use: `TPM2_Unseal`, `TPM2_Sign`,
+`TPM2_RSA_Decrypt` (`RSADecrypt`, `rsa.go:285`) and `TPM2_ECDH_ZGen`. The
+invariant is that an object with a policy can only be used through that
+policy.
+
+| Object binding | `authPolicy` | `userWithAuth` | USER role answered by |
+|---|---|---|---|
+| platform policy, password | `PolicyOR(PolicyPCR, PolicyAuthValue)` | CLEAR | PCR branch with no password; `PolicyAuthValue` branch with it (the recovery PIN) |
+| platform policy, no password | `PolicyPCR` alone (`platformPCRPolicyDigestFromPin`, `tpm.go:821`) | CLEAR | `PolicyPCR` session (`platformPCRSession`, `session.go:575`) |
+| named policy, with or without password | `AuthorizedObjectPolicy` (see [`../tpm-policies/engineering.md`](../tpm-policies/engineering.md)) | CLEAR | the authorized policy session; the password only where the policy asks for it |
+| caller digest (`SealOptions.AuthPolicy`), sealed data only | the caller's digest | CLEAR | a policy session the caller builds (systemd-cryptsetup for a `systemd-tpm2` LUKS token); xkms builds none |
+| no policy, password | empty | SET | salted HMAC session proving the password |
+| no policy, no password | empty | SET | an empty password: refused for sealed data by `SealKey` (`sealer.go:289`) with `ErrSealUnprotected` (`types.go:504`); allowed for keys, whose `TPM2_Load` is gated by the parent |
+
+- **`userWithAuth` is cleared on every object with an `authPolicy`**
+  (`restrictUserRole`, `object_policy.go:97`). With it SET, TPM 2.0 lets the
+  `authValue` alone satisfy the USER role (Part 1 §19.7.5): an object bound
+  to a policy without a password answered a plain empty password, skipping
+  the policy, and one with a password answered that password alone. A
+  password on a policy-bound object is enforced only with `PolicyAuthValue`
+  inside the policy.
+- **No open `PolicyAuthValue` branch.** `PolicyAuthValue` proves knowledge of
+  the object's `authValue`; an empty one is known to everyone. A passwordless
+  platform-policy object therefore gets the `PolicyPCR` branch alone, and a
+  named policy gets the outer `PolicyAuthValue` branch only when the object
+  has a password (`namedPolicyBinding`).
+- **The object chooses its session.** `objectSession` uses the named-policy
+  binding record when there is one, `devidKeySession` for an IDevID or IAK,
+  and otherwise reads the loaded object's `authPolicy` back with
+  `TPM2_ReadPublic`: empty selects the password session; with a password the
+  platform `PolicyAuthValue` branch; without one `platformPCRBranchSession`
+  (`object_policy.go:169`), which builds the `PolicyPCR` session when the
+  `authPolicy` is the live `PolicyPCR` digest and the platform `PolicyOR`'s
+  PCR branch otherwise. The read-back only selects which session to build;
+  the TPM still checks the session against the object, so a wrong choice can
+  only fail. A caller's `TPMPolicy` is not needed at use.
+- **NV indices.** An NV index defined with the platform policy (`NVWrite`,
+  `NVDefineCounter`, `NVDefineExtend`) never has an auth value, so its policy
+  is the `PolicyPCR` branch alone and it is defined without
+  `TPMA_NV_AUTHREAD`/`TPMA_NV_AUTHWRITE` (`nvPlatformPolicy`,
+  `nvram.go:903`): its empty auth value authorizes nothing. It is read through
+  `TPMA_NV_POLICYREAD` (`nvPolicyReadAuthorization`, `nvram.go:918`, chosen
+  from the index's own attributes) or by the owner, and written by the owner.
+- **The seal refusal belongs to `SealKey`.** `requireSealProtection`
+  (`seal.go:231`) runs in `SealKey`, which `Seal` and every sealing caller go
+  through. Keys and symmetric key objects keep the pre-existing rule that
+  their `TPM2_Load` is gated by the Platform SRK's USER PIN or platform
+  policy, so they may carry neither.
+- **Defaults bind to the parent's policy.** `Seal` with no `KeyAttributes`
+  (`defaultSealKeyAttributes`, `sealer.go:41`) binds a passwordless seal to
+  the Platform SRK's own policy and a password-carrying seal to the password
+  alone. `frost.TPM2SecretSealKeyAttributes`
+  (`pkg/keyprovider/frost/wrapkey.go:80`) does the same for FROST shares.
+- **A caller-computed digest (`SealOptions.AuthPolicy`).** `Seal` installs
+  it as the sealed object's `authPolicy` (`applySealAuthPolicy`,
+  `sealer.go:171`) after checking it is the size of the object's name
+  algorithm digest (`ErrSealAuthPolicySize`) and that the seal names no TPM
+  policy as well (`ErrSealAuthPolicyConflict`). It counts as a policy, so
+  the seal is not refused as unprotected, and `userWithAuth` is cleared as
+  for every policy-bound object. xkms builds sessions only for its own
+  platform and named policies, so it does not unseal such an object:
+  whoever computed the digest does. `pkg/luks` uses it for the
+  `systemd-tpm2` token it seals under the Shared SRK, which only
+  systemd-cryptsetup unseals (`luks.ErrTPMSSRKUnsealUnsupported`). The PCR
+  selection behind the digest is the caller's own record (the token's PCR
+  list); `Seal` takes only the digest.
+- **Existing objects keep their attributes.** An object or NV index created
+  before this rule keeps `userWithAuth` (or `TPMA_NV_AUTHREAD`) SET and, when
+  passwordless and platform-bound, its open `PolicyAuthValue` branch.
+  Re-create it to apply the rule; nothing is migrated.
+
 ## Bus protection
 
 The TPM bus is outside the security boundary: an observer with a probe on
@@ -303,8 +381,8 @@ session.
 | `TPM2_NV_Read` (`NVRead`) | sealed data | extra session, encrypt out | `nvram.go:310` |
 | `TPM2_NV_Increment`, `TPM2_NV_Extend`, `TPM2_NV_UndefineSpace`, NV reads under owner auth | hierarchy auth | salted bound session | `nvram.go:539`, `:638`, `:864`, `nvReadAuthorization` `:911` |
 | `TPM2_Create` / `TPM2_CreateLoaded` (seal, RSA, ECDSA, secret, symmetric) | sealed data (symmetric keys included), key `userAuth` | extra session, encrypt in | `seal.go:145`, `rsa.go:124`, `ecdsa.go:123`, `secretkey.go:86` |
-| `TPM2_Unseal` | sealed data (the auto-unsealed PKCS#11 PIN, symmetric key material) | extra session, encrypt out | `seal.go:322`, `seal.go:431` |
-| `TPM2_RSA_Decrypt`, `TPM2_ECDH_ZGen` | plaintext, shared secret | extra session, encrypt out | `rsa.go:307`, `ecdh.go:112` |
+| `TPM2_Unseal` | sealed data (the auto-unsealed PKCS#11 PIN, symmetric key material) | extra session, encrypt out | `seal.go:317`, `seal.go:427` |
+| `TPM2_RSA_Decrypt`, `TPM2_ECDH_ZGen` | plaintext, shared secret | extra session, encrypt out | `rsa.go:308`, `ecdh.go:112` |
 | `TPM2_ActivateCredential` | recovered credential | extra session, encrypt out | `attestation.go:614` |
 | `TPM2_GetRandom` | key material | extra session, encrypt out | `random.go:88` |
 | `TPM2_Sign`, `TPM2_Quote`, `TPM2_Certify`, `TPM2_CertifyCreation`, `TPM2_Load` | key or parent auth | salted HMAC or policy session | `CreateSession` `session.go:620`, `createKeySession` `session.go:808` |
@@ -368,11 +446,12 @@ session or policy code of its own:
   PCR branch. Nobody without the PIN, or without the measured platform state,
   can load the key.
 - **Object authorization, as for every sealed object.** The object's
-  `userAuth` is `attrs.Password` (`seal.go:55`); with `attrs.PlatformPolicy`
-  its `authPolicy` is the platform policy digest and the policy pin is
-  recorded beside it (`seal.go:100`, `:236`). `TPM2_Unseal` is authorized by
-  `createKeySession` (`session.go:711`). The template is always
-  `KeyedHashTemplate` (`types.go:735`); a caller's `TPMAttributes` is dropped.
+  `userAuth` is `attrs.Password`; with a policy its `authPolicy` is that
+  policy and `userWithAuth` is clear, and `TPM2_Unseal` is authorized by
+  `objectSession` — see §"Object authorization". Unlike `SealKey`, a
+  symmetric key may carry neither a policy nor a password: its use is gated by
+  the Platform SRK at `TPM2_Load`. The template is always `KeyedHashTemplate`;
+  a caller's `TPMAttributes` is dropped.
 - **DA protection.** `NoDA` is clear, as on every sealed object and on the
   Platform SRK itself (`enableDAOnSRK`, `platform_keystore.go:652`): a wrong
   object password advances the lockout counter.

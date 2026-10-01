@@ -68,6 +68,12 @@ func TestTPM2SecretSealKeyAttributes(t *testing.T) {
 
 	assert.Empty(t, attrs.CN, "the TPM2 template carries no CN; KeyStore fills one in per FROST key")
 	assert.Same(t, psrkAttrs, attrs.Parent)
+	assert.Empty(t, attrs.TPMPolicy, "a parent without a policy lends none")
+
+	psrkAttrs.TPMPolicy = types.TPMPolicyPlatform
+	attrs = TPM2SecretSealKeyAttributes(psrkAttrs)
+	assert.Equal(t, types.TPMPolicyPlatform, attrs.TPMPolicy,
+		"the passwordless share must be bound to the Platform SRK's policy")
 }
 
 func TestTPM2SecretSealKeyAttributes_NilParent(t *testing.T) {
@@ -75,6 +81,7 @@ func TestTPM2SecretSealKeyAttributes_NilParent(t *testing.T) {
 
 	assert.Nil(t, attrs.Parent)
 	assert.Empty(t, attrs.CN)
+	assert.Empty(t, attrs.TPMPolicy)
 }
 
 func TestKeyStore_SecretSealKeyAttributesFor_NilTemplate(t *testing.T) {

@@ -30,7 +30,7 @@ tell.
 | [phone](phone/) | The `xkey/pkg/phone` FIDO2 key backend (`--backend phone`), its BLE/USB/TCP transports, device-fingerprint continuity, the bidirectional xkmsd bridge, and the GUI's `PhoneService` | `phone/README.md`, `phone/protocol.md`, `phone/attestation.md`, `phone/bidirectional.md`, `phone/transport.md`, `phone/android/`, `phone/backend/` |
 | [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
 | [piv](piv/) | The `xkey piv` CLI/GUI surface over the SDK's PIV certificate manager | `piv/README.md` |
-| [luks](luks/) | LUKS2 encrypted storage: container lifecycle and the fail-closed lock gate shared by the CLI and GUI | `luks/README.md` |
+| [luks](luks/) | LUKS2 encrypted storage: the fail-closed lock gate shared by the CLI and GUI, over the shared go-xkms `pkg/luks` volume lifecycle (`sdk/go/luks`) and xkey-specific privilege-drop/wipe glue | `luks/README.md` |
 | [pkcs11-manager](pkcs11-manager/) | The PKCS#11 module/token manager wrapper and its automatic per-slot backend-registry synchronization | — |
 | [pkcs11](pkcs11/) | xkey's PKCS#11 side: GUI module/slot/token management, the embedded and IPC `PKCS11Transport` implementations, and the `--backend pkcs11` surface across other commands | `pkcs11/ipc.md` |
 | [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |

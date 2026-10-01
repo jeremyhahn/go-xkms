@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -253,7 +254,7 @@ func TestTPMPolicy_SealsWithoutKeyIDAreDistinctObjects(t *testing.T) {
 
 	first, err := svc.Seal(sys, &transport.SealRequest{Backend: "tpm2", Data: []byte("first"), TPMPolicy: "boot"})
 	require.NoError(t, err)
-	second, err := svc.Seal(sys, &transport.SealRequest{Backend: "tpm2", Data: []byte("second")})
+	second, err := svc.Seal(sys, &transport.SealRequest{Backend: "tpm2", Data: []byte("second"), TPMPolicy: "platform"})
 	require.NoError(t, err)
 	require.NotEmpty(t, first.KeyID, "the seal names the object it created")
 	require.NotEmpty(t, second.KeyID)
@@ -276,4 +277,27 @@ func TestTPMPolicy_SealsWithoutKeyIDAreDistinctObjects(t *testing.T) {
 		require.NoError(t, err, tc.want)
 		assert.Equal(t, []byte(tc.want), got.Plaintext)
 	}
+}
+
+// TestTPMPolicy_SealWithoutPolicyOrPasswordRefused proves a TPM2 seal through
+// the service that names neither a policy nor a password is refused rather
+// than creating an object any holder of its blobs could unseal.
+func TestTPMPolicy_SealWithoutPolicyOrPasswordRefused(t *testing.T) {
+	svc := newTPMPolicyServer(t)
+	sys := identityCtx(qrdbsdk.SystemTenantID)
+
+	_, err := svc.Seal(sys, &transport.SealRequest{Backend: "tpm2", Data: []byte("unprotected")})
+	require.ErrorIs(t, err, pkgtpm2.ErrSealUnprotected)
+
+	protected, err := svc.Seal(sys, &transport.SealRequest{Backend: "tpm2", Data: []byte("protected"), Password: "object-password"})
+	require.NoError(t, err)
+	got, err := svc.Unseal(sys, &transport.UnsealRequest{
+		Backend:    "tpm2",
+		KeyID:      protected.KeyID,
+		TPMPublic:  protected.TPMPublic,
+		TPMPrivate: protected.TPMPrivate,
+		Password:   "object-password",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("protected"), got.Plaintext)
 }

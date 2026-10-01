@@ -266,15 +266,20 @@ func TestRSADecrypt_RoundTripsOAEPCiphertext(t *testing.T) {
 	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pub, plaintext, nil)
 	require.NoError(t, err)
 
-	// Load the key so its transient handle and name are available.
-	loaded, err := h.TPM.LoadKeyPair(attrs, nil, h.Backend)
-	require.NoError(t, err)
-	defer h.TPM.Flush(loaded.ObjectHandle)
-
-	recovered, err := h.TPM.RSADecrypt(loaded.ObjectHandle, loaded.Name, ciphertext)
+	recovered, err := h.TPM.RSADecrypt(attrs, h.Backend, ciphertext)
 	require.NoError(t, err)
 	assert.Equal(t, plaintext, recovered,
 		"the TPM must recover the exact plaintext encrypted to its public key")
+}
+
+// TestRSADecrypt_MissingKey_Rejected proves RSADecrypt reports a key whose
+// blobs do not exist rather than decrypting with anything else.
+func TestRSADecrypt_MissingKey_Rejected(t *testing.T) {
+	h := newSimHarness(t, nil)
+	attrs := childKeyAttrs(t, h, "rsa-decrypt-missing", x509.RSA, types.KeyTypeEncryption)
+	out, err := h.TPM.RSADecrypt(attrs, h.Backend, []byte("ciphertext"))
+	require.Error(t, err)
+	assert.Nil(t, out)
 }
 
 // TestRSADecrypt_CorruptCiphertext_Rejected proves OAEP integrity checking is
@@ -292,11 +297,7 @@ func TestRSADecrypt_CorruptCiphertext_Rejected(t *testing.T) {
 	require.NoError(t, err)
 	ciphertext[len(ciphertext)-1] ^= 0xFF
 
-	loaded, err := h.TPM.LoadKeyPair(attrs, nil, h.Backend)
-	require.NoError(t, err)
-	defer h.TPM.Flush(loaded.ObjectHandle)
-
-	out, err := h.TPM.RSADecrypt(loaded.ObjectHandle, loaded.Name, ciphertext)
+	out, err := h.TPM.RSADecrypt(attrs, h.Backend, ciphertext)
 	require.Error(t, err, "a corrupted OAEP ciphertext must not decrypt")
 	assert.Nil(t, out)
 }

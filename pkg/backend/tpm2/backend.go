@@ -915,23 +915,9 @@ func (d *tpm2Decrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.D
 	}
 	defer func() { err = errors.Join(err, scope.close()) }()
 
-	// Load the key first to get the handle
-	loadResp, err := scope.tpm.LoadKeyPair(scope.bind(d.attrs), nil, scope.keys)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to load key", Err: err}
-	}
-	defer scope.tpm.Flush(loadResp.ObjectHandle)
-
-	// Read the public to get the name
-	pub, err := tpm2.ReadPublic{
-		ObjectHandle: loadResp.ObjectHandle,
-	}.Execute(scope.tpm.Transport())
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to read public", Err: err}
-	}
-
-	// Decrypt
-	plaintext, err := scope.tpm.RSADecrypt(loadResp.ObjectHandle, pub.Name, ciphertext)
+	// RSADecrypt loads the key and answers its USER role through the key's
+	// own policy or password.
+	plaintext, err := scope.tpm.RSADecrypt(scope.bind(d.attrs), scope.keys, ciphertext)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "TPM decrypt failed", Err: err}
 	}

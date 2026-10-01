@@ -130,8 +130,9 @@ func (s *AutoUnsealService) GetStatus() *AutoUnsealStatus {
 }
 
 // Enable seals the passphrase with the specified backend, bound to
-// tpmPolicy on the tpm2 backend ("platform", a named policy, or empty for
-// none), and stores the configuration for automatic unseal on startup.
+// tpmPolicy on the tpm2 backend ("platform" or a named policy; the sealed
+// passphrase carries no password, so the tpm2 backend refuses an empty
+// policy), and stores the configuration for automatic unseal on startup.
 func (s *AutoUnsealService) Enable(passphrase, tpmPolicy, backend string) (*AutoUnsealResult, error) {
 	// Validate passphrase.
 	if len(passphrase) < autoUnsealMinPassphraseLength {

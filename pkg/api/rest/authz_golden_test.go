@@ -54,6 +54,7 @@ var authzSeams = []authzscan.Seam{
 // counterpart of pkg/api/grpc's goldenRPCPermissions and
 // pkg/api/mcp's goldenMethodPermissions, and pins the same vocabulary.
 var goldenRESTPermissions = map[string]string{
+	"DELETE /api/v1/backups/{id}":                                "backup:delete",
 	"DELETE /api/v1/barrier/recovery/keys":                       "seal:generate_recovery",
 	"DELETE /api/v1/certs/{id}":                                  "certs:revoke",
 	"DELETE /api/v1/custodian/groups/{id}":                       "ceremony:revoke_custodian",
@@ -74,6 +75,8 @@ var goldenRESTPermissions = map[string]string{
 	"GET /api/v1/audit/":                                         "audit:read",
 	"GET /api/v1/backends":                                       "backends:list",
 	"GET /api/v1/backends/{id}":                                  "backends:read",
+	"GET /api/v1/backups":                                        "backup:list",
+	"GET /api/v1/backups/{id}":                                   "backup:read",
 	"GET /api/v1/barrier/status":                                 "seal:status",
 	"GET /api/v1/bootstrap/keys":                                 "bootstrap:read",
 	"GET /api/v1/ca/bundle#0":                                    "certs:read",
@@ -125,6 +128,9 @@ var goldenRESTPermissions = map[string]string{
 	"HEAD /api/v1/certs/{id}":                                    "certs:read",
 	"PATCH /api/v1/factors/{factorID}":                           "users:update",
 	"POST /api/v1/attest":                                        "keys:get",
+	"POST /api/v1/backups":                                       "backup:create",
+	"POST /api/v1/backups/restore":                               "backup:restore",
+	"POST /api/v1/backups/{id}/verify":                           "backup:verify",
 	"POST /api/v1/barrier/enable-encryption":                     "seal:enable_encryption",
 	"POST /api/v1/barrier/initialize":                            "seal:bootstrap",
 	"POST /api/v1/barrier/recovery/generate":                     "seal:generate_recovery",

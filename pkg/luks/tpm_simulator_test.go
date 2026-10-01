@@ -18,168 +18,143 @@ package luks
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"crypto"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
+	"io"
 	"log/slog"
-	"strings"
 	"sync"
 	"testing"
 
-	"github.com/google/go-tpm-tools/simulator"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
+
 	libtpm2 "github.com/google/go-tpm/tpm2"
-	"github.com/google/go-tpm/tpm2/transport"
+	"github.com/stretchr/testify/require"
 )
 
-// simLock serialises access to the go-tpm-tools simulator singleton. The
-// library itself blocks on a sync.Mutex; we mirror the invariant so tests
-// do not spin waiting for it.
+// simLock serialises access to the go-tpm-tools simulator singleton: the
+// library itself allows one simulator per process and hands the next caller
+// a lock that only Close releases.
 var simLock sync.Mutex
 
-// sharedSimOpener hands out a no-op TPM closer wrapping a shared
-// transport.TPM. Used in seal+unseal round-trip tests so both operations
-// see the same TPM state.
-type sharedSimOpener struct {
-	tpm transport.TPM
-}
-
-func (s *sharedSimOpener) Open(context.Context) (transport.TPMCloser, error) {
-	return nopTPMCloser{tpm: s.tpm}, nil
-}
-
-type nopTPMCloser struct{ tpm transport.TPM }
-
-func (n nopTPMCloser) Send(cmd []byte) ([]byte, error) { return n.tpm.Send(cmd) }
-func (n nopTPMCloser) Close() error                    { return nil }
-
-// provisionPersistentSRK creates a storage primary under the Owner hierarchy
-// and evicts it to the supplied persistent handle on the given simulator.
-func provisionPersistentSRK(t *testing.T, tpm transport.TPM, handle libtpm2.TPMHandle) {
+// newLUKSSimHarness opens a fresh TPM simulator, provisions it (EK, SSRK,
+// Platform SRK) and returns the resulting *pkgtpm2.TPM2, satisfying
+// TPMSealUnsealer. The Platform SRK is created with empty auth (no PIN),
+// matching pkg/tpm2/tpm2test.EnrollPlatformSRK's documented first-boot
+// shape; TPMSealer sets no password on the Platform SRK parent or on the
+// sealed objects, so this is sufficient to exercise both SealParentPSRK and
+// SealParentSSRK.
+func newLUKSSimHarness(t *testing.T) *pkgtpm2.TPM2 {
 	t.Helper()
-	primary, err := libtpm2.CreatePrimary{
-		PrimaryHandle: libtpm2.AuthHandle{
-			Handle: libtpm2.TPMRHOwner,
-			Auth:   libtpm2.PasswordAuth(nil),
-		},
-		InPublic: libtpm2.New2B(libtpm2.ECCSRKTemplate),
-	}.Execute(tpm)
-	if err != nil {
-		t.Fatalf("CreatePrimary: %v", err)
-	}
-	defer func() {
-		_, _ = (libtpm2.FlushContext{FlushHandle: primary.ObjectHandle}).Execute(tpm)
-	}()
+	simLock.Lock()
+	sim, err := pkgtpm2.OpenSimulator()
+	require.NoError(t, err, "TPM simulator must be available; build with -tags tpm_simulator")
+	t.Cleanup(func() {
+		_ = sim.Close()
+		simLock.Unlock()
+	})
 
-	if _, err := (libtpm2.EvictControl{
-		Auth: libtpm2.AuthHandle{
-			Handle: libtpm2.TPMRHOwner,
-			Auth:   libtpm2.PasswordAuth(nil),
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	dir := t.TempDir()
+	storageFactory, err := store.NewStorageFactory(logger, dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = storageFactory.Close() })
+
+	config := &pkgtpm2.Config{
+		UseSimulator: false, // Transport is supplied explicitly below.
+		Hash:         "SHA-256",
+		EK: &pkgtpm2.EKConfig{
+			Handle:       0x81010001,
+			KeyAlgorithm: "RSA",
+			RSAConfig:    &store.RSAConfig{KeySize: 2048},
 		},
-		ObjectHandle: &libtpm2.NamedHandle{
-			Handle: primary.ObjectHandle,
-			Name:   primary.Name,
+		IAK: &pkgtpm2.IAKConfig{
+			CN:                 "luks-test-iak",
+			Hash:               crypto.SHA256.String(),
+			Handle:             0x81010002,
+			KeyAlgorithm:       x509.RSA.String(),
+			RSAConfig:          &store.RSAConfig{KeySize: 2048},
+			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 		},
-		PersistentHandle: handle,
-	}).Execute(tpm); err != nil {
-		t.Fatalf("EvictControl: %v", err)
+		SSRK: &pkgtpm2.SRKConfig{
+			Handle:       0x81000001,
+			KeyAlgorithm: "RSA",
+			RSAConfig:    &store.RSAConfig{KeySize: 2048},
+		},
+		PlatformSRK: &pkgtpm2.PlatformSRKConfig{
+			SRKHandle:      0x81000002,
+			PlatformPolicy: true,
+		},
+		PlatformPCR:     pkgtpm2.DefaultPlatformPCR,
+		PlatformPCRBank: pkgtpm2.PCRBankSHA256,
 	}
+
+	params := &pkgtpm2.Params{
+		Logger:    logger,
+		Config:    config,
+		BlobStore: storageFactory.BlobStore(),
+		Backend:   storageFactory.KeyBackend(),
+		Transport: sim.Transport(),
+		FQDN:      "luks-test.example.com",
+	}
+
+	tpmIface, err := pkgtpm2.NewTPM2(params)
+	if errors.Is(err, pkgtpm2.ErrNotInitialized) {
+		require.NotNil(t, tpmIface)
+		require.NoError(t, tpmIface.Provision(nil), "provisioning the simulator must succeed")
+	} else {
+		require.NoError(t, err)
+	}
+	require.NoError(t, tpm2test.EnrollPlatformSRK(tpmIface, config))
+
+	tpm, ok := tpmIface.(*pkgtpm2.TPM2)
+	require.True(t, ok, "NewTPM2 must return *pkgtpm2.TPM2")
+	t.Cleanup(func() { _ = tpmIface.Close() })
+	return tpm
 }
 
-// TestTPMSealer_SealUnsealRoundTrip seals a random passphrase against a
-// software TPM with a PCR policy on PCR 7, then unseals it via the same
-// policy — the bytes must match exactly.
-func TestTPMSealer_SealUnsealRoundTrip(t *testing.T) {
-	simLock.Lock()
-	sim, err := simulator.Get()
-	if err != nil {
-		simLock.Unlock()
-		t.Fatalf("simulator.Get: %v", err)
-	}
-	defer func() {
-		sim.Close()
-		simLock.Unlock()
-	}()
+// ---------------------------------------------------------------------------
+// SealParentPSRK — bound to go-xkms's platform PCR policy
+// ---------------------------------------------------------------------------
 
-	sharedTPM := transport.FromReadWriter(sim)
-	provisionPersistentSRK(t, sharedTPM, libtpm2.TPMHandle(0x81000001))
+// TestTPMSealer_PSRK_SealUnsealRoundTrip proves a passphrase sealed under
+// the Platform SRK, with the platform's current PCR state, unseals correctly
+// through the same sealer.
+func TestTPMSealer_PSRK_SealUnsealRoundTrip(t *testing.T) {
+	tpm := newLUKSSimHarness(t)
+	s, err := NewTPMSealer(tpm, TPMSealerConfig{Parent: SealParentPSRK})
+	require.NoError(t, err)
 
-	h, err := NewTPMSealer(nil, &sharedSimOpener{tpm: sharedTPM})
-	if err != nil {
-		t.Fatalf("construct sealer: %v", err)
-	}
-
-	res, err := h.SealPassphrase(context.Background(), "", []int32{7})
-	if err != nil {
-		t.Fatalf("SealPassphrase: %v", err)
-	}
+	res, err := s.SealPassphrase(context.Background(), nil)
+	require.NoError(t, err)
 	defer res.Passphrase.Destroy()
-	if res.Passphrase.Size() != 32 {
-		t.Fatalf("passphrase length = %d, want 32", res.Passphrase.Size())
-	}
-	if len(res.TokenJSON) == 0 {
-		t.Fatal("empty token json")
-	}
-	if len(res.PolicyDigest) == 0 {
-		t.Fatal("empty policy digest")
-	}
+	require.Equal(t, XKMSTPMTokenType, res.Token.Type)
 
-	var tok TPMToken
-	if err := json.Unmarshal(res.TokenJSON, &tok); err != nil {
-		t.Fatalf("unmarshal token: %v", err)
-	}
-	if tok.Type != TPMTokenType {
-		t.Fatalf("token type = %q, want %q", tok.Type, TPMTokenType)
-	}
-	if tok.TPM2PCRBank != "sha256" {
-		t.Fatalf("pcr bank = %q, want sha256", tok.TPM2PCRBank)
-	}
-	if tok.TPM2Handle != 0x81000001 {
-		t.Fatalf("handle = %#x, want 0x81000001", tok.TPM2Handle)
-	}
-	if len(tok.TPM2PCRs) != 1 || tok.TPM2PCRs[0] != 7 {
-		t.Fatalf("pcrs = %v, want [7]", tok.TPM2PCRs)
-	}
-
-	unsealed, err := h.UnsealPassphrase(context.Background(), res.TokenJSON)
-	if err != nil {
-		t.Fatalf("UnsealPassphrase: %v", err)
-	}
-	if !bytes.Equal(unsealed, res.Passphrase.Bytes()) {
-		t.Fatalf("unseal mismatch:\n  got  %x\n  want %x", unsealed, res.Passphrase.Bytes())
-	}
+	unsealed, err := s.UnsealPassphrase(context.Background(), res.Token)
+	require.NoError(t, err)
+	require.True(t, bytes.Equal(unsealed, res.Passphrase.Bytes()))
 }
 
-// TestTPMSealer_Seal_PolicyBindsPCRState proves PCR policy enforcement —
-// extending PCR 7 after seal must make the subsequent unseal fail with
-// ErrTPMUnsealFailed.
-func TestTPMSealer_Seal_PolicyBindsPCRState(t *testing.T) {
-	simLock.Lock()
-	sim, err := simulator.Get()
-	if err != nil {
-		simLock.Unlock()
-		t.Fatalf("simulator.Get: %v", err)
-	}
-	defer func() {
-		sim.Close()
-		simLock.Unlock()
-	}()
+// TestTPMSealer_PSRK_Seal_PolicyBindsPCRState proves that extending a
+// platform PCR after sealing makes the subsequent unseal fail: the sealed
+// object is genuinely bound to the live platform measurement, not merely
+// labelled as if it were.
+func TestTPMSealer_PSRK_Seal_PolicyBindsPCRState(t *testing.T) {
+	tpm := newLUKSSimHarness(t)
+	s, err := NewTPMSealer(tpm, TPMSealerConfig{Parent: SealParentPSRK})
+	require.NoError(t, err)
 
-	sharedTPM := transport.FromReadWriter(sim)
-	provisionPersistentSRK(t, sharedTPM, libtpm2.TPMHandle(0x81000001))
-
-	h, err := NewTPMSealer(nil, &sharedSimOpener{tpm: sharedTPM})
-	if err != nil {
-		t.Fatalf("construct sealer: %v", err)
-	}
-	res, err := h.SealPassphrase(context.Background(), "", []int32{7})
-	if err != nil {
-		t.Fatalf("SealPassphrase: %v", err)
-	}
+	res, err := s.SealPassphrase(context.Background(), nil)
+	require.NoError(t, err)
 	defer res.Passphrase.Destroy()
 
-	// Perturb PCR 7 so the policy digest no longer matches.
-	if _, err := (libtpm2.PCRExtend{
+	// Perturb the platform PCR so the policy digest no longer matches.
+	_, err = (libtpm2.PCRExtend{
 		PCRHandle: libtpm2.AuthHandle{
-			Handle: libtpm2.TPMHandle(7),
+			Handle: libtpm2.TPMHandle(pkgtpm2.DefaultPlatformPCR),
 			Auth:   libtpm2.PasswordAuth(nil),
 		},
 		Digests: libtpm2.TPMLDigestValues{
@@ -188,107 +163,124 @@ func TestTPMSealer_Seal_PolicyBindsPCRState(t *testing.T) {
 				Digest:  bytes.Repeat([]byte{0xAB}, 32),
 			}},
 		},
-	}).Execute(sharedTPM); err != nil {
-		t.Fatalf("PCRExtend: %v", err)
-	}
+	}).Execute(tpm.Transport())
+	require.NoError(t, err)
 
-	if _, err = h.UnsealPassphrase(context.Background(), res.TokenJSON); !errors.Is(err, ErrTPMUnsealFailed) {
-		t.Fatalf("expected ErrTPMUnsealFailed after PCR extend, got %v", err)
-	}
+	_, err = s.UnsealPassphrase(context.Background(), res.Token)
+	require.Error(t, err, "unseal must fail once the platform PCR state has moved")
+	require.ErrorIs(t, err, ErrTPMUnsealFailed)
 }
 
-// errSimulatedCloseFailure is the TPMCloser.Close error
-// failingCloseTPMCloser reports, letting the test assert on it without
-// depending on transport.TPMCloser's undocumented Close error shapes.
-var errSimulatedCloseFailure = errors.New("luks_test: simulated tpm transport close failure")
+// ---------------------------------------------------------------------------
+// SealParentSSRK — plain PolicyPCR, systemd-tpm2 compatible
+// ---------------------------------------------------------------------------
 
-// failingCloseOpener hands out a TPMCloser whose Send delegates to a real
-// (simulator-backed) TPM but whose Close always fails, exercising
-// TPMSealer.closeTPM's non-nil-error branch (go-xkms#876): the seal result
-// is already decided by the time closeTPM runs, so a Close failure must be
-// logged, never surfaced through SealPassphrase's return.
-type failingCloseOpener struct {
-	tpm transport.TPM
-}
+// TestTPMSealer_SSRK_Seal_Success proves SealPassphrase produces a
+// systemd-tpm2 shaped token under the Shared SRK.
+func TestTPMSealer_SSRK_Seal_Success(t *testing.T) {
+	tpm := newLUKSSimHarness(t)
+	s, err := NewTPMSealer(tpm, TPMSealerConfig{Parent: SealParentSSRK})
+	require.NoError(t, err)
 
-func (f *failingCloseOpener) Open(context.Context) (transport.TPMCloser, error) {
-	return failingCloseTPMCloser{tpm: f.tpm}, nil
-}
-
-type failingCloseTPMCloser struct{ tpm transport.TPM }
-
-func (f failingCloseTPMCloser) Send(cmd []byte) ([]byte, error) { return f.tpm.Send(cmd) }
-func (f failingCloseTPMCloser) Close() error                    { return errSimulatedCloseFailure }
-
-// recordingHandler is a minimal slog.Handler that records every record
-// passed to Handle, so a test can assert a specific message/level/attr
-// combination was logged without parsing formatted output.
-type recordingHandler struct {
-	mu      *sync.Mutex
-	records *[]slog.Record
-}
-
-func newRecordingHandler() *recordingHandler {
-	return &recordingHandler{mu: &sync.Mutex{}, records: &[]slog.Record{}}
-}
-
-func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
-
-func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	*h.records = append(*h.records, r)
-	return nil
-}
-
-func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
-
-func (h *recordingHandler) hasRecordContaining(level slog.Level, substr string) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for _, r := range *h.records {
-		if r.Level == level && strings.Contains(r.Message, substr) {
-			return true
-		}
-	}
-	return false
-}
-
-// TestTPMSealer_CloseFailure_LoggedNotSurfaced proves closeTPM's contract
-// from go-xkms#876: SealPassphrase's own result is unaffected by a TPM
-// transport Close failure, and the failure is logged at debug through the
-// sealer's logger instead of being silently discarded.
-func TestTPMSealer_CloseFailure_LoggedNotSurfaced(t *testing.T) {
-	simLock.Lock()
-	sim, err := simulator.Get()
-	if err != nil {
-		simLock.Unlock()
-		t.Fatalf("simulator.Get: %v", err)
-	}
-	defer func() {
-		sim.Close()
-		simLock.Unlock()
-	}()
-
-	sharedTPM := transport.FromReadWriter(sim)
-	provisionPersistentSRK(t, sharedTPM, libtpm2.TPMHandle(0x81000001))
-
-	handler := newRecordingHandler()
-	logger := slog.New(handler)
-
-	h, err := NewTPMSealer(logger, &failingCloseOpener{tpm: sharedTPM})
-	if err != nil {
-		t.Fatalf("construct sealer: %v", err)
-	}
-
-	res, err := h.SealPassphrase(context.Background(), "", []int32{7})
-	if err != nil {
-		t.Fatalf("SealPassphrase must succeed despite a Close failure, got: %v", err)
-	}
+	res, err := s.SealPassphrase(context.Background(), []int32{7})
+	require.NoError(t, err)
 	defer res.Passphrase.Destroy()
 
-	if !handler.hasRecordContaining(slog.LevelDebug, "tpm transport close failed") {
-		t.Fatal("expected a debug log recording the TPM transport close failure")
-	}
+	require.Equal(t, TPMTokenType, res.Token.Type)
+	require.Equal(t, "sha256", res.Token.TPM2PCRBank)
+	require.Equal(t, []int{7}, res.Token.TPM2PCRs)
+	require.Equal(t, uint64(0x81000001), res.Token.TPM2KeyHandle)
+	require.NotEmpty(t, res.Token.TPM2PolicyHash)
+	require.Equal(t, 32, res.Passphrase.Size())
+}
+
+// TestTPMSealer_SSRK_Unseal_Unsupported proves go-xkms refuses to unseal its
+// own SSRK-parented tokens, by design (see ErrTPMSSRKUnsealUnsupported):
+// systemd-cryptsetup is the only intended unsealer for this mode.
+func TestTPMSealer_SSRK_Unseal_Unsupported(t *testing.T) {
+	tpm := newLUKSSimHarness(t)
+	s, err := NewTPMSealer(tpm, TPMSealerConfig{Parent: SealParentSSRK})
+	require.NoError(t, err)
+
+	res, err := s.SealPassphrase(context.Background(), []int32{7})
+	require.NoError(t, err)
+	defer res.Passphrase.Destroy()
+
+	_, err = s.UnsealPassphrase(context.Background(), res.Token)
+	require.ErrorIs(t, err, ErrTPMSSRKUnsealUnsupported)
+}
+
+// TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy proves the SSRK-sealed
+// object genuinely requires a correct PolicyPCR session to unseal. The object
+// carries its PolicyPCR digest with USERWITHAUTH clear, so a plain
+// empty-password TPM2_Unseal is refused by the attribute
+// (TPM_RC_AUTH_UNAVAILABLE), while the PolicyPCR session systemd-cryptsetup
+// builds from the token's PCR list unseals the passphrase.
+func TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy(t *testing.T) {
+	tpm := newLUKSSimHarness(t)
+	s, err := NewTPMSealer(tpm, TPMSealerConfig{Parent: SealParentSSRK})
+	require.NoError(t, err)
+
+	res, err := s.SealPassphrase(context.Background(), []int32{7})
+	require.NoError(t, err)
+	defer res.Passphrase.Destroy()
+
+	publicBlob, privateBlob, err := DecodeTPMSealBlobs(res.Token.TPM2Blob)
+	require.NoError(t, err)
+
+	ssrkAttrs, err := tpm.SSRKAttributes()
+	require.NoError(t, err)
+	ssrkName, _, err := tpm.ReadHandle(libtpm2.TPMHandle(ssrkAttrs.TPMAttributes.Handle))
+	require.NoError(t, err)
+
+	pub := libtpm2.BytesAs2B[libtpm2.TPMTPublic](publicBlob)
+	loadRsp, err := (libtpm2.Load{
+		ParentHandle: libtpm2.AuthHandle{
+			Handle: libtpm2.TPMHandle(ssrkAttrs.TPMAttributes.Handle),
+			Name:   ssrkName,
+			Auth:   libtpm2.PasswordAuth(nil),
+		},
+		InPrivate: libtpm2.TPM2BPrivate{Buffer: privateBlob},
+		InPublic:  pub,
+	}).Execute(tpm.Transport())
+	require.NoError(t, err)
+	defer func() {
+		_, _ = (libtpm2.FlushContext{FlushHandle: loadRsp.ObjectHandle}).Execute(tpm.Transport())
+	}()
+
+	public, err := pub.Contents()
+	require.NoError(t, err)
+	require.False(t, public.ObjectAttributes.UserWithAuth,
+		"a PCR-gated object must answer only a policy session")
+	require.Equal(t, res.Token.TPM2PolicyHash, base64.StdEncoding.EncodeToString(public.AuthPolicy.Buffer))
+
+	_, err = (libtpm2.Unseal{
+		ItemHandle: libtpm2.AuthHandle{
+			Handle: loadRsp.ObjectHandle,
+			Name:   loadRsp.Name,
+			Auth:   libtpm2.PasswordAuth(nil),
+		},
+	}).Execute(tpm.Transport())
+	require.ErrorIs(t, err, libtpm2.TPMRCAuthUnavailable,
+		"an empty-password TPM2_Unseal must not satisfy a PCR-gated object")
+
+	// The unseal systemd-cryptsetup performs: a PolicyPCR session over the
+	// PCRs the token records.
+	session, closeSession, err := libtpm2.PolicySession(tpm.Transport(), libtpm2.TPMAlgSHA256, 16)
+	require.NoError(t, err)
+	defer func() { _ = closeSession() }()
+	_, err = (libtpm2.PolicyPCR{
+		PolicySession: session.Handle(),
+		Pcrs:          buildPCRSelection(libtpm2.TPMAlgSHA256, []int32{7}),
+	}).Execute(tpm.Transport())
+	require.NoError(t, err)
+	out, err := (libtpm2.Unseal{
+		ItemHandle: libtpm2.AuthHandle{
+			Handle: loadRsp.ObjectHandle,
+			Name:   loadRsp.Name,
+			Auth:   session,
+		},
+	}).Execute(tpm.Transport())
+	require.NoError(t, err, "the PolicyPCR session must unseal the passphrase")
+	require.True(t, bytes.Equal(res.Passphrase.Bytes(), out.OutData.Buffer))
 }

@@ -2673,6 +2673,135 @@ func (t *Transport) TenantVTPMStop(ctx context.Context, tenantID string) (*trans
 	return pbconv.TPMPolicyClient{Client: t.client}.TenantVTPMStop(ctx, tenantID)
 }
 
+// Backup Operations (go-xkms#728)
+
+// CreateBackup initiates a new backup with the specified options.
+func (t *Transport) CreateBackup(ctx context.Context, req *transport.BackupRequest) (*transport.BackupInfo, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.CreateBackup(ctx, &pb.BackupRequest{
+		Destination:   req.Destination,
+		Compression:   string(req.Compression),
+		Encryption:    string(req.Encryption),
+		EncryptionKey: req.EncryptionKey,
+		Metadata:      req.Metadata,
+		ShardIds:      req.ShardIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return pbBackupInfoToTransport(resp), nil
+}
+
+// ListBackups returns metadata for all available backups.
+func (t *Transport) ListBackups(ctx context.Context) ([]transport.BackupInfo, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.ListBackups(ctx, &emptypb.Empty{})
+	if err != nil {
+		return nil, err
+	}
+
+	backups := make([]transport.BackupInfo, len(resp.GetBackups()))
+	for i, b := range resp.GetBackups() {
+		backups[i] = *pbBackupInfoToTransport(b)
+	}
+	return backups, nil
+}
+
+// GetBackup returns metadata for a specific backup by ID.
+func (t *Transport) GetBackup(ctx context.Context, id string) (*transport.BackupInfo, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.GetBackup(ctx, &pb.GetBackupRequest{Id: id})
+	if err != nil {
+		return nil, err
+	}
+	return pbBackupInfoToTransport(resp), nil
+}
+
+// DeleteBackup removes a backup by ID.
+func (t *Transport) DeleteBackup(ctx context.Context, id string) error {
+	if t.client == nil {
+		return ErrNotConnected
+	}
+
+	_, err := t.client.DeleteBackup(ctx, &pb.DeleteBackupRequest{Id: id})
+	return err
+}
+
+// RestoreBackup restores data from a backup.
+func (t *Transport) RestoreBackup(ctx context.Context, req *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.RestoreBackup(ctx, &pb.RestoreRequest{
+		BackupId:      req.BackupID,
+		TargetShards:  req.TargetShards,
+		ValidateFirst: req.ValidateFirst,
+		DecryptionKey: req.DecryptionKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	shardErrs := make([]transport.ShardError, len(resp.GetErrors()))
+	for i, e := range resp.GetErrors() {
+		shardErrs[i] = transport.ShardError{ShardID: e.GetShardId(), Message: e.GetMessage()}
+	}
+	return &transport.RestoreResult{
+		BackupID:       resp.GetBackupId(),
+		ShardsRestored: int(resp.GetShardsRestored()),
+		Duration:       time.Duration(resp.GetDurationNs()),
+		Errors:         shardErrs,
+	}, nil
+}
+
+// VerifyBackup verifies the integrity of a backup by computing and comparing
+// checksums.
+func (t *Transport) VerifyBackup(ctx context.Context, id string) (*transport.VerifyResult, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.VerifyBackup(ctx, &pb.VerifyBackupRequest{Id: id})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.VerifyResult{
+		Valid:            resp.GetValid(),
+		ChecksumMatch:    resp.GetChecksumMatch(),
+		ExpectedChecksum: resp.GetExpectedChecksum(),
+		ActualChecksum:   resp.GetActualChecksum(),
+		Errors:           resp.GetErrors(),
+	}, nil
+}
+
+// pbBackupInfoToTransport converts a wire BackupInfo to the transport type.
+func pbBackupInfoToTransport(info *pb.BackupInfo) *transport.BackupInfo {
+	return &transport.BackupInfo{
+		ID:           info.GetId(),
+		Timestamp:    time.Unix(0, info.GetTimestampNs()).UTC(),
+		Size:         info.GetSize(),
+		ShardCount:   int(info.GetShardCount()),
+		Status:       transport.BackupStatus(info.GetStatus()),
+		Checksum:     info.GetChecksum(),
+		Destination:  info.GetDestination(),
+		Compression:  transport.CompressionType(info.GetCompression()),
+		Encryption:   transport.EncryptionType(info.GetEncryption()),
+		Metadata:     info.GetMetadata(),
+		Duration:     time.Duration(info.GetDurationNs()),
+		ErrorMessage: info.GetErrorMessage(),
+	}
+}
+
 // CustodianGroup Operations
 
 // CreateCustodianGroup creates a new custodian group.

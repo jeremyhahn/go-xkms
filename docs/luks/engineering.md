@@ -1,25 +1,25 @@
 # LUKS (root module) — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `luks` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `luks` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 Design rationale: [`architecture.md`](architecture.md). This document is the
-exported surface, config keys, errors, and test inventory, each cited to
-`path/file.go:Symbol` or a line range in `pkg/luks`.
+exported surface, config keys, errors, and test inventory for `pkg/luks`.
 
 ## Package
 
-`pkg/luks` (`pkg/luks/errors.go:14-18`, package doc): "Package luks provides
+`pkg/luks` (`pkg/luks/errors.go`, package doc): "Package luks provides
 FIPS-aware LUKS volume configuration and lifecycle management. It wraps LUKS
 volume operations with automatic KDF selection based on the runtime FIPS
 policy and exposes an Executor interface so callers can supply
 platform-specific implementations (or test mocks)."
 
-Re-exported verbatim (types, consts, vars, no added logic) by
-`sdk/go/luks` (`sdk/go/luks/luks.go`).
+Re-exported as type/value aliases (no added logic) by `sdk/go/luks`
+(`sdk/go/luks/luks.go`); this is the only sanctioned import path from
+outside the root module, including `xkey`.
 
 ## Volume lifecycle
 
-### `Executor` — `pkg/luks/manager.go:26-50`
+### `Executor` — `pkg/luks/manager.go`
 
 ```go
 type Executor interface {
@@ -33,45 +33,59 @@ type Executor interface {
 }
 ```
 
-The seam a `cryptsetup`/`dmsetup`/mount-backed implementation fills in.
-`Mount`/`Unmount` were added alongside `Manager.Mount`/`Manager.Unmount`
-(go-xkms#917) so `Manager`'s `mounted` flag has a caller-facing action that
-sets and clears it — previously the interface had no mutating mount
-operation at all, only the `IsMounted` query. **No production implementation
-of this interface exists anywhere in this repository or in the `xkey`
-module** — verified by grep for the method set against `*VolumeConfig`; the
-only implementations are `mockExecutor` (`pkg/luks/manager_test.go`) and
-equivalents in the other `_test.go` files in this package. `xkey/pkg/luks`
-uses `github.com/jeremyhahn/go-luks2` directly (`xkey/go.mod`) for its own,
-separate LUKS2 implementation and does not implement this interface; adding
-`go-luks2` as a dependency of the root `go-xkms` module to back a production
-`Executor` here is pending owner approval (go-xkms#917).
+### `LibExecutor` — `pkg/luks/executor.go`
 
-### `Manager` — `pkg/luks/manager.go:52-183`
+```go
+type LibExecutor struct {
+	Filesystem string // defaults to "ext4" when empty
+}
+
+func NewLibExecutor() *LibExecutor
+```
+
+The production `Executor`, on `github.com/jeremyhahn/go-luks2`. Method
+behavior:
+
+| Method | Behavior |
+|---|---|
+| `Create` | Refuses `ErrVolumeAlreadyExists` if the container file already exists. Runs `EnsureKeyringAvailable`. Creates the parent directory, then the sparse container file with `O_EXCL`. Attaches a loop device, formats (`KDFType`/`PBKDFIterTime` from `VolumeConfig`), unlocks, creates the filesystem, locks, detaches. Every step's failure is a typed `*ExecutorError` and unwinds everything created so far (loop device detached, container file removed) except a format that already succeeded (a detach failure after a successful format leaves the container on disk, not removed). |
+| `Unlock` | Refuses `ErrVolumeNotFound` if the container file does not exist. Runs `EnsureKeyringAvailable`. Attaches a loop device and opens the LUKS mapping. A failed `go-luks2.Unlock` detaches the loop device it just attached before returning. |
+| `Lock` | Closes the LUKS mapping, then resolves and detaches the loop device via `go-luks2.FindLoopDevice` (not a cached handle) — a no-op, not an error, when no loop device is found. |
+| `Mount` | Creates the mount point directory, mounts, then `chmod 0700`s the mount point (undoing whatever mode a freshly formatted filesystem's root inode left behind); a failed `chmod` unmounts before returning. |
+| `Unmount` | Unmounts the mount point. |
+| `IsMounted` | `go-luks2.IsMounted` on the mount point; an error from the kernel check reports `false`, not an error — `Executor.IsMounted` has no error return (see package-level `IsMounted` below for the error-returning form). |
+| `IsUnlocked` | `go-luks2.IsUnlocked` on the mapper name. |
+
+### Package-level free functions — `pkg/luks/executor.go`
+
+```go
+func IsLUKSVolume(path string) bool
+func IsMounted(mountPoint string) (bool, error)
+func IsUnlocked(mapperName string) bool
+```
+
+`IsLUKSVolume` reads the first 6 bytes of a file and compares against the
+LUKS2 magic (`LUKS` + `0xba 0xbe`); any read failure or short file reports
+`false`. `IsMounted` is the error-returning form of the mount check (used by
+`xkey.Volume.IsMounted` and anywhere else that must distinguish "not
+mounted" from "could not determine").
+
+### `Manager` — `pkg/luks/manager.go`
 
 | Symbol | Signature | Behavior |
 |---|---|---|
-| `NewManager` | `func NewManager(config *VolumeConfig, executor Executor) (*Manager, error)` | Applies `config.SetDefaults()`, then `config.Validate()`. Returns `ErrNilExecutor` for a nil executor. `pkg/luks/manager.go:64-76` |
-| `NewFIPSAwareManager` | `func NewFIPSAwareManager(luksPath, mountPoint, mapperName string, executor Executor) (*Manager, error)` | Convenience constructor: builds a `VolumeConfig{LUKSPath, MountPoint, MapperName}` and delegates to `NewManager`. `pkg/luks/manager.go:81-88` |
-| `(*Manager) Create` | `func (m *Manager) Create(ctx context.Context, sizeBytes int64, passphrase string) error` | Returns `ErrInvalidSize` if `sizeBytes <= 0`, `ErrEmptyPassphrase` if empty, else calls `Executor.Create` and wraps any error as `&errs.Joined{Lead: ErrOperationFailed, Cause: err}`. `pkg/luks/manager.go:92-103` |
-| `(*Manager) Unlock` | `func (m *Manager) Unlock(ctx context.Context, passphrase string) error` | Returns `ErrEmptyPassphrase` if empty, `ErrAlreadyUnlocked` if already unlocked, else calls `Executor.Unlock`, wraps errors the same way, and sets `unlocked = true` on success. `pkg/luks/manager.go:108-120` |
-| `(*Manager) Lock` | `func (m *Manager) Lock(ctx context.Context) error` | Returns `ErrNotUnlocked` if not currently unlocked, else calls `Executor.Lock`, wraps errors, and on success sets `unlocked = false` and `mounted = false`. `pkg/luks/manager.go:124-134` |
-| `(*Manager) Mount` | `func (m *Manager) Mount(ctx context.Context) error` | Returns `ErrNotUnlocked` if not currently unlocked, `ErrAlreadyMounted` if already mounted, else calls `Executor.Mount`, wraps errors, and sets `mounted = true` on success. `pkg/luks/manager.go:139-151` |
-| `(*Manager) Unmount` | `func (m *Manager) Unmount(ctx context.Context) error` | Returns `ErrNotMounted` if not currently mounted, else calls `Executor.Unmount`, wraps errors, and sets `mounted = false` on success. `pkg/luks/manager.go:156-165` |
-| `(*Manager) IsMounted` | `func (m *Manager) IsMounted() bool` | Reads the atomic `mounted` field, set by a successful `Mount` and cleared by a successful `Unmount` or `Lock`. `pkg/luks/manager.go:167-172` |
-| `(*Manager) IsUnlocked` | `func (m *Manager) IsUnlocked() bool` | Reads the atomic `unlocked` field, set by `Unlock`, cleared by `Lock`. `pkg/luks/manager.go:174-178` |
-| `(*Manager) Config` | `func (m *Manager) Config() VolumeConfig` | Returns a value copy of the internal config. `pkg/luks/manager.go:180-183` |
+| `NewManager` | `func NewManager(config *VolumeConfig, executor Executor) (*Manager, error)` | Applies `config.SetDefaults()`, then `config.Validate()`. Returns `ErrNilExecutor` for a nil executor. |
+| `NewFIPSAwareManager` | `func NewFIPSAwareManager(luksPath, mountPoint, mapperName string, executor Executor) (*Manager, error)` | Builds a `VolumeConfig{LUKSPath, MountPoint, MapperName}` and delegates to `NewManager`. |
+| `(*Manager) Create` | `func (m *Manager) Create(ctx context.Context, sizeBytes int64, passphrase string) error` | `ErrInvalidSize` if `sizeBytes <= 0`, `ErrEmptyPassphrase` if empty, else `Executor.Create`, errors wrapped as `&errs.Joined{Lead: ErrOperationFailed, Cause: err}`. |
+| `(*Manager) Unlock` | `func (m *Manager) Unlock(ctx context.Context, passphrase string) error` | `ErrEmptyPassphrase` if empty, `ErrAlreadyUnlocked` if already unlocked, else `Executor.Unlock`; sets `unlocked = true` on success. |
+| `(*Manager) Lock` | `func (m *Manager) Lock(ctx context.Context) error` | `ErrNotUnlocked` if not unlocked, else `Executor.Lock`; sets `unlocked = false` and `mounted = false` on success. |
+| `(*Manager) Mount` | `func (m *Manager) Mount(ctx context.Context) error` | `ErrNotUnlocked` if not unlocked, `ErrAlreadyMounted` if already mounted, else `Executor.Mount`; sets `mounted = true` on success. |
+| `(*Manager) Unmount` | `func (m *Manager) Unmount(ctx context.Context) error` | `ErrNotMounted` if not mounted, else `Executor.Unmount`; sets `mounted = false` on success. |
+| `(*Manager) IsMounted` | `func (m *Manager) IsMounted() bool` | Reads the atomic `mounted` field. |
+| `(*Manager) IsUnlocked` | `func (m *Manager) IsUnlocked() bool` | Reads the atomic `unlocked` field. |
+| `(*Manager) Config` | `func (m *Manager) Config() VolumeConfig` | Value copy of the internal config. |
 
-`Mount`/`Unmount`/`Unlock`/`Lock` guard against calls made out of order —
-`TestMount_NotUnlocked`, `TestMount_AlreadyMounted`, `TestUnmount_NotMounted`,
-`TestLock_NotUnlocked`, `TestUnlock_AlreadyUnlocked`
-(`pkg/luks/manager_test.go`) each verify both the returned sentinel and that
-the `Executor` method is never invoked when the guard rejects the call.
-
-### `VolumeConfig` — `pkg/luks/config.go:42-62`
-
-Struct fields (there is no YAML/env/flag binding for any of these — see
-"Config surface" below):
+### `VolumeConfig` — `pkg/luks/config.go`
 
 | Field | Type | Meaning | Required | Default |
 |---|---|---|---|---|
@@ -79,21 +93,15 @@ Struct fields (there is no YAML/env/flag binding for any of these — see
 | `MountPoint` | `string` | Directory the unlocked volume is mounted at | yes — same | none |
 | `MapperName` | `string` | Device-mapper name under `/dev/mapper/` | yes — same | none |
 | `KDF` | `KDFType` (`"argon2id"` \| `"pbkdf2"`) | Key-derivation function for LUKS keyslot processing | no | `DefaultKDF()` via `SetDefaults` |
-| `PBKDFIterTime` | `int` | PBKDF2 iteration time in milliseconds | no | `2000` (matches the `cryptsetup` default, per the field's doc comment) |
+| `PBKDFIterTime` | `int` | PBKDF2 iteration time in milliseconds | no | `2000` |
 
-`Validate()` (`pkg/luks/config.go:77-93`): returns `ErrInvalidConfig` for any
-empty required field; returns `ErrInvalidKDF` if `KDF` is non-empty and not
-one of `validKDFs` (`pkg/luks/config.go:37-40`, a map literal — O(1)
-membership check, not a switch).
+`Validate()`: `ErrInvalidConfig` for any empty required field; `ErrInvalidKDF`
+if `KDF` is non-empty and not one of `validKDFs`.
 
-`SetDefaults()` (`pkg/luks/config.go:98-105`): fills `KDF` via `DefaultKDF()`
-and `PBKDFIterTime` via the `defaultPBKDFIterTime` constant (`2000`,
-`pkg/luks/config.go:31-33`) when zero-valued. Idempotent — a config that
-already sets these fields is left unchanged (`TestVolumeConfig_SetDefaults_PreservesExistingKDF`,
-`TestVolumeConfig_SetDefaults_PreservesExistingIterTime`,
-`pkg/luks/config_test.go:184-206`).
+`SetDefaults()`: fills `KDF` via `DefaultKDF()` and `PBKDFIterTime` via
+`defaultPBKDFIterTime` (`2000`) when zero-valued. Idempotent.
 
-### `KDFType` and `DefaultKDF` — `pkg/luks/config.go:18-33, 64-72`
+### `KDFType` and `DefaultKDF` — `pkg/luks/config.go`
 
 ```go
 type KDFType string
@@ -103,190 +111,184 @@ const (
 	KDFPBKDF2   KDFType = "pbkdf2"   // required in FIPS 140 mode
 )
 
-func DefaultKDF() KDFType {
-	if fips140.Enabled() {
-		return KDFPBKDF2
-	}
-	return KDFArgon2id
-}
+func DefaultKDF() KDFType
 ```
 
-`fips140.Enabled()` is the stdlib `crypto/fips140` signal (`GODEBUG=fips140=on|only`
-or a `GOFIPS140` build) — no locally maintained approved-algorithm list.
-`DefaultKDF`'s doc comment cites go-xkms#21 as the issue that wired this up.
+`fips140.Enabled()` is the stdlib `crypto/fips140` signal — no locally
+maintained approved-algorithm list (go-xkms#21).
 
 ## TPM 2.0 passphrase sealing
 
-### `TPMOpener` / `TPMOpenerFunc` / `DefaultTPMOpener` — `pkg/luks/tpm.go:47-71`
+### `SealParent` and `TPMSealerConfig` — `pkg/luks/config.go`
 
 ```go
-type TPMOpener interface {
-	Open(ctx context.Context) (transport.TPMCloser, error)
+type SealParent uint8
+
+const (
+	SealParentPSRK SealParent = iota // default: go-xkms's Platform SRK
+	SealParentSSRK                   // TCG Shared SRK, systemd-tpm2 compatible
+)
+
+func (p SealParent) String() string
+func (p SealParent) Validate() error
+func ParseSealParent(s string) (SealParent, error) // "", "psrk" -> PSRK; "ssrk" -> SSRK
+
+type TPMSealerConfig struct {
+	Parent  SealParent // zero value: SealParentPSRK
+	PCRBank string     // "sha1"|"sha256"|"sha384"|"sha512"; empty -> "sha256"; ignored for SealParentPSRK
 }
-type TPMOpenerFunc func(ctx context.Context) (transport.TPMCloser, error)
-func DefaultTPMOpener() TPMOpener
+
+func (c *TPMSealerConfig) SetDefaults()
+func (c *TPMSealerConfig) Validate() error // SealParentInvalidError | ErrInvalidPCRBank
 ```
 
-`DefaultTPMOpener()` opens `/dev/tpmrm0` via `linuxtpm.Open`; on failure it
-returns `&errs.Detail{Err: ErrTPMNoTransport, Detail: <os error>}`
-(`pkg/luks/tpm.go:60-71`).
-
-### `TPMSealer` — `pkg/luks/tpm.go:103-151`
+### `TPMSealUnsealer` — `pkg/luks/tpm.go`
 
 ```go
-type TPMSealer struct { /* unexported: logger, opener, parentHandle, pcrBank */ }
-
-func NewTPMSealer(logger *slog.Logger, opener TPMOpener) (*TPMSealer, error)
-func (h *TPMSealer) WithParentHandle(handle uint32) *TPMSealer
-```
-
-- `NewTPMSealer(nil, nil)` → `ErrTPMNoTransport` (nil opener is rejected
-  outright, `pkg/luks/tpm.go:129-131`). A nil `logger` is replaced with
-  `slog.Default()`, not an error.
-- `parentHandle` defaults to `DefaultTPMParentHandle = 0x81000001`
-  (`pkg/luks/tpm.go:42-45`); `pcrBank` defaults to `TPMAlgSHA256`.
-- `WithParentHandle(0)` resets to the default rather than persisting a zero
-  handle (`pkg/luks/tpm.go:143-151`).
-
-### `Seal` / `SealPassphrase` / `UnsealPassphrase`
-
-| Method | Signature | Notes |
-|---|---|---|
-| `Seal` | `func (h *TPMSealer) Seal(ctx context.Context, handle string, pcrs []int32) ([]byte, []byte, error)` | Narrow handler-shaped API: calls `SealPassphrase`, copies the passphrase out of the `secure.Buffer`, calls `Destroy()` itself, and returns `(passphrase, tokenJSON, error)`. `pkg/luks/tpm.go:153-173` |
-| `SealPassphrase` | `func (h *TPMSealer) SealPassphrase(ctx context.Context, handle string, pcrs []int32) (*TPMSealResult, error)` | Generates 32 random bytes (`crypto/rand`), seals them as a `TPMAlgKeyedHash` object under the resolved parent with an `AdminWithPolicy` PCR policy, and returns the full result including raw blobs. `pkg/luks/tpm.go:175-289` |
-| `UnsealPassphrase` | `func (h *TPMSealer) UnsealPassphrase(ctx context.Context, tokenJSON []byte) ([]byte, error)` | Parses the token, loads the object under its recorded parent, replays the recorded PCR selection in a policy session, and unseals. `pkg/luks/tpm.go:291-372` |
-
-**Bus protection.** The passphrase never crosses the TPM bus in plaintext.
-`SealPassphrase` attaches `pkg/tpm2.CommandEncryptionSession` to `TPM2_Create`
-(`pkg/luks/tpm.go:241-255`), encrypting the sensitive area on the way in;
-`UnsealPassphrase` attaches `pkg/tpm2.ResponseEncryptionSession` to
-`TPM2_Unseal` (`pkg/luks/tpm.go:355-367`), encrypting the returned data on the
-way out. Both are salted against an ephemeral NULL-hierarchy key and
-authorize nothing: the parent's empty password authorization and the
-unsealing PCR policy session are unchanged. The sealer passes its own
-transport to these `pkg/tpm2` entry points rather than carrying session code
-of its own (see [`../tpm2/engineering.md`](../tpm2/engineering.md)
-§"Bus protection"). A failure to flush either session is logged at debug
-level by `closeSession` (`pkg/luks/tpm.go:564-573`), like every other teardown
-failure. `tpm_bus_simulator_test.go` records the TPM traffic of a seal and
-unseal and asserts the passphrase appears in none of it.
-
-`handle` in `Seal`/`SealPassphrase` is a decimal-or-`0x`-hex string resolved
-by `resolveParentHandle` (`pkg/luks/tpm.go:378-397`); empty uses the sealer's
-configured `parentHandle`. An unparseable value returns
-`&errs.Detail{Err: ErrTPMInvalidHandle, ...}`.
-
-### `TPMToken` — `pkg/luks/tpm.go:73-84`
-
-```go
-type TPMToken struct {
-	Type         string   `json:"type"`
-	Keyslots     []string `json:"keyslots"`
-	TPM2Blob     string   `json:"tpm2-blob"`
-	TPM2PCRBank  string   `json:"tpm2-pcr-bank"`
-	TPM2PCRs     []int    `json:"tpm2-pcrs"`
-	TPM2Handle   uint64   `json:"tpm2-key-handle"`
-	TPM2PolicyHA string   `json:"tpm2-policy-hash,omitempty"`
+type TPMSealUnsealer interface {
+	Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error)
+	Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error)
+	PlatformSRKAttributes() (*types.KeyAttributes, error)
+	SSRKAttributes() (*types.KeyAttributes, error)
+	Transport() transport.TPM
 }
 ```
 
-`Type` is always `TPMTokenType = "systemd-tpm2"` (`pkg/luks/tpm.go:37-40`) —
-chosen to match `systemd-cryptsetup`'s own token type name so third-party
-tooling can still recognize the slot. `Keyslots` is present in the struct
-(for the LUKS2 token schema) but is never populated by `SealPassphrase` —
-populating it is the caller's responsibility when it adds the sealed
-passphrase to an actual LUKS2 keyslot.
+Satisfied by `*pkg/tpm2.TPM2` without any adapter. `Transport()` is used only
+by the `SealParentSSRK` path, to compute a PolicyPCR digest via a trial
+session (`computePCRPolicyDigest`) — the one piece of raw TPM session code
+this package still owns, because `pkg/tpm2.Seal` requires a pre-computed
+digest for a non-platform policy (`types.SealOptions.AuthPolicy`) and has
+no public helper to compute one.
 
-### `TPMSealResult` — `pkg/luks/tpm.go:86-101`
+### `TPMSealer` — `pkg/luks/tpm.go`
+
+```go
+type TPMSealer struct { /* unexported: tpm, parent, pcrBank */ }
+
+func NewTPMSealer(tpm TPMSealUnsealer, cfg TPMSealerConfig) (*TPMSealer, error)
+func (s *TPMSealer) Parent() SealParent
+func (s *TPMSealer) SealPassphrase(ctx context.Context, pcrs []int32) (*TPMSealResult, error)
+func (s *TPMSealer) UnsealPassphrase(ctx context.Context, token *luks2.Token) ([]byte, error)
+```
+
+- `NewTPMSealer(nil, _)` → `ErrTPMNoTransport`. An invalid `cfg.Parent` →
+  `*SealParentInvalidError`; an invalid `cfg.PCRBank` → `ErrInvalidPCRBank`.
+  `cfg.SetDefaults()` is applied before validation, so an empty `PCRBank` is
+  never rejected.
+- `SealPassphrase(ctx, pcrs)`:
+  - `SealParentPSRK`: `pcrs` must be empty — a non-empty selection returns
+    `ErrTPMPCRSelectionNotSupported` (the platform policy's PCR set is fixed
+    by `pkg/tpm2` configuration, not chosen per call). Resolves
+    `PlatformSRKAttributes()`, builds `KeyAttributes{CN, Parent,
+    TPMPolicy: types.TPMPolicyPlatform}` (no password), calls
+    `tpm.Seal`. Token: `XKMSTPMTokenType`, `TPM2Blob`, `TPM2KeyHandle`.
+  - `SealParentSSRK`: resolves `SSRKAttributes()`, computes a PolicyPCR
+    digest over `pcrs` (bank from construction), builds
+    `KeyAttributes{CN, Parent}` (no `TPMPolicy`, no password), calls
+    `tpm.Seal` with `types.SealOptions.AuthPolicy` set to the computed
+    digest.
+    Token: `TPMTokenType`, `TPM2Blob`, `TPM2PCRBank`, `TPM2PCRs`,
+    `TPM2KeyHandle`, `TPM2PolicyHash`.
+  - Both paths generate the 32-byte passphrase with `crypto/rand`. The
+    sealed object carries no password: `pkg/tpm2` clears its
+    `UserWithAuth`, so only a policy session unseals it — see
+    architecture.md §"No empty-auth bypass".
+- `UnsealPassphrase(ctx, token)`:
+  - Dispatches on `s.Parent()`, not `token.Type`.
+  - `SealParentPSRK`: decodes `token.TPM2Blob`, resolves
+    `PlatformSRKAttributes()`, builds `KeyAttributes{CN, Parent, TPMPolicy:
+    types.TPMPolicyPlatform}` (no password — the PCR branch of the platform
+    policy is what's expected to satisfy it), calls `tpm.Unseal`.
+  - `SealParentSSRK`: always `ErrTPMSSRKUnsealUnsupported`, without
+    decoding the token or touching `tpm`.
+  - `nil` token → `ErrTPMInvalidToken`.
+
+### Token — `*luks2.Token` (`github.com/jeremyhahn/go-luks2/pkg/luks2`)
+
+No longer a `pkg/luks`-local type. Fields this package populates:
+`Type`, `TPM2Blob`, `TPM2PCRBank`, `TPM2PCRs`, `TPM2KeyHandle`,
+`TPM2PolicyHash`. `Keyslots` is left for the caller to fill in once it knows
+which LUKS2 keyslot the sealed passphrase was added to
+(`go-luks2.AddKey`/`ImportToken`).
+
+### `TPMSealResult` — `pkg/luks/tpm.go`
 
 ```go
 type TPMSealResult struct {
-	Passphrase   *secure.Buffer // sdk/go/secure, an mlocked/canary-guarded buffer
-	TokenJSON    []byte
-	PublicBlob   []byte
-	PrivateBlob  []byte
-	PolicyDigest []byte
+	Passphrase  *secure.Buffer // sdk/go/secure; caller MUST call Destroy()
+	Token       *luks2.Token
+	PublicBlob  []byte
+	PrivateBlob []byte
 }
 ```
 
-Invariant stated in the doc comment: "Callers MUST call `Passphrase.Destroy()`
-once the passphrase has been persisted... or otherwise consumed." `secure.Buffer`
-is a type alias onto go-qrdb's `secure.Buffer`
-(`sdk/go/secure/secure.go:36`) — `pkg/luks` reaches it only through the SDK
-boundary, not a `pkg/*` import of go-qrdb, matching the SDK-boundary rule.
-
-### Blob packing — `pkg/luks/tpm.go:505-540`
+### Blob packing — `pkg/luks/tpm.go`
 
 ```go
 func EncodeTPMSealBlobs(public, private []byte) string
 func DecodeTPMSealBlobs(s string) ([]byte, []byte, error)
 ```
 
-Wire format: `base64(uint32BE(len(public)) | public | private)`.
+Unchanged wire format: `base64(uint32BE(len(public)) | public | private)`.
 `DecodeTPMSealBlobs` returns `ErrTPMInvalidToken` for invalid base64, a
-too-short payload (`< 4` bytes), or a length prefix that overruns the
-buffer.
+too-short payload, or a length prefix that overruns the buffer.
 
-## Errors — `pkg/luks/errors.go:22-85`
+## Errors — `pkg/luks/errors.go`
 
-All are package-level sentinel `error` values built with `errors.New`, meant
-to be matched with `errors.Is`. Operational failures are surfaced wrapped in
-`*errs.Detail` or `*errs.Joined` (`pkg/errs`), never as bare
-`fmt.Errorf`-formatted strings, so the sentinel below is always reachable
-via `errors.Is`/`errors.As` even when detail text is appended.
+| Sentinel / type | Raised by |
+|---|---|
+| `ErrNotMounted`, `ErrAlreadyMounted`, `ErrNotUnlocked`, `ErrAlreadyUnlocked` | `Manager`'s state guards |
+| `ErrInvalidConfig`, `ErrEmptyPassphrase`, `ErrInvalidSize`, `ErrInvalidKDF` | `VolumeConfig.Validate`, `Manager.Create`/`Unlock` |
+| `ErrOperationFailed` | `Manager`, as the `Lead` of an `errs.Joined` wrapping the `Executor`'s error |
+| `ErrNilExecutor` | `NewManager` |
+| `ErrVolumeAlreadyExists`, `ErrVolumeNotFound` | `LibExecutor.Create`/`Unlock` |
+| `*ExecutorError{Operation, Path, Err}` | Every other `LibExecutor` failure |
+| `ErrKeyringUnavailable` / `*KeyringError{Err}` | `EnsureKeyringAvailable`, when the kernel keyring preflight fails |
+| `ErrTPMNoTransport` | `NewTPMSealer(nil, _)` |
+| `ErrInvalidSealParent` / `*SealParentInvalidError{Raw, Value}` | `SealParent.Validate`, `ParseSealParent`, `TPMSealerConfig.Validate` |
+| `ErrInvalidPCRBank` | `TPMSealerConfig.Validate`, `resolvePCRBank` |
+| `ErrTPMPCRSelectionNotSupported` | `SealPassphrase` under `SealParentPSRK` with a non-empty `pcrs` |
+| `ErrTPMPolicyFailed` | `SealPassphrase` under `SealParentSSRK`, when `computePCRPolicyDigest` fails |
+| `ErrTPMSealFailed` | `SealPassphrase`, on `rand.Read`, secure-buffer construction, or `tpm.Seal` failure |
+| `ErrTPMUnsealFailed` | `UnsealPassphrase` under `SealParentPSRK`, on `tpm.Unseal` failure |
+| `ErrTPMSSRKUnsealUnsupported` | `UnsealPassphrase` under `SealParentSSRK`, always |
+| `ErrTPMInvalidToken` | `UnsealPassphrase` (nil token, bad blob), `DecodeTPMSealBlobs` |
 
-| Sentinel | Message | Raised by |
-|---|---|---|
-| `ErrNotMounted` | `luks: volume is not mounted` | `Manager.Unmount`, when not currently mounted (`pkg/luks/manager.go:157-158`) |
-| `ErrAlreadyMounted` | `luks: volume is already mounted` | `Manager.Mount`, when already mounted (`pkg/luks/manager.go:143-144`) |
-| `ErrNotUnlocked` | `luks: volume is not unlocked` | `Manager.Lock` and `Manager.Mount`, when not currently unlocked (`pkg/luks/manager.go:125-126, 140-141`) |
-| `ErrAlreadyUnlocked` | `luks: volume is already unlocked` | `Manager.Unlock`, when already unlocked (`pkg/luks/manager.go:112-113`) |
-| `ErrInvalidConfig` | `luks: invalid configuration` | `VolumeConfig.Validate()` — missing `LUKSPath`/`MountPoint`/`MapperName` |
-| `ErrEmptyPassphrase` | `luks: passphrase must not be empty` | `Manager.Create`, `Manager.Unlock` |
-| `ErrInvalidSize` | `luks: size must be positive` | `Manager.Create` |
-| `ErrInvalidKDF` | `luks: unsupported KDF type` | `VolumeConfig.Validate()` |
-| `ErrOperationFailed` | `luks: operation failed` | `Manager.Create`/`Unlock`/`Lock`/`Mount`/`Unmount`, as the `Lead` of an `errs.Joined` wrapping the `Executor`'s error |
-| `ErrNilExecutor` | `luks: executor must not be nil` | `NewManager` |
-| `ErrTPMNoTransport` | `luks: no tpm transport available` | `DefaultTPMOpener` (no `/dev/tpmrm0`), `NewTPMSealer` (nil opener) |
-| `ErrTPMPolicyFailed` | `luks: tpm pcr policy digest failed` | `SealPassphrase`, when `computePCRPolicyDigest` fails |
-| `ErrTPMSealFailed` | `luks: tpm seal failed` | `SealPassphrase`, on `rand.Read`, the parameter-encryption session (as the `Lead` of an `errs.Joined` wrapping `pkg/tpm2.ErrSaltKey`/`ErrSaltedSession`), `TPM2_Create`, secure-buffer construction, or token marshal failure |
-| `ErrTPMUnsealFailed` | `luks: tpm unseal failed` | `UnsealPassphrase`, on `TPM2_Load`, policy-session, `PolicyPCR`, the parameter-encryption session (as the `Lead` of an `errs.Joined` wrapping `pkg/tpm2.ErrSaltKey`/`ErrSaltedSession`), or `TPM2_Unseal` failure |
-| `ErrTPMInvalidHandle` | `luks: invalid tpm handle` | `resolveParentHandle`, on an unparseable handle string |
-| `ErrTPMInvalidToken` | `luks: invalid tpm token payload` | `UnsealPassphrase` (bad JSON), `DecodeTPMSealBlobs` (bad base64 or length) |
-
-`errs.Joined{Lead, Detail, Cause}` and `errs.Detail{Err, Detail}` are defined
-in `pkg/errs/errs.go:49-61, 89-110` and both implement `Unwrap` so
+`errs.Joined{Lead, Detail, Cause}`, `errs.Detail{Err, Detail}` and
+`errs.Wrapped{Msg, Err}` (`pkg/errs`) all implement `Unwrap`, so
 `errors.Is`/`errors.As` see through them to the sentinel.
 
 ## Config surface
 
 There is **no** `pkg/config` (xkmsd YAML/env/flag) binding for any
-`VolumeConfig` or `TPMSealer` field — verified: no match for `luks` (any
-case) in `pkg/config/*.go`, and the only `VolumeConfig{...}` literal outside
-`pkg/luks` itself is inside `NewFIPSAwareManager`. `VolumeConfig` fields are
-plain Go struct fields set by the embedding Go caller (the SDK, or a future
-`xkmsd` wiring), not deployment configuration. If `xkmsd` grows a LUKS
-volume of its own, that wiring does not exist yet and should be documented
-here when it does.
+`VolumeConfig`/`TPMSealerConfig` field. Both carry `yaml`/`json`/
+`mapstructure` struct tags for future config-file wiring, following this
+codebase's convention for config structs, but nothing currently loads them
+from a file — they are plain Go struct fields set by the embedding caller.
 
 ## Tests
 
 `pkg/luks` test files, by concern (all in-package, `package luks`):
 
-- `config_test.go` — `VolumeConfig.Validate`/`SetDefaults`, `DefaultKDF`
-  under standard and FIPS builds.
-- `manager_test.go` — `NewManager`/`NewFIPSAwareManager` construction,
-  `Create`/`Unlock`/`Lock`/`Mount`/`Unmount` success and executor-error
-  paths, and the state-guard errors (`ErrAlreadyUnlocked`, `ErrNotUnlocked`,
-  `ErrAlreadyMounted`, `ErrNotMounted`) for calls made out of order.
-- `tpm_test.go` — sealer construction, `resolveParentHandle`,
-  `EncodeTPMSealBlobs`/`DecodeTPMSealBlobs`, PCR-selection building — the
-  non-TPM-hardware-dependent surface.
-- `tpm_gaps_test.go` — additional edge cases for the same non-hardware
-  surface.
-- `tpm_simulator_test.go`, `tpm_simulator_fault_test.go` — full seal/unseal
-  round trips and induced-fault paths against a software TPM, gated behind
-  the `tpm_simulator` build tag (`//go:build tpm_simulator`).
+- `config_test.go` — `VolumeConfig`/`TPMSealerConfig` `Validate`/
+  `SetDefaults`, `DefaultKDF` under standard and FIPS builds, `SealParent`
+  `String`/`Validate`/`ParseSealParent`.
+- `manager_test.go` — `Manager` construction and every method's success,
+  guard-error and executor-error paths.
+- `executor_test.go` — `LibExecutor`'s full fault-injection matrix against
+  faked `go-luks2` package vars (no real loop device, dm-crypt or mount),
+  plus the package-level `IsLUKSVolume`/`IsMounted`/`IsUnlocked` functions.
+- `keyring_test.go` — `EnsureKeyringAvailable`'s typed-error and
+  probe-every-call behavior.
+- `tpm_test.go` — `TPMSealer` construction, dispatch and error propagation
+  against a fake `TPMSealUnsealer`; token blob encode/decode; PCR-selection
+  building. No TPM, real or simulated.
+- `tpm_simulator_test.go` — full PSRK and SSRK seal/unseal round trips, PCR
+  state-change failure, and the empty-auth bypass proof, against a real
+  `*pkg/tpm2.TPM2` wired to the go-tpm-tools simulator. Gated behind
+  `-tags tpm_simulator`.
 
-Run with `GOWORK=off go test ./pkg/luks/...` for the non-simulator suite;
-add `-tags tpm_simulator` for the hardware-shaped round-trip tests.
+Run `GOWORK=off go test ./pkg/luks/...` for the non-simulator suite; add
+`-tags "codec_cbor codec_json codec_msgpack tpm_simulator frost"` for the
+full CI matrix including the TPM round trips.

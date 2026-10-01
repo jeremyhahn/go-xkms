@@ -180,7 +180,7 @@ type TrustedPlatformModule interface {
 	Read(data []byte) (n int, err error)
 	ReadHandle(handle tpm2.TPMHandle) (tpm2.TPM2BName, tpm2.TPMTPublic, error)
 	ReadPCRs(pcrList []uint) ([]PCRBank, error)
-	RSADecrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, blob []byte) ([]byte, error)
+	RSADecrypt(keyAttrs *types.KeyAttributes, backend store.KeyBackend, blob []byte) ([]byte, error)
 	RSAEncrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, message []byte) ([]byte, error)
 	SaveKeyPair(
 		keyAttrs *types.KeyAttributes,
@@ -811,6 +811,28 @@ func platformPolicyDigestFromPin(pin *store.PlatformPolicyPin) (tpm2.TPM2BDigest
 	}
 
 	return tpm2.TPM2BDigest{Buffer: compoundDigest}, nil
+}
+
+// platformPCRPolicyDigestFromPin computes the PolicyPCR branch of the
+// platform policy alone from a pin: the authPolicy of an object sealed to
+// the platform policy without a password. Such an object has no auth value
+// to prove, so the PolicyAuthValue branch is left out of its policy rather
+// than left open to an empty auth value.
+func platformPCRPolicyDigestFromPin(pin *store.PlatformPolicyPin) (tpm2.TPM2BDigest, error) {
+
+	if pin == nil {
+		return tpm2.TPM2BDigest{}, &errs.Detail{
+			Err:    ErrPlatformPolicyDigestCompute,
+			Detail: "nil platform policy pin",
+		}
+	}
+
+	branch1, _, err := platformPolicyBranchDigests(
+		tpm2.TPMAlgID(pin.PCRBank), uint(pin.PCRIndex), pin.PCRDigest)
+	if err != nil {
+		return tpm2.TPM2BDigest{}, err
+	}
+	return tpm2.TPM2BDigest{Buffer: branch1}, nil
 }
 
 // primaryPolicyPinAttrs returns the key attributes under which a persistent
@@ -1624,12 +1646,13 @@ func (tpm *TPM2) Sign(
 	requestedHash := requestedSignHash(opts)
 
 	// Create key session to sign with, unless the branch above already answered
-	// the authorization. The backend is threaded through so the key's platform
-	// policy pin is read from the same store its blobs came from, which is what
-	// lets a PIN-carrying signing key still sign after the platform
-	// measurements change.
+	// the authorization. The key's own authPolicy selects it (objectSession).
+	// The backend is threaded through so the key's platform policy pin is read
+	// from the same store its blobs came from, which is what lets a
+	// PIN-carrying signing key still sign after the platform measurements
+	// change.
 	if signAuth == nil {
-		session2, closer2, err2 := tpm.createKeySession(keyAttrs, backend)
+		session2, closer2, err2 := tpm.objectSession(keyAttrs, backend, handle)
 		if err2 != nil {
 			tpm.logger.Error("failed to create key session", slog.String("error", err2.Error()))
 			return nil, err2

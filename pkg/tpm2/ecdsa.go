@@ -88,31 +88,10 @@ func (tpm *TPM2) CreateECDSA(
 		return nil, err
 	}
 
-	// Attach platform PCR policy digest if configured.
-	//
-	// The digest is computed from a captured pin rather than straight from live
-	// PCRs. The value is identical, but capturing it lets the record written
-	// after the blobs are saved name the exact PolicyPCR branch this key's
-	// AuthPolicy covers, so the key's PIN branch can still reproduce the
-	// PolicyOR digest once the platform measurements change.
-	var policyPin *store.PlatformPolicyPin
-
-	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
-		pin, err := tpm.capturePlatformPolicyPin()
-		if err != nil {
-			return nil, err
-		}
-		policyDigest, err := platformPolicyDigestFromPin(pin)
-		if err != nil {
-			return nil, err
-		}
-		eccTemplate.AuthPolicy = policyDigest
-		policyPin = pin
-	}
-
-	// A named, authorized policy replaces the password path entirely: the
-	// template gets the policy's authPolicy and loses USERWITHAUTH.
-	policyBinding, err := tpm.namedPolicyBinding(keyAttrs, &eccTemplate)
+	// Bind the key to its policy -- the platform policy, a named policy, or
+	// none -- with the USERWITHAUTH that goes with it (bindObjectPolicy). The
+	// pin and binding returned are recorded beside the blobs below.
+	policyPin, policyBinding, err := tpm.bindObjectPolicy(keyAttrs, &eccTemplate, keyAuthValue(keyAttrs))
 	if err != nil {
 		return nil, err
 	}

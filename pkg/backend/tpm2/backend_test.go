@@ -277,7 +277,7 @@ func (m *mockTPM) ReadHandle(handle tpm2.TPMHandle) (tpm2.TPM2BName, tpm2.TPMTPu
 	return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, nil
 }
 func (m *mockTPM) ReadPCRs(pcrList []uint) ([]pkgtpm2.PCRBank, error) { return nil, nil }
-func (m *mockTPM) RSADecrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, blob []byte) ([]byte, error) {
+func (m *mockTPM) RSADecrypt(keyAttrs *types.KeyAttributes, backend store.KeyBackend, blob []byte) ([]byte, error) {
 	if m.rsaDecryptErr != nil {
 		return nil, m.rsaDecryptErr
 	}
@@ -1424,17 +1424,6 @@ func TestTPM2Signer_Sign_WithNilOpts(t *testing.T) {
 	}
 }
 
-func TestTPM2Decrypter_Decrypt_RSA_LoadKeyPairError(t *testing.T) {
-	expectedErr := errors.New("load key pair error")
-	mockTpm := &mockTPM{loadKeyPairErr: expectedErr}
-	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}}
-	decrypter := &tpm2Decrypter{tpm2Signer: &tpm2Signer{backend: b, attrs: &types.KeyAttributes{CN: "test", KeyAlgorithm: x509.RSA}, publicKey: &rsa.PublicKey{}}}
-	_, err := decrypter.Decrypt(rand.Reader, []byte("ciphertext"), nil)
-	if err == nil {
-		t.Error("Expected error from LoadKeyPair")
-	}
-}
-
 func TestBackend_parsePublicKey(t *testing.T) {
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -1638,28 +1627,6 @@ func TestConfig_Validate_EmptyDeviceNoSimulator(t *testing.T) {
 		if config.Device != "/dev/tpmrm0" {
 			t.Errorf("Expected Device to be /dev/tpmrm0, got %q", config.Device)
 		}
-	}
-}
-
-// TestTPM2Decrypter_Decrypt_RSA_ReadPublicError tests ReadPublic error path
-func TestTPM2Decrypter_Decrypt_RSA_ReadPublicError(t *testing.T) {
-	// Create a mock transport that will cause ReadPublic to fail
-	mockTpm := &mockTPM{
-		transport: &mockTransport{
-			sendErr: errors.New("send error"),
-		},
-	}
-	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}}
-	decrypter := &tpm2Decrypter{
-		tpm2Signer: &tpm2Signer{
-			backend:   b,
-			attrs:     &types.KeyAttributes{CN: "test", KeyAlgorithm: x509.RSA},
-			publicKey: &rsa.PublicKey{N: big.NewInt(12345), E: 65537},
-		},
-	}
-	_, err := decrypter.Decrypt(rand.Reader, []byte("ciphertext"), nil)
-	if err == nil {
-		t.Error("Expected error from ReadPublic")
 	}
 }
 
@@ -1976,14 +1943,7 @@ func TestNewBackend_VerifyConfigDefaults(t *testing.T) {
 // TestTPM2Decrypter_Decrypt_RSADecryptError tests RSADecrypt error path
 func TestTPM2Decrypter_Decrypt_RSADecryptError(t *testing.T) {
 	expectedErr := errors.New("rsa decrypt error")
-	mockTpm := &mockTPM{
-		rsaDecryptErr: expectedErr,
-		transport: &mockTransport{
-			// Need to return valid response for ReadPublic
-			sendResult: nil,
-			sendErr:    nil,
-		},
-	}
+	mockTpm := &mockTPM{rsaDecryptErr: expectedErr}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}}
 	decrypter := &tpm2Decrypter{
 		tpm2Signer: &tpm2Signer{
@@ -1993,11 +1953,11 @@ func TestTPM2Decrypter_Decrypt_RSADecryptError(t *testing.T) {
 		},
 	}
 
-	// The decrypter will try to load the key and read public first
-	// Since our mock transport returns nil for Send, ReadPublic will fail
+	// RSADecrypt loads and authorizes the key itself; its failure is
+	// reported, wrapped, by Decrypt.
 	_, err := decrypter.Decrypt(rand.Reader, []byte("ciphertext"), nil)
-	if err == nil {
-		t.Error("Expected error from Decrypt")
+	if !errors.Is(err, expectedErr) {
+		t.Errorf("Expected the RSADecrypt error, got %v", err)
 	}
 }
 

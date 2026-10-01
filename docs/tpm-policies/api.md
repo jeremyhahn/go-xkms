@@ -54,8 +54,8 @@ every transport calls.
 | Field | REST / MCP JSON | gRPC | Meaning |
 |---|---|---|---|
 | `GenerateKeyRequest.TPMPolicy` | `tpm_policy` | `GenerateKeyRequest.tpm_policy` = 11 | TPM2 key bound to the named policy; empty is `platform`. Any other backend refuses a non-empty value (`xkms.ErrTPMPolicyNotSupported`, invalid argument). |
-| `SealRequest.TPMPolicy` | `tpm_policy` | `SealRequest.tpm_policy` = 6 | TPM2 sealed object bound to the named policy, `platform`, or empty for none. |
-| `SealRequest.Password` | `password` | `SealRequest.password` = 5 | The sealed object's authorization value. |
+| `SealRequest.TPMPolicy` | `tpm_policy` | `SealRequest.tpm_policy` = 6 | TPM2 sealed object bound to the named policy, `platform`, or empty for none. A TPM2 seal needs a policy, a password or both; one with neither is refused (`tpm2.ErrSealUnprotected`). |
+| `SealRequest.Password` | `password` | `SealRequest.password` = 5 | The TPM2 sealed object's authorization value. With a TPM policy it counts only inside the policy (`PolicyAuthValue`); without one it is the object's only protection. |
 
 gRPC also gained the fields a TPM2 sealed object needs to round-trip:
 `SealResponse.tpm_public` = 6, `tpm_private` = 7, `wrapped_dek` = 8,

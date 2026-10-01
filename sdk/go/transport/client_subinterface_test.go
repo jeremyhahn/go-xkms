@@ -430,6 +430,18 @@ func (s *stubClient) TenantVTPMStop(context.Context, string) (*TenantVTPMStatusR
 	panic("stub")
 }
 
+// BackupService stubs.
+func (s *stubClient) CreateBackup(context.Context, *BackupRequest) (*BackupInfo, error) {
+	panic("stub")
+}
+func (s *stubClient) ListBackups(context.Context) ([]BackupInfo, error)      { panic("stub") }
+func (s *stubClient) GetBackup(context.Context, string) (*BackupInfo, error) { panic("stub") }
+func (s *stubClient) DeleteBackup(context.Context, string) error             { panic("stub") }
+func (s *stubClient) RestoreBackup(context.Context, *RestoreRequest) (*RestoreResult, error) {
+	panic("stub")
+}
+func (s *stubClient) VerifyBackup(context.Context, string) (*VerifyResult, error) { panic("stub") }
+
 // CustodianGroupService stubs.
 func (s *stubClient) CreateCustodianGroup(context.Context, *CreateCustodianGroupRequest) (*CreateCustodianGroupResponse, error) {
 	panic("stub")

@@ -88,6 +88,10 @@ github.com/RaduBerinde/btreemap v0.0.0-20260105202824-d3184786f603 h1:fSdiBlO4Ba
 github.com/RaduBerinde/btreemap v0.0.0-20260105202824-d3184786f603/go.mod h1:0tr7FllbE9gJkHq7CVeeDDFAFKQVy5RnCSSNBOvdqbc=
 github.com/aclements/go-perfevent v0.0.0-20240301234650-f7843625020f h1:JjxwchlOepwsUWcQwD2mLUAGE9aCp0/ehy6yCHFBOvo=
 github.com/aclements/go-perfevent v0.0.0-20240301234650-f7843625020f/go.mod h1:tMDTce/yLLN/SK8gMOxQfnyeMeCg8KGzp0D1cbECEeo=
+github.com/anatol/devmapper.go v0.0.0-20250316020617-2671eefd35d7 h1:rmzBzcHwcMj/yd0KSIpUThfhBSHDaCwja+UOMpBL8ug=
+github.com/anatol/devmapper.go v0.0.0-20250316020617-2671eefd35d7/go.mod h1:gc23OPOgbAUVQPvBD6aJTlpnwmKfx3AdrmjkBXstafE=
+github.com/anatol/vmtest v0.0.0-20230711210602-87511df0d4bc h1:xMQuzBhj6hXQZufedPQM2OiGX2UcQHSptXtG3+28S8Q=
+github.com/anatol/vmtest v0.0.0-20230711210602-87511df0d4bc/go.mod h1:NC+g66bgkUjV1unIJXhHO35RHxVViWUzNeeKAkkO7DU=
 github.com/awnumar/memcall v0.5.0 h1:31zYqzH08fM1UBzr53ywXFvqVP4grhAIFFd1Pfd7Gtk=
 github.com/awnumar/memcall v0.5.0/go.mod h1:5q5zKsL4XfYgqzCQEvUt9Dou4fEXWsn+tNrm1z1oYgQ=
 github.com/awnumar/memguard v0.23.0 h1:sJ3a1/SWlcuKIQ7MV+R9p0Pvo9CWsMbGZvcZQtmc68A=
@@ -366,6 +370,8 @@ github.com/jeremyhahn/go-enclave v0.6.0-alpha h1:aQ0xOVKPFJ8fGRLOpiWSfXv6KpN/sHA
 github.com/jeremyhahn/go-enclave v0.6.0-alpha/go.mod h1:NzaV85d7/iJuP8eTFIJogPZwGcGkKR3RHm3i2bthPNA=
 github.com/jeremyhahn/go-frost v0.3.0-alpha h1:fS/7aRh6igwYfhEkpY6UsMF0qg0xbqeARG4HZTpLb20=
 github.com/jeremyhahn/go-frost v0.3.0-alpha/go.mod h1:Dzz/o3XUPo+jruOoojc9SG3zFpF2v46kSLLz1vq/90U=
+github.com/jeremyhahn/go-luks2 v0.2.0-alpha h1:VDK7ACWhAnPISf/IybwBSJeCZXjke4sXOBJ3LFYA9Rk=
+github.com/jeremyhahn/go-luks2 v0.2.0-alpha/go.mod h1:0KROmXZOqRe7pO0jGbIJXPypPtWkjSv8d9UV3rRuYF4=
 github.com/jeremyhahn/go-objstore v0.3.0-alpha h1:G/KiZBLcojP9rFnH+UuqyTk1CM8ogM2ZRfrt0Ps3WcI=
 github.com/jeremyhahn/go-objstore v0.3.0-alpha/go.mod h1:bLqSB64gltrsEsxMx7DyNjjxcHXz82grpkyZJ0gv+tw=
 github.com/jeremyhahn/go-qrdb v0.20.2-alpha h1:bFwoygn9q1dt825xDpxiX3iRRhXtD3tq94ZHdd7X0cY=
@@ -384,6 +390,8 @@ github.com/jmespath/go-jmespath/internal/testify v1.5.1 h1:shLQSRRSCCPj3f2gpwzGw
 github.com/jmespath/go-jmespath/internal/testify v1.5.1/go.mod h1:L3OGu8Wl2/fWfCI6z80xFu9LTZmf1ZRjMHUOPmWr69U=
 github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
 github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
+github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 h1:Z9n2FFNUXsshfwJMBgNA0RU6/i7WVaAegv3PtuIHPMs=
+github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51/go.mod h1:CzGEWj7cYgsdH8dAjBGEr58BoE7ScuLd+fwFZ44+/x8=
 github.com/kevinburke/ssh_config v1.6.0 h1:J1FBfmuVosPHf5GRdltRLhPJtJpTlMdKTBjRgTaQBFY=
 github.com/kevinburke/ssh_config v1.6.0/go.mod h1:q2RIzfka+BXARoNexmF9gkxEX7DmvbW9P4hIVx2Kg4M=
 github.com/keybase/go-keychain v0.0.1 h1:way+bWYa6lDppZoZcgMbYsvC7GxljxrskdNInRtuthU=
@@ -577,6 +585,8 @@ github.com/tinylib/msgp v1.6.4 h1:mOwYbyYDLPj35mkA2BjjYejgJk9BuHxDdvRnb6v2ZcQ=
 github.com/tinylib/msgp v1.6.4/go.mod h1:RSp0LW9oSxFut3KzESt5Voq4GVWyS+PSulT77roAqEA=
 github.com/tkrajina/go-reflector v0.5.8 h1:yPADHrwmUbMq4RGEyaOUpz2H90sRsETNVpjzo3DLVQQ=
 github.com/tkrajina/go-reflector v0.5.8/go.mod h1:ECbqLgccecY5kPmPmXg1MrHW585yMcDkVl6IvJe64T4=
+github.com/tmc/scp v0.0.0-20170824174625-f7b48647feef h1:7D6Nm4D6f0ci9yttWaKjM1TMAXrH5Su72dojqYGntFY=
+github.com/tmc/scp v0.0.0-20170824174625-f7b48647feef/go.mod h1:WLFStEdnJXpjK8kd4qKLwQKX/1vrDzp5BcDyiZJBHJM=
 github.com/twitchyliquid64/golang-asm v0.15.1 h1:SU5vSMR7hnwNxj24w34ZyCi/FmDZTkS4MhqMhdFk5YI=
 github.com/twitchyliquid64/golang-asm v0.15.1/go.mod h1:a1lVb/DtPvCB8fslRZhAngC2+aY1QWCk3Cedj/Gdt08=
 github.com/ugorji/go/codec v1.3.2 h1:zkEASHHyEClGeURfgNT9PJZVfAbs9oEX9QXggwWNJbc=

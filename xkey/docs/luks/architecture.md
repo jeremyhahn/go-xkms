@@ -1,6 +1,21 @@
 # LUKS2 Encrypted Storage — Architecture
 
-> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
+
+> **go-xkms#917 (2026-09-30):** `xkey/pkg/luks` no longer drives
+> `github.com/jeremyhahn/go-luks2` directly. `luks.Volume`'s lifecycle
+> methods (`Create`/`Unlock`/`Lock`/`Mount` internally via `Unlock`) now
+> delegate to `sdk/go/luks`'s `Executor` (`sdkluks.NewLibExecutor()`), the
+> one production LUKS implementation in the stack, which lives in the root
+> module's `pkg/luks` and is documented in
+> [`../../../docs/luks/`](../../../docs/luks/). This document and the rest
+> of this folder are unaffected in substance: `Volume`'s method set, the
+> `VolumeOperator` interface this doc describes, and the storage gate below
+> are all unchanged — only the code `Volume` calls into changed. What
+> remains genuinely local to `xkey/pkg/luks` after #917 is the
+> privilege-drop chown (`resolveCallingUser`/`chownTreeToCallingUser`) and
+> the secure wipe (`Wipe`); see
+> [`engineering.md`](engineering.md) for the current exported surface.
 
 ## Scope
 

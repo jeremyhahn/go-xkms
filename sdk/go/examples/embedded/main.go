@@ -781,6 +781,30 @@ func (m *MockXKMSService) CreateCustodianGroup(ctx context.Context, req *transpo
 	return nil, &mockUnsupportedError{capability: "custodian"}
 }
 
+func (m *MockXKMSService) CreateBackup(ctx context.Context, req *transport.BackupRequest) (*transport.BackupInfo, error) {
+	return nil, &mockUnsupportedError{capability: "backup"}
+}
+
+func (m *MockXKMSService) ListBackups(ctx context.Context) ([]transport.BackupInfo, error) {
+	return nil, &mockUnsupportedError{capability: "backup"}
+}
+
+func (m *MockXKMSService) GetBackup(ctx context.Context, id string) (*transport.BackupInfo, error) {
+	return nil, &mockUnsupportedError{capability: "backup"}
+}
+
+func (m *MockXKMSService) DeleteBackup(ctx context.Context, id string) error {
+	return &mockUnsupportedError{capability: "backup"}
+}
+
+func (m *MockXKMSService) RestoreBackup(ctx context.Context, req *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	return nil, &mockUnsupportedError{capability: "backup"}
+}
+
+func (m *MockXKMSService) VerifyBackup(ctx context.Context, id string) (*transport.VerifyResult, error) {
+	return nil, &mockUnsupportedError{capability: "backup"}
+}
+
 func (m *MockXKMSService) GetCustodianGroup(ctx context.Context, groupID string) (*transport.GetCustodianGroupResponse, error) {
 	return nil, &mockUnsupportedError{capability: "custodian"}
 }

@@ -22,6 +22,7 @@ the folder in the same commit that changes the behavior.
 | [audit-log](audit-log/) | Tamper-evident audit records and their signing chain |
 | [auth-factors](auth-factors/) | Factor composition, adapters, and the identity/key-domain split |
 | [avr-device-backend](avr-device-backend/) | An AVR device with a secure-element identity as an xkms key provider and DICE attester, over the arduino-generic wire protocol |
+| [backup](backup/) | Whole-node backup/restore over the embedded go-qrdb node's shard-snapshot capability (`backup:*`); per-key export/import is [key-management](key-management/) |
 | [certificate-authority](certificate-authority/) | `TrustedCA` — cross-signed root pool, AIA import, DANE TLSA publishing |
 | [clustering](clustering/) | Embedding a go-qrdb clustered node behind the `raft` build tag: Raft config mapping, inter-node mTLS provisioning, not-leader redirects, the `xkmsctl cluster`/`rebalance` control plane, the read-only REST cluster status/membership surface for the web console, and cluster CA key custody |
 | [crypto-backends](crypto-backends/) | The `Backend` contract and every software, hardware and cloud implementation |
@@ -33,7 +34,7 @@ the folder in the same commit that changes the behavior.
 | [host-embedding](host-embedding/) | Mounting the `xkms` ServiceModule in a qrdb-embedding host: the host supplies dependencies (qrdb client, barrier registry, PIN backend, sealer, CA config, PCR reader), `pkg/compose` builds the Password Manager, SSH, CA, platform store, credential and policy stores through the same path as `xkmsd`, and the barrier routes stay the host's unless it opts in |
 | [init-ceremony](init-ceremony/) | `xkmsd init` — the KMS+CA half and the delegated IAM half |
 | [key-management](key-management/) | Key lifecycle, key providers, symmetric and asymmetric operations |
-| [luks](luks/) | The root module's `pkg/luks`: FIPS-aware LUKS volume lifecycle (`Manager`/`Executor`) and TPM 2.0 passphrase sealing (`TPMSealer`); `xkey`'s own LUKS2 implementation is documented separately in `xkey/docs/luks/` |
+| [luks](luks/) | The single LUKS implementation in the stack: FIPS-aware volume lifecycle (`Manager`/`Executor`, `LibExecutor` on `go-luks2`) and TPM 2.0 passphrase sealing (`TPMSealer`, configurable Platform-SRK/Shared-SRK parent). `xkey` consumes it through `sdk/go/luks`; its desktop-specific glue is documented separately in `xkey/docs/luks/` |
 | [multi-tenancy](multi-tenancy/) | Per-tenant isolation, tenant barriers, tenant-scoped keys |
 | [observability](observability/) | Prometheus instrumentation — operation counters/histograms, backend health, keys/certs totals, connection tracking |
 | [password-vault](password-vault/) | Stored password credentials and their access modes |
