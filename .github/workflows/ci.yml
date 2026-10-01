@@ -307,7 +307,9 @@ jobs:
           # graph (dolthub/go-icu-regex, google/gousb via go-qrdb) -- needed
           # even for the default (non-hardware) build tags, because
           # CGO_ENABLED defaults to 1 whenever a C toolchain is present.
-          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev
+          # swtpm: pkg/tpm2/vtpm supervises a real swtpm process per tenant,
+          # and this job's `make coverage` run exercises those tests.
+          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev swtpm
           # Create token directory
           mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
           # Create SoftHSM2 config
@@ -577,9 +579,17 @@ jobs:
       # 2,483 of the module's 13,725 test functions: the 41 packages below had
       # tests that `go vet -tags ble ./...` compiled and no job ran, and a test
       # that is only compiled cannot fail. The set is the security surface of
-      # the product -- truststore, tokenstore, luks, ca, secretservice, nssdb,
+      # the product -- truststore, tokenstore, luks, secretservice, nssdb,
       # pivcert, sshstore, sshlocal, config, audit -- and #182 was
       # an open defect in truststore while its 266 tests sat dark.
+      #
+      # pkg/ca and pkg/pcr_policy were removed from this list when the
+      # packages themselves were deleted upstream (xkey-side CA/PCR-policy
+      # dead code cleanup); a stale entry here fails the job with
+      # "[setup failed]" the moment `go test` cannot even resolve the import
+      # path, before a single test runs. pkg/shellquote and pkg/urlsafety are
+      # added here: both had _test.go files but were in neither list below --
+      # exactly the gap the last paragraph warns about.
       #
       # -tags codec_json for the same reason as the step above: the DAO-backed
       # packages (tokenstore 49 tests, truststore 20, oath 30) fail without it
@@ -674,14 +684,13 @@ jobs:
           as_xkey_ci go test -race -tags "codec_json tpm_simulator" -count=1 \
             ./cmd/e2eprobe ./cmd/xkey ./cmd/xkey/cmd \
             ./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
-            ./pkg/ca ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
+            ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
             ./pkg/gui ./pkg/gui/events ./pkg/ipc ./pkg/keyboard ./pkg/luks \
             ./pkg/nativemsg ./pkg/notify ./pkg/nssdb \
             ./pkg/oidc ./pkg/oidc/aws ./pkg/oidc/handlers \
-            ./pkg/pcr_policy \
             ./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
-            ./pkg/serverregistry ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
-            ./pkg/tokenstore ./pkg/truststore ./pkg/uhid ./pkg/usb \
+            ./pkg/serverregistry ./pkg/shellquote ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
+            ./pkg/tokenstore ./pkg/truststore ./pkg/uhid ./pkg/urlsafety ./pkg/usb \
             ./pkg/virtualdevice ./pkg/xhome
           # -tags ble: createFIDO2PhoneKeyBackend and the CLI's fail-closed
           # fingerprint tests are ble-only, and the four *HarnessArgv* tests
@@ -843,9 +852,11 @@ jobs:
           cache: true
       # Same SoftHSM2 setup as the `test` job, for the same reason: the
       # changed-package set can legitimately include pkcs11-backed code.
+      # swtpm: pkg/tpm2/vtpm supervises a real swtpm process per tenant, and
+      # this job's tpm_simulator-tagged run can include that package.
       - name: Install and configure SoftHSM2
         run: |
-          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev
+          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev swtpm
           mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
           cat > ${GITHUB_WORKSPACE}/softhsm2.conf << EOF
           directories.tokendir = ${GITHUB_WORKSPACE}/softhsm2/tokens
@@ -1031,6 +1042,15 @@ jobs:
       - name: Install cgo dependencies
         run: |
           sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
+
+      # The secure-analyzer sweep reads `go vet -vettool` output and fails on
+      # any line that is not a securecheck diagnostic, so a cold module cache
+      # ("go: downloading ...") fails it, and the aborted module then reports
+      # its allowlist entries as stale. Lint's vet steps warmed the cache
+      # before this job was split out; download every module up front here.
+      - name: Download modules
+        run: |
+          for m in . sdk/go xkey web/desktop; do (cd "$m" && go mod download); done
 
       # `make vet` only reaches files that compile untagged (or, for xkey,
       # under LINT_TAGS_xkey) -- every file behind an `integration` (or
@@ -1594,8 +1614,9 @@ jobs:
           # libicu-dev/libusb-1.0-0-dev: see the "build" job's comment --
           # unconditional cgo deps of the module graph (dolthub/go-icu-regex,
           # google/gousb via go-qrdb), needed for any CGO_ENABLED=1 build
-          # regardless of tags.
-          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libtss2-dev libicu-dev libusb-1.0-0-dev
+          # regardless of tags. swtpm: pkg/tpm2/vtpm supervises a real swtpm
+          # process per tenant, and `go test ./...` below includes that package.
+          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libtss2-dev libicu-dev libusb-1.0-0-dev swtpm
 
       - name: Configure SoftHSM2
         run: |

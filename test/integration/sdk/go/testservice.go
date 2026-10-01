@@ -1129,8 +1129,8 @@ func (s *TestXKMSService) PasswordList(ctx context.Context, req *xkms.PasswordLi
 	return nil, ErrNotImplemented
 }
 
-func (s *TestXKMSService) PasswordUpdate(ctx context.Context, req *xkms.PasswordUpdateRequest) error {
-	return ErrNotImplemented
+func (s *TestXKMSService) PasswordUpdate(ctx context.Context, req *xkms.PasswordUpdateRequest) (*xkms.PasswordGetResponse, error) {
+	return nil, ErrNotImplemented
 }
 
 func (s *TestXKMSService) PasswordDelete(ctx context.Context, req *xkms.PasswordDeleteRequest) error {
@@ -1154,6 +1154,26 @@ func (s *TestXKMSService) PasswordStoreSetAccessMode(ctx context.Context, req *x
 }
 
 func (s *TestXKMSService) PasswordGenerate(ctx context.Context, req *xkms.PasswordGenerateRequest) (*xkms.PasswordGenerateResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) PasswordVaultStatus(ctx context.Context) (*xkms.PasswordVaultStatusResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) PasswordVaultEnroll(ctx context.Context, req *xkms.PasswordVaultEnrollRequest) (*xkms.PasswordVaultEnrollResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) PasswordVaultRotate(ctx context.Context, req *xkms.PasswordVaultRotateRequest) (*xkms.PasswordVaultEnrollResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) PasswordVaultRemoveFactor(ctx context.Context, req *xkms.PasswordVaultRemoveFactorRequest) error {
+	return ErrNotImplemented
+}
+
+func (s *TestXKMSService) PasswordVaultRecover(ctx context.Context, req *xkms.PasswordVaultRecoverRequest) (*xkms.PasswordVaultEnrollResponse, error) {
 	return nil, ErrNotImplemented
 }
 

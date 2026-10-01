@@ -258,18 +258,34 @@ func TestManager_RefusesBadInputs(t *testing.T) {
 	assert.ErrorIs(t, err, ErrManagerClosed)
 }
 
-// TestManager_MissingBinaryIsAStartError proves a node without swtpm reports
-// it rather than hanging.
-func TestManager_MissingBinaryIsAStartError(t *testing.T) {
+// TestManager_MissingBinaryIsAConstructionError proves a node without swtpm
+// reports it at NewManager rather than hanging, or launching whatever a
+// later PATH lookup resolves a bare name to, at the first Start.
+func TestManager_MissingBinaryIsAConstructionError(t *testing.T) {
 	runDir, err := os.MkdirTemp("", "vtpm")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(runDir)) })
-	m, err := NewManager(Config{
+	_, err = NewManager(Config{
 		Binary:   filepath.Join(t.TempDir(), "no-swtpm"),
 		StateDir: t.TempDir(),
 		RunDir:   runDir,
 	}, &fixedKeys{keys: map[string][]byte{"acme": key(1)}})
+	var binErr *BinaryError
+	require.True(t, errors.As(err, &binErr))
+}
+
+// TestManager_BareBinaryNameNotOnPATHIsAConstructionError proves the same
+// fail-closed behavior for a bare command name exec.LookPath cannot find,
+// not only for an absolute path that does not exist.
+func TestManager_BareBinaryNameNotOnPATHIsAConstructionError(t *testing.T) {
+	runDir, err := os.MkdirTemp("", "vtpm")
 	require.NoError(t, err)
-	var startErr *StartError
-	require.True(t, errors.As(m.Start(context.Background(), "acme"), &startErr))
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(runDir)) })
+	_, err = NewManager(Config{
+		Binary:   "no-such-vtpm-binary-xkms-test",
+		StateDir: t.TempDir(),
+		RunDir:   runDir,
+	}, &fixedKeys{keys: map[string][]byte{"acme": key(1)}})
+	var binErr *BinaryError
+	require.True(t, errors.As(err, &binErr))
 }

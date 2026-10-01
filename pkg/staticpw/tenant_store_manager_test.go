@@ -22,6 +22,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -151,8 +152,17 @@ func scoped(t *testing.T, mgr *TenantPasswordStoreManager, tenantID, userID stri
 }
 
 // pass returns userID's test passphrase credential.
-func pass(userID string) VaultCredential {
-	return VaultCredential{Type: FactorPassphrase, Secret: []byte("passphrase-of-" + userID)}
+func pass(t *testing.T, userID string) VaultCredential {
+	t.Helper()
+	return VaultCredential{Type: FactorPassphrase, Secret: testSecret(t, []byte("passphrase-of-"+userID))}
+}
+
+// testSecret seals b into a *secure.Secret for a test fixture.
+func testSecret(t *testing.T, b []byte) *secure.Secret {
+	t.Helper()
+	secret, err := secure.NewSecret(b)
+	require.NoError(t, err)
+	return secret
 }
 
 // unlocked opens userID's session in tenantID -- enrolling its passphrase
@@ -164,10 +174,10 @@ func unlocked(t *testing.T, mgr *TenantPasswordStoreManager, tenantID, userID st
 	require.NoError(t, err)
 	switch {
 	case !status.Initialized:
-		_, err = mgr.EnrollFactor(ctx, tenantID, userID, pass(userID))
+		_, err = mgr.EnrollFactor(ctx, tenantID, userID, pass(t, userID))
 		require.NoError(t, err)
 	case !status.Unlocked:
-		require.NoError(t, mgr.UnlockUser(ctx, tenantID, userID, pass(userID)))
+		require.NoError(t, mgr.UnlockUser(ctx, tenantID, userID, pass(t, userID)))
 	}
 	s := scoped(t, mgr, tenantID, userID)
 	require.False(t, s.PersonalLocked())
@@ -316,15 +326,15 @@ func TestUserSessions_Errors(t *testing.T) {
 	registerAndInitTenant(t, reg, "tenant-a")
 	ctx := context.Background()
 
-	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass("alice")), ErrVaultNotInitialized)
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass(t, "alice")), ErrVaultNotInitialized)
 	unlocked(t, mgr, "tenant-a", "alice")
-	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass("alice")), ErrStoreNotLocked)
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass(t, "alice")), ErrStoreNotLocked)
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
 	assert.ErrorIs(t, mgr.LockUser("tenant-a", "alice"), ErrStoreAlreadyLocked)
 
-	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "bad/user", pass("x")), ErrInvalidUserID)
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "bad/user", pass(t, "x")), ErrInvalidUserID)
 	assert.ErrorIs(t, mgr.LockUser("tenant-a", ""), ErrInvalidUserID)
-	assert.ErrorIs(t, mgr.UnlockUser(ctx, "nonexistent", "alice", pass("alice")), seal.ErrTenantNotFound)
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "nonexistent", "alice", pass(t, "alice")), seal.ErrTenantNotFound)
 	assert.ErrorIs(t, mgr.LockUser("nonexistent", "alice"), seal.ErrTenantNotFound)
 	_, err := mgr.IsUserLocked("nonexistent", "alice")
 	assert.ErrorIs(t, err, seal.ErrTenantNotFound)
@@ -338,7 +348,7 @@ func TestUserSessions_SealingEndsThem(t *testing.T) {
 	require.NoError(t, reg.SealTenant("tenant-a"))
 	_, err := mgr.ResolveScopedStore("tenant-a", "alice")
 	assert.ErrorIs(t, err, seal.ErrTenantSealed)
-	assert.ErrorIs(t, mgr.UnlockUser(context.Background(), "tenant-a", "alice", pass("alice")), seal.ErrTenantSealed)
+	assert.ErrorIs(t, mgr.UnlockUser(context.Background(), "tenant-a", "alice", pass(t, "alice")), seal.ErrTenantSealed)
 	locked, err := mgr.IsUserLocked("tenant-a", "alice")
 	require.NoError(t, err)
 	assert.True(t, locked)
