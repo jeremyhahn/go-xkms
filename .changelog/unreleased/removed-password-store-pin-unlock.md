@@ -1,0 +1,1 @@
+- **The deployment-wide user PIN no longer unlocks the password store.** `PasswordStoreUnlockRequest` carries a vault credential instead of `UserPIN`, and `ErrPasswordStoreUserPINRequired` / `ErrPasswordStoreUserPINNotProvisioned` are removed. The PIN remains for the features that use it.

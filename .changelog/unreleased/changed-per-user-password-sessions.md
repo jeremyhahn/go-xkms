@@ -1,0 +1,5 @@
+- **Password vault sessions are per user.**
+  - Unlocking or locking opens or closes only the caller's personal session (`TenantPasswordStoreManager.UnlockUser` / `LockUser` / `IsUserLocked` / `UserStoreStatus`, replacing the tenant-wide `UnlockTenant` / `LockTenant` / `IsLocked` / `TenantStoreStatus` / `StoreForTenant` / `ResolveStore`).
+  - Shared entries are usable whenever the tenant barrier is unsealed.
+  - Personal operations on a locked session return `ErrStoreLocked`.
+  - Sealing the tenant barrier ends its sessions.

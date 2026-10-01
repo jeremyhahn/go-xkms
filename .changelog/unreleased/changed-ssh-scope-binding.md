@@ -1,0 +1,5 @@
+- **SSH scope binding follows `pkg/scope`.**
+  - `scope=user` assets are reachable only by their owner, now including system-tenant callers.
+  - `scope=service` assets are reachable only with `ssh:service`, in the caller's own tenant, for any workload owner.
+  - `OwnerBindingError` gains a diagnostic `Cause`.
+  - `compose.BuildSSHClient` takes the permission checker.

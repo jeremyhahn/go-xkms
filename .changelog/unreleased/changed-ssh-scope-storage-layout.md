@@ -1,0 +1,1 @@
+- **SSH storage uses the scope layout:** `{tenant}/ssh/shared/`, `{tenant}/ssh/users/{subject}/`, `{tenant}/ssh/services/{owner}/`. The platform partition is `system/`. No migration.
