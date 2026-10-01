@@ -129,11 +129,12 @@ var (
 	ErrVaultPasskeyExists = errors.New("staticpw: passkey already enrolled")
 )
 
-// passphraseKDFParams returns the Argon2id cost a new passphrase factor is
-// wrapped with: the repository default (kdf.DefaultParams). The cost is
-// stored on the factor, so changing it affects new wraps only. It is a
-// variable so this package's unit tests can run at a cheap cost.
-var passphraseKDFParams = func() *kdf.KDFParams {
+// defaultPassphraseKDFParams returns the Argon2id cost a new passphrase
+// factor is wrapped with unless the owning TenantPasswordStoreManager was
+// built with WithPassphraseKDFParams: the repository default
+// (kdf.DefaultParams). The cost is stored on the factor, so changing it
+// affects new wraps only.
+func defaultPassphraseKDFParams() *kdf.KDFParams {
 	return kdf.DefaultParams(kdf.AlgorithmArgon2id)
 }
 
@@ -228,19 +229,27 @@ func secretSize(secret *secure.Secret) (int, error) {
 
 // vaultKeyring persists one user's factors in the tenant barrier.
 type vaultKeyring struct {
-	backend  storage.Backend
-	prefix   string
-	tenantID string
-	subject  string
+	backend   storage.Backend
+	prefix    string
+	tenantID  string
+	subject   string
+	kdfParams func() *kdf.KDFParams
 }
 
-// newVaultKeyring returns subject's keyring in tenantID over backend.
-func newVaultKeyring(backend storage.Backend, tenantID, subject string) (*vaultKeyring, error) {
+// newVaultKeyring returns subject's keyring in tenantID over backend. New
+// passphrase factors wrap the DEK at the Argon2id cost kdfParams returns.
+func newVaultKeyring(backend storage.Backend, tenantID, subject string, kdfParams func() *kdf.KDFParams) (*vaultKeyring, error) {
 	prefix, err := scope.PersonalPrefix(tenantID, VaultFeature, subject)
 	if err != nil {
 		return nil, err
 	}
-	return &vaultKeyring{backend: backend, prefix: prefix + factorsSegment, tenantID: tenantID, subject: subject}, nil
+	return &vaultKeyring{
+		backend:   backend,
+		prefix:    prefix + factorsSegment,
+		tenantID:  tenantID,
+		subject:   subject,
+		kdfParams: kdfParams,
+	}, nil
 }
 
 // factors returns every stored factor, oldest first.
@@ -318,7 +327,7 @@ func (k *vaultKeyring) wrap(cred VaultCredential, dek []byte) (*vaultFactor, err
 		f.PRFSalt = append([]byte(nil), cred.PRFSalt...)
 	}
 	if cred.Type == FactorPassphrase {
-		params := passphraseKDFParams()
+		params := k.kdfParams()
 		f.ArgonTime, f.ArgonMemory, f.ArgonThreads = params.Time, params.Memory, params.Threads
 	}
 	kek, err := f.kek(cred.Secret)
