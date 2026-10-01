@@ -57,7 +57,16 @@ KEKs: HKDF-SHA256 with a per-factor salt and a domain-separated info string.
 Every wrap and every personal entry is AES-256-GCM with associated data
 binding it to its tenant, user and factor (wraps) or storage key (entries).
 
-Invariants: the DEK never changes; a vault always has a recovery factor
+Personal names (`names.go`): a personal store's `entryNames` is keyed with
+`HKDF-SHA256(DEK, "xkms/staticpw/personal/v1/names")`, so its entry IDs and
+folder-marker and alias key segments are 128-bit HMAC-SHA-256 values (32 hex
+characters) instead of `GenerateID`'s public hash and the plain text; an
+opaque folder marker stores its path in its sealed value. The key is zeroed
+with the DEK when the session ends. The zero `entryNames` is the public
+scheme of shared, system and xkey-local stores, unchanged.
+
+Invariants: the DEK never changes (so personal entry IDs are stable across
+sessions); a vault always has a recovery factor
 (written before the first factor); a user's vault changes are serialized per
 user, so racing first enrollments mint one DEK; rotation writes the new wrap
 before removing the old one; recovery writes the new factor and the new code
@@ -195,6 +204,10 @@ pre-release, so old layouts are not carried forward).
 
 - **Unit** — one suite per file in `pkg/staticpw`, with `access`, `scope`,
   `team_*`, `expiry`, `generator` and `validation` each covered independently.
+  `personal_names_test.go` scans the raw tenant barrier and proves no
+  personal storage key or value contains an entry name, folder, alias or
+  public `GenerateID` of them, that IDs are keyed per user and stable across
+  sessions, and that lookups, folders, aliases, moves and renames still work.
 - **Transport** — `pkg/api/rest/password_handlers_test.go`;
   `pkg/api/mcp/handlers_password_test.go`, `handlers_password_unlock_test.go`;
   `pkg/xkms/servicer_password_test.go`.

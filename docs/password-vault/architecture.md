@@ -97,6 +97,7 @@ factors: the tenant barrier key alone opens nothing.
 
 ```
 personal entry ──AES-256-GCM(DEK, aad = storage key)──▶ tenant barrier
+storage key    = {tenant}/staticpw/users/{subject}/HMAC(K_names, name)   K_names = HKDF(DEK)
 DEK ──wrapped, once per factor──▶ {tenant}/staticpw-vault/users/{subject}/factors/{id}
       passphrase: KEK = Argon2id(passphrase, salt)          64 MiB, t=3, p=4 (kdf.DefaultParams)
       passkey:    KEK = HKDF-SHA256(hmac-secret output, salt) FIDO2 hmac-secret / WebAuthn PRF
@@ -245,9 +246,20 @@ session gate are enforced once.
 - **Personal entries need the owner's factor.** Their values are sealed with
   the owner's DEK, which exists in the clear only in memory while the owner's
   session is open. A holder of the tenant barrier key reads ciphertext and
-  wrapped DEKs. What the barrier key still reveals: that a user has personal
-  entries, how many, their entry IDs (a hash of name and folder) and their
-  personal folder names, which appear in storage keys.
+  wrapped DEKs, and storage keys that name nothing: a personal entry's ID is
+  `HMAC-SHA-256(K_names, "entry" ‖ 0x00 ‖ lower(folder/name))` truncated to
+  128 bits, and a personal folder marker's or alias's key segment is the same
+  MAC of its text (kinds `folder`, `alias`), with
+  `K_names = HKDF-SHA256(DEK, info "xkms/staticpw/personal/v1/names")`. The
+  folder path a marker stands for and an alias's target are stored in its
+  DEK-sealed value. The MAC is keyed per user, so the same name gives
+  different IDs to different users and nobody without the DEK can test a
+  guessed name against a key. **Residual:** the barrier key still shows that
+  a subject has a vault (the subject is a keyspace segment), how many
+  personal objects it holds (entries, folder markers and aliases are counted
+  separately by their key prefixes), their sizes, and when they change.
+  Shared entries keep the public `GenerateID` scheme: every tenant user reads
+  them, so there is no per-user key to MAC with.
 - **A factor is only as strong as its secret.** A passphrase is stretched
   with Argon2id but can be guessed offline by anyone holding the barrier key
   and the wrapped DEK; a passkey's hmac-secret output and the recovery code

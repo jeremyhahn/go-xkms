@@ -122,8 +122,3 @@ func GenerateID(name string, folderPath string) string {
 	}
 	return fmt.Sprintf("%016x", xxhash.Sum64String(path))
 }
-
-// generateID is an unexported convenience wrapper that delegates to GenerateID.
-func generateID(name string, folderPath string) string {
-	return GenerateID(name, folderPath)
-}

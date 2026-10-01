@@ -379,7 +379,7 @@ func TestBackendStore_MoveToFolder_Success(t *testing.T) {
 	moved, err := s.Get("gmail")
 	require.NoError(t, err)
 	assert.Equal(t, "work", moved.FolderPath)
-	assert.Equal(t, generateID("gmail", "work"), moved.ID)
+	assert.Equal(t, GenerateID("gmail", "work"), moved.ID)
 }
 
 func TestBackendStore_MoveToFolder_SameFolder(t *testing.T) {
@@ -439,12 +439,12 @@ func TestBackendStore_Add_GeneratesDeterministicID(t *testing.T) {
 	pw := &StaticPassword{Name: "Test", Password: "pass"}
 	require.NoError(t, s.Add(pw))
 
-	expectedID := generateID("Test", "")
+	expectedID := GenerateID("Test", "")
 	assert.Len(t, pw.ID, 16, "ID must be a 16-char hex hash")
 	assert.Equal(t, expectedID, pw.ID, "ID must be deterministic from name")
 
 	// Same name (case-insensitive) must produce the same hash.
-	assert.Equal(t, generateID("test", ""), pw.ID,
+	assert.Equal(t, GenerateID("test", ""), pw.ID,
 		"case-insensitive names must produce the same ID")
 
 	// Retrieve by name still works via the hashed-ID O(1) lookup.
@@ -595,7 +595,7 @@ func TestNewSharedTenantStore_KeyPrefix(t *testing.T) {
 	require.NoError(t, s.Add(pw))
 
 	// The storage key uses the hashed ID, not the raw name.
-	expectedKey := "acme/staticpw/shared/" + generateID("test", "") + ".json"
+	expectedKey := "acme/staticpw/shared/" + GenerateID("test", "") + ".json"
 
 	// Verify the key prefix is correct by listing from the backend directly.
 	keys, err := backend.List(context.Background(), "acme/staticpw/shared/")
@@ -642,7 +642,7 @@ func TestNewPersonalTenantStore_KeyPrefix(t *testing.T) {
 	require.NoError(t, s.Add(pw))
 
 	// The storage key uses the hashed ID, not the raw name.
-	expectedKey := "acme/staticpw/users/alice@acme.com/" + generateID("test", "") + ".json"
+	expectedKey := "acme/staticpw/users/alice@acme.com/" + GenerateID("test", "") + ".json"
 
 	keys, err := backend.List(context.Background(), "acme/staticpw/users/alice@acme.com/")
 	require.NoError(t, err)
@@ -789,7 +789,7 @@ func TestBackendStore_Delete_ReadOnlyByName(t *testing.T) {
 	require.NoError(t, store.Add(pw))
 
 	// The ID is now a 16-char hex hash (generateID lowercases the name).
-	expectedID := generateID("Protected", "")
+	expectedID := GenerateID("Protected", "")
 	assert.Equal(t, expectedID, pw.ID)
 	assert.Len(t, pw.ID, 16)
 
@@ -797,7 +797,7 @@ func TestBackendStore_Delete_ReadOnlyByName(t *testing.T) {
 	// to force the name-scan fallback path in getUnlocked. The exact
 	// ID lookup (step 1) will miss because this key does not exist in
 	// the backend, and the hashed-name lookup (step 2) will also miss
-	// because generateID("does-not-exist-in-store","") produces a
+	// because GenerateID("does-not-exist-in-store","") produces a
 	// different hash. This forces step 3 (findByName scan).
 	// However, since Delete takes idOrName and getUnlocked handles name
 	// lookups, we can simply pass the original name to verify the

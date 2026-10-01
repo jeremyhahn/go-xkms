@@ -69,8 +69,12 @@ type userSession struct {
 	store *BackendStore
 }
 
-// end zeroes the DEK. The store is dropped with the session.
-func (s *userSession) end() { clear(s.dek) }
+// end zeroes the DEK and the naming key derived from it. The store is
+// dropped with the session.
+func (s *userSession) end() {
+	clear(s.dek)
+	clear(s.store.names.key)
+}
 
 // tenantPasswordState holds one tenant's shared store and its users' open
 // personal sessions.
@@ -359,6 +363,12 @@ func unwrapWith(keyring *vaultKeyring, factors []*vaultFactor, cred VaultCredent
 func (m *TenantPasswordStoreManager) openSession(state *tenantPasswordState, userID string, dek []byte) error {
 	store, err := NewPersonalTenantStore(newDEKBackend(state.backend, dek), state.tenantID, userID)
 	if err != nil {
+		clear(dek)
+		return err
+	}
+	// Entry IDs and marker keys are keyed by the DEK, so the tenant barrier
+	// key alone reveals no names or folders (see entryNames).
+	if store.names, err = newPersonalNames(dek); err != nil {
 		clear(dek)
 		return err
 	}

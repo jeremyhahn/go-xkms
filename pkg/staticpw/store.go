@@ -114,6 +114,7 @@ type BackendStore struct {
 	backend   storage.Backend
 	tenantID  string
 	keyPrefix string
+	names     entryNames
 	closed    bool
 }
 
@@ -206,7 +207,7 @@ func (s *BackendStore) Add(pw *StaticPassword) error {
 		return err
 	}
 
-	pw.ID = generateID(pw.Name, pw.FolderPath)
+	pw.ID = s.names.entryID(pw.Name, pw.FolderPath)
 	now := time.Now()
 	pw.CreatedAt = now
 	pw.UpdatedAt = now
@@ -321,7 +322,7 @@ func (s *BackendStore) Update(pw *StaticPassword) error {
 	pw.UpdatedAt = time.Now()
 
 	// Recompute ID in case name or folder changed.
-	newID := generateID(pw.Name, pw.FolderPath)
+	newID := s.names.entryID(pw.Name, pw.FolderPath)
 
 	if newID != pw.ID {
 		// Name or folder changed — delete old entry, write under new key.
@@ -449,15 +450,11 @@ func (s *BackendStore) ListFolders() ([]string, error) {
 
 	// Merge persisted folder markers.
 	s.mu.RLock()
-	markerPrefix := s.keyPrefix + folderMarkerSuffix
-	markerKeys, listErr := s.backend.List(context.Background(), markerPrefix)
+	markers, listErr := s.folderMarkers()
 	s.mu.RUnlock()
 	if listErr == nil {
-		for _, key := range markerKeys {
-			folder := strings.TrimPrefix(key, markerPrefix)
-			if folder != "" {
-				unique[folder] = struct{}{}
-			}
+		for _, folder := range markers {
+			unique[folder] = struct{}{}
 		}
 	}
 
@@ -502,7 +499,7 @@ func (s *BackendStore) MoveToFolder(idOrName string, folderPath string) error {
 
 	// Update folder and regenerate ID.
 	pw.FolderPath = folderPath
-	pw.ID = generateID(pw.Name, pw.FolderPath)
+	pw.ID = s.names.entryID(pw.Name, pw.FolderPath)
 	pw.UpdatedAt = time.Now()
 
 	// Check for duplicate at new location.
@@ -534,8 +531,7 @@ func (s *BackendStore) CreateFolder(path string) error {
 	if path == "" {
 		return ErrFolderEmpty
 	}
-	key := s.keyPrefix + folderMarkerSuffix + path
-	return s.backend.Put(context.Background(), key, []byte(`{}`))
+	return s.backend.Put(context.Background(), s.folderMarkerKey(path), s.folderMarkerValue(path))
 }
 
 // RemoveFolder removes a persisted folder marker. Does not affect
@@ -550,8 +546,7 @@ func (s *BackendStore) RemoveFolder(path string) error {
 	if path == "" {
 		return ErrFolderEmpty
 	}
-	key := s.keyPrefix + folderMarkerSuffix + path
-	err := s.backend.Delete(context.Background(), key)
+	err := s.backend.Delete(context.Background(), s.folderMarkerKey(path))
 	if err != nil && errors.Is(err, storage.ErrNotFound) {
 		return nil
 	}
@@ -578,7 +573,7 @@ func (s *BackendStore) SetAlias(name string, folderPath string) error {
 	if name == "" {
 		return ErrAliasNameEmpty
 	}
-	key := s.keyPrefix + aliasMarkerSuffix + name
+	key := s.aliasKey(name)
 	if folderPath == "" {
 		err := s.backend.Delete(context.Background(), key)
 		if err != nil && errors.Is(err, storage.ErrNotFound) {
@@ -600,7 +595,7 @@ func (s *BackendStore) GetAlias(name string) (string, bool, error) {
 	if name == "" {
 		return "", false, ErrAliasNameEmpty
 	}
-	key := s.keyPrefix + aliasMarkerSuffix + name
+	key := s.aliasKey(name)
 	exists, err := s.backend.Exists(context.Background(), key)
 	if err != nil {
 		return "", false, err
@@ -632,6 +627,52 @@ func (s *BackendStore) Close() error {
 // alias marker rather than a password entry.
 func (s *BackendStore) isFolderMarkerKey(key string) bool {
 	return strings.Contains(key, folderMarkerSuffix) || strings.Contains(key, aliasMarkerSuffix)
+}
+
+// folderMarkerKey returns the backend key of the folder marker for path.
+func (s *BackendStore) folderMarkerKey(path string) string {
+	return s.keyPrefix + folderMarkerSuffix + s.names.segment(nameKindFolder, path)
+}
+
+// folderMarkerValue returns what the folder marker for path stores. A public
+// marker's key names its folder, so it stores nothing; an opaque marker's
+// key does not, so it stores the path, which the personal store seals.
+func (s *BackendStore) folderMarkerValue(path string) []byte {
+	if s.names.opaque() {
+		return []byte(path)
+	}
+	return []byte(`{}`)
+}
+
+// folderMarkers returns the folder paths of the persisted folder markers.
+// Must be called while holding at least a read lock.
+func (s *BackendStore) folderMarkers() ([]string, error) {
+	markerPrefix := s.keyPrefix + folderMarkerSuffix
+	var folders []string
+	if !s.names.opaque() {
+		keys, err := s.backend.List(context.Background(), markerPrefix)
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range keys {
+			if folder := strings.TrimPrefix(key, markerPrefix); folder != "" {
+				folders = append(folders, folder)
+			}
+		}
+		return folders, nil
+	}
+	err := s.backend.Scan(context.Background(), markerPrefix, func(_ string, value []byte) error {
+		if len(value) > 0 {
+			folders = append(folders, string(value))
+		}
+		return nil
+	})
+	return folders, err
+}
+
+// aliasKey returns the backend key of the alias name.
+func (s *BackendStore) aliasKey(name string) string {
+	return s.keyPrefix + aliasMarkerSuffix + s.names.segment(nameKindAlias, name)
 }
 
 // storageKey returns the backend key for the given password ID,
@@ -670,7 +711,7 @@ func (s *BackendStore) getUnlocked(idOrName string) (*StaticPassword, error) {
 	}
 
 	// 2. Hash the input as a name (no folder) and try O(1) lookup.
-	hashedID := generateID(idOrName, "")
+	hashedID := s.names.entryID(idOrName, "")
 	if hashedID != idOrName {
 		key = s.storageKey(hashedID)
 		data, err = s.backend.Get(context.Background(), key)
