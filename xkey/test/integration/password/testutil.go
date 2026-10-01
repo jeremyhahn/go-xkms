@@ -190,25 +190,18 @@ type PasswordTestHelper struct {
 	t          *testing.T
 	binaryPath string
 	storePath  string
+	home       string
 }
 
 // NewPasswordTestHelper creates a new test helper with a temp password store directory.
 func NewPasswordTestHelper(t *testing.T) *PasswordTestHelper {
 	t.Helper()
 
-	storePath, err := os.MkdirTemp("", "password-cli-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
-	}
-
-	t.Cleanup(func() {
-		os.RemoveAll(storePath)
-	})
-
 	return &PasswordTestHelper{
 		t:          t,
 		binaryPath: getBinary(t),
-		storePath:  storePath,
+		storePath:  t.TempDir(),
+		home:       t.TempDir(),
 	}
 }
 
@@ -240,8 +233,25 @@ func (h *PasswordTestHelper) RunPassword(args ...string) *CommandResult {
 // RunCommand executes the xkey binary with the given arguments.
 func (h *PasswordTestHelper) RunCommand(args ...string) *CommandResult {
 	h.t.Helper()
+	return h.RunCommandWithStdin("", args...)
+}
+
+// RunPasswordWithStdin is RunPassword with stdin as the command's standard
+// input: the password value of "add --password-stdin".
+func (h *PasswordTestHelper) RunPasswordWithStdin(stdin string, args ...string) *CommandResult {
+	h.t.Helper()
+	fullArgs := []string{"password", args[0], "--store", h.storePath}
+	return h.RunCommandWithStdin(stdin, append(fullArgs, args[1:]...)...)
+}
+
+// RunCommandWithStdin executes the xkey binary with the given arguments and
+// standard input, in an xkey home of its own.
+func (h *PasswordTestHelper) RunCommandWithStdin(stdin string, args ...string) *CommandResult {
+	h.t.Helper()
 
 	cmd := exec.Command(h.binaryPath, args...)
+	cmd.Stdin = strings.NewReader(stdin)
+	cmd.Env = append(os.Environ(), "HOME="+h.home, "XKEY_HOME="+h.home)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -270,9 +280,9 @@ func (h *PasswordTestHelper) RunCommand(args ...string) *CommandResult {
 func (h *PasswordTestHelper) AddPassword(name, password string) *CommandResult {
 	h.t.Helper()
 
-	return h.RunPassword("add",
+	return h.RunPasswordWithStdin(password, "add",
 		"--name", name,
-		"--password", password)
+		"--password-stdin")
 }
 
 // AddGeneratedPassword adds a static password with a generated random value.

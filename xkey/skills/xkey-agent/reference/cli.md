@@ -123,6 +123,8 @@ Usage: `xkey auth login [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--backend` | string | software | PIV key backend: software or pkcs11 (used with --piv) |
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--email` | string |  | Canonical email login key to authenticate (required) |
 | `--pin-stdin` | bool | false | Read the PIN from standard input |
 | `--piv` | bool | false | Authenticate with a PIV slot certificate over mTLS instead of WebAuthn |
@@ -467,6 +469,8 @@ Usage: `xkey cert request [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--cn` | string |  | Common Name for the certificate subject (required) |
 | `--organization` | string |  | Organization for the certificate subject |
 | `--profile` | string | client | Certificate profile (client, server) |
@@ -1610,6 +1614,8 @@ Usage: `xkey password unlock [flags]`
 | `--passkey` | bool | false | Unlock with a vault passkey on the attached FIDO2 security key |
 | `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
 | `--pin-stdin` | bool | false | Read the PIN from standard input |
+| `--pkcs11-library` | string |  | PKCS#11 module of the PIV card or token (default: the config's piv.pkcs11_library, else /usr/lib/softhsm/libsofthsm2.so) |
+| `--pkcs11-token` | string |  | PKCS#11 token label of the PIV card or token (default: the config's piv.pkcs11_token); its PIN comes from XKEY_PIV_PKCS11_PIN |
 
 ## xkey password vault
 
@@ -1634,6 +1640,8 @@ Usage: `xkey password vault enroll [flags]`
 | `--passkey` | bool | false | Enroll a passkey on the attached FIDO2 security key instead of a passphrase |
 | `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
 | `--pin-stdin` | bool | false | Read the PIN from standard input |
+| `--pkcs11-library` | string |  | PKCS#11 module of the PIV card or token (default: the config's piv.pkcs11_library, else /usr/lib/softhsm/libsofthsm2.so) |
+| `--pkcs11-token` | string |  | PKCS#11 token label of the PIV card or token (default: the config's piv.pkcs11_token); its PIN comes from XKEY_PIV_PKCS11_PIN |
 | `--tpm-policy` | string |  | Named TPM policy the TPM key is bound to (recorded on the factor) |
 
 ## xkey password vault recover
@@ -1653,6 +1661,8 @@ Usage: `xkey password vault recover [flags]`
 | `--passkey` | bool | false | Enroll a passkey on the attached FIDO2 security key instead of a passphrase |
 | `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
 | `--pin-stdin` | bool | false | Read the PIN from standard input |
+| `--pkcs11-library` | string |  | PKCS#11 module of the PIV card or token (default: the config's piv.pkcs11_library, else /usr/lib/softhsm/libsofthsm2.so) |
+| `--pkcs11-token` | string |  | PKCS#11 token label of the PIV card or token (default: the config's piv.pkcs11_token); its PIN comes from XKEY_PIV_PKCS11_PIN |
 | `--recovery-code-stdin` | bool | false | Read the recovery code from standard input |
 | `--tpm-policy` | string |  | Named TPM policy the TPM key is bound to (recorded on the factor) |
 
@@ -1760,6 +1770,8 @@ Inherited by subcommands:
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--backend` | string | software | Key backend: software, tpm2, or pkcs11 |
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--piv-storage` | string |  | Certificate storage type override: file, tpm2, or pkcs11 (default: matches backend) |
 | `--pkcs11-library` | string | /usr/lib/softhsm/libsofthsm2.so | PKCS#11 library path |
 | `--pkcs11-pin-stdin` | bool | false | Read the PKCS#11 PIN from standard input |
@@ -2101,6 +2113,7 @@ Inherited by subcommands:
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--local` | bool | false | use the local SSH store even when an xkmsd server is configured |
 | `--server` | string |  | Remote xkmsd URL (e.g. grpcs://host:9443, quic://host:8444, unix:///path/xkms.sock) |
 | `--tls-ca` | string |  | TLS CA certificate file used to verify the server |
 

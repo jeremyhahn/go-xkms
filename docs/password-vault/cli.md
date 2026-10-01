@@ -50,7 +50,9 @@ security key (relying party: the server's `passkey_rp_id`, evaluated with the
 WebAuthn prf salt transform -- see
 [`architecture.md`](architecture.md#passkey-salt-handling)). The key's PIN is
 always required and comes from `--pin-stdin`, `XKMS_FIDO2_PIN`, `--pin`, or a
-no-echo prompt; touch the key when asked (twice on enrollment). A passkey
+no-echo prompt; touch the key when asked (twice on enrollment). With more
+than one key attached, `--device <hidraw path>` names the one to use, as on
+the other FIDO2 verbs; without it the first attached key is used. A passkey
 cannot be rotated -- enroll a new one and remove the old one; `vault rotate`
 on a passkey says so.
 
@@ -71,7 +73,7 @@ it with the private key, which never leaves its token. Exactly one key source:
 | Source | Flags | Notes |
 |---|---|---|
 | software key (PEM) | `--key-file`, `--cert-file` | e.g. a client certificate's key; a `certificate` factor needs `--cert-file`, and it must be the key's |
-| TPM 2.0 | `--tpm-device`, `--tpm-data-dir <dir>`, `--key-id`, `--tpm-create`, `--tpm-policy` | `--tpm-data-dir` holds the TPM's key store (`tpm/`) and named-policy registry (`tpm-policies/`, `tpm-keys/`) -- the layout of xkey's data directory, so pointing it there shares xkey's keys and policies. `--tpm-create` makes the key under `--tpm-policy`: `platform` (the default) or a named policy in that registry, e.g. one made with `xkey tpm policy create`; the registry records the key against the policy, so the policy cannot be deleted under it |
+| TPM 2.0 | `--tpm-device` (a device, or `tcp://host:port` for a TPM over TCP such as swtpm), `--tpm-data-dir <dir>`, `--key-id`, `--tpm-create`, `--tpm-policy` | `--tpm-data-dir` holds the TPM's key store (`tpm/`) and named-policy registry (`tpm-policies/`, `tpm-keys/`) -- the layout of xkey's data directory, so pointing it there shares xkey's keys and policies. `--tpm-create` makes the key under `--tpm-policy`: `platform` (the default) or a named policy in that registry, e.g. one made with `xkey tpm policy create`; the registry records the key against the policy, so the policy cannot be deleted under it |
 
 **PIV cards and PKCS#11 tokens are xkey's.** xkmsctl is built without CGO, so
 it has no PKCS#11 and there is no PKCS#11 build of it: `--key-factor piv`

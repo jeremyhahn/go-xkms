@@ -146,6 +146,7 @@ opened with the barrier password (`--barrier-password-stdin`,
 | `--key-backend` | the xKey key backend holding the key (e.g. `pkcs11`, `tpm2`, `software`) |
 | `--key-id` | the key's ID in the backend (`piv` defaults to slot 9d) |
 | `--tpm-policy` | the named TPM policy the TPM key is bound to, recorded on the factor |
+| `--pkcs11-library`, `--pkcs11-token` | the PKCS#11 module and token label of a PIV card or token (`--key-backend pkcs11`); default: the config's `piv.pkcs11_library` / `piv.pkcs11_token`, as for `xkey piv`. The token PIN comes from `XKEY_PIV_PKCS11_PIN` |
 
 `xkey password unlock --key` unlocks with the first of the vault's key
 factors whose key is in xKey's backends. The token is self-tested before

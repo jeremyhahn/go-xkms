@@ -272,11 +272,17 @@ func (b *Backend) ensureP11Context() error {
 
 // findPrivateKeyHandle finds a private key object by its attributes.
 func (b *Backend) findPrivateKeyHandle(session pkcs11.SessionHandle, attrs *types.KeyAttributes) (handle pkcs11.ObjectHandle, err error) {
-	label := createKeyID(attrs)
+	// The key is found by CKA_ID, resolved exactly as Signer and Decrypter
+	// resolve it: a PIV slot's key by the slot's CKA_ID, any other key by
+	// the ID this backend wrote.
+	id, err := b.resolveKeyID(attrs)
+	if err != nil {
+		return 0, err
+	}
 
 	template := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 	}
 
 	if err := b.p11ctx.FindObjectsInit(session, template); err != nil {

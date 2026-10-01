@@ -17,6 +17,8 @@ package vaulttoken
 
 import (
 	"context"
+	"crypto/elliptic"
+	"crypto/x509"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -87,6 +89,24 @@ func TestPKCS11Factor_EnrollUnlockOnSoftHSM(t *testing.T) {
 			require.NoError(t, v.unlock(unlock))
 		})
 	}
+}
+
+// TestPKCS11Factor_PIVSlotKeyAgreesOnTheToken runs the PIV factor on a
+// slot 9d key generated the way a PIV card is provisioned -- under the
+// slot's CKA_ID -- and resolved by slot, with no algorithm named: the
+// agreement finds the key the same way its public half was found.
+func TestPKCS11Factor_PIVSlotKeyAgreesOnTheToken(t *testing.T) {
+	ctx := context.Background()
+	b := newSoftHSMBackend(t, "vault-piv-slot")
+	_, err := b.GenerateECDSA(ctx, &types.KeyAttributes{
+		CN: xkms.PivSlotCN(PIVSlot), PIVSlot: string(PIVSlot), KeyType: types.KeyTypeEncryption, StoreType: b.Type(),
+		KeyAlgorithm: x509.ECDSA, ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+	})
+	require.NoError(t, err)
+
+	key, err := Resolve(ctx, backends{"pkcs11": b}.lookup, FactorPIV, transport.PasswordVaultKeyRef{Backend: "pkcs11"})
+	require.NoError(t, err)
+	require.NoError(t, SelfTest(ctx, key.Token), "the slot's key opens a secret sealed to it")
 }
 
 // TestPKCS11Factor_TokenWithoutOAEP256IsCaughtAtEnrollment proves why the

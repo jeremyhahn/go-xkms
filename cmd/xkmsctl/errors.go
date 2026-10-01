@@ -1317,6 +1317,10 @@ var (
 	ErrVaultPINWithoutPasskey = errors.New("--" + pinFlagStdin + " and --" + pinFlagValue +
 		" are the security key PIN and need --passkey")
 
+	// ErrVaultDeviceWithoutPasskey is returned when --device names a
+	// security key without --passkey.
+	ErrVaultDeviceWithoutPasskey = errors.New("--" + passkeyDeviceFlag + " names the security key and needs --passkey")
+
 	// ErrVaultPasskeyPINRequired is returned when no security key PIN was
 	// supplied for a vault passkey, which is always PIN-verified.
 	ErrVaultPasskeyPINRequired = errors.New("a vault passkey needs your security key's PIN; supply it with --" +

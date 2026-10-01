@@ -46,7 +46,7 @@ func useSimKey(t *testing.T, key *simKey) *int {
 	opened := 0
 	original := vaultAuthenticatorFactory
 	t.Cleanup(func() { vaultAuthenticatorFactory = original })
-	vaultAuthenticatorFactory = func(*Config) (vaultAuthenticator, error) {
+	vaultAuthenticatorFactory = func(*Config, string) (vaultAuthenticator, error) {
 		opened++
 		return key, nil
 	}
@@ -194,7 +194,7 @@ func TestPasskeyVault_UnlockRefusals(t *testing.T) {
 			setup: func(t *testing.T, server *vaultServer) *simKey {
 				key := newSimKey("123456")
 				useSimKey(t, key)
-				_, err := enrollVaultFactor(server.cfg, passkeyEnrollSource(server.cfg, discardPrinter(), testPINSecret(t, "123456"), ""))
+				_, err := enrollVaultFactor(server.cfg, passkeyEnrollSource(server.cfg, discardPrinter(), testPINSecret(t, "123456"), "", ""))
 				require.NoError(t, err)
 				return key
 			},
@@ -216,7 +216,7 @@ func TestPasskeyVault_UnlockRefusals(t *testing.T) {
 			name: "passkey enrolled on another key",
 			setup: func(t *testing.T, server *vaultServer) *simKey {
 				useSimKey(t, newSimKey("123456"))
-				_, err := enrollVaultFactor(server.cfg, passkeyEnrollSource(server.cfg, discardPrinter(), testPINSecret(t, "123456"), ""))
+				_, err := enrollVaultFactor(server.cfg, passkeyEnrollSource(server.cfg, discardPrinter(), testPINSecret(t, "123456"), "", ""))
 				require.NoError(t, err)
 				other := newSimKey("123456")
 				useSimKey(t, other)
@@ -232,7 +232,7 @@ func TestPasskeyVault_UnlockRefusals(t *testing.T) {
 			tt.setup(t, server)
 			server.lock(t)
 
-			err := unlockPasswordStore(server.cfg, passkeyUnlockSource(server.cfg, discardPrinter(), testPINSecret(t, tt.pin)))
+			err := unlockPasswordStore(server.cfg, passkeyUnlockSource(server.cfg, discardPrinter(), testPINSecret(t, tt.pin), ""))
 			assert.ErrorIs(t, err, tt.wantErr)
 			assert.ErrorIs(t, err, ErrUnlockPasswordStoreFailed)
 			assert.False(t, server.status(t).Unlocked, "a refused passkey leaves the session locked")
@@ -323,7 +323,7 @@ func TestPasskeyVault_RecoverWithPasskey(t *testing.T) {
 	assert.Equal(t, vaultpasskey.Factor, factors["spare key"])
 
 	server.lock(t)
-	require.NoError(t, unlockPasswordStore(server.cfg, passkeyUnlockSource(server.cfg, discardPrinter(), testPINSecret(t, "123456"))))
+	require.NoError(t, unlockPasswordStore(server.cfg, passkeyUnlockSource(server.cfg, discardPrinter(), testPINSecret(t, "123456"), "")))
 	assert.True(t, server.status(t).Unlocked, "the recovered passkey unlocks the vault")
 }
 
@@ -347,7 +347,7 @@ func TestPasskeyVault_RecoverRefusals(t *testing.T) {
 		server.enrollPassphrase(t)
 		server.lock(t)
 		useSimKey(t, newSimKey("123456"))
-		_, err := recoverVault(server.cfg, "NOT-THE-CODE", passkeyEnrollSource(server.cfg, discardPrinter(), testPINSecret(t, "123456"), ""))
+		_, err := recoverVault(server.cfg, "NOT-THE-CODE", passkeyEnrollSource(server.cfg, discardPrinter(), testPINSecret(t, "123456"), "", ""))
 		assert.ErrorIs(t, err, ErrVaultRecoverFailed)
 		assert.Empty(t, server.passkeys(t))
 	})
@@ -356,7 +356,7 @@ func TestPasskeyVault_RecoverRefusals(t *testing.T) {
 func TestPasskeyVault_RotateRefusesAPasskey(t *testing.T) {
 	server := newVaultServer(t)
 	useSimKey(t, newSimKey("123456"))
-	enrolled, err := enrollVaultFactor(server.cfg, passkeyEnrollSource(server.cfg, discardPrinter(), testPINSecret(t, "123456"), "yubikey"))
+	enrolled, err := enrollVaultFactor(server.cfg, passkeyEnrollSource(server.cfg, discardPrinter(), testPINSecret(t, "123456"), "", "yubikey"))
 	require.NoError(t, err)
 	// A terminal that fails any read proves no passphrase is asked for.
 	withTerminalPrompt(t, "", errPromptBoom)
@@ -414,14 +414,44 @@ func TestPasskeyVault_FlagConflictsAndAuthenticatorFailure(t *testing.T) {
 		_, _, err := resolveVaultCredentialSource(passwordUnlockCmd, server.cfg, discardPrinter(), false, "correct horse", "", vaultUnlock)
 		assert.ErrorIs(t, err, ErrVaultPINWithoutPasskey)
 	})
+	t.Run("device without passkey", func(t *testing.T) {
+		server := newVaultServer(t)
+		resetCmdFlags(t, passwordUnlockCmd)
+		t.Cleanup(func() { resetCmdFlags(t, passwordUnlockCmd) })
+		require.NoError(t, passwordUnlockCmd.Flags().Set(passkeyDeviceFlag, "/dev/hidraw7"))
+
+		_, _, err := resolveVaultCredentialSource(passwordUnlockCmd, server.cfg, discardPrinter(), false, "correct horse", "", vaultUnlock)
+		assert.ErrorIs(t, err, ErrVaultDeviceWithoutPasskey)
+	})
+	t.Run("the named security key is opened", func(t *testing.T) {
+		server := newVaultServer(t)
+		var opened string
+		original := vaultAuthenticatorFactory
+		t.Cleanup(func() { vaultAuthenticatorFactory = original })
+		vaultAuthenticatorFactory = func(_ *Config, device string) (vaultAuthenticator, error) {
+			opened = device
+			return nil, errors.New("no FIDO2 device")
+		}
+		resetCmdFlags(t, passwordVaultEnrollCmd)
+		t.Cleanup(func() { resetCmdFlags(t, passwordVaultEnrollCmd) })
+		require.NoError(t, passwordVaultEnrollCmd.Flags().Set(pinFlagValue, "123456"))
+		require.NoError(t, passwordVaultEnrollCmd.Flags().Set(passkeyDeviceFlag, "/dev/hidraw7"))
+
+		source, cleanup, err := resolveVaultCredentialSource(passwordVaultEnrollCmd, server.cfg, discardPrinter(), true, "", "", vaultNewFactor)
+		require.NoError(t, err)
+		defer cleanup()
+		_, err = enrollVaultFactor(server.cfg, source)
+		assert.Error(t, err)
+		assert.Equal(t, "/dev/hidraw7", opened)
+	})
 	t.Run("no security key", func(t *testing.T) {
 		server := newVaultServer(t)
 		errNoKey := errors.New("no FIDO2 device")
 		original := vaultAuthenticatorFactory
 		t.Cleanup(func() { vaultAuthenticatorFactory = original })
-		vaultAuthenticatorFactory = func(*Config) (vaultAuthenticator, error) { return nil, errNoKey }
+		vaultAuthenticatorFactory = func(*Config, string) (vaultAuthenticator, error) { return nil, errNoKey }
 
-		_, err := enrollVaultFactor(server.cfg, passkeyEnrollSource(server.cfg, discardPrinter(), testPINSecret(t, "123456"), ""))
+		_, err := enrollVaultFactor(server.cfg, passkeyEnrollSource(server.cfg, discardPrinter(), testPINSecret(t, "123456"), "", ""))
 		assert.ErrorIs(t, err, ErrCreateFIDO2HandlerFailed)
 		assert.ErrorIs(t, err, errNoKey)
 		assert.False(t, server.status(t).Initialized)
@@ -432,7 +462,7 @@ func TestDefaultVaultAuthenticatorFactory_UsesTheConfiguredEnumerator(t *testing
 	// The default factory discovers keys with the config's HID enumerator;
 	// one that finds nothing fails the enrollment at discovery, never with a
 	// PIN error.
-	a, err := defaultVaultAuthenticatorFactory(&Config{HIDEnumerator: noHIDEnumerator{}})
+	a, err := defaultVaultAuthenticatorFactory(&Config{HIDEnumerator: noHIDEnumerator{}}, "")
 	require.NoError(t, err)
 	defer closeQuietly(a)
 	_, err = vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: testPINSecret(t, "123456"), RelyingPartyID: vaulttest.RelyingParty})

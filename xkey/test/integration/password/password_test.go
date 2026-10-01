@@ -326,16 +326,16 @@ func TestPasswordCLI_MissingRequiredArgs(t *testing.T) {
 
 	// add without --name should fail.
 	t.Run("AddMissingName", func(t *testing.T) {
-		result := helper.RunPassword("add", "--password", "test")
+		result := helper.RunPasswordWithStdin("test", "add", "--password-stdin")
 		assert.False(t, result.Success(),
 			"Add without --name should fail")
 	})
 
-	// add --name without --password or --generate should fail.
+	// add --name without --password-stdin or --generate should fail.
 	t.Run("AddMissingSource", func(t *testing.T) {
 		result := helper.RunPassword("add", "--name", "Test")
 		assert.False(t, result.Success(),
-			"Add without --password or --generate should fail")
+			"Add without --password-stdin or --generate should fail")
 	})
 
 	// get without name argument should fail.
@@ -460,16 +460,16 @@ func TestPasswordCLI_ListEmpty(t *testing.T) {
 }
 
 // TestPasswordCLI_MutuallyExclusiveFlags verifies that providing both
-// --password and --generate fails with an appropriate error.
+// --password-stdin and --generate fails with an appropriate error.
 func TestPasswordCLI_MutuallyExclusiveFlags(t *testing.T) {
 	helper := NewPasswordTestHelper(t)
 
-	result := helper.RunPassword("add",
+	result := helper.RunPasswordWithStdin("manual", "add",
 		"--name", "MutexTest",
-		"--password", "manual",
+		"--password-stdin",
 		"--generate")
 	assert.False(t, result.Success(),
-		"Providing both --password and --generate should fail")
+		"Providing both --password-stdin and --generate should fail")
 	assert.True(t, result.OutputContains("exclusive") || result.OutputContains("Exclusive") ||
 		result.OutputContains("mutually"),
 		"Error should mention mutual exclusivity: %s", result.Combined())
@@ -483,9 +483,9 @@ func TestPasswordCLI_NotesField(t *testing.T) {
 	credName := "WithNotes"
 	credNotes := "Production database credentials"
 
-	result := helper.RunPassword("add",
+	result := helper.RunPasswordWithStdin("dbpass", "add",
 		"--name", credName,
-		"--password", "dbpass",
+		"--password-stdin",
 		"--notes", credNotes)
 	require.True(t, result.Success(),
 		"Add with --notes failed: %s", result.Combined())

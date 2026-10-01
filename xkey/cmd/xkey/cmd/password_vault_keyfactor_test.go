@@ -134,3 +134,40 @@ func TestPasswordVaultKeyFactor_RecoverWithAKey(t *testing.T) {
 	assert.Contains(t, out, "RECOVERY CODE")
 	assert.True(t, server.status(t).Unlocked)
 }
+
+// newVaultPKCS11Cmd is a key-factor verb's flag set, for the PKCS#11 token
+// settings.
+func newVaultPKCS11Cmd(t *testing.T, flags map[string]string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "enroll"}
+	addVaultKeyFactorFlags(cmd)
+	for k, v := range flags {
+		require.NoError(t, cmd.Flags().Set(k, v))
+	}
+	return cmd
+}
+
+func TestVaultPKCS11Token_NamesTheTokenThePIVSettingsName(t *testing.T) {
+	t.Setenv("XKEY_PIV_PKCS11_PIN", "123456")
+	cmd := newVaultPKCS11Cmd(t, map[string]string{vaultPKCS11TokenFlag: "PIV card", vaultPKCS11LibraryFlag: "/usr/lib/libykcs11.so"})
+	token, err := vaultPKCS11Token(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]interface{}{"library": "/usr/lib/libykcs11.so", "label": "PIV card", "pin": "123456"}, token)
+
+	// The library defaults as the piv commands' does.
+	token, err = vaultPKCS11Token(newVaultPKCS11Cmd(t, map[string]string{vaultPKCS11TokenFlag: "PIV card"}))
+	require.NoError(t, err)
+	assert.Equal(t, defaultPIVPKCS11Library, token["library"])
+}
+
+func TestVaultPKCS11Token_NoTokenNamedOpensNone(t *testing.T) {
+	token, err := vaultPKCS11Token(newVaultPKCS11Cmd(t, nil))
+	require.NoError(t, err)
+	assert.Nil(t, token, "without a token the configured backends are used as they are")
+}
+
+func TestLoginPKCS11Backend_WithoutABackendFails(t *testing.T) {
+	pkgxkms.Reset()
+	t.Cleanup(pkgxkms.Reset)
+	assert.Error(t, loginPKCS11Backend(), "no PKCS#11 backend is running")
+}

@@ -98,7 +98,7 @@ func addKeySourceFlags(cmd *cobra.Command) {
 	cmd.Flags().String(keyFileFlag, "", "PEM private key of a software key factor (e.g. a client certificate's key)")
 	cmd.Flags().String(certFileFlag, "", "PEM certificate of the key (a certificate factor needs one)")
 	cmd.Flags().String(keyIDFlag, "", "the TPM key's ID (label)")
-	cmd.Flags().String(tpmDeviceFlag, "/dev/tpmrm0", "TPM 2.0 device")
+	cmd.Flags().String(tpmDeviceFlag, "/dev/tpmrm0", "TPM 2.0 device, or tcp://host:port for a TPM over TCP (swtpm)")
 	cmd.Flags().String(tpmDataDirFlag, "", "TPM data directory: the TPM's key store and named-policy registry (xkey's data directory shares them)")
 }
 

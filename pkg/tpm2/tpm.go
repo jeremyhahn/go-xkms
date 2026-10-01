@@ -317,8 +317,11 @@ type TPM2 struct {
 	// rsaKeyBits caches the RSA modulus sizes this TPM accepts. They are not
 	// reported by any capability property, so they are learned by offering each
 	// defined size to TPM2_TestParms.
-	rsaKeyBits  atomic.Pointer[[]int]
-	device      *os.File
+	rsaKeyBits atomic.Pointer[[]int]
+	device     *os.File
+	// conn is the network transport (TCP, Unix socket) the TPM opened,
+	// closed by Close.
+	conn        io.Closer
 	ekAttrs     *types.KeyAttributes
 	ekECCPubKey *ecdsa.PublicKey
 	ekRSAPubKey *rsa.PublicKey
@@ -398,6 +401,9 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 	var sim SimulatorInterface
 	var tpmTransport transport.TPM
 	var device *os.File
+	// conn is a network transport (TCP, Unix socket) this TPM opened and
+	// so closes.
+	var conn io.Closer
 	var err error
 
 	// Use custom transport if provided (for testing)
@@ -423,14 +429,15 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		params.Logger.Info(infoOpeningPlatformAddress,
 			slog.String("command", params.Config.CommandAddress),
 			slog.String("platform", platAddr))
-		tpmTransport, err = tcptpm.Open(tcptpm.Config{
+		tcpTransport, tcpErr := tcptpm.Open(tcptpm.Config{
 			CommandAddress:  params.Config.CommandAddress,
 			PlatformAddress: platAddr,
 		})
-		if err != nil {
-			params.Logger.Error("failed to open TCP TPM", slog.String("error", err.Error()))
-			return nil, &errs.Wrapped{Msg: fmt.Sprintf("open TCP TPM at %s", params.Config.CommandAddress), Err: err}
+		if tcpErr != nil {
+			params.Logger.Error("failed to open TCP TPM", slog.String("error", tcpErr.Error()))
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("open TCP TPM at %s", params.Config.CommandAddress), Err: tcpErr}
 		}
+		tpmTransport, conn = tcpTransport, tcpTransport
 	case params.Config.UseSimulator:
 		params.Logger.Info(infoOpeningSimulator)
 		sim, err = simulatorOpener()
@@ -442,11 +449,12 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 	case params.Config.Device != "":
 		params.Logger.Info(infoOpeningDevice, slog.String("device", params.Config.Device))
 		if strings.HasSuffix(params.Config.Device, ".sock") {
-			tpmTransport, err = linuxudstpm.Open(params.Config.Device)
-			if err != nil {
-				params.Logger.Error("failed to open unix socket", slog.String("error", err.Error()))
-				return nil, err
+			udsTransport, udsErr := linuxudstpm.Open(params.Config.Device)
+			if udsErr != nil {
+				params.Logger.Error("failed to open unix socket", slog.String("error", udsErr.Error()))
+				return nil, udsErr
 			}
+			tpmTransport, conn = udsTransport, udsTransport
 		} else {
 			device, err = tpmdev.Open(params.Config.Device)
 			if err != nil {
@@ -459,12 +467,12 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 
 	hash, ok := store.AvailableHashes()[params.Config.Hash]
 	if !ok {
-		return nil, store.ErrInvalidHashFunction
+		return nil, errors.Join(store.ErrInvalidHashFunction, closeConn(conn))
 	}
 
 	algID, err := ParseCryptoHashAlgID(hash)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, closeConn(conn))
 	}
 
 	// Initialize AEAD tracker
@@ -487,6 +495,7 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		debugSecrets: params.DebugSecrets,
 		config:       params.Config,
 		device:       device,
+		conn:         conn,
 		fqdn:         params.FQDN,
 		httpClient:   params.HTTPClient,
 		// hash:         hash,
@@ -542,7 +551,6 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 func (tpm *TPM2) Open() error {
 
 	var t transport.TPM
-	var err error
 
 	switch {
 	case tpm.config.UseSimulator:
@@ -556,11 +564,13 @@ func (tpm *TPM2) Open() error {
 		t = sim.Transport()
 	case tpm.config.Device != "":
 		if strings.HasSuffix(tpm.config.Device, ".sock") {
-			t, err = linuxudstpm.Open(tpm.config.Device)
-			if err != nil {
-				tpm.logger.Error("failed to open unix socket", slog.String("error", err.Error()))
-				return err
+			udsTransport, udsErr := linuxudstpm.Open(tpm.config.Device)
+			if udsErr != nil {
+				tpm.logger.Error("failed to open unix socket", slog.String("error", udsErr.Error()))
+				return udsErr
 			}
+			tpm.conn = udsTransport
+			t = udsTransport
 		} else {
 			f, err := tpmdev.Open(tpm.config.Device)
 			if err != nil {
@@ -1044,6 +1054,15 @@ func (tpm *TPM2) Close() error {
 			tpm.logger.Error("failed to close device", slog.String("error", err.Error()))
 		}
 		tpm.device = nil
+		tpm.transport = nil
+	}
+	// A TCP TPM (swtpm) serves one connection at a time: a connection left
+	// open blocks every other client of it until this process exits.
+	if tpm.conn != nil {
+		if err := tpm.conn.Close(); err != nil {
+			tpm.logger.Error("failed to close TPM connection", slog.String("error", err.Error()))
+		}
+		tpm.conn = nil
 		tpm.transport = nil
 	}
 	if tpm.simulator != nil {
@@ -2477,4 +2496,12 @@ func (tpm *TPM2) SecretFromShares(shares []string) (string, error) {
 	}
 
 	return string(secret), nil
+}
+
+// closeConn closes conn, a transport NewTPM2 opened, when it is not nil.
+func closeConn(conn io.Closer) error {
+	if conn == nil {
+		return nil
+	}
+	return conn.Close()
 }

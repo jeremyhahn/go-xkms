@@ -53,15 +53,26 @@ type vaultAuthenticator interface {
 	io.Closer
 }
 
-// vaultAuthenticatorFactory opens the authenticator the passkey verbs drive.
+// passkeyDeviceFlag names the security key a passkey verb drives, as the
+// other FIDO2 verbs' --device does.
+const passkeyDeviceFlag = "device"
+
+// addPasskeyDeviceFlag declares --device on a verb that takes --passkey.
+func addPasskeyDeviceFlag(cmd *cobra.Command) {
+	cmd.Flags().String(passkeyDeviceFlag, "", "FIDO2 device path of the security key (--passkey; default: the first attached)")
+}
+
+// vaultAuthenticatorFactory opens the authenticator the passkey verbs drive:
+// the security key at device, or the first attached when device is empty.
 // It is a package-level variable so tests can substitute a simulated
 // authenticator for attached hardware; the release binary never reassigns it.
 var vaultAuthenticatorFactory = defaultVaultAuthenticatorFactory
 
-// defaultVaultAuthenticatorFactory opens the attached FIDO2 security key over
-// HID, discovered with the same enumerator the WebAuthn verbs use.
-func defaultVaultAuthenticatorFactory(cfg *Config) (vaultAuthenticator, error) {
+// defaultVaultAuthenticatorFactory opens the FIDO2 security key over HID,
+// discovered with the same enumerator the WebAuthn verbs use.
+func defaultVaultAuthenticatorFactory(cfg *Config, device string) (vaultAuthenticator, error) {
 	fidoConfig := fido2.DefaultConfig
+	fidoConfig.DevicePath = device
 	handler, err := fido2.NewHandler(&fidoConfig, cfg.HIDDeviceEnumerator())
 	if err != nil {
 		return nil, err
@@ -94,7 +105,7 @@ func resolveVaultPasskeyPIN(cmd *cobra.Command) (*secure.Secret, error) {
 // passkeyEnrollSource returns the source of a new vault passkey, created on
 // the security key with label for the relying party the server advertises
 // in its vault status.
-func passkeyEnrollSource(cfg *Config, printer *Printer, pin *secure.Secret, label string) vaultCredentialSource {
+func passkeyEnrollSource(cfg *Config, printer *Printer, pin *secure.Secret, device, label string) vaultCredentialSource {
 	return func(ctx context.Context, cl client.Client) (client.PasswordVaultCredential, error) {
 		status, err := cl.PasswordVaultStatus(ctx)
 		if err != nil {
@@ -103,7 +114,7 @@ func passkeyEnrollSource(cfg *Config, printer *Printer, pin *secure.Secret, labe
 		if status.PasskeyRPID == "" {
 			return client.PasswordVaultCredential{}, vaultpasskey.ErrNoRelyingParty
 		}
-		return withVaultAuthenticator(cfg, printer, vaultPasskeyEnrollPrompt, func(a vaultpasskey.Authenticator) (client.PasswordVaultCredential, error) {
+		return withVaultAuthenticator(cfg, device, printer, vaultPasskeyEnrollPrompt, func(a vaultpasskey.Authenticator) (client.PasswordVaultCredential, error) {
 			return vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin, Label: label, RelyingPartyID: status.PasskeyRPID})
 		})
 	}
@@ -112,22 +123,23 @@ func passkeyEnrollSource(cfg *Config, printer *Printer, pin *secure.Secret, labe
 // passkeyUnlockSource returns the source of a passkey unlock credential: the
 // vault's passkey factors, read from the server, evaluated on the security
 // key.
-func passkeyUnlockSource(cfg *Config, printer *Printer, pin *secure.Secret) vaultCredentialSource {
+func passkeyUnlockSource(cfg *Config, printer *Printer, pin *secure.Secret, device string) vaultCredentialSource {
 	return func(ctx context.Context, cl client.Client) (client.PasswordVaultCredential, error) {
 		status, err := cl.PasswordVaultStatus(ctx)
 		if err != nil {
 			return client.PasswordVaultCredential{}, &WrappedError{Sentinel: ErrVaultStatusFailed, Err: err}
 		}
-		return withVaultAuthenticator(cfg, printer, vaultPasskeyUnlockPrompt, func(a vaultpasskey.Authenticator) (client.PasswordVaultCredential, error) {
+		return withVaultAuthenticator(cfg, device, printer, vaultPasskeyUnlockPrompt, func(a vaultpasskey.Authenticator) (client.PasswordVaultCredential, error) {
 			return vaultpasskey.Unlock(a, status.Factors, vaultpasskey.Options{PIN: pin})
 		})
 	}
 }
 
-// withVaultAuthenticator opens the security key, asks the user to touch it,
-// runs fn on it and closes it.
-func withVaultAuthenticator(cfg *Config, printer *Printer, prompt string, fn func(vaultpasskey.Authenticator) (client.PasswordVaultCredential, error)) (client.PasswordVaultCredential, error) {
-	authenticator, err := vaultAuthenticatorFactory(cfg)
+// withVaultAuthenticator opens the security key at device (the first
+// attached when empty), asks the user to touch it, runs fn on it and closes
+// it.
+func withVaultAuthenticator(cfg *Config, device string, printer *Printer, prompt string, fn func(vaultpasskey.Authenticator) (client.PasswordVaultCredential, error)) (client.PasswordVaultCredential, error) {
+	authenticator, err := vaultAuthenticatorFactory(cfg, device)
 	if err != nil {
 		return client.PasswordVaultCredential{}, &WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err}
 	}

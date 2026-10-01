@@ -21,6 +21,7 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/vaulttoken"
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/cobra"
 )
@@ -39,6 +40,12 @@ const (
 	vaultKeyIDFlag      = "key-id"
 	vaultTPMPolicyFlag  = "tpm-policy"
 	vaultUnlockKeyFlag  = "key"
+
+	// The PKCS#11 token a PIV or PKCS#11 key factor's key is on: the same
+	// settings the piv commands take (flag, then the config's piv
+	// section), with the token PIN from XKEY_PIV_PKCS11_PIN.
+	vaultPKCS11LibraryFlag = "pkcs11-library"
+	vaultPKCS11TokenFlag   = "pkcs11-token"
 )
 
 // Key factor errors.
@@ -100,11 +107,59 @@ func openLocalKeyBackends(cmd *cobra.Command) (vaulttoken.Lookup, error) {
 			configs[xkms.ServiceBackendType(name)] = c
 		}
 	}
+	token, err := vaultPKCS11Token(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if token != nil {
+		configs[xkms.BackendPKCS11] = token
+	}
 	xkms.Reset()
 	if err := xkms.AutoInitialize(&xkms.AutoConfig{Datastore: datastore, DefaultBackend: "software", BackendConfigs: configs}); err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrPasswordKeyStoreUnavailable, Cause: err}
 	}
+	if token != nil {
+		if err := loginPKCS11Backend(); err != nil {
+			return nil, &SentinelCauseError{Sentinel: ErrPasswordKeyStoreUnavailable, Cause: err}
+		}
+	}
 	return xkms.GetBackend, nil
+}
+
+// vaultPKCS11Token returns the PKCS#11 backend configuration of the token
+// the piv settings name -- library and token label from --pkcs11-library
+// and --pkcs11-token or the config's piv section, the user PIN from
+// XKEY_PIV_PKCS11_PIN -- or nil when no token is named. The xKey key
+// backends the config lists carry no token or PIN, so without it a PIV or
+// PKCS#11 key factor could not log in to its token.
+func vaultPKCS11Token(cmd *cobra.Command) (map[string]interface{}, error) {
+	var cfgPIV xkeyconfig.PIVConfig
+	if cfg := GetConfig(); cfg != nil {
+		cfgPIV = cfg.PIV
+	}
+	label := pivConfigString(cmd, vaultPKCS11TokenFlag, cfgPIV.PKCS11Token)
+	if label == "" {
+		return nil, nil
+	}
+	library := firstNonEmpty(pivConfigString(cmd, vaultPKCS11LibraryFlag, cfgPIV.PKCS11Library), defaultPIVPKCS11Library)
+	pin, err := resolvePIVPKCS11Secret(cmd, pivPKCS11PINSource)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"library": library, "label": label, "pin": pin}, nil
+}
+
+// loginPKCS11Backend logs in to the PKCS#11 backend AutoInitialize created:
+// the factory opens the token but does not authenticate.
+func loginPKCS11Backend() error {
+	backend, err := xkms.GetBackend(string(xkms.BackendPKCS11))
+	if err != nil {
+		return err
+	}
+	if l, ok := backend.KeyProvider().(interface{ Login() error }); ok {
+		return l.Login()
+	}
+	return nil
 }
 
 // addVaultKeyFactorFlags declares the key-factor flags of a verb that
@@ -114,12 +169,21 @@ func addVaultKeyFactorFlags(cmd *cobra.Command) {
 	cmd.Flags().String(vaultKeyBackendFlag, "", "xKey key backend holding the key (e.g. pkcs11, tpm2, software)")
 	cmd.Flags().String(vaultKeyIDFlag, "", "ID of the key in the backend (certificate, tpm; piv uses slot 9d)")
 	cmd.Flags().String(vaultTPMPolicyFlag, "", "Named TPM policy the TPM key is bound to (recorded on the factor)")
+	addVaultPKCS11Flags(cmd)
 	addBarrierPasswordFlags(cmd)
+}
+
+// addVaultPKCS11Flags declares the flags naming the PKCS#11 token of a PIV
+// or PKCS#11 key factor.
+func addVaultPKCS11Flags(cmd *cobra.Command) {
+	cmd.Flags().String(vaultPKCS11LibraryFlag, "", "PKCS#11 module of the PIV card or token (default: the config's piv.pkcs11_library, else "+defaultPIVPKCS11Library+")")
+	cmd.Flags().String(vaultPKCS11TokenFlag, "", "PKCS#11 token label of the PIV card or token (default: the config's piv.pkcs11_token); its PIN comes from XKEY_PIV_PKCS11_PIN")
 }
 
 // addVaultUnlockKeyFlag declares --key on the unlock verb.
 func addVaultUnlockKeyFlag(cmd *cobra.Command) {
 	cmd.Flags().Bool(vaultUnlockKeyFlag, false, "Unlock with a PIV, certificate or TPM key factor whose key is in xKey's key backends")
+	addVaultPKCS11Flags(cmd)
 	addBarrierPasswordFlags(cmd)
 }
 

@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
@@ -30,8 +31,9 @@ type DeviceParams struct {
 	// kept in "<DataDir>/tpm".
 	DataDir string
 
-	// Device is the TPM device path (e.g. /dev/tpmrm0); ignored with
-	// UseSimulator.
+	// Device is the TPM device path (e.g. /dev/tpmrm0), or a TPM reached
+	// over TCP, "tcp://host:port" (a swtpm command port; its control port is
+	// the next one). Ignored with UseSimulator.
 	Device string
 
 	// UseSimulator runs the in-process TPM simulator instead of a device.
@@ -40,6 +42,9 @@ type DeviceParams struct {
 	// Logger receives lifecycle events. Nil selects slog.Default().
 	Logger *slog.Logger
 }
+
+// tcpDevicePrefix marks a DeviceParams.Device reached over TCP.
+const tcpDevicePrefix = "tcp://"
 
 // DeviceError reports a TPM device that does not exist.
 type DeviceError struct {
@@ -73,8 +78,8 @@ func (d *Device) Close() error {
 	return errors.Join(d.tpm.Close(), d.factory.Close())
 }
 
-// OpenDevice opens the host's TPM -- the device, or the in-process
-// simulator -- with its key store at "<DataDir>/tpm". An unprovisioned TPM
+// OpenDevice opens the host's TPM -- the device, a TPM over TCP, or the
+// in-process simulator -- with its key store at "<DataDir>/tpm". An unprovisioned TPM
 // (tpm2.ErrNotInitialized) is opened as it is: provisioning is an operator
 // action (`xkmsd init`, `xkey tpm provision`).
 func OpenDevice(p DeviceParams) (*Device, error) {
@@ -85,7 +90,8 @@ func OpenDevice(p DeviceParams) (*Device, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if !p.UseSimulator {
+	tcpAddress, overTCP := strings.CutPrefix(p.Device, tcpDevicePrefix)
+	if !p.UseSimulator && !overTCP {
 		if _, err := os.Stat(p.Device); err != nil {
 			return nil, &DeviceError{Device: p.Device, Err: err}
 		}
@@ -95,8 +101,12 @@ func OpenDevice(p DeviceParams) (*Device, error) {
 		return nil, err
 	}
 	cfg := tpm2.DefaultConfig
-	cfg.Device = p.Device
 	cfg.UseSimulator = p.UseSimulator
+	if overTCP && !p.UseSimulator {
+		cfg.CommandAddress = tcpAddress
+	} else {
+		cfg.Device = p.Device
+	}
 	tpm, err := tpm2.NewTPM2(&tpm2.Params{
 		Logger:    logger,
 		Config:    &cfg,

@@ -281,19 +281,27 @@ func resolveVaultCredentialSource(cmd *cobra.Command, cfg *Config, printer *Prin
 		if passphraseFlag != "" {
 			return nil, nil, ErrVaultPasskeyWithPassphrase
 		}
+		fr := newFlagReader(cmd)
+		device := fr.String(passkeyDeviceFlag)
+		if err := fr.Err(); err != nil {
+			return nil, nil, err
+		}
 		pin, err := resolveVaultPasskeyPIN(cmd)
 		if err != nil {
 			return nil, nil, err
 		}
 		cleanup := func() { pin.Destroy() }
 		if purpose == vaultUnlock {
-			return passkeyUnlockSource(cfg, printer, pin), cleanup, nil
+			return passkeyUnlockSource(cfg, printer, pin, device), cleanup, nil
 		}
-		return passkeyEnrollSource(cfg, printer, pin, label), cleanup, nil
+		return passkeyEnrollSource(cfg, printer, pin, device, label), cleanup, nil
 	}
 
 	if cmd.Flags().Changed(pinFlagStdin) || cmd.Flags().Changed(pinFlagValue) {
 		return nil, nil, ErrVaultPINWithoutPasskey
+	}
+	if cmd.Flags().Changed(passkeyDeviceFlag) {
+		return nil, nil, ErrVaultDeviceWithoutPasskey
 	}
 	resolve := resolveNewVaultPassphrase
 	if purpose == vaultUnlock {
@@ -575,6 +583,7 @@ func init() {
 	passwordVaultEnrollCmd.Flags().String("label", "", "label naming the factor (e.g. the device it is used on)")
 	passwordVaultEnrollCmd.Flags().Bool("passkey", false, "enroll a passkey on the attached FIDO2 security key instead of a passphrase")
 	addPINFlags(passwordVaultEnrollCmd)
+	addPasskeyDeviceFlag(passwordVaultEnrollCmd)
 	addKeyFactorEnrollFlags(passwordVaultEnrollCmd)
 
 	passwordVaultRotateCmd.Flags().String("factor-id", "", "ID of the factor to rotate (see \"password vault status\")")
@@ -588,6 +597,7 @@ func init() {
 	passwordVaultRecoverCmd.Flags().String("label", "", "label naming the new factor")
 	passwordVaultRecoverCmd.Flags().Bool("passkey", false, "enroll a passkey on the attached FIDO2 security key instead of a passphrase")
 	addPINFlags(passwordVaultRecoverCmd)
+	addPasskeyDeviceFlag(passwordVaultRecoverCmd)
 	addKeyFactorEnrollFlags(passwordVaultRecoverCmd)
 
 	passwordVaultCmd.AddCommand(passwordVaultStatusCmd)

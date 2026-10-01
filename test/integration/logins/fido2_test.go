@@ -30,9 +30,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/sys/unix"
 
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
+	"github.com/jeremyhahn/go-xkms/test/integration/xkeytest"
 )
 
 // This leg drives the real xkey CLI (auth register / auth login) through a
@@ -127,167 +127,12 @@ func runXkey(t *testing.T, ctx context.Context, bin, home string, args ...string
 
 // startVirtualAuthenticator starts the xkey binary with
 // VirtualAuthenticatorArgv in the background, standing in for an attached
-// CTAP2 security key, and registers a cleanup that stops it. It uses
-// in-memory credential storage (the default), so credentials live only for
-// the daemon's lifetime - exactly one register+login exchange.
+// CTAP2 security key, until the test ends. It uses in-memory credential
+// storage (the default), so credentials live only for the daemon's
+// lifetime - exactly one register+login exchange.
 func startVirtualAuthenticator(t *testing.T, bin, home string) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-
-	cmd := exec.CommandContext(ctx, bin, VirtualAuthenticatorArgv...)
-	// See runXkey: pin Dir so the daemon's relative storage paths
-	// (./data/staticpw by default) land under the per-test tmp dir instead
-	// of the repo working tree.
-	cmd.Dir = home
-	cmd.Env = append(os.Environ(), "HOME="+home)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-
-	require.NoError(t, cmd.Start(), "start xkey fido2 virtual authenticator")
-
-	t.Cleanup(func() {
-		cancel()
-		_ = cmd.Wait()
-		if t.Failed() {
-			t.Logf("xkey fido2 output:\n%s", out.String())
-		}
-	})
-
-	// The daemon opens a uhid device and starts serving CTAP2 requests
-	// almost immediately, but the CTAP client in "auth register" reaches it
-	// through /dev/hidrawX, and the devcontainer runs no udev to create
-	// that node when the kernel registers the virtual device. The suite
-	// runs as root (the same sudo the uhid open needs), so poll sysfs for
-	// the new hidraw entry and mknod its device node ourselves; on a host
-	// with udev the node already exists and the mknod is skipped.
-	require.Eventually(t, func() bool {
-		return ensureHidrawNodes(t)
-	}, 10*time.Second, 200*time.Millisecond,
-		"virtual FIDO2 authenticator never surfaced an openable hidraw device")
-
-	startTouchPump(t, bin)
-}
-
-// startTouchPump approves the daemon's user-presence requests for the
-// test's lifetime by invoking "xkey touch" against the daemon's IPC socket
-// in a loop. CTAP2 semantics require user presence on MakeCredential /
-// GetAssertion whenever no PIN auth proves user interaction, so a headless
-// run must supply the "touch" the way an operator's approval dialog would.
-// A touch with no pending request is a cheap no-op, so pumping is safe.
-func startTouchPump(t *testing.T, bin string) {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	t.Cleanup(func() {
-		cancel()
-		<-done
-	})
-
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(300 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				socks, _ := filepath.Glob("/tmp/xkey-*/xkey.sock")
-				for _, sock := range socks {
-					cmd := exec.CommandContext(ctx, bin, "touch", "--socket", sock)
-					_ = cmd.Run()
-				}
-			}
-		}
-	}()
-}
-
-// ensureHidrawNodes creates /dev/hidrawX character nodes for every
-// /sys/class/hidraw entry that lacks one, returning true once at least one
-// FIDO-vendor (0xF1D0) hidraw node exists and opens. The vendor gate
-// matters: the daemon also registers a virtual keyboard, and the host can
-// carry unrelated HID devices (a VM's QEMU USB tablet), so "some hidraw
-// node opened" is not "the authenticator is ready". sysfs publishes the
-// device numbers in each entry's "dev" file as "major:minor".
-func ensureHidrawNodes(t *testing.T) bool {
-	t.Helper()
-	entries, err := os.ReadDir("/sys/class/hidraw")
-	if err != nil || len(entries) == 0 {
-		return false
-	}
-	ready := false
-	for _, entry := range entries {
-		devPath := filepath.Join("/dev", entry.Name())
-		raw, err := os.ReadFile(filepath.Join("/sys/class/hidraw", entry.Name(), "dev"))
-		if err != nil {
-			continue
-		}
-		var major, minor uint32
-		if _, err := fmt.Sscanf(strings.TrimSpace(string(raw)), "%d:%d", &major, &minor); err != nil {
-			continue
-		}
-		rdev := unix.Mkdev(major, minor)
-
-		// A node left behind by an earlier run can carry a stale device
-		// number; recreate it whenever it disagrees with sysfs.
-		var st unix.Stat_t
-		switch err := unix.Stat(devPath, &st); {
-		case err == nil && st.Rdev == rdev:
-			// Node exists and matches.
-		case err == nil:
-			if err := os.Remove(devPath); err != nil {
-				t.Logf("remove stale %s: %v", devPath, err)
-				continue
-			}
-			fallthrough
-		default:
-			if err := unix.Mknod(devPath, unix.S_IFCHR|0o600, int(rdev)); err != nil {
-				t.Logf("mknod %s: %v", devPath, err)
-				continue
-			}
-		}
-		if !isFIDOVendorHidraw(entry.Name()) {
-			continue
-		}
-		if f, err := os.OpenFile(devPath, os.O_RDWR, 0); err == nil {
-			_ = f.Close()
-			ready = true
-		}
-	}
-	return ready
-}
-
-// isFIDOVendorHidraw reports whether the hidraw sysfs entry is the virtual
-// CTAP2 authenticator (vendor 0xF1D0, product 0x0001), read from the HID_ID
-// line of the device uevent ("bus:vendor:product" in hex). The product
-// check matters too: the daemon's virtual keyboard shares the 0xF1D0
-// vendor (product 0x0004), and readiness on the keyboard alone would race
-// the authenticator's registration.
-func isFIDOVendorHidraw(name string) bool {
-	raw, err := os.ReadFile(filepath.Join("/sys/class/hidraw", name, "device", "uevent"))
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(raw), "\n") {
-		id, ok := strings.CutPrefix(line, "HID_ID=")
-		if !ok {
-			continue
-		}
-		parts := strings.Split(strings.TrimSpace(id), ":")
-		if len(parts) != 3 {
-			return false
-		}
-		var vendor, product uint32
-		if _, err := fmt.Sscanf(parts[1], "%X", &vendor); err != nil {
-			return false
-		}
-		if _, err := fmt.Sscanf(parts[2], "%X", &product); err != nil {
-			return false
-		}
-		return vendor == 0xF1D0 && product == 0x0001
-	}
-	return false
+	xkeytest.StartAuthenticator(t, bin, home, VirtualAuthenticatorArgv, "")
 }
 
 // TestFIDO2Login_RegisterAndLogin drives a full WebAuthn register+login

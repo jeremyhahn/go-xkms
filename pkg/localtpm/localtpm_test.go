@@ -16,6 +16,7 @@ package localtpm
 import (
 	"errors"
 	"io/fs"
+	"net"
 	"path/filepath"
 	"testing"
 
@@ -90,4 +91,18 @@ func TestPolicyAPI_ReportsTheSharedTPMsRefusal(t *testing.T) {
 func TestIsNotFound(t *testing.T) {
 	assert.True(t, isNotFound(fs.ErrNotExist))
 	assert.False(t, isNotFound(errors.New("other")))
+}
+
+func TestOpenDevice_DialsATPMOverTCP(t *testing.T) {
+	// A tcp:// device is dialled, not stat'ed: nothing listens on the port,
+	// so the open fails in the transport rather than as a missing device.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	_, err = OpenDevice(DeviceParams{DataDir: t.TempDir(), Device: "tcp://" + addr})
+	require.Error(t, err)
+	var devErr *DeviceError
+	assert.False(t, errors.As(err, &devErr), "a TCP TPM is not a device file")
 }

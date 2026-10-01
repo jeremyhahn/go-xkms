@@ -275,6 +275,30 @@ pre-release, so old layouts are not carried forward).
   `pkg/xkms/servicer_password_test.go`.
 - **Cross-module** — xkey's autofill and extension suites exercise the same
   store through IPC.
+- **Integration** — `make integration-test-password-vault` (devcontainer, as
+  root for `/dev/uhid`) runs `xkey/test/integration/password`, the one
+  password suite: xkey's local store CLI and, against a real xkmsd started
+  by `test/integration/xkmsdtest` (passphrase barrier initialized through
+  the sealed window, REST over mTLS, relying party `localhost`), the real
+  xkmsctl and xkey binaries on every vault factor's real token -- enroll,
+  unlock, wrong token, missing token:
+  - passphrase and certificate key (xkmsctl);
+  - passkey on xkey's virtual FIDO2 authenticator (`test/integration/xkeytest`),
+    named with `--device`, plus a wrong PIN;
+  - TPM key on the swtpm fixture (`--tpm-device tcp://swtpm:2321`) under
+    `platform` and under a named policy created with `xkey tpm policy`,
+    refused after the PCR drifts and re-approved by `policy update`; each
+    test undefines the NV indexes it defined, so the fixture does not fill;
+  - PIV slot 9d on a SoftHSM token, provisioned with `xkey piv generate`
+    and used through `xkey password vault` (`--pkcs11-token`);
+  - the recovery code (recovers once, then refused; a wrong code refused);
+  - two users' personal entries isolated and the shared entry visible to
+    both. Storing an entry takes `passwords:write`, which the built-in
+    `user` role does not hold, so those two users are administrators;
+  - the browser bridge: the real native host (`xkey extension host`) with
+    the pairing ceremony, encrypted native messaging, the xKey password
+    service behind IPC approving the request; a wrong origin is refused
+    before the user is asked.
 
 The two cases worth explicit tests in any consumer: a `get` against a locked
 store, and a read of an entry outside the caller's scope. Both must fail, and
