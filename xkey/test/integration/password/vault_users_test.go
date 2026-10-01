@@ -56,13 +56,6 @@ const passphrase = "correct horse battery staple"
 // starts with an empty vault.
 func newUser(t *testing.T, name string) *vaultUser {
 	t.Helper()
-	return newUserWithRole(t, name, "user")
-}
-
-// newUserWithRole onboards a fresh user holding role. Storing an entry
-// takes passwords:write, which the built-in "user" role does not hold.
-func newUserWithRole(t *testing.T, name, role string) *vaultUser {
-	t.Helper()
 	dir := t.TempDir()
 	u := &vaultUser{
 		name: name,
@@ -84,7 +77,7 @@ func newUserWithRole(t *testing.T, name, role string) *vaultUser {
 
 	admin := &vaultUser{name: "admin", cert: vault.server.AdminCert, key: vault.server.AdminKey}
 	admin.mustCtl(t, "", "ca", "sign-csr", "--csr", csrFile, "--profile", "client", "--output", u.cert)
-	out := admin.mustCtl(t, "", "user", "register", name, "--email", name+"@vault.test", "--role", role, "-o", "json")
+	out := admin.mustCtl(t, "", "user", "register", name, "--email", name+"@vault.test", "--role", "user", "-o", "json")
 	tenant, token := inviteOf(t, out)
 	anon := &vaultUser{name: "invitee"}
 	anon.mustCtl(t, "", "user", "invite", "redeem", token, "--tenant-id", tenant, "--method", "piv", "--piv-cert-file", u.cert)

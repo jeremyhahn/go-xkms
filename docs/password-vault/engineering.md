@@ -292,9 +292,10 @@ pre-release, so old layouts are not carried forward).
   - PIV slot 9d on a SoftHSM token, provisioned with `xkey piv generate`
     and used through `xkey password vault` (`--pkcs11-token`);
   - the recovery code (recovers once, then refused; a wrong code refused);
-  - two users' personal entries isolated and the shared entry visible to
-    both. Storing an entry takes `passwords:write`, which the built-in
-    `user` role does not hold, so those two users are administrators;
+  - two ordinary users (the built-in `user` role, which holds
+    `passwords:write` and `passwords:delete`): personal entries isolated, the shared entry visible
+    to both, and a shared entry its owner made refused to the other user's
+    update and delete;
   - the browser bridge: the real native host (`xkey extension host`) with
     the pairing ceremony, encrypted native messaging, the xKey password
     service behind IPC approving the request; a wrong origin is refused

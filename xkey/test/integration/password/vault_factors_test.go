@@ -161,12 +161,11 @@ func (u *vaultUser) add(t *testing.T, name, value string, shared bool) string {
 // TestVault_SharedAndPersonalAcrossUsers proves a personal entry is its
 // owner's alone -- another user neither lists nor reads it -- while a
 // shared entry is the tenant's, readable by both, and that a locked vault
-// hides its owner's personal entries but not the shared ones. Both users
-// are administrators -- storing an entry takes passwords:write -- so the
-// isolation is the vault's, not a role's.
+// hides its owner's personal entries but not the shared ones. Both are
+// ordinary users: the password manager is a store for users.
 func TestVault_SharedAndPersonalAcrossUsers(t *testing.T) {
-	alice := newUserWithRole(t, "vault-alice", "admin")
-	bob := newUserWithRole(t, "vault-bob", "admin")
+	alice := newUser(t, "vault-alice")
+	bob := newUser(t, "vault-bob")
 	alice.enrollPassphrase(t)
 	bob.enrollPassphrase(t)
 
@@ -200,4 +199,31 @@ func TestVault_SharedAndPersonalAcrossUsers(t *testing.T) {
 	out, err = alice.ctl("", "password", "get", personal, "-o", "json")
 	require.Error(t, err, "a locked vault does not open its personal entries: %s", out)
 	bob.requireUnlocked(t)
+}
+
+// TestVault_SharedEntryIsItsOwners proves another user can read a shared
+// entry but neither change nor delete it; its owner can.
+func TestVault_SharedEntryIsItsOwners(t *testing.T) {
+	alice := newUser(t, "vault-shared-owner")
+	bob := newUser(t, "vault-shared-reader")
+	alice.enrollPassphrase(t)
+	bob.enrollPassphrase(t)
+	shared := alice.add(t, "team-wifi", "original", true)
+
+	out, err := bob.ctl("bob's value", "password", "update", shared, "--password", "-")
+	require.Error(t, err, "another user cannot change the shared entry: %s", out)
+	assert.Contains(t, out, "Not the owner")
+	out, err = bob.ctl("", "password", "delete", shared)
+	require.Error(t, err, "another user cannot delete the shared entry: %s", out)
+	assert.Contains(t, out, "Not the owner")
+
+	var got entry
+	require.NoError(t, json.Unmarshal([]byte(bob.mustCtl(t, "", "password", "get", shared, "-o", "json")), &got))
+	assert.Equal(t, "original", got.Password, "the entry is unchanged")
+
+	alice.mustCtl(t, "rotated", "password", "update", shared, "--password", "-")
+	require.NoError(t, json.Unmarshal([]byte(bob.mustCtl(t, "", "password", "get", shared, "-o", "json")), &got))
+	assert.Equal(t, "rotated", got.Password, "its owner changes it")
+	alice.mustCtl(t, "", "password", "delete", shared)
+	assert.NotContains(t, bob.list(t, "all"), "team-wifi", "its owner deletes it")
 }

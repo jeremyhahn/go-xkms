@@ -29,6 +29,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	xkmsrest "github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -172,4 +173,20 @@ func TestNewModule_AdminAndOwnerHoldEveryRESTPermission(t *testing.T) {
 		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perm), "admin must hold %s", pair)
 		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.RoleNameOwner, perm), "owner must hold %s", pair)
 	}
+}
+
+// TestNewModule_UserRoleStoresPasswords proves the built-in User role can
+// store entries in the password vault -- the store is for users -- while
+// changing another user's shared entry stays with its owner or an
+// administrator (XKMSService.checkSharedPasswordOwnership).
+func TestNewModule_UserRoleStoresPasswords(t *testing.T) {
+	_, err := NewModule(func() *xkms.XKMSService { return nil })
+	require.NoError(t, err)
+
+	for _, action := range []string{auth.ActionWrite, auth.ActionDelete} {
+		perm := qrdbsdk.Permission(auth.ResourcePasswords + ":" + action)
+		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleUser, perm), "user must hold %s", perm)
+	}
+	assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleUser,
+		qrdbsdk.Permission(auth.ResourceOIDCCredentials+":"+auth.ActionCreate)), "the user role gains nothing else")
 }

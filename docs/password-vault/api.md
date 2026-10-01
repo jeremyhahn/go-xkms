@@ -14,7 +14,12 @@ the vault and session verbs sat under `/api/v1/passwords` and shadowed
 `GET /{id}` for an entry named `vault` or `status`.) Every route is `RouteAuthPermission` and demands the same
 `passwords:*` pair gRPC and MCP enforce for the same operation (the
 **Permission** column), so REST, QUIC, gRPC/Unix and MCP ask for one grant per
-operation. Admin and Owner hold every one of them by default.
+operation. Admin and Owner hold every one of them by default. The password
+manager is a store for users, so the built-in User role also holds
+`passwords:write` and `passwords:delete`: a user creates, changes and
+deletes personal entries and shares entries with the tenant. Updating or deleting a shared entry stays with its owner or an
+Admin/SO, which the service enforces whatever the permission
+(`staticpw.ErrNotOwner`).
 
 `POST /api/v1/passwords/access-mode` used to be the one route in this family
 served to any authenticated session (`RouteAuthSession`) with no RBAC

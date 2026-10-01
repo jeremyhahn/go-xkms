@@ -84,16 +84,24 @@ func registerRoleGrants() {
 		// A tenant's shared OIDC credentials are visible to every user of
 		// the tenant, so the User role consumes them: it reads their
 		// metadata and current access tokens. Creating, changing and
-		// deleting credentials stays with Admin and Owner, as passwords:write
-		// does for the password vault.
+		// deleting credentials stays with Admin and Owner. The password
+		// vault is a store for users, so the User role writes entries.
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleUser, userPermissions()...)
 	})
 }
 
 // userPermissions returns the xkms-owned permissions the built-in User role
-// holds: the consuming slice of oidc_credentials.
+// holds: the consuming slice of oidc_credentials, and passwords:write and
+// passwords:delete -- the password manager is a store for users, who create,
+// change and delete their personal entries and share entries with the
+// tenant. Changing or deleting a shared entry stays with its owner or an
+// administrator, which the service enforces
+// (XKMSService.checkSharedPasswordOwnership); without passwords:delete an
+// owner could not delete even their own entry.
 func userPermissions() []qrdbsdk.Permission {
 	return []qrdbsdk.Permission{
+		qrdbsdk.Permission(auth.ResourcePasswords + ":" + auth.ActionWrite),
+		qrdbsdk.Permission(auth.ResourcePasswords + ":" + auth.ActionDelete),
 		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionGet),
 		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionList),
 		qrdbsdk.Permission(auth.ResourceOIDCCredentials + ":" + auth.ActionToken),
