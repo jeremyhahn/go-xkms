@@ -15,9 +15,10 @@
 
 // Package oidccredentials is the end-to-end suite of server-side OIDC
 // credentials. TestMain builds and starts a real xkmsd serving every network
-// transport (Unix gRPC, REST, gRPC, QUIC, MCP) over TLS, its barrier
-// auto-unsealed (strategy none: credentials are sealed by the barrier, so the
-// suite needs it open without an operator ceremony), and the tests drive the real xkey and xkmsctl binaries against it.
+// transport (Unix gRPC, REST, gRPC, QUIC, MCP) over TLS with a passphrase
+// barrier, initializes that barrier through the pre-boot sealed-window
+// listener as an operator does, and the tests drive the real xkey and
+// xkmsctl binaries against it.
 // The lease-contention test runs credential services over a real raft qrdb
 // node. Run it in the devcontainer: make integration-test-oidc-credentials.
 package oidccredentials
@@ -142,6 +143,10 @@ func run(m *testing.M) (int, error) {
 		<-exited
 	}()
 
+	dataDir := filepath.Join(work, "data")
+	if err := initializeThroughSealedWindow(env.urls["rest"], dataDir, exited, &waitErr); err != nil {
+		return 0, newSetupError("initialize the barrier through the sealed window", err, logFile.Name())
+	}
 	if err := waitForServer(ports, exited, &waitErr, 60*time.Second); err != nil {
 		return 0, newSetupError("xkmsd did not come up", err, logFile.Name())
 	}
@@ -303,7 +308,7 @@ backends:
     path: %s/software
 barrier:
   enabled: true
-  strategy: none
+  strategy: passphrase
 `, p.rest, p.grpc, p.quic, p.mcp, env.socket, data, data)
 	return os.WriteFile(path, []byte(cfg), 0o600)
 }

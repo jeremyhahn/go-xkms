@@ -157,6 +157,12 @@ type Server struct {
 	unifiedTLS           *unifiedTLSProvider
 	noiseBootstrapServer *noiseboot.Server
 
+	// sealedWindowTLS is the unified server TLS configuration, kept for the
+	// pre-boot sealed-window listener: it serves on the same transports as
+	// the full server, and qrdb's transports are TLS-only. Nil when xkmsd
+	// does not serve the network (the window then serves no TLS transport).
+	sealedWindowTLS *tls.Config
+
 	// noiseBootstrapKey is the protected static key the bootstrap server's
 	// handshakes read in place. It lives here, alongside the server it
 	// belongs to, because noiseboot.Server.Start does NOT block — it launches

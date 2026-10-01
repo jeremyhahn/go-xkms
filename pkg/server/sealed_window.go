@@ -19,6 +19,7 @@ import (
 	"net"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -122,7 +123,15 @@ func (s *Server) serveSealedWindow(node *qrdbnode.Node) error {
 	// On cancellation this returns *qrdbsdk.SealedWindowCanceledError, which
 	// initEmbeddedQRDBNode wraps and propagates as a non-fatal, clearly
 	// diagnosable startup failure rather than a panic or a silent hang.
-	if err := qrdbnode.ServeSealedWindow(ctx, node); err != nil {
+	// The window serves the node's pending-boot transports, which are
+	// TLS-only: it takes the same unified TLS material the full server will
+	// serve (qrdb does not carry WithServerTLS from the node's construction
+	// into the window).
+	var windowOpts []qrdbsdk.ServerOption
+	if s.sealedWindowTLS != nil {
+		windowOpts = append(windowOpts, qrdbsdk.WithServerTLS(s.sealedWindowTLS))
+	}
+	if err := qrdbnode.ServeSealedWindow(ctx, node, windowOpts...); err != nil {
 		return err
 	}
 

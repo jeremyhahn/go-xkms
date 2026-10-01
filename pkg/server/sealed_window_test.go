@@ -15,8 +15,11 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
+	"net"
+	"strconv"
 	"testing"
 	"time"
 
@@ -289,4 +292,87 @@ func TestBarrierConfig_SealedWindowTimeoutDuration(t *testing.T) {
 		_, err := (config.BarrierConfig{SealedWindowTimeout: "-1m"}).SealedWindowTimeoutDuration()
 		assert.Error(t, err)
 	})
+}
+
+// TestServeSealedWindow_NetworkServingUsesUnifiedTLS reproduces the
+// passphrase-barrier deployment with network transports: the node's pending
+// boot serves REST, qrdb's transports are TLS-only, and the sealed-window
+// listener must receive the same unified TLS material the full server
+// serves. Without it the window fails to start ("no TLS configured") and
+// xkmsd cannot boot. The test proves the window serves TLS with that
+// certificate and completes the boot once the barrier is unsealed.
+func TestServeSealedWindow_NetworkServingUsesUnifiedTLS(t *testing.T) {
+	dataDir := t.TempDir()
+	port := freeLoopbackPort(t)
+	qcfg := sealedWindowTestConfig(dataDir)
+	qcfg.Server.Host = "127.0.0.1"
+	qcfg.Server.AdminPort = port
+	qcfg.Protocols.REST = true
+
+	ctx := context.Background()
+	bootstrap, err := qrdbnode.NewStandaloneNode(ctx, sealedWindowTestConfig(dataDir), nil,
+		qrdbnode.WithLogger(slog.Default()), qrdbnode.WithSealPassphrase([]byte("right")))
+	require.NoError(t, err)
+	require.NoError(t, bootstrap.Close())
+	cfg := createMinimalConfig(t)
+	cfg.Datastore.Path = t.TempDir()
+	s := testSealedWindowServer(t, cfg)
+	tlsCfg, err := s.buildUnifiedTLSConfig()
+	require.NoError(t, err)
+	s.sealedWindowTLS = tlsCfg
+
+	// The node gets the TLS material at construction, as
+	// initEmbeddedQRDBNode gives it, for the boot after the window.
+	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, []qrdbsdk.ServerOption{qrdbsdk.WithServerTLS(tlsCfg)},
+		qrdbnode.WithLogger(slog.Default()), qrdbnode.WithSealPassphrase([]byte("wrong")))
+	require.NoError(t, err)
+	defer func() { _ = node.Close() }()
+	require.True(t, node.IsSealed())
+	served, err := s.ensureBootstrapCert()
+	require.NoError(t, err)
+
+	done := make(chan error, 1)
+	go func() { done <- s.serveSealedWindow(node) }()
+
+	// The window answers TLS with the unified certificate.
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	var conn *tls.Conn
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		conn, err = tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}) // insecure-ok: the test inspects the served certificate itself
+		if err == nil {
+			break
+		}
+		select {
+		case winErr := <-done:
+			t.Fatalf("the sealed window stopped before serving: %v", winErr)
+		default:
+		}
+		require.True(t, time.Now().Before(deadline), "the sealed window never served TLS: %v", err)
+		timer := time.NewTimer(50 * time.Millisecond)
+		<-timer.C
+	}
+	peer := conn.ConnectionState().PeerCertificates
+	require.NoError(t, conn.Close())
+	require.NotEmpty(t, peer)
+	assert.Equal(t, served.Certificate[0], peer[0].Raw, "the window serves the unified certificate")
+
+	require.NoError(t, node.Services().Barrier.BarrierUnseal(ctx, []byte("right")))
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("serveSealedWindow did not return after the barrier was unsealed")
+	}
+	assert.False(t, node.IsSealed())
+}
+
+// freeLoopbackPort returns a TCP port the kernel had free on 127.0.0.1.
+func freeLoopbackPort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := l.Addr().(*net.TCPAddr).Port
+	require.NoError(t, l.Close())
+	return port
 }

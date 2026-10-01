@@ -179,6 +179,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 			return &QRDBNodeError{Stage: "build unified server TLS config", Err: err}
 		}
 		serverOpts = append(serverOpts, qrdbsdk.WithServerTLS(tlsCfg))
+		s.sealedWindowTLS = tlsCfg
 	}
 
 	// Phase 3 of the unified API server
