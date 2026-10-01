@@ -98,6 +98,22 @@ type GRPCConfig struct {
 	// the same way as AllowedUIDs. Optional; nil admits only the defaults.
 	AllowedGIDs []uint32
 
+	// ExclusivePeers admits only AllowedUIDs and AllowedGIDs, dropping the
+	// implicit admission of the daemon's own uid and root
+	// (NewExclusivePeerCredentialPolicy). Start refuses an exclusive
+	// configuration with both allowlists empty, since it could admit no one.
+	ExclusivePeers bool
+
+	// UnaryInterceptors run after the tenant interceptor on every unary RPC.
+	// An embedder narrows what this listener serves with them; the node-local
+	// signing server (pkg/signserver) admits only its sign-only slot RPCs
+	// this way. Optional.
+	UnaryInterceptors []grpc.UnaryServerInterceptor
+
+	// StreamInterceptors run after the tenant interceptor on every streaming
+	// RPC. Optional.
+	StreamInterceptors []grpc.StreamServerInterceptor
+
 	// Logger is the logging adapter
 	Logger *slog.Logger
 
@@ -225,6 +241,9 @@ func (s *GRPCServer) Start() error {
 	if err := peercred.CheckSupport(); err != nil {
 		return &errs.Wrapped{Msg: "peer credential support required for Unix socket listener", Err: err}
 	}
+	if s.config.ExclusivePeers && len(s.config.AllowedUIDs) == 0 && len(s.config.AllowedGIDs) == 0 {
+		return ErrNoAdmittedPeers
+	}
 
 	// An existing socket directory must already be privately owned by this
 	// process: its mode is what stands between an unrelated user replacing
@@ -267,6 +286,11 @@ func (s *GRPCServer) Start() error {
 	// context ever carries one -- kept for parity with every other transport
 	// rather than because a nil identity needs gating today.
 	peerPolicy := NewPeerCredentialPolicy(s.config.AllowedUIDs, s.config.AllowedGIDs)
+	if s.config.ExclusivePeers {
+		peerPolicy = NewExclusivePeerCredentialPolicy(s.config.AllowedUIDs, s.config.AllowedGIDs)
+	}
+	unary := append([]grpc.UnaryServerInterceptor{grpcinternal.TenantUnaryInterceptor(s.config.BarrierRegistry, s.logger)}, s.config.UnaryInterceptors...)
+	stream := append([]grpc.StreamServerInterceptor{grpcinternal.TenantStreamInterceptor(s.config.BarrierRegistry, s.logger)}, s.config.StreamInterceptors...)
 	opts := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(s.config.MaxRecvMsgSize),
 		grpc.MaxSendMsgSize(s.config.MaxSendMsgSize),
@@ -277,8 +301,8 @@ func (s *GRPCServer) Start() error {
 		// time, before this listener's WithLocalTrust (RBAC off) keystore
 		// service would otherwise trust the connection on file mode alone.
 		grpc.Creds(newPeerCredentialTransport(peerPolicy)),
-		grpc.ChainUnaryInterceptor(grpcinternal.TenantUnaryInterceptor(s.config.BarrierRegistry, s.logger)),
-		grpc.ChainStreamInterceptor(grpcinternal.TenantStreamInterceptor(s.config.BarrierRegistry, s.logger)),
+		grpc.ChainUnaryInterceptor(unary...),
+		grpc.ChainStreamInterceptor(stream...),
 		// Tracks this listener's active connections (go-xkms#720): the unix
 		// socket has no per-request middleware chain the way REST and network
 		// gRPC do (metrics.HTTPMiddleware, metrics.GRPCUnaryServerInterceptor),

@@ -102,7 +102,7 @@ func (s *XKMSService) GeneratePIVCSR(ctx context.Context, req *transport.Generat
 // PKCS11, and other configured backends instead of software-only generation.
 func (s *XKMSService) InitPIVBackendResolver() error {
 	resolver := func(backendName string) (PIVKeyGenerator, error) {
-		b, err := GetBackend(backendName)
+		b, err := s.lookupBackend(backendName)
 		if err != nil {
 			return nil, err
 		}

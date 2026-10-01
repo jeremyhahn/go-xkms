@@ -46,6 +46,17 @@ var ErrPKCS11StateTenantMismatch = errors.New("xkms: PKCS#11 state tenant_id doe
 // is the final segment, so it cannot reach outside its token.
 var ErrPKCS11StateTokenSeparator = errors.New("xkms: PKCS#11 state token must not contain '/'")
 
+// ErrPKCS11StateTokenDotSegment is returned when a token label is "." or "..".
+// A path-normalizing store (file storage) resolves such a segment, so the
+// token would address a namespace other than its own.
+var ErrPKCS11StateTokenDotSegment = errors.New("xkms: PKCS#11 state token must not be '.' or '..'")
+
+// ErrPKCS11StateKeyPath is returned when a record key or list prefix carries a
+// "." or ".." segment, an empty interior segment, or a leading '/'. Keys are
+// hierarchical, and a path-normalizing store would resolve such a segment out
+// of the token's namespace.
+var ErrPKCS11StateKeyPath = errors.New("xkms: PKCS#11 state key must not contain '.', '..' or empty path segments")
+
 // IsPKCS11StateRequestError reports whether err is a fault in the PKCS#11-state
 // request itself — a missing or malformed token label, or a tenant other than
 // the caller's — so every transport answers it as an invalid argument rather
@@ -53,6 +64,8 @@ var ErrPKCS11StateTokenSeparator = errors.New("xkms: PKCS#11 state token must no
 func IsPKCS11StateRequestError(err error) bool {
 	return errors.Is(err, ErrPKCS11StateTokenRequired) ||
 		errors.Is(err, ErrPKCS11StateTokenSeparator) ||
+		errors.Is(err, ErrPKCS11StateTokenDotSegment) ||
+		errors.Is(err, ErrPKCS11StateKeyPath) ||
 		errors.Is(err, ErrPKCS11StateTenantMismatch)
 }
 
@@ -76,12 +89,18 @@ func IsPKCS11StateRequestError(err error) bool {
 // states its configured tenant keeps working and one that names another tenant
 // is refused. The comparison involves only the caller's identity, so the
 // refusal reveals nothing about the other tenant.
-func (s *XKMSService) pkcs11StateScope(ctx context.Context, suppliedTenant, token string) (string, error) {
+func (s *XKMSService) pkcs11StateScope(ctx context.Context, suppliedTenant, token, key string) (string, error) {
+	if err := validatePKCS11StateKey(key); err != nil {
+		return "", err
+	}
 	if token == "" {
 		return "", ErrPKCS11StateTokenRequired
 	}
 	if strings.Contains(token, "/") {
 		return "", ErrPKCS11StateTokenSeparator
+	}
+	if token == "." || token == ".." {
+		return "", ErrPKCS11StateTokenDotSegment
 	}
 	if s.pkcs11StateStore == nil {
 		return "", ErrPKCS11StateStoreUnavailable
@@ -105,7 +124,7 @@ func (s *XKMSService) PKCS11StatePut(ctx context.Context, req *transport.PKCS11S
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token)
+	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token, req.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +139,7 @@ func (s *XKMSService) PKCS11StatePutIfAbsent(ctx context.Context, req *transport
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token)
+	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token, req.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +158,7 @@ func (s *XKMSService) PKCS11StateCAS(ctx context.Context, req *transport.PKCS11S
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token)
+	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token, req.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +176,7 @@ func (s *XKMSService) PKCS11StateCAD(ctx context.Context, req *transport.PKCS11S
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token)
+	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token, req.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +192,7 @@ func (s *XKMSService) PKCS11StateGet(ctx context.Context, req *transport.PKCS11S
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token)
+	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token, req.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +208,7 @@ func (s *XKMSService) PKCS11StateDelete(ctx context.Context, req *transport.PKCS
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token)
+	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token, req.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +223,7 @@ func (s *XKMSService) PKCS11StateList(ctx context.Context, req *transport.PKCS11
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token)
+	tenantID, err := s.pkcs11StateScope(ctx, req.TenantID, req.Token, req.Prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -213,4 +232,21 @@ func (s *XKMSService) PKCS11StateList(ctx context.Context, req *transport.PKCS11
 		return nil, err
 	}
 	return &transport.PKCS11StateListResponse{Keys: keys}, nil
+}
+
+// validatePKCS11StateKey refuses a record key or list prefix whose path a
+// normalizing store would resolve differently from the literal: a "." or ".."
+// segment, an empty interior segment, or a leading '/'. An empty key (a list
+// of the whole token) and a trailing '/' (a list prefix) are allowed.
+func validatePKCS11StateKey(key string) error {
+	if key == "" {
+		return nil
+	}
+	segments := strings.Split(strings.TrimSuffix(key, "/"), "/")
+	for _, segment := range segments {
+		if segment == "" || segment == "." || segment == ".." {
+			return ErrPKCS11StateKeyPath
+		}
+	}
+	return nil
 }

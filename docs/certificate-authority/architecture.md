@@ -1,6 +1,6 @@
 # Certificate Authority — Architecture
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 ## The problem
 
@@ -204,6 +204,74 @@ identity's key, or the two can disagree over the identical persisted state.
 `Init` and `Load` share `getCAKeyAttributes` for this reason — see
 [`engineering.md`](engineering.md) for the persistence contract this
 enforces.
+
+## Overlay identity: caller-named profiles under name-constrained subordinates
+
+Two profiles certify keys for overlay identity rather than for a
+requester-chosen name:
+
+| Profile | Certifies | Names | Lifetime |
+|---|---|---|---|
+| `ipsec-vtep` | an IKEv2 tunnel endpoint (RFC 4945, RFC 7296) | at least one IP address; DNS allowed | 30 days default, 90 days max |
+| `x509-svid` | a SPIFFE X.509-SVID leaf | exactly one SPIFFE ID URI; DNS allowed | 1 hour default, 24 hours max |
+
+**The names come from the issuing caller, never from the CSR.** Both profiles
+implement `CallerSANProfile`. Under one, `SignCSR` ignores the CSR's subject
+and names. The CSR proves possession of the key and contributes nothing
+else. The names arrive on `SignOptions.SANS` and the subject on
+`SignOptions.Subject`. The caller is the party that knows the truth: the IPAM
+reservation for a tunnel endpoint, the placement for a workload. A requester
+who could name itself would be issuing to itself. The tenant SPIFFE synthesis
+options are refused under these profiles, because they would add a name the
+caller did not supply.
+
+**Each is issued under a dedicated, name-constrained subordinate.**
+`(*CA).IssueSubordinateCA` certifies a caller-held key as a CA with an RFC 5280
+name constraints extension:
+
+- the tunnel subordinate is confined to the fabric's IPv4 and IPv6 ranges;
+- the SPIFFE subordinate is confined to one trust domain.
+
+The subordinate signs through `SignOptions.Signer` and `IssuerCert`, so its key
+stays in the keystore, TPM or HSM the caller chose. A compromised tunnel
+subordinate can then certify only addresses inside the fabric, and a
+compromised SPIFFE subordinate only identities inside its trust domain. A
+relying party enforces both during path validation.
+
+**URI constraints bind the trust domain, not the path.** RFC 5280 §4.2.1.10
+constrains a URI by its host only. For a SPIFFE ID that host is the trust
+domain, so no X.509 constraint can confine a subordinate to
+`spiffe://<td>/tenant/<t>/`. Path scoping belongs to the issuing caller, which
+checks the requested ID before it asks for a certificate
+(`spiffe.WorkloadID.HasPathPrefix`). This is a property of the standard, not a
+gap in this implementation.
+
+**The CA refuses what path validation would reject.** Before signing any
+certificate, under any profile, `Issuer.Template` checks the leaf's IP, DNS,
+URI and email names against the issuing certificate's name constraints and
+refuses a violation (`ErrNameConstraintViolation`). The CA therefore never
+mints a certificate that every conforming relying party would reject.
+
+**Attestation evidence is the caller's statement, carried in the certificate.**
+An `ipsec-vtep` certificate may carry the private, non-critical
+`tp-attestationEvidence` extension: the verifier's verdict ID, a PCR digest and
+the appraisal time. The CA does not appraise anything. It encodes what the
+issuing caller (the relying party that admitted the endpoint) supplies, and it
+validates the encoding. Because CSR extensions are never copied, a requester
+cannot inject its own evidence.
+
+## SPIFFE identities
+
+`pkg/spiffe` is the one place SPIFFE IDs are built and checked, re-exported as
+`sdk/go/spiffe`. It has two shapes. The tenant-scoped identity
+`spiffe://<td>/tenant/<t>/<kind>/<name>` (`ID`, `BuildURI`, `ParseID`,
+`TenantFromURIs`) is what the CA stamps on broker-issued certificates and what
+mTLS login reads back. The general builder and validator (`TrustDomain`,
+`WorkloadID`) accepts any trust domain and path the SPIFFE-ID specification
+allows, and nothing else. The `x509-svid` profile validates its URI SAN with
+it, and an issuing caller scopes a subordinate's paths with
+`WorkloadID.HasPathPrefix`, because the X.509 URI constraint binds only the
+trust domain. The package is a leaf with no go-xkms imports.
 
 ## Trust boundaries
 
