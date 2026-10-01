@@ -7,7 +7,7 @@ This document covers the CLI's token-store surface
 store security decision (`pkg/gui/services/oidc_service.go`,
 [below](#gui-token-store-go-xkms1203)), and the AWS credentials-file writer
 (`pkg/oidc/handlers/aws_credentials.go`). For the OIDC protocol client,
-discovery, and DPoP, see `xkey/pkg/oidc`'s own doc comments.
+discovery, and DPoP, see `pkg/oidc`'s own doc comments.
 
 ## Exported surface
 
@@ -92,7 +92,7 @@ func (s *oidcCLITokenStore) Clear() (existed bool, err error)
   local callback listener shows the browser (the CLI's
   `handleOIDCCallback`, the GUI's `OIDCService.Login` handler, and
   `xkey/pkg/oidc/aws`'s `handleLoginCallback`) is written by
-  `oidc.WriteCallbackPage` (`xkey/pkg/oidc/callback.go`), which renders an
+  `oidc.WriteCallbackPage` (`pkg/oidc/callback.go`), which renders an
   `oidc.CallbackPage{Title, Message}` through `html/template`. The provider's
   `error` and `error_description` parameters are attacker-controlled (anyone
   who can steer the browser to the loopback URL while a login is pending
@@ -106,7 +106,7 @@ func (s *oidcCLITokenStore) Clear() (existed bool, err error)
   Referer. A page that cannot be written (the browser hung up) is a
   `*oidc.CallbackPageError`; it does not change the login's outcome.
 - **Provider-controlled text reaches a terminal or a log only through
-  `oidc.SanitizeProviderText`** (`xkey/pkg/oidc/callback.go`). A hostile or
+  `oidc.SanitizeProviderText`** (`pkg/oidc/callback.go`). A hostile or
   compromised provider can put escape sequences in any string it returns,
   and a terminal would act on them: clear the screen, spoof a prompt, or
   write the clipboard with OSC 52. The sanitiser removes every
@@ -270,9 +270,9 @@ the files below.
 | `oidc_test.go` | Sealed round-trip through the explicit-file path (`TestStoreAndLoadToken`), not-found and empty-store handling, JSON marshal/unmarshal parity through the protected fields, file permissions |
 | `oidc_cmds_test.go` | `login`/`token`/`refresh`/`logout` end-to-end against the explicit-file path, including refresh token rotation and provider-scoped manual-endpoint refresh |
 | `oidc_test.go` (`TestHandleOIDCCallback_EscapesReflectedError`) | A `<script>` / `"><img onerror>` error redirect reaches the page escaped, with the four security headers set |
-| `xkey/pkg/oidc/callback_test.go` (`TestWriteCallbackPage_*`) | `WriteCallbackPage` escaping, headers, the title-only page, and the typed write failure |
+| `pkg/oidc/callback_test.go` (`TestWriteCallbackPage_*`) | `WriteCallbackPage` escaping, headers, the title-only page, and the typed write failure |
 | `xkey/pkg/oidc/aws/login_test.go`, `pkg/gui/services/oidc_callback_test.go` (`*Inert*`) | The same injection against the AWS handler and against the GUI's real callback listener |
-| `xkey/pkg/oidc/callback_test.go` (`TestSanitizeProviderText*`, `FuzzSanitizeProviderText`) | OSC 52, OSC 8, CSI, DCS/APC/PM/SOS, nF and Fs escapes, 8-bit C1 sequences (raw and UTF-8), NUL and other C0, line breaks, bidi overrides, invalid UTF-8, length bounding on a rune boundary; the fuzz target checks for any input that the output is inert, bounded and idempotent |
+| `pkg/oidc/callback_test.go` (`TestSanitizeProviderText*`, `FuzzSanitizeProviderText`) | OSC 52, OSC 8, CSI, DCS/APC/PM/SOS, nF and Fs escapes, 8-bit C1 sequences (raw and UTF-8), NUL and other C0, line breaks, bidi overrides, invalid UTF-8, length bounding on a rune boundary; the fuzz target checks for any input that the output is inert, bounded and idempotent |
 | `*TerminalInert*`, `TestTokenRequestError_RendersProviderTextInert`, `TestClient_Exchange_TokenEndpointErrorIsInert` | An OSC 52 + `ESC[2J` + 8-bit CSI + NUL payload sent through every call path listed under Invariants (CLI, GUI and AWS callback errors, the GUI log line, the OIDC and AWS token-endpoint errors, the GUI refresh error, printed claims and the AWS access key ID) comes out as plain text |
 | `oidc_barrier_test.go` | The barrier decision itself: no-barrier warning + plain-file fallback, barrier-encrypted round-trip across two independent `openOIDCTokenStore` calls (proving a fresh process can unseal and read), wrong-password and no-password typed refusals, `--token-store` bypassing barrier auto-detection, and `TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick` — which invalidates the barrier password on the test's `cobra.Command` immediately after the store is opened, then proves three successful refresh ticks still complete, so any hypothetical re-resolution inside the loop would have failed |
 | `oidc_aws_barrier_test.go` | The identical barrier decision for the AWS DPoP session store (go-xkms#1325): no-barrier warning + plain-file fallback under `<xkey data dir>/oidc/aws-session.json`, barrier-encrypted round-trip across two independent `openAWSSessionStore` calls proving neither the refresh token nor the DPoP private key PEM appears in the on-disk ciphertext, wrong-password and no-password typed refusals, and an explicit `--session-store` bypassing barrier auto-detection |
@@ -281,7 +281,7 @@ The GUI token store's barrier-first decision (go-xkms#1203) is covered by:
 
 | File | Covers |
 |---|---|
-| `xkey/pkg/oidc/store_test.go` | `MemoryTokenStore`'s CRUD and closed-store behavior, `normalizeIssuer`, and the `TokenStore` interface assertion (`BackendTokenStore`'s own assertion lives beside its implementation in `backend_store.go`) — `oidc.FileTokenStore` and its dedicated tests were deleted outright by go-xkms#1325 once confirmed unused in production since #1203 |
+| `pkg/oidc/store_test.go` | `MemoryTokenStore`'s CRUD and closed-store behavior, `normalizeIssuer`, and the `TokenStore` interface assertion (`BackendTokenStore`'s own assertion lives beside its implementation in `backend_store.go`) — `oidc.FileTokenStore` and its dedicated tests were deleted outright by go-xkms#1325 once confirmed unused in production since #1203 |
 | `xkey/pkg/gui/services/oidc_token_store_security_test.go` | No barrier: no file named `tokens*` is ever written to the data directory, `svc.tokenStore` is an `*oidc.MemoryTokenStore`, a token round-trips within the session, and the warning logs exactly once naming the exposure; with a barrier: `SetBackend` still round-trips through the storage backend under the `oidc/tokens/` key prefix |
 | `xkey/pkg/gui/oidc_token_store_warning_test.go` | The same behavior end to end through `App.initializeDataDir()`, mirroring `fido2_passkey_store_warning_test.go`'s pattern for the FIDO2 passkey store: the warning fires without a barrier and does not fire with one, and the `oidc/` data directory carries no token file |
 

@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/pkg/oidc"
 )
 
 const (

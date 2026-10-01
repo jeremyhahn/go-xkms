@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

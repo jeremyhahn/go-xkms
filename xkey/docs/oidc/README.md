@@ -962,7 +962,7 @@ The `pkg/oidc` package includes built-in provider templates that provide sensibl
 ### Using Templates in Go
 
 ```go
-import "github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
+import "github.com/jeremyhahn/go-xkms/pkg/oidc"
 
 // Create config from template
 config, err := oidc.NewExtendedProviderConfig("aws")
@@ -1013,7 +1013,7 @@ type ProviderTemplate struct {
 ### DPoP Key Management
 
 ```go
-import "github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
+import "github.com/jeremyhahn/go-xkms/pkg/oidc"
 
 // Generate new DPoP key
 dpopKey, err := oidc.GenerateDPoPKey()

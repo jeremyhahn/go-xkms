@@ -27,7 +27,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/urlsafety"
+	"github.com/jeremyhahn/go-xkms/pkg/urlsafety"
 )
 
 const (

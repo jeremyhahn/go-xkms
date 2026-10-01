@@ -35,7 +35,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/pkg/oidc"
 )
 
 // oidcTestCmd builds a detached cobra command carrying every flag the OIDC

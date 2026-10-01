@@ -38,7 +38,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/pkg/oidc"
 )
 
 // newDetachedOIDCCmd builds a private copy of an oidc subcommand's flags,

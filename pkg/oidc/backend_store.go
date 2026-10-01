@@ -21,7 +21,7 @@ import (
 	"strings"
 	"sync"
 
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // BackendTokenStore errors.
@@ -30,13 +30,13 @@ var (
 	ErrBackendStoreClosed = errors.New("oidc: backend store is closed")
 )
 
-// BackendTokenStore implements TokenStore using a xkms.StorageBackend for
+// BackendTokenStore implements TokenStore using a storage.Backend for
 // persistence. Each token is stored as an individual JSON entry keyed
 // by normalized issuer, enabling encrypted storage when backed by a
 // barrier.
 type BackendTokenStore struct {
 	mu      sync.RWMutex
-	backend xkms.StorageBackend
+	backend storage.Backend
 	prefix  string
 	closed  bool
 }
@@ -47,7 +47,7 @@ var _ TokenStore = (*BackendTokenStore)(nil)
 // NewBackendTokenStore creates a new BackendTokenStore using the given
 // storage backend. The prefix is prepended to all storage keys (e.g.,
 // "oidc/tokens/" produces keys like "oidc/tokens/issuer-key.json").
-func NewBackendTokenStore(backend xkms.StorageBackend, prefix string) (*BackendTokenStore, error) {
+func NewBackendTokenStore(backend storage.Backend, prefix string) (*BackendTokenStore, error) {
 	if backend == nil {
 		return nil, ErrNilBackend
 	}
@@ -112,7 +112,7 @@ func (s *BackendTokenStore) Load(issuer string) (*TokenResponse, error) {
 
 	data, err := s.backend.Get(context.Background(), s.tokenKey(issuer))
 	if err != nil {
-		if errors.Is(err, xkms.ErrStorageNotFound) {
+		if errors.Is(err, storage.ErrNotFound) {
 			return nil, ErrTokenNotFound
 		}
 		return nil, err
@@ -143,7 +143,7 @@ func (s *BackendTokenStore) Delete(issuer string) error {
 
 	err := s.backend.Delete(context.Background(), s.tokenKey(issuer))
 	if err != nil {
-		if errors.Is(err, xkms.ErrStorageNotFound) {
+		if errors.Is(err, storage.ErrNotFound) {
 			return ErrTokenNotFound
 		}
 		return err

@@ -28,7 +28,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/handlers"
 	"github.com/spf13/cobra"

@@ -25,7 +25,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/urlsafety"
+	"github.com/jeremyhahn/go-xkms/pkg/urlsafety"
 )
 
 // BrowserSystem is the default browser selection that delegates to the

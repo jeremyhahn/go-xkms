@@ -20,7 +20,8 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,10 +29,10 @@ import (
 // newTestDAOStore creates a DAOStore backed by in-memory storage for testing.
 func newTestDAOStore(t *testing.T) *DAOStore {
 	t.Helper()
-	backend := xkms.NewStorageMemory()
+	backend := storage.NewMemory()
 	t.Cleanup(func() { backend.Close() })
 
-	kvStore, err := xkms.NewKVStoreAdapter(backend)
+	kvStore, err := kvadapter.New(backend)
 	require.NoError(t, err)
 
 	store, err := NewDAOStore(kvStore)
