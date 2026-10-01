@@ -400,3 +400,24 @@ func TestVault_ConcurrentFirstEnrollmentsShareOneDEK(t *testing.T) {
 		require.NoError(t, err, string(cred.Type))
 	}
 }
+
+// TestTenantState_ConcurrentFirstUseDoesNotSealTheTenant is the regression
+// for the duplicate tenant state a racing first use builds: dropping it used
+// to close its store, whose backend is the tenant barrier, sealing the
+// tenant under the state that won.
+func TestTenantState_ConcurrentFirstUseDoesNotSealTheTenant(t *testing.T) {
+	mgr, reg, _ := vaultFixture(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := mgr.ResolveScopedStore("tenant-a", "alice")
+			assert.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+	tb, err := reg.Tenant("tenant-a")
+	require.NoError(t, err)
+	assert.False(t, tb.IsSealed())
+}

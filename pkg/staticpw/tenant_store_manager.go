@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
@@ -183,14 +182,11 @@ func (m *TenantPasswordStoreManager) tenantState(tenantID string) (*tenantPasswo
 		tenantID: name,
 	}
 
-	actual, loaded := m.tenants.LoadOrStore(name, state)
-	if loaded {
-		if cerr := shared.Close(); cerr != nil {
-			slog.Debug("staticpw: failed to close a duplicate shared tenant store", "tenant_id", name, "error", cerr)
-		}
-		return actual.(*tenantPasswordState), nil
-	}
-	return state, nil
+	// A concurrent first use may have stored its state first. The duplicate
+	// is dropped, never closed: its backend is the tenant barrier itself,
+	// and closing it would seal the tenant under the state that won.
+	actual, _ := m.tenants.LoadOrStore(name, state)
+	return actual.(*tenantPasswordState), nil
 }
 
 // barrierFor returns the barrier holding tenant name's entries, as a storage
