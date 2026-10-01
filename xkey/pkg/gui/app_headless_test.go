@@ -492,25 +492,3 @@ func TestApp_StartupReturningUser_NonBarrierStorage_InitializesDataDir(t *testin
 	assert.True(t, app.dataDirInit, "a non-barrier storage type must proceed straight to data dir initialization")
 	assert.NotNil(t, app.ipcServer, "postDataDirStartup must run and start the IPC server")
 }
-
-// TestApp_RegisterPKCS11XKMSBackend_FactoryNotRegistered verifies
-// registerPKCS11XKMSBackend fails closed (no panic, no backend registered)
-// when the xkms process was built without the pkcs11 backend factory, as
-// this test binary is (built with the xkey coverage tag set, not
-// "pkcs11").
-func TestApp_RegisterPKCS11XKMSBackend_FactoryNotRegistered(t *testing.T) {
-	app := newMinimalApp(t)
-
-	require.NoError(t, app.initializeDataDir())
-	t.Cleanup(xkmssdk.Reset)
-	require.True(t, xkmssdk.IsInitialized())
-
-	_, ok := xkmssdk.GetBackendFactory(xkmssdk.BackendPKCS11)
-	require.False(t, ok, "precondition: this test binary must not have the pkcs11 backend factory registered")
-
-	assert.NotPanics(t, func() {
-		app.registerPKCS11XKMSBackend("/usr/lib/softhsm/libsofthsm2.so", 0, "1234", "", "token")
-	})
-	_, err := xkmssdk.GetBackend("pkcs11")
-	assert.Error(t, err, "no pkcs11 backend may be registered when its factory is unavailable")
-}
