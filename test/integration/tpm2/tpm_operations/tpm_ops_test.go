@@ -782,7 +782,7 @@ func TestTPMOps_RSADecrypt(t *testing.T) {
 	}
 	t.Logf("Encrypted %d bytes to %d bytes", len(plaintext), len(ciphertext))
 	// Now decrypt
-	decrypted, err := sharedTPM.RSADecrypt(handle, name, ciphertext)
+	decrypted, err := sharedTPM.RSADecrypt(keyAttrs, backend, ciphertext)
 	if err != nil {
 		t.Logf("RSADecrypt error: %v", err)
 	} else {
@@ -1539,22 +1539,9 @@ func TestTPMOps_RSADecryptWithInvalidCiphertext(t *testing.T) {
 		t.Logf("CreateRSA error: %v", err)
 		t.Fatal("Cannot create RSA key for decrypt error test")
 	}
-	session, closer, err := sharedTPM.CreateSession(keyAttrs)
-	if err != nil {
-		t.Logf("CreateSession error: %v", err)
-		t.Fatal("Cannot create session for decrypt error test")
-	}
-	defer closer()
-	loadResp, err := sharedTPM.LoadKeyPair(keyAttrs, &session, backend)
-	if err != nil {
-		t.Logf("LoadKeyPair error: %v", err)
-		t.Fatal("Cannot load key pair for decrypt error test")
-	}
-	handle := loadResp.ObjectHandle
-	name := loadResp.Name
-	// Try to decrypt invalid ciphertext
+	// Try to decrypt invalid ciphertext. RSADecrypt loads the key itself.
 	invalidCiphertext := []byte("this is not valid ciphertext")
-	_, err = sharedTPM.RSADecrypt(handle, name, invalidCiphertext)
+	_, err = sharedTPM.RSADecrypt(keyAttrs, backend, invalidCiphertext)
 	if err != nil {
 		t.Logf("RSADecrypt with invalid ciphertext correctly failed: %v", err)
 	} else {

@@ -32,12 +32,13 @@ func (tpm *TPM2) CanSeal() bool {
 // has nothing this method can seal to, and the caller sees that as a typed
 // error rather than a silent fallback to the SSRK.
 //
-// A seal with a password is protected by that password alone. A seal without
-// one is bound to the Platform SRK's own policy -- the platform policy when
+// A seal with a password is protected by that password alone, and one with a
+// caller-computed AuthPolicy by that policy. A seal with neither is bound to
+// the Platform SRK's own policy -- the platform policy when
 // platform-srk.platform-policy is enabled -- so the object answers the same
 // platform state its parent does; with no policy there either, the seal is
 // refused with ErrSealUnprotected.
-func (tpm *TPM2) defaultSealKeyAttributes(password types.Password) (*types.KeyAttributes, error) {
+func (tpm *TPM2) defaultSealKeyAttributes(opts *types.SealOptions) (*types.KeyAttributes, error) {
 	srkAttrs, err := tpm.PlatformSRKAttributes()
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: no usable Platform SRK for sealing", Err: err}
@@ -46,7 +47,8 @@ func (tpm *TPM2) defaultSealKeyAttributes(password types.Password) (*types.KeyAt
 		CN:     "platform-sealing-key",
 		Parent: srkAttrs,
 	}
-	if password == nil || len(password.Bytes()) == 0 {
+	hasPassword := opts.Password != nil && len(opts.Password.Bytes()) > 0
+	if !hasPassword && len(opts.AuthPolicy) == 0 {
 		attrs.TPMPolicy = srkAttrs.TPMPolicy
 	}
 	return attrs, nil
@@ -67,10 +69,13 @@ func (tpm *TPM2) defaultUnsealKeyAttributes(keyID string) (*types.KeyAttributes,
 }
 
 // Seal encrypts/protects data using the TPM's sealing mechanism.
-// The sealed object is bound to the policy keyAttrs.TPMPolicy names, to its
-// password, or to both; a seal with neither fails with ErrSealUnprotected.
-// An object with a policy answers only a policy session, whatever its
-// password.
+// The sealed object is bound to the policy keyAttrs.TPMPolicy names or the
+// digest opts.AuthPolicy carries, to its password, or to both; a seal with
+// neither fails with ErrSealUnprotected. An object with a policy answers only
+// a policy session, whatever its password. xkms builds sessions only for its
+// own platform and named policies, so an object bound to an opts.AuthPolicy
+// digest is unsealed by whoever computed it (systemd-cryptsetup for a
+// systemd-tpm2 LUKS token), not by Unseal.
 //
 // When opts is nil or opts.KeyAttributes is nil, sensible defaults are provided
 // using the Platform Storage Root Key (Platform SRK) as the parent hierarchy.
@@ -89,7 +94,7 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 	}
 
 	if opts.KeyAttributes == nil {
-		defaultAttrs, err := tpm.defaultSealKeyAttributes(opts.Password)
+		defaultAttrs, err := tpm.defaultSealKeyAttributes(opts)
 		if err != nil {
 			return nil, err
 		}
@@ -108,6 +113,15 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 	// opts.Password before authorizing the keyed hash session).
 	if opts.Password != nil {
 		keyAttrs.Password = opts.Password
+	}
+
+	// Bind the object to the caller's policy digest, if one is given. The
+	// template's authPolicy makes bindObjectPolicy clear USERWITHAUTH, so
+	// only a policy session reaching the digest can use the object.
+	if len(opts.AuthPolicy) > 0 {
+		if err := tpm.applySealAuthPolicy(keyAttrs, opts.AuthPolicy); err != nil {
+			return nil, err
+		}
 	}
 
 	// Get the backend - use opts.Backend if provided, otherwise use TPM instance backend
@@ -148,6 +162,34 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 	}
 
 	return sealed, nil
+}
+
+// applySealAuthPolicy installs authPolicy, a caller-computed policy digest,
+// as the authPolicy of the sealed object keyAttrs describes. The digest must
+// be the size of the object's name algorithm digest, or no policy session
+// could ever reach it, and the object must name no TPM policy of its own.
+func (tpm *TPM2) applySealAuthPolicy(keyAttrs *types.KeyAttributes, authPolicy []byte) error {
+	if keyAttrs.TPMPolicy != "" {
+		return &errs.Detail{Err: ErrSealAuthPolicyConflict, Detail: keyAttrs.TPMPolicy}
+	}
+	template := KeyedHashTemplate
+	template.NameAlg = tpm.algID
+	hash, err := template.NameAlg.Hash()
+	if err != nil {
+		return err
+	}
+	if len(authPolicy) != hash.Size() {
+		return &errs.Detail{
+			Err:    ErrSealAuthPolicySize,
+			Detail: fmt.Sprintf("%d bytes, name algorithm 0x%x", len(authPolicy), template.NameAlg),
+		}
+	}
+	template.AuthPolicy = tpm2.TPM2BDigest{Buffer: authPolicy}
+	if keyAttrs.TPMAttributes == nil {
+		keyAttrs.TPMAttributes = &types.TPMAttributes{}
+	}
+	keyAttrs.TPMAttributes.Template = template
+	return nil
 }
 
 // Unseal decrypts/recovers data using the TPM's unsealing mechanism.

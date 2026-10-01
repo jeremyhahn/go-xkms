@@ -2907,6 +2907,16 @@ type SealOptions struct {
 	// This is the UserAuth value set during sealing.
 	Password Password
 
+	// AuthPolicy binds a TPM2 sealed object to a policy digest the caller
+	// computed, in the object's name algorithm, for a policy some other
+	// party satisfies -- systemd-cryptsetup's PolicyPCR session for a
+	// systemd-tpm2 LUKS token. The object then answers only a policy session
+	// reaching that digest. xkms builds sessions only for its own platform
+	// and named policies, so it cannot unseal such an object: whoever
+	// computed the digest does. It excludes KeyAttributes.TPMPolicy. TPM2
+	// only.
+	AuthPolicy []byte
+
 	// Backend specifies the storage backend for sealed data.
 	// For TPM2, this should be a store.KeyBackend implementation.
 	// If nil, the backend configured on the sealer instance is used.

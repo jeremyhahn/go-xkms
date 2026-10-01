@@ -341,17 +341,22 @@ func TestDefaultSealKeyAttributes(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, types.TPMPolicyPlatform, srkAttrs.TPMPolicy)
 
-	attrs, err := tpm2Instance.defaultSealKeyAttributes(nil)
+	attrs, err := tpm2Instance.defaultSealKeyAttributes(&types.SealOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "platform-sealing-key", attrs.CN)
 	assert.NotNil(t, attrs.Parent)
 	assert.Equal(t, types.TPMPolicyPlatform, attrs.TPMPolicy,
 		"a seal without a password must be bound to the parent's policy")
 
-	attrs, err = tpm2Instance.defaultSealKeyAttributes(mustPassword([]byte("pw")))
+	attrs, err = tpm2Instance.defaultSealKeyAttributes(&types.SealOptions{Password: mustPassword([]byte("pw"))})
 	require.NoError(t, err)
 	assert.Empty(t, attrs.TPMPolicy,
 		"a seal with a password is protected by the password alone")
+
+	attrs, err = tpm2Instance.defaultSealKeyAttributes(&types.SealOptions{AuthPolicy: make([]byte, 32)})
+	require.NoError(t, err)
+	assert.Empty(t, attrs.TPMPolicy,
+		"a seal with its own AuthPolicy digest is protected by that policy alone")
 }
 
 // TestDefaultSealKeyAttributes_NoPlatformSRK verifies the error when no
@@ -363,7 +368,7 @@ func TestDefaultSealKeyAttributes_NoPlatformSRK(t *testing.T) {
 		config: &Config{},
 	}
 
-	_, err := tpm2Instance.defaultSealKeyAttributes(nil)
+	_, err := tpm2Instance.defaultSealKeyAttributes(&types.SealOptions{})
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrInvalidPlatformSRKConfiguration))
 }

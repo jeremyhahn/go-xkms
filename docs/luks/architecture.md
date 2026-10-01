@@ -169,17 +169,17 @@ string}` (`pkg/luks/config.go`), not a hardcoded handle.
 
 **`SealParentPSRK` (the default, `SealParent` zero value).** Seals under
 go-xkms's own Platform SRK (PSRK), bound to go-xkms's platform PCR policy —
-`pkg/tpm2`'s existing `types.TPMPolicyPlatform` mechanism, the same
-PolicyOR(PolicyPCR, PolicyAuthValue) digest every other platform-policy-bound
-secret in go-xkms uses. The token type is `XKMSTPMTokenType =
+`pkg/tpm2`'s existing `types.TPMPolicyPlatform` mechanism. The sealed object
+carries no password, so `pkg/tpm2` binds it to the platform policy's PolicyPCR
+branch alone, as it does every passwordless platform-policy object. The token type is `XKMSTPMTokenType =
 "xkms-tpm2"`. This is in line with go-xkms#681 (go-xkms seals only under the
 PSRK, with USER PIN plus platform PCR policy authorization): the sealed
 LUKS passphrase sits under the one storage parent every other go-xkms secret
 sits under, and unattended boot-time unlock goes through go-xkms's own
-auto-unseal path (go-xkms#677), not systemd-cryptsetup. `TPMSealer` does not
-set a PIN on the sealed child object itself (only a random guard password —
-see below); the platform PCR branch alone gates unattended unseal, exactly
-as the barrier's own TPM2 auto-unseal strategy does.
+auto-unseal path (go-xkms#677), not systemd-cryptsetup. `TPMSealer` sets no
+password on the sealed child object; the platform PCR policy alone gates
+unattended unseal, exactly as the barrier's own TPM2 auto-unseal strategy
+does.
 
 **`SealParentSSRK`.** Seals under the TCG-standard Shared SRK (handle
 `0x81000001`) with empty parent auth, matching the pre-#917 behavior but now
@@ -190,7 +190,7 @@ build a session for — computed by `computePCRPolicyDigest`
 (`pkg/luks/tpm.go`) via a trial `PolicySession` + `PolicyPCR`, the one piece
 of TPM session code this package still owns (it is PCR-digest arithmetic,
 not sealing: the actual `TPM2_Create` is still `pkg/tpm2.TPM2.Seal`, given
-the digest as `types.TPMSealPolicy.AuthPolicy`). The token type is
+the digest as `types.SealOptions.AuthPolicy`). The token type is
 `TPMTokenType = "systemd-tpm2"`, matching `systemd-cryptsetup`'s own token so
 `systemd-cryptenroll`/crypttab can unlock the volume at boot without
 go-xkms running at all. This is the documented, narrow exception to
@@ -209,34 +209,23 @@ go-xkms#917 says not to add. `systemd-cryptsetup` builds that PolicyPCR
 session itself at boot; go-xkms was never going to be the one unsealing an
 SSRK-parented token.
 
-### Guard password: closing the empty-auth bypass
+### No empty-auth bypass
 
-Every object `pkg/tpm2` creates from `KeyedHashTemplate` (the only template
-`sealKeyInternal` uses) carries `ObjectAttributes.UserWithAuth = true` and
-is never cleared for either seal path here. TPM 2.0 semantics: an object
-with `UserWithAuth` set answers its USER role to *either* a plain
-password/HMAC session presenting the object's `authValue` (empty counts as
-a match when `authValue` itself is empty) *or* a policy session satisfying
-`AuthPolicy`. A sealed object with no `Password` set and `UserWithAuth`
-still set is therefore unsealable by a trivial empty-password
-`TPM2_Unseal` — bypassing the PCR gate entirely, for both `SealParentPSRK`
-and `SealParentSSRK`.
-
-`randomGuardPassword` (`pkg/luks/tpm.go`) closes this: both seal paths set
-`KeyAttributes.Password` to 32 fresh random bytes, generated, used once as
-the `TPM2_Create` sensitive area's `UserAuth`, and discarded (`Clear()`'d)
-before `SealPassphrase` returns — nobody, including go-xkms itself, retains
-it afterward. This forces the password branch of `UserWithAuth` to require a
-secret nobody has, so the *only* practical way to satisfy the object's USER
-role is the PolicyPCR branch — closing the bypass without touching
-`pkg/tpm2`'s shared, widely-used `sealKeyInternal`.
+Both seal paths leave the sealed object without a password and rely on
+`pkg/tpm2`'s object rules (`docs/tpm2/engineering.md` §"Object
+authorization"): every sealed object with an `authPolicy` — the platform
+policy's PolicyPCR branch for `SealParentPSRK`, the caller's PolicyPCR
+digest (`types.SealOptions.AuthPolicy`) for `SealParentSSRK` — is created
+with `ObjectAttributes.UserWithAuth` clear. Its USER role then answers only a
+policy session reaching that `authPolicy`; a plain empty-password
+`TPM2_Unseal` is refused with `TPM_RC_AUTH_UNAVAILABLE`. An earlier version
+of this package closed the bypass itself with a random, discarded guard
+password on the sealed object; with the attribute cleared at the source the
+guard was redundant and was removed.
 `TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy`
-(`pkg/luks/tpm_simulator_test.go`) proves a bare `TPM2_Unseal` with
-`PasswordAuth(nil)` against an SSRK-sealed object fails. This same gap
-exists for any `pkg/tpm2` caller that seals under the platform policy
-without setting a `Password` of its own; closing it generally, in
-`pkg/tpm2` itself, is outside this package's scope and is called out
-separately for owner triage (go-xkms#917's PR discussion).
+(`pkg/luks/tpm_simulator_test.go`) proves both halves on the simulator: the
+empty-password `TPM2_Unseal` is refused, and the PolicyPCR session
+systemd-cryptsetup builds from the token's PCR list unseals the passphrase.
 
 ### Token format
 

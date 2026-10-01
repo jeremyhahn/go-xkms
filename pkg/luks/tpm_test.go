@@ -224,8 +224,8 @@ func TestTPMSealer_SealPassphrase_PSRK_Success(t *testing.T) {
 	if gotOpts.KeyAttributes.TPMPolicy != types.TPMPolicyPlatform {
 		t.Fatalf("KeyAttributes.TPMPolicy = %q, want %q", gotOpts.KeyAttributes.TPMPolicy, types.TPMPolicyPlatform)
 	}
-	if gotOpts.KeyAttributes.Password == nil {
-		t.Fatal("expected a guard password to be set on the sealed object")
+	if gotOpts.KeyAttributes.Password != nil {
+		t.Fatal("the sealed object carries no password: its platform policy alone protects it")
 	}
 }
 

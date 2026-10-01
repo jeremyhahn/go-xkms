@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -43,9 +44,9 @@ var simLock sync.Mutex
 // Platform SRK) and returns the resulting *pkgtpm2.TPM2, satisfying
 // TPMSealUnsealer. The Platform SRK is created with empty auth (no PIN),
 // matching pkg/tpm2/tpm2test.EnrollPlatformSRK's documented first-boot
-// shape; TPMSealer never sets a password on the Platform SRK parent itself
-// (only on the sealed child object's guard password), so this is sufficient
-// to exercise both SealParentPSRK and SealParentSSRK.
+// shape; TPMSealer sets no password on the Platform SRK parent or on the
+// sealed objects, so this is sufficient to exercise both SealParentPSRK and
+// SealParentSSRK.
 func newLUKSSimHarness(t *testing.T) *pkgtpm2.TPM2 {
 	t.Helper()
 	simLock.Lock()
@@ -210,11 +211,11 @@ func TestTPMSealer_SSRK_Unseal_Unsupported(t *testing.T) {
 }
 
 // TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy proves the SSRK-sealed
-// object genuinely requires a correct PolicyPCR session to unseal: a plain,
-// empty-password TPM2_Unseal against it fails. This is the guard-password
-// defense documented on randomGuardPassword — without it, the object's
-// default UserWithAuth attribute would let an empty password bypass the PCR
-// gate entirely.
+// object genuinely requires a correct PolicyPCR session to unseal. The object
+// carries its PolicyPCR digest with USERWITHAUTH clear, so a plain
+// empty-password TPM2_Unseal is refused by the attribute
+// (TPM_RC_AUTH_UNAVAILABLE), while the PolicyPCR session systemd-cryptsetup
+// builds from the token's PCR list unseals the passphrase.
 func TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy(t *testing.T) {
 	tpm := newLUKSSimHarness(t)
 	s, err := NewTPMSealer(tpm, TPMSealerConfig{Parent: SealParentSSRK})
@@ -247,6 +248,12 @@ func TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy(t *testing.T) {
 		_, _ = (libtpm2.FlushContext{FlushHandle: loadRsp.ObjectHandle}).Execute(tpm.Transport())
 	}()
 
+	public, err := pub.Contents()
+	require.NoError(t, err)
+	require.False(t, public.ObjectAttributes.UserWithAuth,
+		"a PCR-gated object must answer only a policy session")
+	require.Equal(t, res.Token.TPM2PolicyHash, base64.StdEncoding.EncodeToString(public.AuthPolicy.Buffer))
+
 	_, err = (libtpm2.Unseal{
 		ItemHandle: libtpm2.AuthHandle{
 			Handle: loadRsp.ObjectHandle,
@@ -254,5 +261,26 @@ func TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy(t *testing.T) {
 			Auth:   libtpm2.PasswordAuth(nil),
 		},
 	}).Execute(tpm.Transport())
-	require.Error(t, err, "an empty-password TPM2_Unseal must not satisfy a PCR-gated object")
+	require.ErrorIs(t, err, libtpm2.TPMRCAuthUnavailable,
+		"an empty-password TPM2_Unseal must not satisfy a PCR-gated object")
+
+	// The unseal systemd-cryptsetup performs: a PolicyPCR session over the
+	// PCRs the token records.
+	session, closeSession, err := libtpm2.PolicySession(tpm.Transport(), libtpm2.TPMAlgSHA256, 16)
+	require.NoError(t, err)
+	defer func() { _ = closeSession() }()
+	_, err = (libtpm2.PolicyPCR{
+		PolicySession: session.Handle(),
+		Pcrs:          buildPCRSelection(libtpm2.TPMAlgSHA256, []int32{7}),
+	}).Execute(tpm.Transport())
+	require.NoError(t, err)
+	out, err := (libtpm2.Unseal{
+		ItemHandle: libtpm2.AuthHandle{
+			Handle: loadRsp.ObjectHandle,
+			Name:   loadRsp.Name,
+			Auth:   session,
+		},
+	}).Execute(tpm.Transport())
+	require.NoError(t, err, "the PolicyPCR session must unseal the passphrase")
+	require.True(t, bytes.Equal(res.Passphrase.Bytes(), out.OutData.Buffer))
 }

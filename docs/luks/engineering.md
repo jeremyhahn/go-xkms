@@ -158,7 +158,7 @@ Satisfied by `*pkg/tpm2.TPM2` without any adapter. `Transport()` is used only
 by the `SealParentSSRK` path, to compute a PolicyPCR digest via a trial
 session (`computePCRPolicyDigest`) — the one piece of raw TPM session code
 this package still owns, because `pkg/tpm2.Seal` requires a pre-computed
-digest for a non-platform policy (`types.TPMSealPolicy.AuthPolicy`) and has
+digest for a non-platform policy (`types.SealOptions.AuthPolicy`) and has
 no public helper to compute one.
 
 ### `TPMSealer` — `pkg/luks/tpm.go`
@@ -181,19 +181,19 @@ func (s *TPMSealer) UnsealPassphrase(ctx context.Context, token *luks2.Token) ([
     `ErrTPMPCRSelectionNotSupported` (the platform policy's PCR set is fixed
     by `pkg/tpm2` configuration, not chosen per call). Resolves
     `PlatformSRKAttributes()`, builds `KeyAttributes{CN, Parent,
-    TPMPolicy: types.TPMPolicyPlatform, Password: <32-byte guard>}`, calls
+    TPMPolicy: types.TPMPolicyPlatform}` (no password), calls
     `tpm.Seal`. Token: `XKMSTPMTokenType`, `TPM2Blob`, `TPM2KeyHandle`.
   - `SealParentSSRK`: resolves `SSRKAttributes()`, computes a PolicyPCR
     digest over `pcrs` (bank from construction), builds
-    `KeyAttributes{CN, Parent, Password: <32-byte guard>}` (no
-    `TPMPolicy`), calls `tpm.Seal` with
-    `types.SealOptions.TPMPolicy.AuthPolicy` set to the computed digest.
+    `KeyAttributes{CN, Parent}` (no `TPMPolicy`, no password), calls
+    `tpm.Seal` with `types.SealOptions.AuthPolicy` set to the computed
+    digest.
     Token: `TPMTokenType`, `TPM2Blob`, `TPM2PCRBank`, `TPM2PCRs`,
     `TPM2KeyHandle`, `TPM2PolicyHash`.
-  - Both paths generate the 32-byte passphrase with `crypto/rand`, and a
-    second, independent 32-byte guard password (also `crypto/rand`) set as
-    the sealed object's `UserAuth` and `Clear()`'d before returning — see
-    architecture.md §"Guard password" for why.
+  - Both paths generate the 32-byte passphrase with `crypto/rand`. The
+    sealed object carries no password: `pkg/tpm2` clears its
+    `UserWithAuth`, so only a policy session unseals it — see
+    architecture.md §"No empty-auth bypass".
 - `UnsealPassphrase(ctx, token)`:
   - Dispatches on `s.Parent()`, not `token.Type`.
   - `SealParentPSRK`: decodes `token.TPM2Blob`, resolves
@@ -250,7 +250,7 @@ too-short payload, or a length prefix that overruns the buffer.
 | `ErrInvalidPCRBank` | `TPMSealerConfig.Validate`, `resolvePCRBank` |
 | `ErrTPMPCRSelectionNotSupported` | `SealPassphrase` under `SealParentPSRK` with a non-empty `pcrs` |
 | `ErrTPMPolicyFailed` | `SealPassphrase` under `SealParentSSRK`, when `computePCRPolicyDigest` fails |
-| `ErrTPMSealFailed` | `SealPassphrase`, on `rand.Read`, the guard password, secure-buffer construction, or `tpm.Seal` failure |
+| `ErrTPMSealFailed` | `SealPassphrase`, on `rand.Read`, secure-buffer construction, or `tpm.Seal` failure |
 | `ErrTPMUnsealFailed` | `UnsealPassphrase` under `SealParentPSRK`, on `tpm.Unseal` failure |
 | `ErrTPMSSRKUnsealUnsupported` | `UnsealPassphrase` under `SealParentSSRK`, always |
 | `ErrTPMInvalidToken` | `UnsealPassphrase` (nil token, bad blob), `DecodeTPMSealBlobs` |
@@ -285,7 +285,7 @@ from a file — they are plain Go struct fields set by the embedding caller.
   against a fake `TPMSealUnsealer`; token blob encode/decode; PCR-selection
   building. No TPM, real or simulated.
 - `tpm_simulator_test.go` — full PSRK and SSRK seal/unseal round trips, PCR
-  state-change failure, and the guard-password bypass proof, against a real
+  state-change failure, and the empty-auth bypass proof, against a real
   `*pkg/tpm2.TPM2` wired to the go-tpm-tools simulator. Gated behind
   `-tags tpm_simulator`.
 

@@ -124,7 +124,7 @@ func TestIntegration_RSAEncryptDecrypt(t *testing.T) {
 			}
 
 			// Decrypt the ciphertext using TPM
-			decrypted, err := tpmInstance.RSADecrypt(keyHandle, keyName, ciphertext)
+			decrypted, err := tpmInstance.RSADecrypt(keyAttrs, nil, ciphertext)
 			if err != nil {
 				t.Fatalf("RSA decryption failed: %v", err)
 			}
@@ -180,7 +180,9 @@ func TestIntegration_RSAEncryptDecrypt_InvalidInput(t *testing.T) {
 				t.Errorf("Unexpected error: %v", err)
 			}
 
-			_, err = tpmInstance.RSADecrypt(tc.handle, tpm2.TPM2BName{}, tc.data)
+			// RSADecrypt names its key by attributes; a key with no blobs
+			// and no parent cannot be loaded.
+			_, err = tpmInstance.RSADecrypt(&types.KeyAttributes{CN: "no-such-key-" + tc.name}, nil, tc.data)
 			if tc.expectError && err == nil {
 				t.Error("Expected error but got none")
 			}
@@ -639,7 +641,7 @@ func TestIntegration_RSAEncryptDecrypt_LargeData(t *testing.T) {
 			}
 
 			// Decrypt
-			decrypted, err := tpmInstance.RSADecrypt(keyHandle, keyName, ciphertext)
+			decrypted, err := tpmInstance.RSADecrypt(keyAttrs, nil, ciphertext)
 			if err != nil {
 				t.Fatalf("Decryption failed: %v", err)
 			}

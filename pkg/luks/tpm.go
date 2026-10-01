@@ -192,34 +192,6 @@ func randomPassphrase() ([]byte, error) {
 	return passphrase, nil
 }
 
-// randomGuardPassword returns a Password wrapping 32 random bytes, used as
-// the sealed object's UserAuth so that a plain empty-password session can
-// never satisfy TPM2_Unseal's USER role. Every KeyedHashTemplate leaves
-// ObjectAttributes.UserWithAuth set, so the USER role is satisfiable either
-// by a policy session proving AuthPolicy (the PCR gate this package wants)
-// or by a plain session presenting the object's UserAuth verbatim; an unset
-// UserAuth is the empty byte string, which a bare TPM_RS_PW session
-// satisfies trivially, bypassing every PCR check. Setting UserAuth to a
-// secret this function discards immediately closes that branch without
-// touching the policy branch systemd-cryptsetup (SealParentSSRK) or
-// go-xkms's own auto-unseal (SealParentPSRK) needs.
-func randomGuardPassword() (types.Password, error) {
-	guard := make([]byte, 32)
-	if _, err := rand.Read(guard); err != nil {
-		return nil, &errs.Detail{Err: ErrTPMSealFailed, Detail: fmt.Sprintf("guard rand: %v", err)}
-	}
-	defer func() {
-		for i := range guard {
-			guard[i] = 0
-		}
-	}()
-	pw, err := types.NewPassword(guard)
-	if err != nil {
-		return nil, &errs.Detail{Err: ErrTPMSealFailed, Detail: fmt.Sprintf("guard password: %v", err)}
-	}
-	return pw, nil
-}
-
 // sealPlatform seals under the Platform SRK, bound to go-xkms's platform PCR
 // policy.
 func (s *TPMSealer) sealPlatform(ctx context.Context) (*TPMSealResult, error) {
@@ -233,17 +205,13 @@ func (s *TPMSealer) sealPlatform(ctx context.Context) (*TPMSealResult, error) {
 		return nil, err
 	}
 
-	guard, err := randomGuardPassword()
-	if err != nil {
-		return nil, err
-	}
-	defer guard.Clear()
-
+	// No password: pkg/tpm2 binds the object to the platform policy's
+	// PolicyPCR branch alone, with USERWITHAUTH clear, so only a policy
+	// session proving the platform state unseals it.
 	keyAttrs := &types.KeyAttributes{
 		CN:        platformSealCN,
 		Parent:    parentAttrs,
 		TPMPolicy: types.TPMPolicyPlatform,
-		Password:  guard,
 	}
 
 	sealed, err := s.tpm.Seal(ctx, passphrase, &types.SealOptions{KeyAttributes: keyAttrs})
@@ -284,25 +252,18 @@ func (s *TPMSealer) sealSSRK(ctx context.Context, pcrs []int32) (*TPMSealResult,
 		return nil, err
 	}
 
-	guard, err := randomGuardPassword()
-	if err != nil {
-		return nil, err
-	}
-	defer guard.Clear()
-
+	// The object is bound to the PolicyPCR digest alone: pkg/tpm2 clears
+	// USERWITHAUTH on any object with an authPolicy, so only a policy
+	// session reaching the digest -- systemd-cryptsetup's, at boot --
+	// unseals it. The PCR list itself is recorded in the token below.
 	keyAttrs := &types.KeyAttributes{
-		CN:       ssrkSealCN,
-		Parent:   parentAttrs,
-		Password: guard,
+		CN:     ssrkSealCN,
+		Parent: parentAttrs,
 	}
 
 	sealed, err := s.tpm.Seal(ctx, passphrase, &types.SealOptions{
 		KeyAttributes: keyAttrs,
-		TPMPolicy: &types.TPMSealPolicy{
-			PCRSelection: pcrSel,
-			HashAlg:      s.pcrBank,
-			AuthPolicy:   policyDigest,
-		},
+		AuthPolicy:    policyDigest,
 	})
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrTPMSealFailed, Cause: err}
@@ -373,12 +334,6 @@ func (s *TPMSealer) unsealPlatform(ctx context.Context, token *luks2.Token) ([]b
 	if err != nil {
 		return nil, err
 	}
-
-	guard, err := randomGuardPassword()
-	if err != nil {
-		return nil, err
-	}
-	defer guard.Clear()
 
 	sealed := &types.SealedData{
 		Backend:    types.BackendTypeTPM2,

@@ -294,3 +294,58 @@ func TestSeal_DefaultAttributes_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, secret, got)
 }
+
+// TestSeal_CallerAuthPolicy_OnlyItsPolicySessionUnseals proves a seal bound
+// to a caller-computed AuthPolicy digest -- here a PolicyPCR digest, the
+// shape a systemd-tpm2 LUKS token carries -- has USERWITHAUTH clear, refuses
+// an empty-password TPM2_Unseal, and opens to a policy session reaching the
+// digest, as systemd-cryptsetup builds for a systemd-tpm2 token.
+func TestSeal_CallerAuthPolicy_OnlyItsPolicySessionUnseals(t *testing.T) {
+	h := newSimHarness(t, nil)
+	digest, err := h.TPM.platformPCRPolicyDigest()
+	require.NoError(t, err)
+
+	secret := []byte("systemd-tpm2-volume-key")
+	attrs := sealedKeyAttrs(t, h, "caller-auth-policy", false, nil)
+	sealed, err := h.TPM.Seal(context.Background(), secret, &types.SealOptions{
+		KeyAttributes: attrs,
+		AuthPolicy:    digest.Buffer,
+	})
+	require.NoError(t, err, "an explicit AuthPolicy is a policy: the seal is not unprotected")
+
+	public, err := UnmarshalPublic(sealed.TPMPublic)
+	require.NoError(t, err)
+	require.False(t, public.ObjectAttributes.UserWithAuth)
+	require.Equal(t, digest.Buffer, public.AuthPolicy.Buffer)
+
+	loaded := loadSealedObject(t, h, attrs)
+	requireUnsealRefused(t, h, loaded, tpm2.PasswordAuth(nil), tpm2.TPMRCAuthUnavailable)
+
+	session, closer, err := h.TPM.platformPCRSession()
+	require.NoError(t, err)
+	defer h.TPM.closeSession(closer, "caller policy session")
+	out, err := tpm2.Unseal{
+		ItemHandle: tpm2.AuthHandle{Handle: loaded.ObjectHandle, Name: loaded.Name, Auth: session},
+	}.Execute(h.TPM.transport)
+	require.NoError(t, err, "a policy session reaching the digest must unseal")
+	require.Equal(t, secret, out.OutData.Buffer)
+}
+
+// TestSeal_CallerAuthPolicy_Refusals proves the AuthPolicy option refuses a
+// digest the object's name algorithm cannot carry and a seal that also names
+// a TPM policy.
+func TestSeal_CallerAuthPolicy_Refusals(t *testing.T) {
+	h := newSimHarness(t, nil)
+
+	_, err := h.TPM.Seal(context.Background(), []byte("x"), &types.SealOptions{
+		KeyAttributes: sealedKeyAttrs(t, h, "auth-policy-short", false, nil),
+		AuthPolicy:    make([]byte, 20),
+	})
+	require.ErrorIs(t, err, ErrSealAuthPolicySize)
+
+	_, err = h.TPM.Seal(context.Background(), []byte("x"), &types.SealOptions{
+		KeyAttributes: sealedKeyAttrs(t, h, "auth-policy-conflict", true, nil),
+		AuthPolicy:    make([]byte, 32),
+	})
+	require.ErrorIs(t, err, ErrSealAuthPolicyConflict)
+}

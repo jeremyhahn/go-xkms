@@ -258,8 +258,9 @@ policy.
 | platform policy, password | `PolicyOR(PolicyPCR, PolicyAuthValue)` | CLEAR | PCR branch with no password; `PolicyAuthValue` branch with it (the recovery PIN) |
 | platform policy, no password | `PolicyPCR` alone (`platformPCRPolicyDigestFromPin`, `tpm.go:821`) | CLEAR | `PolicyPCR` session (`platformPCRSession`, `session.go:575`) |
 | named policy, with or without password | `AuthorizedObjectPolicy` (see [`../tpm-policies/engineering.md`](../tpm-policies/engineering.md)) | CLEAR | the authorized policy session; the password only where the policy asks for it |
+| caller digest (`SealOptions.AuthPolicy`), sealed data only | the caller's digest | CLEAR | a policy session the caller builds (systemd-cryptsetup for a `systemd-tpm2` LUKS token); xkms builds none |
 | no policy, password | empty | SET | salted HMAC session proving the password |
-| no policy, no password | empty | SET | an empty password: refused for sealed data by `SealKey` (`sealer.go:247`) with `ErrSealUnprotected` (`types.go:504`); allowed for keys, whose `TPM2_Load` is gated by the parent |
+| no policy, no password | empty | SET | an empty password: refused for sealed data by `SealKey` (`sealer.go:289`) with `ErrSealUnprotected` (`types.go:504`); allowed for keys, whose `TPM2_Load` is gated by the parent |
 
 - **`userWithAuth` is cleared on every object with an `authPolicy`**
   (`restrictUserRole`, `object_policy.go:97`). With it SET, TPM 2.0 lets the
@@ -296,10 +297,23 @@ policy.
   their `TPM2_Load` is gated by the Platform SRK's USER PIN or platform
   policy, so they may carry neither.
 - **Defaults bind to the parent's policy.** `Seal` with no `KeyAttributes`
-  (`defaultSealKeyAttributes`, `sealer.go:40`) binds a passwordless seal to
+  (`defaultSealKeyAttributes`, `sealer.go:41`) binds a passwordless seal to
   the Platform SRK's own policy and a password-carrying seal to the password
   alone. `frost.TPM2SecretSealKeyAttributes`
   (`pkg/keyprovider/frost/wrapkey.go:80`) does the same for FROST shares.
+- **A caller-computed digest (`SealOptions.AuthPolicy`).** `Seal` installs
+  it as the sealed object's `authPolicy` (`applySealAuthPolicy`,
+  `sealer.go:171`) after checking it is the size of the object's name
+  algorithm digest (`ErrSealAuthPolicySize`) and that the seal names no TPM
+  policy as well (`ErrSealAuthPolicyConflict`). It counts as a policy, so
+  the seal is not refused as unprotected, and `userWithAuth` is cleared as
+  for every policy-bound object. xkms builds sessions only for its own
+  platform and named policies, so it does not unseal such an object:
+  whoever computed the digest does. `pkg/luks` uses it for the
+  `systemd-tpm2` token it seals under the Shared SRK, which only
+  systemd-cryptsetup unseals (`luks.ErrTPMSSRKUnsealUnsupported`). The PCR
+  selection behind the digest is the caller's own record (the token's PCR
+  list); `Seal` takes only the digest.
 - **Existing objects keep their attributes.** An object or NV index created
   before this rule keeps `userWithAuth` (or `TPMA_NV_AUTHREAD`) SET and, when
   passwordless and platform-bound, its open `PolicyAuthValue` branch.
