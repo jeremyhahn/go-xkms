@@ -331,7 +331,12 @@ func TestTenantRateLimiter_Middleware(t *testing.T) {
 		},
 	}
 
-	tenantKeyFn := TenantRateLimiterFromHeader("X-Tenant-ID")
+	// A locally defined TenantKeyFunc stands in for the header-based
+	// extractor xkmsd and the standalone TrustedCA don't use in production
+	// (both resolve the tenant from a verified JWS "kid" via
+	// TenantRateLimiterFromRequestContext); this test only exercises
+	// Middleware's admission-control behavior, not tenant resolution.
+	tenantKeyFn := func(r *http.Request) string { return r.Header.Get("X-Tenant-ID") }
 	trl := NewTenantRateLimiter(config, tenantKeyFn, ClientIP, "overall")
 	defer trl.Stop()
 
@@ -434,10 +439,8 @@ func TestTenantRateLimiter_OperationTypes(t *testing.T) {
 		constructor func(*TenantRateLimiterConfig, TenantKeyFunc) *TenantRateLimiter
 		expected    int
 	}{
-		{"new-account", NewTenantAccountRateLimiter, 10},
 		{"new-order", NewTenantOrderRateLimiter, 100},
 		{"certificate", NewTenantCertificateRateLimiter, 50},
-		{"overall", NewTenantOverallRateLimiter, 1000},
 		{"failed-validation", NewTenantFailedValidationRateLimiter, 5},
 	}
 
@@ -459,25 +462,6 @@ func TestTenantRateLimiter_OperationTypes(t *testing.T) {
 }
 
 func TestTenantKeyFunctions(t *testing.T) {
-	t.Run("TenantRateLimiterFromHeader", func(t *testing.T) {
-		fn := TenantRateLimiterFromHeader("X-Tenant-ID")
-
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.Header.Set("X-Tenant-ID", "my-tenant")
-
-		tenantID := fn(req)
-		require.Equal(t, "my-tenant", tenantID)
-	})
-
-	t.Run("TenantRateLimiterFromHeader with missing header", func(t *testing.T) {
-		fn := TenantRateLimiterFromHeader("X-Tenant-ID")
-
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-
-		tenantID := fn(req)
-		require.Empty(t, tenantID)
-	})
-
 	t.Run("TenantRateLimiterFromRequestContext", func(t *testing.T) {
 		fn := TenantRateLimiterFromRequestContext()
 
@@ -497,16 +481,6 @@ func TestTenantKeyFunctions(t *testing.T) {
 		require.Empty(t, tenantID)
 	})
 
-	t.Run("TenantRateLimiterFromContext with custom key", func(t *testing.T) {
-		type customKey struct{}
-		fn := TenantRateLimiterFromContext(customKey{})
-
-		ctx := context.WithValue(context.Background(), customKey{}, "custom-tenant")
-		req := httptest.NewRequest(http.MethodGet, "/test", nil).WithContext(ctx)
-
-		tenantID := fn(req)
-		require.Equal(t, "custom-tenant", tenantID)
-	})
 }
 
 func TestTenantIDContext(t *testing.T) {

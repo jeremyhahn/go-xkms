@@ -1363,6 +1363,14 @@ var (
 	// --tpm-private is given: a TPM2 sealed object needs both.
 	ErrTPMAreasRequired = errors.New("--tpm-public and --tpm-private must be given together")
 
+	// ErrPasswordSealFailed is returned when a TPM2 sealed object's
+	// --password could not be sealed into protected memory.
+	ErrPasswordSealFailed = errors.New("failed to seal the sealed-object password into protected memory")
+
+	// ErrPasswordOpenFailed is returned when a TPM2 sealed object's
+	// password could not be opened from protected memory for the request.
+	ErrPasswordOpenFailed = errors.New("failed to open the sealed-object password from protected memory")
+
 	// ErrInvalidBase64TPMArea is returned when a TPM2 sealed object's area
 	// is not valid base64.
 	ErrInvalidBase64TPMArea = errors.New("invalid base64 TPM sealed-object area")

@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // errTPMRunBoom stands in for a server failure.
@@ -442,7 +443,7 @@ func TestSealData_TPMSealedObject(t *testing.T) {
 	mock := &mockSealClient{sealResp: &client.SealResponse{Backend: "tpm2", TPMPublic: []byte("pub"), TPMPrivate: []byte("priv"), KeyID: "xkms-sealing-key-tpm2"}}
 	cfg := &Config{Backend: "tpm2", ClientFactory: func(*Config) (client.Client, error) { return mock, nil }}
 	buf := new(bytes.Buffer)
-	sealData(cfg, NewPrinter("json", buf), "", []byte("secret"), nil, sealTPMParams{Policy: "boot", Password: "pw"})
+	sealData(cfg, NewPrinter("json", buf), "", []byte("secret"), nil, sealTPMParams{Policy: "boot", Password: testPassword(t, "pw")})
 
 	require.NotNil(t, mock.lastSeal)
 	assert.Equal(t, "boot", mock.lastSeal.TPMPolicy)
@@ -458,7 +459,7 @@ func TestUnsealData_TPMSealedObject(t *testing.T) {
 	mock := &mockSealClient{unsealResp: &client.UnsealResponse{Plaintext: []byte("secret")}}
 	cfg := &Config{Backend: "tpm2", ClientFactory: func(*Config) (client.Client, error) { return mock, nil }}
 	buf := new(bytes.Buffer)
-	unsealData(cfg, NewPrinter("json", buf), "", nil, nil, nil, nil, unsealTPMParams{Public: []byte("pub"), Private: []byte("priv"), Password: "pw"})
+	unsealData(cfg, NewPrinter("json", buf), "", nil, nil, nil, nil, unsealTPMParams{Public: []byte("pub"), Private: []byte("priv"), Password: testPassword(t, "pw")})
 
 	require.NotNil(t, mock.lastUnseal)
 	assert.Equal(t, []byte("pub"), mock.lastUnseal.TPMPublic)
@@ -471,18 +472,52 @@ func TestUnsealData_TPMSealedObject(t *testing.T) {
 // other or an area that is not base64.
 func TestDecodeUnsealTPMParams(t *testing.T) {
 	pub, priv := base64.StdEncoding.EncodeToString([]byte("pub")), base64.StdEncoding.EncodeToString([]byte("priv"))
-	got, err := decodeUnsealTPMParams(pub, priv, "pw")
+	password := testPassword(t, "pw")
+	got, err := decodeUnsealTPMParams(pub, priv, password)
 	require.NoError(t, err)
-	assert.Equal(t, unsealTPMParams{Public: []byte("pub"), Private: []byte("priv"), Password: "pw"}, got)
+	assert.Equal(t, unsealTPMParams{Public: []byte("pub"), Private: []byte("priv"), Password: password}, got)
 
-	none, err := decodeUnsealTPMParams("", "", "")
+	none, err := decodeUnsealTPMParams("", "", nil)
 	require.NoError(t, err)
 	assert.Nil(t, none.Public)
 
-	_, err = decodeUnsealTPMParams(pub, "", "")
+	_, err = decodeUnsealTPMParams(pub, "", nil)
 	assert.ErrorIs(t, err, ErrTPMAreasRequired)
-	_, err = decodeUnsealTPMParams("%%%", priv, "")
+	_, err = decodeUnsealTPMParams("%%%", priv, nil)
 	assert.ErrorIs(t, err, ErrInvalidBase64TPMArea)
-	_, err = decodeUnsealTPMParams(pub, "%%%", "")
+	_, err = decodeUnsealTPMParams(pub, "%%%", nil)
 	assert.ErrorIs(t, err, ErrInvalidBase64TPMArea)
+}
+
+// testPassword seals a sealed-object password the way the seal and unseal
+// commands do, destroying it when the test ends.
+func testPassword(t *testing.T, password string) *secure.Secret {
+	t.Helper()
+	secret, err := sealPassword(password)
+	require.NoError(t, err)
+	t.Cleanup(secret.Destroy)
+	return secret
+}
+
+// TestSealPassword_EmptyIsNone proves an empty --password yields no secret,
+// and a nil one opens to the empty wire value.
+func TestSealPassword_EmptyIsNone(t *testing.T) {
+	secret, err := sealPassword("")
+	require.NoError(t, err)
+	assert.Nil(t, secret)
+
+	wire, err := openPassword(nil)
+	require.NoError(t, err)
+	assert.Empty(t, wire)
+}
+
+// TestOpenPassword_Destroyed proves a password destroyed before the request
+// is built is refused with ErrPasswordOpenFailed rather than sent empty.
+func TestOpenPassword_Destroyed(t *testing.T) {
+	secret, err := sealPassword("pw")
+	require.NoError(t, err)
+	secret.Destroy()
+
+	_, err = openPassword(secret)
+	assert.ErrorIs(t, err, ErrPasswordOpenFailed)
 }

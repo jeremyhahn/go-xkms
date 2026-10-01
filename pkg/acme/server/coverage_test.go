@@ -14,7 +14,6 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -93,37 +92,6 @@ func TestTenantRateLimiter_GetMaxInterval_PartialRatesConfigured(t *testing.T) {
 
 	maxInterval := trl.getMaxInterval()
 	assert.Equal(t, 30*time.Minute, maxInterval)
-}
-
-// =============================================================================
-// TenantRateLimiterFromContext Tests (75% -> 100%)
-// =============================================================================
-
-// TestTenantRateLimiterFromContext_NonStringValue verifies that
-// TenantRateLimiterFromContext returns empty string when the context
-// value is not a string type.
-func TestTenantRateLimiterFromContext_NonStringValue(t *testing.T) {
-	type myKey struct{}
-	fn := TenantRateLimiterFromContext(myKey{})
-
-	// Set a non-string value in context
-	ctx := context.WithValue(context.Background(), myKey{}, 12345)
-	req := httptest.NewRequest(http.MethodGet, "/test", nil).WithContext(ctx)
-
-	tenantID := fn(req)
-	assert.Empty(t, tenantID)
-}
-
-// TestTenantRateLimiterFromContext_MissingKey verifies that
-// TenantRateLimiterFromContext returns empty string when the key is absent.
-func TestTenantRateLimiterFromContext_MissingKey(t *testing.T) {
-	type myKey struct{}
-	fn := TenantRateLimiterFromContext(myKey{})
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-
-	tenantID := fn(req)
-	assert.Empty(t, tenantID)
 }
 
 // =============================================================================

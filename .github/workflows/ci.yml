@@ -933,19 +933,6 @@ jobs:
       - name: Run go vet
         run: make vet
 
-      # `make vet` only reaches files that compile untagged (or, for xkey,
-      # under LINT_TAGS_xkey) -- every file behind an `integration` (or
-      # other suite) build tag is invisible to it, which is how #636/#638
-      # broke sdk/go and acme-tpm unnoticed and how the tpm2 idevid/tpmops
-      # suites drifted roughly 200 references behind pkg/tpm2/store's
-      # current API before anyone tripped over it (go-xkms#650). This is
-      # compile-only, one `go vet` per distinct //go:build tag combination
-      # under test/integration -- see scripts/vet-integration.sh for why a
-      # single tag union is wrong (some suites are mutually exclusive). The
-      # suites themselves still run only in the devcontainer.
-      - name: Run go vet across test/integration (build-tag compile gate)
-        run: make vet-integration
-
       # The version gate has its own tests, and they run HERE rather than only
       # on a developer's machine — a guard nothing executes is a guard that can
       # rot into agreement with whatever the code does. They exist because the
@@ -1019,6 +1006,44 @@ jobs:
       # CLAUDE.md/AGENTS.md/.claude allowlist.
       - name: Check for internal literals (public-release readiness)
         run: make check-public-literals
+
+  # Split out of Lint (go-xkms#1382): vet, vet-integration, golangci-lint
+  # and the secure-analyzer sweep in one job grew past Lint's 60m budget on
+  # the slower fleet hosts (vet 17m, vet-integration 23m, lint 15m, then the
+  # analyzer), so the job was killed at the limit rather than failing on a
+  # finding. These two whole-module sweeps run here, in parallel with Lint.
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      # Same cgo headers as Lint: both sweeps compile the full module graph.
+      - name: Install cgo dependencies
+        run: |
+          sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
+
+      # `make vet` only reaches files that compile untagged (or, for xkey,
+      # under LINT_TAGS_xkey) -- every file behind an `integration` (or
+      # other suite) build tag is invisible to it, which is how #636/#638
+      # broke sdk/go and acme-tpm unnoticed and how the tpm2 idevid/tpmops
+      # suites drifted roughly 200 references behind pkg/tpm2/store's
+      # current API before anyone tripped over it (go-xkms#650). This is
+      # compile-only, one `go vet` per distinct //go:build tag combination
+      # under test/integration -- see scripts/vet-integration.sh for why a
+      # single tag union is wrong (some suites are mutually exclusive). The
+      # suites themselves still run only in the devcontainer.
+      - name: Run go vet across test/integration (build-tag compile gate)
+        run: make vet-integration
 
       # go-qrdb's pkg/secure/analyzer enforces the raw-memguard-import,
       # ssh.ParsePrivateKey and sensitive-field rules, but only where its own
@@ -1652,8 +1677,9 @@ jobs:
         run: |
           # libssl-dev: go-tpm-tools/simulator compiles the reference TPM
           # with cgo and links it against -lcrypto. libicu-dev and
-          # libusb-1.0-0-dev: see the "build" job's comment.
-          sudo .github/scripts/apt-deps.sh libssl-dev libicu-dev libusb-1.0-0-dev
+          # libusb-1.0-0-dev: see the "build" job's comment. swtpm:
+          # pkg/tpm2/vtpm supervises a real swtpm process per tenant.
+          sudo .github/scripts/apt-deps.sh libssl-dev libicu-dev libusb-1.0-0-dev swtpm
 
       - name: Run pkg/tpm2 on the simulator
         env:
@@ -1745,7 +1771,7 @@ jobs:
     name: CI Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [changes, test, test-changed, nested-module-test, nested-module-build, lint, security, build, build-raft, arch-gates, docker, race, tpm2-simulator]
+    needs: [changes, test, test-changed, nested-module-test, nested-module-build, lint, static-analysis, security, build, build-raft, arch-gates, docker, race, tpm2-simulator]
 
     steps:
       - name: Fail closed on any non-success
@@ -1779,6 +1805,7 @@ jobs:
           # included (lint is where the xkey check-skill-reference docs
           # check lives; arch-gates is six seconds of grep).
           check_required lint       "${{ needs.lint.result }}" 0
+          check_required static-analysis "${{ needs.static-analysis.result }}" 0
           check_required arch-gates "${{ needs.arch-gates.result }}" 0
 
           # build runs on both tiers; only a docs-only diff skips it.
