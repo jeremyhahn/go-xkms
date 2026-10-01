@@ -54,7 +54,7 @@ func TestRunAuthRefresh_NoRefreshToken(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const serverURL = "https://webauthn.example.com:8443"
 
-	require.NoError(t, storeAuthToken(context.Background(), slog.Default(), serverURL, makeTestJWT(t)))
+	require.NoError(t, storeAuthToken(context.Background(), slog.Default(), loginServer{URL: serverURL}, makeTestJWT(t)))
 
 	err := runAuthRefresh(authServerCmd(serverURL), nil)
 	require.Error(t, err)
@@ -65,7 +65,7 @@ func TestRunAuthRefresh_ServerNotRegistered(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const serverURL = "https://piv.example.com:8443"
 
-	require.NoError(t, storeAuthTokenPair(context.Background(), slog.Default(), serverURL, tokenstore.SourcePIV,
+	require.NoError(t, storeAuthTokenPair(context.Background(), slog.Default(), loginServer{URL: serverURL}, tokenstore.SourcePIV,
 		&xkms.TokenPair{AccessToken: "at", RefreshToken: "rt"}))
 
 	// The token is stored, but the server was never registered, so the
@@ -98,7 +98,7 @@ func TestRunAuthLogout_NoRefreshToken_DeletesLocalOnly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const serverURL = "https://webauthn.example.com:8443"
 
-	require.NoError(t, storeAuthToken(context.Background(), slog.Default(), serverURL, makeTestJWT(t)))
+	require.NoError(t, storeAuthToken(context.Background(), slog.Default(), loginServer{URL: serverURL}, makeTestJWT(t)))
 
 	err := runAuthLogout(authServerCmd(serverURL), nil)
 	require.NoError(t, err)
@@ -119,7 +119,7 @@ func TestRunAuthLogout_RefreshTokenPresent_ServerUnreachable(t *testing.T) {
 	const serverURL = "https://127.0.0.1:1"
 
 	registerTestServer(t, serverURL)
-	require.NoError(t, storeAuthTokenPair(context.Background(), slog.Default(), serverURL, tokenstore.SourcePIV,
+	require.NoError(t, storeAuthTokenPair(context.Background(), slog.Default(), loginServer{URL: serverURL}, tokenstore.SourcePIV,
 		&xkms.TokenPair{AccessToken: "at", RefreshToken: "rt"}))
 
 	err := runAuthLogout(authServerCmd(serverURL), nil)
@@ -140,7 +140,7 @@ func TestStoreAuthTokenPair_RoundTrip(t *testing.T) {
 	const serverURL = "https://piv.example.com:8443"
 
 	pair := &xkms.TokenPair{AccessToken: "at", RefreshToken: "rt", TokenType: "Bearer", ExpiresIn: 900}
-	require.NoError(t, storeAuthTokenPair(context.Background(), slog.Default(), serverURL, tokenstore.SourcePIV, pair))
+	require.NoError(t, storeAuthTokenPair(context.Background(), slog.Default(), loginServer{URL: serverURL}, tokenstore.SourcePIV, pair))
 
 	tokens, cleanup, err := openTokenStore(slog.Default())
 	require.NoError(t, err)
@@ -164,7 +164,7 @@ func TestStoreAuthTokenPair_StorageFailure(t *testing.T) {
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
 	t.Setenv("XKEY_HOME", filepath.Join(blocker, "nested"))
 
-	err := storeAuthTokenPair(context.Background(), slog.Default(), "https://example.com", tokenstore.SourcePIV,
+	err := storeAuthTokenPair(context.Background(), slog.Default(), loginServer{URL: "https://example.com"}, tokenstore.SourcePIV,
 		&xkms.TokenPair{AccessToken: "at"})
 	assert.Error(t, err)
 }

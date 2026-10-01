@@ -24,6 +24,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/spf13/cobra"
 )
 
@@ -145,8 +146,15 @@ func runAuthLoginPIV(cmd *cobra.Command, logger *slog.Logger, serverURL string) 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultAuthTimeout)
 	defer cancel()
 
+	// A PIV login needs no WebAuthn enrollment, so the server need not be
+	// registered: a registered server contributes its recorded pin, an
+	// unregistered one is reached by the URL given and verified by the auth
+	// root pool alone.
 	serverEntry, err := registry.Lookup(ctx, serverURL)
-	if err != nil {
+	registered := err == nil
+	if errors.Is(err, serverregistry.ErrServerNotFound) {
+		serverEntry = &serverregistry.ServerEntry{URL: serverURL}
+	} else if err != nil {
 		return errors.Join(ErrAuthServerLookupFailed, err)
 	}
 
@@ -154,9 +162,9 @@ func runAuthLoginPIV(cmd *cobra.Command, logger *slog.Logger, serverURL string) 
 	// system pool and --tls-ca, so `auth login --piv` reaches a server by the
 	// CA an operator added just as the WebAuthn path does (#250).
 	// LoginClientConfig ignores RootCAs when SPKIPin is set.
+	tlsCAFile, _ := cmd.Flags().GetString("tls-ca")
 	var roots *x509.CertPool
 	if serverEntry.CAFingerprint == "" {
-		tlsCAFile, _ := cmd.Flags().GetString("tls-ca")
 		pool, poolErr := authRootPool(tlsCAFile)
 		if poolErr != nil {
 			return poolErr
@@ -184,15 +192,24 @@ func runAuthLoginPIV(cmd *cobra.Command, logger *slog.Logger, serverURL string) 
 		return errors.Join(ErrAuthPIVLoginFailed, err)
 	}
 
-	if err := storeAuthTokenPair(ctx, logger, serverEntry.URL, tokenstoreSourcePIV, pair); err != nil {
+	server, err := identifyLoginServer(ctx, authClientConfig{
+		ServerURL: serverEntry.URL,
+		SPKIPin:   serverEntry.CAFingerprint,
+		TLSCAFile: tlsCAFile,
+	})
+	if err != nil {
 		return err
 	}
-
-	serverEntry.LastConnectedAt = time.Now().UTC()
-	if updateErr := registry.Update(ctx, serverEntry); updateErr != nil {
-		logger.Warn("failed to update server last connected time",
-			slog.String("url", serverEntry.URL),
-			slog.Any("error", updateErr))
+	if err := storeAuthTokenPair(ctx, logger, server, tokenstoreSourcePIV, pair); err != nil {
+		return err
+	}
+	if registered {
+		serverEntry.LastConnectedAt = time.Now().UTC()
+		if updateErr := registry.Update(ctx, serverEntry); updateErr != nil {
+			logger.Warn("failed to update server last connected time",
+				slog.String("url", serverEntry.URL),
+				slog.Any("error", updateErr))
+		}
 	}
 
 	_, _ = fmt.Fprintf(out, "Authenticated to %s with PIV slot %s. Token pair stored.\n", serverEntry.URL, slot)

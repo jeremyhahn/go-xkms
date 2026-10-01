@@ -133,14 +133,12 @@ func defaultShareClientFactory(serverURL string) (ShareService, error) {
 		return nil, ErrShareMissingServer
 	}
 
-	token, err := resolveXKMSdToken(serverURL)
+	endpoint, err := withXKMSdToken(XKMSdEndpoint{
+		URL:       serverURL,
+		TLSCAFile: resolveXKMSdTLSCAFile(shareCmd),
+	})
 	if err != nil {
 		return nil, err
-	}
-	endpoint := XKMSdEndpoint{
-		URL:       serverURL,
-		Token:     token,
-		TLSCAFile: resolveXKMSdTLSCAFile(shareCmd),
 	}
 	return endpoint.Client()
 }

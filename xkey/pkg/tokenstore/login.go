@@ -16,6 +16,7 @@ package tokenstore
 import (
 	"context"
 	"errors"
+	"strings"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -54,20 +55,61 @@ func (s *FileStore) Close() error {
 	return errors.Join(s.DAOStore.Close(), s.backend.Close())
 }
 
-// LoginToken returns the stored login token for serverURL, the bearer an
-// xkey server call presents. No login for the server is not an error: it
-// returns "". An expired login is a *LoginExpiredError, so the caller is
-// told to refresh or log in again instead of silently calling anonymously.
-func LoginToken(ctx context.Context, store TokenStore, serverURL string) (string, error) {
-	entry, err := store.Load(ctx, serverURL)
-	if errors.Is(err, ErrTokenNotFound) {
+// ServerRef identifies the server a call goes to, for picking its login.
+type ServerRef struct {
+	// ID is the server's TLS identity (see TokenEntry.ServerID), observed
+	// on a TLS transport. When set it alone selects the login.
+	ID string
+
+	// Name is the configured server name, used on a transport without TLS
+	// (a Unix socket) to select the login whose ServerName matches.
+	Name string
+}
+
+// LoginToken returns the stored login token for the server ref names, the
+// bearer an xkey server call presents. The login is selected by the
+// server's TLS identity, so a login made over one transport serves every
+// transport of that server; without TLS it is selected by the configured
+// server name, which must name exactly one server. Of several logins to
+// the same server the newest is used. No login is not an error: it returns
+// "". An expired login is a *LoginExpiredError, so the caller is told to
+// refresh or log in again instead of silently calling anonymously.
+func LoginToken(ctx context.Context, store TokenStore, ref ServerRef) (string, error) {
+	if ref.ID == "" && ref.Name == "" {
 		return "", nil
 	}
+	entries, err := store.List(ctx)
 	if err != nil {
 		return "", err
 	}
-	if entry.IsExpired() {
-		return "", &LoginExpiredError{ServerURL: entry.ServerURL}
+
+	var newest *TokenEntry
+	servers := map[string]bool{}
+	for _, e := range entries {
+		if !ref.matches(e) {
+			continue
+		}
+		servers[e.ServerID] = true
+		if newest == nil || e.IssuedAt.After(newest.IssuedAt) {
+			newest = e
+		}
 	}
-	return entry.Token, nil
+	if newest == nil {
+		return "", nil
+	}
+	if ref.ID == "" && len(servers) > 1 {
+		return "", &AmbiguousServerNameError{Name: ref.Name, Servers: len(servers)}
+	}
+	if newest.IsExpired() {
+		return "", &LoginExpiredError{ServerURL: newest.ServerURL}
+	}
+	return newest.Token, nil
+}
+
+// matches reports whether e is a login to the server r names.
+func (r ServerRef) matches(e *TokenEntry) bool {
+	if r.ID != "" {
+		return e.ServerID == r.ID
+	}
+	return e.ServerName != "" && strings.EqualFold(e.ServerName, r.Name)
 }

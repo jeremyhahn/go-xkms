@@ -248,17 +248,16 @@ func closeSSHClientQuiet(client sshsdk.Client) func() {
 // trust and client credential, on every transport.
 func sshClient(cmd *cobra.Command) (sshsdk.Client, func(), error) {
 	if server := strings.TrimSpace(commandFlagString(cmd, "server")); server != "" {
-		token, err := resolveXKMSdToken(server)
-		if err != nil {
-			return nil, nil, err
-		}
-		return sshClientForEndpoint(XKMSdEndpoint{
+		endpoint, err := withXKMSdToken(XKMSdEndpoint{
 			URL:         server,
-			Token:       token,
 			TLSCAFile:   resolveXKMSdTLSCAFile(cmd),
 			TLSCertFile: strings.TrimSpace(os.Getenv(envXKMSdTLSCert)),
 			TLSKeyFile:  strings.TrimSpace(os.Getenv(envXKMSdTLSKey)),
 		})
+		if err != nil {
+			return nil, nil, err
+		}
+		return sshClientForEndpoint(endpoint)
 	}
 
 	useServer, err := sshUseServer(cmd)

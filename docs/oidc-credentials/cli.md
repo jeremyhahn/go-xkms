@@ -93,8 +93,10 @@ With `--xkmsd-url`, `XKMSD_URL` or the config set, the existing commands act
 on server credentials; `--local` keeps any of them on the local backend.
 
 xkey authenticates to xkmsd with `XKMSD_TOKEN`, or, when it is unset, the
-login `xkey auth login` stored for that server URL (a session token, carried
-as a bearer token on every transport, the Unix socket included) and, for TLS transports, an mTLS
+login `xkey auth login` stored for that server, bound to the server's TLS
+identity so one login serves every transport (a session token, carried as a
+bearer token on every transport, the Unix socket included; see
+`xkey/docs/usage/quickstart.md`) and, for TLS transports, an mTLS
 client credential in `XKMSD_TLS_CERT` / `XKMSD_TLS_KEY`; `XKMSD_TLS_CA` names
 the CA bundle. The unified server authenticates gRPC and MCP calls by client
 certificate, so those transports need the credential.

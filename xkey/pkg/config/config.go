@@ -174,6 +174,10 @@ type XKMSDConfig struct {
 	TLSCAFile     string `yaml:"tls_ca_file" json:"tls_ca_file" mapstructure:"tls_ca_file"`
 	TLSCertFile   string `yaml:"tls_cert_file" json:"tls_cert_file" mapstructure:"tls_cert_file"`
 	TLSKeyFile    string `yaml:"tls_key_file" json:"tls_key_file" mapstructure:"tls_key_file"`
+	// ServerName names the server on a transport without TLS (a Unix
+	// socket), where no certificate identifies it: the stored login whose
+	// server name matches is presented there.
+	ServerName string `yaml:"server_name,omitempty" json:"server_name,omitempty" mapstructure:"server_name"`
 }
 
 // OIDCConfig holds the local OAuth2 callback listener shared by the OIDC and

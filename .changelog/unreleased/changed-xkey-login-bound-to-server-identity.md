@@ -1,0 +1,8 @@
+- **One `xkey auth login` serves every transport to that server.** A stored login is now bound to the server's identity, not to the URL it was made through.
+  - The identity is qrdb's SPKI SHA-256 thumbprint (`ComputeSPKIThumbprint`) of the TLS leaf certificate the server presents. It is read with the same trust as the call, from a TCP handshake for `https`/`grpcs`/`mcps` and a QUIC handshake for `quic`. New package: `xkey/pkg/serverid`.
+  - A login made over `https://` therefore serves `grpcs://`, `quic://` and `mcps://` to the same server on any port, while a different certificate on the same host is a different server and never receives it. A reissued server key needs a fresh login.
+  - On a Unix socket, the new `XKMSD_SERVER_NAME` / `xkmsd.server_name` selects the login by the host it was made to; a name matching two servers is refused (`AmbiguousServerNameError`).
+  - `TokenEntry` gains `ServerID` and `ServerName`. `tokenstore.LoginToken` takes a `ServerRef` and picks the newest login of that server.
+  - The CLI (endpoint, share, SSH) and the GUI connection resolve logins this way. The GUI reads the server name from `xkmsd.server_name`.
+  - `xkey auth login --piv` no longer requires a WebAuthn `auth register` first: an unregistered server is reached by its URL and verified by the auth root pool.
+  - The OIDC credentials integration suite logs in once with `xkey auth login --piv` (key on a SoftHSM token) over REST and uses that login on unix, REST, gRPC, QUIC and MCP. It also checks that a decoy server on the same host with another certificate receives no Authorization header.

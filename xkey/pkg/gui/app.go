@@ -1866,6 +1866,9 @@ func NewApp(cfg *GUIConfig) *App {
 	} else {
 		connSvc.SetTokenStore(loginTokens)
 	}
+	if ucfg, ucfgErr := config.Load(); ucfgErr == nil {
+		connSvc.SetServerName(ucfg.XKMSD.ServerName)
+	}
 
 	var explorerTokens tokenstore.TokenStore
 	if loginTokens != nil {

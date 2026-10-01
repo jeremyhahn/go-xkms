@@ -106,15 +106,20 @@ func TestRunAuthLoginPIV_NoCertificateInSlot(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPIVCertificateNotFound)
 }
 
-func TestRunAuthLoginPIV_ServerNotRegistered(t *testing.T) {
+// TestRunAuthLoginPIV_UnregisteredServerIsReachedByURL proves a PIV login
+// needs no WebAuthn registration: an unregistered server is reached by the
+// URL given (here an unbound port, so the login itself fails), rather than
+// refused at the registry lookup.
+func TestRunAuthLoginPIV_UnregisteredServerIsReachedByURL(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	withPIVStoragePath(t)
 	storeTestPIVCertificate(t, xkms.PIVSlot("9a"))
 
-	err := runAuthLoginPIV(authPIVCmd("9a", "software"), slog.Default(), "https://nonexistent.example.com:8443")
+	err := runAuthLoginPIV(authPIVCmd("9a", "software"), slog.Default(), "https://127.0.0.1:1")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrAuthServerLookupFailed)
+	assert.ErrorIs(t, err, ErrAuthPIVLoginFailed)
+	assert.NotErrorIs(t, err, ErrAuthServerLookupFailed)
 }
 
 // TestRunAuthLoginPIV_ConnectionRefused proves the flow reaches the actual

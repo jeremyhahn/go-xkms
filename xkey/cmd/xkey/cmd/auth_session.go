@@ -148,7 +148,7 @@ func newSessionLoginClient(entry *serverregistry.ServerEntry) (*xkms.LoginClient
 // refresh) in the token store, alongside best-effort JWT metadata read from
 // the access token. It is the token-pair counterpart to storeAuthToken,
 // which only ever stores a single opaque token.
-func storeAuthTokenPair(ctx context.Context, logger *slog.Logger, serverURL, source string, pair *xkms.TokenPair) error {
+func storeAuthTokenPair(ctx context.Context, logger *slog.Logger, server loginServer, source string, pair *xkms.TokenPair) error {
 	tokens, cleanup, err := openTokenStore(logger)
 	if err != nil {
 		return err
@@ -156,7 +156,9 @@ func storeAuthTokenPair(ctx context.Context, logger *slog.Logger, serverURL, sou
 	defer cleanup()
 
 	entry := &tokenstore.TokenEntry{
-		ServerURL:    serverURL,
+		ServerURL:    server.URL,
+		ServerID:     server.Ref.ID,
+		ServerName:   server.Ref.Name,
 		TokenType:    tokenstore.TypeBearer,
 		Source:       source,
 		Token:        pair.AccessToken,
@@ -221,7 +223,11 @@ func runAuthRefresh(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrAuthRefreshFailed, err)
 	}
 
-	if err := storeAuthTokenPair(ctx, logger, serverURL, entry.Source, pair); err != nil {
+	server, err := identifyLoginServer(ctx, authClientConfig{ServerURL: serverURL, SPKIPin: serverEntry.CAFingerprint})
+	if err != nil {
+		return err
+	}
+	if err := storeAuthTokenPair(ctx, logger, server, entry.Source, pair); err != nil {
 		return errors.Join(ErrAuthRefreshSaveFailed, err)
 	}
 

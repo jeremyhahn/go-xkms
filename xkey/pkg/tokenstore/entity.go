@@ -28,6 +28,8 @@ type TokenEntity struct {
 	IssuedAt     time.Time `json:"issued_at"`
 	Issuer       string    `json:"issuer"`
 	Subject      string    `json:"subject"`
+	ServerID     string    `json:"server_id,omitempty"`
+	ServerName   string    `json:"server_name,omitempty"`
 }
 
 // EntityID returns the entity's unique identifier.
@@ -48,6 +50,8 @@ func (e *TokenEntity) ToTokenEntry() *TokenEntry {
 		IssuedAt:     e.IssuedAt,
 		Issuer:       e.Issuer,
 		Subject:      e.Subject,
+		ServerID:     e.ServerID,
+		ServerName:   e.ServerName,
 	}
 }
 
@@ -63,5 +67,7 @@ func TokenEntityFromEntry(entry *TokenEntry) *TokenEntity {
 		IssuedAt:     entry.IssuedAt,
 		Issuer:       entry.Issuer,
 		Subject:      entry.Subject,
+		ServerID:     entry.ServerID,
+		ServerName:   entry.ServerName,
 	}
 }

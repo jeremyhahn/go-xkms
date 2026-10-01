@@ -25,8 +25,11 @@ import (
 	"io/fs"
 	"log/slog"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,6 +45,8 @@ import (
 	resttransport "github.com/jeremyhahn/go-xkms/sdk/go/transport/rest"
 	unixtransport "github.com/jeremyhahn/go-xkms/sdk/go/transport/unix"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverid"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverid/serveridtest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
 
@@ -712,40 +717,108 @@ func storeLogin(t *testing.T, entry *tokenstore.TokenEntry) {
 	store, cleanup, err := openTokenStore(slog.Default())
 	require.NoError(t, err)
 	defer cleanup()
+	if entry.IssuedAt.IsZero() {
+		entry.IssuedAt = time.Now()
+	}
 	require.NoError(t, store.Save(context.Background(), entry))
 }
 
-func TestResolveXKMSdEndpoint_UsesStoredLogin(t *testing.T) {
+// loginTarget is an HTTPS server standing in for xkmsd: it answers every
+// request with body and records each Authorization header.
+type loginTarget struct {
+	srv    *httptest.Server
+	caFile string
+	mu     sync.Mutex
+	seen   []string
+}
+
+// newLoginTarget starts a loginTarget with its own certificate, trusted
+// through a CA file.
+func newLoginTarget(t *testing.T, body string) *loginTarget {
+	t.Helper()
+	lt := &loginTarget{}
+	lt.srv, lt.caFile = serveridtest.NewTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lt.mu.Lock()
+		lt.seen = append(lt.seen, r.Header.Get("Authorization"))
+		lt.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	return lt
+}
+
+// id is the target's server identity.
+func (lt *loginTarget) id() string { return serverid.Of(lt.srv.Certificate()) }
+
+// authorizations returns the Authorization headers received so far.
+func (lt *loginTarget) authorizations() []string {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+	return append([]string(nil), lt.seen...)
+}
+
+func TestResolveXKMSdEndpoint_UsesStoredLoginOfTheServerIdentity(t *testing.T) {
 	isolateXKMSdEndpoint(t)
-	xkmsdURL = "https://xkmsd.example.com:8443"
+	target := newLoginTarget(t, "{}")
+	t.Setenv(envXKMSdTLSCA, target.caFile)
+	// The login was made through another URL of the same server: the
+	// identity, not the URL, selects it.
 	storeLogin(t, &tokenstore.TokenEntry{
-		ServerURL: "https://xkmsd.example.com:8443", Token: "stored.jwt", ExpiresAt: time.Now().Add(time.Hour),
+		ServerURL: "https://login.example:1", ServerID: target.id(), ServerName: "login.example",
+		Token: "stored.jwt", ExpiresAt: time.Now().Add(time.Hour),
 	})
+	xkmsdURL = target.srv.URL
 
 	endpoint, err := resolveXKMSdEndpoint(nil)
 	require.NoError(t, err)
 	assert.Equal(t, "stored.jwt", endpoint.Token)
 }
 
+func TestResolveXKMSdEndpoint_SameHostOtherCertificateGetsNoLogin(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	loggedIn := newLoginTarget(t, "{}")
+	other := newLoginTarget(t, "{}")
+	storeLogin(t, &tokenstore.TokenEntry{
+		ServerURL: loggedIn.srv.URL, ServerID: loggedIn.id(), ServerName: "127.0.0.1",
+		Token: "stored.jwt", ExpiresAt: time.Now().Add(time.Hour),
+	})
+	t.Setenv(envXKMSdTLSCA, other.caFile)
+	xkmsdURL = other.srv.URL
+
+	endpoint, err := resolveXKMSdEndpoint(nil)
+	require.NoError(t, err)
+	assert.Empty(t, endpoint.Token, "another certificate on the same host is another server")
+}
+
 func TestResolveXKMSdEndpoint_ExplicitTokenBeatsStoredLogin(t *testing.T) {
 	isolateXKMSdEndpoint(t)
-	xkmsdURL = "https://xkmsd.example.com:8443"
-	storeLogin(t, &tokenstore.TokenEntry{ServerURL: xkmsdURL, Token: "stored.jwt"})
+	target := newLoginTarget(t, "{}")
+	t.Setenv(envXKMSdTLSCA, target.caFile)
+	storeLogin(t, &tokenstore.TokenEntry{ServerURL: target.srv.URL, ServerID: target.id(), Token: "stored.jwt"})
 	t.Setenv(envXKMSdToken, "explicit.jwt")
+	xkmsdURL = target.srv.URL
 
 	endpoint, err := resolveXKMSdEndpoint(nil)
 	require.NoError(t, err)
 	assert.Equal(t, "explicit.jwt", endpoint.Token)
 }
 
-func TestResolveXKMSdEndpoint_NoLoginNoToken(t *testing.T) {
+func TestResolveXKMSdEndpoint_UnixUsesTheConfiguredServerName(t *testing.T) {
 	isolateXKMSdEndpoint(t)
-	xkmsdURL = "https://xkmsd.example.com:8443"
-	storeLogin(t, &tokenstore.TokenEntry{ServerURL: "https://other.example.com:8443", Token: "other.jwt"})
+	storeLogin(t, &tokenstore.TokenEntry{
+		ServerURL: "https://xkmsd.local:8443", ServerID: "id-local", ServerName: "xkmsd.local",
+		Token: "local.jwt", ExpiresAt: time.Now().Add(time.Hour),
+	})
+	xkmsdURL = "unix:///run/xkms.sock"
 
 	endpoint, err := resolveXKMSdEndpoint(nil)
 	require.NoError(t, err)
-	assert.Empty(t, endpoint.Token, "a login for another server is never presented")
+	assert.Empty(t, endpoint.Token, "without a configured server name a socket gets no login")
+
+	t.Setenv(envXKMSdServerName, "xkmsd.local")
+	endpoint, err = resolveXKMSdEndpoint(nil)
+	require.NoError(t, err)
+	assert.Equal(t, "local.jwt", endpoint.Token)
 }
 
 func TestResolveXKMSdEndpoint_NoStoreIsNotCreated(t *testing.T) {
@@ -759,12 +832,23 @@ func TestResolveXKMSdEndpoint_NoStoreIsNotCreated(t *testing.T) {
 	assert.True(t, errors.Is(statErr, fs.ErrNotExist), "resolving a token must not create the login store")
 }
 
+func TestResolveXKMSdEndpoint_UnreachableServerFails(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	storeLogin(t, &tokenstore.TokenEntry{ServerURL: "https://x:1", ServerID: "id", Token: "t"})
+	xkmsdURL = "https://127.0.0.1:1"
+
+	_, err := resolveXKMSdEndpoint(nil)
+	assert.ErrorIs(t, err, ErrXKMSdConnectFailed, "an unidentifiable server is an error, not an anonymous call")
+}
+
 func TestResolveXKMSdEndpoint_ExpiredLoginFails(t *testing.T) {
 	isolateXKMSdEndpoint(t)
-	xkmsdURL = "https://xkmsd.example.com:8443"
+	target := newLoginTarget(t, "{}")
+	t.Setenv(envXKMSdTLSCA, target.caFile)
 	storeLogin(t, &tokenstore.TokenEntry{
-		ServerURL: xkmsdURL, Token: "old.jwt", ExpiresAt: time.Now().Add(-time.Minute),
+		ServerURL: target.srv.URL, ServerID: target.id(), Token: "old.jwt", ExpiresAt: time.Now().Add(-time.Minute),
 	})
+	xkmsdURL = target.srv.URL
 
 	_, err := resolveXKMSdEndpoint(nil)
 	require.Error(t, err)
@@ -774,10 +858,12 @@ func TestResolveXKMSdEndpoint_ExpiredLoginFails(t *testing.T) {
 
 func TestDefaultShareClientFactory_UsesStoredLogin(t *testing.T) {
 	isolateXKMSdEndpoint(t)
+	target := newLoginTarget(t, "{}")
+	t.Setenv(envXKMSdTLSCA, target.caFile)
 	storeLogin(t, &tokenstore.TokenEntry{
-		ServerURL: "https://share.example.com:8443", Token: "old.jwt", ExpiresAt: time.Now().Add(-time.Minute),
+		ServerURL: target.srv.URL, ServerID: target.id(), Token: "old.jwt", ExpiresAt: time.Now().Add(-time.Minute),
 	})
 
-	_, err := defaultShareClientFactory("https://share.example.com:8443")
+	_, err := defaultShareClientFactory(target.srv.URL)
 	assert.ErrorIs(t, err, tokenstore.ErrTokenExpired, "the share client resolves the same stored login")
 }

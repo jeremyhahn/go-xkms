@@ -54,25 +54,73 @@ func TestOpen_UnusableDirFails(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestLoginToken(t *testing.T) {
+// saveLogin stores a login the way `xkey auth login` does.
+func saveLogin(t *testing.T, store TokenStore, url, id, name, token string, expires time.Time) {
+	t.Helper()
+	require.NoError(t, store.Save(context.Background(), &TokenEntry{
+		ServerURL: url, ServerID: id, ServerName: name, Token: token,
+		IssuedAt: time.Now(), ExpiresAt: expires,
+	}))
+}
+
+func TestLoginToken_ByServerID(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryTokenStore()
-	require.NoError(t, store.Save(ctx, &TokenEntry{
-		ServerURL: "https://live.example", Token: "live", ExpiresAt: time.Now().Add(time.Hour),
-	}))
-	require.NoError(t, store.Save(ctx, &TokenEntry{
-		ServerURL: "https://old.example", Token: "old", ExpiresAt: time.Now().Add(-time.Minute),
-	}))
+	saveLogin(t, store, "https://xkms.example:8443", "id-a", "xkms.example", "a.jwt", time.Now().Add(time.Hour))
+	saveLogin(t, store, "https://xkms.example:9443", "id-b", "xkms.example", "b.jwt", time.Now().Add(time.Hour))
 
-	token, err := LoginToken(ctx, store, "HTTPS://live.example/")
+	token, err := LoginToken(ctx, store, ServerRef{ID: "id-a"})
 	require.NoError(t, err)
-	assert.Equal(t, "live", token, "the lookup normalizes the URL as Save does")
+	assert.Equal(t, "a.jwt", token, "the login made through any URL serves its server's identity")
 
-	token, err = LoginToken(ctx, store, "https://never.example")
-	require.NoError(t, err, "no login for the server is not an error")
-	assert.Empty(t, token)
+	token, err = LoginToken(ctx, store, ServerRef{ID: "id-unknown", Name: "xkms.example"})
+	require.NoError(t, err)
+	assert.Empty(t, token, "a server with another certificate on the same host gets no login")
+}
 
-	_, err = LoginToken(ctx, store, "https://old.example")
+func TestLoginToken_NewestLoginOfTheServerWins(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryTokenStore()
+	require.NoError(t, store.Save(ctx, &TokenEntry{ServerURL: "https://a:1", ServerID: "id", Token: "old", IssuedAt: time.Now().Add(-time.Hour)}))
+	require.NoError(t, store.Save(ctx, &TokenEntry{ServerURL: "https://a:2", ServerID: "id", Token: "new", IssuedAt: time.Now()}))
+
+	token, err := LoginToken(ctx, store, ServerRef{ID: "id"})
+	require.NoError(t, err)
+	assert.Equal(t, "new", token)
+}
+
+func TestLoginToken_ByServerName(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryTokenStore()
+	saveLogin(t, store, "https://Local.Example:8443", "id-a", "local.example", "a.jwt", time.Now().Add(time.Hour))
+
+	token, err := LoginToken(ctx, store, ServerRef{Name: "LOCAL.example"})
+	require.NoError(t, err)
+	assert.Equal(t, "a.jwt", token)
+
+	token, err = LoginToken(ctx, store, ServerRef{})
+	require.NoError(t, err)
+	assert.Empty(t, token, "no identity and no name selects nothing")
+}
+
+func TestLoginToken_AmbiguousServerNameRefused(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryTokenStore()
+	saveLogin(t, store, "https://h:1", "id-a", "h", "a", time.Now().Add(time.Hour))
+	saveLogin(t, store, "https://h:2", "id-b", "h", "b", time.Now().Add(time.Hour))
+
+	_, err := LoginToken(ctx, store, ServerRef{Name: "h"})
+	var ambiguous *AmbiguousServerNameError
+	require.True(t, errors.As(err, &ambiguous), "two servers under one name never guess: %v", err)
+	assert.Equal(t, "h", ambiguous.Name)
+	assert.Equal(t, 2, ambiguous.Servers)
+}
+
+func TestLoginToken_ExpiredLoginFails(t *testing.T) {
+	store := NewMemoryTokenStore()
+	saveLogin(t, store, "https://old.example", "id-old", "old.example", "old", time.Now().Add(-time.Minute))
+
+	_, err := LoginToken(context.Background(), store, ServerRef{ID: "id-old"})
 	var expired *LoginExpiredError
 	require.True(t, errors.As(err, &expired), "an expired login fails loudly: %v", err)
 	assert.Equal(t, "https://old.example", expired.ServerURL)
@@ -82,6 +130,6 @@ func TestLoginToken(t *testing.T) {
 func TestLoginToken_StoreFailureSurfaces(t *testing.T) {
 	store := NewMemoryTokenStore()
 	require.NoError(t, store.Close())
-	_, err := LoginToken(context.Background(), store, "https://x.example")
+	_, err := LoginToken(context.Background(), store, ServerRef{ID: "x"})
 	assert.ErrorIs(t, err, ErrStoreClosed)
 }

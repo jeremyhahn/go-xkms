@@ -16,12 +16,14 @@ package services
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverid"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -64,6 +66,10 @@ type ConnectionService struct {
 	// connection presents the login stored for its server. Nil presents
 	// none.
 	tokens tokenstore.TokenStore
+
+	// serverName names the server reached without TLS, selecting its
+	// stored login there (see SetServerName).
+	serverName string
 
 	// endpoint is the connected server's address and credentials, for the
 	// service APIs dialed on their own (SSH). Nil when disconnected.
@@ -127,9 +133,12 @@ func connectionURL(protocol, address string, tlsEnabled bool) string {
 	return scheme + "://" + address
 }
 
-// loginToken returns the stored login token for the connection's server,
-// or "" when no store is set or no login is stored.
-func (s *ConnectionService) loginToken(protocol, address string, tlsEnabled bool) (string, error) {
+// loginToken returns the stored login for the endpoint's server, or ""
+// when no store is set or no login is stored. The login is bound to the
+// server's TLS identity, read from a handshake verified by the
+// connection's own trust, so a login made over any transport serves this
+// one; without TLS the configured server name selects it.
+func (s *ConnectionService) loginToken(ep *serverEndpoint) (string, error) {
 	if s.tokens == nil {
 		return "", nil
 	}
@@ -137,14 +146,29 @@ func (s *ConnectionService) loginToken(protocol, address string, tlsEnabled bool
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return tokenstore.LoginToken(ctx, s.tokens, connectionURL(protocol, address, tlsEnabled))
+	ref := tokenstore.ServerRef{Name: s.serverName}
+	id, err := serverid.Probe(ctx, ep.url, ep.tlsConfig)
+	switch {
+	case err == nil:
+		ref = tokenstore.ServerRef{ID: id}
+	case !errors.Is(err, serverid.ErrNoTLS):
+		return "", err
+	}
+	return tokenstore.LoginToken(ctx, s.tokens, ref)
 }
 
-// newServerEndpoint records a connection's URL and credentials: the same
-// trust the SDK connection applies (the SPKI pin when given, else the CA
-// file or the system roots) and its login token.
-func newServerEndpoint(protocol, address string, tlsEnabled bool, caFile, spkiPin, token string) (*serverEndpoint, error) {
-	ep := &serverEndpoint{url: connectionURL(protocol, address, tlsEnabled), token: token}
+// SetServerName sets the name of the server reached without TLS (a Unix
+// socket), which selects its stored login. It is called once at startup
+// from the xkmsd.server_name setting.
+func (s *ConnectionService) SetServerName(name string) {
+	s.serverName = name
+}
+
+// newServerEndpoint records a connection's URL and trust: the same trust
+// the SDK connection applies (the SPKI pin when given, else the CA file or
+// the system roots). Connect adds the login token.
+func newServerEndpoint(protocol, address string, tlsEnabled bool, caFile, spkiPin string) (*serverEndpoint, error) {
+	ep := &serverEndpoint{url: connectionURL(protocol, address, tlsEnabled)}
 	switch {
 	case !tlsEnabled:
 	case spkiPin != "":
@@ -224,14 +248,15 @@ func (s *ConnectionService) Connect(
 		SPKIPin:  spkiPin,
 	})
 
-	token, err := s.loginToken(protocol, address, tlsEnabled)
-	if err != nil {
-		return s.setErrorState(protocol, address, tlsEnabled, "login_token", err), err
-	}
-	endpoint, err := newServerEndpoint(protocol, address, tlsEnabled, caFile, spkiPin, token)
+	endpoint, err := newServerEndpoint(protocol, address, tlsEnabled, caFile, spkiPin)
 	if err != nil {
 		return s.setErrorState(protocol, address, tlsEnabled, "tls_config", err), err
 	}
+	token, err := s.loginToken(endpoint)
+	if err != nil {
+		return s.setErrorState(protocol, address, tlsEnabled, "login_token", err), err
+	}
+	endpoint.token = token
 
 	var client xkms.Client
 

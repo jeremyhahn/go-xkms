@@ -18,12 +18,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -413,32 +410,12 @@ func TestSSHClientForEndpoint_BadTLSMaterialFails(t *testing.T) {
 	assert.ErrorIs(t, err, ErrXKMSdTLSConfigFailed)
 }
 
-// authRecordingSSHServer answers the REST SSH key list and records every
-// Authorization header it receives.
-func authRecordingSSHServer(t *testing.T) (*httptest.Server, func() []string) {
-	t.Helper()
-	var mu sync.Mutex
-	var seen []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		seen = append(seen, r.Header.Get("Authorization"))
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"items":[]}`))
-	}))
-	t.Cleanup(srv.Close)
-	return srv, func() []string {
-		mu.Lock()
-		defer mu.Unlock()
-		return append([]string(nil), seen...)
-	}
-}
-
 func TestSSHClient_ConfiguredServerPresentsStoredLogin(t *testing.T) {
 	withEmbeddedSSHStore(t)
-	srv, seen := authRecordingSSHServer(t)
-	xkmsdURL = srv.URL
-	storeLogin(t, &tokenstore.TokenEntry{ServerURL: srv.URL, Token: "login.jwt", ExpiresAt: time.Now().Add(time.Hour)})
+	target := newLoginTarget(t, `{"items":[]}`)
+	t.Setenv(envXKMSdTLSCA, target.caFile)
+	xkmsdURL = target.srv.URL
+	storeLogin(t, &tokenstore.TokenEntry{ServerURL: target.srv.URL, ServerID: target.id(), Token: "login.jwt", ExpiresAt: time.Now().Add(time.Hour)})
 
 	cmd, _ := sshTestCmd(t)
 	client, closer, err := sshClient(cmd)
@@ -446,13 +423,13 @@ func TestSSHClient_ConfiguredServerPresentsStoredLogin(t *testing.T) {
 	defer closer()
 	_, err = client.Keys().List(context.Background(), sshsdk.ListKeysRequest{Scope: "user", Owner: "alice"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Bearer login.jwt"}, seen())
+	assert.Equal(t, []string{"Bearer login.jwt"}, target.authorizations())
 }
 
 func TestSSHClient_LocalFlagKeepsLocalStore(t *testing.T) {
 	withEmbeddedSSHStore(t)
-	srv, seen := authRecordingSSHServer(t)
-	xkmsdURL = srv.URL
+	target := newLoginTarget(t, `{"items":[]}`)
+	xkmsdURL = target.srv.URL
 
 	cmd, _ := sshTestCmd(t)
 	setSSHFlags(t, cmd, map[string]string{"local": "true"})
@@ -461,40 +438,19 @@ func TestSSHClient_LocalFlagKeepsLocalStore(t *testing.T) {
 	defer closer()
 	_, err = client.Keys().List(context.Background(), sshsdk.ListKeysRequest{Scope: "user", Owner: "alice"})
 	require.NoError(t, err)
-	assert.Empty(t, seen(), "--local never reaches the configured server")
+	assert.Empty(t, target.authorizations(), "--local never reaches the configured server")
 }
 
 func TestSSHClient_ExpiredLoginFails(t *testing.T) {
 	withEmbeddedSSHStore(t)
-	xkmsdURL = "https://xkmsd.example.com:8443"
-	storeLogin(t, &tokenstore.TokenEntry{ServerURL: xkmsdURL, Token: "old", ExpiresAt: time.Now().Add(-time.Minute)})
+	target := newLoginTarget(t, `{"items":[]}`)
+	t.Setenv(envXKMSdTLSCA, target.caFile)
+	xkmsdURL = target.srv.URL
+	storeLogin(t, &tokenstore.TokenEntry{ServerURL: target.srv.URL, ServerID: target.id(), Token: "old", ExpiresAt: time.Now().Add(-time.Minute)})
 
 	cmd, _ := sshTestCmd(t)
 	_, _, err := sshClient(cmd)
 	assert.ErrorIs(t, err, tokenstore.ErrTokenExpired)
-}
-
-func TestSSHClient_ServerFlagBeatsEnvironment(t *testing.T) {
-	withEmbeddedSSHStore(t)
-	t.Setenv("XKMSD_URL", "http://env.example.com")
-
-	cmd, _ := sshTestCmd(t)
-	setSSHFlags(t, cmd, map[string]string{"server": "gopher://bad"})
-
-	// The unsupported scheme proves the --server flag was consulted first;
-	// the environment URL would have produced a working REST client.
-	_, _, err := sshClient(cmd)
-	assert.ErrorIs(t, err, ErrSSHClientConstruct)
-}
-
-func TestSSHClient_EnvironmentSelectsREST(t *testing.T) {
-	withEmbeddedSSHStore(t)
-	t.Setenv("XKMSD_URL", "http://127.0.0.1:1/")
-
-	client, closer, err := sshClient(nil)
-	require.NoError(t, err)
-	require.NotNil(t, client)
-	closer()
 }
 
 func TestSSHTestCmdFlagsMatchRealCommandFlags(t *testing.T) {

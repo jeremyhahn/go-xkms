@@ -236,9 +236,25 @@ resolves in this order (`resolveXKMSdEndpoint`):
 4. the `xkmsd.address` key of the unified xkey config
 
 The auth token is `XKMSD_TOKEN` when set; otherwise xkey presents the login
-`xkey auth login --server <url>` stored for that same server URL (an expired
-login fails with the `xkey auth refresh` command to run). The CA bundle comes
-from `--tls-ca`, then `XKMSD_TLS_CA`, then `xkmsd.tls_ca_file`.
+`xkey auth login` stored for that server (an expired login fails with the
+`xkey auth refresh` command to run). The CA bundle comes from `--tls-ca`, then
+`XKMSD_TLS_CA`, then `xkmsd.tls_ca_file`.
+
+A stored login is bound to the server's identity, not to the URL it was made
+through: the SPKI SHA-256 thumbprint of the TLS certificate the server
+presents, read from a handshake verified by the same trust as the call. The
+server presents one certificate on REST, gRPC, QUIC and MCP, so a login made
+over `https://` serves `grpcs://`, `quic://` and `mcps://` to that server too,
+whatever the port. A different certificate is a different server, even on the
+same host, and never receives the login. When the server's key changes (a
+reissued certificate), log in again. A Unix socket carries no certificate:
+there, `XKMSD_SERVER_NAME` (or `xkmsd.server_name`) names the server, and the
+login whose host matches is used; a name matching logins to two different
+servers is refused rather than guessed.
+
+`xkey auth login --piv` needs no prior `xkey auth register`: an unregistered
+server is reached by the `--server` URL and verified by the xKey trust store,
+the system roots and `--tls-ca`.
 
 **2. The commands that use server mode** are `xkey ca`, `xkey password`,
 `xkey platform-store` and `xkey agent`. `xkey agent start` *requires* it —

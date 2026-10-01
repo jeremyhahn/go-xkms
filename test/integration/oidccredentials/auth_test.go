@@ -102,19 +102,13 @@ func authBootstrap(dataDir, restURL string) error {
 		}},
 	}
 
+	env.admin = client
+
 	leaf, err := x509.ParseCertificate(admin.Certificate[0])
 	if err != nil {
 		return err
 	}
-	body, err := json.Marshal(map[string]string{"thumbprint": qrdbsdk.ComputeSPKIThumbprint(leaf)})
-	if err != nil {
-		return err
-	}
-	resp, err := client.Post(restURL+"/api/v1/users/admin/cert-bindings", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	if err := drain(resp, http.StatusOK); err != nil {
+	if err := bindAdminCert(client, restURL, leaf); err != nil {
 		return err
 	}
 
@@ -133,6 +127,21 @@ func authBootstrap(dataDir, restURL string) error {
 	}
 	env.token = pair.AccessToken
 	return nil
+}
+
+// bindAdminCert binds cert's SPKI thumbprint to the admin user, so a PIV
+// login with it authenticates as the admin. client presents the admin
+// credential.
+func bindAdminCert(client *http.Client, restURL string, cert *x509.Certificate) error {
+	body, err := json.Marshal(map[string]string{"thumbprint": qrdbsdk.ComputeSPKIThumbprint(cert)})
+	if err != nil {
+		return err
+	}
+	resp, err := client.Post(restURL+"/api/v1/users/admin/cert-bindings", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	return drain(resp, http.StatusOK)
 }
 
 // findAdminCredential locates admin-cert.pem and admin-key.pem under dir.

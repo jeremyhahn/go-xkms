@@ -51,6 +51,18 @@ type TokenEntry struct {
 	IssuedAt     time.Time `json:"issued_at"`
 	Issuer       string    `json:"issuer"`  // JWT iss claim
 	Subject      string    `json:"subject"` // JWT sub claim
+
+	// ServerID is the identity of the server the login authenticated to:
+	// qrdb's SPKI SHA-256 thumbprint of the TLS leaf certificate it
+	// presented. A server presents that certificate on every TLS transport,
+	// so one login serves REST, gRPC, QUIC and MCP alike; a different
+	// certificate is a different server, whatever its host.
+	ServerID string `json:"server_id,omitempty"`
+
+	// ServerName is the host name the login reached. It selects the login
+	// on a transport without TLS (a Unix socket), where no certificate
+	// identifies the server and the configured xkmsd server name does.
+	ServerName string `json:"server_name,omitempty"`
 }
 
 // HasRefreshToken reports whether the entry carries a refresh token, i.e.

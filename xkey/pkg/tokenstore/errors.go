@@ -56,6 +56,19 @@ func (e *OpenError) Error() string {
 // Unwrap returns the underlying cause.
 func (e *OpenError) Unwrap() error { return e.Cause }
 
+// AmbiguousServerNameError is returned when a server name selects logins to
+// more than one server (different TLS identities), so no login is chosen.
+type AmbiguousServerNameError struct {
+	Name    string
+	Servers int
+}
+
+// Error implements the error interface.
+func (e *AmbiguousServerNameError) Error() string {
+	return fmt.Sprintf("tokenstore: server name %q matches logins to %d different servers; log out of the stale ones or set XKMSD_TOKEN",
+		e.Name, e.Servers)
+}
+
 // LoginExpiredError is returned when the stored login for a server has
 // expired. It matches ErrTokenExpired.
 type LoginExpiredError struct {

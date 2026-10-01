@@ -30,6 +30,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverid"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
@@ -58,6 +59,10 @@ const (
 	// bearer token alone reaches only REST and QUIC.
 	envXKMSdTLSCert = "XKMSD_TLS_CERT"
 	envXKMSdTLSKey  = "XKMSD_TLS_KEY"
+
+	// envXKMSdServerName names the server reached without TLS (a Unix
+	// socket), selecting the stored login whose server name matches.
+	envXKMSdServerName = "XKMSD_SERVER_NAME"
 )
 
 // cfgKeyXKMSdURL is the viper key bound to the global --xkmsd-url flag.
@@ -186,26 +191,34 @@ func resolveXKMSdEndpoint(cmd *cobra.Command) (XKMSdEndpoint, error) {
 		return XKMSdEndpoint{}, ErrXKMSdURLRequired
 	}
 
-	token, err := resolveXKMSdToken(serverURL)
-	if err != nil {
-		return XKMSdEndpoint{}, err
-	}
-
-	return XKMSdEndpoint{
+	return withXKMSdToken(XKMSdEndpoint{
 		URL:         serverURL,
-		Token:       token,
 		TLSCAFile:   resolveXKMSdTLSCAFile(cmd),
 		TLSCertFile: strings.TrimSpace(os.Getenv(envXKMSdTLSCert)),
 		TLSKeyFile:  strings.TrimSpace(os.Getenv(envXKMSdTLSKey)),
-	}, nil
+	})
 }
 
-// resolveXKMSdToken returns the bearer token presented to serverURL: the
-// explicit XKMSD_TOKEN when set, otherwise the login `xkey auth login
-// --server <serverURL>` stored for that server. No stored login is no token
-// (the call relies on mTLS or the Unix socket's peer credentials); an
-// expired one is an error naming the refresh command.
-func resolveXKMSdToken(serverURL string) (string, error) {
+// withXKMSdToken sets the endpoint's bearer token (see resolveXKMSdToken).
+func withXKMSdToken(endpoint XKMSdEndpoint) (XKMSdEndpoint, error) {
+	token, err := resolveXKMSdToken(endpoint)
+	if err != nil {
+		return XKMSdEndpoint{}, err
+	}
+	endpoint.Token = token
+	return endpoint, nil
+}
+
+// resolveXKMSdToken returns the bearer token presented to the endpoint's
+// server: the explicit XKMSD_TOKEN when set, otherwise the `xkey auth
+// login` stored for that server. A login is bound to the server's TLS
+// identity, read from a handshake verified by the endpoint's own trust, so
+// one login serves every transport of that server and never a different
+// server on the same host. On a transport without TLS the configured server
+// name (XKMSD_SERVER_NAME, xkmsd.server_name) selects the login. No stored
+// login is no token (the call relies on mTLS or the Unix socket's peer
+// credentials); an expired one is an error naming the refresh command.
+func resolveXKMSdToken(endpoint XKMSdEndpoint) (string, error) {
 	if token := strings.TrimSpace(os.Getenv(envXKMSdToken)); token != "" {
 		return token, nil
 	}
@@ -227,16 +240,66 @@ func resolveXKMSdToken(serverURL string) (string, error) {
 	if err != nil {
 		return "", &SentinelCauseError{Sentinel: ErrAuthTokenLoadFailed, Cause: err}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), xkmsdConnectTimeout)
-	defer cancel()
-	token, err := tokenstore.LoginToken(ctx, store, serverURL)
+	token, err := storedLoginToken(store, endpoint)
 	if closeErr := store.Close(); closeErr != nil {
 		err = errors.Join(err, closeErr)
 	}
+	return token, err
+}
+
+// storedLoginToken picks the endpoint's login from store. An empty store
+// holds no login, so the server is not even identified.
+func storedLoginToken(store tokenstore.TokenStore, endpoint XKMSdEndpoint) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), xkmsdConnectTimeout)
+	defer cancel()
+	logins, err := store.List(ctx)
+	if err != nil {
+		return "", &SentinelCauseError{Sentinel: ErrAuthTokenLoadFailed, Cause: err}
+	}
+	if len(logins) == 0 {
+		return "", nil
+	}
+	ref, err := xkmsdServerRef(ctx, endpoint)
+	if err != nil {
+		return "", err
+	}
+	token, err := tokenstore.LoginToken(ctx, store, ref)
 	if err != nil {
 		return "", &SentinelCauseError{Sentinel: ErrAuthTokenLoadFailed, Cause: err}
 	}
 	return token, nil
+}
+
+// probeServerID reads a server's TLS identity. Tests that stand in a fake
+// server replace it.
+var probeServerID = serverid.Probe
+
+// xkmsdServerRef identifies the endpoint's server for picking its login:
+// by the TLS identity it presents, or, on a transport without TLS, by the
+// configured server name.
+func xkmsdServerRef(ctx context.Context, endpoint XKMSdEndpoint) (tokenstore.ServerRef, error) {
+	tlsConfig, err := endpoint.TLSConfig()
+	if err != nil {
+		return tokenstore.ServerRef{}, err
+	}
+	id, err := probeServerID(ctx, endpoint.URL, tlsConfig)
+	if errors.Is(err, serverid.ErrNoTLS) {
+		return tokenstore.ServerRef{Name: resolveXKMSdServerName()}, nil
+	}
+	if err != nil {
+		return tokenstore.ServerRef{}, &SentinelCauseError{Sentinel: ErrXKMSdConnectFailed, Cause: err}
+	}
+	return tokenstore.ServerRef{ID: id}, nil
+}
+
+// resolveXKMSdServerName returns the configured name of the server reached
+// without TLS: XKMSD_SERVER_NAME, then the config's xkmsd.server_name.
+func resolveXKMSdServerName() string {
+	sources := []string{os.Getenv(envXKMSdServerName)}
+	if cfg := GetConfig(); cfg != nil {
+		sources = append(sources, cfg.XKMSD.ServerName)
+	}
+	return strings.TrimSpace(firstNonEmpty(sources...))
 }
 
 // resolveXKMSdURL applies the URL precedence chain. It returns an empty

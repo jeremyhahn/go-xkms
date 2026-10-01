@@ -19,7 +19,8 @@ command server-backed, unless `--local` is given; with no xkmsd configured
 the command uses the local embedded store (see
 [engineering.md](engineering.md#configuration)). A server call presents
 `XKMSD_TOKEN`, or else the login `xkey auth login` stored for that server
-URL, on every transport, plus the `XKMSD_TLS_CERT` / `XKMSD_TLS_KEY` client
+(bound to its TLS identity, so one login serves every transport), on every
+transport, plus the `XKMSD_TLS_CERT` / `XKMSD_TLS_KEY` client
 credential on TLS transports.
 
 The GUI follows the server connection: while xKey is connected to an

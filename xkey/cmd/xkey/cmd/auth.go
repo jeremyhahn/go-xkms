@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/mail"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -695,7 +696,11 @@ func runAuthRegister(cmd *cobra.Command, args []string) (err error) {
 	// Some servers issue a session token alongside registration; keep it so
 	// the operator does not have to log in again immediately.
 	if finish.Token != "" {
-		if err := storeAuthToken(ctx, logger, serverURL, finish.Token); err != nil {
+		server, err := identifyLoginServer(ctx, authClientConfig{ServerURL: serverURL, SPKIPin: spkiPin, TLSCAFile: tlsCAFile})
+		if err != nil {
+			return err
+		}
+		if err := storeAuthToken(ctx, logger, server, finish.Token); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintln(out, "Token stored. Use 'xkey auth token --server "+serverURL+"' to print it.")
@@ -830,7 +835,15 @@ func runAuthLogin(cmd *cobra.Command, args []string) (err error) {
 		return ErrAuthNoToken
 	}
 
-	if err := storeAuthToken(ctx, logger, serverEntry.URL, finish.Token); err != nil {
+	server, err := identifyLoginServer(ctx, authClientConfig{
+		ServerURL: serverEntry.URL,
+		SPKIPin:   serverEntry.CAFingerprint,
+		TLSCAFile: tlsCAFile,
+	})
+	if err != nil {
+		return err
+	}
+	if err := storeAuthToken(ctx, logger, server, finish.Token); err != nil {
 		return err
 	}
 
@@ -895,10 +908,52 @@ func authServerDetail(message string) string {
 	return ": " + message
 }
 
+// loginServer is the server a login authenticated to: the URL the login
+// used and the server's identity, which binds the stored login to that
+// server on every transport.
+type loginServer struct {
+	URL string
+	Ref tokenstore.ServerRef
+}
+
+// identifyLoginServer reads the identity of the server a login reached,
+// from a TLS handshake verified by the same trust the login used: the
+// server's SPKI thumbprint, plus the URL's host as its name for the
+// transports without TLS.
+func identifyLoginServer(ctx context.Context, cfg authClientConfig) (loginServer, error) {
+	trust, err := authTrustConfig(cfg)
+	if err != nil {
+		return loginServer{}, err
+	}
+	id, err := probeServerID(ctx, cfg.ServerURL, trust)
+	if err != nil {
+		return loginServer{}, &SentinelCauseError{Sentinel: ErrAuthConnectFailed, Cause: err}
+	}
+	name := ""
+	if u, parseErr := url.Parse(cfg.ServerURL); parseErr == nil {
+		name = u.Hostname()
+	}
+	return loginServer{URL: cfg.ServerURL, Ref: tokenstore.ServerRef{ID: id, Name: name}}, nil
+}
+
+// authTrustConfig is the TLS configuration a login verifies the server
+// with: the auth root pool (plus an additive pin), or the pin alone as the
+// trust anchor, or nil for the system roots.
+func authTrustConfig(cfg authClientConfig) (*tls.Config, error) {
+	tlsCfg, err := buildAuthTLSConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if tlsCfg == nil && cfg.SPKIPin != "" {
+		return xkms.NewSPKIPinnedTLSConfig(cfg.SPKIPin), nil
+	}
+	return tlsCfg, nil
+}
+
 // storeAuthToken persists a server-issued JWT in the token store, carrying
 // over the expiry, issuer, and subject claims so "auth status" can report
 // token validity without another round trip.
-func storeAuthToken(ctx context.Context, logger *slog.Logger, serverURL, token string) error {
+func storeAuthToken(ctx context.Context, logger *slog.Logger, server loginServer, token string) error {
 	tokens, cleanup, err := openTokenStore(logger)
 	if err != nil {
 		return err
@@ -906,11 +961,13 @@ func storeAuthToken(ctx context.Context, logger *slog.Logger, serverURL, token s
 	defer cleanup()
 
 	entry := &tokenstore.TokenEntry{
-		ServerURL: serverURL,
-		TokenType: tokenstore.TypeBearer,
-		Source:    tokenstore.SourceFIDO2,
-		Token:     token,
-		IssuedAt:  time.Now().UTC(),
+		ServerURL:  server.URL,
+		ServerID:   server.Ref.ID,
+		ServerName: server.Ref.Name,
+		TokenType:  tokenstore.TypeBearer,
+		Source:     tokenstore.SourceFIDO2,
+		Token:      token,
+		IssuedAt:   time.Now().UTC(),
 	}
 	applyJWTClaims(entry, token)
 

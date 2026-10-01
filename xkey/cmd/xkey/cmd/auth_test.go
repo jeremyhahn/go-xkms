@@ -16,6 +16,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"os"
@@ -1198,6 +1199,19 @@ func installAuthDoubles(t *testing.T, client AuthClientService, ceremony WebAuth
 		authClientFactory = originalClient
 		webauthnCeremonyFactory = originalCeremony
 	})
+	stubServerIdentity(t, testServerID)
+}
+
+// testServerID is the identity the fake auth servers present.
+const testServerID = "test-server-identity"
+
+// stubServerIdentity makes every server identify as id, for tests whose
+// server is a double with no TLS endpoint to read an identity from.
+func stubServerIdentity(t *testing.T, id string) {
+	t.Helper()
+	original := probeServerID
+	probeServerID = func(context.Context, string, *tls.Config) (string, error) { return id, nil }
+	t.Cleanup(func() { probeServerID = original })
 }
 
 // newAuthRegisterCmd builds a register command carrying the flags the real
@@ -1554,6 +1568,8 @@ func TestRunAuthLogin_ObtainsAndStoresToken(t *testing.T) {
 	assert.Equal(t, "xkms.example.com", entry.Issuer)
 	assert.Equal(t, "alice", entry.Subject)
 	assert.False(t, entry.IsExpired())
+	assert.Equal(t, testServerID, entry.ServerID, "the login is bound to the server's identity")
+	assert.Equal(t, "xkms.example.com", entry.ServerName)
 
 	// The registry records the successful connection.
 	registry, regCleanup, err := openServerRegistry(slog.Default())

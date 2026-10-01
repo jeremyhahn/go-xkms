@@ -28,6 +28,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,6 +47,8 @@ var env struct {
 	adminCert string
 	adminKey  string
 	token     string
+	// admin is an HTTPS client presenting the admin credential.
+	admin *http.Client
 }
 
 func TestMain(m *testing.M) {
@@ -78,12 +81,13 @@ func run(m *testing.M) (int, error) {
 	env.xkmsctl = filepath.Join(bin, "xkmsctl")
 	env.xkey = filepath.Join(bin, "xkey")
 	const tags = "codec_cbor codec_json codec_msgpack"
-	for _, b := range []struct{ dir, out, pkg string }{
-		{root, xkmsd, "./cmd/xkmsd"},
-		{root, env.xkmsctl, "./cmd/xkmsctl"},
-		{filepath.Join(root, "xkey"), env.xkey, "./cmd/xkey"},
+	for _, b := range []struct{ dir, tags, out, pkg string }{
+		{root, tags, xkmsd, "./cmd/xkmsd"},
+		{root, tags, env.xkmsctl, "./cmd/xkmsctl"},
+		// pkcs11: the login test holds its PIV key on a SoftHSM token.
+		{filepath.Join(root, "xkey"), tags + " pkcs11", env.xkey, "./cmd/xkey"},
 	} {
-		if err := goBuild(b.dir, tags, b.out, b.pkg); err != nil {
+		if err := goBuild(b.dir, b.tags, b.out, b.pkg); err != nil {
 			return 0, err
 		}
 	}
@@ -364,21 +368,29 @@ func xkmsctl(transport string, args ...string) (string, error) {
 func xkey(t *testing.T, transport, stdin string, args ...string) (string, error) {
 	t.Helper()
 	home := t.TempDir()
-	cmd := exec.Command(env.xkey, args...)
-	cmd.Env = append(os.Environ(),
-		"HOME="+home,
-		"XKEY_HOME="+home,
-		"XKEY_DATA_DIR="+filepath.Join(home, "data"),
+	vars := append(xkeyHome(home),
 		"XKMSD_TLS_CA="+env.caFile,
 		"XKMSD_TOKEN="+env.token,
 		"XKMSD_TLS_CERT="+env.adminCert,
 		"XKMSD_TLS_KEY="+env.adminKey,
 	)
 	if transport != "" {
-		cmd.Env = append(cmd.Env, "XKMSD_URL="+env.urls[transport])
+		vars = append(vars, "XKMSD_URL="+env.urls[transport])
 	} else {
-		cmd.Env = append(cmd.Env, "XKMSD_URL=")
+		vars = append(vars, "XKMSD_URL=")
 	}
+	return runXKey(vars, stdin, args...)
+}
+
+// xkeyHome is the environment that makes home xkey's whole home.
+func xkeyHome(home string) []string {
+	return []string{"HOME=" + home, "XKEY_HOME=" + home, "XKEY_DATA_DIR=" + filepath.Join(home, "data")}
+}
+
+// runXKey runs xkey with vars added to the environment.
+func runXKey(vars []string, stdin string, args ...string) (string, error) {
+	cmd := exec.Command(env.xkey, args...)
+	cmd.Env = append(os.Environ(), vars...)
 	cmd.Stdin = strings.NewReader(stdin)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
