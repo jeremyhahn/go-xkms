@@ -112,10 +112,16 @@ export type PasswordVaultFactorType = 'passphrase' | 'passkey';
 /** POST /api/v1/password-vault/unlock opens the caller's session with one of their vault factors. */
 export type PasswordStoreUnlockRequest = PasswordVaultCredential;
 
+/**
+ * The factor types a vault status lists: the enrollable ones plus the
+ * recovery code every vault holds, which is never removed or unlocked with.
+ */
+export type PasswordVaultFactorInfoType = PasswordVaultFactorType | 'recovery';
+
 /** One enrolled vault factor (never key material). */
 export interface PasswordVaultFactor {
   id: string;
-  factor: PasswordVaultFactorType;
+  factor: PasswordVaultFactorInfoType;
   label?: string;
   created_at: RFC3339;
   /** Passkey factors only: the credential to request from the authenticator. */

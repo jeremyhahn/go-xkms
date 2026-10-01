@@ -4,6 +4,8 @@
   import StatusBadge from "$components/StatusBadge.svelte";
   import Modal from "$components/Modal.svelte";
   import Alert from "$components/Alert.svelte";
+  import VaultFactors from "$components/VaultFactors.svelte";
+  import { MIN_PASSPHRASE_LENGTH } from "$lib/vault.ts";
   import { getSDKClient } from "$stores/sdkClient.ts";
   import { showToast } from "$stores/toast.svelte.ts";
   import type { PasswordInfo, PasswordStoreStatusResponse } from "@go-xkms/sdk";
@@ -21,6 +23,15 @@
   let passphraseConfirm = $state("");
   let recoveryCode = $state<string | null>(null);
   let showAdd = $state(false);
+  let showFactors = $state(false);
+
+  // Recovery: the one-time code plus a new passphrase replaces the lost
+  // factors and opens the session; the server answers with a new code.
+  let recovering = $state(false);
+  let rCode = $state("");
+  let rPassphrase = $state("");
+  let rConfirm = $state("");
+  let rErr = $state<string | null>(null);
 
   let aName = $state("");
   let aUsername = $state("");
@@ -82,6 +93,28 @@
     }
   }
 
+  async function recover(): Promise<void> {
+    busy = true;
+    rErr = null;
+    try {
+      const resp = await getSDKClient().passwords.vaultRecover({
+        recovery_code: rCode,
+        factor: "passphrase",
+        passphrase: rPassphrase,
+        label: "web console",
+      });
+      rCode = ""; rPassphrase = ""; rConfirm = "";
+      recovering = false;
+      recoveryCode = resp.recovery_code ?? null;
+      showToast("success", "Vault recovered and unlocked.");
+      await load();
+    } catch (e) {
+      rErr = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function lock(): Promise<void> {
     busy = true;
     try {
@@ -132,6 +165,7 @@
   {#snippet actions()}
     {#if status && !status.is_locked}
       <button class="btn btn-primary btn-sm" onclick={() => (showAdd = true)}>+ Add</button>
+      <button class="btn btn-sm" onclick={() => (showFactors = true)}>Vault factors</button>
       <button class="btn btn-sm" onclick={lock} disabled={busy}>Lock</button>
     {/if}
   {/snippet}
@@ -152,9 +186,24 @@
       <div class="card-body">
         <h2 class="card-title text-base">Create your vault</h2>
         <p class="text-sm">Your personal entries are sealed with your own passphrase. Nobody else can open them.</p>
-        <input type="password" class="input input-bordered" aria-label="Passphrase" placeholder="Passphrase (8+ characters)" bind:value={passphrase} />
+        <input type="password" class="input input-bordered" aria-label="Passphrase" placeholder={`Passphrase (${MIN_PASSPHRASE_LENGTH}+ characters)`} bind:value={passphrase} />
         <input type="password" class="input input-bordered" aria-label="Confirm passphrase" placeholder="Confirm passphrase" bind:value={passphraseConfirm} />
-        <button class="btn btn-primary btn-sm w-fit" onclick={createVault} disabled={busy || passphrase.length < 8 || passphrase !== passphraseConfirm}>Create vault</button>
+        <button class="btn btn-primary btn-sm w-fit" onclick={createVault} disabled={busy || passphrase.length < MIN_PASSPHRASE_LENGTH || passphrase !== passphraseConfirm}>Create vault</button>
+      </div>
+    </div>
+  {:else if status.is_locked && recovering}
+    <div class="card bg-base-200 max-w-sm">
+      <div class="card-body">
+        <h2 class="card-title text-base">Recover your vault</h2>
+        <p class="text-sm">Enter your recovery code and choose a new passphrase. The code works once; you will get a new one.</p>
+        {#if rErr}<Alert kind="error"><span>{rErr}</span></Alert>{/if}
+        <input class="input input-bordered font-mono" aria-label="Recovery code" placeholder="ABCD-EFGH-…" autocomplete="off" bind:value={rCode} />
+        <input type="password" class="input input-bordered" aria-label="New passphrase" placeholder={`New passphrase (${MIN_PASSPHRASE_LENGTH}+ characters)`} bind:value={rPassphrase} />
+        <input type="password" class="input input-bordered" aria-label="Confirm new passphrase" placeholder="Confirm new passphrase" bind:value={rConfirm} />
+        <div class="flex gap-2">
+          <button class="btn btn-primary btn-sm" onclick={recover} disabled={busy || rCode.trim() === "" || rPassphrase.length < MIN_PASSPHRASE_LENGTH || rPassphrase !== rConfirm}>Recover vault</button>
+          <button class="btn btn-ghost btn-sm" onclick={() => { recovering = false; rErr = null; }} disabled={busy}>Back to unlock</button>
+        </div>
       </div>
     </div>
   {:else if status.is_locked}
@@ -162,7 +211,10 @@
       <div class="card-body">
         <h2 class="card-title text-base">Unlock vault</h2>
         <input type="password" class="input input-bordered" aria-label="Passphrase" placeholder="Passphrase" bind:value={passphrase} />
-        <button class="btn btn-primary btn-sm w-fit" onclick={unlock} disabled={busy || passphrase === ""}>Unlock</button>
+        <div class="flex gap-2">
+          <button class="btn btn-primary btn-sm" onclick={unlock} disabled={busy || passphrase === ""}>Unlock</button>
+          <button class="btn btn-ghost btn-sm" onclick={() => (recovering = true)} disabled={busy}>Use recovery code</button>
+        </div>
       </div>
     </div>
   {:else}
@@ -191,12 +243,16 @@
 {#if recoveryCode}
   <Modal open={recoveryCode !== null} onClose={() => {}} labelledby="recovery-code-title">
       <h3 id="recovery-code-title" class="text-lg font-semibold mb-4">Your recovery code</h3>
-      <Alert kind="warning" class="mb-3"><span>Store this now. It will not be shown again. It is the only way back into your personal entries if you lose your passphrase.</span></Alert>
+      <Alert kind="warning" class="mb-3"><span>Store this now. It will not be shown again, and any earlier code no longer works. It is the only way back into your personal entries if you lose your other factors.</span></Alert>
       <code class="block font-mono text-lg break-all select-all p-3 bg-base-200 rounded">{recoveryCode}</code>
       <div class="modal-action">
         <button class="btn btn-primary" onclick={() => (recoveryCode = null)}>I have stored it</button>
       </div>
   </Modal>
+{/if}
+
+{#if showFactors}
+  <VaultFactors onClose={() => { showFactors = false; void load(); }} />
 {/if}
 
 {#if showAdd}

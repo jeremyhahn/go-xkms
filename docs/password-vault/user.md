@@ -45,6 +45,14 @@ passphrase, `xkmsctl password vault recover --recovery-code -` enrolls a new
 one with the recovery code and gives you a new code. Without your passphrase
 or your recovery code, your personal entries cannot be recovered.
 
+**In the web console** (Passwords): the first visit offers *Create your
+vault* with a passphrase and shows the recovery code once. A locked vault
+unlocks with your passphrase, or with *Use recovery code*, which takes the code
+and a new passphrase and shows your next code. While unlocked, *Vault factors*
+lists your factors and lets you add a passphrase, change one, or remove a
+factor (the last passphrase or passkey, and the recovery code, cannot be
+removed).
+
 You unlock once and your personal entries are readable until you lock again.
 The session is yours alone: unlocking does not open anyone else's personal
 entries, and another user locking does not lock you.
