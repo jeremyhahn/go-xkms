@@ -92,6 +92,12 @@ xkmsctl -o json oidc get codex --scope tenant
 With `--xkmsd-url`, `XKMSD_URL` or the config set, the existing commands act
 on server credentials; `--local` keeps any of them on the local backend.
 
+xkey authenticates to xkmsd with `XKMSD_TOKEN` (a session token, carried as
+a bearer token on REST, QUIC, gRPC and MCP) and, for TLS transports, an mTLS
+client credential in `XKMSD_TLS_CERT` / `XKMSD_TLS_KEY`; `XKMSD_TLS_CA` names
+the CA bundle. The unified server authenticates gRPC and MCP calls by client
+certificate, so those transports need the credential.
+
 | Command | Server behaviour |
 |---|---|
 | `providers add --name N [--template T ...]` | `create` |

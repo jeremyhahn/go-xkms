@@ -117,6 +117,8 @@ login. `token` is the only verb that returns a secret.
 | `pkg/xkms/servicer_oidc_credential_test.go` | Servicer conversions and guards |
 | transport tests (`*oidc_credential*_test.go`) | Every verb on every transport |
 | `xkey/cmd/xkey/cmd/oidc_server_test.go` | xkey's server mode against a real xkmsd over Unix gRPC |
+| `test/integration/oidccredentials` (`make integration-test-oidc-credentials`, devcontainer) | A real xkmsd on every transport (Unix gRPC, REST, gRPC, QUIC, MCP) driven by the real xkey and xkmsctl binaries after first-boot admin login; xkey's local backend untouched; and, over a real single-replica **raft** qrdb node, two services (as two nodes, each with its own in-process locks) racing one rotating refresh -- exactly one reaches the provider -- and scheduler leadership moving to the other node when the leader stops |
+| `web/app/e2e/oidc-credentials.spec.ts` (Playwright) | The console view in a real browser: re-login status, codex auth.json import request, device login to completion |
 
 The fake OAuth server (`pkg/oidc/credential/idp_test.go`) serves discovery,
 RFC 8628, and a token endpoint whose refresh tokens rotate and whose reuse is

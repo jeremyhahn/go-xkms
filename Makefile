@@ -2816,8 +2816,10 @@ integration-test-xkey-ssh:
 ## integration-test-oidc-credentials: Server-side OIDC credentials end to end (devcontainer):
 ## a real xkmsd on every transport driven by xkey and xkmsctl, and the
 ## refresh lock and scheduler election over a real raft qrdb node
-integration-test-oidc-credentials:
-	$(call run_in_devcontainer,$(GO) test -v -count=1 -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/oidccredentials/... -timeout 20m,integration-test-oidc-credentials)
+# The suite builds xkmsd, xkmsctl and xkey inside the devcontainer, so it
+# resolves the private first-party modules through the staged gomodauth env.
+integration-test-oidc-credentials: stage-gomodauth
+	$(call run_in_devcontainer,if [ -s .devcontainer/gomodauth.env ]; then . .devcontainer/gomodauth.env; fi; $(GO) test -v -count=1 -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/oidccredentials/... -timeout 20m,integration-test-oidc-credentials)
 
 .PHONY: integration-test-xkey-ctap
 ## integration-test-xkey-ctap: Run FIDO2 CTAP protocol integration tests (MakeCredential, GetAssertion, etc.)
