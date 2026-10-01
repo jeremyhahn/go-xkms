@@ -128,14 +128,14 @@ func TestRegisterHTTP_NoResolverStillComposing(t *testing.T) {
 
 	var health http.HandlerFunc
 	for _, rec := range *recs {
-		if rec.method == "GET" && rec.pattern == "/health" {
+		if rec.method == "GET" && rec.pattern == "/health/live" {
 			health = rec.handler
 		}
 	}
 	require.NotNil(t, health)
 
 	w := httptest.NewRecorder()
-	health(w, httptest.NewRequest("GET", "/health", nil))
+	health(w, httptest.NewRequest("GET", "/health/live", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.Contains(t, w.Body.String(), "still composing")
 }
@@ -155,14 +155,14 @@ func TestRegisterHTTP_NoHostInputs_LoudFailure(t *testing.T) {
 
 	var health http.HandlerFunc
 	for _, rec := range *recs {
-		if rec.method == "GET" && rec.pattern == "/health" {
+		if rec.method == "GET" && rec.pattern == "/health/live" {
 			health = rec.handler
 		}
 	}
 	require.NotNil(t, health)
 
 	w := httptest.NewRecorder()
-	health(w, httptest.NewRequest("GET", "/health", nil))
+	health(w, httptest.NewRequest("GET", "/health/live", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.Contains(t, w.Body.String(), "host provided no usable REST inputs")
 
@@ -186,21 +186,21 @@ func TestRegisterHTTP_LazyBinding(t *testing.T) {
 
 	var health http.HandlerFunc
 	for _, rec := range *recs {
-		if rec.method == "GET" && rec.pattern == "/health" {
+		if rec.method == "GET" && rec.pattern == "/health/live" {
 			health = rec.handler
 		}
 	}
-	require.NotNil(t, health, "GET /health must be registered")
+	require.NotNil(t, health, "GET /health/live must be registered")
 
 	// Unresolved: 503.
 	w := httptest.NewRecorder()
-	health(w, httptest.NewRequest("GET", "/health", nil))
+	health(w, httptest.NewRequest("GET", "/health/live", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 
 	// Resolved: served by the real handler.
 	srv.Store(newModuleRESTServer(t))
 	w = httptest.NewRecorder()
-	health(w, httptest.NewRequest("GET", "/health", nil))
+	health(w, httptest.NewRequest("GET", "/health/live", nil))
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
