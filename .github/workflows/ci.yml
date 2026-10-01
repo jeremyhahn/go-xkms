@@ -288,6 +288,21 @@ jobs:
     # narrower `test-changed` job instead.
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
 
+    # ci-template v1.6: the Go toolchain is cgroup-unaware -- in a ~12 GB job
+    # container it sees the HOST's 24 cores and 94 GB, same as the Security
+    # Scan job below (2026-08-18). Here it showed up as pkg/api/mcp's
+    # password-vault tests (go-xkms run 21639): -race plus unbounded
+    # t.Parallel() fan-out spawned enough concurrent Argon2id-sealed barrier
+    # fixtures that the job was OOM-killed ("signal: killed") even after the
+    # per-test KDF cost was fixed to run cheap in tests (pkg/staticpw
+    # WithPassphraseKDFParams) -- measured 2026-10-01: the same binary peaks
+    # at ~20 GB RSS with GOMAXPROCS unset vs ~6.7 GB at GOMAXPROCS=8. GOMEMLIMIT
+    # makes the GC respect the container budget; GOMAXPROCS bounds the worker
+    # fan-out, exactly as for Security Scan.
+    env:
+      GOMEMLIMIT: 10GiB
+      GOMAXPROCS: 8
+
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -834,6 +849,12 @@ jobs:
     needs: [lint, build, arch-gates, changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier != 'true'
 
+    # Same cgroup-unaware Go toolchain bound as the `test` job above (see its
+    # comment): unbounded GOMAXPROCS OOM-killed pkg/api/rest in the fast tier.
+    env:
+      GOMEMLIMIT: 10GiB
+      GOMAXPROCS: 8
+
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -890,7 +911,10 @@ jobs:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
           PACKAGES: ${{ steps.pkgs.outputs.packages }}
-        run: go test -race -timeout 15m -tags="codec_cbor codec_json codec_msgpack tpm_simulator frost" $PACKAGES
+        # -p 2: go test runs up to GOMAXPROCS test binaries at once, and under
+        # -race the password-vault packages (pkg/api/mcp, pkg/api/rest) each
+        # peak near 7 GB, so eight in parallel OOM-killed this job (#1389).
+        run: go test -race -p 2 -timeout 15m -tags="codec_cbor codec_json codec_msgpack tpm_simulator frost" $PACKAGES
 
       - name: No root-module Go changes
         if: steps.pkgs.outputs.packages == ''
@@ -1599,6 +1623,12 @@ jobs:
     needs: [lint, build, arch-gates, changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
 
+    # Same cgroup-unaware Go toolchain bound as the `test` job above (see its
+    # comment): unbounded GOMAXPROCS OOM-killed pkg/api/rest in the fast tier.
+    env:
+      GOMEMLIMIT: 10GiB
+      GOMAXPROCS: 8
+
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -1653,7 +1683,10 @@ jobs:
         env:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-        run: go test -race -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
+        # -p 2: go test runs up to GOMAXPROCS test binaries at once, and under
+        # -race the password-vault packages (pkg/api/mcp, pkg/api/rest) each
+        # peak near 7 GB, so eight in parallel OOM-killed this job (#1389).
+        run: go test -race -p 2 -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
 
   # Job 7b: pkg/tpm2 on the in-process TPM simulator
   #

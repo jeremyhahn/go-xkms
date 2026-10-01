@@ -215,6 +215,7 @@ func (m *Manager) Start(ctx context.Context, tenant string) error {
 	if err := m.awaitReady(ctx, inst, proc); err != nil {
 		return errors.Join(err, m.kill(inst, proc))
 	}
+	inst.running.Store(true)
 
 	m.instances[tenant] = inst
 	go m.supervise(inst, proc)
@@ -323,7 +324,13 @@ type process struct {
 	err  error
 }
 
-// spawn starts one swtpm process for inst.
+// spawn starts one swtpm process for inst. It does not wait for the
+// process's command socket to accept connections and does not mark inst
+// running: the swtpm binary takes some time after the process starts to
+// create and bind the socket, so a caller that needs inst.running (and so
+// Status and Transport) to mean "ready for a command", not just "the
+// process exists", must call awaitReady on the result and set inst.running
+// itself once that succeeds -- as Start and supervise's restart both do.
 func (m *Manager) spawn(inst *instance) (*process, error) {
 	key, err := m.keys.StateKey(inst.tenant)
 	if err != nil {
@@ -369,7 +376,6 @@ func (m *Manager) spawn(inst *instance) (*process, error) {
 	inst.proc = cmd.Process
 	inst.procMu.Unlock()
 	inst.pid.Store(int64(cmd.Process.Pid))
-	inst.running.Store(true)
 
 	proc := &process{done: make(chan struct{})}
 	go func() {
@@ -416,7 +422,9 @@ func (m *Manager) kill(inst *instance, proc *process) error {
 }
 
 // supervise waits for inst's process to exit and restarts it with backoff
-// until Stop closes inst.stop.
+// until Stop closes inst.stop. A restart is not visible as Running until the
+// replacement's command socket is ready, exactly as Start requires for the
+// first process.
 func (m *Manager) supervise(inst *instance, proc *process) {
 	defer close(inst.stopped)
 	backoff := minBackoff
@@ -449,10 +457,53 @@ func (m *Manager) supervise(inst *instance, proc *process) {
 			proc = nil
 			continue
 		}
+
+		// A client must never observe this restart as Running before the new
+		// process's command socket actually accepts connections: Status and
+		// Transport are both keyed off inst.running, and a client that acted
+		// on "running" the instant the process merely started would dial a
+		// socket swtpm has not created yet. readyCtx ends awaitReady early if
+		// Stop is called while this wait is outstanding, so stopping never
+		// waits out the full readyTimeout.
+		readyCtx, cancelReady := stopContext(inst.stop)
+		readyErr := m.awaitReady(readyCtx, inst, next)
+		cancelReady()
+		if readyErr != nil {
+			m.logger.Error("vTPM restart failed to become ready",
+				slog.String("tenant", inst.tenant), slog.Any("error", readyErr))
+			if killErr := m.kill(inst, next); killErr != nil {
+				m.logger.Error("vTPM restart cleanup failed", slog.String("tenant", inst.tenant), slog.Any("error", killErr))
+			}
+			select {
+			case <-inst.stop:
+				return
+			default:
+			}
+			proc = nil
+			continue
+		}
+
+		inst.running.Store(true)
 		inst.restarts.Add(1)
 		backoff = minBackoff
 		proc = next
 	}
+}
+
+// stopContext returns a context canceled as soon as stop closes, so a
+// restart awaiting its new process's readiness does not outlive Stop. The
+// returned cancel must be called once the caller no longer needs the
+// context, win or lose, to release the watcher goroutine.
+func stopContext(stop <-chan struct{}) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		select {
+		case <-stop:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
 }
 
 // closedDone is an already-closed channel: the exit of "no process".

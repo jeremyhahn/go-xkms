@@ -17,7 +17,11 @@
 // SimulatedKey, the security key every client surface's passkey tests use.
 // It imports only pkg/api/transport and pkg/fido2 (neither imports a
 // transport), so every transport package's tests can use it; the real
-// service the scenario runs against is in vaultservice.
+// service the scenario runs against is in vaultservice. The cheap
+// passphrase Argon2id cost every package's TenantPasswordStoreManager test
+// fixture uses is pkg/testutil/kdftest, not here: staticpw (and so
+// pkg/testutil/kdftest's caller, never pkg/testutil/kdftest itself) reaches
+// back into the transports and would make this package import one.
 package vaulttest
 
 import (

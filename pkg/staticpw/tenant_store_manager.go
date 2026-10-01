@@ -19,6 +19,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -135,24 +136,46 @@ func (st *tenantPasswordState) keyLock(subject string) *sync.Mutex {
 // encrypted by the system barrier. The systemStore serves only requests that
 // carry no identity (internal callers, authentication disabled).
 type TenantPasswordStoreManager struct {
-	registry    *seal.BarrierRegistry
-	systemStore Store
-	tenants     sync.Map // tenant scope name -> *tenantPasswordState
+	registry            *seal.BarrierRegistry
+	systemStore         Store
+	tenants             sync.Map // tenant scope name -> *tenantPasswordState
+	passphraseKDFParams func() *kdf.KDFParams
+}
+
+// Option configures a TenantPasswordStoreManager.
+type Option func(*TenantPasswordStoreManager)
+
+// WithPassphraseKDFParams overrides the Argon2id cost new passphrase vault
+// factors are wrapped with (defaultPassphraseKDFParams, the repository
+// default, otherwise). Production callers never need it: it exists so every
+// package that builds a TenantPasswordStoreManager in tests can enroll and
+// unlock passphrase factors, many times over, at a cost cheap enough not to
+// dominate a suite's runtime and memory when many such tests run in
+// parallel, while still exercising the production wrap/unwrap code path.
+func WithPassphraseKDFParams(params func() *kdf.KDFParams) Option {
+	return func(m *TenantPasswordStoreManager) {
+		m.passphraseKDFParams = params
+	}
 }
 
 // NewTenantPasswordStoreManager creates a manager over registry. systemStore
 // serves requests with no identity.
-func NewTenantPasswordStoreManager(registry *seal.BarrierRegistry, systemStore Store) (*TenantPasswordStoreManager, error) {
+func NewTenantPasswordStoreManager(registry *seal.BarrierRegistry, systemStore Store, opts ...Option) (*TenantPasswordStoreManager, error) {
 	if registry == nil {
 		return nil, ErrNilBarrierRegistry
 	}
 	if systemStore == nil {
 		return nil, ErrNilStore
 	}
-	return &TenantPasswordStoreManager{
-		registry:    registry,
-		systemStore: systemStore,
-	}, nil
+	m := &TenantPasswordStoreManager{
+		registry:            registry,
+		systemStore:         systemStore,
+		passphraseKDFParams: defaultPassphraseKDFParams,
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m, nil
 }
 
 // SystemStore returns the store that serves requests with no identity.
@@ -277,7 +300,7 @@ func (m *TenantPasswordStoreManager) VaultStatus(ctx context.Context, tenantID, 
 
 // factors returns userID's stored factors.
 func (m *TenantPasswordStoreManager) factors(ctx context.Context, state *tenantPasswordState, userID string) ([]*vaultFactor, error) {
-	keyring, err := newVaultKeyring(state.backend, state.tenantID, userID)
+	keyring, err := newVaultKeyring(state.backend, state.tenantID, userID, m.passphraseKDFParams)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +349,7 @@ func (m *TenantPasswordStoreManager) UnlockUser(ctx context.Context, tenantID, u
 
 // keyring returns userID's keyring and its factors.
 func (m *TenantPasswordStoreManager) keyring(ctx context.Context, state *tenantPasswordState, userID string) (*vaultKeyring, []*vaultFactor, error) {
-	keyring, err := newVaultKeyring(state.backend, state.tenantID, userID)
+	keyring, err := newVaultKeyring(state.backend, state.tenantID, userID, m.passphraseKDFParams)
 	if err != nil {
 		return nil, nil, err
 	}
