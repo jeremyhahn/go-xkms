@@ -30,12 +30,13 @@ import (
 
 // passkey returns a passkey credential: a credential ID, the PRF salt the
 // authenticator evaluated hmac-secret over, and its 32-byte output.
-func passkey(id string, output byte) VaultCredential {
+func passkey(t *testing.T, id string, output byte) VaultCredential {
+	t.Helper()
 	return VaultCredential{
 		Type:         FactorPasskey,
 		CredentialID: []byte(id),
 		PRFSalt:      bytes.Repeat([]byte{0x5a}, PRFSaltLength),
-		Secret:       bytes.Repeat([]byte{output}, PasskeySecretLength),
+		Secret:       testSecret(t, bytes.Repeat([]byte{output}, PasskeySecretLength)),
 		Label:        "key " + id,
 	}
 }
@@ -59,7 +60,7 @@ func TestVault_FirstEnrollmentInitializesAndIssuesRecoveryCode(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, status.Initialized)
 
-	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", pass("alice"))
+	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", pass(t, "alice"))
 	require.NoError(t, err)
 	assert.Regexp(t, `^[A-Z2-7]{4}(-[A-Z2-7]{4}){7}$`, res.RecoveryCode)
 	assert.Equal(t, FactorPassphrase, res.Factor.Type)
@@ -116,11 +117,11 @@ func TestVault_UnlockWithPassphrase(t *testing.T) {
 	require.NoError(t, alice.Add(entry("mine", false)))
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
 
-	wrong := VaultCredential{Type: FactorPassphrase, Secret: []byte("not-alice's-passphrase")}
+	wrong := VaultCredential{Type: FactorPassphrase, Secret: testSecret(t, []byte("not-alice's-passphrase"))}
 	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", wrong), ErrVaultCredentialRejected)
 	assert.True(t, scoped(t, mgr, "tenant-a", "alice").PersonalLocked())
 
-	require.NoError(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass("alice")))
+	require.NoError(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass(t, "alice")))
 	got, err := scoped(t, mgr, "tenant-a", "alice").Get("mine")
 	require.NoError(t, err)
 	assert.Equal(t, "pw-mine", got.Password)
@@ -131,23 +132,23 @@ func TestVault_PasskeyFactor(t *testing.T) {
 	ctx := context.Background()
 
 	// A passkey can be the first factor.
-	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey("cred-1", 0x11))
+	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey(t, "cred-1", 0x11))
 	require.NoError(t, err)
 	require.NotEmpty(t, res.RecoveryCode)
 	assert.Equal(t, []byte("cred-1"), res.Factor.CredentialID)
 	assert.Len(t, res.Factor.PRFSalt, PRFSaltLength, "the client reads the salt back to evaluate hmac-secret")
 	require.NoError(t, scoped(t, mgr, "tenant-a", "alice").Add(entry("mine", false)))
 
-	_, err = mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey("cred-1", 0x22))
+	_, err = mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey(t, "cred-1", 0x22))
 	assert.ErrorIs(t, err, ErrVaultPasskeyExists)
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
 
-	wrongOutput := passkey("cred-1", 0x99)
+	wrongOutput := passkey(t, "cred-1", 0x99)
 	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", wrongOutput), ErrVaultCredentialRejected)
-	unknown := passkey("cred-2", 0x11)
+	unknown := passkey(t, "cred-2", 0x11)
 	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", unknown), ErrVaultCredentialRejected)
 
-	require.NoError(t, mgr.UnlockUser(ctx, "tenant-a", "alice", passkey("cred-1", 0x11)))
+	require.NoError(t, mgr.UnlockUser(ctx, "tenant-a", "alice", passkey(t, "cred-1", 0x11)))
 	_, err = scoped(t, mgr, "tenant-a", "alice").Get("mine")
 	require.NoError(t, err)
 }
@@ -158,11 +159,11 @@ func TestVault_BothFactorsOpenTheSameEntries(t *testing.T) {
 	alice := unlocked(t, mgr, "tenant-a", "alice")
 	require.NoError(t, alice.Add(entry("mine", false)))
 
-	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey("cred-1", 0x11))
+	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey(t, "cred-1", 0x11))
 	require.NoError(t, err)
 	assert.Empty(t, res.RecoveryCode, "only the first enrollment issues a recovery code")
 
-	for _, cred := range []VaultCredential{pass("alice"), passkey("cred-1", 0x11)} {
+	for _, cred := range []VaultCredential{pass(t, "alice"), passkey(t, "cred-1", 0x11)} {
 		require.NoError(t, mgr.LockUser("tenant-a", "alice"))
 		require.NoError(t, mgr.UnlockUser(ctx, "tenant-a", "alice", cred), string(cred.Type))
 		got, gerr := scoped(t, mgr, "tenant-a", "alice").Get("mine")
@@ -177,7 +178,7 @@ func TestVault_LaterEnrollmentNeedsTheSession(t *testing.T) {
 	unlocked(t, mgr, "tenant-a", "alice")
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
 
-	_, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey("cred-1", 0x11))
+	_, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey(t, "cred-1", 0x11))
 	assert.ErrorIs(t, err, ErrStoreLocked, "a locked user cannot add a factor: nobody else may enroll into their vault")
 }
 
@@ -197,15 +198,15 @@ func TestVault_RotateFactorKeepsTheDEK(t *testing.T) {
 	}
 	require.NotEmpty(t, passID)
 
-	next := VaultCredential{Type: FactorPassphrase, Secret: []byte("a brand new passphrase")}
-	_, err = mgr.RotateFactor(ctx, "tenant-a", "alice", passID, passkey("cred-1", 0x11))
+	next := VaultCredential{Type: FactorPassphrase, Secret: testSecret(t, []byte("a brand new passphrase"))}
+	_, err = mgr.RotateFactor(ctx, "tenant-a", "alice", passID, passkey(t, "cred-1", 0x11))
 	assert.ErrorIs(t, err, ErrVaultInvalidCredential, "rotation keeps the factor's type")
 	res, err := mgr.RotateFactor(ctx, "tenant-a", "alice", passID, next)
 	require.NoError(t, err)
 	assert.NotEqual(t, passID, res.Factor.ID)
 
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
-	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass("alice")), ErrVaultCredentialRejected)
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass(t, "alice")), ErrVaultCredentialRejected)
 	require.NoError(t, mgr.UnlockUser(ctx, "tenant-a", "alice", next))
 	got, err := scoped(t, mgr, "tenant-a", "alice").Get("mine")
 	require.NoError(t, err, "the DEK never changes, so entries sealed before rotation still open")
@@ -219,7 +220,7 @@ func TestVault_RemoveFactor(t *testing.T) {
 	mgr, _, _ := vaultFixture(t)
 	ctx := context.Background()
 	unlocked(t, mgr, "tenant-a", "alice")
-	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey("cred-1", 0x11))
+	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey(t, "cred-1", 0x11))
 	require.NoError(t, err)
 
 	status, err := mgr.VaultStatus(ctx, "tenant-a", "alice")
@@ -240,22 +241,22 @@ func TestVault_RemoveFactor(t *testing.T) {
 	assert.ErrorIs(t, mgr.RemoveFactor(ctx, "tenant-a", "alice", res.Factor.ID), ErrVaultLastFactor)
 
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
-	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass("alice")), ErrVaultCredentialRejected)
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass(t, "alice")), ErrVaultCredentialRejected)
 	assert.ErrorIs(t, mgr.RemoveFactor(ctx, "tenant-a", "alice", res.Factor.ID), ErrStoreLocked)
 }
 
 func TestVault_RecoveryIsOneTime(t *testing.T) {
 	mgr, _, _ := vaultFixture(t)
 	ctx := context.Background()
-	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", pass("alice"))
+	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", pass(t, "alice"))
 	require.NoError(t, err)
 	require.NoError(t, scoped(t, mgr, "tenant-a", "alice").Add(entry("mine", false)))
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
 
 	// The code does not unlock; it recovers.
-	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", VaultCredential{Type: FactorRecovery, Secret: []byte(res.RecoveryCode)}), ErrVaultRecoveryFactor)
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", VaultCredential{Type: FactorRecovery, Secret: testSecret(t, []byte(res.RecoveryCode))}), ErrVaultRecoveryFactor)
 
-	newPass := VaultCredential{Type: FactorPassphrase, Secret: []byte("remembered at last")}
+	newPass := VaultCredential{Type: FactorPassphrase, Secret: testSecret(t, []byte("remembered at last"))}
 	_, err = mgr.RecoverVault(ctx, "tenant-a", "alice", []byte("AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH"), newPass)
 	assert.ErrorIs(t, err, ErrVaultCredentialRejected)
 
@@ -270,7 +271,7 @@ func TestVault_RecoveryIsOneTime(t *testing.T) {
 	require.NoError(t, err, "recovery opens the session over the same DEK")
 	assert.Equal(t, "pw-mine", got.Password)
 
-	_, err = mgr.RecoverVault(ctx, "tenant-a", "alice", []byte(res.RecoveryCode), pass("alice"))
+	_, err = mgr.RecoverVault(ctx, "tenant-a", "alice", []byte(res.RecoveryCode), pass(t, "alice"))
 	assert.ErrorIs(t, err, ErrVaultCredentialRejected, "the used code no longer works")
 
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
@@ -289,11 +290,11 @@ func TestVault_RecoveryIsOneTime(t *testing.T) {
 func TestVault_RecoverRefusals(t *testing.T) {
 	mgr, _, _ := vaultFixture(t)
 	ctx := context.Background()
-	_, err := mgr.RecoverVault(ctx, "tenant-a", "alice", []byte("CODE"), pass("alice"))
+	_, err := mgr.RecoverVault(ctx, "tenant-a", "alice", []byte("CODE"), pass(t, "alice"))
 	assert.ErrorIs(t, err, ErrVaultNotInitialized)
-	_, err = mgr.RecoverVault(ctx, "tenant-a", "alice", nil, pass("alice"))
+	_, err = mgr.RecoverVault(ctx, "tenant-a", "alice", nil, pass(t, "alice"))
 	assert.ErrorIs(t, err, ErrVaultInvalidCredential)
-	_, err = mgr.RecoverVault(ctx, "tenant-a", "alice", []byte("CODE"), VaultCredential{Type: FactorRecovery, Secret: []byte("x")})
+	_, err = mgr.RecoverVault(ctx, "tenant-a", "alice", []byte("CODE"), VaultCredential{Type: FactorRecovery, Secret: testSecret(t, []byte("x"))})
 	assert.ErrorIs(t, err, ErrVaultRecoveryFactor)
 }
 
@@ -301,19 +302,19 @@ func TestVault_InvalidCredentials(t *testing.T) {
 	mgr, _, _ := vaultFixture(t)
 	ctx := context.Background()
 	cases := map[string]VaultCredential{
-		"short passphrase":    {Type: FactorPassphrase, Secret: []byte("short")},
-		"passkey without id":  {Type: FactorPasskey, Secret: make([]byte, PasskeySecretLength), PRFSalt: make([]byte, PRFSaltLength)},
-		"passkey short out":   {Type: FactorPasskey, CredentialID: []byte("c"), Secret: []byte("short"), PRFSalt: make([]byte, PRFSaltLength)},
-		"passkey bad salt":    {Type: FactorPasskey, CredentialID: []byte("c"), Secret: make([]byte, PasskeySecretLength), PRFSalt: []byte("s")},
-		"unknown factor type": {Type: "pin", Secret: []byte("12345678")},
+		"short passphrase":    {Type: FactorPassphrase, Secret: testSecret(t, []byte("short"))},
+		"passkey without id":  {Type: FactorPasskey, Secret: testSecret(t, make([]byte, PasskeySecretLength)), PRFSalt: make([]byte, PRFSaltLength)},
+		"passkey short out":   {Type: FactorPasskey, CredentialID: []byte("c"), Secret: testSecret(t, []byte("short")), PRFSalt: make([]byte, PRFSaltLength)},
+		"passkey bad salt":    {Type: FactorPasskey, CredentialID: []byte("c"), Secret: testSecret(t, make([]byte, PasskeySecretLength)), PRFSalt: []byte("s")},
+		"unknown factor type": {Type: "pin", Secret: testSecret(t, []byte("12345678"))},
 	}
 	for name, cred := range cases {
 		_, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", cred)
 		assert.ErrorIs(t, err, ErrVaultInvalidCredential, name)
 	}
-	_, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", VaultCredential{Type: FactorRecovery, Secret: []byte("x")})
+	_, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", VaultCredential{Type: FactorRecovery, Secret: testSecret(t, []byte("x"))})
 	assert.ErrorIs(t, err, ErrVaultRecoveryFactor)
-	_, err = mgr.EnrollFactor(ctx, "tenant-a", "bad/user", pass("x"))
+	_, err = mgr.EnrollFactor(ctx, "tenant-a", "bad/user", pass(t, "x"))
 	assert.ErrorIs(t, err, ErrInvalidUserID)
 }
 
@@ -327,12 +328,12 @@ func TestVault_WrapsAreBoundToTheirUser(t *testing.T) {
 	require.NoError(t, err)
 
 	dek := bytes.Repeat([]byte{7}, dekLength)
-	f, err := alice.wrap(pass("same"), dek)
+	f, err := alice.wrap(pass(t, "same"), dek)
 	require.NoError(t, err)
-	got, err := alice.unwrap(f, pass("same").Secret)
+	got, err := alice.unwrap(f, pass(t, "same").Secret)
 	require.NoError(t, err)
 	assert.Equal(t, dek, got)
-	_, err = bob.unwrap(f, pass("same").Secret)
+	_, err = bob.unwrap(f, pass(t, "same").Secret)
 	assert.ErrorIs(t, err, ErrVaultCredentialRejected)
 }
 
@@ -376,7 +377,7 @@ func TestDEKBackend_EntriesAreBoundToTheirKey(t *testing.T) {
 func TestVault_ConcurrentFirstEnrollmentsShareOneDEK(t *testing.T) {
 	mgr, _, _ := vaultFixture(t)
 	ctx := context.Background()
-	creds := []VaultCredential{pass("alice"), passkey("cred-1", 0x11)}
+	creds := []VaultCredential{pass(t, "alice"), passkey(t, "cred-1", 0x11)}
 
 	var wg sync.WaitGroup
 	errs := make([]error, len(creds))

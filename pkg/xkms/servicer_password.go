@@ -354,8 +354,11 @@ func (s *XKMSService) PasswordStoreUnlock(ctx context.Context, req *transport.Pa
 	if err != nil {
 		return err
 	}
-	cred := vaultCredential(req.PasswordVaultCredential)
-	defer clear(cred.Secret)
+	cred, err := vaultCredential(req.PasswordVaultCredential)
+	if err != nil {
+		return err
+	}
+	defer cred.Secret.Destroy()
 	return manager.UnlockUser(ctx, tenantID, subject, cred)
 }
 

@@ -32,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // The personal vault.
@@ -142,8 +143,9 @@ type VaultCredential struct {
 	Type FactorType
 
 	// Secret is the passphrase, the hmac-secret output, or the recovery
-	// code.
-	Secret []byte
+	// code, sealed in protected memory. It is opened only to derive a
+	// factor's key-encryption key (kek) or to check its length (validate).
+	Secret *secure.Secret
 
 	// CredentialID identifies a passkey.
 	CredentialID []byte
@@ -181,13 +183,17 @@ type vaultFactor struct {
 // validate checks a credential's shape for its type. Enrollment also needs
 // a passkey's PRF salt.
 func (c VaultCredential) validate(enrolling bool) error {
+	secretLen, err := secretSize(c.Secret)
+	if err != nil {
+		return err
+	}
 	switch c.Type {
 	case FactorPassphrase:
-		if len(c.Secret) < MinPassphraseLength {
+		if secretLen < MinPassphraseLength {
 			return ErrVaultInvalidCredential
 		}
 	case FactorPasskey:
-		if len(c.CredentialID) == 0 || len(c.Secret) != PasskeySecretLength {
+		if len(c.CredentialID) == 0 || secretLen != PasskeySecretLength {
 			return ErrVaultInvalidCredential
 		}
 		if enrolling && len(c.PRFSalt) != PRFSaltLength {
@@ -197,13 +203,27 @@ func (c VaultCredential) validate(enrolling bool) error {
 		if enrolling {
 			return ErrVaultRecoveryFactor
 		}
-		if len(c.Secret) == 0 {
+		if secretLen == 0 {
 			return ErrVaultInvalidCredential
 		}
 	default:
 		return ErrVaultInvalidCredential
 	}
 	return nil
+}
+
+// secretSize returns the length of the plaintext secret holds, or 0 when
+// secret is nil (no credential presented).
+func secretSize(secret *secure.Secret) (int, error) {
+	if secret == nil {
+		return 0, nil
+	}
+	buf, err := secret.Open()
+	if err != nil {
+		return 0, &VaultCryptoError{Op: "open", Err: err}
+	}
+	defer buf.Destroy()
+	return buf.Size(), nil
 }
 
 // vaultKeyring persists one user's factors in the tenant barrier.
@@ -315,7 +335,7 @@ func (k *vaultKeyring) wrap(cred VaultCredential, dek []byte) (*vaultFactor, err
 
 // unwrap returns the DEK f wraps, or ErrVaultCredentialRejected when secret
 // is not f's.
-func (k *vaultKeyring) unwrap(f *vaultFactor, secret []byte) ([]byte, error) {
+func (k *vaultKeyring) unwrap(f *vaultFactor, secret *secure.Secret) ([]byte, error) {
 	kek, err := f.kek(secret)
 	if err != nil {
 		return nil, err
@@ -328,18 +348,28 @@ func (k *vaultKeyring) unwrap(f *vaultFactor, secret []byte) ([]byte, error) {
 	return dek, nil
 }
 
-// kek derives the factor's key-encryption key from secret.
-func (f *vaultFactor) kek(secret []byte) ([]byte, error) {
+// kek derives the factor's key-encryption key from secret, opening it only
+// for the duration of the derivation.
+func (f *vaultFactor) kek(secret *secure.Secret) ([]byte, error) {
+	if secret == nil {
+		return nil, &VaultCryptoError{Op: "kdf", Err: ErrVaultInvalidCredential}
+	}
+	buf, err := secret.Open()
+	if err != nil {
+		return nil, &VaultCryptoError{Op: "open", Err: err}
+	}
+	defer buf.Destroy()
+	plaintext := buf.Bytes()
 	switch f.Type {
 	case FactorPassphrase:
 		if f.ArgonTime == 0 || f.ArgonMemory == 0 || f.ArgonThreads == 0 {
 			return nil, &VaultCryptoError{Op: "kdf", Err: ErrVaultInvalidCredential}
 		}
-		return argon2.IDKey(secret, f.Salt, f.ArgonTime, f.ArgonMemory, f.ArgonThreads, aesgcm.KeySize), nil
+		return argon2.IDKey(plaintext, f.Salt, f.ArgonTime, f.ArgonMemory, f.ArgonThreads, aesgcm.KeySize), nil
 	case FactorPasskey:
-		return hkdfKey(secret, f.Salt, passkeyHKDFInfo)
+		return hkdfKey(plaintext, f.Salt, passkeyHKDFInfo)
 	case FactorRecovery:
-		return hkdfKey(secret, f.Salt, recoveryHKDFInfo)
+		return hkdfKey(plaintext, f.Salt, recoveryHKDFInfo)
 	default:
 		return nil, ErrVaultInvalidCredential
 	}
@@ -355,8 +385,8 @@ func hkdfKey(secret, salt []byte, info string) ([]byte, error) {
 }
 
 // newRecoveryCode returns a fresh recovery code for display ("ABCD-EFGH-…",
-// 160 bits) and its normalized secret.
-func newRecoveryCode() (display string, secret []byte, err error) {
+// 160 bits) and its normalized secret, sealed in protected memory.
+func newRecoveryCode() (display string, secret *secure.Secret, err error) {
 	raw, err := randomBytes(recoveryCodeBytes)
 	if err != nil {
 		return "", nil, err
@@ -366,7 +396,11 @@ func newRecoveryCode() (display string, secret []byte, err error) {
 	for i := 0; i < len(encoded); i += recoveryGroupWidth {
 		groups = append(groups, encoded[i:min(i+recoveryGroupWidth, len(encoded))])
 	}
-	return strings.Join(groups, "-"), []byte(encoded), nil
+	sealed, err := secure.NewSecret([]byte(encoded))
+	if err != nil {
+		return "", nil, &VaultCryptoError{Op: "seal", Err: err}
+	}
+	return strings.Join(groups, "-"), sealed, nil
 }
 
 // normalizeRecoveryCode returns the secret of a recovery code as the user

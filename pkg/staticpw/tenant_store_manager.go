@@ -22,6 +22,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // ErrNoSystemBarrier is returned when the system tenant's password store is
@@ -451,7 +452,7 @@ func wrapRecovery(keyring *vaultKeyring, dek []byte) (string, *vaultFactor, erro
 	if err != nil {
 		return "", nil, err
 	}
-	defer clear(secret)
+	defer secret.Destroy()
 	f, err := keyring.wrap(VaultCredential{Type: FactorRecovery, Secret: secret, Label: "recovery code"}, dek)
 	if err != nil {
 		return "", nil, err
@@ -608,8 +609,12 @@ func (m *TenantPasswordStoreManager) RecoverVault(ctx context.Context, tenantID,
 	if len(factors) == 0 {
 		return nil, ErrVaultNotInitialized
 	}
-	secret := normalizeRecoveryCode(recoveryCode)
-	defer clear(secret)
+	normalized := normalizeRecoveryCode(recoveryCode)
+	secret, err := secure.NewSecret(normalized)
+	if err != nil {
+		return nil, ErrVaultCredentialRejected
+	}
+	defer secret.Destroy()
 	var used *vaultFactor
 	var dek []byte
 	for _, f := range factors {

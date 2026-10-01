@@ -1,6 +1,6 @@
 # Password Vault — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 ## Exported surface — `pkg/staticpw`
 
@@ -34,9 +34,9 @@ type FactorType string // FactorPassphrase, FactorPasskey, FactorRecovery
 
 type VaultCredential struct {
 	Type         FactorType
-	Secret       []byte // passphrase, hmac-secret output, or recovery code
-	CredentialID []byte // passkey
-	PRFSalt      []byte // passkey enrollment: the 32-byte hmac-secret salt
+	Secret       *secure.Secret // passphrase, hmac-secret output, or recovery code
+	CredentialID []byte         // passkey
+	PRFSalt      []byte         // passkey enrollment: the 32-byte hmac-secret salt
 	Label        string
 }
 
@@ -56,6 +56,17 @@ Constants: `MinPassphraseLength` 8 (NIST SP 800-63B), `PasskeySecretLength`
 KEKs: HKDF-SHA256 with a per-factor salt and a domain-separated info string.
 Every wrap and every personal entry is AES-256-GCM with associated data
 binding it to its tenant, user and factor (wraps) or storage key (entries).
+
+`VaultCredential.Secret` is sealed in protected memory
+(`sdk/go/secure.Secret`), never a plain `[]byte` or `string` struct field. It
+is opened only for the duration of a key-encryption-key derivation
+(`vaultFactor.kek`) or a length check (`VaultCredential.validate`), and the
+opened `*secure.Buffer` is destroyed immediately after. The servicer layer
+(`pkg/xkms`'s `vaultCredential`) is the boundary: it seals a transport
+request's plaintext secret into a `*secure.Secret` and the caller destroys it
+after the vault call returns. Wire and transport types
+(`transport.PasswordVaultCredential`, and the REST/gRPC/MCP request types)
+carry the secret as plaintext bytes up to that boundary.
 
 Invariants: the DEK never changes; a vault always has a recovery factor
 (written before the first factor); a user's vault changes are serialized per
