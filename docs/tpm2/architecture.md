@@ -1,6 +1,6 @@
 # TPM 2.0 — Architecture
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## The problem
 
@@ -79,11 +79,18 @@ documents its own use.
 **Sealing to platform state:**
 
 ```
-seal:    data + PCR policy  →  TPM2_Create under the SRK, policy-bound
+seal:    data + PCR policy  →  TPM2_Create under the SRK, policy-bound,
+                                userWithAuth CLEAR
 unseal:  TPM re-evaluates the policy against current PCRs
          → PCRs match   → data released
          → PCRs differ  → refused, and that is the mechanism working
 ```
+
+A policy-bound object — sealed data, an RSA, ECDSA or AES key, or an NV index
+— answers only a policy session: its password, if it has one, counts only
+inside the policy, and a seal bound to neither a policy nor a password is
+refused. The rules are in [`engineering.md`](engineering.md) §"Object
+authorization".
 
 **Identity and attestation:**
 

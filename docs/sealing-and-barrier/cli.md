@@ -1,6 +1,6 @@
 # Sealing and Barrier — CLI
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 Binary: `xkmsctl`. Groups: `barrier` (`cmd/xkmsctl/barrier*.go`), `policy`
 (`cmd/xkmsctl/policy.go`), and the top-level `seal` / `unseal` / `can-seal`
@@ -144,9 +144,15 @@ mechanism.
 
 ```
 xkmsctl can-seal --backend tpm2
-xkmsctl seal "secret payload" --backend tpm2
+xkmsctl seal "secret payload" --backend tpm2 --tpm-policy platform
 xkmsctl seal "secret payload" --backend software --key-id vault-key
 ```
+
+On `tpm2` a seal must name `--tpm-policy`, `--password` or both; a seal with
+neither is refused (`ErrSealUnprotected`), because nothing would protect the
+object. With a policy, the password counts only inside it. See
+[`../tpm2/engineering.md`](../tpm2/engineering.md) §"Object
+authorization".
 
 `--key-id` names one of the calling tenant's keys; without it the tenant's
 own default sealing key is used. A tenant account is refused on `tpm2`

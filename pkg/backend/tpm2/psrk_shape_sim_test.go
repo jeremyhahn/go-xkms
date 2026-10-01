@@ -237,11 +237,16 @@ func TestBackend_SealUnseal_PINEnrolledPlatformSRK(t *testing.T) {
 	ctx := context.Background()
 	plaintext := []byte("pin-branch-round-trip-secret")
 
+	// The object carries a password of its own: a seal bound to neither a
+	// policy nor a password is refused (pkgtpm2.ErrSealUnprotected).
+	objectAuth, err := types.NewPasswordFromString("pin-branch-object-auth")
+	require.NoError(t, err)
 	sealed, err := backend.Seal(ctx, plaintext, &types.SealOptions{
 		KeyAttributes: &types.KeyAttributes{
 			CN:     "pin-branch-seal-test",
 			Parent: backend.SRKAttributes(),
 		},
+		Password: objectAuth,
 	})
 	require.NoError(t, err, "Seal must succeed via the password branch of a PIN-enrolled Platform SRK")
 
@@ -250,6 +255,7 @@ func TestBackend_SealUnseal_PINEnrolledPlatformSRK(t *testing.T) {
 			CN:     "pin-branch-seal-test",
 			Parent: backend.SRKAttributes(),
 		},
+		Password: objectAuth,
 	})
 	require.NoError(t, err, "Unseal must succeed via the password branch of a PIN-enrolled Platform SRK")
 	require.Equal(t, plaintext, got)

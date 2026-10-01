@@ -491,6 +491,7 @@ var (
 	ErrTPMIAKConfigFailed             = tpm2.ErrIAKConfigFailed
 	ErrTPMCSRFieldTooLarge            = tpm2.ErrCSRFieldTooLarge
 	ErrTPMNVSecretTooLarge            = tpm2.ErrNVSecretTooLarge
+	ErrTPMSealUnprotected             = tpm2.ErrSealUnprotected
 	ErrTPMInvalidHierarchy            = tpm2.ErrInvalidHierarchy
 	ErrTPMFactoryReset                = tpm2.ErrFactoryReset
 	ErrTPMForceClear                  = tpm2.ErrForceClear

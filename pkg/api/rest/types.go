@@ -380,9 +380,13 @@ type SealRequest struct {
 	KeyID   string `json:"key_id,omitempty"` // Optional key ID for sealing key
 	Data    []byte `json:"data"`             // Data to seal (base64 encoded in JSON)
 	AAD     []byte `json:"aad,omitempty"`    // Additional Authenticated Data (base64 encoded)
-	// Password is the sealed object's authorization value (TPM2).
+	// Password is the TPM2 sealed object's authorization value. With a TPM
+	// policy it counts only inside the policy; without one it is the
+	// object's only protection.
 	Password string `json:"password,omitempty"`
-	// TPMPolicy names the TPM policy a TPM2 sealed object is bound to.
+	// TPMPolicy names the TPM policy a TPM2 sealed object is bound to:
+	// "platform", a named policy of the tenant's scope, or empty for none. A
+	// TPM2 seal needs a policy, a password or both.
 	TPMPolicy string `json:"tpm_policy,omitempty"`
 }
 

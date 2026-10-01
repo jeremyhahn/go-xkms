@@ -249,9 +249,6 @@ type (
 	// key agreement operations.
 	TPMKeyAgreementProvider = types.TPMKeyAgreementProvider
 
-	// TPMSealPolicy describes a TPM 2.0 seal/unseal policy.
-	TPMSealPolicy = types.TPMSealPolicy
-
 	// NOTE: RSAConfig and ECCConfig from pkg/types are not re-exported here
 	// because tpm.go already re-exports them from pkg/tpm2/store (which are
 	// different struct definitions). Use xkms.RSAConfig / xkms.ECCConfig

@@ -19,9 +19,9 @@ export interface SealRequest {
   key_id?: string;
   data: Base64;
   aad?: Base64;
-  /** The sealed object's authorization value (TPM2-specific). */
+  /** The TPM2 sealed object's authorization value. With a TPM policy it counts only inside the policy; without one it is the object's only protection. */
   password?: string;
-  /** Names the TPM policy a TPM2 sealed object is bound to (TPM2 backends only). */
+  /** The TPM policy a TPM2 sealed object is bound to: "platform", a named policy of the tenant's scope, or empty for none. A TPM2 seal needs a policy, a password or both. */
   tpm_policy?: string;
 }
 

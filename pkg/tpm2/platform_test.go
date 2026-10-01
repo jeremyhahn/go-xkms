@@ -403,7 +403,7 @@ func (m *mockTPMForPKS) ReadHandle(_ tpm2.TPMHandle) (tpm2.TPM2BName, tpm2.TPMTP
 	return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, m.readHandleErr
 }
 func (m *mockTPMForPKS) ReadPCRs(_ []uint) ([]PCRBank, error) { return nil, nil }
-func (m *mockTPMForPKS) RSADecrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]byte, error) {
+func (m *mockTPMForPKS) RSADecrypt(_ *types.KeyAttributes, _ store.KeyBackend, _ []byte) ([]byte, error) {
 	return nil, nil
 }
 func (m *mockTPMForPKS) RSAEncrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]byte, error) {

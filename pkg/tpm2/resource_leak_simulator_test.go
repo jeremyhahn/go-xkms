@@ -139,7 +139,7 @@ func TestUnsealKey_MissingKey_LeaksNoResources(t *testing.T) {
 	h := newSimHarness(t, nil)
 
 	// Seal and unseal once so all lazily-initialized state exists.
-	warmup := sealedKeyAttrs(t, h, "warmup-key", false, nil)
+	warmup := sealedKeyAttrs(t, h, "warmup-key", false, mustPassword([]byte("warmup-password")))
 	warmup.SealData = types.NewSealData([]byte("warmup"))
 	_, err := h.TPM.SealKey(warmup, h.Backend, true)
 	require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestLoadKeyPair_CorruptBlobs_LeakNoResources(t *testing.T) {
 func TestSealKey_OversizedSecret_LeaksNoResources(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	warmup := sealedKeyAttrs(t, h, "warmup-key", false, nil)
+	warmup := sealedKeyAttrs(t, h, "warmup-key", false, mustPassword([]byte("warmup-password")))
 	warmup.SealData = types.NewSealData([]byte("warmup"))
 	_, err := h.TPM.SealKey(warmup, h.Backend, true)
 	require.NoError(t, err)
@@ -219,7 +219,7 @@ func TestSealKey_OversizedSecret_LeaksNoResources(t *testing.T) {
 	oversized := make([]byte, 4096)
 	const attempts = 15
 	for i := 0; i < attempts; i++ {
-		attrs := sealedKeyAttrs(t, h, "oversized-secret", false, nil)
+		attrs := sealedKeyAttrs(t, h, "oversized-secret", false, mustPassword([]byte("oversized-password")))
 		attrs.SealData = types.NewSealData(oversized)
 		resp, err := h.TPM.SealKey(attrs, h.Backend, true)
 		require.Error(t, err, "attempt %d: an oversized secret must be rejected", i)
@@ -235,7 +235,7 @@ func TestSealKey_OversizedSecret_LeaksNoResources(t *testing.T) {
 		"%d oversized seals must not strand saved sessions", attempts)
 
 	// The TPM must still be able to seal afterwards.
-	ok := sealedKeyAttrs(t, h, "post-rejection-key", false, nil)
+	ok := sealedKeyAttrs(t, h, "post-rejection-key", false, mustPassword([]byte("post-rejection-password")))
 	ok.SealData = types.NewSealData([]byte("still works"))
 	_, err = h.TPM.SealKey(ok, h.Backend, true)
 	assert.NoError(t, err, "the TPM must remain usable after repeated rejections")

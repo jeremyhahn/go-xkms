@@ -91,31 +91,10 @@ func (tpm *TPM2) CreateRSA(
 		return nil, err
 	}
 
-	// Attach platform PCR policy digest if configured.
-	//
-	// The digest is computed from a captured pin rather than straight from live
-	// PCRs. The value is identical, but capturing it lets the record written
-	// after the blobs are saved name the exact PolicyPCR branch this key's
-	// AuthPolicy covers, so the key's PIN branch can still reproduce the
-	// PolicyOR digest once the platform measurements change.
-	var policyPin *store.PlatformPolicyPin
-
-	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
-		pin, err := tpm.capturePlatformPolicyPin()
-		if err != nil {
-			return nil, err
-		}
-		policyDigest, err := platformPolicyDigestFromPin(pin)
-		if err != nil {
-			return nil, err
-		}
-		rsaTemplate.AuthPolicy = policyDigest
-		policyPin = pin
-	}
-
-	// A named, authorized policy replaces the password path entirely: the
-	// template gets the policy's authPolicy and loses USERWITHAUTH.
-	policyBinding, err := tpm.namedPolicyBinding(keyAttrs, &rsaTemplate)
+	// Bind the key to its policy -- the platform policy, a named policy, or
+	// none -- with the USERWITHAUTH that goes with it (bindObjectPolicy). The
+	// pin and binding returned are recorded beside the blobs below.
+	policyPin, policyBinding, err := tpm.bindObjectPolicy(keyAttrs, &rsaTemplate, keyAuthValue(keyAttrs))
 	if err != nil {
 		return nil, err
 	}
@@ -298,35 +277,28 @@ func (tpm *TPM2) CreateRSA(
 	return rsaPub, nil
 }
 
-// func (tpm *TPM2) RSADecrypt(
-// 	keyAttrs *types.KeyAttributes, blob []byte) ([]byte, error) {
-// 	response, err := tpm2.RSADecrypt{
-// 		KeyHandle: tpm2.NamedHandle{
-// 			Handle: keyAttrs.TPMAttributes.Handle,
-// 			Name:   keyAttrs.TPMAttributes.Name,
-// 			// Auth:   tpm2.PasswordAuth(keyAuth),
-// 		},
-// 		CipherText: tpm2.TPM2BPublicKeyRSA{Buffer: blob},
-// 		InScheme: tpm2.TPMTRSADecrypt{
-// 			Scheme: tpm2.TPMAlgOAEP,
-// 			Details: tpm2.NewTPMUAsymScheme(
-// 				tpm2.TPMAlgOAEP,
-// 				&tpm2.TPMSEncSchemeOAEP{
-// 					HashAlg: tpm2.TPMAlgSHA256,
-// 				},
-// 			),
-// 		},
-// 	}.Execute(tpm.transport)
-// 	if err != nil {
-// 		tpm.logger.Error("RSA decrypt failed", slog.String("error", err.Error()))
-// 		return nil, err
-// 	}
-// 	return response.Message.Buffer, nil
-// }
+// RSADecrypt decrypts blob (RSA-OAEP, SHA-256) with the RSA key keyAttrs
+// names, loaded from backend (nil: the platform backend). The key's USER role
+// is answered by objectSession, so a key bound to a policy is used only
+// through it. The recovered plaintext leaves the TPM encrypted under a salted
+// session.
+func (tpm *TPM2) RSADecrypt(
+	keyAttrs *types.KeyAttributes,
+	backend store.KeyBackend,
+	blob []byte) ([]byte, error) {
 
-// Performs RSA decryption. The recovered plaintext leaves the TPM encrypted
-// under a salted session.
-func (tpm *TPM2) RSADecrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, blob []byte) ([]byte, error) {
+	key, err := tpm.LoadKeyPair(keyAttrs, nil, backend)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.Flush(key.ObjectHandle)
+
+	auth, closer, err := tpm.objectSession(keyAttrs, backend, key.ObjectHandle)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closer, "RSADecrypt key")
+
 	encSession, closeEncSession, err := tpm.encryptionSession(encryptOut)
 	if err != nil {
 		return nil, err
@@ -334,9 +306,10 @@ func (tpm *TPM2) RSADecrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, blob []b
 	defer tpm.closeSession(closeEncSession, "RSADecrypt encryption")
 
 	response, err := tpm2.RSADecrypt{
-		KeyHandle: tpm2.NamedHandle{
-			Handle: handle,
-			Name:   name,
+		KeyHandle: tpm2.AuthHandle{
+			Handle: key.ObjectHandle,
+			Name:   key.Name,
+			Auth:   auth,
 		},
 		CipherText: tpm2.TPM2BPublicKeyRSA{Buffer: blob},
 		InScheme: tpm2.TPMTRSADecrypt{

@@ -31,15 +31,25 @@ func (tpm *TPM2) CanSeal() bool {
 // PlatformKeyStore.Initialize/EnrollPlatformSRK, or first-boot provisioning)
 // has nothing this method can seal to, and the caller sees that as a typed
 // error rather than a silent fallback to the SSRK.
-func (tpm *TPM2) defaultSealKeyAttributes() (*types.KeyAttributes, error) {
+//
+// A seal with a password is protected by that password alone. A seal without
+// one is bound to the Platform SRK's own policy -- the platform policy when
+// platform-srk.platform-policy is enabled -- so the object answers the same
+// platform state its parent does; with no policy there either, the seal is
+// refused with ErrSealUnprotected.
+func (tpm *TPM2) defaultSealKeyAttributes(password types.Password) (*types.KeyAttributes, error) {
 	srkAttrs, err := tpm.PlatformSRKAttributes()
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: no usable Platform SRK for sealing", Err: err}
 	}
-	return &types.KeyAttributes{
+	attrs := &types.KeyAttributes{
 		CN:     "platform-sealing-key",
 		Parent: srkAttrs,
-	}, nil
+	}
+	if password == nil || len(password.Bytes()) == 0 {
+		attrs.TPMPolicy = srkAttrs.TPMPolicy
+	}
+	return attrs, nil
 }
 
 // defaultUnsealKeyAttributes returns sensible default KeyAttributes for
@@ -57,8 +67,10 @@ func (tpm *TPM2) defaultUnsealKeyAttributes(keyID string) (*types.KeyAttributes,
 }
 
 // Seal encrypts/protects data using the TPM's sealing mechanism.
-// The data is sealed to the current PCR state (if PlatformPolicy is enabled)
-// and can only be unsealed when the same PCR values are present.
+// The sealed object is bound to the policy keyAttrs.TPMPolicy names, to its
+// password, or to both; a seal with neither fails with ErrSealUnprotected.
+// An object with a policy answers only a policy session, whatever its
+// password.
 //
 // When opts is nil or opts.KeyAttributes is nil, sensible defaults are provided
 // using the Platform Storage Root Key (Platform SRK) as the parent hierarchy.
@@ -77,7 +89,7 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 	}
 
 	if opts.KeyAttributes == nil {
-		defaultAttrs, err := tpm.defaultSealKeyAttributes()
+		defaultAttrs, err := tpm.defaultSealKeyAttributes(opts.Password)
 		if err != nil {
 			return nil, err
 		}
@@ -96,22 +108,6 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 	// opts.Password before authorizing the keyed hash session).
 	if opts.Password != nil {
 		keyAttrs.Password = opts.Password
-	}
-
-	// Apply TPM policy if provided
-	if opts.TPMPolicy != nil {
-		if keyAttrs.TPMAttributes == nil {
-			keyAttrs.TPMAttributes = &types.TPMAttributes{}
-		}
-		keyAttrs.TPMAttributes.PCRSelection = opts.TPMPolicy.PCRSelection
-		keyAttrs.TPMAttributes.HashAlg = opts.TPMPolicy.HashAlg
-
-		// Set auth policy if provided
-		if len(opts.TPMPolicy.AuthPolicy) > 0 {
-			template := KeyedHashTemplate
-			template.AuthPolicy = tpm2.TPM2BDigest{Buffer: opts.TPMPolicy.AuthPolicy}
-			keyAttrs.TPMAttributes.Template = template
-		}
 	}
 
 	// Get the backend - use opts.Backend if provided, otherwise use TPM instance backend
@@ -243,17 +239,19 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 	return plaintext, nil
 }
 
-// SealKey is the internal method that creates a sealed keyed hash key.
-// This is the original Seal() implementation renamed for clarity.
-// It creates a new key under the provided Storage Root Key (SRK),
-// optionally sealing a provided secret to the current Platform
-// Golden Integrity Measurements.
+// SealKey creates a sealed keyed hash object under the provided Storage Root
+// Key (SRK), sealing keyAttrs.SealData or a random secret. The object must be
+// bound to a policy (keyAttrs.TPMPolicy), a non-empty password, or both;
+// ErrSealUnprotected otherwise. An object with a policy answers only a policy
+// session, whatever its password.
 func (tpm *TPM2) SealKey(
 	keyAttrs *types.KeyAttributes,
 	backend KeyBackend,
 	overwrite bool) (*tpm2.CreateResponse, error) {
 
-	// Delegate to the existing implementation in seal.go
+	if err := requireSealProtection(keyAttrs); err != nil {
+		return nil, err
+	}
 	return tpm.sealKeyInternal(keyAttrs, backend, overwrite)
 }
 

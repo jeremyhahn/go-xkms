@@ -353,8 +353,8 @@ func init() {
 	sealCmd.Flags().String("key-id", "", "Key ID to use for sealing (optional; on tpm2 it names the sealed object, and without it each seal creates a uniquely named object whose key_id is printed)")
 	sealCmd.Flags().String("data-file", "", "File containing data to seal")
 	sealCmd.Flags().String("aad", "", "Additional authenticated data (optional)")
-	sealCmd.Flags().String("tpm-policy", "", "TPM policy a TPM2 sealed object is bound to: 'platform' or a policy from 'xkmsctl tpm policy' (default: none)")
-	sealCmd.Flags().String("password", "", "Authorization value of a TPM2 sealed object (optional)")
+	sealCmd.Flags().String("tpm-policy", "", "TPM policy a TPM2 sealed object is bound to: 'platform', a policy from 'xkmsctl tpm policy', or empty for none; a TPM2 seal needs a policy, a password or both")
+	sealCmd.Flags().String("password", "", "Authorization value of a TPM2 sealed object; with a TPM policy it counts only inside the policy, without one it is the object's only protection")
 
 	// Unseal command flags
 	unsealDataCmd.Flags().String("key-id", "", "Key ID to use for unsealing (optional; required on tpm2: the key_id the seal printed)")
