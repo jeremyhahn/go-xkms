@@ -959,6 +959,11 @@ lib: builder-image
 ## Sub-makes rather than prerequisites so the Go suites always report before
 ## the web suites even under `make -j`; make aborts on the first failure, so a
 ## red web suite still fails the target.
+# Unit tests never reach the host's hardware TPM (pkg/tpm2/tpmdev): a test
+# binary is refused by itself, and this flag holds every process a test runs
+# (a built binary, a child) to the same rule. Opt in with
+# XKMS_TEST_HARDWARE_TPM=1.
+test test-go: export XKMS_DENY_HARDWARE_TPM := 1
 test:
 	@$(MAKE) --no-print-directory test-scripts
 	@$(MAKE) --no-print-directory test-go

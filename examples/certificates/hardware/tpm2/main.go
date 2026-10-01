@@ -25,7 +25,10 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2/transport"
+	"github.com/google/go-tpm/tpm2/transport/tcp"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpmdev"
 )
 
 // Example demonstrating TPM2 NV RAM certificate storage.
@@ -63,9 +66,13 @@ func main() {
 		// For testing with simulator
 		log.Println("ℹ Using TPM simulator (swtpm)")
 		log.Println("  Start swtpm: swtpm socket --tpmstate dir=/tmp/tpm --ctrl type=tcp,port=2322 --server type=tcp,port=2321")
-		tpm, err = transport.OpenTPM("swtpm:host=localhost,port=2321") //nolint:staticcheck // TODO: migrate to swtpm package when available
+		tpm, err = tcp.Open(tcp.Config{CommandAddress: "localhost:2321", PlatformAddress: "localhost:2322"})
 	} else {
-		tpm, err = transport.OpenTPM(tpmDevice) //nolint:staticcheck // TODO: migrate to linuxtpm package when available
+		var device *os.File
+		device, err = tpmdev.Open(tpmDevice)
+		if err == nil {
+			tpm = transport.FromReadWriteCloser(device)
+		}
 	}
 
 	if err != nil {

@@ -29,6 +29,7 @@ import (
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/simulator"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpmdev"
 )
 
 // TestTPM2CertStorage performs comprehensive integration tests for TPM2 NV RAM certificate storage
@@ -652,7 +653,10 @@ func openTPMSimulator(t *testing.T) transport.TPMCloser {
 		}
 
 		t.Logf("Using hardware TPM device: %s", tpmDevice)
-		tpm, err = transport.OpenTPM(tpmDevice)
+		device, err := tpmdev.Open(tpmDevice)
+		if err == nil {
+			tpm = transport.FromReadWriteCloser(device)
+		}
 		if err != nil {
 			t.Fatalf("Failed to open TPM device %s: %v", tpmDevice, err)
 		}

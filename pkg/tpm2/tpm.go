@@ -39,6 +39,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpmdev"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -447,10 +448,10 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 				return nil, err
 			}
 		} else {
-			device, err = os.OpenFile(params.Config.Device, os.O_RDWR, 0)
+			device, err = tpmdev.Open(params.Config.Device)
 			if err != nil {
 				params.Logger.Error("failed to open device", slog.String("error", err.Error()))
-				return nil, ErrOpeningDevice
+				return nil, openDeviceError(err)
 			}
 			tpmTransport = transport.FromReadWriter(device)
 		}
@@ -561,10 +562,10 @@ func (tpm *TPM2) Open() error {
 				return err
 			}
 		} else {
-			f, err := os.OpenFile(tpm.config.Device, os.O_RDWR, 0)
+			f, err := tpmdev.Open(tpm.config.Device)
 			if err != nil {
 				tpm.logger.Error("failed to open device", slog.String("error", err.Error()))
-				return ErrOpeningDevice
+				return openDeviceError(err)
 			}
 			tpm.device = f
 			t = transport.FromReadWriter(f)
@@ -597,11 +598,20 @@ func OpenDeviceTransport(device string) (transport.TPMCloser, error) {
 	if strings.HasSuffix(device, ".sock") {
 		return linuxudstpm.Open(device)
 	}
-	f, err := os.OpenFile(device, os.O_RDWR, 0)
+	f, err := tpmdev.Open(device)
 	if err != nil {
-		return nil, ErrOpeningDevice
+		return nil, openDeviceError(err)
 	}
 	return transport.FromReadWriteCloser(f), nil
+}
+
+// openDeviceError is ErrOpeningDevice, joined with the hardware-in-test
+// refusal when that is why the device was not opened.
+func openDeviceError(err error) error {
+	if errors.Is(err, tpmdev.ErrHardwareTPMInTest) {
+		return errors.Join(ErrOpeningDevice, err)
+	}
+	return ErrOpeningDevice
 }
 
 // OpenTCPTransport opens a connection to a TPM over TCP (e.g. swtpm).

@@ -27,11 +27,11 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpmdev"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	libtpm2 "github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/google/go-tpm/tpm2/transport/linuxtpm"
 )
 
 // TPMTokenType is the LUKS2 token type written for TPM-sealed keyslots.
@@ -54,6 +54,10 @@ type TPMOpener interface {
 // TPMOpenerFunc adapts a function to the TPMOpener interface.
 type TPMOpenerFunc func(ctx context.Context) (transport.TPMCloser, error)
 
+// defaultTPMDevice is the kernel resource-managed TPM the default opener
+// uses.
+const defaultTPMDevice = "/dev/tpmrm0"
+
 // Open invokes the underlying function.
 func (f TPMOpenerFunc) Open(ctx context.Context) (transport.TPMCloser, error) { return f(ctx) }
 
@@ -62,11 +66,11 @@ func (f TPMOpenerFunc) Open(ctx context.Context) (transport.TPMCloser, error) { 
 // callers can downgrade cleanly to a "not wired" failure mode.
 func DefaultTPMOpener() TPMOpener {
 	return TPMOpenerFunc(func(ctx context.Context) (transport.TPMCloser, error) {
-		tpm, err := linuxtpm.Open("/dev/tpmrm0")
+		device, err := tpmdev.Open(defaultTPMDevice)
 		if err != nil {
 			return nil, &errs.Detail{Err: ErrTPMNoTransport, Detail: fmt.Sprintf("%v", err)}
 		}
-		return tpm, nil
+		return transport.FromReadWriteCloser(device), nil
 	})
 }
 

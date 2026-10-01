@@ -1,0 +1,11 @@
+- **No test can reach the host's hardware TPM without an explicit opt-in.**
+  - **Runtime guard:** opening a TPM character device now goes through one leaf package, `pkg/tpm2/tpmdev`. In a test binary (`testing.Testing()`), or in any process run with `XKMS_DENY_HARDWARE_TPM=1`, it refuses `/dev/tpm*` and `/dev/tpmrm*`, symlinks resolved, unless `XKMS_TEST_HARDWARE_TPM=1` is set (`ErrHardwareTPMInTest`). `make test` exports the deny flag, so a binary a test runs as a subprocess is held to it too.
+  - **Openers routed through it:** every opener goes through `tpmdev`:
+    - `pkg/tpm2` (`NewTPM2`, `Open`, `OpenDeviceTransport`), where a refusal is still `ErrOpeningDevice`, joined with the cause;
+    - `pkg/luks`'s default opener;
+    - `pkg/crypto/rand`'s TPM resolver;
+    - xkey's enroller probe and EK probe;
+    - the TPM integration test's hardware fallback;
+    - the `tpm2` certificates example.
+  - **Static guard:** `TestNoTPMDeviceOpensOutsideTpmdev` parses every Go file in the repository (all modules, test files included). It fails on any go-tpm path opener (`linuxtpm.Open`, `transport.OpenTPM`, `tpmutil.OpenTPM`), or any `os.Open`/`os.OpenFile` of a TPM or device argument, outside `tpmdev`. A short allowlist covers non-TPM devices (uhid).
+  - This follows the provision tests, which sealed their barrier to a host's real TPM through auto-detection.

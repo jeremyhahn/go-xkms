@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpmdev"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -175,7 +176,7 @@ func deviceOpenCause(logger *slog.Logger, device string, err error) error {
 	if !errors.Is(err, xkms.ErrTPMOpeningDevice) {
 		return err
 	}
-	probe, probeErr := os.OpenFile(device, os.O_RDWR, 0)
+	probe, probeErr := tpmdev.Open(device)
 	if probeErr != nil {
 		return probeErr
 	}

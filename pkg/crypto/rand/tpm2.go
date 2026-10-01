@@ -18,11 +18,11 @@ import (
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpmdev"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/tcp"
-	"github.com/google/go-tpm/tpmutil"
 )
 
 // tpm2Resolver uses TPM2 hardware RNG for random number generation.
@@ -81,7 +81,7 @@ func newTPM2Resolver(config *TPM2Config) (Resolver, error) {
 		}
 	} else {
 		// Open hardware TPM device
-		dev, err := tpmutil.OpenTPM(config.Device)
+		dev, err := tpmdev.Open(config.Device)
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to open TPM2 device %s", config.Device), Err: err}
 		}
