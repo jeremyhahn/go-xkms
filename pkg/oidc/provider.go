@@ -91,6 +91,10 @@ type ProviderConfig struct {
 	// TokenEncoding selects how token requests (authorization code
 	// exchange and refresh) are encoded. Defaults to TokenEncodingForm.
 	TokenEncoding TokenEncoding
+
+	// DeviceStyle selects the device login protocol (StartDeviceAuthorization
+	// and PollDeviceToken). Defaults to DeviceStyleRFC8628.
+	DeviceStyle DeviceStyle
 }
 
 // hasManualEndpoint returns true if any manual endpoint field is set,
@@ -201,6 +205,11 @@ type Provider struct {
 	// EndSessionEndpoint is the URL for ending sessions (logout).
 	EndSessionEndpoint string `json:"end_session_endpoint,omitempty"`
 
+	// DeviceAuthorizationEndpoint is the URL for RFC 8628 device
+	// authorization requests. It is empty for a provider without a device
+	// flow.
+	DeviceAuthorizationEndpoint string `json:"device_authorization_endpoint,omitempty"`
+
 	// ScopesSupported lists supported scopes.
 	ScopesSupported []string `json:"scopes_supported,omitempty"`
 
@@ -294,6 +303,83 @@ func NewProvider(ctx context.Context, config *ProviderConfig) (*Provider, error)
 	return p, nil
 }
 
+// Endpoints names a provider's endpoints explicitly, for a provider used
+// without discovery. Only Token is required: a credential that is imported,
+// refreshed, or logged in through a device flow never needs the
+// authorization endpoint or the JWKS.
+type Endpoints struct {
+	// Authorization is the authorization endpoint (authorization code flow).
+	Authorization string
+
+	// Token is the token endpoint. Required.
+	Token string
+
+	// DeviceAuthorization is the device authorization endpoint (device flow).
+	DeviceAuthorization string
+
+	// Revocation is the token revocation endpoint.
+	Revocation string
+
+	// JWKS is the JSON Web Key Set URI (ID token verification).
+	JWKS string
+
+	// Userinfo is the userinfo endpoint.
+	Userinfo string
+}
+
+// NewEndpointProvider returns a Provider over explicit endpoints, without
+// discovery. Every endpoint must be https, or http on the loopback
+// interface -- the rule discovery applies to a discovered document.
+func NewEndpointProvider(issuer string, ep Endpoints, httpClient *http.Client) (*Provider, error) {
+	parsed, err := url.Parse(issuer)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, ErrInvalidIssuer
+	}
+	if ep.Token == "" {
+		return nil, ErrMissingTokenEndpoint
+	}
+	for _, endpoint := range []struct {
+		name  string
+		value string
+	}{
+		{"authorization_endpoint", ep.Authorization},
+		{"token_endpoint", ep.Token},
+		{"device_authorization_endpoint", ep.DeviceAuthorization},
+		{"revocation_endpoint", ep.Revocation},
+		{"jwks_uri", ep.JWKS},
+		{"userinfo_endpoint", ep.Userinfo},
+	} {
+		if err := validateDiscoveredEndpoint(endpoint.name, endpoint.value); err != nil {
+			return nil, err
+		}
+	}
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: DefaultHTTPTimeout}
+	}
+	return &Provider{
+		Issuer:                      strings.TrimSuffix(issuer, "/"),
+		AuthorizationEndpoint:       ep.Authorization,
+		TokenEndpoint:               ep.Token,
+		DeviceAuthorizationEndpoint: ep.DeviceAuthorization,
+		RevocationEndpoint:          ep.Revocation,
+		JwksURI:                     ep.JWKS,
+		UserinfoEndpoint:            ep.Userinfo,
+		httpClient:                  httpClient,
+		jwksCache:                   &JWKSCache{},
+	}, nil
+}
+
+// HasTokenEndpoint reports whether the provider has a token endpoint, the
+// one endpoint every token request (exchange, refresh, device poll) needs.
+func (p *Provider) HasTokenEndpoint() bool {
+	if p == nil {
+		return false
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.TokenEndpoint != ""
+}
+
 // Discover fetches the OIDC discovery document and populates provider endpoints.
 func (p *Provider) Discover(ctx context.Context) error {
 	discoveryURL := p.Issuer + WellKnownPath
@@ -354,6 +440,7 @@ func (p *Provider) Discover(ctx context.Context) error {
 		{"revocation_endpoint", metadata.RevocationEndpoint},
 		{"introspection_endpoint", metadata.IntrospectionEndpoint},
 		{"end_session_endpoint", metadata.EndSessionEndpoint},
+		{"device_authorization_endpoint", metadata.DeviceAuthorizationEndpoint},
 	} {
 		if err := validateDiscoveredEndpoint(endpoint.name, endpoint.value); err != nil {
 			return err
@@ -372,6 +459,7 @@ func (p *Provider) Discover(ctx context.Context) error {
 	p.RevocationEndpoint = metadata.RevocationEndpoint
 	p.IntrospectionEndpoint = metadata.IntrospectionEndpoint
 	p.EndSessionEndpoint = metadata.EndSessionEndpoint
+	p.DeviceAuthorizationEndpoint = metadata.DeviceAuthorizationEndpoint
 	p.ScopesSupported = metadata.ScopesSupported
 	p.ResponseTypesSupported = metadata.ResponseTypesSupported
 	p.ResponseModesSupported = metadata.ResponseModesSupported

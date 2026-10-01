@@ -143,7 +143,7 @@ func (c *Client) AuthCodeURL(opts *AuthCodeOptions) (string, error) {
 
 // Exchange exchanges an authorization code for tokens.
 func (c *Client) Exchange(ctx context.Context, code string, opts *AuthCodeOptions) (*TokenResponse, error) {
-	if c.provider == nil || !c.provider.IsInitialized() {
+	if !c.provider.HasTokenEndpoint() {
 		return nil, ErrProviderNotInitialized
 	}
 
@@ -173,7 +173,7 @@ func (c *Client) Exchange(ctx context.Context, code string, opts *AuthCodeOption
 
 // Refresh exchanges a refresh token for new tokens.
 func (c *Client) Refresh(ctx context.Context, refreshToken string) (*TokenResponse, error) {
-	if c.provider == nil || !c.provider.IsInitialized() {
+	if !c.provider.HasTokenEndpoint() {
 		return nil, ErrProviderNotInitialized
 	}
 
@@ -198,24 +198,37 @@ func (c *Client) Refresh(ctx context.Context, refreshToken string) (*TokenRespon
 // doTokenRequest dispatches the token request through the DPoP path when
 // a DPoP key is configured, otherwise uses the plain Bearer path.
 func (c *Client) doTokenRequest(ctx context.Context, data url.Values) (*TokenResponse, error) {
+	return c.doTokenRequestEncoded(ctx, data, c.config.TokenEncoding)
+}
+
+// doTokenRequestEncoded is doTokenRequest with an explicit body encoding,
+// for a grant a provider expects encoded differently from its configured
+// TokenEncoding (OpenAI's device login exchanges its code form-encoded
+// while refreshing with JSON).
+func (c *Client) doTokenRequestEncoded(ctx context.Context, data url.Values, encoding TokenEncoding) (*TokenResponse, error) {
 	c.dpopMu.Lock()
 	hasDPoP := c.dpopKey != nil
 	c.dpopMu.Unlock()
 
 	if hasDPoP {
-		return c.doDPoPTokenRequest(ctx, data)
+		return c.doDPoPTokenRequest(ctx, data, encoding)
 	}
-	return c.doPlainTokenRequest(ctx, data)
+	return c.doPlainTokenRequest(ctx, data, encoding)
+}
+
+// httpClient returns the configured HTTP client, or http.DefaultClient.
+func (c *Client) httpClient() *http.Client {
+	if c.config.HTTPClient != nil {
+		return c.config.HTTPClient
+	}
+	return http.DefaultClient
 }
 
 // doPlainTokenRequest performs a standard token request without DPoP binding.
-func (c *Client) doPlainTokenRequest(ctx context.Context, data url.Values) (*TokenResponse, error) {
-	httpClient := c.config.HTTPClient
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
+func (c *Client) doPlainTokenRequest(ctx context.Context, data url.Values, encoding TokenEncoding) (*TokenResponse, error) {
+	httpClient := c.httpClient()
 
-	reqBody, contentType, err := EncodeTokenRequestBody(c.config.TokenEncoding, data)
+	reqBody, contentType, err := EncodeTokenRequestBody(encoding, data)
 	if err != nil {
 		return nil, err
 	}
@@ -250,11 +263,8 @@ func (c *Client) doPlainTokenRequest(ctx context.Context, data url.Values) (*Tok
 // doDPoPTokenRequest performs a DPoP-bound token request with nonce retry.
 // It follows the pattern from RFC 9449 Section 5: the server may respond with
 // use_dpop_nonce, requiring the client to retry with the provided nonce.
-func (c *Client) doDPoPTokenRequest(ctx context.Context, data url.Values) (*TokenResponse, error) {
-	httpClient := c.config.HTTPClient
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
+func (c *Client) doDPoPTokenRequest(ctx context.Context, data url.Values, encoding TokenEncoding) (*TokenResponse, error) {
+	httpClient := c.httpClient()
 
 	tokenEndpoint := c.provider.TokenEndpoint
 
@@ -263,7 +273,7 @@ func (c *Client) doDPoPTokenRequest(ctx context.Context, data url.Values) (*Toke
 	nonce := c.dpopNonce
 	c.dpopMu.Unlock()
 
-	reqBody, contentType, err := EncodeTokenRequestBody(c.config.TokenEncoding, data)
+	reqBody, contentType, err := EncodeTokenRequestBody(encoding, data)
 	if err != nil {
 		return nil, err
 	}
@@ -336,8 +346,9 @@ func (c *Client) doDPoPTokenRequest(ctx context.Context, data url.Values) (*Toke
 // code -- instead of the unmarshal's zero-valued Code and Description.
 func parseTokenErrorResponse(body []byte, statusCode int, contentType string) *TokenRequestError {
 	var errResp struct {
-		Error            string `json:"error"`
-		ErrorDescription string `json:"error_description"`
+		Error            json.RawMessage `json:"error"`
+		ErrorDescription string          `json:"error_description"`
+		Code             string          `json:"code"`
 	}
 	if err := json.Unmarshal(body, &errResp); err != nil {
 		slog.Debug("oidc: token error response is not valid OAuth2 JSON", "status_code", statusCode, "content_type", contentType, "error", err)
@@ -347,12 +358,39 @@ func parseTokenErrorResponse(body []byte, statusCode int, contentType string) *T
 			StatusCode:  statusCode,
 		}
 	}
+	code, description := oauthErrorFields(errResp.Error)
+	if code == "" {
+		code = errResp.Code
+	}
+	if errResp.ErrorDescription != "" {
+		description = errResp.ErrorDescription
+	}
 	return &TokenRequestError{
 		Err:         ErrTokenExchangeFailed,
-		Code:        errResp.Error,
-		Description: errResp.ErrorDescription,
+		Code:        code,
+		Description: description,
 		StatusCode:  statusCode,
 	}
+}
+
+// oauthErrorFields reads the "error" member of a token error body. RFC 6749
+// makes it a string code; some providers (OpenAI's auth service among them)
+// answer with an object carrying "code" and "message" instead.
+func oauthErrorFields(raw json.RawMessage) (code, message string) {
+	if len(raw) == 0 {
+		return "", ""
+	}
+	if err := json.Unmarshal(raw, &code); err == nil {
+		return code, ""
+	}
+	var obj struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return "", ""
+	}
+	return obj.Code, obj.Message
 }
 
 // formatNonOAuth2Body builds a bounded, printable description for a token

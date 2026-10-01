@@ -14,6 +14,9 @@
 package oidc
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -80,6 +83,84 @@ func (t *TokenResponse) SetDPoPKey(key *DPoPKey) error {
 	}
 	t.DPoPKeyPEM = pem
 	return nil
+}
+
+// InheritFrom completes a refresh response from the token set it replaced.
+// RFC 6749 section 6 lets a provider omit the refresh token (the old one
+// stays valid) and the ID token from a refresh response; a provider that
+// rotates refresh tokens returns a new one, which is kept. The DPoP key is
+// always carried over: RFC 9449 binds the refreshed tokens to the same key.
+func (t *TokenResponse) InheritFrom(prev *TokenResponse) {
+	if prev == nil {
+		return
+	}
+	if t.RefreshToken == "" {
+		t.RefreshToken = prev.RefreshToken
+	}
+	if t.IDToken == "" {
+		t.IDToken = prev.IDToken
+	}
+	if t.Scope == "" {
+		t.Scope = prev.Scope
+	}
+	if t.TokenType == "" {
+		t.TokenType = prev.TokenType
+	}
+	if t.DPoPKeyPEM == "" {
+		t.DPoPKeyPEM = prev.DPoPKeyPEM
+	}
+}
+
+// ExpiresAt returns when the access token expires: the Expiry the token
+// endpoint reported, or, when it reported none, the "exp" claim of a JWT
+// access token. The zero time means the expiry is unknown.
+//
+// The claim is read without verifying the token's signature. It is used only
+// to schedule a refresh, never to trust the token.
+func (t *TokenResponse) ExpiresAt() time.Time {
+	if !t.Expiry.IsZero() {
+		return t.Expiry
+	}
+	exp, ok := JWTExpiry(t.AccessToken)
+	if !ok {
+		return time.Time{}
+	}
+	return exp
+}
+
+// JWTExpiry returns the "exp" claim of a compact JWT, read without verifying
+// its signature, and ok=false when token is not a JWT or carries no "exp".
+func JWTExpiry(token string) (time.Time, bool) {
+	claims, ok := UnverifiedClaims(token)
+	if !ok {
+		return time.Time{}, false
+	}
+	exp, ok := claims["exp"].(float64)
+	if !ok || exp <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(int64(exp), 0), true
+}
+
+// UnverifiedClaims decodes the claims of a compact JWT WITHOUT verifying its
+// signature, and ok=false when token is not a three-part JWT with a JSON
+// object payload. Its result must never be trusted for an authorization
+// decision; it serves bookkeeping such as scheduling a refresh or naming the
+// account a token belongs to.
+func UnverifiedClaims(token string) (map[string]any, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return nil, false
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, false
+	}
+	return claims, true
 }
 
 // IDTokenClaims represents the standard claims in an OIDC ID token.

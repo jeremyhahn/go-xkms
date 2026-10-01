@@ -15,7 +15,9 @@ package oidc
 
 import (
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 )
 
 // OutputMode defines how tokens/credentials are output after login.
@@ -87,6 +89,54 @@ type ProviderTemplate struct {
 
 	// RequiresRegion indicates the provider requires a region parameter.
 	RequiresRegion bool
+
+	// TokenEncoding is how the provider expects token requests encoded.
+	// Empty means form encoding (RFC 6749).
+	TokenEncoding TokenEncoding
+
+	// DeviceStyle is the provider's device login protocol, for a template
+	// that supports FlowDevice. Empty means RFC 8628.
+	DeviceStyle DeviceStyle
+
+	// Flows are the ways a login for this provider can be obtained. Empty
+	// means FlowAuthorizationCode only -- the browser login every
+	// pre-existing template uses.
+	Flows []Flow
+
+	// NoRefresh marks a provider whose tokens cannot be refreshed: a login
+	// is imported and used until TokenLifetime runs out, then imported
+	// again.
+	NoRefresh bool
+
+	// TokenLifetime is how long an imported token of a NoRefresh provider
+	// lives when the token itself does not say.
+	TokenLifetime time.Duration
+}
+
+// Flow is a way of obtaining a login.
+type Flow string
+
+const (
+	// FlowAuthorizationCode is the browser login: authorization code with
+	// PKCE through a loopback callback.
+	FlowAuthorizationCode Flow = "authorization_code"
+
+	// FlowDevice is a device login (DeviceStyle): the user approves a code
+	// on another device while the client polls.
+	FlowDevice Flow = "device"
+
+	// FlowImport is importing tokens obtained elsewhere, such as an existing
+	// codex auth.json or a token printed by a CLI.
+	FlowImport Flow = "import"
+)
+
+// SupportsFlow reports whether a login for this provider can be obtained
+// through f.
+func (t *ProviderTemplate) SupportsFlow(f Flow) bool {
+	if len(t.Flows) == 0 {
+		return f == FlowAuthorizationCode
+	}
+	return slices.Contains(t.Flows, f)
 }
 
 // BuiltinTemplates contains pre-configured provider templates.
@@ -163,6 +213,40 @@ var BuiltinTemplates = map[string]*ProviderTemplate{
 		DPoP:               false,
 		DefaultOutput:      OutputModeExec,
 		SupportsRemoteFlow: false,
+	},
+	// openai is the ChatGPT login of OpenAI's codex CLI. Every value is the
+	// codex CLI's own (openai/codex codex-rs/login/src/server.rs and
+	// codex-rs/login/src/auth/manager.rs): the public client, the token
+	// endpoint it refreshes at, the JSON refresh body, and its scopes. The
+	// service rotates refresh tokens on use. Its browser login redirects
+	// only to codex's own fixed loopback port, so a login is obtained by
+	// the device flow or by importing a codex auth.json.
+	"openai": {
+		Name:                      "openai",
+		Description:               "OpenAI ChatGPT login (the codex CLI's)",
+		Issuer:                    "https://auth.openai.com",
+		AuthorizeEndpointTemplate: "https://auth.openai.com/oauth/authorize",
+		TokenEndpointTemplate:     "https://auth.openai.com/oauth/token",
+		ClientID:                  "app_EMoamEEZ73f0CkXaXp7hrann",
+		Scopes:                    []string{"openid", "profile", "email", "offline_access", "api.connectors.read", "api.connectors.invoke"},
+		DefaultOutput:             OutputModeNone,
+		TokenEncoding:             TokenEncodingJSON,
+		DeviceStyle:               DeviceStyleOpenAI,
+		Flows:                     []Flow{FlowDevice, FlowImport},
+	},
+	// anthropic is the long-lived Claude Code token `claude setup-token`
+	// prints: a bearer token valid for one year with no refresh token
+	// (code.claude.com/docs/en/authentication). Anthropic documents no
+	// OAuth client or refresh endpoint for use outside Claude Code, so the
+	// token is imported and tracked to its expiry, never refreshed.
+	"anthropic": {
+		Name:          "anthropic",
+		Description:   "Anthropic Claude Code long-lived token (claude setup-token); imported, never refreshed",
+		Issuer:        "https://claude.ai",
+		DefaultOutput: OutputModeNone,
+		Flows:         []Flow{FlowImport},
+		NoRefresh:     true,
+		TokenLifetime: 365 * 24 * time.Hour,
 	},
 }
 

@@ -362,6 +362,12 @@ func (s *OIDCService) GetTemplates() []OIDCProviderTemplateInfo {
 	templates := make([]OIDCProviderTemplateInfo, 0, len(oidc.BuiltinTemplates)+1)
 
 	for _, tmpl := range oidc.BuiltinTemplates {
+		// The local provider list logs in through the browser; a template
+		// whose login is only imported or device-approved (openai,
+		// anthropic) is a server-side OIDC credential template.
+		if !tmpl.SupportsFlow(oidc.FlowAuthorizationCode) {
+			continue
+		}
 		provType := OIDCProviderTypeStandard
 		if tmpl.CustomResponseHandler == "aws" {
 			provType = OIDCProviderTypeAWS

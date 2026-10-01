@@ -969,6 +969,12 @@ func TestOIDCService_GetTemplates(t *testing.T) {
 	assert.True(t, okta.RequiresIssuer)
 	assert.Empty(t, okta.Issuer)
 
+	// The local browser-login list is unchanged by the server credential
+	// templates, which log in by device flow or import only.
+	assert.NotContains(t, byName, "openai")
+	assert.NotContains(t, byName, "anthropic")
+	assert.Len(t, templates, 8, "the seven browser-login builtins plus custom")
+
 	// Validate "custom" synthetic entry.
 	custom, ok := byName["custom"]
 	require.True(t, ok, "custom template missing")
