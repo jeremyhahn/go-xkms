@@ -32,6 +32,10 @@ type BarrierBackend struct {
 // Compile-time assertion that BarrierBackend satisfies storage.Backend.
 var _ storage.Backend = (*BarrierBackend)(nil)
 
+// And the fenced create, promoted from go-qrdb's barrier, which encrypts and
+// delegates the decision to its base.
+var _ storage.FencedCreator = (*BarrierBackend)(nil)
+
 // And the optional guarded-delete capability, which it inherits from the
 // embedded barrier rather than implementing here. Asserted because
 // storage.CompareAndDeleter's documentation names this type: if a future

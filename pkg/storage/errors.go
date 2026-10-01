@@ -32,6 +32,11 @@ var (
 	// CompareAndDeleter.
 	ErrCompareAndDeleteUnsupported = errors.New("storage: backend does not support compare-and-delete")
 
+	// ErrFencedCreateUnsupported is returned when a PutIfAllAbsent is asked
+	// of a backend, or a wrapper over one, that cannot decide the absence of
+	// a key and its fences together with the write in one atomic step.
+	ErrFencedCreateUnsupported = errors.New("storage: backend does not support fenced create")
+
 	// ErrAlreadyExists is returned when attempting to save a key or certificate that already exists.
 	ErrAlreadyExists = errors.New("storage: already exists")
 

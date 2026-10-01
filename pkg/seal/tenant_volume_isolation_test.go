@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,7 +46,11 @@ func newVolumeTestStack(t *testing.T, ents *qrdbsdk.Entitlements) (*BarrierRegis
 	ctx := context.Background()
 	dataDir := t.TempDir()
 
-	barrier, err := NewBarrier(testLogger(), newMemoryBackend(), BarrierConfig{
+	// The engine-backed memory store: go-qrdb's TenantService commits a new
+	// tenant with a fenced create, which the store must decide atomically.
+	base := storage.NewMemory()
+	t.Cleanup(func() { _ = base.Close() })
+	barrier, err := NewBarrier(testLogger(), base, BarrierConfig{
 		RootKeyPath: "core/seal",
 	}, NewSoftwareStrategy())
 	require.NoError(t, err)
@@ -112,7 +118,11 @@ func TestVolumeTenant_AutoUnseal_CreateAndUse(t *testing.T) {
 func TestVolumeTenant_RestoreAfterRestart(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
-	base := newMemoryBackend() // persists across the simulated restart
+	// The system store is a file store: the simulated restart closes it with
+	// the phase-1 stack and reopens it from disk.
+	storeDir := filepath.Join(dataDir, "system-store")
+	base, err := storage.OpenEngine(storage.EngineConfig{Kind: storage.EngineFile, Path: storeDir})
+	require.NoError(t, err)
 	creds, err := CredentialsFor([]byte("system-pass"))
 	require.NoError(t, err)
 	t.Cleanup(func() { creds.Secret.Destroy() })
@@ -152,7 +162,10 @@ func TestVolumeTenant_RestoreAfterRestart(t *testing.T) {
 	require.NoError(t, pool1.Close())
 
 	// --- Phase 2: fresh stack over the same store + pool dir; restore. ---
-	barrier2, err := NewBarrier(testLogger(), base, cfg, NewSoftwareStrategy())
+	base2, err := storage.OpenEngine(storage.EngineConfig{Kind: storage.EngineFile, Path: storeDir})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = base2.Close() })
+	barrier2, err := NewBarrier(testLogger(), base2, cfg, NewSoftwareStrategy())
 	require.NoError(t, err)
 	require.NoError(t, barrier2.Unseal(ctx, creds))
 	pool2, err := BuildVolumePoolSubsystem(dataDir, pools, testLogger(), false)
@@ -200,4 +213,27 @@ func TestBarrierTenant_SelfManaged_SealedUntilInit(t *testing.T) {
 	tb, err := registry.Tenant("bar-1")
 	require.NoError(t, err)
 	assert.True(t, tb.IsSealed(), "self-managed barrier tenant must remain sealed until Phase 2 init")
+}
+
+// TestHardwareTenantService_StoreWithoutFencedCreateRefuses proves a tenant
+// metadata store that cannot decide a fenced create atomically refuses the
+// create rather than checking the tombstone and then writing.
+func TestHardwareTenantService_StoreWithoutFencedCreateRefuses(t *testing.T) {
+	ctx := context.Background()
+	barrier, err := NewBarrier(testLogger(), newMemoryBackend(), BarrierConfig{RootKeyPath: "core/seal"}, NewSoftwareStrategy())
+	require.NoError(t, err)
+	creds, err := CredentialsFor([]byte("system-pass"))
+	require.NoError(t, err)
+	t.Cleanup(func() { creds.Secret.Destroy() })
+	require.NoError(t, barrier.Initialize(ctx, creds))
+	registry, err := NewBarrierRegistry(barrier)
+	require.NoError(t, err)
+	svc, err := NewHardwareTenantService(barrier, registry, testLogger(), nil,
+		qrdbsdk.WithTenantDefaultEntitlements(permissiveEntitlements()))
+	require.NoError(t, err)
+
+	_, err = svc.CreateTenant(ctx, "t-1", "Tenant", qrdbsdk.TenantIsolationPrefix)
+	assert.ErrorIs(t, err, storage.ErrFencedCreateUnsupported)
+	_, err = svc.GetTenant(ctx, "t-1")
+	assert.Error(t, err, "nothing was created")
 }

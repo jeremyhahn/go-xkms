@@ -44,6 +44,20 @@ func (s tenantMetadataStore) Get(ctx context.Context, key string) ([]byte, error
 	return v, err
 }
 
+// PutIfAllAbsent forwards the fenced create go-qrdb's TenantService commits
+// a new tenant with: the record only while it and the tenant's tombstone are
+// absent, in one atomic step. The metadata store is the system barrier,
+// whose own PutIfAllAbsent encrypts and hands the decision to its base -- the
+// xkms backend under guardedStorageBackend. A store without the capability
+// reports storage.ErrFencedCreateUnsupported; there is no check-then-write.
+func (s tenantMetadataStore) PutIfAllAbsent(ctx context.Context, key string, value []byte, fences ...string) (bool, error) {
+	fc, ok := s.StorageBackend.(storage.FencedCreator)
+	if !ok {
+		return false, storage.ErrFencedCreateUnsupported
+	}
+	return fc.PutIfAllAbsent(ctx, key, value, fences...)
+}
+
 // guardedStorageBackend adapts an xkms storage.Backend to go-qrdb's
 // StorageBackend, whose contract (go-quicraft's seal.StorageBackend) requires
 // CompareAndDelete as a MANDATORY method.
@@ -96,6 +110,17 @@ func (g guardedStorageBackend) CompareAndDelete(ctx context.Context, key string,
 		return false, storage.ErrCompareAndDeleteUnsupported
 	}
 	return cad.CompareAndDelete(ctx, key, expected)
+}
+
+// PutIfAllAbsent forwards to the wrapped backend's optional fenced create, and
+// reports storage.ErrFencedCreateUnsupported when it has none. It never
+// degrades to checking the fences and then writing.
+func (g guardedStorageBackend) PutIfAllAbsent(ctx context.Context, key string, value []byte, fences ...string) (bool, error) {
+	fc, ok := g.Backend.(storage.FencedCreator)
+	if !ok {
+		return false, storage.ErrFencedCreateUnsupported
+	}
+	return fc.PutIfAllAbsent(ctx, key, value, fences...)
 }
 
 // CompareAndSwap gives a barrier over an xkms backend its guarded swap.

@@ -87,6 +87,7 @@ type engineBackend struct {
 var _ Backend = (*engineBackend)(nil)
 var _ CompareAndSwapper = (*engineBackend)(nil)
 var _ CompareAndDeleter = (*engineBackend)(nil)
+var _ FencedCreator = (*engineBackend)(nil)
 
 // NewEngineBackend wraps a go-qrdb storage engine as an xkms Backend.
 func NewEngineBackend(eng qrdbsdk.Storage) Backend {
@@ -143,6 +144,29 @@ func (b *engineBackend) PutIfAbsent(_ context.Context, key string, value []byte)
 	}
 	if err := b.eng.Set([]byte(key), value); err != nil {
 		return false, mapErr("put-if-absent", key, err)
+	}
+	return true, nil
+}
+
+// PutIfAllAbsent stores value at key only when key and every fence are
+// absent, deciding every absence and the write under writeMu -- the lock
+// PutIfAbsent, CompareAndSwap and CompareAndDelete share -- so for this
+// single-writer, process-local engine the decision is genuinely atomic.
+func (b *engineBackend) PutIfAllAbsent(_ context.Context, key string, value []byte, fences ...string) (bool, error) {
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
+
+	for _, k := range append([]string{key}, fences...) {
+		exists, err := b.eng.Exists([]byte(k))
+		if err != nil {
+			return false, mapErr("put-if-all-absent", k, err)
+		}
+		if exists {
+			return false, nil
+		}
+	}
+	if err := b.eng.Set([]byte(key), value); err != nil {
+		return false, mapErr("put-if-all-absent", key, err)
 	}
 	return true, nil
 }
