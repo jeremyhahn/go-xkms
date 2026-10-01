@@ -463,6 +463,23 @@ export namespace keybackend {
 
 }
 
+export namespace localtpm {
+	
+	export class Policies {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new Policies(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
+
+}
+
 export namespace nativemsg {
 	
 	export class PairingVerifier {
@@ -3058,18 +3075,6 @@ export namespace services {
 		    }
 		    return a;
 		}
-	}
-	export class LocalTPMPolicies {
-	
-	
-	    static createFrom(source: any = {}) {
-	        return new LocalTPMPolicies(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	
-	    }
 	}
 	export class LockoutInfo {
 	    counter: number;
