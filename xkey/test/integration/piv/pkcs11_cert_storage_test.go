@@ -37,6 +37,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	p11 "github.com/miekg/pkcs11"
 )
 
@@ -147,10 +148,12 @@ func generateTestCertWithSubject(t *testing.T, cn string) *x509.Certificate {
 func newPKCS11Storage(t *testing.T, libPath string, slotID int) *xkms.PIVPKCS11Backend {
 	t.Helper()
 
+	pin, err := secure.NewSecret([]byte(testPIN))
+	require.NoError(t, err)
 	storage, err := xkms.NewPIVPKCS11Backend(&xkms.PIVPKCS11StorageConfig{
 		LibraryPath: libPath,
 		SlotID:      slotID,
-		PIN:         testPIN,
+		PIN:         pin,
 	})
 	require.NoError(t, err, "failed to create PKCS11CertStorage")
 

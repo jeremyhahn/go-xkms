@@ -1129,8 +1129,33 @@ func (s *TestXKMSService) PasswordList(ctx context.Context, req *xkms.PasswordLi
 	return nil, ErrNotImplemented
 }
 
-func (s *TestXKMSService) PasswordUpdate(ctx context.Context, req *xkms.PasswordUpdateRequest) error {
+func (s *TestXKMSService) PasswordUpdate(ctx context.Context, req *xkms.PasswordUpdateRequest) (*xkms.PasswordGetResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+// PasswordVaultStatus is not modelled by the test service.
+func (s *TestXKMSService) PasswordVaultStatus(ctx context.Context) (*xkms.PasswordVaultStatusResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+// PasswordVaultEnroll is not modelled by the test service.
+func (s *TestXKMSService) PasswordVaultEnroll(ctx context.Context, req *xkms.PasswordVaultEnrollRequest) (*xkms.PasswordVaultEnrollResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+// PasswordVaultRotate is not modelled by the test service.
+func (s *TestXKMSService) PasswordVaultRotate(ctx context.Context, req *xkms.PasswordVaultRotateRequest) (*xkms.PasswordVaultEnrollResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+// PasswordVaultRemoveFactor is not modelled by the test service.
+func (s *TestXKMSService) PasswordVaultRemoveFactor(ctx context.Context, req *xkms.PasswordVaultRemoveFactorRequest) error {
 	return ErrNotImplemented
+}
+
+// PasswordVaultRecover is not modelled by the test service.
+func (s *TestXKMSService) PasswordVaultRecover(ctx context.Context, req *xkms.PasswordVaultRecoverRequest) (*xkms.PasswordVaultEnrollResponse, error) {
+	return nil, ErrNotImplemented
 }
 
 func (s *TestXKMSService) PasswordDelete(ctx context.Context, req *xkms.PasswordDeleteRequest) error {

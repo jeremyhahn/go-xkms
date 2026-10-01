@@ -330,11 +330,19 @@ func newPKCS11BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 		return nil, err
 	}
 
+	pinSecret, err := xkms.NewLiteralSecretValue([]byte(pin))
+	if err != nil {
+		return nil, err
+	}
+	soPINSecret, err := xkms.NewLiteralSecretValue([]byte(soPin))
+	if err != nil {
+		return nil, err
+	}
 	provider, err := xkms.NewPKCS11Backend(&xkms.PKCS11BackendConfig{
 		Library:     library,
 		TokenLabel:  tokenLabel,
-		PIN:         pin,
-		SOPIN:       soPin,
+		PIN:         pinSecret,
+		SOPIN:       soPINSecret,
 		KeyStorage:  keyStorage,
 		CertStorage: certStorage,
 	})
