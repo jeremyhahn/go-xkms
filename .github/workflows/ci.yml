@@ -911,7 +911,10 @@ jobs:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
           PACKAGES: ${{ steps.pkgs.outputs.packages }}
-        run: go test -race -timeout 15m -tags="codec_cbor codec_json codec_msgpack tpm_simulator frost" $PACKAGES
+        # -p 2: go test runs up to GOMAXPROCS test binaries at once, and under
+        # -race the password-vault packages (pkg/api/mcp, pkg/api/rest) each
+        # peak near 7 GB, so eight in parallel OOM-killed this job (#1389).
+        run: go test -race -p 2 -timeout 15m -tags="codec_cbor codec_json codec_msgpack tpm_simulator frost" $PACKAGES
 
       - name: No root-module Go changes
         if: steps.pkgs.outputs.packages == ''
@@ -1680,7 +1683,10 @@ jobs:
         env:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-        run: go test -race -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
+        # -p 2: go test runs up to GOMAXPROCS test binaries at once, and under
+        # -race the password-vault packages (pkg/api/mcp, pkg/api/rest) each
+        # peak near 7 GB, so eight in parallel OOM-killed this job (#1389).
+        run: go test -race -p 2 -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
 
   # Job 7b: pkg/tpm2 on the in-process TPM simulator
   #
