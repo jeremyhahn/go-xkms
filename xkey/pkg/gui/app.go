@@ -2611,12 +2611,33 @@ func (a *App) applyConnectionEvent(eventType events.EventType, client xkmssdk.Cl
 		a.tpmPolicyService.SetClient(client)
 		a.staticPWService.SetClient(client)
 		a.oidcServerService.SetClient(client)
+		a.useServerSSH()
 	case events.EventServerDisconnected, events.EventServerError:
 		a.pivService.SetClient(nil)
 		a.certificateService.SetClient(nil)
 		a.tpmPolicyService.SetClient(nil)
 		a.staticPWService.SetClient(nil)
 		a.oidcServerService.SetClient(nil)
+		if err := a.sshService.SetServerClient(nil); err != nil {
+			a.log.Warn("ssh: closing the server client failed", "error", err)
+		}
+	}
+}
+
+// useServerSSH makes the SSH service server-backed for the connected
+// server. A server whose SSH API cannot be dialed makes SSH fail closed
+// until the connection goes; it never quietly falls back to local keys.
+func (a *App) useServerSSH() {
+	client, err := a.connectionService.SSHClient()
+	if err != nil {
+		a.log.Error("ssh: the connected server's SSH API is unavailable", "error", err)
+		if closeErr := a.sshService.SetServerUnavailable(err); closeErr != nil {
+			a.log.Warn("ssh: closing the previous server client failed", "error", closeErr)
+		}
+		return
+	}
+	if err := a.sshService.SetServerClient(client); err != nil {
+		a.log.Warn("ssh: closing the previous server client failed", "error", err)
 	}
 }
 

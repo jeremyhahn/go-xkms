@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	gossh "golang.org/x/crypto/ssh"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -241,30 +240,39 @@ func closeSSHClientQuiet(client sshsdk.Client) func() {
 }
 
 // sshClient resolves the transport and returns an sshsdk.Client along
-// with its Close function. The Close returned is always safe to defer;
-// it is a no-op on the REST transport.
+// with its Close function. SSH follows the same local/remote switch as
+// OIDC: an explicit --server, or else the configured xkmsd (see
+// resolveXKMSdEndpoint) unless --local is given, makes the command
+// server-backed; otherwise it runs on the local shared SSH store. A server
+// call presents XKMSD_TOKEN or the stored login, and the XKMSD_TLS_*
+// trust and client credential, on every transport.
 func sshClient(cmd *cobra.Command) (sshsdk.Client, func(), error) {
-	token := strings.TrimSpace(os.Getenv("XKMSD_TOKEN"))
-
-	// 1. Explicit --server flag selects the transport by URL scheme so the
-	//    same command works over every protocol (rest/grpc/quic/unix/mcp).
-	if cmd != nil {
-		if server, _ := cmd.Flags().GetString("server"); strings.TrimSpace(server) != "" {
-			tlsCA, _ := cmd.Flags().GetString("tls-ca")
-			return sshClientForServer(strings.TrimSpace(server), strings.TrimSpace(tlsCA), token)
-		}
-	}
-
-	// 2. XKMSD_URL / config fall back to the REST transport.
-	if u := firstNonEmpty(os.Getenv("XKMSD_URL"), viper.GetString("xkmsd_url")); strings.TrimSpace(u) != "" {
-		client, err := sshsdk.NewREST(sshsdk.RESTOptions{BaseURL: strings.TrimSpace(u), AuthToken: token})
+	if server := strings.TrimSpace(commandFlagString(cmd, "server")); server != "" {
+		token, err := resolveXKMSdToken(server)
 		if err != nil {
-			return nil, nil, &SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}
+			return nil, nil, err
 		}
-		return client, closeSSHClientQuiet(client), nil
+		return sshClientForEndpoint(XKMSdEndpoint{
+			URL:         server,
+			Token:       token,
+			TLSCAFile:   resolveXKMSdTLSCAFile(cmd),
+			TLSCertFile: strings.TrimSpace(os.Getenv(envXKMSdTLSCert)),
+			TLSKeyFile:  strings.TrimSpace(os.Getenv(envXKMSdTLSKey)),
+		})
 	}
 
-	// 3. Otherwise use the local shared-store-backed embedded client.
+	useServer, err := sshUseServer(cmd)
+	if err != nil {
+		return nil, nil, err
+	}
+	if useServer {
+		endpoint, err := resolveXKMSdEndpoint(cmd)
+		if err != nil {
+			return nil, nil, err
+		}
+		return sshClientForEndpoint(endpoint)
+	}
+
 	backend, err := xkeySSHBackend()
 	if err != nil {
 		return nil, nil, err
@@ -276,12 +284,32 @@ func sshClient(cmd *cobra.Command) (sshsdk.Client, func(), error) {
 	return client, closeSSHClientQuiet(client), nil
 }
 
-// sshClientForServer constructs the SDK SSH client for an explicit --server URL.
+// sshUseServer reports whether an SSH command acts on the server's SSH
+// keys: an xkmsd is configured and --local was not given.
+func sshUseServer(cmd *cobra.Command) (bool, error) {
+	if resolveXKMSdURL() == "" {
+		return false, nil
+	}
+	local, err := commandFlagBool(cmd, "local")
+	if err != nil {
+		return false, err
+	}
+	return !local, nil
+}
+
+// sshClientForEndpoint constructs the SDK SSH client for an xkmsd endpoint.
 // The scheme dispatch (http(s)→REST, grpc(s)→gRPC, unix→gRPC-over-UDS,
 // quic→HTTP/3, mcp(s)→JSON-RPC) lives in the SDK so xkey and other consumers
-// share one code path. tlsCA, when set, verifies the server.
-func sshClientForServer(server, tlsCA, token string) (sshsdk.Client, func(), error) {
-	client, err := sshsdk.NewClientForServer(server, tlsCA, token)
+// share one code path.
+func sshClientForEndpoint(endpoint XKMSdEndpoint) (sshsdk.Client, func(), error) {
+	tlsConfig, err := endpoint.TLSConfig()
+	if err != nil {
+		return nil, nil, err
+	}
+	client, err := sshsdk.NewClientForServerWith(endpoint.URL, sshsdk.ServerOptions{
+		TLSConfig: tlsConfig,
+		Token:     endpoint.Token,
+	})
 	if err != nil {
 		return nil, nil, &SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}
 	}
@@ -819,6 +847,7 @@ func init() {
 	// back to XKMSD_URL (REST) then the local embedded store.
 	SSHCmd.PersistentFlags().String("server", "", "Remote xkmsd URL (e.g. grpcs://host:9443, quic://host:8444, unix:///path/xkms.sock)")
 	SSHCmd.PersistentFlags().String("tls-ca", "", "TLS CA certificate file used to verify the server")
+	SSHCmd.PersistentFlags().Bool("local", false, "use the local SSH store even when an xkmsd server is configured")
 
 	SSHCmd.AddCommand(sshKeysCmd)
 	sshKeysCmd.AddCommand(sshKeysGenerateCmd)

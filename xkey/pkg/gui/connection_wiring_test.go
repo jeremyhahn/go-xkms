@@ -15,9 +15,13 @@ package gui
 
 import (
 	"context"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
@@ -41,6 +45,9 @@ func newConnectionWiringApp() *App {
 		tpmPolicyService:   services.NewTPMPolicyService(),
 		staticPWService:    services.NewStaticPasswordService(nil),
 		oidcServerService:  services.NewOIDCServerService(nil),
+		connectionService:  services.NewConnectionService(),
+		sshService:         services.NewSSHService(nil),
+		log:                slog.Default(),
 	}
 }
 
@@ -146,4 +153,41 @@ func TestAutoUnsealBarrier_WithoutTPMNeedsThePassword(t *testing.T) {
 			assert.False(t, a.barrierService.IsUnsealed())
 		})
 	}
+}
+
+// TestApplyConnectionEvent_SSHFollowsTheConnection proves SSH is
+// server-backed while a server is connected and local once it is gone.
+func TestApplyConnectionEvent_SSHFollowsTheConnection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","version":"v"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	a := newConnectionWiringApp()
+	a.connectionService.SetContext(context.Background())
+	_, err := a.connectionService.Connect("rest", srv.Listener.Addr().String(), false, "", "")
+	require.NoError(t, err)
+
+	a.applyConnectionEvent(events.EventServerConnected, a.connectionService.GetClient())
+	assert.True(t, a.sshService.Connected(), "a connected server serves SSH")
+
+	require.NoError(t, a.connectionService.Disconnect())
+	a.applyConnectionEvent(events.EventServerDisconnected, nil)
+	assert.False(t, a.sshService.Connected(), "SSH returns to local when the server goes")
+}
+
+// TestApplyConnectionEvent_SSHFailsClosedWithoutServerSSH proves a
+// connected server whose SSH API cannot be dialed makes SSH unavailable,
+// never quietly local, until the connection goes.
+func TestApplyConnectionEvent_SSHFailsClosedWithoutServerSSH(t *testing.T) {
+	a := newConnectionWiringApp()
+	a.applyConnectionEvent(events.EventServerConnected, &connectedClient{})
+	assert.True(t, a.sshService.Connected())
+	_, err := a.sshService.ListKeys()
+	var unavailable *services.SSHServerUnavailableError
+	assert.ErrorAs(t, err, &unavailable)
+
+	a.applyConnectionEvent(events.EventServerDisconnected, nil)
+	assert.False(t, a.sshService.Connected())
 }

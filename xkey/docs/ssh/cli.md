@@ -10,11 +10,23 @@ Persistent flags on `xkey ssh` (inherited by every subcommand):
 |---|---|---|
 | `--server` | *(empty)* | Remote xkmsd URL, e.g. `grpcs://host:9443`, `quic://host:8444`, `unix:///path/xkms.sock` |
 | `--tls-ca` | *(empty)* | TLS CA certificate file used to verify the server |
+| `--local` | `false` | Use the local SSH store even when an xkmsd is configured |
 
-Without `--server`: `XKMSD_URL` (env) or `xkmsd_url` (config) selects
-REST; otherwise the command uses the local embedded store (see
-[engineering.md](engineering.md#configuration)). `XKMSD_TOKEN` supplies an
-auth token when set.
+SSH switches between server and local the way `xkey oidc` does. Without
+`--server`, a configured xkmsd (`--xkmsd-url`, `XKMSD_URL`,
+`XKEY_XKMSD_URL`, `xkmsd_url`, or `xkmsd.address`; any scheme) makes every
+command server-backed, unless `--local` is given; with no xkmsd configured
+the command uses the local embedded store (see
+[engineering.md](engineering.md#configuration)). A server call presents
+`XKMSD_TOKEN`, or else the login `xkey auth login` stored for that server
+URL, on every transport, plus the `XKMSD_TLS_CERT` / `XKMSD_TLS_KEY` client
+credential on TLS transports.
+
+The GUI follows the server connection: while xKey is connected to an
+xkmsd, the SSH key view lists, generates and deletes keys on the server
+(the server picks its backend; choosing a local backend explicitly is
+refused, and a server whose SSH API cannot be reached fails closed); when
+the connection goes, it returns to the local store.
 
 ## `xkey ssh keys`
 

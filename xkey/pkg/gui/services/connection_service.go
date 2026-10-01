@@ -15,6 +15,7 @@ package services
 
 import (
 	"context"
+	"crypto/tls"
 	"log/slog"
 	"strings"
 	"sync"
@@ -24,6 +25,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // ConnectionInfo describes the current server connection state.
@@ -61,6 +64,18 @@ type ConnectionService struct {
 	// connection presents the login stored for its server. Nil presents
 	// none.
 	tokens tokenstore.TokenStore
+
+	// endpoint is the connected server's address and credentials, for the
+	// service APIs dialed on their own (SSH). Nil when disconnected.
+	endpoint atomic.Pointer[serverEndpoint]
+}
+
+// serverEndpoint is a connected server's URL and the credentials its
+// connection presents.
+type serverEndpoint struct {
+	url       string
+	tlsConfig *tls.Config
+	token     string
 }
 
 // NewConnectionService creates a new ConnectionService with a disconnected
@@ -125,6 +140,35 @@ func (s *ConnectionService) loginToken(protocol, address string, tlsEnabled bool
 	return tokenstore.LoginToken(ctx, s.tokens, connectionURL(protocol, address, tlsEnabled))
 }
 
+// newServerEndpoint records a connection's URL and credentials: the same
+// trust the SDK connection applies (the SPKI pin when given, else the CA
+// file or the system roots) and its login token.
+func newServerEndpoint(protocol, address string, tlsEnabled bool, caFile, spkiPin, token string) (*serverEndpoint, error) {
+	ep := &serverEndpoint{url: connectionURL(protocol, address, tlsEnabled), token: token}
+	switch {
+	case !tlsEnabled:
+	case spkiPin != "":
+		ep.tlsConfig = xkms.NewSPKIPinnedTLSConfig(spkiPin)
+	default:
+		cfg, err := transport.BuildTLSConfig(transport.TLSOptions{CAFile: caFile})
+		if err != nil {
+			return nil, err
+		}
+		ep.tlsConfig = cfg
+	}
+	return ep, nil
+}
+
+// SSHClient dials the connected server's SSH API with the connection's
+// address and credentials. The caller owns Close.
+func (s *ConnectionService) SSHClient() (sshclient.Client, error) {
+	ep := s.endpoint.Load()
+	if ep == nil {
+		return nil, ErrServerNotConnected
+	}
+	return sshclient.NewClientForServerWith(ep.url, sshclient.ServerOptions{TLSConfig: ep.tlsConfig, Token: ep.token})
+}
+
 // GetConnectionInfo returns the current connection state.
 func (s *ConnectionService) GetConnectionInfo() *ConnectionInfo {
 	return s.state.Load().(*ConnectionInfo)
@@ -184,6 +228,10 @@ func (s *ConnectionService) Connect(
 	if err != nil {
 		return s.setErrorState(protocol, address, tlsEnabled, "login_token", err), err
 	}
+	endpoint, err := newServerEndpoint(protocol, address, tlsEnabled, caFile, spkiPin, token)
+	if err != nil {
+		return s.setErrorState(protocol, address, tlsEnabled, "tls_config", err), err
+	}
 
 	var client xkms.Client
 
@@ -228,6 +276,7 @@ func (s *ConnectionService) Connect(
 	s.mu.Lock()
 	s.client = client
 	s.mu.Unlock()
+	s.endpoint.Store(endpoint)
 
 	info := &ConnectionInfo{
 		State:    "connected",
@@ -258,6 +307,7 @@ func (s *ConnectionService) Disconnect() error {
 	}
 	s.client = nil
 	s.mu.Unlock()
+	s.endpoint.Store(nil)
 
 	closeErr := client.Close()
 

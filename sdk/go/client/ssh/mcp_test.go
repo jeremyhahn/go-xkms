@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -100,6 +101,8 @@ type fakeMCPServer struct {
 
 	mu    sync.Mutex
 	calls []mcpCall
+	// auth records the Authorization header of every HTTP request.
+	auth []string
 }
 
 func newFakeMCPServer(t *testing.T) *fakeMCPServer {
@@ -157,7 +160,12 @@ func newFakeMCPServer(t *testing.T) *fakeMCPServer {
 	}
 
 	httpServer := mcpserver.NewStreamableHTTPServer(mcpSrv)
-	s.testServer = httptest.NewServer(httpServer)
+	s.testServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		s.auth = append(s.auth, r.Header.Get("Authorization"))
+		s.mu.Unlock()
+		httpServer.ServeHTTP(w, r)
+	}))
 	t.Cleanup(s.testServer.Close)
 	return s
 }

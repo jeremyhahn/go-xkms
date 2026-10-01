@@ -16,6 +16,7 @@ package services
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -73,9 +74,11 @@ type SSHBackendInfo struct {
 // embedded SSH client (backend-backed keys); a connected remote xkms backend
 // is served by the remote transport client.
 type SSHService struct {
-	ctx         context.Context
-	embedded    sshclient.Client
-	remoteFn    func() (sshclient.Client, bool)
+	ctx      context.Context
+	embedded sshclient.Client
+	// server is the connected xkmsd's SSH client. While set, the service
+	// is server-backed; nil means local.
+	server      atomic.Pointer[sshServer]
 	registry    backendregistry.Registry
 	auditLogger audit.Logger
 	logger      *slog.Logger
@@ -95,10 +98,55 @@ func (s *SSHService) SetContext(ctx context.Context) { s.ctx = ctx }
 // SetEmbeddedClient sets/replaces the embedded SSH client.
 func (s *SSHService) SetEmbeddedClient(c sshclient.Client) { s.embedded = c }
 
-// SetRemoteClientFunc registers a factory returning the remote SSH client for a
-// connected xkms backend. It returns (client, true) when a remote connection is
-// available, (nil, false) otherwise.
-func (s *SSHService) SetRemoteClientFunc(fn func() (sshclient.Client, bool)) { s.remoteFn = fn }
+// sshServer is the connected server's SSH side: its client, or the error
+// that kept its SSH API from being dialed.
+type sshServer struct {
+	client sshclient.Client
+	err    error
+}
+
+// SetServerClient switches the service between server and local mode, the
+// same switch the OIDC and TPM policy services make: while c is set (a
+// server is connected), every key operation runs on that xkmsd; nil (the
+// server disconnected) returns the service to the local store. A replaced
+// or cleared server client is closed.
+func (s *SSHService) SetServerClient(c sshclient.Client) error {
+	var next *sshServer
+	if c != nil {
+		next = &sshServer{client: c}
+	}
+	return s.swapServer(next)
+}
+
+// SetServerUnavailable records that a server is connected but its SSH API
+// could not be dialed. SSH then fails closed with *SSHServerUnavailableError
+// rather than quietly using the local store while connected.
+func (s *SSHService) SetServerUnavailable(err error) error {
+	return s.swapServer(&sshServer{err: err})
+}
+
+// swapServer installs next and closes the previous server client.
+func (s *SSHService) swapServer(next *sshServer) error {
+	if prev := s.server.Swap(next); prev != nil && prev.client != nil {
+		return prev.client.Close()
+	}
+	return nil
+}
+
+// Connected reports whether the service is server-backed: a server is
+// connected and SSH keys live on it.
+func (s *SSHService) Connected() bool {
+	return s.server.Load() != nil
+}
+
+// serverClient returns the connected server's SSH client, or nil when
+// offline.
+func (s *SSHService) serverClient() sshclient.Client {
+	if srv := s.server.Load(); srv != nil {
+		return srv.client
+	}
+	return nil
+}
 
 // SetRegistry wires the backend registry used for backend selection.
 func (s *SSHService) SetRegistry(r backendregistry.Registry) { s.registry = r }
@@ -123,25 +171,34 @@ func (s *SSHService) resolveBackend(backend string) string {
 	return ""
 }
 
-// clientFor selects the SSH client for a backend. A remote xkms backend uses
-// the remote transport client (the server mints the key on its own backend);
-// every other backend uses the embedded client with the backend ID forwarded.
-// The returned remote flag reports whether the key is generated server-side.
+// clientFor selects the SSH client for a backend. While a server is
+// connected every operation runs on it (the server mints keys on its own
+// backend); offline, a remote xkms backend is unavailable and every other
+// backend uses the embedded client with the backend ID forwarded. The
+// returned remote flag reports whether the key is handled server-side.
 func (s *SSHService) clientFor(backendID string) (sshclient.Client, bool, error) {
-	if s.registry != nil && backendID != "" {
-		if b, err := s.registry.Get(backendID); err == nil && b != nil && b.Location == backendregistry.LocationRemote {
-			if s.remoteFn != nil {
-				if c, ok := s.remoteFn(); ok {
-					return c, true, nil
-				}
-			}
-			return nil, false, &SSHRemoteUnavailableError{Backend: backendID}
+	if srv := s.server.Load(); srv != nil {
+		if srv.err != nil {
+			return nil, true, &SSHServerUnavailableError{Err: srv.err}
 		}
+		return srv.client, true, nil
+	}
+	if s.isRemoteBackend(backendID) {
+		return nil, false, &SSHRemoteUnavailableError{Backend: backendID}
 	}
 	if s.embedded == nil {
 		return nil, false, ErrSSHUnavailable
 	}
 	return s.embedded, false, nil
+}
+
+// isRemoteBackend reports whether backendID names a remote xkms backend.
+func (s *SSHService) isRemoteBackend(backendID string) bool {
+	if s.registry == nil || backendID == "" {
+		return false
+	}
+	b, err := s.registry.Get(backendID)
+	return err == nil && b != nil && b.Location == backendregistry.LocationRemote
 }
 
 // GenerateKey generates an SSH key on the selected backend and returns its
@@ -153,6 +210,11 @@ func (s *SSHService) GenerateKey(params SSHGenerateParams) (*SSHKeyInfo, error) 
 	}
 	if params.Algorithm == "" {
 		params.Algorithm = "ed25519"
+	}
+	// A local backend chosen explicitly while connected is refused rather
+	// than silently replaced by the server's own backend.
+	if params.Backend != "" && s.Connected() && !s.isRemoteBackend(params.Backend) {
+		return nil, &SSHLocalBackendConnectedError{Backend: params.Backend}
 	}
 	backendID := s.resolveBackend(params.Backend)
 	client, remote, err := s.clientFor(backendID)

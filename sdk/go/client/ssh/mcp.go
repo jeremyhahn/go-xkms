@@ -98,6 +98,9 @@ type MCPOptions struct {
 	// TLSConfig enables TLS when non-nil. nil means plain HTTP (not
 	// recommended for production deployments).
 	TLSConfig *tls.Config
+
+	// AuthToken is a bearer token presented on every request. Optional.
+	AuthToken string
 }
 
 // NewMCP constructs an MCP SSH Client, connects to Addr (negotiating the
@@ -115,6 +118,9 @@ func NewMCP(opts MCPOptions) (Client, error) {
 	cfgOpts := []apitransport.Option{apitransport.WithAddress(opts.Addr)}
 	if opts.TLSConfig != nil {
 		cfgOpts = append(cfgOpts, apitransport.WithTLSConfig(opts.TLSConfig))
+	}
+	if opts.AuthToken != "" {
+		cfgOpts = append(cfgOpts, apitransport.WithJWTToken(opts.AuthToken))
 	}
 	if err := apitransport.ApplyOptions(cfg, cfgOpts...); err != nil {
 		return nil, &ProtocolError{Message: "configure mcp transport", Err: err}

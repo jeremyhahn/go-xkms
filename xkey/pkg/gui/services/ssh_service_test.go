@@ -174,8 +174,8 @@ func TestSSHService_Setters(t *testing.T) {
 	if svc.embedded != nil {
 		t.Fatal("expected nil embedded client by default")
 	}
-	if svc.remoteFn != nil {
-		t.Fatal("expected nil remoteFn by default")
+	if svc.serverClient() != nil {
+		t.Fatal("expected no server client by default")
 	}
 	if svc.auditLogger != nil {
 		t.Fatal("expected nil audit logger by default")
@@ -206,14 +206,6 @@ func TestSSHService_Setters(t *testing.T) {
 		t.Fatal("SetEmbeddedClient did not store the client")
 	}
 
-	svc.SetRemoteClientFunc(func() (sshclient.Client, bool) { return embedded, true })
-	if svc.remoteFn == nil {
-		t.Fatal("SetRemoteClientFunc did not store the factory")
-	}
-	if c, ok := svc.remoteFn(); !ok || c != embedded {
-		t.Fatalf("remoteFn() = %v, %v", c, ok)
-	}
-
 	auditLogger := audit.NewSlogLogger(slog.Default())
 	svc.SetAuditLogger(auditLogger)
 	if svc.auditLogger != auditLogger {
@@ -227,9 +219,18 @@ func TestSSHService_Setters(t *testing.T) {
 	}
 }
 
-func TestSSHService_ClientFor_RemoteBackend(t *testing.T) {
+func TestSSHService_ClientFor_RemoteBackendOffline(t *testing.T) {
 	svc := newTestSSHService(t)
+	registerRemoteSSHBackend(t, svc)
 
+	// Not connected: the remote backend is unreachable.
+	if _, _, err := svc.clientFor("remote-1"); !errorsIsSSHRemoteUnavailable(err, "remote-1") {
+		t.Fatalf("expected SSHRemoteUnavailableError, got %v", err)
+	}
+}
+
+func registerRemoteSSHBackend(t *testing.T, svc *SSHService) {
+	t.Helper()
 	if rerr := svc.registry.Register(&backendregistry.RegisteredBackend{
 		ID:           "remote-1",
 		Location:     backendregistry.LocationRemote,
@@ -239,24 +240,108 @@ func TestSSHService_ClientFor_RemoteBackend(t *testing.T) {
 	}); rerr != nil {
 		t.Fatalf("Register: %v", rerr)
 	}
+}
 
-	// No remoteFn wired yet: the remote backend is unreachable.
-	if _, _, err := svc.clientFor("remote-1"); !errorsIsSSHRemoteUnavailable(err, "remote-1") {
-		t.Fatalf("expected SSHRemoteUnavailableError, got %v", err)
-	}
-
-	remoteClient := svc.embedded
-	svc.SetRemoteClientFunc(func() (sshclient.Client, bool) { return remoteClient, true })
-
-	client, remote, err := svc.clientFor("remote-1")
+// newServerSSHClient returns an SSH client standing in for a connected
+// xkmsd: its own store, distinct from the service's local one.
+func newServerSSHClient(t *testing.T) sshclient.Client {
+	t.Helper()
+	server, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{Backend: storage.New()})
 	if err != nil {
-		t.Fatalf("clientFor: %v", err)
+		t.Fatalf("NewEmbedded: %v", err)
 	}
-	if !remote {
-		t.Fatal("expected remote=true for a remote-location backend")
+	return server
+}
+
+// TestSSHService_ServerBackedWhenConnected proves the switch: while a
+// server client is set every key operation runs on the server, and
+// clearing it returns the service to the local store.
+func TestSSHService_ServerBackedWhenConnected(t *testing.T) {
+	svc := newTestSSHService(t)
+	server := newServerSSHClient(t)
+	if err := svc.SetServerClient(server); err != nil {
+		t.Fatalf("SetServerClient: %v", err)
 	}
-	if client != remoteClient {
-		t.Fatal("expected the remote client from remoteFn")
+
+	if _, err := svc.GenerateKey(SSHGenerateParams{Name: "on-server"}); err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	onServer, err := server.Keys().List(context.Background(), sshclient.ListKeysRequest{Scope: sshDefaultScope, Owner: sshDefaultOwner})
+	if err != nil || len(onServer) != 1 || onServer[0].Name != "on-server" {
+		t.Fatalf("server keys = %v, %v; want the generated key", onServer, err)
+	}
+	if !svc.Connected() {
+		t.Fatal("a set server client makes the service server-backed")
+	}
+	listed, err := svc.ListKeys()
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("ListKeys while connected = %v, %v; want the server's key", listed, err)
+	}
+
+	if err := svc.SetServerClient(nil); err != nil {
+		t.Fatalf("SetServerClient(nil): %v", err)
+	}
+	if svc.Connected() {
+		t.Fatal("clearing the server client returns the service to local")
+	}
+	local, err := svc.ListKeys()
+	if err != nil || len(local) != 0 {
+		t.Fatalf("ListKeys offline = %v, %v; want the empty local store", local, err)
+	}
+}
+
+// TestSSHService_ExplicitLocalBackendRefusedWhenConnected proves a local
+// backend chosen explicitly is not silently replaced by the server.
+func TestSSHService_ExplicitLocalBackendRefusedWhenConnected(t *testing.T) {
+	svc := newTestSSHService(t)
+	if err := svc.SetServerClient(newServerSSHClient(t)); err != nil {
+		t.Fatalf("SetServerClient: %v", err)
+	}
+	_, err := svc.GenerateKey(SSHGenerateParams{Name: "k", Backend: "software"})
+	var refused *SSHLocalBackendConnectedError
+	if !errors.As(err, &refused) || refused.Backend != "software" {
+		t.Fatalf("expected *SSHLocalBackendConnectedError, got %v", err)
+	}
+}
+
+// TestSSHService_RemoteBackendUsesServer proves the remote registry
+// backend is served by the connected server.
+func TestSSHService_RemoteBackendUsesServer(t *testing.T) {
+	svc := newTestSSHService(t)
+	registerRemoteSSHBackend(t, svc)
+	server := newServerSSHClient(t)
+	if err := svc.SetServerClient(server); err != nil {
+		t.Fatalf("SetServerClient: %v", err)
+	}
+	if _, err := svc.GenerateKey(SSHGenerateParams{Name: "k", Backend: "remote-1"}); err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+}
+
+// closeRecordingClient records Close on an SSH client.
+type closeRecordingClient struct {
+	sshclient.Client
+	closed bool
+}
+
+func (c *closeRecordingClient) Close() error {
+	c.closed = true
+	return nil
+}
+
+// TestSSHService_SetServerClientClosesPrevious proves a replaced or cleared
+// server client is closed.
+func TestSSHService_SetServerClientClosesPrevious(t *testing.T) {
+	svc := NewSSHService(nil)
+	first := &closeRecordingClient{Client: newServerSSHClient(t)}
+	if err := svc.SetServerClient(first); err != nil {
+		t.Fatalf("SetServerClient: %v", err)
+	}
+	if err := svc.SetServerClient(nil); err != nil {
+		t.Fatalf("SetServerClient(nil): %v", err)
+	}
+	if !first.closed {
+		t.Fatal("the cleared server client must be closed")
 	}
 }
 
@@ -465,5 +550,24 @@ func TestSSHService_SetDefaultBackend_DelegatesToRegistry(t *testing.T) {
 	}
 	if got := registry.defaults[backendregistry.CapSSH]; got != "software" {
 		t.Fatalf("registry default for CapSSH = %q, want %q", got, "software")
+	}
+}
+
+// TestSSHService_ServerUnavailableFailsClosed proves a connected server
+// whose SSH API could not be dialed fails every operation instead of
+// using the local store.
+func TestSSHService_ServerUnavailableFailsClosed(t *testing.T) {
+	svc := newTestSSHService(t)
+	dialErr := errors.New("dial refused")
+	if err := svc.SetServerUnavailable(dialErr); err != nil {
+		t.Fatalf("SetServerUnavailable: %v", err)
+	}
+	_, err := svc.ListKeys()
+	var unavailable *SSHServerUnavailableError
+	if !errors.As(err, &unavailable) || !errors.Is(err, dialErr) {
+		t.Fatalf("expected *SSHServerUnavailableError wrapping the dial error, got %v", err)
+	}
+	if _, err := svc.GenerateKey(SSHGenerateParams{Name: "k"}); !errors.As(err, &unavailable) {
+		t.Fatalf("GenerateKey: expected *SSHServerUnavailableError, got %v", err)
 	}
 }

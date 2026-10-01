@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io/fs"
 	"net/url"
@@ -345,6 +346,21 @@ func commandFlagChanged(cmd *cobra.Command, name string) bool {
 	return false
 }
 
+// TLSConfig builds the TLS configuration for the endpoint's TLS transports:
+// the CA bundle (empty selects the system roots) and the mTLS client
+// credential, through the SDK's shared TLS builder.
+func (e XKMSdEndpoint) TLSConfig() (*tls.Config, error) {
+	cfg, err := transport.BuildTLSConfig(transport.TLSOptions{
+		CAFile:   e.TLSCAFile,
+		CertFile: e.TLSCertFile,
+		KeyFile:  e.TLSKeyFile,
+	})
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrXKMSdTLSConfigFailed, Cause: err}
+	}
+	return cfg, nil
+}
+
 // Client constructs an SDK transport client for the endpoint. The URL scheme
 // selects the transport (http(s) → REST, grpc(s) → gRPC, unix → gRPC over a
 // Unix socket, quic → HTTP/3, mcp(s) → JSON-RPC). The client is not connected;
@@ -378,15 +394,9 @@ func (e XKMSdEndpoint) Client() (transport.Client, error) {
 		xkms.WithAddress(address),
 	}
 	if selected.tls {
-		// transport.BuildTLSConfig is the SDK's shared TLS builder; an empty
-		// CAFile selects the system root pool.
-		tlsConfig, err := transport.BuildTLSConfig(transport.TLSOptions{
-			CAFile:   e.TLSCAFile,
-			CertFile: e.TLSCertFile,
-			KeyFile:  e.TLSKeyFile,
-		})
+		tlsConfig, err := e.TLSConfig()
 		if err != nil {
-			return nil, &SentinelCauseError{Sentinel: ErrXKMSdTLSConfigFailed, Cause: err}
+			return nil, err
 		}
 		opts = append(opts, xkms.WithTLS(tlsConfig))
 	}

@@ -37,6 +37,30 @@ func (e *SSHRemoteUnavailableError) Error() string {
 	return fmt.Sprintf("ssh_service: remote backend %q selected but no connection is available", e.Backend)
 }
 
+// SSHServerUnavailableError indicates a server is connected but its SSH API
+// could not be dialed; SSH fails closed instead of using the local store.
+type SSHServerUnavailableError struct {
+	Err error
+}
+
+func (e *SSHServerUnavailableError) Error() string {
+	return fmt.Sprintf("ssh_service: the connected server's SSH API is unavailable: %v", e.Err)
+}
+
+// Unwrap returns the dial failure.
+func (e *SSHServerUnavailableError) Unwrap() error { return e.Err }
+
+// SSHLocalBackendConnectedError indicates a local backend was chosen
+// explicitly for an SSH key while a server is connected, where keys live
+// on the server.
+type SSHLocalBackendConnectedError struct {
+	Backend string
+}
+
+func (e *SSHLocalBackendConnectedError) Error() string {
+	return fmt.Sprintf("ssh_service: local backend %q selected while connected to a server; SSH keys live on the server until it disconnects", e.Backend)
+}
+
 // AppService errors.
 var (
 	// ErrAppConfigNil indicates a nil configuration was provided.

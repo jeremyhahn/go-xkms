@@ -15,17 +15,21 @@ package ssh
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"net"
+	"strings"
 
 	gossh "golang.org/x/crypto/ssh"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials/local"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport/grpcauth"
 	pkgauthorized "github.com/jeremyhahn/go-xkms/pkg/ssh/authorized"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -50,6 +54,15 @@ type GRPCOptions struct {
 	// ServerName overrides the TLS SNI / verification name. Optional.
 	ServerName string
 
+	// TLSConfig, when set with TLSEnabled, is used as-is (it may carry a
+	// client certificate or an SPKI pin) instead of the file fields.
+	// Optional.
+	TLSConfig *tls.Config
+
+	// AuthToken is a bearer token presented on every RPC. It needs a
+	// secure channel: TLS, or a Unix socket. Optional.
+	AuthToken string
+
 	// DialOptions are extra gRPC dial options appended verbatim. Optional.
 	DialOptions []grpc.DialOption
 }
@@ -61,22 +74,32 @@ func NewGRPC(opts GRPCOptions) (Client, error) {
 		return nil, &NilInputError{Field: "Endpoint"}
 	}
 
-	dialOpts := make([]grpc.DialOption, 0, 2+len(opts.DialOptions))
-	if opts.TLSEnabled {
-		tlsConfig, err := buildTLSConfig(transport.TLSOptions{
-			CAFile:     opts.TLSCAFile,
-			CertFile:   opts.TLSCertFile,
-			KeyFile:    opts.TLSKeyFile,
-			ServerName: opts.ServerName,
-		})
-		if err != nil {
-			return nil, err
+	dialOpts := make([]grpc.DialOption, 0, 3+len(opts.DialOptions))
+	switch {
+	case opts.TLSEnabled:
+		tlsConfig := opts.TLSConfig
+		if tlsConfig == nil {
+			built, err := buildTLSConfig(transport.TLSOptions{
+				CAFile:     opts.TLSCAFile,
+				CertFile:   opts.TLSCertFile,
+				KeyFile:    opts.TLSKeyFile,
+				ServerName: opts.ServerName,
+			})
+			if err != nil {
+				return nil, err
+			}
+			tlsConfig = built
 		}
 		dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
-	} else {
+	case strings.HasPrefix(opts.Endpoint, "unix:"):
+		// A Unix domain socket has no network path; local credentials say
+		// so to gRPC, which lets a bearer token ride it.
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(local.NewCredentials()))
+	default:
 		// opts.TLSEnabled=false is the caller's own explicit GRPCOptions choice.
 		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials())) // insecure-ok: explicit-config transport. Allowlisted in Makefile check-insecure-tls.
 	}
+	dialOpts = append(dialOpts, grpcauth.DialOptions(opts.AuthToken)...)
 	dialOpts = append(dialOpts, opts.DialOptions...)
 
 	conn, err := grpc.NewClient(opts.Endpoint, dialOpts...)

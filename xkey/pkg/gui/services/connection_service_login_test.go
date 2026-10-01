@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
 
@@ -122,4 +123,37 @@ func TestConnectionURL(t *testing.T) {
 	} {
 		assert.Equal(t, tc.want, connectionURL(tc.protocol, tc.address, tc.tls), "%s %s", tc.protocol, tc.address)
 	}
+}
+
+func TestConnectionServiceSSHClient_NotConnected(t *testing.T) {
+	svc := NewConnectionService()
+	_, err := svc.SSHClient()
+	assert.ErrorIs(t, err, ErrServerNotConnected)
+}
+
+// TestConnectionServiceSSHClient_UsesConnectionAndLogin proves the SSH
+// client dials the connected server with the connection's stored login.
+func TestConnectionServiceSSHClient_UsesConnectionAndLogin(t *testing.T) {
+	srv, seen := authRecordingRESTServer(t)
+	addr := srv.Listener.Addr().String()
+	store := tokenstore.NewMemoryTokenStore()
+	require.NoError(t, store.Save(context.Background(), &tokenstore.TokenEntry{ServerURL: "http://" + addr, Token: "login.jwt"}))
+
+	svc := NewConnectionService()
+	svc.SetContext(context.Background())
+	svc.SetTokenStore(store)
+	_, err := svc.Connect("rest", addr, false, "", "")
+	require.NoError(t, err)
+
+	client, err := svc.SSHClient()
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, client.Close()) })
+	// The recording server answers every path with a health body; the call
+	// only has to reach it.
+	_, _ = client.Keys().List(context.Background(), sshclient.ListKeysRequest{Scope: "user", Owner: "me"})
+	assert.Contains(t, seen(), "Bearer login.jwt")
+
+	require.NoError(t, svc.Disconnect())
+	_, err = svc.SSHClient()
+	assert.ErrorIs(t, err, ErrServerNotConnected, "a disconnected service dials nothing")
 }

@@ -15,18 +15,26 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
+
+	sshsdk "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
 
 // sshTestCmd builds a detached cobra command carrying the union of every
@@ -45,6 +53,7 @@ func sshTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 		fs.String(name, "", "")
 	}
 	fs.Int("bits", 0, "")
+	fs.Bool("local", false, "")
 
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
@@ -65,8 +74,7 @@ func setSSHFlags(t *testing.T, cmd *cobra.Command, values map[string]string) {
 func withEmbeddedSSHStore(t *testing.T) string {
 	t.Helper()
 	home := withCLIHome(t)
-	t.Setenv("XKMSD_URL", "")
-	t.Setenv("XKMSD_TOKEN", "")
+	isolateXKMSdEndpoint(t)
 	return home
 }
 
@@ -394,10 +402,76 @@ func TestSSHHandlers_RefuseBarrierEncryptedStore(t *testing.T) {
 
 // --- transport selection ---
 
-func TestSSHClientForServer_RejectsUnknownScheme(t *testing.T) {
-	_, _, err := sshClientForServer("gopher://example.com", "", "")
+func TestSSHClientForEndpoint_RejectsUnknownScheme(t *testing.T) {
+	_, _, err := sshClientForEndpoint(XKMSdEndpoint{URL: "gopher://example.com"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSSHClientConstruct)
+}
+
+func TestSSHClientForEndpoint_BadTLSMaterialFails(t *testing.T) {
+	_, _, err := sshClientForEndpoint(XKMSdEndpoint{URL: "grpcs://127.0.0.1:1", TLSCAFile: "/nonexistent/ca.pem"})
+	assert.ErrorIs(t, err, ErrXKMSdTLSConfigFailed)
+}
+
+// authRecordingSSHServer answers the REST SSH key list and records every
+// Authorization header it receives.
+func authRecordingSSHServer(t *testing.T) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), seen...)
+	}
+}
+
+func TestSSHClient_ConfiguredServerPresentsStoredLogin(t *testing.T) {
+	withEmbeddedSSHStore(t)
+	srv, seen := authRecordingSSHServer(t)
+	xkmsdURL = srv.URL
+	storeLogin(t, &tokenstore.TokenEntry{ServerURL: srv.URL, Token: "login.jwt", ExpiresAt: time.Now().Add(time.Hour)})
+
+	cmd, _ := sshTestCmd(t)
+	client, closer, err := sshClient(cmd)
+	require.NoError(t, err)
+	defer closer()
+	_, err = client.Keys().List(context.Background(), sshsdk.ListKeysRequest{Scope: "user", Owner: "alice"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Bearer login.jwt"}, seen())
+}
+
+func TestSSHClient_LocalFlagKeepsLocalStore(t *testing.T) {
+	withEmbeddedSSHStore(t)
+	srv, seen := authRecordingSSHServer(t)
+	xkmsdURL = srv.URL
+
+	cmd, _ := sshTestCmd(t)
+	setSSHFlags(t, cmd, map[string]string{"local": "true"})
+	client, closer, err := sshClient(cmd)
+	require.NoError(t, err)
+	defer closer()
+	_, err = client.Keys().List(context.Background(), sshsdk.ListKeysRequest{Scope: "user", Owner: "alice"})
+	require.NoError(t, err)
+	assert.Empty(t, seen(), "--local never reaches the configured server")
+}
+
+func TestSSHClient_ExpiredLoginFails(t *testing.T) {
+	withEmbeddedSSHStore(t)
+	xkmsdURL = "https://xkmsd.example.com:8443"
+	storeLogin(t, &tokenstore.TokenEntry{ServerURL: xkmsdURL, Token: "old", ExpiresAt: time.Now().Add(-time.Minute)})
+
+	cmd, _ := sshTestCmd(t)
+	_, _, err := sshClient(cmd)
+	assert.ErrorIs(t, err, tokenstore.ErrTokenExpired)
 }
 
 func TestSSHClient_ServerFlagBeatsEnvironment(t *testing.T) {
