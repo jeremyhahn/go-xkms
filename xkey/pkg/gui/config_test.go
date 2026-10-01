@@ -296,6 +296,37 @@ func TestConfigDir_CreatesDirectory(t *testing.T) {
 	assert.Equal(t, filepath.Join(tmpDir, ".config", "xkey"), dir)
 }
 
+// TestConfigDir_HomeUnset_ReturnsError covers the fallback branch: with
+// neither XDG_CONFIG_HOME nor HOME set, os.UserConfigDir() fails ("$HOME is
+// not defined"), and the fallback to os.UserHomeDir() fails for the same
+// reason, so configDir must surface a wrapped ErrConfigLoad rather than
+// panicking or resolving a nonsense path.
+func TestConfigDir_HomeUnset_ReturnsError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+
+	_, err := configDir()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrConfigLoad)
+}
+
+// TestConfigDir_MkdirAllFails covers the directory-creation error branch:
+// when a regular file occupies the path configDir would create the "xkey"
+// subdirectory under, os.MkdirAll fails.
+func TestConfigDir_MkdirAllFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	cfgBase := filepath.Join(tmpDir, ".config")
+	require.NoError(t, os.MkdirAll(cfgBase, 0700))
+	// Occupy the "xkey" path with a file so MkdirAll cannot create it as a directory.
+	require.NoError(t, os.WriteFile(filepath.Join(cfgBase, "xkey"), []byte("x"), 0600))
+
+	_, err := configDir()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrConfigLoad)
+}
+
 // ---------------------------------------------------------------------------
 // Error sentinel tests for new errors
 // ---------------------------------------------------------------------------

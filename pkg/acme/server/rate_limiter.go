@@ -379,86 +379,6 @@ func NewAccountRateLimiter(config *RateLimit) func(next http.Handler) http.Handl
 	return limiter.MiddlewareFunc(rateLimitClientIPKey)
 }
 
-// NewOrderRateLimiter creates a middleware for limiting order creation per account.
-// This implements RFC 8555 Section 6.6 rate limiting for new order endpoints.
-//
-// Parameters:
-//   - config: Rate limit configuration
-//
-// Returns:
-//   - func(next http.Handler) http.Handler: Middleware function
-func NewOrderRateLimiter(config *RateLimit) func(next http.Handler) http.Handler {
-	if config == nil {
-		// No rate limit configured - return pass-through middleware
-		return func(next http.Handler) http.Handler {
-			return next
-		}
-	}
-
-	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(rateLimitClientIDKey)
-}
-
-// CertificateRateLimiter creates a middleware for limiting certificate operations per account.
-// This implements RFC 8555 Section 6.6 rate limiting for certificate endpoints.
-//
-// Parameters:
-//   - config: Rate limit configuration
-//
-// Returns:
-//   - func(next http.Handler) http.Handler: Middleware function
-func CertificateRateLimiter(config *RateLimit) func(next http.Handler) http.Handler {
-	if config == nil {
-		// No rate limit configured - return pass-through middleware
-		return func(next http.Handler) http.Handler {
-			return next
-		}
-	}
-
-	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(rateLimitClientIDKey)
-}
-
-// OverallRateLimiter creates a middleware for limiting all requests per IP address.
-// This implements RFC 8555 Section 6.6 general rate limiting across all endpoints.
-//
-// Parameters:
-//   - config: Rate limit configuration
-//
-// Returns:
-//   - func(next http.Handler) http.Handler: Middleware function
-func OverallRateLimiter(config *RateLimit) func(next http.Handler) http.Handler {
-	if config == nil {
-		// No rate limit configured - return pass-through middleware
-		return func(next http.Handler) http.Handler {
-			return next
-		}
-	}
-
-	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(rateLimitClientIPKey)
-}
-
-// FailedValidationRateLimiter creates a middleware for limiting failed validation attempts per account.
-// This implements RFC 8555 Section 6.6 rate limiting to prevent abuse through repeated failed validations.
-//
-// Parameters:
-//   - config: Rate limit configuration
-//
-// Returns:
-//   - func(next http.Handler) http.Handler: Middleware function
-func FailedValidationRateLimiter(config *RateLimit) func(next http.Handler) http.Handler {
-	if config == nil {
-		// No rate limit configured - return pass-through middleware
-		return func(next http.Handler) http.Handler {
-			return next
-		}
-	}
-
-	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(rateLimitClientIDKey)
-}
-
 // TrustedProxies is the set of proxies trusted to name the client in the
 // X-Forwarded-For / X-Real-IP headers. Nil (the default) trusts none, so
 // proxy headers are ignored and only the transport peer address is used.
@@ -512,10 +432,10 @@ func ClientID(r *http.Request) string {
 
 // rateLimitClientIPKey resolves ClientIP and folds it through
 // ratelimit.RateLimitKey, so every rate limiter keyed on the client's
-// transport/forwarded IP address (NewAccountRateLimiter, OverallRateLimiter,
-// and the tenant-aware new-account/overall limiters) buckets an IPv6 client
-// on its /64 rather than its full address, while an IPv4 client keys on its
-// exact address as before.
+// transport/forwarded IP address (NewAccountRateLimiter and the tenant-aware
+// new-account/overall limiters) buckets an IPv6 client on its /64 rather
+// than its full address, while an IPv4 client keys on its exact address as
+// before.
 func rateLimitClientIPKey(r *http.Request) string {
 	return ratelimit.RateLimitKey(ClientIP(r))
 }
@@ -523,10 +443,9 @@ func rateLimitClientIPKey(r *http.Request) string {
 // rateLimitClientIDKey resolves ClientID and folds it through
 // ratelimit.RateLimitKey. A JWS KID passes through unchanged — it is never a
 // valid IP address — and the IP fallback is masked exactly like
-// rateLimitClientIPKey, so every ClientID-keyed limiter (new-order,
-// certificate, failed-validation, and the overall per-client admission
-// control) gets the same IPv6 /64 protection before an account exists to key
-// on.
+// rateLimitClientIPKey, so every ClientID-keyed limiter (the tenant-aware
+// new-order, certificate, and failed-validation limiters) gets the same
+// IPv6 /64 protection before an account exists to key on.
 func rateLimitClientIDKey(r *http.Request) string {
 	return ratelimit.RateLimitKey(ClientID(r))
 }

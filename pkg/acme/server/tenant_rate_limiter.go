@@ -526,30 +526,6 @@ func formatInt(n int) string {
 	return string(buf[i:])
 }
 
-// TenantRateLimiterFromContext extracts the tenant ID from context.
-// This is a helper function for use as a TenantKeyFunc.
-func TenantRateLimiterFromContext(key interface{}) TenantKeyFunc {
-	return func(r *http.Request) string {
-		if tenantID, ok := r.Context().Value(key).(string); ok {
-			return tenantID
-		}
-		return ""
-	}
-}
-
-// TenantRateLimiterFromHeader extracts the tenant ID from an HTTP header.
-// This is a helper function for use as a TenantKeyFunc.
-func TenantRateLimiterFromHeader(headerName string) TenantKeyFunc {
-	return func(r *http.Request) string {
-		return r.Header.Get(headerName)
-	}
-}
-
-// NewTenantAccountRateLimiter creates a tenant-aware rate limiter for account creation.
-func NewTenantAccountRateLimiter(config *TenantRateLimiterConfig, tenantKeyFn TenantKeyFunc) *TenantRateLimiter {
-	return NewTenantRateLimiter(config, tenantKeyFn, rateLimitClientIPKey, "new-account")
-}
-
 // NewTenantOrderRateLimiter creates a tenant-aware rate limiter for order creation.
 func NewTenantOrderRateLimiter(config *TenantRateLimiterConfig, tenantKeyFn TenantKeyFunc) *TenantRateLimiter {
 	return NewTenantRateLimiter(config, tenantKeyFn, rateLimitClientIDKey, "new-order")
@@ -558,11 +534,6 @@ func NewTenantOrderRateLimiter(config *TenantRateLimiterConfig, tenantKeyFn Tena
 // NewTenantCertificateRateLimiter creates a tenant-aware rate limiter for certificate operations.
 func NewTenantCertificateRateLimiter(config *TenantRateLimiterConfig, tenantKeyFn TenantKeyFunc) *TenantRateLimiter {
 	return NewTenantRateLimiter(config, tenantKeyFn, rateLimitClientIDKey, "certificate")
-}
-
-// NewTenantOverallRateLimiter creates a tenant-aware rate limiter for all requests.
-func NewTenantOverallRateLimiter(config *TenantRateLimiterConfig, tenantKeyFn TenantKeyFunc) *TenantRateLimiter {
-	return NewTenantRateLimiter(config, tenantKeyFn, rateLimitClientIPKey, "overall")
 }
 
 // NewTenantFailedValidationRateLimiter creates a tenant-aware rate limiter for failed validations.

@@ -14,6 +14,7 @@
 package gui
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -39,6 +40,30 @@ func TestResolveBrowsersDir_NoHomeDirectory(t *testing.T) {
 	t.Setenv("HOME", "")
 
 	_, err := resolveBrowsersDir()
+	assert.Error(t, err)
+}
+
+// TestDataDir_Success verifies the happy path: with XKEY_HOME pointed at a
+// writable temp directory, dataDir() resolves and creates <home>/data.
+func TestDataDir_Success(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XKEY_HOME", home)
+
+	dir, err := dataDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, "data"), dir)
+	require.DirExists(t, dir)
+}
+
+// TestDataDir_PropagatesEnsureDataDirError verifies that a data path
+// occupied by a regular file (so EnsureDataDir's MkdirAll cannot create the
+// directory) is reported as an error, not silently ignored.
+func TestDataDir_PropagatesEnsureDataDirError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XKEY_HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, "data"), []byte("x"), 0600))
+
+	_, err := dataDir()
 	assert.Error(t, err)
 }
 
