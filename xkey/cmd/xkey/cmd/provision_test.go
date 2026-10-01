@@ -69,6 +69,15 @@ func isolateProvisionEnv(t *testing.T) string {
 	t.Setenv("XKEY_SO_PIN", "")
 	t.Setenv("XKEY_BARRIER_PASSWORD", "")
 
+	// Provisioning auto-detects a TPM for the barrier, and on a host that
+	// has one it would seal to (and authorize against) the host's real
+	// TPM. Unit tests never touch host hardware: point the probe at a
+	// device that does not exist, so the barrier takes the software
+	// strategy.
+	previousDevice, previousSimulator := barrierTPMDevice, barrierTPMSimulator
+	barrierTPMDevice, barrierTPMSimulator = "/nonexistent-tpm-device-for-test", false
+	t.Cleanup(func() { barrierTPMDevice, barrierTPMSimulator = previousDevice, previousSimulator })
+
 	return agentHome
 }
 

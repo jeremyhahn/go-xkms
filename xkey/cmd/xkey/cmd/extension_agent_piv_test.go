@@ -246,6 +246,7 @@ func TestRunAgentStatus_ListsEnrolledAgents(t *testing.T) {
 func withFilePIVStorage(t *testing.T) string {
 	t.Helper()
 
+	withSoftwarePIVKeyStore(t)
 	dir := t.TempDir()
 
 	previous := loadedConfig
@@ -624,6 +625,7 @@ func newPIVGenerateTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 	cmd.Flags().StringP("output", "o", "", "")
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
+	addBarrierPasswordFlags(cmd) // the software PIV backend's key store
 	return cmd, &buf
 }
 
@@ -699,6 +701,7 @@ func newPIVCSRTestCmd(t *testing.T, cn string) (*cobra.Command, *bytes.Buffer) {
 	cmd.Flags().StringP("output", "o", "", "")
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
+	addBarrierPasswordFlags(cmd) // the software PIV backend's key store
 	return cmd, &buf
 }
 

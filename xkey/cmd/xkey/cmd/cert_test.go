@@ -40,6 +40,7 @@ func newCertRequestCmd(t *testing.T) *cobra.Command {
 	cmd.Flags().String("organization", "", "")
 	cmd.Flags().String("profile", defaultCertProfile, "")
 	cmd.Flags().Int("validity-days", 0, "")
+	addBarrierPasswordFlags(cmd) // the software PIV backend's key store
 	return cmd
 }
 

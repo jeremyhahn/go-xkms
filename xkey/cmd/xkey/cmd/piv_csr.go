@@ -126,7 +126,7 @@ func runPivCSR(cmd *cobra.Command, args []string) error {
 	}
 
 	// Ensure PIV manager is initialized with file storage.
-	if err := ensurePIVInitialized(cfg, logger); err != nil {
+	if err := ensurePIVInitialized(cmd, cfg, logger); err != nil {
 		return err
 	}
 

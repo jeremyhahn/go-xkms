@@ -479,6 +479,8 @@ func init() {
 		"PKCS#11 token label")
 	pivPKCS11PINSource.addPersistentFlags(PIVCmd)
 	pivPKCS11SOPINSource.addPersistentFlags(PIVCmd)
+	// The software backend's keys live in xKey's barrier-protected key store.
+	addBarrierPasswordPersistentFlags(PIVCmd)
 
 	// Export command specific flags
 	pivExportCmd.Flags().String("format", defaultPIVExportFormat,

@@ -651,7 +651,7 @@ func provisionPIV(cmd *cobra.Command, agent string) ([]AgentProvisionPIVSlot, er
 		return nil, err
 	}
 
-	if err := ensurePIVInitialized(pivCfg, logger); err != nil {
+	if err := ensurePIVInitialized(cmd, pivCfg, logger); err != nil {
 		return nil, err
 	}
 

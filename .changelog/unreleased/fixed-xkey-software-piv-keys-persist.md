@@ -1,0 +1,7 @@
+- **xkey's software PIV keys persist, encrypted at rest.** The software PIV backend kept keys in the generating process's memory only, so `xkey piv generate --backend software` made a key no later `piv csr`, `cert request` or `auth login --piv` could use.
+  - Software PIV keys now live in xKey's key store: the barrier's `keys/` namespace, the store the GUI and the vault key factors use. It is opened by the existing `localKeyBackends` and handed to the PIV manager through `InitPIVBackendResolver`, as PKCS#11 does. No new crypto.
+  - Without a barrier the backend refuses (`ErrPIVSoftwareKeyStoreRequiresBarrier`).
+  - The `piv` group, `auth login` and `cert request` take the barrier password flags.
+  - Generating into a slot now replaces the slot's previous key in a key-persisting backend, instead of failing with "key already exists" (`PIVRekeyError` if it cannot).
+  - Tests cover generate in one process and use in another, both in-process and with the real xkey binary in the OIDC credentials suite, and check that no private key is stored in plaintext.
+  - The provision tests no longer reach the host's real TPM: they pointed TPM auto-detection at the default device, so on a host with a TPM they sealed to it.

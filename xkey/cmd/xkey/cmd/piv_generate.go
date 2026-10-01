@@ -321,7 +321,7 @@ func runPivGenerate(cmd *cobra.Command, args []string) error {
 	)
 
 	// Ensure PIV manager is initialized with file storage.
-	if err := ensurePIVInitialized(pivCfg, logger); err != nil {
+	if err := ensurePIVInitialized(cmd, pivCfg, logger); err != nil {
 		return err
 	}
 
@@ -390,7 +390,7 @@ func writePIVOutput(out io.Writer, outputFile string, data []byte, label, succes
 
 // ensurePIVInitialized initializes the xkms PIV manager and registers the
 // certificate store for the configured backend.
-func ensurePIVInitialized(pivCfg *PIVConfig, logger *slog.Logger) error {
+func ensurePIVInitialized(cmd *cobra.Command, pivCfg *PIVConfig, logger *slog.Logger) error {
 	// Create storage backend.
 	storage, err := createPIVStorage(pivCfg, logger)
 	if err != nil {
@@ -412,10 +412,15 @@ func ensurePIVInitialized(pivCfg *PIVConfig, logger *slog.Logger) error {
 		return err
 	}
 
-	// For PKCS#11 backend, also initialize the xkms PKCS#11 key backend
-	// and set up the PIV backend resolver for hardware key generation.
-	if pivCfg.Backend == PIVBackendPKCS11 {
+	// PKCS#11 and software keys persist in a key backend the PIV manager
+	// resolves to: the token, or xKey's encrypted key store.
+	switch pivCfg.Backend {
+	case PIVBackendPKCS11:
 		if err := ensurePKCS11Backend(pivCfg, logger); err != nil {
+			return err
+		}
+	case PIVBackendSoftware:
+		if err := ensureSoftwarePIVKeyStore(cmd, logger); err != nil {
 			return err
 		}
 	}

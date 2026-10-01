@@ -96,6 +96,13 @@ func addBarrierPasswordFlags(cmd *cobra.Command) {
 	cmd.Flags().String("barrier-password-file", "", "Read barrier password from file (first line)")
 }
 
+// addBarrierPasswordPersistentFlags declares the barrier password flags on
+// cmd's persistent flag set, so every subcommand of a group inherits them.
+func addBarrierPasswordPersistentFlags(cmd *cobra.Command) {
+	barrierPasswordSource.addPersistentFlags(cmd)
+	cmd.PersistentFlags().String("barrier-password-file", "", "Read barrier password from file (first line)")
+}
+
 // openBarrierBackend unseals the xkey barrier for a one-shot or long-running
 // headless CLI command and returns it as a storage.Backend. It shares the
 // exact unseal mechanics the GUI and `xkey extension serve` already use: the

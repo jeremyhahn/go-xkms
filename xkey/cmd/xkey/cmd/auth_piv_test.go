@@ -36,6 +36,7 @@ import (
 // locations a bare `go test` run must not write to.
 func withPIVStoragePath(t *testing.T) string {
 	t.Helper()
+	withSoftwarePIVKeyStore(t)
 	tmpDir := t.TempDir()
 	previous := loadedConfig
 	cfg := xkeyconfig.DefaultConfig()
@@ -89,6 +90,7 @@ func authPIVCmd(slot, backend string) *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("slot", slot, "")
 	cmd.Flags().String("backend", backend, "")
+	addBarrierPasswordFlags(cmd) // the software PIV backend's key store
 	return cmd
 }
 

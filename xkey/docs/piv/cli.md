@@ -19,6 +19,17 @@ Inherited by every `piv` subcommand (`list`, `show`, `store`, `delete`,
 | `--pkcs11-token` | | PKCS#11 token label |
 | `--pkcs11-pin-stdin` | `false` | Read the PKCS#11 user PIN from standard input |
 | `--pkcs11-so-pin-stdin` | `false` | Read the PKCS#11 Security Officer PIN from standard input |
+| `--barrier-password-stdin`, `--barrier-password-file` | | The barrier password that opens the software backend's key store (or `XKEY_BARRIER_PASSWORD`) |
+
+The `software` backend keeps its keys in xKey's key store, the barrier's
+`keys/` namespace, encrypted at rest. This is the same store the GUI and the
+password vault's key factors use. A key one `xkey piv generate` makes is
+therefore the key a later `xkey piv csr`, `xkey cert request` or `xkey auth
+login --piv` signs with. Run `xkey barrier init` first: without a barrier
+there is no encrypted store, and the software backend refuses
+(`ErrPIVSoftwareKeyStoreRequiresBarrier`) rather than make a key the next
+command could not find. Generating into a slot replaces the slot's previous
+key.
 
 Storage defaults to match the key backend (software→file, tpm2→tpm2,
 pkcs11→pkcs11); override with `--piv-storage`, e.g. TPM2 keys with

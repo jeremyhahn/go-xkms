@@ -193,6 +193,7 @@ func init() {
 
 	// Request command flags
 	certRequestCmd.Flags().String("server", "", "xkms server URL (required)")
+	addBarrierPasswordFlags(certRequestCmd) // the software PIV backend's key store
 	certRequestCmd.Flags().String("slot", defaultCertSlot,
 		"PIV slot to use for key and certificate (9a, 9c, 9d, 9e)")
 	certRequestCmd.Flags().String("cn", "", "Common Name for the certificate subject (required)")
@@ -251,7 +252,7 @@ func runCertRequest(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := ensurePIVInitialized(pivCfg, logger); err != nil {
+	if err := ensurePIVInitialized(cmd, pivCfg, logger); err != nil {
 		return errors.Join(ErrCertSignerUnavailable, err)
 	}
 

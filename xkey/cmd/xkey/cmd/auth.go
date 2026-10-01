@@ -530,6 +530,7 @@ func init() {
 	authLoginCmd.Flags().String("tls-ca", "", "PEM bundle of CA certificates to trust, in addition to the xKey trust store")
 	authLoginCmd.Flags().String("slot", string(PIVSlotAuthentication), "PIV slot to authenticate with (used with --piv)")
 	authLoginCmd.Flags().String("backend", defaultPIVBackend, "PIV key backend: software or pkcs11 (used with --piv)")
+	addBarrierPasswordFlags(authLoginCmd) // the software PIV backend's key store
 	addPINFlags(authLoginCmd)
 
 	// Status command flags

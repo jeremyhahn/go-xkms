@@ -137,6 +137,14 @@ func (g *backendPIVKeyGenerator) GeneratePIVKey(slot pivcert.PIVSlot, algorithm 
 	// PIVKeyGenerator interface, which carries no request context.
 	ctx := context.Background()
 
+	// Generating into a slot re-keys it, as on a PIV token: the slot's
+	// previous key is replaced, not left to block the new one (a backend
+	// that persists keys refuses a second key under the same name) or
+	// orphaned beside it.
+	if err := g.deleteSlotKeys(ctx, cn); err != nil {
+		return nil, err
+	}
+
 	// Generate the key using the appropriate backend method
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
@@ -157,6 +165,26 @@ func (g *backendPIVKeyGenerator) GeneratePIVKey(slot pivcert.PIVSlot, algorithm 
 
 	// Retrieve the signer for the generated key
 	return g.backend.Signer(ctx, attrs)
+}
+
+// deleteSlotKeys removes the keys a slot's CN names from the backend. A
+// backend whose ListKeys does not enumerate slot keys (hardware tokens
+// resolving by CKA_ID) lists none here, and its own generate replaces the
+// slot's key.
+func (g *backendPIVKeyGenerator) deleteSlotKeys(ctx context.Context, cn string) error {
+	stored, err := g.backend.ListKeys(ctx)
+	if err != nil {
+		return &PIVRekeyError{CN: cn, Err: err}
+	}
+	for _, ka := range stored {
+		if ka == nil || ka.CN != cn {
+			continue
+		}
+		if err := g.backend.DeleteKey(ctx, ka); err != nil {
+			return &PIVRekeyError{CN: cn, Err: err}
+		}
+	}
+	return nil
 }
 
 // GetPIVSigner returns a signer for an existing key in the given PIV slot.

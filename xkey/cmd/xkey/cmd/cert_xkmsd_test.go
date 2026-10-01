@@ -39,6 +39,7 @@ import (
 func isolateCertPIV(t *testing.T) {
 	t.Helper()
 
+	withSoftwarePIVKeyStore(t)
 	previous := loadedConfig
 	cfg := xkeyconfig.DefaultConfig()
 	cfg.PIV.Backend = string(PIVBackendSoftware)
@@ -69,6 +70,7 @@ func newPIVGenerateCmd(t *testing.T) *cobra.Command {
 	cmd.Flags().String("country", "", "")
 	cmd.Flags().Int("validity-days", 0, "")
 	cmd.Flags().StringP("output", "o", "", "")
+	addBarrierPasswordFlags(cmd) // the software PIV backend's key store
 	return cmd
 }
 

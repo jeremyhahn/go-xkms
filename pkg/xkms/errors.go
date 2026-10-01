@@ -1092,3 +1092,18 @@ func (e *ClusterMembersError) Error() string {
 
 // Unwrap returns the wrapped cause for errors.Is/As.
 func (e *ClusterMembersError) Unwrap() error { return e.Err }
+
+// PIVRekeyError is returned when a slot's previous key cannot be listed or
+// removed before the slot is re-keyed.
+type PIVRekeyError struct {
+	CN  string
+	Err error
+}
+
+// Error implements the error interface.
+func (e *PIVRekeyError) Error() string {
+	return "piv: re-key " + e.CN + ": replace the slot's previous key: " + e.Err.Error()
+}
+
+// Unwrap returns the cause.
+func (e *PIVRekeyError) Unwrap() error { return e.Err }

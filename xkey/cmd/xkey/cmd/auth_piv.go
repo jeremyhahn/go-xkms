@@ -107,7 +107,7 @@ func runAuthLoginPIV(cmd *cobra.Command, logger *slog.Logger, serverURL string) 
 	if err != nil {
 		return err
 	}
-	if err := ensurePIVInitialized(pivCfg, logger); err != nil {
+	if err := ensurePIVInitialized(cmd, pivCfg, logger); err != nil {
 		return err
 	}
 

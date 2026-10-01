@@ -52,6 +52,11 @@ type mockXKMSBackend struct {
 
 	// storeType overrides Type()'s default of StoreSoftware when set.
 	storeType types.StoreType
+
+	// keys, listKeysErr and deleteKeyErr drive the slot re-key step.
+	keys         []*types.KeyAttributes
+	listKeysErr  error
+	deleteKeyErr error
 }
 
 // KeyProvider returns a types.KeyProvider stub whose Capabilities().HardwareBacked
@@ -103,11 +108,12 @@ func (m *mockXKMSBackend) GetKey(_ context.Context, _ *types.KeyAttributes) (cry
 }
 
 func (m *mockXKMSBackend) DeleteKey(_ context.Context, _ *types.KeyAttributes) error {
-	return errors.New("not implemented")
+	return m.deleteKeyErr
 }
 
+// ListKeys lists m.keys, or fails with m.listKeysErr.
 func (m *mockXKMSBackend) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
-	return nil, errors.New("not implemented")
+	return m.keys, m.listKeysErr
 }
 
 func (m *mockXKMSBackend) RotateKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error) {

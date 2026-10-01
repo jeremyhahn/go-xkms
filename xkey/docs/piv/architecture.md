@@ -50,7 +50,11 @@ built with the matching tag:
 | PKCS#11 | `pkcs11` | `cmd/xkey/cmd/piv_pkcs11.go` | `piv_pkcs11_stub.go` → `ErrPIVPKCS11BuildTagRequired` |
 | TPM2 | `tpm2` | `cmd/xkey/cmd/piv_tpm2.go` | `piv_tpm2_stub.go` → `ErrPIVTPM2BuildTagRequired` |
 
-The `software`/file backend has no build tag and is always available. This
+The `software`/file backend has no build tag and is always available. Its
+keys live in xKey's barrier-protected key store (`keys/`), reached through
+the same `localKeyBackends` the vault key factors use and handed to the PIV
+manager by `InitPIVBackendResolver`, exactly as the PKCS#11 backend hands
+over its token (`ensureSoftwarePIVKeyStore`, `piv_software.go`). This
 mirrors the pattern [device](../device/) uses for its `ble` tag and
 [phone-hsm](../phone-hsm/) documents in more depth — a compile-time
 capability split with an identical `--help` surface, not a runtime flag.
