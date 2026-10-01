@@ -1307,6 +1307,32 @@ var (
 	// ErrVaultRecoverFailed is the sentinel error "failed to recover vault".
 	ErrVaultRecoverFailed = errors.New("failed to recover vault")
 
+	// ErrVaultPasskeyWithPassphrase is returned when a vault verb is given
+	// both --passkey and --passphrase: it sends exactly one factor.
+	ErrVaultPasskeyWithPassphrase = errors.New("--passkey and --passphrase are mutually exclusive")
+
+	// ErrVaultPINWithoutPasskey is returned when a security key PIN flag is
+	// given without --passkey: the PIN serves only a vault passkey and never
+	// unlocks the vault by itself.
+	ErrVaultPINWithoutPasskey = errors.New("--" + pinFlagStdin + " and --" + pinFlagValue +
+		" are the security key PIN and need --passkey")
+
+	// ErrVaultPasskeyPINRequired is returned when no security key PIN was
+	// supplied for a vault passkey, which is always PIN-verified.
+	ErrVaultPasskeyPINRequired = errors.New("a vault passkey needs your security key's PIN; supply it with --" +
+		pinFlagStdin + " (preferred), the " + pinEnvVar + " environment variable, or --" + pinFlagValue)
+
+	// ErrVaultPasskeySingleStdin is returned when both the recovery code and
+	// the security key PIN are asked to come from standard input.
+	ErrVaultPasskeySingleStdin = errors.New("only one of --recovery-code - and --" + pinFlagStdin +
+		" may read standard input; supply the PIN with " + pinEnvVar + " instead")
+
+	// ErrVaultRotatePasskey is returned when rotate names a passkey factor.
+	// A passkey's secret is bound to its credential on the security key, so
+	// there is no new secret to rotate to.
+	ErrVaultRotatePasskey = errors.New("a passkey cannot be rotated: enroll a new passkey " +
+		"(\"password vault enroll --passkey\") and remove the old one (\"password vault remove\")")
+
 	// Platform store errors
 
 	// ErrPlatformSecretNameRequired is returned when a platform secret name is missing.

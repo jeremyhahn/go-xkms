@@ -19,6 +19,8 @@ export function DeletePasswordForce(arg1:string):Promise<void>;
 
 export function EnrollPassphrase(arg1:string,arg2:string):Promise<services.PasswordVaultEnrollResult>;
 
+export function EnrollPasskey(arg1:string,arg2:string):Promise<services.PasswordVaultEnrollResult>;
+
 export function Generate(arg1:number,arg2:boolean,arg3:boolean,arg4:boolean,arg5:boolean):Promise<string>;
 
 export function GeneratePassword(arg1:number,arg2:string):Promise<string>;
@@ -47,6 +49,8 @@ export function OpenImportFileDialog():Promise<string>;
 
 export function PreviewImport(arg1:services.ImportParams):Promise<services.ImportPreviewResult>;
 
+export function RecoverWithPasskey(arg1:string,arg2:string,arg3:string):Promise<services.PasswordVaultEnrollResult>;
+
 export function RecoverWithPassphrase(arg1:string,arg2:string,arg3:string):Promise<services.PasswordVaultEnrollResult>;
 
 export function RemoveVaultFactor(arg1:string):Promise<void>;
@@ -70,6 +74,8 @@ export function SetContext(arg1:context.Context):Promise<void>;
 export function SetStore(arg1:staticpw.Store):Promise<void>;
 
 export function Unlock(arg1:string):Promise<void>;
+
+export function UnlockWithPasskey(arg1:string):Promise<void>;
 
 export function UpdatePassword(arg1:services.UpdatePasswordParams):Promise<void>;
 

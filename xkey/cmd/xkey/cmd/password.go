@@ -332,23 +332,29 @@ Examples:
 var passwordUnlockCmd = &cobra.Command{
 	Use:   "unlock",
 	Short: "Open your personal password session",
-	Long: `Open your personal password session with your vault passphrase.
+	Long: `Open your personal password session with your vault passphrase, or with
+--passkey with a vault passkey on your FIDO2 security key.
 
 Your personal entries stay sealed until you unlock with one of your own
 vault factors; the session stays open until 'xkey password lock' or until it
-expires. Enroll a passphrase first with 'xkey password vault enroll'; if you
-have lost it, use 'xkey password vault recover' with your recovery code.
+expires. Enroll a factor first with 'xkey password vault enroll'; if you have
+lost every factor, use 'xkey password vault recover' with your recovery code.
 
 This acts on an xkmsd server's session and requires --xkmsd-url.
 
 ` + vaultPassphraseUsage + `
+
+` + vaultPasskeyUsage + `
 
 Examples:
   # Unlock with the passphrase piped on standard input
   xkey password unlock --passphrase-stdin < passphrase.txt
 
   # Unlock with the passphrase from the environment
-  XKEY_VAULT_PASSPHRASE=... xkey password unlock`,
+  XKEY_VAULT_PASSPHRASE=... xkey password unlock
+
+  # Unlock with your security key
+  xkey password unlock --passkey --pin-stdin < pin.txt`,
 	RunE: runPasswordUnlock,
 }
 
@@ -822,22 +828,25 @@ func runPasswordType(cmd *cobra.Command, args []string) (err error) {
 }
 
 // runPasswordUnlock executes the password unlock command: it opens the
-// caller's personal session with their vault passphrase.
+// caller's personal session with their vault passphrase or passkey.
 func runPasswordUnlock(cmd *cobra.Command, args []string) error {
-	passphrase, err := resolveVaultSecret(cmd, vaultPassphraseSource, ErrPasswordMissingPassphrase)
+	source, cleanup, err := resolveVaultCredentialSource(cmd, "", vaultUnlock)
 	if err != nil {
 		return err
 	}
-	defer enclave.Wipe(passphrase)
+	defer cleanup()
 
 	return withPasswordStore(func(ctx context.Context, client PasswordStoreClientService) error {
-		req := &transport.PasswordStoreUnlockRequest{
-			PasswordVaultCredential: vaultPassphraseCredential(passphrase, ""),
+		cred, err := source(ctx, client)
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrPasswordUnlockFailed, Cause: err}
 		}
+		defer clear(cred.Secret)
+		req := &transport.PasswordStoreUnlockRequest{PasswordVaultCredential: cred}
 		if err := client.PasswordStoreUnlock(ctx, req); err != nil {
 			return &SentinelCauseError{Sentinel: ErrPasswordUnlockFailed, Cause: err}
 		}
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), "Password store unlocked.")
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Password store unlocked.")
 		return err
 	})
 }
@@ -1116,6 +1125,7 @@ func init() {
 
 	// password unlock flags.
 	vaultPassphraseSource.addFlags(passwordUnlockCmd)
+	addVaultPasskeyFlags(passwordUnlockCmd, "Unlock with a vault passkey on the attached FIDO2 security key")
 
 	// password access-mode flags.
 	passwordAccessModeCmd.Flags().String("mode", "", "Access mode: pin_per_operation or session_based")

@@ -15,8 +15,12 @@ package services
 
 import (
 	"errors"
+	"io"
 
+	fido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/sdk/go/vaultpasskey"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
 
@@ -24,6 +28,12 @@ import (
 // the caller's own unlock factors on the connected xkmsd server. The server
 // seals the caller's personal entries with a key only these factors unwrap;
 // the GUI never holds that key, only forwards the factor the user supplies.
+//
+// A passkey factor lives on a FIDO2 security key -- a hardware key or the
+// running xKey virtual authenticator, both reached over HID. Its secret is
+// the key's hmac-secret output, derived by vaultpasskey (the same package
+// xkmsctl and the xkey CLI use, so a passkey enrolled here unlocks there).
+// Each passkey call blocks until the user touches the key.
 
 // vaultFactorPassphrase is the wire name of the passphrase vault factor.
 const vaultFactorPassphrase = "passphrase"
@@ -38,7 +48,27 @@ var (
 
 	// ErrStaticPWRecoveryCodeRequired indicates an empty recovery code.
 	ErrStaticPWRecoveryCodeRequired = errors.New("staticpw_service: recovery code is required")
+
+	// ErrStaticPWSecurityKeyPINRequired indicates an empty security key PIN.
+	// A vault passkey is always verified with the key's PIN.
+	ErrStaticPWSecurityKeyPINRequired = errors.New("staticpw_service: security key PIN is required")
+
+	// ErrStaticPWSecurityKeyUnavailable indicates no FIDO2 security key
+	// could be opened for a vault passkey.
+	ErrStaticPWSecurityKeyUnavailable = errors.New("staticpw_service: no FIDO2 security key is available; " +
+		"attach one or start the xKey authenticator")
+
+	// ErrStaticPWSecurityKeyPINSealFailed indicates the security key PIN
+	// could not be sealed into protected memory.
+	ErrStaticPWSecurityKeyPINSealFailed = errors.New("staticpw_service: failed to seal the security key PIN")
 )
+
+// vaultAuthenticator is the FIDO2 authenticator a vault passkey runs on.
+// *fido2.FIDO2Handler satisfies it.
+type vaultAuthenticator interface {
+	vaultpasskey.Authenticator
+	io.Closer
+}
 
 // PasswordVaultFactor is the frontend-facing description of one enrolled
 // vault factor. It never carries key material.
@@ -180,6 +210,142 @@ func (s *StaticPasswordService) RecoverWithPassphrase(recoveryCode, passphrase, 
 		PasswordVaultCredential: passphraseCredential(passphrase, label),
 	})
 	return s.auditVaultResult(audit.OpPasswordVaultRecovered, resp, recoverErr)
+}
+
+// EnrollPasskey creates a vault passkey on the attached security key,
+// verified with its PIN, and enrolls it. The first enrollment initializes the
+// vault, opens the session and returns the recovery code; later enrollments
+// need the session open. The key is touched twice: once to create the
+// passkey and once to derive its secret.
+func (s *StaticPasswordService) EnrollPasskey(label, pin string) (*PasswordVaultEnrollResult, error) {
+	client, pinSecret, err := s.passkeyCall(pin)
+	if err != nil {
+		return nil, err
+	}
+	defer pinSecret.Destroy()
+
+	cred, err := s.withVaultAuthenticator(func(a vaultpasskey.Authenticator) (transport.PasswordVaultCredential, error) {
+		return vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pinSecret, Label: label})
+	})
+	if err != nil {
+		return s.auditVaultResult(audit.OpPasswordVaultFactorEnrolled, nil, err)
+	}
+	defer clear(cred.Secret)
+	resp, enrollErr := client.PasswordVaultEnroll(s.getContext(), &transport.PasswordVaultEnrollRequest{
+		PasswordVaultCredential: cred,
+	})
+	return s.auditVaultResult(audit.OpPasswordVaultFactorEnrolled, resp, enrollErr)
+}
+
+// UnlockWithPasskey opens the caller's personal password session with a
+// vault passkey on the attached security key, verified with its PIN.
+func (s *StaticPasswordService) UnlockWithPasskey(pin string) error {
+	client, pinSecret, err := s.passkeyCall(pin)
+	if err != nil {
+		return err
+	}
+	defer pinSecret.Destroy()
+
+	unlockErr := s.unlockWithPasskey(client, pinSecret)
+	details := map[string]any{"factor": vaultpasskey.Factor}
+	if auditErr := s.logPasswordEvent(audit.OpPasswordStoreUnlocked, "", unlockErr == nil, unlockErr, details); auditErr != nil {
+		return auditErr
+	}
+	return unlockErr
+}
+
+// unlockWithPasskey evaluates the vault's passkeys on the security key and
+// sends the unlock credential.
+func (s *StaticPasswordService) unlockWithPasskey(client transport.Client, pin *secure.Secret) error {
+	ctx := s.getContext()
+	status, err := client.PasswordVaultStatus(ctx)
+	if err != nil {
+		return err
+	}
+	cred, err := s.withVaultAuthenticator(func(a vaultpasskey.Authenticator) (transport.PasswordVaultCredential, error) {
+		return vaultpasskey.Unlock(a, status.Factors, vaultpasskey.Options{PIN: pin})
+	})
+	if err != nil {
+		return err
+	}
+	defer clear(cred.Secret)
+	return client.PasswordStoreUnlock(ctx, &transport.PasswordStoreUnlockRequest{PasswordVaultCredential: cred})
+}
+
+// RecoverWithPasskey uses the one-time recovery code to enroll a new vault
+// passkey on the attached security key. It opens the session and returns the
+// replacement recovery code.
+func (s *StaticPasswordService) RecoverWithPasskey(recoveryCode, label, pin string) (*PasswordVaultEnrollResult, error) {
+	if recoveryCode == "" {
+		return nil, ErrStaticPWRecoveryCodeRequired
+	}
+	client, pinSecret, err := s.passkeyCall(pin)
+	if err != nil {
+		return nil, err
+	}
+	defer pinSecret.Destroy()
+
+	cred, err := s.withVaultAuthenticator(func(a vaultpasskey.Authenticator) (transport.PasswordVaultCredential, error) {
+		return vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pinSecret, Label: label})
+	})
+	if err != nil {
+		return s.auditVaultResult(audit.OpPasswordVaultRecovered, nil, err)
+	}
+	defer clear(cred.Secret)
+	resp, recoverErr := client.PasswordVaultRecover(s.getContext(), &transport.PasswordVaultRecoverRequest{
+		RecoveryCode:            recoveryCode,
+		PasswordVaultCredential: cred,
+	})
+	return s.auditVaultResult(audit.OpPasswordVaultRecovered, resp, recoverErr)
+}
+
+// passkeyCall validates the inputs every passkey call shares: a non-empty
+// security key PIN, sealed for the authenticator, and a connected client.
+// The caller destroys the returned PIN.
+func (s *StaticPasswordService) passkeyCall(pin string) (transport.Client, *secure.Secret, error) {
+	if pin == "" {
+		return nil, nil, ErrStaticPWSecurityKeyPINRequired
+	}
+	client, err := s.getClient()
+	if err != nil {
+		return nil, nil, err
+	}
+	pinSecret, err := secure.NewSecret([]byte(pin))
+	if err != nil {
+		return nil, nil, &SentinelCauseError{Sentinel: ErrStaticPWSecurityKeyPINSealFailed, Cause: err}
+	}
+	return client, pinSecret, nil
+}
+
+// withVaultAuthenticator opens the security key, runs fn on it and closes
+// it. A close failure fails the call and discards the derived secret.
+func (s *StaticPasswordService) withVaultAuthenticator(fn func(vaultpasskey.Authenticator) (transport.PasswordVaultCredential, error)) (cred transport.PasswordVaultCredential, err error) {
+	open := s.vaultAuthenticatorOpener
+	if open == nil {
+		open = openVaultAuthenticator
+	}
+	authenticator, err := open()
+	if err != nil {
+		return transport.PasswordVaultCredential{}, &SentinelCauseError{Sentinel: ErrStaticPWSecurityKeyUnavailable, Cause: err}
+	}
+	defer func() {
+		if closeErr := authenticator.Close(); closeErr != nil {
+			clear(cred.Secret)
+			cred = transport.PasswordVaultCredential{}
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	return fn(authenticator)
+}
+
+// openVaultAuthenticator opens the attached FIDO2 security key over HID.
+func openVaultAuthenticator() (vaultAuthenticator, error) {
+	cfg := fido2.DefaultConfig
+	handler, err := fido2.NewHandler(&cfg, fido2.NewDefaultEnumerator())
+	if err != nil {
+		return nil, err
+	}
+	return handler, nil
 }
 
 // auditVaultResult records a factor-changing vault operation and converts

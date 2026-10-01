@@ -1560,7 +1560,9 @@ Usage: `xkey password unlock [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--passkey` | bool | false | Unlock with a vault passkey on the attached FIDO2 security key |
 | `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
+| `--pin-stdin` | bool | false | Read the PIN from standard input |
 
 ## xkey password vault
 
@@ -1570,25 +1572,29 @@ Usage: `xkey password vault`
 
 ## xkey password vault enroll
 
-Enroll a passphrase on your personal vault
+Enroll a passphrase or passkey on your personal vault
 
 Usage: `xkey password vault enroll [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--label` | string |  | Label naming the factor (e.g. the device it is used on) |
+| `--passkey` | bool | false | Enroll a passkey on the attached FIDO2 security key instead of a passphrase |
 | `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
+| `--pin-stdin` | bool | false | Read the PIN from standard input |
 
 ## xkey password vault recover
 
-Enroll a new passphrase with your one-time recovery code
+Enroll a new passphrase or passkey with your one-time recovery code
 
 Usage: `xkey password vault recover [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--label` | string |  | Label naming the new factor |
+| `--passkey` | bool | false | Enroll a passkey on the attached FIDO2 security key instead of a passphrase |
 | `--passphrase-stdin` | bool | false | Read the vault passphrase from standard input |
+| `--pin-stdin` | bool | false | Read the PIN from standard input |
 | `--recovery-code-stdin` | bool | false | Read the recovery code from standard input |
 
 ## xkey password vault remove

@@ -42,14 +42,25 @@ never shown again.
 | `vault recover` | `--recovery-code <v\|->`, `--passphrase <v\|->`, `--label` | lost your factors: enroll a new passphrase with the recovery code, which is replaced by a new one (printed once) |
 
 A new passphrase is asked twice when prompted; at most one flag may read
-stdin. Passkey enrollment and unlock are served by the API (see
-[`api.md`](api.md)) but not yet by this CLI.
+stdin.
+
+**Passkeys.** `--passkey` replaces `--passphrase` on `unlock`,
+`vault enroll` and `vault recover`: the factor is a credential on your FIDO2
+security key (relying party `xkms-password-vault`, evaluated with the
+WebAuthn prf salt transform -- see
+[`architecture.md`](architecture.md#passkey-salt-handling)). The key's PIN is
+always required and comes from `--pin-stdin`, `XKMS_FIDO2_PIN`, `--pin`, or a
+no-echo prompt; touch the key when asked (twice on enrollment). A passkey
+cannot be rotated -- enroll a new one and remove the old one; `vault rotate`
+on a passkey says so.
 
 ```
 xkmsctl password vault enroll --label laptop
 xkmsctl password vault status -o json
 xkmsctl password vault rotate --factor-id 3fa2c1d09b7e4a55
 xkmsctl password vault recover --recovery-code - < code.txt
+xkmsctl password vault enroll --passkey --label "yubikey"
+xkmsctl password unlock --passkey
 ```
 
 ## `password add <name>`

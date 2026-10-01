@@ -2,8 +2,11 @@
   /**
    * PasswordVaultPanel manages the caller's personal password vault on the
    * connected xkmsd server through StaticPasswordService: first-run
-   * enrollment, unlocking with a passphrase, the enrolled factors (rotate,
-   * remove, add), and recovery with the one-time recovery code.
+   * enrollment, unlocking, the enrolled factors (rotate, remove, add), and
+   * recovery with the one-time recovery code. Each of create, unlock, add and
+   * recover takes either a passphrase or -- "Use security key" -- a passkey on
+   * a FIDO2 security key, verified with the key's PIN. While a passkey call
+   * is pending the panel asks the user to touch the key.
    *
    * The recovery code the server returns on the first enrollment and on every
    * recovery is shown exactly once; the panel keeps it on screen until the
@@ -16,7 +19,16 @@
   import Input from '$lib/components/Input.svelte';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
-  import { mdiDelete, mdiLockOpenOutline, mdiLockOutline, mdiLockReset, mdiPlus, mdiShieldLockOutline } from '$lib/utils/icons';
+  import {
+    mdiDelete,
+    mdiFingerprint,
+    mdiLockOpenOutline,
+    mdiLockOutline,
+    mdiLockReset,
+    mdiPlus,
+    mdiShieldKeyOutline,
+    mdiShieldLockOutline,
+  } from '$lib/utils/icons';
   import { addNotification } from '$lib/stores/notifications';
   import { callBackendWithError, callBackendVoidWithError } from '$lib/api/backend';
   import type { PasswordVaultEnrollResult, PasswordVaultFactor, PasswordVaultStatus } from '$lib/api/backend';
@@ -34,6 +46,12 @@
   let confirmPassphrase = '';
   let label = '';
   let recoveryCodeInput = '';
+  let pin = '';
+
+  // usePasskey switches the current form from a passphrase to a passkey on
+  // a security key; touching is true while a passkey call waits for a touch.
+  let usePasskey = false;
+  let touching = false;
 
   // Sub-views of the locked and unlocked states.
   let recovering = false;
@@ -58,14 +76,35 @@
     status = result;
     loadError = err ?? '';
     loading = false;
+    if (status?.initialized && !status.unlocked && !recovering) {
+      usePasskey = onlyPasskeys(status.factors);
+    }
+  }
+
+  /** onlyPasskeys is true when every unlockable factor is a passkey. */
+  function onlyPasskeys(factors: PasswordVaultFactor[]): boolean {
+    const unlockable = factors.filter((f) => f.factor === 'passkey' || f.factor === 'passphrase');
+    return unlockable.length > 0 && unlockable.every((f) => f.factor === 'passkey');
+  }
+
+  function clearSecrets(): void {
+    passphrase = '';
+    confirmPassphrase = '';
+    recoveryCodeInput = '';
+    pin = '';
   }
 
   function resetForm(): void {
-    passphrase = '';
-    confirmPassphrase = '';
+    clearSecrets();
     label = '';
-    recoveryCodeInput = '';
     error = '';
+    usePasskey = false;
+  }
+
+  function setUsePasskey(value: boolean): void {
+    clearSecrets();
+    error = '';
+    usePasskey = value;
   }
 
   /** newPassphraseError validates a passphrase being set, or returns ''. */
@@ -73,6 +112,12 @@
     if (!passphrase) return 'Enter a passphrase.';
     if (passphrase !== confirmPassphrase) return 'The passphrases do not match.';
     return '';
+  }
+
+  /** newFactorError validates the factor being set, or returns ''. */
+  function newFactorError(): string {
+    if (usePasskey) return pin ? '' : 'Enter your security key PIN.';
+    return newPassphraseError();
   }
 
   function showRecoveryCode(result: PasswordVaultEnrollResult | null): void {
@@ -87,11 +132,11 @@
     success: string,
   ): Promise<void> {
     busy = true;
+    touching = usePasskey;
     const { result, error: err } = await call;
     busy = false;
-    passphrase = '';
-    confirmPassphrase = '';
-    recoveryCodeInput = '';
+    touching = false;
+    clearSecrets();
     if (err) {
       error = err;
       return;
@@ -106,8 +151,15 @@
   }
 
   async function enroll(): Promise<void> {
-    error = newPassphraseError();
+    error = newFactorError();
     if (error) return;
+    if (usePasskey) {
+      await finishWithResult(
+        callBackendWithError<PasswordVaultEnrollResult>(SERVICE, 'EnrollPasskey', label, pin),
+        'Security key enrolled',
+      );
+      return;
+    }
     await finishWithResult(
       callBackendWithError<PasswordVaultEnrollResult>(SERVICE, 'EnrollPassphrase', passphrase, label),
       'Passphrase enrolled',
@@ -130,8 +182,15 @@
       error = 'Enter your recovery code.';
       return;
     }
-    error = newPassphraseError();
+    error = newFactorError();
     if (error) return;
+    if (usePasskey) {
+      await finishWithResult(
+        callBackendWithError<PasswordVaultEnrollResult>(SERVICE, 'RecoverWithPasskey', recoveryCodeInput, label, pin),
+        'Vault recovered',
+      );
+      return;
+    }
     await finishWithResult(
       callBackendWithError<PasswordVaultEnrollResult>(SERVICE, 'RecoverWithPassphrase', recoveryCodeInput, passphrase, label),
       'Vault recovered',
@@ -140,14 +199,18 @@
 
   async function unlock(): Promise<void> {
     error = '';
-    if (!passphrase) {
-      error = 'Enter your vault passphrase.';
+    if (usePasskey ? !pin : !passphrase) {
+      error = usePasskey ? 'Enter your security key PIN.' : 'Enter your vault passphrase.';
       return;
     }
     busy = true;
-    const res = await callBackendVoidWithError(SERVICE, 'Unlock', passphrase);
+    touching = usePasskey;
+    const res = usePasskey
+      ? await callBackendVoidWithError(SERVICE, 'UnlockWithPasskey', pin)
+      : await callBackendVoidWithError(SERVICE, 'Unlock', passphrase);
     busy = false;
-    passphrase = '';
+    touching = false;
+    clearSecrets();
     if (!res.ok) {
       error = res.error || 'Failed to unlock the vault.';
       return;
@@ -188,10 +251,11 @@
     rotating = factor;
   }
 
-  function startAdd(): void {
+  function startAdd(passkey: boolean): void {
     resetForm();
     rotating = null;
     adding = true;
+    usePasskey = passkey;
   }
 
   function cancelSubview(): void {
@@ -244,26 +308,45 @@
     <div class="actions"><Button variant="outline" on:click={load}>Retry</Button></div>
   {:else if !status.initialized}
     <p class="text-body-small muted">
-      Create your personal vault by choosing a passphrase. Your personal entries are sealed with a
-      key only your own factors unlock.
+      {#if usePasskey}
+        Create your personal vault with a passkey on your security key. Your personal entries are
+        sealed with a key only your own factors unlock.
+      {:else}
+        Create your personal vault by choosing a passphrase. Your personal entries are sealed with a
+        key only your own factors unlock.
+      {/if}
     </p>
-    <Input id="vault-new-passphrase" type="password" label="Passphrase" bind:value={passphrase} />
-    <Input id="vault-confirm-passphrase" type="password" label="Confirm passphrase" bind:value={confirmPassphrase} />
-    <Input id="vault-label" label="Label (optional)" placeholder="e.g. laptop" bind:value={label} />
+    {#if usePasskey}
+      <Input id="vault-pin" type="password" label="Security key PIN" bind:value={pin} />
+    {:else}
+      <Input id="vault-new-passphrase" type="password" label="Passphrase" bind:value={passphrase} />
+      <Input id="vault-confirm-passphrase" type="password" label="Confirm passphrase" bind:value={confirmPassphrase} />
+    {/if}
+    <Input id="vault-label" label="Label (optional)" placeholder={usePasskey ? 'e.g. yubikey' : 'e.g. laptop'} bind:value={label} />
     <div class="actions">
+      <Button variant="text" icon={usePasskey ? mdiShieldLockOutline : mdiFingerprint} on:click={() => setUsePasskey(!usePasskey)}>
+        {usePasskey ? 'Use a passphrase' : 'Use security key'}
+      </Button>
       <Button variant="primary" icon={mdiShieldLockOutline} loading={busy} on:click={enroll}>Create vault</Button>
     </div>
   {:else if !status.unlocked}
     {#if recovering}
       <p class="text-body-small muted">
-        Your recovery code enrolls a new passphrase and opens your vault. You will receive a new
-        recovery code; the old one stops working.
+        Your recovery code enrolls a new {usePasskey ? 'security key' : 'passphrase'} and opens your
+        vault. You will receive a new recovery code; the old one stops working.
       </p>
       <Input id="vault-recovery-code" type="password" label="Recovery code" monospace bind:value={recoveryCodeInput} />
-      <Input id="vault-new-passphrase" type="password" label="New passphrase" bind:value={passphrase} />
-      <Input id="vault-confirm-passphrase" type="password" label="Confirm passphrase" bind:value={confirmPassphrase} />
+      {#if usePasskey}
+        <Input id="vault-pin" type="password" label="Security key PIN" bind:value={pin} />
+      {:else}
+        <Input id="vault-new-passphrase" type="password" label="New passphrase" bind:value={passphrase} />
+        <Input id="vault-confirm-passphrase" type="password" label="Confirm passphrase" bind:value={confirmPassphrase} />
+      {/if}
       <Input id="vault-label" label="Label (optional)" bind:value={label} />
       <div class="actions">
+        <Button variant="text" icon={usePasskey ? mdiShieldLockOutline : mdiFingerprint} on:click={() => setUsePasskey(!usePasskey)}>
+          {usePasskey ? 'Use a passphrase' : 'Use security key'}
+        </Button>
         <Button variant="text" on:click={cancelSubview}>Cancel</Button>
         <Button variant="primary" icon={mdiLockReset} loading={busy} on:click={recover}>Recover</Button>
       </div>
@@ -271,8 +354,15 @@
       <div class="row">
         <StatusBadge status="warning" label="Locked" />
       </div>
-      <Input id="vault-passphrase" type="password" label="Vault passphrase" bind:value={passphrase} />
+      {#if usePasskey}
+        <Input id="vault-pin" type="password" label="Security key PIN" bind:value={pin} />
+      {:else}
+        <Input id="vault-passphrase" type="password" label="Vault passphrase" bind:value={passphrase} />
+      {/if}
       <div class="actions">
+        <Button variant="text" icon={usePasskey ? mdiShieldLockOutline : mdiFingerprint} on:click={() => setUsePasskey(!usePasskey)}>
+          {usePasskey ? 'Use a passphrase' : 'Use security key'}
+        </Button>
         <Button variant="text" on:click={() => { resetForm(); recovering = true; }}>Use recovery code</Button>
         <Button variant="primary" icon={mdiLockOpenOutline} loading={busy} on:click={unlock}>Unlock</Button>
       </div>
@@ -301,10 +391,20 @@
     {#if rotating || adding}
       <div class="subform">
         <span class="text-title-small">
-          {rotating ? `New passphrase for ${rotating.label || rotating.factor}` : 'Add a passphrase'}
+          {#if rotating}
+            New passphrase for {rotating.label || rotating.factor}
+          {:else if usePasskey}
+            Add a security key
+          {:else}
+            Add a passphrase
+          {/if}
         </span>
-        <Input id="vault-new-passphrase" type="password" label="New passphrase" bind:value={passphrase} />
-        <Input id="vault-confirm-passphrase" type="password" label="Confirm passphrase" bind:value={confirmPassphrase} />
+        {#if usePasskey}
+          <Input id="vault-pin" type="password" label="Security key PIN" bind:value={pin} />
+        {:else}
+          <Input id="vault-new-passphrase" type="password" label="New passphrase" bind:value={passphrase} />
+          <Input id="vault-confirm-passphrase" type="password" label="Confirm passphrase" bind:value={confirmPassphrase} />
+        {/if}
         {#if adding}
           <Input id="vault-label" label="Label (optional)" bind:value={label} />
         {/if}
@@ -317,9 +417,16 @@
       </div>
     {:else}
       <div class="actions">
-        <Button variant="outline" size="sm" icon={mdiPlus} on:click={startAdd}>Add passphrase</Button>
+        <Button variant="outline" size="sm" icon={mdiPlus} on:click={() => startAdd(false)}>Add passphrase</Button>
+        <Button variant="outline" size="sm" icon={mdiShieldKeyOutline} on:click={() => startAdd(true)}>Add security key</Button>
       </div>
     {/if}
+  {/if}
+  {#if touching}
+    <div class="row touch-prompt" role="status" data-testid="vault-touch-prompt">
+      <Icon path={mdiFingerprint} size={20} color="var(--color-primary)" />
+      <span class="text-body-medium">Touch your security key...</span>
+    </div>
   {/if}
   {#if error}<p class="text-body-small error-text" role="alert">{error}</p>{/if}
 </div>

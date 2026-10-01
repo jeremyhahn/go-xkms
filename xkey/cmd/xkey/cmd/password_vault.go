@@ -22,6 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/sdk/go/vaultpasskey"
 	"github.com/spf13/cobra"
 )
 
@@ -111,17 +112,18 @@ var passwordVaultCmd = &cobra.Command{
 xkmsd server (requires --xkmsd-url).
 
 Your personal entries are sealed with a key only your own factors unwrap: a
-passphrase you choose. The first enrollment initializes the vault, opens your
-session, and prints a one-time recovery code -- store it somewhere safe, it
-is shown exactly once and is the only way back in if you lose every factor.
-Recovering with it enrolls a new factor and prints a new code.
+passphrase you choose, or a passkey on your FIDO2 security key (--passkey).
+The first enrollment initializes the vault, opens your session, and prints a
+one-time recovery code -- store it somewhere safe, it is shown exactly once
+and is the only way back in if you lose every factor. Recovering with it
+enrolls a new factor and prints a new code.
 
 Subcommands:
   status   Show whether the vault is initialized and unlocked, and its factors
-  enroll   Enroll a passphrase (the first enrollment initializes the vault)
-  rotate   Replace the passphrase of an enrolled factor
+  enroll   Enroll a passphrase or passkey (the first enrollment initializes the vault)
+  rotate   Replace the passphrase of an enrolled passphrase factor
   remove   Remove an enrolled factor
-  recover  Enroll a new passphrase with the one-time recovery code`,
+  recover  Enroll a new passphrase or passkey with the one-time recovery code`,
 }
 
 // passwordVaultStatusCmd shows the caller's vault status.
@@ -139,17 +141,22 @@ Example:
 // passwordVaultEnrollCmd enrolls a passphrase factor.
 var passwordVaultEnrollCmd = &cobra.Command{
 	Use:   "enroll",
-	Short: "Enroll a passphrase on your personal vault",
-	Long: `Enroll a passphrase on your personal vault.
+	Short: "Enroll a passphrase or passkey on your personal vault",
+	Long: `Enroll a passphrase, or with --passkey a passkey on your FIDO2 security key,
+on your personal vault.
 
 The first enrollment initializes the vault, opens your session, and prints the
 one-time recovery code. Later enrollments add a factor and need your session
-open ('xkey password unlock').
+open ('xkey password unlock'). Enrolling a passkey touches the key twice: once
+to create the passkey and once to derive its secret.
 
 ` + vaultPassphraseUsage + `
 
-Example:
-  xkey password vault enroll --passphrase-stdin --label laptop < passphrase.txt`,
+` + vaultPasskeyUsage + `
+
+Examples:
+  xkey password vault enroll --passphrase-stdin --label laptop < passphrase.txt
+  xkey password vault enroll --passkey --pin-stdin --label yubikey < pin.txt`,
 	RunE: runPasswordVaultEnroll,
 }
 
@@ -157,9 +164,13 @@ Example:
 var passwordVaultRotateCmd = &cobra.Command{
 	Use:   "rotate",
 	Short: "Replace the passphrase of an enrolled factor",
-	Long: `Replace the passphrase of the factor named by --factor-id. Your session
-must be open ('xkey password unlock'). The rotated factor gets a new ID and
-keeps its label unless --label names a new one.
+	Long: `Replace the passphrase of the passphrase factor named by --factor-id. Your
+session must be open ('xkey password unlock'). The rotated factor gets a new
+ID and keeps its label unless --label names a new one.
+
+A passkey cannot be rotated: its secret is bound to the credential on the
+security key. Enroll a new passkey ('xkey password vault enroll --passkey')
+and remove the old one ('xkey password vault remove') instead.
 
 ` + vaultPassphraseUsage + `
 
@@ -183,16 +194,21 @@ Example:
 // passwordVaultRecoverCmd enrolls a new passphrase with the recovery code.
 var passwordVaultRecoverCmd = &cobra.Command{
 	Use:   "recover",
-	Short: "Enroll a new passphrase with your one-time recovery code",
-	Long: `Use your one-time recovery code to enroll a new passphrase. This opens
-your session and prints a NEW recovery code; the old one stops working.
+	Short: "Enroll a new passphrase or passkey with your one-time recovery code",
+	Long: `Use your one-time recovery code to enroll a new passphrase, or with
+--passkey a new passkey on your FIDO2 security key. This opens your session and
+prints a NEW recovery code; the old one stops working.
 
 The recovery code comes from --recovery-code-stdin or XKEY_VAULT_RECOVERY_CODE;
-the new passphrase from --passphrase-stdin or XKEY_VAULT_PASSPHRASE. Standard
-input carries only one of them.
+the new passphrase from --passphrase-stdin or XKEY_VAULT_PASSPHRASE; the
+security key PIN from --pin-stdin or XKEY_PIN. Standard input carries only one
+of them.
 
-Example:
-  XKEY_VAULT_PASSPHRASE=... xkey password vault recover --recovery-code-stdin < code.txt`,
+` + vaultPasskeyUsage + `
+
+Examples:
+  XKEY_VAULT_PASSPHRASE=... xkey password vault recover --recovery-code-stdin < code.txt
+  XKEY_PIN=... xkey password vault recover --passkey --recovery-code-stdin < code.txt`,
 	RunE: runPasswordVaultRecover,
 }
 
@@ -251,16 +267,19 @@ func runPasswordVaultEnroll(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	passphrase, err := resolveVaultSecret(cmd, vaultPassphraseSource, ErrPasswordMissingPassphrase)
+	source, cleanup, err := resolveVaultCredentialSource(cmd, label, vaultNewFactor)
 	if err != nil {
 		return err
 	}
-	defer enclave.Wipe(passphrase)
+	defer cleanup()
 
 	return withPasswordStore(func(ctx context.Context, client PasswordStoreClientService) error {
-		resp, err := client.PasswordVaultEnroll(ctx, &transport.PasswordVaultEnrollRequest{
-			PasswordVaultCredential: vaultPassphraseCredential(passphrase, label),
-		})
+		cred, err := source(ctx, client)
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrPasswordVaultEnrollFailed, Cause: err}
+		}
+		defer clear(cred.Secret)
+		resp, err := client.PasswordVaultEnroll(ctx, &transport.PasswordVaultEnrollRequest{PasswordVaultCredential: cred})
 		if err != nil {
 			return &SentinelCauseError{Sentinel: ErrPasswordVaultEnrollFailed, Cause: err}
 		}
@@ -281,20 +300,26 @@ func runPasswordVaultRotate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	passphrase, err := resolveVaultSecret(cmd, vaultPassphraseSource, ErrPasswordMissingPassphrase)
-	if err != nil {
-		return err
-	}
-	defer enclave.Wipe(passphrase)
 
 	return withPasswordStore(func(ctx context.Context, client PasswordStoreClientService) error {
-		if label == "" {
-			current, err := vaultFactorLabel(ctx, client, factorID)
-			if err != nil {
-				return &SentinelCauseError{Sentinel: ErrPasswordVaultRotateFailed, Cause: err}
-			}
-			label = current
+		// The factor is looked up first: a passkey is refused before any
+		// passphrase is read, and a rotation that names no new label keeps
+		// the factor's current one.
+		factor, err := vaultFactorByID(ctx, client, factorID)
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrPasswordVaultRotateFailed, Cause: err}
 		}
+		if factor.Factor == vaultpasskey.Factor {
+			return ErrPasswordVaultRotatePasskey
+		}
+		if label == "" {
+			label = factor.Label
+		}
+		passphrase, err := resolveVaultSecret(cmd, vaultPassphraseSource, ErrPasswordMissingPassphrase)
+		if err != nil {
+			return err
+		}
+		defer enclave.Wipe(passphrase)
 		resp, err := client.PasswordVaultRotate(ctx, &transport.PasswordVaultRotateRequest{
 			FactorID:                factorID,
 			PasswordVaultCredential: vaultPassphraseCredential(passphrase, label),
@@ -306,20 +331,19 @@ func runPasswordVaultRotate(cmd *cobra.Command, args []string) error {
 	})
 }
 
-// vaultFactorLabel returns the label of factor id, so a rotation that names
-// no new label keeps the factor's current one instead of clearing it. An
-// unknown id yields an empty label; the rotation itself then reports it.
-func vaultFactorLabel(ctx context.Context, client PasswordStoreClientService, id string) (string, error) {
+// vaultFactorByID returns the enrolled factor id, or the zero factor when the
+// vault has none by that id; the rotation itself then reports it.
+func vaultFactorByID(ctx context.Context, client PasswordStoreClientService, id string) (transport.PasswordVaultFactor, error) {
 	status, err := client.PasswordVaultStatus(ctx)
 	if err != nil {
-		return "", err
+		return transport.PasswordVaultFactor{}, err
 	}
 	for _, f := range status.Factors {
 		if f.ID == id {
-			return f.Label, nil
+			return f, nil
 		}
 	}
-	return "", nil
+	return transport.PasswordVaultFactor{}, nil
 }
 
 // runPasswordVaultRemove executes the vault remove command.
@@ -356,8 +380,15 @@ func runPasswordVaultRecover(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	pinFromStdin, err := cmd.Flags().GetBool(pinFlagStdin)
+	if err != nil {
+		return err
+	}
 	if codeFromStdin && passphraseFromStdin {
 		return ErrPasswordVaultSingleStdin
+	}
+	if codeFromStdin && pinFromStdin {
+		return ErrPasswordPasskeySingleStdin
 	}
 
 	code, err := resolveVaultSecret(cmd, vaultRecoveryCodeSource, ErrPasswordMissingRecoveryCode)
@@ -365,16 +396,21 @@ func runPasswordVaultRecover(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer enclave.Wipe(code)
-	passphrase, err := resolveVaultSecret(cmd, vaultPassphraseSource, ErrPasswordMissingPassphrase)
+	source, cleanup, err := resolveVaultCredentialSource(cmd, label, vaultNewFactor)
 	if err != nil {
 		return err
 	}
-	defer enclave.Wipe(passphrase)
+	defer cleanup()
 
 	return withPasswordStore(func(ctx context.Context, client PasswordStoreClientService) error {
+		cred, err := source(ctx, client)
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrPasswordVaultRecoverFailed, Cause: err}
+		}
+		defer clear(cred.Secret)
 		resp, err := client.PasswordVaultRecover(ctx, &transport.PasswordVaultRecoverRequest{
 			RecoveryCode:            string(code),
-			PasswordVaultCredential: vaultPassphraseCredential(passphrase, label),
+			PasswordVaultCredential: cred,
 		})
 		if err != nil {
 			return &SentinelCauseError{Sentinel: ErrPasswordVaultRecoverFailed, Cause: err}
@@ -434,6 +470,7 @@ func init() {
 
 	vaultPassphraseSource.addFlags(passwordVaultEnrollCmd)
 	passwordVaultEnrollCmd.Flags().String("label", "", "Label naming the factor (e.g. the device it is used on)")
+	addVaultPasskeyFlags(passwordVaultEnrollCmd, "Enroll a passkey on the attached FIDO2 security key instead of a passphrase")
 
 	passwordVaultRotateCmd.Flags().String("factor-id", "", "ID of the factor to rotate (see 'xkey password vault status')")
 	vaultPassphraseSource.addFlags(passwordVaultRotateCmd)
@@ -444,4 +481,5 @@ func init() {
 	vaultRecoveryCodeSource.addFlags(passwordVaultRecoverCmd)
 	vaultPassphraseSource.addFlags(passwordVaultRecoverCmd)
 	passwordVaultRecoverCmd.Flags().String("label", "", "Label naming the new factor")
+	addVaultPasskeyFlags(passwordVaultRecoverCmd, "Enroll a passkey on the attached FIDO2 security key instead of a passphrase")
 }

@@ -33,6 +33,12 @@ xkmsctl password unlock --passphrase -
 xkmsctl password status -o json
 ```
 
+You can use your FIDO2 security key instead of, or as well as, a passphrase:
+`xkmsctl password vault enroll --passkey` adds it (you are asked for the
+key's PIN and to touch it), and `xkmsctl password unlock --passkey` unlocks
+with it. A key enrolled from one tool -- xkmsctl, xkey, or the xkey app --
+works in all of them.
+
 Nobody else can open your personal entries: not another user, not a tenant
 administrator, not someone holding the tenant's key. If you forget your
 passphrase, `xkmsctl password vault recover --recovery-code -` enrolls a new

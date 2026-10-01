@@ -137,6 +137,11 @@ type StaticPasswordService struct {
 	store    staticpw.Store
 	client   atomic.Pointer[transport.Client]
 	auditLog atomic.Pointer[audit.Logger]
+
+	// vaultAuthenticatorOpener opens the FIDO2 authenticator a vault
+	// passkey runs on. Nil opens the attached security key over HID (see
+	// openVaultAuthenticator); tests set a simulated authenticator.
+	vaultAuthenticatorOpener func() (vaultAuthenticator, error)
 }
 
 // NewStaticPasswordService creates a new StaticPasswordService. If store is nil,

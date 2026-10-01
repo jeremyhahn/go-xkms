@@ -1,6 +1,6 @@
 # FIDO2 / CTAP2 Client — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `fido2-ctap2` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `fido2-ctap2` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## Exported surface — `pkg/fido2`
 
@@ -18,6 +18,19 @@ type Logger interface { Printf(format string, v ...interface{}) }
 type PromptWriter interface { /* user-presence prompting */ }
 
 type FIDO2Handler struct{ /* implements Handler */ }
+
+// DeriveHMACSecret returns the raw hmac-secret output, HMAC-SHA-256(CredRandom,
+// salt) (CTAP 2.1 12.5): AuthenticationResult.HMACSecret (and HMACSecret2 for
+// Salt2). UnlockWithKey is this output run through GenerateDerivedKey.
+func (h *FIDO2Handler) DeriveHMACSecret(config *AuthenticationConfig) (*AuthenticationResult, error)
+
+// WebAuthnPRFSalt returns SHA-256(UTF8("WebAuthn PRF") || 0x00 || salt): the
+// hmac-secret salt a browser sends for a WebAuthn prf evaluation of salt.
+func WebAuthnPRFSalt(salt []byte) []byte
+
+// EnrollmentConfig.PIN and AuthenticationConfig.PIN (*secure.Secret, optional)
+// authorize MakeCredential / GetAssertion with a pinUvAuthToken; the "uv"
+// option is cleared, since the token is the verification (CTAP 2.1 6.1.2).
 
 func NewHandler(config *Config, enumerator HIDDeviceEnumerator) (*FIDO2Handler, error)
 func NewHandlerWithLogger(config *Config, enumerator HIDDeviceEnumerator, logger Logger) (*FIDO2Handler, error)
@@ -66,9 +79,18 @@ relying party.
   gesture rather than skipping it: a scripted `xkey touch` answers the daemon's
   presence request, or a verified CTAP2 PIN stands in for the touch when the
   daemon runs with `--require-touch=false`.
-- **`UnlockWithKey` is deterministic** for a fixed credential and salt: the same
-  inputs always yield the same derived key, and no other authenticator can
-  produce it. That is what makes it usable as a key source.
+- **`UnlockWithKey` and `DeriveHMACSecret` are deterministic** for a fixed
+  credential, salt and user-verification state: the same inputs always yield
+  the same output, and no other authenticator can produce it. That is what
+  makes them usable as a key source. **User verification is an input:** CTAP
+  2.1 keys the output with `CredRandomWithUV` when the assertion is
+  user-verified (a PIN was supplied) and `CredRandomWithoutUV` otherwise, so a
+  caller that must reproduce an output supplies a PIN every time or never.
+- **A browser's prf output is the hmac-secret of the transformed salt.** To
+  match a browser's WebAuthn prf evaluation of `salt`, a direct CTAP2 caller
+  evaluates `WebAuthnPRFSalt(salt)`, never `salt` itself. The vectors in
+  `pkg/fido2/testdata/webauthn_prf_salt_vectors.json` pin the transform; the
+  Go tests and `sdk/ts` (WebCrypto, the browser computation) both check them.
 - **The derived key is key material.** Never log it, never write it unprotected,
   zeroize it when done.
 - **A credential is bound to its RP id.** Changing `RelyingPartyID` makes

@@ -13,9 +13,11 @@
 
 // Package vaulttest holds personal-vault fixtures for tests of the
 // transports: deterministic passkey credentials, a call of every vault
-// method, and one lifecycle scenario every transport runs end to end. It
-// imports only pkg/api/transport, so every transport package's tests can use
-// it; the real service the scenario runs against is in vaultservice.
+// method, one lifecycle scenario every transport runs end to end, and
+// SimulatedKey, the security key every client surface's passkey tests use.
+// It imports only pkg/api/transport and pkg/fido2 (neither imports a
+// transport), so every transport package's tests can use it; the real
+// service the scenario runs against is in vaultservice.
 package vaulttest
 
 import (

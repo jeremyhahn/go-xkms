@@ -231,8 +231,12 @@ func TestPasswordVaultRecover_Errors(t *testing.T) {
 	})
 }
 
-func TestPasswordUnlock_NoPINFlag(t *testing.T) {
-	assert.Nil(t, passwordUnlockCmd.Flags().Lookup(pinFlagStdin),
-		"password unlock takes a vault factor, not the user PIN")
+func TestPasswordUnlock_PINFlagServesOnlyAPasskey(t *testing.T) {
+	// password unlock takes a vault factor: the security key PIN is there
+	// only for --passkey, and alone it is refused (see
+	// TestPasswordVaultPasskey_FlagRefusals).
 	assert.NotNil(t, passwordUnlockCmd.Flags().Lookup("passphrase-stdin"))
+	assert.NotNil(t, passwordUnlockCmd.Flags().Lookup(vaultPasskeyFlag))
+	assert.NotNil(t, passwordUnlockCmd.Flags().Lookup(pinFlagStdin))
+	assert.Nil(t, passwordUnlockCmd.Flags().Lookup("pin"), "a PIN is never a value flag")
 }

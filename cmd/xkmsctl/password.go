@@ -270,35 +270,42 @@ Example:
 var passwordUnlockCmd = &cobra.Command{
 	Use:   "unlock",
 	Short: "Open your personal password session",
-	Long: `Open your personal password session with your vault passphrase.
+	Long: `Open your personal password session with your vault passphrase, or
+with --passkey with a vault passkey on your FIDO2 security key.
 
 The passphrase is taken from --passphrase, from stdin when --passphrase is
 "-", or from an interactive no-echo prompt when the flag is omitted. Enroll
-a passphrase first with "password vault enroll"; if you have lost it, use
-"password vault recover" with your recovery code.
+a factor first with "password vault enroll"; if you have lost every factor,
+use "password vault recover" with your recovery code.
+
+With --passkey the vault's passkeys are tried on the attached security key;
+touch it when asked.
+
+` + vaultPasskeyPINUsage + `
 
 Examples:
   xkmsctl password unlock
-  printf '%s' "$PASSPHRASE" | xkmsctl password unlock --passphrase -`,
+  printf '%s' "$PASSPHRASE" | xkmsctl password unlock --passphrase -
+  printf '%s' "$PIN" | xkmsctl password unlock --passkey --pin-stdin`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
 		fr := newFlagReader(cmd)
 		passphraseFlag := fr.String("passphrase")
+		usePasskey := fr.Bool("passkey")
 		if err := fr.Err(); err != nil {
 			handleError(err)
 			return
 		}
-		passphrase, err := resolveVaultPassphrase(passphraseFlag)
+		source, cleanup, err := resolveVaultCredentialSource(cmd, cfg, printer, usePasskey, passphraseFlag, "", vaultUnlock)
 		if err != nil {
 			handleError(err)
 			return
 		}
+		defer cleanup()
 
-		passwordUnlock(cfg, printer, &client.PasswordStoreUnlockRequest{
-			PasswordVaultCredential: vaultPassphraseCredential(passphrase, ""),
-		})
+		passwordUnlock(cfg, printer, source)
 	},
 }
 
@@ -563,25 +570,40 @@ func passwordDelete(cfg *Config, printer *Printer, req *client.PasswordDeleteReq
 	}
 }
 
-// passwordUnlock unlocks the password store via the SDK client.
-func passwordUnlock(cfg *Config, printer *Printer, req *client.PasswordStoreUnlockRequest) {
-	cl, cleanup, err := createPasswordClient(cfg)
-	if err != nil {
+// passwordUnlock opens the caller's personal password session with the
+// credential source produces.
+func passwordUnlock(cfg *Config, printer *Printer, source vaultCredentialSource) {
+	if err := unlockPasswordStore(cfg, source); err != nil {
 		handleError(err)
 		return
+	}
+	if err := printer.PrintSuccess("Personal password session unlocked"); err != nil {
+		handleError(err)
+	}
+}
+
+// unlockPasswordStore sends the unlock credential source produces.
+func unlockPasswordStore(cfg *Config, source vaultCredentialSource) error {
+	cl, cleanup, err := createPasswordClient(cfg)
+	if err != nil {
+		return err
 	}
 	defer cleanup()
 
 	printVerbose("Opening personal password session")
 
-	if err := cl.PasswordStoreUnlock(context.Background(), req); err != nil {
-		handleError(&WrappedError{Sentinel: ErrUnlockPasswordStoreFailed, Err: err})
-		return
+	ctx := context.Background()
+	cred, err := source(ctx, cl)
+	if err != nil {
+		return &WrappedError{Sentinel: ErrUnlockPasswordStoreFailed, Err: err}
 	}
+	defer clear(cred.Secret)
 
-	if err := printer.PrintSuccess("Personal password session unlocked"); err != nil {
-		handleError(err)
+	req := &client.PasswordStoreUnlockRequest{PasswordVaultCredential: cred}
+	if err := cl.PasswordStoreUnlock(ctx, req); err != nil {
+		return &WrappedError{Sentinel: ErrUnlockPasswordStoreFailed, Err: err}
 	}
+	return nil
 }
 
 // passwordLock locks the password store via the SDK client.
@@ -763,6 +785,8 @@ func init() {
 
 	// password unlock flags
 	passwordUnlockCmd.Flags().String("passphrase", "", "vault passphrase ('-' reads stdin; prompted when omitted)")
+	passwordUnlockCmd.Flags().Bool("passkey", false, "unlock with a vault passkey on the attached FIDO2 security key")
+	addPINFlags(passwordUnlockCmd)
 
 	// password generate flags
 	passwordGenerateCmd.Flags().Int("length", 0, "password length (0 = server default)")

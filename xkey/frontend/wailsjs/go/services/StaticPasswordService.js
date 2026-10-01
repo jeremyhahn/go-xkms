@@ -30,6 +30,10 @@ export function EnrollPassphrase(arg1, arg2) {
   return window['go']['services']['StaticPasswordService']['EnrollPassphrase'](arg1, arg2);
 }
 
+export function EnrollPasskey(arg1, arg2) {
+  return window['go']['services']['StaticPasswordService']['EnrollPasskey'](arg1, arg2);
+}
+
 export function Generate(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['services']['StaticPasswordService']['Generate'](arg1, arg2, arg3, arg4, arg5);
 }
@@ -86,6 +90,10 @@ export function PreviewImport(arg1) {
   return window['go']['services']['StaticPasswordService']['PreviewImport'](arg1);
 }
 
+export function RecoverWithPasskey(arg1, arg2, arg3) {
+  return window['go']['services']['StaticPasswordService']['RecoverWithPasskey'](arg1, arg2, arg3);
+}
+
 export function RecoverWithPassphrase(arg1, arg2, arg3) {
   return window['go']['services']['StaticPasswordService']['RecoverWithPassphrase'](arg1, arg2, arg3);
 }
@@ -132,6 +140,10 @@ export function SetStore(arg1) {
 
 export function Unlock(arg1) {
   return window['go']['services']['StaticPasswordService']['Unlock'](arg1);
+}
+
+export function UnlockWithPasskey(arg1) {
+  return window['go']['services']['StaticPasswordService']['UnlockWithPasskey'](arg1);
 }
 
 export function UpdatePassword(arg1) {

@@ -33,7 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - every client transport and the Go and TS SDKs;
     - `xkmsctl password vault ...` and `xkey password vault ...`;
     - the xkey GUI vault panel.
-  - Clients unlock with a passphrase today; passkey factors are served by the API, but no client can drive them yet.
+  - Passkeys work on every client: `--passkey` on `xkmsctl` / `xkey password unlock|vault enroll|vault recover`, and "Use security key" in the xkey GUI. Every client goes through `pkg/vaultpasskey`:
+    - RP ID `xkms-password-vault`;
+    - the WebAuthn prf salt transform `SHA-256("WebAuthn PRF" || 0x00 || salt)`, so a passkey enrolled on any surface (or in a browser) unlocks on every other;
+    - user verification by PIN, always.
+  - `pkg/fido2` adds `FIDO2Handler.DeriveHMACSecret` (the raw hmac-secret), `EnrollmentConfig.PIN` / `AuthenticationConfig.PIN`, and `WebAuthnPRFSalt`, all re-exported in `sdk/go/fido2`.
 
 ### Removed
 

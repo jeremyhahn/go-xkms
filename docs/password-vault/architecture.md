@@ -109,12 +109,50 @@ DEK ──wrapped, once per factor──▶ {tenant}/staticpw-vault/users/{subje
   **recovery code**, opens the session and returns the code, which is shown
   exactly once and never stored in the clear. Later enrollments need the
   session open, so nobody else can add a factor to a user's vault.
-- **Passkeys.** The client asks its FIDO2 authenticator for the hmac-secret
-  (PRF) output of the credential over a 32-byte salt it chose, and sends the
-  credential ID, the salt and the output. The server stores the salt; to
-  unlock, the client reads the credential ID and salt from the vault status,
-  evaluates hmac-secret again and sends the output. xkey drives the
-  authenticator through `pkg/fido2`'s CTAP2 hmac-secret (PIN/UV-authenticated).
+- **Passkeys.** A passkey factor is a FIDO2 credential with the hmac-secret
+  extension (the CTAP2 primitive behind WebAuthn's prf), on relying party
+  `xkms-password-vault`. Every non-browser client uses one implementation,
+  `pkg/vaultpasskey` (`sdk/go/vaultpasskey`); see "Passkey salt handling".
+- **Rotation of a passkey** is enrolling a new passkey and removing the old
+  one: a passkey's secret is bound to its credential.
+
+### Passkey salt handling
+
+The salt is defined exactly as WebAuthn's prf extension defines it, so a
+passkey enrolled from a CLI, the xkey GUI or a browser unlocks from all of
+them:
+
+| Step | Value |
+|---|---|
+| PRF salt (stored by the server on the factor, `prf_salt`) | 32 random bytes, chosen by the enrolling client |
+| hmac-secret salt the authenticator receives | `SHA-256(UTF8("WebAuthn PRF") ‖ 0x00 ‖ prf_salt)` — `fido2.WebAuthnPRFSalt` |
+| factor secret (sent as `secret`) | the 32-byte hmac-secret output: `HMAC-SHA-256(CredRandomWithUV, hmac-secret salt)` |
+| KEK | `HKDF-SHA256(secret, factor salt, "xkms/staticpw/vault/v1/passkey")` |
+
+- **Enroll:** MakeCredential with hmac-secret for RP `xkms-password-vault`,
+  a fresh 32-byte `prf_salt`, one hmac-secret evaluation over the
+  transformed salt; send `{factor: "passkey", credential_id, prf_salt,
+  secret, label}`.
+- **Unlock:** read `credential_id` and `prf_salt` from the vault status,
+  evaluate hmac-secret over the transformed salt, send `{factor: "passkey",
+  credential_id, secret}`. The client tries each passkey factor until one
+  is on the authenticator.
+- **A browser** evaluates `navigator.credentials.get` with
+  `extensions: {prf: {eval: {first: prf_salt}}}`, rpId
+  `xkms-password-vault`, and `userVerification: "required"`; the browser
+  applies the transform itself and `results.first` is the `secret`.
+- **User verification is always required.** CTAP2 keys the output with
+  `CredRandomWithUV` when the user is verified and `CredRandomWithoutUV` when
+  not, so a factor would stop opening if one surface verified and another
+  did not. Every vault passkey evaluation is PIN-verified (`vaultpasskey`
+  refuses without a PIN); a security key without a PIN must have one set
+  first.
+- **Proof:** `pkg/fido2/testdata/webauthn_prf_salt_vectors.json` holds the
+  transform's vectors; `pkg/fido2` and `pkg/vaultpasskey` (the CLI/GUI path)
+  and `sdk/ts` (WebCrypto, the browser computation) are tested against the
+  same file, and `pkg/vaultpasskey` proves end to end that a passkey enrolled
+  by a client unlocks with a browser-computed prf output while an output over
+  the untransformed salt is refused.
 - **Rotation** re-wraps the DEK under a new secret for a factor of the same
   type and removes the old wrap. **The DEK never changes**, so nothing is
   re-encrypted.

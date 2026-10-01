@@ -4,6 +4,7 @@ import { render, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
 import PasswordVaultPanel from './PasswordVaultPanel.svelte';
 
 const factor = { id: 'f-1', factor: 'passphrase', label: 'laptop', created_at: '2026-09-30T00:00:00Z' };
+const passkey = { id: 'f-2', factor: 'passkey', label: 'yubikey', created_at: '2026-09-30T00:00:00Z' };
 
 function installMock(status: Record<string, unknown> | Error) {
   const svc = {
@@ -11,12 +12,26 @@ function installMock(status: Record<string, unknown> | Error) {
     EnrollPassphrase: vi.fn().mockResolvedValue({ factor, recovery_code: 'ABCD-EFGH-IJKL' }),
     RotatePassphrase: vi.fn().mockResolvedValue({ factor: { ...factor, id: 'f-9' } }),
     RecoverWithPassphrase: vi.fn().mockResolvedValue({ factor, recovery_code: 'NEW-CODE-0001' }),
+    EnrollPasskey: vi.fn().mockResolvedValue({ factor: passkey, recovery_code: 'ABCD-EFGH-IJKL' }),
+    UnlockWithPasskey: vi.fn().mockResolvedValue(undefined),
+    RecoverWithPasskey: vi.fn().mockResolvedValue({ factor: passkey, recovery_code: 'NEW-CODE-0002' }),
     RemoveVaultFactor: vi.fn().mockResolvedValue(undefined),
     Unlock: vi.fn().mockResolvedValue(undefined),
     Lock: vi.fn().mockResolvedValue(undefined),
   };
   (window as any).go = { services: { StaticPasswordService: svc } };
   return svc;
+}
+
+/** deferred returns a promise the test settles, to observe a pending call. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 async function type(id: string, value: string) {
@@ -143,5 +158,123 @@ describe('PasswordVaultPanel', () => {
     const view = render(PasswordVaultPanel);
     await waitFor(() => expect(view.getByRole('status')).toHaveTextContent('connect to one'));
     expect(view.getByRole('status')).toHaveTextContent('no connected client');
+  });
+
+  describe('security key', () => {
+    it('creates the vault with a security key, asking for a touch, and shows the recovery code', async () => {
+      const svc = installMock({ initialized: false, unlocked: false, factors: [] });
+      const pending = deferred<unknown>();
+      svc.EnrollPasskey.mockReturnValue(pending.promise);
+      const view = render(PasswordVaultPanel);
+      await waitFor(() => view.getByText('Use security key'));
+
+      await fireEvent.click(view.getByText('Use security key'));
+      expect(document.getElementById('vault-new-passphrase')).toBeNull();
+      await type('vault-pin', '123456');
+      await type('vault-label', 'yubikey');
+      svc.VaultStatus.mockResolvedValue({ initialized: true, unlocked: true, factors: [passkey] });
+      await fireEvent.click(view.getByText('Create vault'));
+
+      await waitFor(() => expect(view.getByTestId('vault-touch-prompt')).toHaveTextContent('Touch your security key'));
+      expect(svc.EnrollPasskey).toHaveBeenCalledWith('yubikey', '123456');
+      expect(svc.EnrollPassphrase).not.toHaveBeenCalled();
+
+      pending.resolve({ factor: passkey, recovery_code: 'ABCD-EFGH-IJKL' });
+      await waitFor(() => expect(view.getByTestId('vault-recovery-code')).toHaveTextContent('ABCD-EFGH-IJKL'));
+      expect(view.queryByTestId('vault-touch-prompt')).not.toBeInTheDocument();
+      expect(view.getByText(/it will not be shown again/)).toBeInTheDocument();
+    });
+
+    it('requires the security key PIN before touching the key', async () => {
+      const svc = installMock({ initialized: false, unlocked: false, factors: [] });
+      const view = render(PasswordVaultPanel);
+      await waitFor(() => view.getByText('Use security key'));
+      await fireEvent.click(view.getByText('Use security key'));
+      await fireEvent.click(view.getByText('Create vault'));
+
+      await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('security key PIN'));
+      expect(svc.EnrollPasskey).not.toHaveBeenCalled();
+    });
+
+    it('unlocks with the security key', async () => {
+      const svc = installMock({ initialized: true, unlocked: false, factors: [factor, passkey] });
+      const pending = deferred<undefined>();
+      svc.UnlockWithPasskey.mockReturnValue(pending.promise);
+      const view = render(PasswordVaultPanel);
+      await waitFor(() => view.getByText('Use security key'));
+
+      await fireEvent.click(view.getByText('Use security key'));
+      await type('vault-pin', '123456');
+      svc.VaultStatus.mockResolvedValue({ initialized: true, unlocked: true, factors: [factor, passkey] });
+      await fireEvent.click(view.getByText('Unlock'));
+
+      await waitFor(() => expect(view.getByTestId('vault-touch-prompt')).toBeInTheDocument());
+      expect(svc.UnlockWithPasskey).toHaveBeenCalledWith('123456');
+      expect(svc.Unlock).not.toHaveBeenCalled();
+      pending.resolve(undefined);
+      await waitFor(() => expect(view.getByText('Unlocked')).toBeInTheDocument());
+      expect(view.queryByTestId('vault-touch-prompt')).not.toBeInTheDocument();
+    });
+
+    it('reports a wrong security key PIN and clears it', async () => {
+      const svc = installMock({ initialized: true, unlocked: false, factors: [passkey] });
+      svc.UnlockWithPasskey.mockRejectedValue(new Error('fido2: invalid PIN'));
+      const view = render(PasswordVaultPanel);
+      // A vault with only passkeys offers the security key first.
+      await waitFor(() => expect(document.getElementById('vault-pin')).not.toBeNull());
+      expect(document.getElementById('vault-passphrase')).toBeNull();
+
+      await type('vault-pin', '000000');
+      await fireEvent.click(view.getByText('Unlock'));
+
+      await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('invalid PIN'));
+      expect((document.getElementById('vault-pin') as HTMLInputElement).value).toBe('');
+      expect(view.queryByTestId('vault-touch-prompt')).not.toBeInTheDocument();
+    });
+
+    it('requires the PIN to unlock with the security key', async () => {
+      const svc = installMock({ initialized: true, unlocked: false, factors: [passkey] });
+      const view = render(PasswordVaultPanel);
+      await waitFor(() => expect(document.getElementById('vault-pin')).not.toBeNull());
+      await fireEvent.click(view.getByText('Unlock'));
+
+      await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('security key PIN'));
+      expect(svc.UnlockWithPasskey).not.toHaveBeenCalled();
+    });
+
+    it('recovers with a new security key and shows the replacement code', async () => {
+      const svc = installMock({ initialized: true, unlocked: false, factors: [factor] });
+      const view = render(PasswordVaultPanel);
+      await waitFor(() => view.getByText('Use recovery code'));
+      await fireEvent.click(view.getByText('Use recovery code'));
+      await fireEvent.click(view.getByText('Use security key'));
+
+      await type('vault-recovery-code', 'OLD-CODE');
+      await type('vault-pin', '123456');
+      await type('vault-label', 'spare key');
+      await fireEvent.click(view.getByText('Recover'));
+
+      await waitFor(() => expect(view.getByTestId('vault-recovery-code')).toHaveTextContent('NEW-CODE-0002'));
+      expect(svc.RecoverWithPasskey).toHaveBeenCalledWith('OLD-CODE', 'spare key', '123456');
+      expect(svc.RecoverWithPassphrase).not.toHaveBeenCalled();
+    });
+
+    it('adds a security key to an unlocked vault without a recovery code', async () => {
+      const svc = installMock({ initialized: true, unlocked: true, factors: [factor] });
+      svc.EnrollPasskey.mockResolvedValue({ factor: passkey });
+      const view = render(PasswordVaultPanel);
+      await waitFor(() => view.getByText('Add security key'));
+
+      await fireEvent.click(view.getByText('Add security key'));
+      expect(view.getByText('Add a security key')).toBeInTheDocument();
+      await type('vault-pin', '123456');
+      await type('vault-label', 'yubikey');
+      svc.VaultStatus.mockResolvedValue({ initialized: true, unlocked: true, factors: [factor, passkey] });
+      await fireEvent.click(view.getByText('Add'));
+
+      await waitFor(() => expect(svc.EnrollPasskey).toHaveBeenCalledWith('yubikey', '123456'));
+      await waitFor(() => expect(view.getByText('yubikey')).toBeInTheDocument());
+      expect(view.queryByTestId('vault-recovery-code')).not.toBeInTheDocument();
+    });
   });
 });

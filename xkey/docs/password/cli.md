@@ -125,12 +125,21 @@ entries' key is wrapped under. Requires `--xkmsd-url`.
 
 Secrets come from `--passphrase-stdin` / `XKEY_VAULT_PASSPHRASE` and
 `--recovery-code-stdin` / `XKEY_VAULT_RECOVERY_CODE`; at most one may read
-standard input. Passkey factors are served by the API but not yet by this
-CLI.
+standard input.
+
+`--passkey` replaces the passphrase on `unlock`, `vault enroll` and
+`vault recover`: the factor is a credential on your FIDO2 security key
+(relying party `xkms-password-vault`, WebAuthn prf salt transform; see
+go-xkms `docs/password-vault/architecture.md`). The key's PIN is always
+required and comes from `--pin-stdin` or `XKEY_PIN`; a PIN given without
+`--passkey` is refused. A passkey cannot be rotated: enroll a new one and
+remove the old one.
 
 ```bash
 XKEY_VAULT_PASSPHRASE=... xkey password vault enroll --label laptop
 XKEY_VAULT_PASSPHRASE=... xkey password vault recover --recovery-code-stdin < code.txt
+XKEY_PIN=... xkey password vault enroll --passkey --label yubikey
+XKEY_PIN=... xkey password unlock --passkey
 ```
 
 ## `xkey password lock`
