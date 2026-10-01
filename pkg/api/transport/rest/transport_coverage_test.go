@@ -209,13 +209,13 @@ func newFullMockServer(t *testing.T) *httptest.Server {
 			json.NewEncoder(w).Encode(map[string]bool{"revoked": false})
 
 		// --- TCG CA ---
-		case path == "/api/v1/tcg-ca/issue-ek-cert":
+		case path == "/api/v1/ca/tcg/ek":
 			json.NewEncoder(w).Encode(map[string]string{"certificate_pem": "ZWs="})
-		case path == "/api/v1/tcg-ca/issue-ak-cert":
+		case path == "/api/v1/ca/tcg/ak":
 			json.NewEncoder(w).Encode(map[string]string{"certificate_pem": "YWs="})
-		case path == "/api/v1/tcg-ca/sign-tcg-csr":
+		case path == "/api/v1/ca/tcg/sign-csr":
 			json.NewEncoder(w).Encode(map[string]string{"iak_cert_der": "aWFr"})
-		case path == "/api/v1/tcg-ca/enroll-device":
+		case path == "/api/v1/ca/tcg/enroll":
 			json.NewEncoder(w).Encode(map[string]string{"result": "ok"})
 
 		// --- PIV ---

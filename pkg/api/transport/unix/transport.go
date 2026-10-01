@@ -1890,7 +1890,7 @@ func (t *Transport) IssueEKCertificate(ctx context.Context, req *transport.Issue
 		body["tenant_id"] = req.TenantID
 	}
 
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/tcg-ca/issue-ek-cert", body)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/ek", body)
 	if err != nil {
 		return nil, err
 	}
@@ -1920,7 +1920,7 @@ func (t *Transport) IssueAKCertificate(ctx context.Context, req *transport.Issue
 		body["tenant_id"] = req.TenantID
 	}
 
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/tcg-ca/issue-ak-cert", body)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/ak", body)
 	if err != nil {
 		return nil, err
 	}
@@ -1950,7 +1950,7 @@ func (t *Transport) SignTCGCSR(ctx context.Context, req *transport.SignTCGCSRReq
 		body["tenant_id"] = req.TenantID
 	}
 
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/tcg-ca/sign-tcg-csr", body)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/sign-csr", body)
 	if err != nil {
 		return nil, err
 	}
@@ -1980,7 +1980,7 @@ func (t *Transport) EnrollDevice(ctx context.Context, req *transport.EnrollDevic
 		body["tenant_id"] = req.TenantID
 	}
 
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/tcg-ca/enroll-device", body)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/enroll", body)
 	if err != nil {
 		return nil, err
 	}

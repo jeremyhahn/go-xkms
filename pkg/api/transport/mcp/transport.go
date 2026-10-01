@@ -126,10 +126,10 @@ var methodMapping = map[string]string{
 	"/api/v1/ca/crl":         "xkms.ca.crl",
 
 	// TCG CA
-	"/api/v1/tcg-ca/issue-ek-cert": "xkms.ca.tcg.issue-ek",
-	"/api/v1/tcg-ca/issue-ak-cert": "xkms.ca.tcg.issue-ak",
-	"/api/v1/tcg-ca/sign-tcg-csr":  "xkms.ca.tcg.sign-csr",
-	"/api/v1/tcg-ca/enroll-device": "xkms.ca.tcg.enroll",
+	"/api/v1/ca/tcg/ek":       "xkms.ca.tcg.issue-ek",
+	"/api/v1/ca/tcg/ak":       "xkms.ca.tcg.issue-ak",
+	"/api/v1/ca/tcg/sign-csr": "xkms.ca.tcg.sign-csr",
+	"/api/v1/ca/tcg/enroll":   "xkms.ca.tcg.enroll",
 
 	// Barrier
 	"/v1/barrier/initialize":             "barrier.initialize",
