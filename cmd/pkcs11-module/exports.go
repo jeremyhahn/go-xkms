@@ -214,18 +214,14 @@ func C_Initialize(pInitArgs C.CK_VOID_PTR) (rv C.CK_RV) {
 		}
 	}
 
-	// Offline mode: build the embedded in-process service and install it as the
-	// global module before initialization, so the module uses the injected
-	// in-process client instead of dialing a remote xkmsd. Building it only when
-	// the global module has not already been set lets a Go caller inject its own
-	// client (as xkey does) and keeps repeated C_Initialize idempotent.
-	if offlineModeRequested() && !module.HasGlobalModule() {
-		// Cryptoki gives an entry point no channel for error detail: CK_RV is
-		// the whole return surface, so the cause is deliberately collapsed to
-		// CKR_DEVICE_ERROR rather than bound to a variable and dropped.
-		if buildOfflineModule() != nil {
-			return C.CKR_DEVICE_ERROR
-		}
+	// Offline mode: the library builds the embedded in-process service and
+	// installs it as the global module, so the module uses the injected
+	// in-process client instead of dialing a remote xkmsd. initializeOffline
+	// leaves a module a Go caller installed (xkey injects its own client) in
+	// place, and rebuilds the library's own module after C_Finalize so the
+	// application can initialize again.
+	if offlineModeRequested() {
+		return C.CK_RV(initializeOffline())
 	}
 
 	mrv := module.GetGlobalModule().Initialize(nil)

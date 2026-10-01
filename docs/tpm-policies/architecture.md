@@ -391,7 +391,10 @@ inside its own container.
     type=unixio,path=<run>/vtpm-<tenant>.ctrl --key fd=3,mode=aes-256-cbc
     --flags startup-clear`.
   - It restarts the process with backoff, and reconnects clients by reopening
-    the socket.
+    the socket. A restart is not visible through `Status` or `Transport` as
+    running until the replacement's command socket actually accepts
+    connections -- the same readiness wait the first `Start` performs --
+    so a client never dials a socket swtpm has not created yet.
 - **State key:** a random 32 bytes created when the tenant's scope is created,
   and sealed under `vtpm-state`, a named policy in the system scope. It is
   stored in the system scope's storage and unsealed by the node at start. A

@@ -3234,6 +3234,31 @@ func (m *mockCertClient) TenantVTPMStop(context.Context, string) (*transport.Ten
 	return nil, nil
 }
 
+// BackupService stub implementations
+func (m *mockCertClient) CreateBackup(_ context.Context, _ *transport.BackupRequest) (*transport.BackupInfo, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) ListBackups(_ context.Context) ([]transport.BackupInfo, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) GetBackup(_ context.Context, _ string) (*transport.BackupInfo, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) DeleteBackup(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockCertClient) RestoreBackup(_ context.Context, _ *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) VerifyBackup(_ context.Context, _ string) (*transport.VerifyResult, error) {
+	return nil, nil
+}
+
 // CustodianGroupService stub implementations
 func (m *mockCertClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
 	return nil, nil

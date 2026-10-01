@@ -33,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/vaultkey"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // The personal vault.
@@ -164,11 +165,12 @@ var (
 	ErrVaultRelyingPartyMismatch = errors.New("staticpw: the passkey was created for another relying party")
 )
 
-// passphraseKDFParams returns the Argon2id cost a new passphrase factor is
-// wrapped with: the repository default (kdf.DefaultParams). The cost is
-// stored on the factor, so changing it affects new wraps only. It is a
-// variable so this package's unit tests can run at a cheap cost.
-var passphraseKDFParams = func() *kdf.KDFParams {
+// defaultPassphraseKDFParams returns the Argon2id cost a new passphrase
+// factor is wrapped with unless the owning TenantPasswordStoreManager was
+// built with WithPassphraseKDFParams: the repository default
+// (kdf.DefaultParams). The cost is stored on the factor, so changing it
+// affects new wraps only.
+func defaultPassphraseKDFParams() *kdf.KDFParams {
 	return kdf.DefaultParams(kdf.AlgorithmArgon2id)
 }
 
@@ -178,8 +180,9 @@ type VaultCredential struct {
 	Type FactorType
 
 	// Secret is the passphrase, the hmac-secret output, or the recovery
-	// code.
-	Secret []byte
+	// code, sealed in protected memory. It is opened only to derive a
+	// factor's key-encryption key (kek) or to check its length (validate).
+	Secret *secure.Secret
 
 	// CredentialID identifies a passkey.
 	CredentialID []byte
@@ -258,13 +261,17 @@ type vaultFactor struct {
 // validate checks a credential's shape for its type. Enrollment also needs
 // a passkey's PRF salt.
 func (c VaultCredential) validate(enrolling bool) error {
+	secretLen, err := secretSize(c.Secret)
+	if err != nil {
+		return err
+	}
 	switch c.Type {
 	case FactorPassphrase:
-		if len(c.Secret) < MinPassphraseLength {
+		if secretLen < MinPassphraseLength {
 			return ErrVaultInvalidCredential
 		}
 	case FactorPasskey:
-		if len(c.CredentialID) == 0 || len(c.Secret) != PasskeySecretLength {
+		if len(c.CredentialID) == 0 || secretLen != PasskeySecretLength {
 			return ErrVaultInvalidCredential
 		}
 		if enrolling && len(c.PRFSalt) != PRFSaltLength {
@@ -274,7 +281,7 @@ func (c VaultCredential) validate(enrolling bool) error {
 		if enrolling {
 			return ErrVaultRecoveryFactor
 		}
-		if len(c.Secret) == 0 {
+		if secretLen == 0 {
 			return ErrVaultInvalidCredential
 		}
 	case FactorPIV, FactorCertificate, FactorTPM:
@@ -287,7 +294,7 @@ func (c VaultCredential) validate(enrolling bool) error {
 			}
 			return nil
 		}
-		if c.KeyFingerprint == "" || len(c.Secret) != vaultkey.SecretLength {
+		if c.KeyFingerprint == "" || secretLen != vaultkey.SecretLength {
 			return ErrVaultInvalidCredential
 		}
 	default:
@@ -323,21 +330,43 @@ func (e *VaultKeyError) Unwrap() error { return e.Err }
 // malformed credential.
 func (e *VaultKeyError) Is(target error) bool { return target == ErrVaultInvalidCredential }
 
-// vaultKeyring persists one user's factors in the tenant barrier.
-type vaultKeyring struct {
-	backend  storage.Backend
-	prefix   string
-	tenantID string
-	subject  string
+// secretSize returns the length of the plaintext secret holds, or 0 when
+// secret is nil (no credential presented).
+func secretSize(secret *secure.Secret) (int, error) {
+	if secret == nil {
+		return 0, nil
+	}
+	buf, err := secret.Open()
+	if err != nil {
+		return 0, &VaultCryptoError{Op: "open", Err: err}
+	}
+	defer buf.Destroy()
+	return buf.Size(), nil
 }
 
-// newVaultKeyring returns subject's keyring in tenantID over backend.
-func newVaultKeyring(backend storage.Backend, tenantID, subject string) (*vaultKeyring, error) {
+// vaultKeyring persists one user's factors in the tenant barrier.
+type vaultKeyring struct {
+	backend   storage.Backend
+	prefix    string
+	tenantID  string
+	subject   string
+	kdfParams func() *kdf.KDFParams
+}
+
+// newVaultKeyring returns subject's keyring in tenantID over backend. New
+// passphrase factors wrap the DEK at the Argon2id cost kdfParams returns.
+func newVaultKeyring(backend storage.Backend, tenantID, subject string, kdfParams func() *kdf.KDFParams) (*vaultKeyring, error) {
 	prefix, err := scope.PersonalPrefix(tenantID, VaultFeature, subject)
 	if err != nil {
 		return nil, err
 	}
-	return &vaultKeyring{backend: backend, prefix: prefix + factorsSegment, tenantID: tenantID, subject: subject}, nil
+	return &vaultKeyring{
+		backend:   backend,
+		prefix:    prefix + factorsSegment,
+		tenantID:  tenantID,
+		subject:   subject,
+		kdfParams: kdfParams,
+	}, nil
 }
 
 // factors returns every stored factor, oldest first.
@@ -417,15 +446,20 @@ func (k *vaultKeyring) wrap(cred VaultCredential, dek []byte) (*vaultFactor, err
 		f.PRFSalt = append([]byte(nil), cred.PRFSalt...)
 		f.RelyingParty = cred.RelyingParty
 	case cred.Type == FactorPassphrase:
-		params := passphraseKDFParams()
+		params := k.kdfParams()
 		f.ArgonTime, f.ArgonMemory, f.ArgonThreads = params.Time, params.Memory, params.Threads
 	case cred.Type.IsKeyFactor():
 		sealed, err := sealKeyFactor(f, cred)
 		if err != nil {
 			return nil, err
 		}
-		secret = sealed
-		defer clear(sealed)
+		// NewSecret wipes sealed; only its sealed form is stored.
+		keySecret, err := secure.NewSecret(sealed)
+		if err != nil {
+			return nil, &VaultCryptoError{Op: "seal", Err: err}
+		}
+		defer keySecret.Destroy()
+		secret = keySecret
 	}
 	kek, err := f.kek(secret)
 	if err != nil {
@@ -441,7 +475,7 @@ func (k *vaultKeyring) wrap(cred VaultCredential, dek []byte) (*vaultFactor, err
 
 // unwrap returns the DEK f wraps, or ErrVaultCredentialRejected when secret
 // is not f's.
-func (k *vaultKeyring) unwrap(f *vaultFactor, secret []byte) ([]byte, error) {
+func (k *vaultKeyring) unwrap(f *vaultFactor, secret *secure.Secret) ([]byte, error) {
 	kek, err := f.kek(secret)
 	if err != nil {
 		return nil, err
@@ -481,20 +515,30 @@ func sealKeyFactor(f *vaultFactor, cred VaultCredential) ([]byte, error) {
 	return sealed.Secret, nil
 }
 
-// kek derives the factor's key-encryption key from secret.
-func (f *vaultFactor) kek(secret []byte) ([]byte, error) {
+// kek derives the factor's key-encryption key from secret, opening it only
+// for the duration of the derivation.
+func (f *vaultFactor) kek(secret *secure.Secret) ([]byte, error) {
+	if secret == nil {
+		return nil, &VaultCryptoError{Op: "kdf", Err: ErrVaultInvalidCredential}
+	}
+	buf, err := secret.Open()
+	if err != nil {
+		return nil, &VaultCryptoError{Op: "open", Err: err}
+	}
+	defer buf.Destroy()
+	plaintext := buf.Bytes()
 	switch f.Type {
 	case FactorPassphrase:
 		if f.ArgonTime == 0 || f.ArgonMemory == 0 || f.ArgonThreads == 0 {
 			return nil, &VaultCryptoError{Op: "kdf", Err: ErrVaultInvalidCredential}
 		}
-		return argon2.IDKey(secret, f.Salt, f.ArgonTime, f.ArgonMemory, f.ArgonThreads, aesgcm.KeySize), nil
+		return argon2.IDKey(plaintext, f.Salt, f.ArgonTime, f.ArgonMemory, f.ArgonThreads, aesgcm.KeySize), nil
 	case FactorPasskey:
-		return hkdfKey(secret, f.Salt, passkeyHKDFInfo)
+		return hkdfKey(plaintext, f.Salt, passkeyHKDFInfo)
 	case FactorRecovery:
-		return hkdfKey(secret, f.Salt, recoveryHKDFInfo)
+		return hkdfKey(plaintext, f.Salt, recoveryHKDFInfo)
 	case FactorPIV, FactorCertificate, FactorTPM:
-		return hkdfKey(secret, f.Salt, keyHKDFInfo+"|"+f.KeyFingerprint)
+		return hkdfKey(plaintext, f.Salt, keyHKDFInfo+"|"+f.KeyFingerprint)
 	default:
 		return nil, ErrVaultInvalidCredential
 	}
@@ -510,8 +554,8 @@ func hkdfKey(secret, salt []byte, info string) ([]byte, error) {
 }
 
 // newRecoveryCode returns a fresh recovery code for display ("ABCD-EFGH-…",
-// 160 bits) and its normalized secret.
-func newRecoveryCode() (display string, secret []byte, err error) {
+// 160 bits) and its normalized secret, sealed in protected memory.
+func newRecoveryCode() (display string, secret *secure.Secret, err error) {
 	raw, err := randomBytes(recoveryCodeBytes)
 	if err != nil {
 		return "", nil, err
@@ -521,7 +565,11 @@ func newRecoveryCode() (display string, secret []byte, err error) {
 	for i := 0; i < len(encoded); i += recoveryGroupWidth {
 		groups = append(groups, encoded[i:min(i+recoveryGroupWidth, len(encoded))])
 	}
-	return strings.Join(groups, "-"), []byte(encoded), nil
+	sealed, err := secure.NewSecret([]byte(encoded))
+	if err != nil {
+		return "", nil, &VaultCryptoError{Op: "seal", Err: err}
+	}
+	return strings.Join(groups, "-"), sealed, nil
 }
 
 // normalizeRecoveryCode returns the secret of a recovery code as the user

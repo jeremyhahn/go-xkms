@@ -288,6 +288,25 @@ jobs:
     # narrower `test-changed` job instead.
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
 
+    # ci-template v1.6: the Go toolchain is cgroup-unaware -- in a ~12 GB job
+    # container it sees the HOST's 24 cores and 94 GB, same as the Security
+    # Scan job below (2026-08-18). Here it showed up as pkg/api/mcp's
+    # password-vault tests (go-xkms run 21639): -race plus unbounded
+    # t.Parallel() fan-out spawned enough concurrent Argon2id-sealed barrier
+    # fixtures that the job was OOM-killed ("signal: killed") even after the
+    # per-test KDF cost was fixed to run cheap in tests (pkg/staticpw
+    # WithPassphraseKDFParams) -- measured 2026-10-01: the same binary peaks
+    # at ~20 GB RSS with GOMAXPROCS unset vs ~6.7 GB at GOMAXPROCS=8. GOMEMLIMIT
+    # makes the GC respect the container budget; GOMAXPROCS bounds the worker
+    # fan-out, exactly as for Security Scan.
+    env:
+      GOMEMLIMIT: 10GiB
+      GOMAXPROCS: 8
+      # make coverage runs `go test -race ./...`; -p=2 keeps at most two race
+      # test binaries alive at once (pkg/api/mcp and pkg/api/rest each peak
+      # near 7 GB), the same bound the fast-tier and race jobs carry.
+      GOFLAGS: -p=2
+
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -307,7 +326,9 @@ jobs:
           # graph (dolthub/go-icu-regex, google/gousb via go-qrdb) -- needed
           # even for the default (non-hardware) build tags, because
           # CGO_ENABLED defaults to 1 whenever a C toolchain is present.
-          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev
+          # swtpm: pkg/tpm2/vtpm supervises a real swtpm process per tenant,
+          # and this job's `make coverage` run exercises those tests.
+          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev swtpm
           # Create token directory
           mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
           # Create SoftHSM2 config
@@ -577,9 +598,17 @@ jobs:
       # 2,483 of the module's 13,725 test functions: the 41 packages below had
       # tests that `go vet -tags ble ./...` compiled and no job ran, and a test
       # that is only compiled cannot fail. The set is the security surface of
-      # the product -- truststore, tokenstore, luks, ca, secretservice, nssdb,
+      # the product -- truststore, tokenstore, luks, secretservice, nssdb,
       # pivcert, sshstore, sshlocal, config, audit -- and #182 was
       # an open defect in truststore while its 266 tests sat dark.
+      #
+      # pkg/ca and pkg/pcr_policy were removed from this list when the
+      # packages themselves were deleted upstream (xkey-side CA/PCR-policy
+      # dead code cleanup); a stale entry here fails the job with
+      # "[setup failed]" the moment `go test` cannot even resolve the import
+      # path, before a single test runs. pkg/shellquote and pkg/urlsafety are
+      # added here: both had _test.go files but were in neither list below --
+      # exactly the gap the last paragraph warns about.
       #
       # -tags codec_json for the same reason as the step above: the DAO-backed
       # packages (tokenstore 49 tests, truststore 20, oath 30) fail without it
@@ -674,14 +703,13 @@ jobs:
           as_xkey_ci go test -race -tags "codec_json tpm_simulator" -count=1 \
             ./cmd/e2eprobe ./cmd/xkey ./cmd/xkey/cmd \
             ./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
-            ./pkg/ca ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
+            ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
             ./pkg/gui ./pkg/gui/events ./pkg/ipc ./pkg/keyboard ./pkg/luks \
             ./pkg/nativemsg ./pkg/notify ./pkg/nssdb \
             ./pkg/oidc ./pkg/oidc/aws ./pkg/oidc/handlers \
-            ./pkg/pcr_policy \
             ./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
-            ./pkg/serverregistry ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
-            ./pkg/tokenstore ./pkg/truststore ./pkg/uhid ./pkg/usb \
+            ./pkg/serverregistry ./pkg/shellquote ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
+            ./pkg/tokenstore ./pkg/truststore ./pkg/uhid ./pkg/urlsafety ./pkg/usb \
             ./pkg/virtualdevice ./pkg/xhome
           # -tags ble: createFIDO2PhoneKeyBackend and the CLI's fail-closed
           # fingerprint tests are ble-only, and the four *HarnessArgv* tests
@@ -825,6 +853,12 @@ jobs:
     needs: [lint, build, arch-gates, changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier != 'true'
 
+    # Same cgroup-unaware Go toolchain bound as the `test` job above (see its
+    # comment): unbounded GOMAXPROCS OOM-killed pkg/api/rest in the fast tier.
+    env:
+      GOMEMLIMIT: 10GiB
+      GOMAXPROCS: 8
+
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -843,9 +877,11 @@ jobs:
           cache: true
       # Same SoftHSM2 setup as the `test` job, for the same reason: the
       # changed-package set can legitimately include pkcs11-backed code.
+      # swtpm: pkg/tpm2/vtpm supervises a real swtpm process per tenant, and
+      # this job's tpm_simulator-tagged run can include that package.
       - name: Install and configure SoftHSM2
         run: |
-          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev
+          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev swtpm
           mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
           cat > ${GITHUB_WORKSPACE}/softhsm2.conf << EOF
           directories.tokendir = ${GITHUB_WORKSPACE}/softhsm2/tokens
@@ -879,7 +915,10 @@ jobs:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
           PACKAGES: ${{ steps.pkgs.outputs.packages }}
-        run: go test -race -timeout 15m -tags="codec_cbor codec_json codec_msgpack tpm_simulator frost" $PACKAGES
+        # -p 2: go test runs up to GOMAXPROCS test binaries at once, and under
+        # -race the password-vault packages (pkg/api/mcp, pkg/api/rest) each
+        # peak near 7 GB, so eight in parallel OOM-killed this job (#1389).
+        run: go test -race -p 2 -timeout 15m -tags="codec_cbor codec_json codec_msgpack tpm_simulator frost" $PACKAGES
 
       - name: No root-module Go changes
         if: steps.pkgs.outputs.packages == ''
@@ -1031,6 +1070,15 @@ jobs:
       - name: Install cgo dependencies
         run: |
           sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
+
+      # The secure-analyzer sweep reads `go vet -vettool` output and fails on
+      # any line that is not a securecheck diagnostic, so a cold module cache
+      # ("go: downloading ...") fails it, and the aborted module then reports
+      # its allowlist entries as stale. Lint's vet steps warmed the cache
+      # before this job was split out; download every module up front here.
+      - name: Download modules
+        run: |
+          for m in . sdk/go xkey web/desktop; do (cd "$m" && go mod download); done
 
       # `make vet` only reaches files that compile untagged (or, for xkey,
       # under LINT_TAGS_xkey) -- every file behind an `integration` (or
@@ -1579,6 +1627,12 @@ jobs:
     needs: [lint, build, arch-gates, changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
 
+    # Same cgroup-unaware Go toolchain bound as the `test` job above (see its
+    # comment): unbounded GOMAXPROCS OOM-killed pkg/api/rest in the fast tier.
+    env:
+      GOMEMLIMIT: 10GiB
+      GOMAXPROCS: 8
+
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -1594,8 +1648,9 @@ jobs:
           # libicu-dev/libusb-1.0-0-dev: see the "build" job's comment --
           # unconditional cgo deps of the module graph (dolthub/go-icu-regex,
           # google/gousb via go-qrdb), needed for any CGO_ENABLED=1 build
-          # regardless of tags.
-          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libtss2-dev libicu-dev libusb-1.0-0-dev
+          # regardless of tags. swtpm: pkg/tpm2/vtpm supervises a real swtpm
+          # process per tenant, and `go test ./...` below includes that package.
+          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libtss2-dev libicu-dev libusb-1.0-0-dev swtpm
 
       - name: Configure SoftHSM2
         run: |
@@ -1632,7 +1687,10 @@ jobs:
         env:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-        run: go test -race -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
+        # -p 2: go test runs up to GOMAXPROCS test binaries at once, and under
+        # -race the password-vault packages (pkg/api/mcp, pkg/api/rest) each
+        # peak near 7 GB, so eight in parallel OOM-killed this job (#1389).
+        run: go test -race -p 2 -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
 
   # Job 7b: pkg/tpm2 on the in-process TPM simulator
   #

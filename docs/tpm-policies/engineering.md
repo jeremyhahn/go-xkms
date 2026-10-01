@@ -1,6 +1,6 @@
 # TPM Policies — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-01 (vTPM restart-readiness fix)
 
 Design: [`architecture.md`](architecture.md). Surface: [`api.md`](api.md).
 
@@ -256,6 +256,26 @@ backends:
       run_dir: /run/xkms-vtpm             # default <datastore.path>/vtpm-run (socket paths <= 107 bytes)
       binary: /usr/bin/swtpm              # default swtpm from PATH
 ```
+
+`vtpm.NewManager` resolves and validates `binary` once, at construction: a
+bare name (no path separator, including the `swtpm` default) is resolved
+through `exec.LookPath`; a path is confirmed with `os.Stat` to exist and be a
+regular, executable file. A node whose `vtpm.binary` cannot be resolved this
+way fails closed at startup with the typed `*vtpm.BinaryError`, not at the
+first tenant's vTPM `Start` — and `Start` never re-searches `PATH`, since the
+resolved path is fixed for the `Manager`'s lifetime (gosec G204).
+
+`Manager.Status(tenant).Running` and `Manager.Transport(tenant)` both key off
+the tenant's `instance.running` flag, which only becomes true once the
+vTPM's command socket accepts a connection -- never the instant the `swtpm`
+process merely starts, which `exec.Cmd.Start` can report before swtpm has
+created the socket file. `Start` and a supervisor restart both enforce this
+the same way: `spawn` starts the process and returns without touching
+`running`; the caller then calls `awaitReady` (poll the socket, capped at
+`readyTimeout`) and only sets `running` once it succeeds. Before this was
+true of restarts too, a `Transport.Send` racing a restart's socket creation
+surfaced the raw `dial unix: ...: no such file or directory` instead of the
+documented `ErrConnectionLost` retry-once contract (`transport.go`).
 
 ## Tests
 

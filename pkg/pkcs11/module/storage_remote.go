@@ -65,6 +65,17 @@ type remoteBackend struct {
 	token    string
 }
 
+// NewRemoteStorage returns the token store a remote-mode module keeps its
+// token and object records in: every read and write is a PKCS11State* call on
+// client, namespaced by (tenantID, token). An embedder that provisions keys
+// for a remote-mode module (ProvisionECKeyPair) passes this, built over the
+// same key service the module reaches, so the records it writes are the ones
+// the module reads. tenantID may be empty; the server always confines the
+// records to the caller's own tenant.
+func NewRemoteStorage(client PKCS11StateClient, tenantID, token string) (storage.Backend, error) {
+	return newRemoteBackend(client, tenantID, token)
+}
+
 // newRemoteBackend builds a remote storage.Backend. token is the token label the
 // records are namespaced under. The server always namespaces by the
 // authenticated identity's tenant; tenantID is only a statement of it, so it may

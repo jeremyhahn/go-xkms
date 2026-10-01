@@ -54,6 +54,9 @@ type QRDBFakeTransport struct {
 	roles       map[string]*qrdbtransport.Role
 	rolesByName map[string]string
 	nextRoleID  int
+
+	backups      map[string]*qrdbtransport.BackupInfo
+	nextBackupID uint64
 }
 
 // Conformance is asserted at compile time: without this, a method added to
@@ -62,6 +65,7 @@ type QRDBFakeTransport struct {
 var (
 	_ qrdbtransport.UserClient      = (*QRDBFakeTransport)(nil)
 	_ qrdbtransport.GuardedKVClient = (*QRDBFakeTransport)(nil)
+	_ qrdbtransport.BackupClient    = (*QRDBFakeTransport)(nil)
 )
 
 // NewQRDBFakeTransport constructs an empty in-memory fake transport.
@@ -74,6 +78,7 @@ func NewQRDBFakeTransport() *QRDBFakeTransport {
 		usersByCert:  make(map[string]uint64),
 		roles:        make(map[string]*qrdbtransport.Role),
 		rolesByName:  make(map[string]string),
+		backups:      make(map[string]*qrdbtransport.BackupInfo),
 	}
 }
 
@@ -584,4 +589,96 @@ func (f *QRDBFakeTransport) ReconcileBuiltInRoles(ctx context.Context, req *qrdb
 func idString(v uint64) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// --- transport.BackupClient ---
+//
+// A real, minimal in-memory implementation: metadata only, no actual shard
+// data or checksum computation (there is no node here to snapshot). Tests
+// that need checksum/tamper semantics use pkg/xkms's own fakeBackupClient.
+
+// CreateBackup implements transport.BackupClient.
+func (f *QRDBFakeTransport) CreateBackup(_ context.Context, req *qrdbtransport.BackupRequest) (*qrdbtransport.BackupInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if req.Destination == "" {
+		return nil, &qrdbtransport.BackupEmptyDestinationError{}
+	}
+	f.nextBackupID++
+	info := &qrdbtransport.BackupInfo{
+		ID:          idString(f.nextBackupID),
+		Status:      qrdbtransport.BackupStatusComplete,
+		Destination: req.Destination,
+		Compression: req.Compression,
+		Encryption:  req.Encryption,
+		Metadata:    req.Metadata,
+	}
+	f.backups[info.ID] = info
+	return info, nil
+}
+
+// ListBackups implements transport.BackupClient.
+func (f *QRDBFakeTransport) ListBackups(_ context.Context) ([]qrdbtransport.BackupInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]qrdbtransport.BackupInfo, 0, len(f.backups))
+	for _, info := range f.backups {
+		out = append(out, *info)
+	}
+	return out, nil
+}
+
+// GetBackup implements transport.BackupClient.
+func (f *QRDBFakeTransport) GetBackup(_ context.Context, id string) (*qrdbtransport.BackupInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id == "" {
+		return nil, &qrdbtransport.BackupEmptyIDError{}
+	}
+	info, ok := f.backups[id]
+	if !ok {
+		return nil, &qrdbtransport.BackupNotFoundError{ID: id}
+	}
+	cp := *info
+	return &cp, nil
+}
+
+// DeleteBackup implements transport.BackupClient.
+func (f *QRDBFakeTransport) DeleteBackup(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id == "" {
+		return &qrdbtransport.BackupEmptyIDError{}
+	}
+	if _, ok := f.backups[id]; !ok {
+		return &qrdbtransport.BackupNotFoundError{ID: id}
+	}
+	delete(f.backups, id)
+	return nil
+}
+
+// RestoreBackup implements transport.BackupClient.
+func (f *QRDBFakeTransport) RestoreBackup(_ context.Context, req *qrdbtransport.RestoreRequest) (*qrdbtransport.RestoreResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if req.BackupID == "" {
+		return nil, &qrdbtransport.BackupEmptyIDError{}
+	}
+	if _, ok := f.backups[req.BackupID]; !ok {
+		return nil, &qrdbtransport.BackupNotFoundError{ID: req.BackupID}
+	}
+	return &qrdbtransport.RestoreResult{BackupID: req.BackupID}, nil
+}
+
+// VerifyBackup implements transport.BackupClient.
+func (f *QRDBFakeTransport) VerifyBackup(_ context.Context, id string) (*qrdbtransport.VerifyResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id == "" {
+		return nil, &qrdbtransport.BackupEmptyIDError{}
+	}
+	if _, ok := f.backups[id]; !ok {
+		return nil, &qrdbtransport.BackupNotFoundError{ID: id}
+	}
+	return &qrdbtransport.VerifyResult{Valid: true, ChecksumMatch: true}, nil
 }

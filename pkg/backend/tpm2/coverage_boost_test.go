@@ -253,25 +253,6 @@ func TestDecrypt_ClosedBackend_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestDecrypt_LoadKeyPairError_ReturnsError verifies Decrypt error handling for LoadKeyPair failure
-func TestDecrypt_LoadKeyPairError_ReturnsError(t *testing.T) {
-	expectedErr := errors.New("load error")
-	mockTpm := &mockTPM{loadKeyPairErr: expectedErr}
-	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}}
-
-	decrypter := &tpm2Decrypter{
-		tpm2Signer: &tpm2Signer{
-			backend: b,
-			attrs:   &types.KeyAttributes{CN: "test", KeyAlgorithm: x509.RSA},
-		},
-	}
-
-	_, err := decrypter.Decrypt(nil, []byte("ciphertext"), nil)
-	if err == nil {
-		t.Error("Expected error from LoadKeyPair")
-	}
-}
-
 // TestBackend_ClosedState_AllMethods tests all methods return proper errors when closed
 func TestBackend_ClosedState_AllMethods(t *testing.T) {
 	b := &Backend{closed: true}

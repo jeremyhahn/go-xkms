@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/localseal"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
@@ -101,11 +102,64 @@ func localKeyDir(cfg *module.Config) string {
 	return filepath.Join(os.TempDir(), "xkms-pkcs11-keys")
 }
 
-// buildOfflineModule constructs the embedded in-process xkms service and installs
-// a module wired to it as the global module, so the cgo C_Initialize path uses
-// the offline client with no network. It is idempotent-safe to call once before
-// C_Initialize.
-func buildOfflineModule() error {
+// offlineMu serializes the offline initialization path: deciding whether the
+// library must (re)build its offline module, building it, installing it as the
+// global module and initializing it happen as one step, so two racing
+// C_Initialize calls cannot each build a module and leak the loser's embedded
+// service.
+//
+// ownedOffline is the module this library built for offline mode, or nil. It is
+// how C_Initialize tells its own module apart from one a Go caller installed
+// (xkey injects its own client and must never have it replaced).
+var (
+	offlineMu    sync.Mutex
+	ownedOffline *module.Module
+)
+
+// initializeOffline is C_Initialize for offline mode.
+//
+// PKCS#11 v3.2 §5.4 lets an application call C_Initialize again after
+// C_Finalize, and p11-kit's server always does (it probes the module with
+// initialize and finalize, then initializes it again for the RPC client).
+// Finalize closes the embedded client and the object store and drops them, so
+// a finalized offline module cannot come back up: Initialize would build the
+// default remote client instead and fail to dial. The library therefore
+// rebuilds its own offline module when the one it built has been finalized.
+//
+// A global module the library did not build is initialized as it is, whatever
+// its state, exactly as before. A module that cannot be built is reported as
+// CKR_DEVICE_ERROR: CK_RV is the whole return surface of a Cryptoki entry
+// point, so the cause cannot travel further.
+func initializeOffline() module.CK_RV {
+	offlineMu.Lock()
+	defer offlineMu.Unlock()
+
+	if needsOfflineModule() {
+		m, err := buildOfflineModule()
+		if err != nil {
+			return module.CKR_DEVICE_ERROR
+		}
+		module.SetGlobalModule(m)
+		ownedOffline = m
+	}
+	return module.GetGlobalModule().Initialize(nil)
+}
+
+// needsOfflineModule reports whether initializeOffline must build a module:
+// when no global module is installed, or when the installed one is the
+// library's own offline module and has been finalized. offlineMu must be held.
+func needsOfflineModule() bool {
+	if !module.HasGlobalModule() {
+		return true
+	}
+	current := module.GetGlobalModule()
+	return current == ownedOffline && !current.IsInitialized()
+}
+
+// buildOfflineModule constructs the embedded in-process xkms service and a
+// module wired to it, so the cgo C_Initialize path uses the offline client with
+// no network. Installing the module is initializeOffline's job.
+func buildOfflineModule() (*module.Module, error) {
 	cfg := module.LoadFromEnv()
 
 	// Offline mode persists token and object metadata locally. A memory default
@@ -132,11 +186,11 @@ func buildOfflineModule() error {
 	if offlineSealStrategy() == sealStrategyPass {
 		base, err := filestorage.New(keyDir)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		controller, sealedStore, err := localseal.New(base, offlineRootKeyPath, nil)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		embeddedCfg.KeyStorage = sealedStore
 		moduleOpts = append(moduleOpts, module.WithSealController(controller))
@@ -144,14 +198,9 @@ func buildOfflineModule() error {
 
 	client, err := xkmssdk.NewEmbeddedClient(embeddedCfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	moduleOpts = append(moduleOpts, module.WithClient(client))
 
-	m, err := module.New(moduleOpts...)
-	if err != nil {
-		return err
-	}
-	module.SetGlobalModule(m)
-	return nil
+	return module.New(moduleOpts...)
 }

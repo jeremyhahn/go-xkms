@@ -84,6 +84,7 @@ func fullDeps(t *testing.T, svc *xkms.XKMSService) Deps {
 		CA:                 hostdeps.NewCAConfig("Compose Test Root"),
 		Custodians:         custodians{},
 		Shares:             shares{},
+		Backup:             backupClient{},
 		ServeBarrier:       true,
 		Leases:             barriertest.NewStandaloneCoordinator(t),
 	}
@@ -125,6 +126,7 @@ func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
 	assert.NotNil(t, st.Shares)
 	assert.NotNil(t, st.Invite)
 	assert.NotNil(t, st.OIDCCredentials)
+	assert.NotNil(t, st.Backup)
 	assert.Equal(t, "barrier", st.Credentials.Strategy())
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 
@@ -161,6 +163,10 @@ func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
 	groups, err := svc.ListCustodianGroups(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, groups.Groups, "custody answers from the host's node clients")
+
+	backups, err := svc.ListBackups(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, backups, "backup answers from the host's node client")
 
 	// The key-version store is wired: a key rotates into version 2.
 	_, err = svc.GenerateKey(ctx, &transport.GenerateKeyRequest{Backend: hostdeps.BackendName, KeyID: "composed", Algorithm: "ecdsa"})
@@ -199,6 +205,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 		FeatureBarrier:         "barrier registry",
 		FeatureCustody:         "custody clients",
 		FeatureInvite:          "storage",
+		FeatureBackup:          "backup client",
 	}, missing)
 
 	assert.Nil(t, st.PasswordStore)
@@ -210,6 +217,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 	assert.Nil(t, st.KeyVersions)
 	assert.Nil(t, st.Barrier)
 	assert.Nil(t, st.Invite)
+	assert.Nil(t, st.Backup)
 
 	// Wiring an empty composition leaves the service answering "not
 	// configured" for each feature.
@@ -497,6 +505,17 @@ type shares struct {
 
 func (shares) ListShares(context.Context) (*qrdbtransport.ListSharesResponse, error) {
 	return &qrdbtransport.ListSharesResponse{}, nil
+}
+
+// backupClient stands in for a qrdb node's backup client (go-xkms#728). Only
+// the listing call the tests make is implemented; the embedded interface
+// panics on anything else, so an unexpected call fails loudly.
+type backupClient struct {
+	qrdbtransport.BackupClient
+}
+
+func (backupClient) ListBackups(context.Context) ([]qrdbtransport.BackupInfo, error) {
+	return nil, nil
 }
 
 // TestTPM2Backend_NoneRegistered proves a service without a TPM2 backend

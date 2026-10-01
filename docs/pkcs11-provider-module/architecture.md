@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — Architecture
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114)
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 ## The problem
 
@@ -93,6 +93,36 @@ consumer  →  libxkms_pkcs11.so  (XKMS_PKCS11_MODE=local)
      → key material under XKMS_PKCS11_LOCAL_KEYDIR (default <StoragePath>/keys)
        → at-rest protection per XKMS_PKCS11_SEAL_STRATEGY
 ```
+
+### Provisioning a remote-mode token from a CGO-free process
+
+A daemon built with `CGO_ENABLED=0` cannot load the `.so`, but it often has to
+create the key a separate Cryptoki consumer (an IKE daemon) later signs with.
+`module.ProvisionECKeyPair` does that without writing token records by hand: it
+drives a `Module` in process, against the same key service and the same token
+store the loaded module will use, and asks it for `C_GenerateKeyPair` with the
+requested `CKA_LABEL` and `CKA_ID`. The objects on the token are therefore
+exactly the objects the module itself creates. `module.NewRemoteStorage` is the
+token store a remote-mode module keeps its records in; any `PKCS11StateClient`
+(a transport, or an in-process `*xkms.XKMSService`) backs it.
+
+The node-local, sign-only server a consumer's remote-mode module connects to is
+[`../sign-server/`](../sign-server/architecture.md).
+
+### Remote token-store layout
+
+Records are keyed `pkcs11state/<tenant>/<token>/<key>`. The system scope (no
+tenant identity) is stored under the system tenant's ID,
+`pkcs11state/system/<token>/`. It used to occupy an empty segment
+(`pkcs11state//<token>/`). File storage normalizes that path, so `List` returned
+keys the scope prefix no longer stripped: a module loaded none of its objects,
+and the next key it created reused handle 1 and overwrote an existing one. For
+the same reason the service refuses a token label of `.` or `..`
+(`ErrPKCS11StateTokenDotSegment`) and a key or list prefix carrying a `.` or
+`..` segment, an empty interior segment or a leading `/`
+(`ErrPKCS11StateKeyPath`): a normalizing store would resolve those outside the
+token's namespace. This is a pre-release layout change with no migration;
+existing system-scope remote tokens are re-provisioned.
 
 ## Trust boundaries
 

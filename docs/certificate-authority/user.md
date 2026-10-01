@@ -1,6 +1,6 @@
 # Certificate Authority — User Guide
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 ## Prerequisites
 
@@ -122,6 +122,26 @@ root (and, concatenated into the same file, its issuing intermediate if it
 has one). With none configured, enrollment refuses every device with
 `ErrTCGEKCertUntrusted` — there is no lesser check it falls back to.
 
+## Issue overlay identity certificates (SDK)
+
+These are in-process only; see the API reference for why. The flow:
+
+1. Create a name-constrained subordinate for a key you hold:
+   `trustedCA.(SubordinateIssuer).IssueSubordinateCA(ctx, &SubordinateCARequest{...})`.
+   - **Tunnel subordinate:** `PermittedIPRanges` covering the fabric, for
+     example `10.4.0.0/24` and `fd00:4::/64`.
+   - **SPIFFE subordinate:** `PermittedURIDomains: []string{"example.org"}`.
+2. Sign the endpoint's or workload's CSR with
+   `SignOptions{Profile: ProfileNameIPsecVTEP or ProfileNameX509SVID, Signer: <subordinate key>, IssuerCert: <subordinate cert>, SANS: <the names you decided>}`.
+   - Whatever names the CSR asks for are ignored.
+   - For a tunnel endpoint, optionally add
+     `CreateAttestationEvidenceExtension(...)` to `ExtraExtensions`.
+3. Verify with `ExtKeyUsageAny` for `ipsec-vtep`. The SVID verifies with
+   serverAuth or clientAuth.
+
+Scope SPIFFE IDs to a tenant path yourself, before you ask: the subordinate's
+constraint binds only the trust domain.
+
 ## Troubleshooting
 
 | What you see | What it means | What to do |
@@ -134,6 +154,8 @@ has one). With none configured, enrollment refuses every device with
 | serial not found | wrong serial format | hex, no `0x`, no colons |
 | `GET /api/v1/ca/crl` is missing a very recent revocation from another cluster node | the refresh-on-revoke CRL update is best-effort; it can lag replication under load | wait for `NextUpdate` to pass (the next read self-heals), or force it with `xkmsctl ca crl` / `POST /api/v1/ca/crl` |
 | `ca tcg enroll` / `EnrollDevice` fails with "endorsement key certificate is not chained to a trusted tpm manufacturer root" | `ca.tcg-config.trust-anchors` is unset, or does not name the device's manufacturer | configure `ExternalRootPaths` with the manufacturer's root (and intermediate) PEM |
+| `ErrCallerSANsRequired` signing an `ipsec-vtep` / `x509-svid` CSR | the profile takes names only from the caller | put the names on `SignOptions.SANS`; over the wire these profiles are not issuable |
+| `ErrNameConstraintViolation` | a name falls outside the issuing subordinate's constraints | issue a name inside the constrained ranges or trust domain |
 | enrollment fails with "does not carry the tcg-kp-EKCertificate extended key usage" | the EK certificate has neither anyExtendedKeyUsage nor the TCG EKU | this is the device's certificate, not a CA setting — get a conformant EK certificate from the manufacturer |
 
 ## Where to go next

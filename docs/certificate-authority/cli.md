@@ -1,6 +1,6 @@
 # Certificate Authority — CLI
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 Binary: `xkmsctl`. Groups: `ca` (the authority), `cert` (certificate storage
 against a key), `tls` (TLS material). Sources: `cmd/xkmsctl/ca.go`,
@@ -45,6 +45,11 @@ xkmsctl ca certificate --identity "Example Intermediate CA" -o json
 ```
 xkmsctl ca sign-csr --csr node.csr --profile server --validity 90 --output node.crt
 ```
+
+`--profile ipsec-vtep` and `--profile x509-svid` are refused: those profiles take
+their names only from an in-process issuing caller, and the CLI carries the
+CSR's names, not the caller's. They have no CLI surface; see the user guide's
+SDK flow.
 
 ### `ca issue`
 

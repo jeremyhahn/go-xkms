@@ -167,6 +167,7 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 				deps.Custodians = client.CustodianGroups()
 				deps.Shares = client.Shares()
 			}
+			deps.Backup = client.Backup()
 		}
 	}
 	if m.resolveBarrierRegistry != nil {

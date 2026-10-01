@@ -2898,10 +2898,6 @@ type SealOptions struct {
 	// For PKCS#11/Cloud KMS, this identifies the encryption key.
 	KeyAttributes *KeyAttributes
 
-	// TPMPolicy contains TPM-specific sealing policy (PCR selection, etc).
-	// Only used by TPM2 backend; ignored by other backends.
-	TPMPolicy *TPMSealPolicy
-
 	// AAD is Additional Authenticated Data for AEAD encryption.
 	// This data is authenticated but not encrypted.
 	// Supported by PKCS#11, Cloud KMS, and PKCS#8 backends.
@@ -2910,6 +2906,16 @@ type SealOptions struct {
 	// Password provides authentication for the sealed object (TPM-specific).
 	// This is the UserAuth value set during sealing.
 	Password Password
+
+	// AuthPolicy binds a TPM2 sealed object to a policy digest the caller
+	// computed, in the object's name algorithm, for a policy some other
+	// party satisfies -- systemd-cryptsetup's PolicyPCR session for a
+	// systemd-tpm2 LUKS token. The object then answers only a policy session
+	// reaching that digest. xkms builds sessions only for its own platform
+	// and named policies, so it cannot unseal such an object: whoever
+	// computed the digest does. It excludes KeyAttributes.TPMPolicy. TPM2
+	// only.
+	AuthPolicy []byte
 
 	// Backend specifies the storage backend for sealed data.
 	// For TPM2, this should be a store.KeyBackend implementation.
@@ -2933,20 +2939,6 @@ type UnsealOptions struct {
 	// For TPM2, this should be a store.KeyBackend implementation.
 	// If nil, the backend configured on the sealer instance is used.
 	Backend any
-}
-
-// TPMSealPolicy contains TPM-specific sealing policy configuration.
-type TPMSealPolicy struct {
-	// PCRSelection specifies which PCRs to bind the sealed data to.
-	// The data can only be unsealed when these PCRs have the same values.
-	PCRSelection tpm2.TPMLPCRSelection
-
-	// HashAlg specifies the hash algorithm for PCR policy.
-	HashAlg tpm2.TPMIAlgHash
-
-	// AuthPolicy contains a pre-computed authorization policy digest.
-	// If set, this is used instead of computing from PCRSelection.
-	AuthPolicy []byte
 }
 
 // SealedData represents the result of a seal operation.

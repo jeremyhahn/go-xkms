@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/kdftest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -76,7 +77,7 @@ func Wire(t testing.TB, svc *xkms.XKMSService) *seal.BarrierRegistry {
 	require.NoError(t, registry.InitializeTenant(ctx, Tenant, tenantCreds))
 
 	systemStore := staticpw.NewStore(storage.NewMemory())
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"))
+	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
 	require.NoError(t, err)
 
 	svc.SetPasswordStore(systemStore)

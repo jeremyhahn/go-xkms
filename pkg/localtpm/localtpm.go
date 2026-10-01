@@ -275,10 +275,12 @@ func sealedObjectAttrs(name, policy string) *types.KeyAttributes {
 }
 
 // SealObject seals data in the TPM as the local sealed object name,
-// replacing any object of that name, bound to policy: a named policy, the
-// built-in "platform" policy, or "" for none. An object bound to a named
-// policy and no password answers only to the policy's approved PCR state,
-// and its assignment is recorded, so the policy cannot be deleted under it.
+// replacing any object of that name, bound to policy: a named policy or the
+// built-in "platform" policy. The object carries no password, so an empty
+// policy is refused by the TPM layer (xkms.ErrTPMSealUnprotected) rather than
+// sealing an object anyone could unseal. An object bound to a named policy
+// answers only to the policy's approved PCR state, and its assignment is
+// recorded, so the policy cannot be deleted under it.
 func (l *Policies) SealObject(ctx context.Context, name, policy string, data []byte) error {
 	if name == "" {
 		return ErrObjectNameRequired

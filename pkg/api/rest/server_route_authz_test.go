@@ -165,6 +165,17 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/token", "oidc_credentials", "token"},
 	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/device", "oidc_credentials", "update"},
 	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/device/poll", "oidc_credentials", "update"},
+
+	// Whole-node backup/restore — handlers_backup.go (owner ruling
+	// 2026-09-30, go-xkms#728). Mirrors go-qrdb's own backup:* permission
+	// family verbatim; restore is gated separately because it overwrites
+	// live shard state.
+	{http.MethodPost, "/api/v1/backups", "backup", "create"},
+	{http.MethodGet, "/api/v1/backups", "backup", "list"},
+	{http.MethodGet, "/api/v1/backups/bkp-1", "backup", "read"},
+	{http.MethodDelete, "/api/v1/backups/bkp-1", "backup", "delete"},
+	{http.MethodPost, "/api/v1/backups/restore", "backup", "restore"},
+	{http.MethodPost, "/api/v1/backups/bkp-1/verify", "backup", "verify"},
 }
 
 // sessionOnlyRoutes is the golden set of REST routes that still require only

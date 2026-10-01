@@ -1323,6 +1323,54 @@ func (t *Transport) OIDCCredentialDevicePoll(ctx context.Context, req *transport
 	return t.service.OIDCCredentialDevicePoll(ctx, req)
 }
 
+// CreateBackup initiates a new backup with the specified options.
+func (t *Transport) CreateBackup(ctx context.Context, req *transport.BackupRequest) (*transport.BackupInfo, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.CreateBackup(ctx, req)
+}
+
+// ListBackups returns metadata for all available backups.
+func (t *Transport) ListBackups(ctx context.Context) ([]transport.BackupInfo, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.ListBackups(ctx)
+}
+
+// GetBackup returns metadata for a specific backup by ID.
+func (t *Transport) GetBackup(ctx context.Context, id string) (*transport.BackupInfo, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.GetBackup(ctx, id)
+}
+
+// DeleteBackup removes a backup by ID.
+func (t *Transport) DeleteBackup(ctx context.Context, id string) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.service.DeleteBackup(ctx, id)
+}
+
+// RestoreBackup restores data from a backup.
+func (t *Transport) RestoreBackup(ctx context.Context, req *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.RestoreBackup(ctx, req)
+}
+
+// VerifyBackup verifies the integrity of a backup.
+func (t *Transport) VerifyBackup(ctx context.Context, id string) (*transport.VerifyResult, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.VerifyBackup(ctx, id)
+}
+
 // CreateCustodianGroup creates a new custodian group.
 func (t *Transport) CreateCustodianGroup(ctx context.Context, req *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
 	if !t.connected {

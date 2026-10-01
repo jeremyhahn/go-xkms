@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/kdftest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
@@ -82,7 +83,7 @@ func testPasswordSetup(t *testing.T) (*seal.BarrierRegistry, *staticpw.BackendSt
 	}
 
 	systemStore := staticpw.NewStore(storage.NewMemory())
-	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"))
+	manager, err := staticpw.NewTenantPasswordStoreManager(registry, systemStore, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
 	require.NoError(t, err)
 
 	return registry, systemStore, manager

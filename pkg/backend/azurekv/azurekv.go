@@ -1143,8 +1143,16 @@ func (s *azurekvSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOp
 		return nil, err
 	}
 
-	// Get signing algorithm (detects PSS from opts)
-	algorithm, err := s.backend.getSigningAlgorithm(s.attrs, opts)
+	// A raw ECDSA request (no named hash) takes its algorithm from the key's
+	// curve; otherwise the algorithm follows the key attributes and opts
+	// (which detects PSS).
+	var algorithm azkeys.SignatureAlgorithm
+	var err error
+	if ecPub, ok := s.publicKey.(*ecdsa.PublicKey); ok && (opts == nil || opts.HashFunc() == 0) {
+		algorithm, err = rawECDSAAlgorithm(ecPub, len(digest))
+	} else {
+		algorithm, err = s.backend.getSigningAlgorithm(s.attrs, opts)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1169,6 +1177,38 @@ func (s *azurekvSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOp
 		return ecdsaResultToDER(resp.Result)
 	}
 	return resp.Result, nil
+}
+
+// rawECDSAAlgorithms pairs each curve Azure Key Vault supports with the one
+// signature algorithm Key Vault accepts for it, and that algorithm's digest
+// size.
+var rawECDSAAlgorithms = map[string]struct {
+	algorithm  azkeys.SignatureAlgorithm
+	digestSize int
+}{
+	elliptic.P256().Params().Name: {azkeys.SignatureAlgorithmES256, 32},
+	elliptic.P384().Params().Name: {azkeys.SignatureAlgorithmES384, 48},
+	elliptic.P521().Params().Name: {azkeys.SignatureAlgorithmES512, 64},
+}
+
+// rawECDSAAlgorithm resolves the Key Vault algorithm for a raw ECDSA signature
+// (a caller-built digest with no named hash, PKCS#11's CKM_ECDSA). Key Vault
+// signs the digest it is given and does not hash it, so the signature is over
+// exactly the caller's bytes; but it accepts only the curve's paired algorithm
+// and only a digest of that algorithm's size. A digest of any other length is
+// refused with ErrRawECDSADigestUnsupported rather than sent to fail remotely.
+func rawECDSAAlgorithm(pub *ecdsa.PublicKey, digestLen int) (azkeys.SignatureAlgorithm, error) {
+	pair, ok := rawECDSAAlgorithms[pub.Curve.Params().Name]
+	if !ok {
+		return "", &errs.Detail{Err: ErrInvalidCurve, Detail: pub.Curve.Params().Name}
+	}
+	if digestLen != pair.digestSize {
+		return "", &errs.Detail{
+			Err:    ErrRawECDSADigestUnsupported,
+			Detail: fmt.Sprintf("%s signs a %d-byte digest; got %d bytes", pair.algorithm, pair.digestSize, digestLen),
+		}
+	}
+	return pair.algorithm, nil
 }
 
 // Public returns the public key corresponding to the Azure Key Vault decryption key.

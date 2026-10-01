@@ -234,6 +234,17 @@ var methodPermissions = map[string]permission{
 	"xkms.getLockoutStatus": {auth.ResourcePIN, auth.ActionRead},
 	"xkms.resetLockout":     {auth.ResourcePIN, auth.ActionWrite},
 
+	// Whole-node backup/restore -- mirrors go-qrdb's own backup:* permission
+	// family verbatim (owner ruling 2026-09-30, go-xkms#728). Restore is
+	// gated separately from create/read because it overwrites live shard
+	// state.
+	"xkms.createBackup":  {auth.ResourceBackup, auth.ActionCreate},
+	"xkms.listBackups":   {auth.ResourceBackup, auth.ActionList},
+	"xkms.getBackup":     {auth.ResourceBackup, auth.ActionRead},
+	"xkms.deleteBackup":  {auth.ResourceBackup, auth.ActionDelete},
+	"xkms.restoreBackup": {auth.ResourceBackup, auth.ActionRestore},
+	"xkms.verifyBackup":  {auth.ResourceBackup, auth.ActionVerify},
+
 	// Custodian groups -- pkg/api/grpc/service_custodian_share_tenant.go's
 	// s.authorize(ctx, auth.ResourceCeremony, ...) calls (go-xkms#773). Group
 	// reads carry the ceremony status action; enrolling or revoking a

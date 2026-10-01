@@ -1039,6 +1039,7 @@ func (s *Server) composedStores() *compose.Stores {
 	if s.qrdbClient != nil {
 		stores.Custodians = s.qrdbClient.CustodianGroups()
 		stores.Shares = s.qrdbClient.Shares()
+		stores.Backup = s.qrdbClient.Backup()
 	}
 	if invite, err := compose.BuildInviteStore(s.createStorage); err != nil {
 		s.logger.Warn("Invite store is off", "error", err)

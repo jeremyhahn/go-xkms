@@ -60,6 +60,7 @@ type XKMSServicer interface {
 	AuditServicer
 	BootstrapServicer
 	InviteServicer
+	BackupServicer
 }
 
 // InviteServicer redeems administrator-issued account-activation
@@ -306,6 +307,32 @@ type EscrowServicer interface {
 	RecoverKey(ctx context.Context, req *RecoverRequest) (*RecoverResponse, error)
 	ListEscrowed(ctx context.Context) ([]EscrowRecord, error)
 	RevokeEscrow(ctx context.Context, escrowID string) error
+}
+
+// BackupServicer provides whole-node backup and restore operations over the
+// embedded go-qrdb node's shard-snapshot capability (owner ruling
+// 2026-09-30, go-xkms#728). Restore is the most destructive operation here —
+// it overwrites live shard state — which is why qrdb grants backup:restore
+// separately from backup:create/backup:read.
+type BackupServicer interface {
+	// CreateBackup initiates a new backup with the specified options.
+	CreateBackup(ctx context.Context, req *BackupRequest) (*BackupInfo, error)
+
+	// ListBackups returns metadata for all available backups.
+	ListBackups(ctx context.Context) ([]BackupInfo, error)
+
+	// GetBackup returns metadata for a specific backup by ID.
+	GetBackup(ctx context.Context, id string) (*BackupInfo, error)
+
+	// DeleteBackup removes a backup by ID.
+	DeleteBackup(ctx context.Context, id string) error
+
+	// RestoreBackup restores data from a backup.
+	RestoreBackup(ctx context.Context, req *RestoreRequest) (*RestoreResult, error)
+
+	// VerifyBackup verifies the integrity of a backup by computing and
+	// comparing checksums.
+	VerifyBackup(ctx context.Context, id string) (*VerifyResult, error)
 }
 
 // CustodianGroupServicer provides custodian group management operations.

@@ -61,6 +61,7 @@ var paramsOptionalMethods = map[string]string{
 	"xkms.getLockoutStatus":      "no parameters",
 	"xkms.listCustodianGroups":   "no parameters",
 	"xkms.listTenants":           "no parameters",
+	"xkms.listBackups":           "no parameters",
 }
 
 // methodContext supplies a per-method context override for the handful of

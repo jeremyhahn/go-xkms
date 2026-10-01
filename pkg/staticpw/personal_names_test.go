@@ -142,7 +142,7 @@ func TestPersonalNames_IDsAreKeyedPerUser(t *testing.T) {
 	assert.Regexp(t, `^[0-9a-f]{32}$`, a.ID)
 
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
-	require.NoError(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass("alice")))
+	require.NoError(t, mgr.UnlockUser(ctx, "tenant-a", "alice", pass(t, "alice")))
 	again := personalSession(t, mgr, "alice")
 	reopened, err := again.Get(a.ID)
 	require.NoError(t, err, "the ID is stable across sessions: it is keyed by the DEK, which never changes")

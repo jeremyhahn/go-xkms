@@ -1,6 +1,6 @@
 # LUKS2 Encrypted Storage — API
 
-> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
 
 No REST or gRPC surface: LUKS is a local, host-filesystem feature reachable
 only through the CLI (`cli.md`) and the desktop GUI's Wails IPC bridge.

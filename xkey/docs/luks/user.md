@@ -1,6 +1,6 @@
 # LUKS2 Encrypted Storage — User Guide
 
-> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
 
 ## What this protects, and what it doesn't
 

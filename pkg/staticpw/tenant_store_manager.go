@@ -19,9 +19,11 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // ErrNoSystemBarrier is returned when the system tenant's password store is
@@ -142,17 +144,31 @@ func (st *tenantPasswordState) keyLock(subject string) *sync.Mutex {
 // encrypted by the system barrier. The systemStore serves only requests that
 // carry no identity (internal callers, authentication disabled).
 type TenantPasswordStoreManager struct {
-	registry    *seal.BarrierRegistry
-	systemStore Store
-	tenants     sync.Map // tenant scope name -> *tenantPasswordState
+	registry            *seal.BarrierRegistry
+	systemStore         Store
+	tenants             sync.Map // tenant scope name -> *tenantPasswordState
+	passphraseKDFParams func() *kdf.KDFParams
 
 	// passkeyRP is the WebAuthn relying party ID passkey factors are
 	// created for; empty disables passkey enrollment.
 	passkeyRP string
 }
 
-// ManagerOption configures a TenantPasswordStoreManager.
-type ManagerOption func(*TenantPasswordStoreManager)
+// Option configures a TenantPasswordStoreManager.
+type Option func(*TenantPasswordStoreManager)
+
+// WithPassphraseKDFParams overrides the Argon2id cost new passphrase vault
+// factors are wrapped with (defaultPassphraseKDFParams, the repository
+// default, otherwise). Production callers never need it: it exists so every
+// package that builds a TenantPasswordStoreManager in tests can enroll and
+// unlock passphrase factors, many times over, at a cost cheap enough not to
+// dominate a suite's runtime and memory when many such tests run in
+// parallel, while still exercising the production wrap/unwrap code path.
+func WithPassphraseKDFParams(params func() *kdf.KDFParams) Option {
+	return func(m *TenantPasswordStoreManager) {
+		m.passphraseKDFParams = params
+	}
+}
 
 // WithPasskeyRelyingParty sets the WebAuthn relying party ID -- the domain
 // the web console is served from (webauthn.rp_id) -- that the vault's
@@ -160,13 +176,13 @@ type ManagerOption func(*TenantPasswordStoreManager)
 // vault passkey for this ID, which is what lets a passkey enrolled in a
 // browser unlock from xkey and xkmsctl, and the reverse. Without it passkey
 // enrollment answers ErrVaultPasskeyUnavailable.
-func WithPasskeyRelyingParty(rpID string) ManagerOption {
+func WithPasskeyRelyingParty(rpID string) Option {
 	return func(m *TenantPasswordStoreManager) { m.passkeyRP = rpID }
 }
 
 // NewTenantPasswordStoreManager creates a manager over registry. systemStore
 // serves requests with no identity.
-func NewTenantPasswordStoreManager(registry *seal.BarrierRegistry, systemStore Store, opts ...ManagerOption) (*TenantPasswordStoreManager, error) {
+func NewTenantPasswordStoreManager(registry *seal.BarrierRegistry, systemStore Store, opts ...Option) (*TenantPasswordStoreManager, error) {
 	if registry == nil {
 		return nil, ErrNilBarrierRegistry
 	}
@@ -174,8 +190,9 @@ func NewTenantPasswordStoreManager(registry *seal.BarrierRegistry, systemStore S
 		return nil, ErrNilStore
 	}
 	m := &TenantPasswordStoreManager{
-		registry:    registry,
-		systemStore: systemStore,
+		registry:            registry,
+		systemStore:         systemStore,
+		passphraseKDFParams: defaultPassphraseKDFParams,
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -331,7 +348,7 @@ func (m *TenantPasswordStoreManager) VaultStatus(ctx context.Context, tenantID, 
 
 // factors returns userID's stored factors.
 func (m *TenantPasswordStoreManager) factors(ctx context.Context, state *tenantPasswordState, userID string) ([]*vaultFactor, error) {
-	keyring, err := newVaultKeyring(state.backend, state.tenantID, userID)
+	keyring, err := newVaultKeyring(state.backend, state.tenantID, userID, m.passphraseKDFParams)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +397,7 @@ func (m *TenantPasswordStoreManager) UnlockUser(ctx context.Context, tenantID, u
 
 // keyring returns userID's keyring and its factors.
 func (m *TenantPasswordStoreManager) keyring(ctx context.Context, state *tenantPasswordState, userID string) (*vaultKeyring, []*vaultFactor, error) {
-	keyring, err := newVaultKeyring(state.backend, state.tenantID, userID)
+	keyring, err := newVaultKeyring(state.backend, state.tenantID, userID, m.passphraseKDFParams)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -515,7 +532,7 @@ func wrapRecovery(keyring *vaultKeyring, dek []byte) (string, *vaultFactor, erro
 	if err != nil {
 		return "", nil, err
 	}
-	defer clear(secret)
+	defer secret.Destroy()
 	f, err := keyring.wrap(VaultCredential{Type: FactorRecovery, Secret: secret, Label: "recovery code"}, dek)
 	if err != nil {
 		return "", nil, err
@@ -681,8 +698,12 @@ func (m *TenantPasswordStoreManager) RecoverVault(ctx context.Context, tenantID,
 	if len(factors) == 0 {
 		return nil, ErrVaultNotInitialized
 	}
-	secret := normalizeRecoveryCode(recoveryCode)
-	defer clear(secret)
+	normalized := normalizeRecoveryCode(recoveryCode)
+	secret, err := secure.NewSecret(normalized)
+	if err != nil {
+		return nil, ErrVaultCredentialRejected
+	}
+	defer secret.Destroy()
 	var used *vaultFactor
 	var dek []byte
 	for _, f := range factors {

@@ -30,6 +30,7 @@ import (
 	"errors"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
@@ -56,16 +57,24 @@ func NewStore(backend storage.Backend) (*Store, error) {
 	return &Store{backend: backend}, nil
 }
 
-// storageKey builds the backend key for a (tenant, token, key) triple. An empty
-// tenant is the system scope; it still occupies a path segment so the system
-// scope cannot alias a tenant literally named "".
+// storageKey builds the backend key for a (tenant, token, key) triple.
 func storageKey(tenantID, token, key string) string {
-	return keyPrefix + tenantID + "/" + token + "/" + key
+	return scopePrefix(tenantID, token) + key
 }
 
 // scopePrefix builds the backend key prefix for a (tenant, token) namespace,
 // used to translate a List within a token back to namespace-relative keys.
+//
+// An empty tenant is the system scope and is stored under the system tenant's
+// own ID, the scope the service already treats it as. It used to occupy an
+// empty path segment ("pkcs11state//<token>/"), which a path-normalizing
+// backend such as file storage collapses: List then returned keys the scope
+// prefix no longer stripped, a remote-mode module loaded none of its objects,
+// and the next key it created reused handle 1 and overwrote an existing one.
 func scopePrefix(tenantID, token string) string {
+	if tenantID == "" {
+		tenantID = qrdbsdk.SystemTenantID
+	}
 	return keyPrefix + tenantID + "/" + token + "/"
 }
 

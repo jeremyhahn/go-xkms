@@ -74,8 +74,13 @@ func AsymmetricSecretSealKeyAttributes(store types.StoreType) *types.KeyAttribut
 // template rather than reusing SecretSealKeyCN across every key (which
 // would make each new FROST key's Seal silently overwrite the TPM backend's
 // stored copy of a previous key's sealed object).
+//
+// The sealed object carries no password, so it is bound to the Platform
+// SRK's own policy: a TPM2 seal must name a policy or a password.
 func TPM2SecretSealKeyAttributes(psrkAttrs *types.KeyAttributes) *types.KeyAttributes {
-	return &types.KeyAttributes{
-		Parent: psrkAttrs,
+	attrs := &types.KeyAttributes{Parent: psrkAttrs}
+	if psrkAttrs != nil {
+		attrs.TPMPolicy = psrkAttrs.TPMPolicy
 	}
+	return attrs
 }

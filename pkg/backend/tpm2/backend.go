@@ -921,7 +921,9 @@ func (d *tpm2Decrypter) Decrypt(_ io.Reader, ciphertext []byte, opts crypto.Decr
 	}
 	defer func() { err = errors.Join(err, scope.close()) }()
 
-	plaintext, err := scope.tpm.RSADecryptKey(scope.bind(d.attrs), ciphertext, scope.keys)
+	// RSADecrypt loads the key and answers its USER role through the key's
+	// own policy or password.
+	plaintext, err := scope.tpm.RSADecrypt(scope.bind(d.attrs), scope.keys, ciphertext)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "TPM decrypt failed", Err: err}
 	}

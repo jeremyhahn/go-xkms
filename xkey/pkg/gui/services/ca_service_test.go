@@ -1068,6 +1068,25 @@ func (m *mockCAClient) RevokeEscrow(_ context.Context, _ string) error {
 	return nil
 }
 
+// Backup operations stub implementations (go-xkms#728)
+
+func (m *mockCAClient) CreateBackup(_ context.Context, _ *transport.BackupRequest) (*transport.BackupInfo, error) {
+	return nil, nil
+}
+func (m *mockCAClient) ListBackups(_ context.Context) ([]transport.BackupInfo, error) {
+	return nil, nil
+}
+func (m *mockCAClient) GetBackup(_ context.Context, _ string) (*transport.BackupInfo, error) {
+	return nil, nil
+}
+func (m *mockCAClient) DeleteBackup(_ context.Context, _ string) error { return nil }
+func (m *mockCAClient) RestoreBackup(_ context.Context, _ *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	return nil, nil
+}
+func (m *mockCAClient) VerifyBackup(_ context.Context, _ string) (*transport.VerifyResult, error) {
+	return nil, nil
+}
+
 // Policy operations stub implementations
 
 func (m *mockCAClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {

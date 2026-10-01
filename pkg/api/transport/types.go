@@ -415,15 +415,16 @@ type SealRequest struct {
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 
-	// TPMPolicy names the TPM policy of the tenant's scope the sealed object
-	// is bound to (TPM2 backends only; any other backend refuses it):
-	// "platform" for the built-in platform policy, the name of a policy
-	// created with the TPM policy API, or empty for none, leaving Password as
-	// the object's only authorization.
+	// TPMPolicy names the TPM policy a TPM2 sealed object is bound to (TPM2
+	// backends only; any other backend refuses it): "platform", a named
+	// policy of the tenant's scope, or empty for none. A TPM2 seal needs a
+	// policy, a password or both; one with neither is refused
+	// (tpm2.ErrSealUnprotected).
 	TPMPolicy string `json:"tpm_policy,omitempty"`
 
-	// Password provides authentication for the sealed object (TPM-specific).
-	// This is the UserAuth value set during sealing.
+	// Password is the TPM2 sealed object's authorization value. With a TPM
+	// policy it counts only inside the policy; without one it is the
+	// object's only protection.
 	Password string `json:"password,omitempty"`
 }
 

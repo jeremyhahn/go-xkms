@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — API
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114)
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 Transport shapes for the rest of the repo:
 [`../key-management/api.md`](../key-management/api.md).
@@ -96,6 +96,22 @@ With `XKMS_PKCS11_MODE=local`, the module runs the SDK's embedded service
 against local key material. There are no RPCs, no server, and no network. That
 is the mode's purpose: a Cryptoki consumer at early boot or on an air-gapped
 host still gets keys.
+
+### Request validation
+
+Every `PKCS11State*` call is refused as an invalid argument when the token label
+is empty (`ErrPKCS11StateTokenRequired`), contains `/`
+(`ErrPKCS11StateTokenSeparator`), or is `.` or `..`
+(`ErrPKCS11StateTokenDotSegment`); when the key or list prefix has a `.` or `..`
+segment, an empty interior segment or a leading `/` (`ErrPKCS11StateKeyPath`);
+or when a supplied `tenant_id` is not the caller's
+(`ErrPKCS11StateTenantMismatch`). A system-scope caller's records live under
+`pkcs11state/system/<token>/`.
+
+The sign server serves a subset of these RPCs on its socket; see
+[`../sign-server/api.md`](../sign-server/api.md). Key provisioning
+(`ProvisionECKeyPair`) has no wire surface of its own: it is a Go function that
+drives these RPCs and `GenerateKey`.
 
 ## Status and error mapping
 

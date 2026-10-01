@@ -338,6 +338,21 @@ func Routes() []RouteSpec {
 	permIf("DELETE", "/custodian/groups/{id}/members/{userID}", auth.ResourceCeremony, auth.ActionRevokeCustodian, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.RemoveMemberHandler })
 	permIf("POST", "/custodian/groups/{id}/distribute", auth.ResourceCeremony, auth.ActionClaimShareBegin, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.DistributeSharesHandler })
 
+	// --- Whole-node backup/restore (owner ruling 2026-09-30, go-xkms#728).
+	// Mirrors go-qrdb's own backup:* permission family verbatim
+	// (pkg/permission/constants.go): create/list/get are read-side,
+	// delete is its own grant, and restore is gated separately because it
+	// overwrites live shard state. Always registered -- unlike custodian/
+	// shares, backup is not conditioned on ServeBarrier -- so a standalone
+	// (non-raft) deployment surfaces the qrdb node's own typed
+	// unsupported-operation error rather than a 404 route.
+	perm("POST", "/backups", auth.ResourceBackup, auth.ActionCreate, func(s *Server) http.HandlerFunc { return s.handlers.CreateBackupHandler })
+	perm("GET", "/backups", auth.ResourceBackup, auth.ActionList, func(s *Server) http.HandlerFunc { return s.handlers.ListBackupsHandler })
+	perm("GET", "/backups/{id}", auth.ResourceBackup, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.GetBackupHandler })
+	perm("DELETE", "/backups/{id}", auth.ResourceBackup, auth.ActionDelete, func(s *Server) http.HandlerFunc { return s.handlers.DeleteBackupHandler })
+	perm("POST", "/backups/restore", auth.ResourceBackup, auth.ActionRestore, func(s *Server) http.HandlerFunc { return s.handlers.RestoreBackupHandler })
+	perm("POST", "/backups/{id}/verify", auth.ResourceBackup, auth.ActionVerify, func(s *Server) http.HandlerFunc { return s.handlers.VerifyBackupHandler })
+
 	// --- Shares (Shamir custody). Reads are ceremony:status; submitting
 	// or deleting a share moves quorum material and carries
 	// barrier:unseal-share — the gRPC and MCP pairs for the same calls. ---

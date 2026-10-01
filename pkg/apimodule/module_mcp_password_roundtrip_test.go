@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/kdftest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -48,7 +49,7 @@ func newRoundTripPasswordManager(t *testing.T) *staticpw.TenantPasswordStoreMana
 	registry, err := seal.NewBarrierRegistry(barrier)
 	require.NoError(t, err)
 	store := staticpw.NewStore(storage.New())
-	mgr, err := staticpw.NewTenantPasswordStoreManager(registry, store, staticpw.WithPasskeyRelyingParty("kms.example.com"))
+	mgr, err := staticpw.NewTenantPasswordStoreManager(registry, store, staticpw.WithPasskeyRelyingParty("kms.example.com"), staticpw.WithPassphraseKDFParams(kdftest.CheapPassphraseParams))
 	require.NoError(t, err)
 	return mgr
 }

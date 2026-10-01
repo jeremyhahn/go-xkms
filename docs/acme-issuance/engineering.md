@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## Exported surface
 
@@ -1262,6 +1262,17 @@ availability, not correctness.
 
 Migration: the ACME object model is RFC-defined on the wire and internal in
 storage. Changing the storage layout requires a data migration step.
+
+**The client's `cert deploy` is a filesystem write by design, not a storage
+gap.** `pkg/acme/client/service.Deployer.Deploy` writes the issued
+certificate and private key PEM to the operator-configured `CertPath`/
+`KeyPath` (`trusted-acme-client cert deploy <spec>`), because the consumer is
+a third-party web server (nginx, Apache, ...) that loads TLS material from a
+filesystem path, not from xkms's datastore. go-xkms#1323's 2026-09-30 ruling
+confirms this stays a plain file, moving onto go-qrdb's exported atomic-write
+helper once it ships rather than a shared ad hoc temp-then-rename copy; see
+`docs/datastore/engineering.md`'s "Secrets that intentionally leave the
+server" section.
 
 ## Test strategy
 

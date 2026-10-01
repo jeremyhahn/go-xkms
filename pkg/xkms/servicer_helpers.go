@@ -34,9 +34,9 @@ import (
 // across all servicer files.
 func (s *XKMSService) resolveBackend(name string) (Backend, error) {
 	if name == "" {
-		return DefaultBackend()
+		return s.lookupDefaultBackend()
 	}
-	return GetBackend(name)
+	return s.lookupBackend(name)
 }
 
 // resolveBackendWithName returns the Backend and its resolved name.

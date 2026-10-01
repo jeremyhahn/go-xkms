@@ -19,6 +19,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // The personal vault (pkg/staticpw vault.go) on the service layer. Every
@@ -44,9 +45,25 @@ func (s *XKMSService) vaultCaller(ctx context.Context) (*staticpw.TenantPassword
 	return manager, tenantID, subject, nil
 }
 
+// VaultCredentialSealError is returned when a transport credential's secret
+// cannot be sealed into protected memory.
+type VaultCredentialSealError struct {
+	Err error
+}
+
+// Error returns a human-readable description.
+func (e *VaultCredentialSealError) Error() string {
+	return "keystore: failed to seal vault credential secret: " + e.Err.Error()
+}
+
+// Unwrap returns the wrapped cause for errors.Is/As.
+func (e *VaultCredentialSealError) Unwrap() error { return e.Err }
+
 // vaultCredential converts a transport credential. The secret bytes are
-// copied, so the caller's request may be zeroed independently.
-func vaultCredential(c transport.PasswordVaultCredential) staticpw.VaultCredential {
+// copied and sealed into protected memory, so the caller's request may be
+// zeroed independently. An empty secret is left nil: staticpw's own
+// validation rejects it with the right sentinel for the factor type.
+func vaultCredential(c transport.PasswordVaultCredential) (staticpw.VaultCredential, error) {
 	cred := staticpw.VaultCredential{
 		Type:           staticpw.FactorType(c.Factor),
 		CredentialID:   c.CredentialID,
@@ -62,13 +79,22 @@ func vaultCredential(c transport.PasswordVaultCredential) staticpw.VaultCredenti
 			TPMPolicy: c.KeyRef.TPMPolicy,
 		},
 	}
+	var secretBytes []byte
 	switch {
 	case cred.Type == staticpw.FactorPassphrase:
-		cred.Secret = []byte(c.Passphrase)
+		secretBytes = []byte(c.Passphrase)
 	case cred.Type == staticpw.FactorPasskey, cred.Type.IsKeyFactor():
-		cred.Secret = append([]byte(nil), c.Secret...)
+		secretBytes = append([]byte(nil), c.Secret...)
 	}
-	return cred
+	if len(secretBytes) == 0 {
+		return cred, nil
+	}
+	secret, err := secure.NewSecret(secretBytes)
+	if err != nil {
+		return staticpw.VaultCredential{}, &VaultCredentialSealError{Err: err}
+	}
+	cred.Secret = secret
+	return cred, nil
 }
 
 // vaultFactor converts a factor description.
@@ -136,8 +162,11 @@ func (s *XKMSService) PasswordVaultEnroll(ctx context.Context, req *transport.Pa
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	cred := vaultCredential(req.PasswordVaultCredential)
-	defer clear(cred.Secret)
+	cred, err := vaultCredential(req.PasswordVaultCredential)
+	if err != nil {
+		return nil, err
+	}
+	defer cred.Secret.Destroy()
 	res, err := manager.EnrollFactor(ctx, tenantID, subject, cred)
 	if err != nil {
 		return nil, err
@@ -156,8 +185,11 @@ func (s *XKMSService) PasswordVaultRotate(ctx context.Context, req *transport.Pa
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	cred := vaultCredential(req.PasswordVaultCredential)
-	defer clear(cred.Secret)
+	cred, err := vaultCredential(req.PasswordVaultCredential)
+	if err != nil {
+		return nil, err
+	}
+	defer cred.Secret.Destroy()
 	res, err := manager.RotateFactor(ctx, tenantID, subject, req.FactorID, cred)
 	if err != nil {
 		return nil, err
@@ -190,8 +222,11 @@ func (s *XKMSService) PasswordVaultRecover(ctx context.Context, req *transport.P
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	cred := vaultCredential(req.PasswordVaultCredential)
-	defer clear(cred.Secret)
+	cred, err := vaultCredential(req.PasswordVaultCredential)
+	if err != nil {
+		return nil, err
+	}
+	defer cred.Secret.Destroy()
 	code := []byte(req.RecoveryCode)
 	defer clear(code)
 	res, err := manager.RecoverVault(ctx, tenantID, subject, code, cred)

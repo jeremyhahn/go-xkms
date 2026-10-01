@@ -98,7 +98,7 @@ func (h *keyHolder) unlockCred(t *testing.T, f VaultFactorInfo) (VaultCredential
 	if err != nil {
 		return VaultCredential{}, err
 	}
-	return VaultCredential{Type: f.Type, KeyFingerprint: f.KeyFingerprint, Secret: secret}, nil
+	return VaultCredential{Type: f.Type, KeyFingerprint: f.KeyFingerprint, Secret: testSecret(t, secret)}, nil
 }
 
 // TestKeyFactor_EnrollAndUnlock covers every key factor type with an EC and
@@ -153,7 +153,7 @@ func TestKeyFactor_WrongTokenIsRefused(t *testing.T) {
 	_, err = wrong.unlockCred(t, res.Factor)
 	assert.ErrorIs(t, err, vaultkey.ErrWrongKey)
 
-	bogus := VaultCredential{Type: FactorPIV, KeyFingerprint: res.Factor.KeyFingerprint, Secret: bytes.Repeat([]byte{7}, vaultkey.SecretLength)}
+	bogus := VaultCredential{Type: FactorPIV, KeyFingerprint: res.Factor.KeyFingerprint, Secret: testSecret(t, bytes.Repeat([]byte{7}, vaultkey.SecretLength))}
 	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", bogus), ErrVaultCredentialRejected)
 
 	// The right secret presented as the wrong factor type opens nothing.
@@ -176,10 +176,13 @@ func TestKeyFactor_ServerCannotUnlockAlone(t *testing.T) {
 	cred, err := h.unlockCred(t, res.Factor)
 	require.NoError(t, err)
 
+	plaintext, err := cred.Secret.Open()
+	require.NoError(t, err)
+	defer plaintext.Destroy()
 	vault, err := scope.PersonalPrefix("tenant-a", VaultFeature, "alice")
 	require.NoError(t, err)
 	require.NoError(t, raw.Scan(ctx, vault, func(key string, value []byte) error {
-		assert.False(t, bytes.Contains(value, cred.Secret), "factor %s stores its secret", key)
+		assert.False(t, bytes.Contains(value, plaintext.Bytes()), "factor %s stores its secret", key)
 		return nil
 	}))
 }
@@ -207,7 +210,7 @@ func TestKeyFactor_EnrollmentRefusals(t *testing.T) {
 	assert.ErrorIs(t, err, ErrVaultKeyExists, "one key is one factor, whatever its type")
 
 	// A malformed unlock credential is refused before any unwrap.
-	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", VaultCredential{Type: FactorPIV, Secret: []byte{1}}), ErrVaultInvalidCredential)
+	assert.ErrorIs(t, mgr.UnlockUser(ctx, "tenant-a", "alice", VaultCredential{Type: FactorPIV, Secret: testSecret(t, []byte{1})}), ErrVaultInvalidCredential)
 }
 
 // TestKeyFactor_RotateAndRemove proves a key factor rotates to a new key
@@ -240,7 +243,7 @@ func TestKeyFactor_RotateAndRemove(t *testing.T) {
 func TestKeyFactor_RecoverWithAKey(t *testing.T) {
 	mgr, _, _ := vaultFixture(t)
 	ctx := context.Background()
-	first, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", pass("alice"))
+	first, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", pass(t, "alice"))
 	require.NoError(t, err)
 	require.NoError(t, mgr.LockUser("tenant-a", "alice"))
 
@@ -264,11 +267,11 @@ func TestPasskey_RelyingParty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, testRelyingParty, status.PasskeyRelyingParty)
 
-	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey("k1", 0x11))
+	res, err := mgr.EnrollFactor(ctx, "tenant-a", "alice", passkey(t, "k1", 0x11))
 	require.NoError(t, err)
 	assert.Equal(t, testRelyingParty, res.Factor.RelyingParty)
 
-	other := passkey("k2", 0x22)
+	other := passkey(t, "k2", 0x22)
 	other.RelyingParty = "xkms-password-vault"
 	_, err = mgr.EnrollFactor(ctx, "tenant-a", "alice", other)
 	assert.ErrorIs(t, err, ErrVaultRelyingPartyMismatch)
@@ -277,12 +280,12 @@ func TestPasskey_RelyingParty(t *testing.T) {
 	registerAndInitTenant(t, reg, "tenant-a")
 	bare, err := NewTenantPasswordStoreManager(reg, NewStore(storage.New()))
 	require.NoError(t, err)
-	_, err = bare.EnrollFactor(ctx, "tenant-a", "bob", passkey("k3", 0x33))
+	_, err = bare.EnrollFactor(ctx, "tenant-a", "bob", passkey(t, "k3", 0x33))
 	assert.ErrorIs(t, err, ErrVaultPasskeyUnavailable)
 	bareStatus, err := bare.VaultStatus(ctx, "tenant-a", "bob")
 	require.NoError(t, err)
 	assert.Empty(t, bareStatus.PasskeyRelyingParty)
 	// Passphrases are unaffected.
-	_, err = bare.EnrollFactor(ctx, "tenant-a", "bob", pass("bob"))
+	_, err = bare.EnrollFactor(ctx, "tenant-a", "bob", pass(t, "bob"))
 	require.NoError(t, err)
 }

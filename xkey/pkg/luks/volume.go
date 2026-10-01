@@ -11,9 +11,17 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+// Package luks provides xkey's desktop/CLI-facing LUKS volume glue: a thin
+// Volume wrapper around go-xkms's canonical LUKS implementation
+// (sdk/go/luks, backed by pkg/luks's go-luks2 Executor), plus the
+// privilege-drop (sudo/pkexec chown) and secure-wipe behavior that is
+// genuinely specific to xkey's desktop UX. The LUKS lifecycle itself --
+// loop device attach/detach, format, unlock, mount -- lives once, in
+// go-xkms/pkg/luks (go-xkms#917); this package never duplicates it.
 package luks
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -22,37 +30,25 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/jeremyhahn/go-luks2/pkg/luks2"
+	sdkluks "github.com/jeremyhahn/go-xkms/sdk/go/luks"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
+
+// volumeExecutor is the shared, production LUKS Executor every Volume
+// operation drives the kernel through. It is a package variable so unit
+// tests can substitute a fake instead of requiring a real loop device,
+// dm-crypt mapping or mount; the fault-injection coverage of the
+// production implementation itself lives in go-xkms/pkg/luks's own test
+// suite.
+var volumeExecutor sdkluks.Executor = sdkluks.NewLibExecutor()
 
 // Volume represents a LUKS encrypted volume.
 type Volume struct {
 	LUKSPath   string // Path to the .luks file
 	MountPoint string // Where to mount the volume
 	MapperName string // device-mapper name
-	LoopDevice string // Loop device path (set after setup)
 }
-
-// The following are go-luks2's kernel-facing primitives. Each is a variable,
-// following the same pattern as checkKeyringAvailable, so tests can stand in
-// for the kernel instead of requiring a real loop device, dm-crypt mapping
-// or mount.
-var (
-	setupLoopDevice  = luks2.SetupLoopDevice
-	detachLoopDevice = luks2.DetachLoopDevice
-	findLoopDeviceFn = luks2.FindLoopDevice
-	formatLUKS       = luks2.Format
-	unlockLUKS       = luks2.Unlock
-	lockLUKS         = luks2.Lock
-	makeFilesystem   = luks2.MakeFilesystem
-	mountLUKS        = luks2.Mount
-	unmountLUKS      = luks2.Unmount
-	isMountedFn      = luks2.IsMounted
-	isUnlockedFn     = luks2.IsUnlocked
-	chmodFn          = os.Chmod
-)
 
 // NewVolume creates a new Volume instance with paths resolved through
 // xhome.Resolve.
@@ -71,6 +67,18 @@ func NewVolumeWithPaths(luksPath, mountPoint string) *Volume {
 		MountPoint: ExpandPath(mountPoint),
 		MapperName: MapperName,
 	}
+}
+
+// config builds the sdk/go/luks VolumeConfig that drives the shared
+// Executor for this Volume's paths.
+func (v *Volume) config() *sdkluks.VolumeConfig {
+	cfg := &sdkluks.VolumeConfig{
+		LUKSPath:   v.LUKSPath,
+		MountPoint: v.MountPoint,
+		MapperName: v.MapperName,
+	}
+	cfg.SetDefaults()
+	return cfg
 }
 
 // GetMountPoint returns the path where the volume is mounted.
@@ -93,94 +101,32 @@ func (v *Volume) IsLUKS() bool {
 // mount state could not be determined; callers must not treat that as
 // "not mounted".
 func (v *Volume) IsMounted() (bool, error) {
-	return isMountedFn(v.MountPoint)
+	return IsMounted(v.MountPoint)
 }
 
 // IsOpen checks if the LUKS volume is unlocked.
 func (v *Volume) IsOpen() bool {
-	return isUnlockedFn(v.MapperName)
+	return IsLUKSOpen(v.MapperName)
 }
 
-// Create creates a new LUKS volume using go-luks2 library.
+// Create creates a new LUKS volume through the shared production Executor.
 func (v *Volume) Create(sizeBytes int64, passphrase string) error {
 	if v.Exists() {
 		return ErrVolumeAlreadyExists
 	}
 
-	// The unlock below needs the kernel keyring; refuse before a container
-	// file exists rather than after a format that cannot be opened.
-	if err := EnsureKeyringAvailable(); err != nil {
-		return err
-	}
-
-	// Create parent directory
-	dir := filepath.Dir(v.LUKSPath)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return &VolumeError{Operation: "create_dir", Path: dir, Err: err}
-	}
-
-	// Create sparse file. O_EXCL makes the existence check atomic with
-	// creation, closing the race window between the Exists check above
-	// and this call.
-	f, err := os.OpenFile(v.LUKSPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
+	if err := volumeExecutor.Create(context.Background(), v.config(), sizeBytes, passphrase); err != nil {
+		if errors.Is(err, sdkluks.ErrVolumeAlreadyExists) {
 			return ErrVolumeAlreadyExists
 		}
-		return &VolumeError{Operation: "create_file", Path: v.LUKSPath, Err: err}
+		return err
 	}
-	if err := f.Truncate(sizeBytes); err != nil {
-		cleanupErr := errors.Join(f.Close(), os.Remove(v.LUKSPath))
-		return &VolumeError{Operation: "truncate", Path: v.LUKSPath, Err: errors.Join(err, cleanupErr)}
-	}
-	if err := f.Close(); err != nil {
-		return &VolumeError{Operation: "close_file", Path: v.LUKSPath, Err: errors.Join(err, os.Remove(v.LUKSPath))}
-	}
-
-	// Setup loop device using go-luks2
-	loopDev, err := setupLoopDevice(v.LUKSPath)
-	if err != nil {
-		return &VolumeError{Operation: "setup_loop", Path: v.LUKSPath, Err: errors.Join(err, os.Remove(v.LUKSPath))}
-	}
-	v.LoopDevice = loopDev
-
-	// Format with LUKS2 using go-luks2
-	formatOpts := luks2.FormatOptions{
-		Device:     loopDev,
-		Passphrase: []byte(passphrase),
-	}
-	if err := formatLUKS(formatOpts); err != nil {
-		cleanupErr := errors.Join(detachLoopDevice(loopDev), os.Remove(v.LUKSPath))
-		return &VolumeError{Operation: "luks_format", Path: loopDev, Err: errors.Join(err, cleanupErr)}
-	}
-
-	// Unlock the volume
-	if err := unlockLUKS(loopDev, []byte(passphrase), v.MapperName); err != nil {
-		cleanupErr := errors.Join(detachLoopDevice(loopDev), os.Remove(v.LUKSPath))
-		return &VolumeError{Operation: "luks_unlock", Path: loopDev, Err: errors.Join(err, cleanupErr)}
-	}
-
-	// Create ext4 filesystem using go-luks2
-	if err := makeFilesystem(v.MapperName, "ext4", "xkey"); err != nil {
-		cleanupErr := errors.Join(lockLUKS(v.MapperName), detachLoopDevice(loopDev), os.Remove(v.LUKSPath))
-		return &VolumeError{Operation: "create_fs", Path: v.MapperName, Err: errors.Join(err, cleanupErr)}
-	}
-
-	// Lock it back
-	if err := lockLUKS(v.MapperName); err != nil {
-		return &VolumeError{Operation: "luks_lock", Path: v.MapperName, Err: errors.Join(err, detachLoopDevice(loopDev))}
-	}
-
-	// Detach loop device
-	if err := detachLoopDevice(loopDev); err != nil {
-		return &VolumeError{Operation: "detach_loop", Path: loopDev, Err: err}
-	}
-	v.LoopDevice = ""
-
 	return nil
 }
 
-// Unlock opens and mounts the LUKS volume.
+// Unlock opens and mounts the LUKS volume. A failed Mount after a
+// successful Unlock is unwound by locking the volume back, so Unlock is
+// all-or-nothing from the caller's perspective.
 func (v *Volume) Unlock(passphrase string) error {
 	if !v.Exists() {
 		return ErrVolumeNotFound
@@ -188,55 +134,27 @@ func (v *Volume) Unlock(passphrase string) error {
 
 	mounted, err := v.IsMounted()
 	if err != nil {
-		return &VolumeError{Operation: "check_mounted", Path: v.MountPoint, Err: err}
+		return err
 	}
 	if mounted {
 		return ErrVolumeAlreadyMounted
 	}
 
-	// Refuse before a loop device is attached: an unlock that cannot place
-	// the volume key in the kernel keyring must not leave one behind.
-	if err := EnsureKeyringAvailable(); err != nil {
+	ctx := context.Background()
+	cfg := v.config()
+
+	if err := volumeExecutor.Unlock(ctx, cfg, passphrase); err != nil {
+		if errors.Is(err, sdkluks.ErrVolumeNotFound) {
+			return ErrVolumeNotFound
+		}
 		return err
 	}
 
-	// Setup loop device
-	loopDev, err := setupLoopDevice(v.LUKSPath)
-	if err != nil {
-		return &VolumeError{Operation: "setup_loop", Path: v.LUKSPath, Err: err}
-	}
-	v.LoopDevice = loopDev
-
-	// Unlock LUKS
-	if err := unlockLUKS(loopDev, []byte(passphrase), v.MapperName); err != nil {
-		return &VolumeError{Operation: "luks_unlock", Path: loopDev, Err: errors.Join(err, detachLoopDevice(loopDev))}
-	}
-
-	// Create mount point
-	if err := os.MkdirAll(v.MountPoint, 0700); err != nil {
-		cleanupErr := errors.Join(lockLUKS(v.MapperName), detachLoopDevice(loopDev))
-		return &VolumeError{Operation: "create_mountpoint", Path: v.MountPoint, Err: errors.Join(err, cleanupErr)}
-	}
-
-	// Mount using go-luks2
-	mountOpts := luks2.MountOptions{
-		Device:     v.MapperName,
-		MountPoint: v.MountPoint,
-		FSType:     "ext4",
-		Flags:      0,
-	}
-	if err := mountLUKS(mountOpts); err != nil {
-		cleanupErr := errors.Join(lockLUKS(v.MapperName), detachLoopDevice(loopDev))
-		return &VolumeError{Operation: "mount", Path: v.MountPoint, Err: errors.Join(err, cleanupErr)}
-	}
-
-	// go-luks2 creates the ext4 filesystem with mkfs.ext4's default root
-	// permissions (0755), and mounting it replaces whatever mode the
-	// MkdirAll above gave the mount point directory. Re-assert 0700 here so
-	// the unlocked volume is never left world-listable.
-	if err := chmodFn(v.MountPoint, 0700); err != nil {
-		cleanupErr := errors.Join(unmountLUKS(v.MountPoint, 0), lockLUKS(v.MapperName), detachLoopDevice(loopDev))
-		return &VolumeError{Operation: "chmod_mountpoint", Path: v.MountPoint, Err: errors.Join(err, cleanupErr)}
+	if err := volumeExecutor.Mount(ctx, cfg); err != nil {
+		if lockErr := volumeExecutor.Lock(ctx, cfg); lockErr != nil {
+			return errors.Join(err, lockErr)
+		}
+		return err
 	}
 
 	// Chown the entire mount tree to the real (non-elevated) user when
@@ -251,34 +169,26 @@ func (v *Volume) Unlock(passphrase string) error {
 func (v *Volume) Lock() error {
 	mounted, err := v.IsMounted()
 	if err != nil {
-		return &VolumeError{Operation: "check_mounted", Path: v.MountPoint, Err: err}
+		return err
 	}
 	if !v.IsOpen() && !mounted {
 		return ErrVolumeNotMounted
 	}
 
-	// Unmount if mounted
+	ctx := context.Background()
+	cfg := v.config()
+
 	if mounted {
-		if err := unmountLUKS(v.MountPoint, 0); err != nil {
-			return &VolumeError{Operation: "unmount", Path: v.MountPoint, Err: err}
+		if err := volumeExecutor.Unmount(ctx, cfg); err != nil {
+			return err
 		}
 	}
 
-	// Close LUKS if open
 	if v.IsOpen() {
-		if err := lockLUKS(v.MapperName); err != nil {
-			return &VolumeError{Operation: "luks_lock", Path: v.MapperName, Err: err}
+		if err := volumeExecutor.Lock(ctx, cfg); err != nil {
+			return err
 		}
 	}
-
-	// Find and detach loop device
-	loopDev, err := findLoopDeviceFn(v.LUKSPath)
-	if err == nil && loopDev != "" {
-		if err := detachLoopDevice(loopDev); err != nil {
-			return &VolumeError{Operation: "detach_loop", Path: loopDev, Err: err}
-		}
-	}
-	v.LoopDevice = ""
 
 	return nil
 }
@@ -290,13 +200,12 @@ func (v *Volume) Lock() error {
 func (v *Volume) CopyDataToVolume(sourceDir string) error {
 	mounted, err := v.IsMounted()
 	if err != nil {
-		return &VolumeError{Operation: "check_mounted", Path: v.MountPoint, Err: err}
+		return err
 	}
 	if !mounted {
 		return ErrVolumeNotMounted
 	}
 
-	// Copy all files from source to mount point.
 	if err := copyDir(sourceDir, v.MountPoint); err != nil {
 		return err
 	}

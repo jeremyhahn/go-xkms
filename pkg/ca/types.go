@@ -490,6 +490,13 @@ type SignOptions struct {
 	// A value of 0 uses the profile or CA default.
 	ValidityDays int
 
+	// Validity overrides ValidityDays with a lifetime finer than a day, such
+	// as the one-hour lifetime of an X.509-SVID. A value of 0 defers to
+	// ValidityDays, then to the profile (a LifetimeBoundedProfile's
+	// DefaultLifetime) and the CA default. A lifetime-bounded profile refuses
+	// a request above its maximum with ErrValidityExceedsProfile.
+	Validity time.Duration
+
 	// NotBefore specifies a custom not-before time.
 	// If zero, the current time is used.
 	NotBefore time.Time
@@ -507,6 +514,8 @@ type SignOptions struct {
 	Subject *Subject
 
 	// SANS provides additional SANs to include beyond those in the CSR.
+	// Under a CallerSANProfile it is the only source of names: the CSR's own
+	// names are ignored, and every entry must parse (ErrInvalidSAN).
 	SANS *SubjectAlternativeNames
 
 	// Signer optionally provides an external signer for this single signing

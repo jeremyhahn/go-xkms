@@ -1743,12 +1743,6 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 		notBefore = opts.NotBefore
 	}
 
-	// Build subject
-	subject := csr.Subject
-	if opts != nil && opts.Subject != nil {
-		subject = mergeSubjects(csr.Subject, opts.Subject)
-	}
-
 	// Determine key usage
 	keyUsage := x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment
 	if opts != nil && opts.KeyUsage != 0 {
@@ -1783,6 +1777,43 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 	// require a profile unconditionally, so no path can bypass Profile.Apply.
 	if profile == nil {
 		profile = newTLSLeafProfile(keyUsage, extKeyUsage, validityDays)
+	}
+
+	// The lifetime: a duration, a day count, or the profile's default, and
+	// never more than a lifetime-bounded profile's maximum.
+	var requestedValidity time.Duration
+	requestedDays := 0
+	if opts != nil {
+		requestedValidity = opts.Validity
+		requestedDays = opts.ValidityDays
+	}
+	lifetime, err := resolveLifetime(profile, requestedValidity, requestedDays)
+	if err != nil {
+		return nil, err
+	}
+	notAfter := notBefore.AddDate(0, 0, validityDays)
+	if lifetime > 0 {
+		notAfter = notBefore.Add(lifetime)
+	}
+
+	if isCallerSANProfile(profile) {
+		return ca.signCallerNamedCSR(ctx, csr, opts, request, &signContext{
+			signer:       signer,
+			issuingCert:  issuingCert,
+			serial:       serial,
+			notBefore:    notBefore,
+			notAfter:     notAfter,
+			validityDays: validityDays,
+			keyUsage:     keyUsage,
+			extKeyUsage:  extKeyUsage,
+			profile:      profile,
+		})
+	}
+
+	// Build subject
+	subject := csr.Subject
+	if opts != nil && opts.Subject != nil {
+		subject = mergeSubjects(csr.Subject, opts.Subject)
 	}
 
 	// Assemble the subject alternative names in issuance order: the CSR's own
@@ -1822,7 +1853,7 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 		Serial:             serial,
 		Subject:            subject,
 		NotBefore:          notBefore,
-		NotAfter:           notBefore.AddDate(0, 0, validityDays),
+		NotAfter:           notAfter,
 		PublicKey:          csr.PublicKey,
 		SignatureAlgorithm: determineSignatureAlgorithm(signer.Public()),
 		Profile:            profile,
@@ -1832,6 +1863,28 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 		URIs:               uris,
 	}
 
+	return ca.issueSignedSpec(ctx, spec, csr, opts, request, &signContext{
+		signer:       signer,
+		issuingCert:  issuingCert,
+		validityDays: validityDays,
+		keyUsage:     keyUsage,
+		extKeyUsage:  extKeyUsage,
+	})
+}
+
+// issueSignedSpec finishes a CSR-signed issuance: it attaches the issuance
+// context the profile sees, signs through Issuer.Issue, stores the
+// certificate and records its tenant. signCSR and signCallerNamedCSR both end
+// here, so the two name-sourcing rules share one signing, storage and tenant
+// path.
+func (ca *CA) issueSignedSpec(
+	ctx context.Context,
+	spec *CertificateSpec,
+	csr *x509.CertificateRequest,
+	opts *SignOptions,
+	request *CertificateRequest,
+	sc *signContext,
+) (*x509.Certificate, error) {
 	// Profiles receive the issuance context so they can make context-sensitive
 	// decisions — a CA profile reads MaxPathLen, a tenant-aware profile reads
 	// TenantID.
@@ -1843,7 +1896,7 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 		requested := *request
 		spec.Request = &requested
 	} else {
-		spec.Request = certificateRequestFromSpec(spec, opts, validityDays, keyUsage, extKeyUsage)
+		spec.Request = certificateRequestFromSpec(spec, opts, sc.validityDays, sc.keyUsage, sc.extKeyUsage)
 	}
 
 	// The extensions the CSR asked for travel with the issuance context so that
@@ -1861,7 +1914,7 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 	// issuer whose CRL and OCSP services this CA cannot speak for, so that
 	// path carries no identity and keeps whatever the caller or its profile
 	// supplied.
-	issuer := &Issuer{Signer: signer, Certificate: issuingCert}
+	issuer := &Issuer{Signer: sc.signer, Certificate: sc.issuingCert}
 	if opts == nil || opts.Signer == nil {
 		issuer.Identity = ca.config.IssuingIdentity()
 	}
@@ -1871,9 +1924,15 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 		return nil, err
 	}
 
-	// Store the certificate
-	if err := ca.certStore.StoreCertificate(cert); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to store certificate", Err: err}
+	// Store the certificate. The store is keyed by Common Name, so a
+	// certificate with none cannot be stored there. Only a caller-named
+	// profile issues such a certificate — an X.509-SVID needs no subject —
+	// and it stays revocable: RevokeCert takes the certificate itself, and
+	// its tenant is recorded below by serial.
+	if cert.Subject.CommonName != "" || !isCallerSANProfile(spec.Profile) {
+		if err := ca.certStore.StoreCertificate(cert); err != nil {
+			return nil, &errs.Wrapped{Msg: "failed to store certificate", Err: err}
+		}
 	}
 
 	// Record the issuing tenant (empty for the system/platform scope) so a

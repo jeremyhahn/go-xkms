@@ -70,6 +70,10 @@ const (
 
 	// FeatureInvite is the enrollment-invitation store (go-xkms#1294 part B).
 	FeatureInvite Feature = "invite"
+
+	// FeatureBackup is whole-node backup/restore over the qrdb node's
+	// shard-snapshot capability (go-xkms#728).
+	FeatureBackup Feature = "backup"
 )
 
 // FeatureDisabledError reports a feature left off because a dependency it

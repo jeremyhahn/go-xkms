@@ -11,7 +11,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -329,7 +328,8 @@ func TestUnsealWithProvidedBlobs(t *testing.T) {
 }
 
 // TestDefaultSealKeyAttributes verifies the default key attributes helper
-// uses the Platform SRK.
+// uses the Platform SRK, binds a passwordless seal to the Platform SRK's own
+// policy, and leaves a password-protected seal to its password alone.
 func TestDefaultSealKeyAttributes(t *testing.T) {
 	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
@@ -337,11 +337,26 @@ func TestDefaultSealKeyAttributes(t *testing.T) {
 	tpm2Instance, ok := tpm.(*TPM2)
 	assert.True(t, ok)
 
-	attrs, err := tpm2Instance.defaultSealKeyAttributes()
+	srkAttrs, err := tpm2Instance.PlatformSRKAttributes()
 	require.NoError(t, err)
-	assert.NotNil(t, attrs)
+	require.Equal(t, types.TPMPolicyPlatform, srkAttrs.TPMPolicy)
+
+	attrs, err := tpm2Instance.defaultSealKeyAttributes(&types.SealOptions{})
+	require.NoError(t, err)
 	assert.Equal(t, "platform-sealing-key", attrs.CN)
 	assert.NotNil(t, attrs.Parent)
+	assert.Equal(t, types.TPMPolicyPlatform, attrs.TPMPolicy,
+		"a seal without a password must be bound to the parent's policy")
+
+	attrs, err = tpm2Instance.defaultSealKeyAttributes(&types.SealOptions{Password: mustPassword([]byte("pw"))})
+	require.NoError(t, err)
+	assert.Empty(t, attrs.TPMPolicy,
+		"a seal with a password is protected by the password alone")
+
+	attrs, err = tpm2Instance.defaultSealKeyAttributes(&types.SealOptions{AuthPolicy: make([]byte, 32)})
+	require.NoError(t, err)
+	assert.Empty(t, attrs.TPMPolicy,
+		"a seal with its own AuthPolicy digest is protected by that policy alone")
 }
 
 // TestDefaultSealKeyAttributes_NoPlatformSRK verifies the error when no
@@ -353,7 +368,7 @@ func TestDefaultSealKeyAttributes_NoPlatformSRK(t *testing.T) {
 		config: &Config{},
 	}
 
-	_, err := tpm2Instance.defaultSealKeyAttributes()
+	_, err := tpm2Instance.defaultSealKeyAttributes(&types.SealOptions{})
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrInvalidPlatformSRKConfiguration))
 }
@@ -423,68 +438,4 @@ func TestSeal_Unseal_OptsPassword_RoundTrip(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, data, got)
-}
-
-// TestSeal_TPMPolicy_AuthPolicyOverridesTemplate proves the
-// SealOptions.TPMPolicy.AuthPolicy branch actually reaches TPM2_Create: the
-// object the TPM created carries exactly the caller-supplied AuthPolicy
-// digest, which is only possible if Seal installed it into the template
-// before calling SealKey rather than leaving KeyedHashTemplate's own (empty)
-// AuthPolicy in place.
-func TestSeal_TPMPolicy_AuthPolicyOverridesTemplate(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-	tpm2Instance := tpm.(*TPM2)
-
-	ssrkAttrs, err := tpm.SSRKAttributes()
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	explicitDigest := make([]byte, 32)
-	for i := range explicitDigest {
-		explicitDigest[i] = 0xAB
-	}
-
-	sealed, err := tpm2Instance.Seal(ctx, []byte("auth-policy-branch"), &types.SealOptions{
-		KeyAttributes: &types.KeyAttributes{CN: "auth-policy-key", Parent: ssrkAttrs},
-		TPMPolicy:     &types.TPMSealPolicy{AuthPolicy: explicitDigest},
-	})
-	require.NoError(t, err, "sealing with an explicit AuthPolicy digest must succeed")
-	require.NotEmpty(t, sealed.TPMPublic)
-
-	public, err := UnmarshalPublic(sealed.TPMPublic)
-	require.NoError(t, err)
-	assert.Equal(t, explicitDigest, public.AuthPolicy.Buffer,
-		"the object's AuthPolicy must be exactly the digest SealOptions.TPMPolicy carried, "+
-			"not KeyedHashTemplate's own empty default")
-}
-
-// TestSeal_TPMPolicy_CopiesPCRSelectionAndHashAlg proves Seal copies
-// TPMPolicy.PCRSelection and TPMPolicy.HashAlg onto the key's TPMAttributes
-// before sealing. opts.KeyAttributes is a pointer Seal mutates in place, so
-// the copy is observable directly on the caller's struct after Seal returns.
-func TestSeal_TPMPolicy_CopiesPCRSelectionAndHashAlg(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-	tpm2Instance := tpm.(*TPM2)
-
-	ssrkAttrs, err := tpm.SSRKAttributes()
-	require.NoError(t, err)
-
-	keyAttrs := &types.KeyAttributes{CN: "pcr-selection-key", Parent: ssrkAttrs}
-	pcrSelection := tpm2.TPMLPCRSelection{
-		PCRSelections: []tpm2.TPMSPCRSelection{
-			{Hash: tpm2.TPMAlgSHA256, PCRSelect: []byte{0x80}},
-		},
-	}
-
-	_, err = tpm2Instance.Seal(context.Background(), []byte("pcr-selection-branch"), &types.SealOptions{
-		KeyAttributes: keyAttrs,
-		TPMPolicy:     &types.TPMSealPolicy{PCRSelection: pcrSelection, HashAlg: tpm2.TPMAlgSHA256},
-	})
-	require.NoError(t, err)
-
-	require.NotNil(t, keyAttrs.TPMAttributes)
-	assert.Equal(t, pcrSelection, keyAttrs.TPMAttributes.PCRSelection)
-	assert.Equal(t, tpm2.TPMIAlgHash(tpm2.TPMAlgSHA256), keyAttrs.TPMAttributes.HashAlg)
 }

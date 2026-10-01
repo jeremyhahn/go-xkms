@@ -866,7 +866,7 @@ func TestIntegration_TPM2_RSAEncryptDecrypt(t *testing.T) {
 	}
 
 	// Decrypt
-	decrypted, err := tpmInstance.RSADecrypt(handle, name, ciphertext)
+	decrypted, err := tpmInstance.RSADecrypt(keyAttrs, nil, ciphertext)
 	if err != nil {
 		t.Fatalf("RSADecrypt failed: %v", err)
 	}

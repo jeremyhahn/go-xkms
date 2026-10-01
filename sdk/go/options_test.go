@@ -1500,6 +1500,30 @@ func (m *mockService) ResetLockout(ctx context.Context, req *ResetLockoutRequest
 	return nil
 }
 
+func (m *mockService) CreateBackup(ctx context.Context, req *BackupRequest) (*BackupInfo, error) {
+	return nil, nil
+}
+
+func (m *mockService) ListBackups(ctx context.Context) ([]BackupInfo, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetBackup(ctx context.Context, id string) (*BackupInfo, error) {
+	return nil, nil
+}
+
+func (m *mockService) DeleteBackup(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *mockService) RestoreBackup(ctx context.Context, req *RestoreRequest) (*RestoreResult, error) {
+	return nil, nil
+}
+
+func (m *mockService) VerifyBackup(ctx context.Context, id string) (*VerifyResult, error) {
+	return nil, nil
+}
+
 func (m *mockService) CreateCustodianGroup(ctx context.Context, req *CreateCustodianGroupRequest) (*CreateCustodianGroupResponse, error) {
 	return nil, nil
 }

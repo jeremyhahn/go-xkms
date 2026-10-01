@@ -121,6 +121,12 @@ const (
 	KeystoreService_ImportPIVCertificate_FullMethodName         = "/xkms.v1.KeystoreService/ImportPIVCertificate"
 	KeystoreService_ExportPIVCertificate_FullMethodName         = "/xkms.v1.KeystoreService/ExportPIVCertificate"
 	KeystoreService_GeneratePIVCSR_FullMethodName               = "/xkms.v1.KeystoreService/GeneratePIVCSR"
+	KeystoreService_CreateBackup_FullMethodName                 = "/xkms.v1.KeystoreService/CreateBackup"
+	KeystoreService_ListBackups_FullMethodName                  = "/xkms.v1.KeystoreService/ListBackups"
+	KeystoreService_GetBackup_FullMethodName                    = "/xkms.v1.KeystoreService/GetBackup"
+	KeystoreService_DeleteBackup_FullMethodName                 = "/xkms.v1.KeystoreService/DeleteBackup"
+	KeystoreService_RestoreBackup_FullMethodName                = "/xkms.v1.KeystoreService/RestoreBackup"
+	KeystoreService_VerifyBackup_FullMethodName                 = "/xkms.v1.KeystoreService/VerifyBackup"
 	KeystoreService_CreateCustodianGroup_FullMethodName         = "/xkms.v1.KeystoreService/CreateCustodianGroup"
 	KeystoreService_GetCustodianGroup_FullMethodName            = "/xkms.v1.KeystoreService/GetCustodianGroup"
 	KeystoreService_ListCustodianGroups_FullMethodName          = "/xkms.v1.KeystoreService/ListCustodianGroups"
@@ -477,6 +483,19 @@ type KeystoreServiceClient interface {
 	ExportPIVCertificate(ctx context.Context, in *GetPIVCertificateRequest, opts ...grpc.CallOption) (*GetPIVCertificateResponse, error)
 	// GeneratePIVCSR generates a certificate signing request for a PIV slot key.
 	GeneratePIVCSR(ctx context.Context, in *GeneratePIVCSRRequest, opts ...grpc.CallOption) (*GeneratePIVCSRResponse, error)
+	// CreateBackup initiates a new backup with the specified options.
+	CreateBackup(ctx context.Context, in *BackupRequest, opts ...grpc.CallOption) (*BackupInfo, error)
+	// ListBackups returns metadata for all available backups.
+	ListBackups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListBackupsResponse, error)
+	// GetBackup returns metadata for a specific backup by ID.
+	GetBackup(ctx context.Context, in *GetBackupRequest, opts ...grpc.CallOption) (*BackupInfo, error)
+	// DeleteBackup removes a backup by ID.
+	DeleteBackup(ctx context.Context, in *DeleteBackupRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// RestoreBackup restores data from a backup, overwriting live shard state.
+	RestoreBackup(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*RestoreResult, error)
+	// VerifyBackup verifies the integrity of a backup by computing and
+	// comparing checksums.
+	VerifyBackup(ctx context.Context, in *VerifyBackupRequest, opts ...grpc.CallOption) (*VerifyResult, error)
 	// CreateCustodianGroup creates a new custodian group for Shamir threshold ceremonies.
 	CreateCustodianGroup(ctx context.Context, in *CreateCustodianGroupRequest, opts ...grpc.CallOption) (*CreateCustodianGroupResponse, error)
 	// GetCustodianGroup retrieves a custodian group by ID.
@@ -1690,6 +1709,66 @@ func (c *keystoreServiceClient) GeneratePIVCSR(ctx context.Context, in *Generate
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GeneratePIVCSRResponse)
 	err := c.cc.Invoke(ctx, KeystoreService_GeneratePIVCSR_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) CreateBackup(ctx context.Context, in *BackupRequest, opts ...grpc.CallOption) (*BackupInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BackupInfo)
+	err := c.cc.Invoke(ctx, KeystoreService_CreateBackup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) ListBackups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListBackupsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListBackupsResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_ListBackups_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GetBackup(ctx context.Context, in *GetBackupRequest, opts ...grpc.CallOption) (*BackupInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BackupInfo)
+	err := c.cc.Invoke(ctx, KeystoreService_GetBackup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) DeleteBackup(ctx context.Context, in *DeleteBackupRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, KeystoreService_DeleteBackup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) RestoreBackup(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*RestoreResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestoreResult)
+	err := c.cc.Invoke(ctx, KeystoreService_RestoreBackup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) VerifyBackup(ctx context.Context, in *VerifyBackupRequest, opts ...grpc.CallOption) (*VerifyResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VerifyResult)
+	err := c.cc.Invoke(ctx, KeystoreService_VerifyBackup_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -3004,6 +3083,19 @@ type KeystoreServiceServer interface {
 	ExportPIVCertificate(context.Context, *GetPIVCertificateRequest) (*GetPIVCertificateResponse, error)
 	// GeneratePIVCSR generates a certificate signing request for a PIV slot key.
 	GeneratePIVCSR(context.Context, *GeneratePIVCSRRequest) (*GeneratePIVCSRResponse, error)
+	// CreateBackup initiates a new backup with the specified options.
+	CreateBackup(context.Context, *BackupRequest) (*BackupInfo, error)
+	// ListBackups returns metadata for all available backups.
+	ListBackups(context.Context, *emptypb.Empty) (*ListBackupsResponse, error)
+	// GetBackup returns metadata for a specific backup by ID.
+	GetBackup(context.Context, *GetBackupRequest) (*BackupInfo, error)
+	// DeleteBackup removes a backup by ID.
+	DeleteBackup(context.Context, *DeleteBackupRequest) (*emptypb.Empty, error)
+	// RestoreBackup restores data from a backup, overwriting live shard state.
+	RestoreBackup(context.Context, *RestoreRequest) (*RestoreResult, error)
+	// VerifyBackup verifies the integrity of a backup by computing and
+	// comparing checksums.
+	VerifyBackup(context.Context, *VerifyBackupRequest) (*VerifyResult, error)
 	// CreateCustodianGroup creates a new custodian group for Shamir threshold ceremonies.
 	CreateCustodianGroup(context.Context, *CreateCustodianGroupRequest) (*CreateCustodianGroupResponse, error)
 	// GetCustodianGroup retrieves a custodian group by ID.
@@ -3536,6 +3628,24 @@ func (UnimplementedKeystoreServiceServer) ExportPIVCertificate(context.Context, 
 }
 func (UnimplementedKeystoreServiceServer) GeneratePIVCSR(context.Context, *GeneratePIVCSRRequest) (*GeneratePIVCSRResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GeneratePIVCSR not implemented")
+}
+func (UnimplementedKeystoreServiceServer) CreateBackup(context.Context, *BackupRequest) (*BackupInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateBackup not implemented")
+}
+func (UnimplementedKeystoreServiceServer) ListBackups(context.Context, *emptypb.Empty) (*ListBackupsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListBackups not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GetBackup(context.Context, *GetBackupRequest) (*BackupInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetBackup not implemented")
+}
+func (UnimplementedKeystoreServiceServer) DeleteBackup(context.Context, *DeleteBackupRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteBackup not implemented")
+}
+func (UnimplementedKeystoreServiceServer) RestoreBackup(context.Context, *RestoreRequest) (*RestoreResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreBackup not implemented")
+}
+func (UnimplementedKeystoreServiceServer) VerifyBackup(context.Context, *VerifyBackupRequest) (*VerifyResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method VerifyBackup not implemented")
 }
 func (UnimplementedKeystoreServiceServer) CreateCustodianGroup(context.Context, *CreateCustodianGroupRequest) (*CreateCustodianGroupResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateCustodianGroup not implemented")
@@ -5636,6 +5746,114 @@ func _KeystoreService_GeneratePIVCSR_Handler(srv interface{}, ctx context.Contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(KeystoreServiceServer).GeneratePIVCSR(ctx, req.(*GeneratePIVCSRRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_CreateBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BackupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).CreateBackup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_CreateBackup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).CreateBackup(ctx, req.(*BackupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_ListBackups_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).ListBackups(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_ListBackups_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).ListBackups(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GetBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetBackupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GetBackup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GetBackup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GetBackup(ctx, req.(*GetBackupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_DeleteBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteBackupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).DeleteBackup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_DeleteBackup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).DeleteBackup(ctx, req.(*DeleteBackupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_RestoreBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).RestoreBackup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_RestoreBackup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).RestoreBackup(ctx, req.(*RestoreRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_VerifyBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VerifyBackupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).VerifyBackup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_VerifyBackup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).VerifyBackup(ctx, req.(*VerifyBackupRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -7946,6 +8164,30 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GeneratePIVCSR",
 			Handler:    _KeystoreService_GeneratePIVCSR_Handler,
+		},
+		{
+			MethodName: "CreateBackup",
+			Handler:    _KeystoreService_CreateBackup_Handler,
+		},
+		{
+			MethodName: "ListBackups",
+			Handler:    _KeystoreService_ListBackups_Handler,
+		},
+		{
+			MethodName: "GetBackup",
+			Handler:    _KeystoreService_GetBackup_Handler,
+		},
+		{
+			MethodName: "DeleteBackup",
+			Handler:    _KeystoreService_DeleteBackup_Handler,
+		},
+		{
+			MethodName: "RestoreBackup",
+			Handler:    _KeystoreService_RestoreBackup_Handler,
+		},
+		{
+			MethodName: "VerifyBackup",
+			Handler:    _KeystoreService_VerifyBackup_Handler,
 		},
 		{
 			MethodName: "CreateCustodianGroup",

@@ -612,6 +612,32 @@ func (b *baseSDKClient) RevokeEscrow(_ context.Context, _ string) error {
 	return errNotImplemented
 }
 
+// Backup operations (go-xkms#728)
+
+func (b *baseSDKClient) CreateBackup(_ context.Context, _ *transport.BackupRequest) (*transport.BackupInfo, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) ListBackups(_ context.Context) ([]transport.BackupInfo, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) GetBackup(_ context.Context, _ string) (*transport.BackupInfo, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) DeleteBackup(_ context.Context, _ string) error {
+	return errNotImplemented
+}
+
+func (b *baseSDKClient) RestoreBackup(_ context.Context, _ *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) VerifyBackup(_ context.Context, _ string) (*transport.VerifyResult, error) {
+	return nil, errNotImplemented
+}
+
 // Policy operations
 
 func (b *baseSDKClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {

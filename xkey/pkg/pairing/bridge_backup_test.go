@@ -218,6 +218,32 @@ func TestBridge_NilParams_BackupHandlers(t *testing.T) {
 	}
 }
 
+// --- Whole-node backup operations (go-xkms#728) ---
+
+func (m *mockTransportClient) CreateBackup(_ context.Context, _ *transport.BackupRequest) (*transport.BackupInfo, error) {
+	return nil, nil
+}
+
+func (m *mockTransportClient) ListBackups(_ context.Context) ([]transport.BackupInfo, error) {
+	return nil, nil
+}
+
+func (m *mockTransportClient) GetBackup(_ context.Context, _ string) (*transport.BackupInfo, error) {
+	return nil, nil
+}
+
+func (m *mockTransportClient) DeleteBackup(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockTransportClient) RestoreBackup(_ context.Context, _ *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	return nil, nil
+}
+
+func (m *mockTransportClient) VerifyBackup(_ context.Context, _ string) (*transport.VerifyResult, error) {
+	return nil, nil
+}
+
 // --- Custodian group operations ---
 
 func (m *mockTransportClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {

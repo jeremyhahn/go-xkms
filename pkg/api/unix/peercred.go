@@ -15,6 +15,7 @@ package unix
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -37,6 +38,10 @@ type PeerCredentialPolicy struct {
 	daemonUID   uint32
 	allowedUIDs map[uint32]struct{}
 	allowedGIDs map[uint32]struct{}
+
+	// exclusive drops the implicit admission of the daemon's own uid and
+	// root: only the configured allowlists are admitted.
+	exclusive bool
 }
 
 // NewPeerCredentialPolicy builds a policy admitting the calling process's
@@ -56,14 +61,26 @@ func NewPeerCredentialPolicy(allowedUIDs, allowedGIDs []uint32) *PeerCredentialP
 	return p
 }
 
+// NewExclusivePeerCredentialPolicy builds a policy admitting only the given
+// allowlists. Unlike NewPeerCredentialPolicy it does not admit the daemon's
+// own uid or root implicitly: a socket that exists to serve one named
+// consumer (an IKE daemon reaching a sign-only slot, say) refuses every other
+// process on the host, including privileged ones that were not named.
+func NewExclusivePeerCredentialPolicy(allowedUIDs, allowedGIDs []uint32) *PeerCredentialPolicy {
+	p := NewPeerCredentialPolicy(allowedUIDs, allowedGIDs)
+	p.exclusive = true
+	return p
+}
+
 // Allowed reports whether creds may connect: the daemon's own uid, root, or
-// an explicitly configured uid/gid. A nil creds (never produced by
-// peercred.FromConn on success) is refused.
+// an explicitly configured uid/gid, or under an exclusive policy only the
+// configured uid/gid. A nil creds (never produced by peercred.FromConn on
+// success) is refused.
 func (p *PeerCredentialPolicy) Allowed(creds *peercred.Credentials) bool {
 	if creds == nil {
 		return false
 	}
-	if creds.UID == 0 || creds.UID == p.daemonUID {
+	if !p.exclusive && (creds.UID == 0 || creds.UID == p.daemonUID) {
 		return true
 	}
 	if _, ok := p.allowedUIDs[creds.UID]; ok {
@@ -74,6 +91,11 @@ func (p *PeerCredentialPolicy) Allowed(creds *peercred.Credentials) bool {
 	}
 	return false
 }
+
+// ErrNoAdmittedPeers is returned by GRPCServer.Start for an exclusive peer
+// policy with no allowlisted uid or gid: such a listener could admit no
+// process, so it is a configuration error rather than a socket to bind.
+var ErrNoAdmittedPeers = errors.New("unix listener: exclusive peer policy names no uid or gid")
 
 // PeerCredentialDeniedError reports a Unix-socket peer refused at accept
 // time because its kernel-verified uid/gid matched neither the daemon's own

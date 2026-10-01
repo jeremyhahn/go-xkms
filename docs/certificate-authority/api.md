@@ -1,6 +1,6 @@
 # Certificate Authority — API
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 Transport shapes are described once in
 [`../key-management/api.md`](../key-management/api.md) §"How the six transports
@@ -141,6 +141,14 @@ wired. Verified by `pkg/api/rest/handlers_certseal_crosstenant_test.go`,
 `pkg/api/mcp/handlers_certseal_crosstenant_test.go` and
 `pkg/xkms/servicer_certseal_tenant_test.go`.
 
+## SPIFFE identities
+
+`pkg/spiffe` has no network surface. It is reachable in process through
+`sdk/go/spiffe`: `TrustDomain`, `WorkloadID`, `InvalidIDError`, `ID`,
+`ParseTrustDomain`, `ParseWorkloadID`, `WorkloadIDFromURL`, `ValidatePath`,
+`ValidatePathPrefix`, `BuildURI`, `ParseID`, `TenantFromURIs`, `KindUser`,
+`KindService`, and every `Err*` sentinel of the package.
+
 ## Missing coverage, recorded
 
 MCP is the weak transport for this feature: it carries the bundle, certificate,
@@ -163,6 +171,20 @@ The public bootstrap route has no non-HTTP equivalent, which is defensible —
 its whole purpose is to be reachable by a client that has nothing yet, and HTTP
 is what such a client has. Recorded as a gap so the decision is visible rather
 than assumed.
+
+### Caller-named profiles are in-process only
+
+`ipsec-vtep` and `x509-svid` take their names from the issuing caller
+(`SignOptions.SANS`). The wire `SignCSR` request on every transport carries a
+profile name but no caller names. Over the wire, these profiles are therefore
+refused, with `ErrCallerSANsRequired`, or with `ErrTenantSPIFFEWithCallerSANs`
+when the server stamps a tenant SPIFFE identity. They are never issued from
+the CSR's names. They are reached in-process, through the SDK's `TrustedCA`:
+
+- `sdk/go` `ProfileNameIPsecVTEP` and `ProfileNameX509SVID`;
+- `SubordinateIssuer.IssueSubordinateCA`;
+- `TrustedCASignOptions.SANS` and `TrustedCASignOptions.Validity`;
+- `CreateAttestationEvidenceExtension`.
 
 ## Request and response schemas
 

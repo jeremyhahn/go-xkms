@@ -2,11 +2,11 @@ package tpm2
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-enclave"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -41,19 +41,16 @@ func (tpm *TPM2) sealKeyInternal(
 		return nil, err
 	}
 
-	// Set the key password authorization value if provided.
+	// Set the key password authorization value if provided. An empty
+	// password is no password.
 	//
-	// This applies under PlatformPolicy too. The platform policy is a PolicyOR
-	// of PolicyPCR and PolicyAuthValue, and CreateKeySession takes the
-	// PolicyAuthValue branch whenever the key carries a password. That branch
-	// can only be satisfied by an object that actually has the auth value, so
-	// skipping it here (the previous "&& !keyAttrs.PlatformPolicy") sealed the
-	// object with empty auth and made the PIN fallback structurally impossible:
-	// every password unseal returned TPM_RC_AUTH_FAIL and incremented the
-	// dictionary-attack counter, eventually locking the TPM out.
-	if keyAttrs.Password != nil {
-		keyUserAuth = keyAttrs.Password.Bytes()
-	}
+	// This applies under PlatformPolicy too. The platform policy of an object
+	// with a password is a PolicyOR of PolicyPCR and PolicyAuthValue, and
+	// CreateKeySession takes the PolicyAuthValue branch whenever the key
+	// carries a password. That branch can only be satisfied by an object that
+	// actually has the auth value, so the auth value is set whatever the
+	// policy.
+	keyUserAuth = keyAuthValue(keyAttrs)
 
 	template := KeyedHashTemplate
 	template.NameAlg = tpm.algID
@@ -67,45 +64,10 @@ func (tpm *TPM2) sealKeyInternal(
 		keyAttrs.TPMAttributes.Template = template
 	}
 
-	// The pin of the platform policy this object is created under, captured
-	// once so the AuthPolicy attached to the object and the record persisted
-	// beside it describe the same PCR state.
-	var policyPin *store.PlatformPolicyPin
-
-	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
-		// Attach platform policy digest (PolicyOR of PolicyPCR + PolicyAuthValue)
-		// This MUST match what PlatformPolicySession() produces during unseal.
-		// The SRK uses PlatformPolicyDigest (key.go), and CreateKeySession uses
-		// PlatformPolicySession -- the sealed object must use the same digest.
-		//
-		// The digest is computed from a captured pin rather than straight from
-		// live PCRs. The value is identical -- the pin holds the PCR state as
-		// it reads right now -- but capturing it lets the record written below
-		// name the exact PolicyPCR branch this object's AuthPolicy covers, so
-		// the PIN branch can still reproduce the PolicyOR digest after the
-		// platform measurements change.
-		tpl := keyAttrs.TPMAttributes.Template
-		pin, err := tpm.capturePlatformPolicyPin()
-		if err != nil {
-			return nil, err
-		}
-		policyDigest, err := platformPolicyDigestFromPin(pin)
-		if err != nil {
-			return nil, err
-		}
-		tpm.logger.Info("tpm: sealKeyInternal - using PlatformPolicyDigest for sealed object AuthPolicy",
-			slog.String("policy_digest", fmt.Sprintf("%x", policyDigest.Buffer)),
-			slog.String("pcr_digest", fmt.Sprintf("%x", pin.PCRDigest)),
-			slog.String("cn", keyAttrs.CN))
-		tpl.AuthPolicy = policyDigest
-		keyAttrs.TPMAttributes.Template = tpl
-		policyPin = pin
-	}
-
-	// A named, authorized policy replaces the password path entirely: the
-	// template gets the policy's authPolicy and loses USERWITHAUTH.
+	// The object's policy -- the platform policy, a named policy, or none --
+	// and the USERWITHAUTH that goes with it (see bindObjectPolicy).
 	sealTemplate := keyAttrs.TPMAttributes.Template
-	policyBinding, err := tpm.namedPolicyBinding(keyAttrs, &sealTemplate)
+	policyPin, policyBinding, err := tpm.bindObjectPolicy(keyAttrs, &sealTemplate, keyUserAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -262,6 +224,20 @@ func (tpm *TPM2) sealKeyInternal(
 	return sealKeyResponse, nil
 }
 
+// requireSealProtection returns ErrSealUnprotected when the sealed object
+// keyAttrs describes would be bound to neither a policy nor a non-empty
+// password. Its USER role would then answer an empty password, so anyone able
+// to load it could unseal it.
+func requireSealProtection(keyAttrs *types.KeyAttributes) error {
+	if keyAttrs.TPMPolicy != "" || keyAuthValue(keyAttrs) != nil {
+		return nil
+	}
+	if keyAttrs.TPMAttributes != nil && len(keyAttrs.TPMAttributes.Template.AuthPolicy.Buffer) > 0 {
+		return nil
+	}
+	return &errs.Detail{Err: ErrSealUnprotected, Detail: keyAttrs.CN}
+}
+
 // unsealKeyInternal returns sealed data for a keyed hash using the platform
 // PCR Policy Session to satisfy the TPM to release the secret.
 //
@@ -317,7 +293,7 @@ func (tpm *TPM2) unsealKeyInternal(
 
 	// Create key session. The backend is threaded through so the object's
 	// platform policy pin is read from the same store the blobs came from.
-	session2, closer2, err2 := tpm.createKeySession(keyAttrs, backend)
+	session2, closer2, err2 := tpm.objectSession(keyAttrs, backend, sealKey.ObjectHandle)
 	defer func() {
 		if err := closer2(); err != nil {
 			tpm.logger.Error("failed to close key session", slog.String("error", err.Error()))
@@ -427,7 +403,7 @@ func (tpm *TPM2) unsealFromBlobs(
 	tpm.logger.Info("tpm: unsealFromBlobs - creating key session",
 		slog.String("tpm_policy", keyAttrs.TPMPolicy),
 		slog.String("cn", keyAttrs.CN))
-	session2, closer2, err2 := tpm.createKeySession(keyAttrs, backend)
+	session2, closer2, err2 := tpm.objectSession(keyAttrs, backend, sealKey.ObjectHandle)
 	defer func() {
 		if err := closer2(); err != nil {
 			tpm.logger.Error("failed to close key session", slog.String("error", err.Error()))

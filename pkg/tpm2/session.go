@@ -493,20 +493,9 @@ func (tpm *TPM2) platformPolicySession(
 	}
 
 	if usePCRBranch {
-		// Execute PolicyPCR in the live session
-		_, err = tpm2.PolicyPCR{
-			PolicySession: session.Handle(),
-			PcrDigest: tpm2.TPM2BDigest{
-				Buffer: pcrDigest,
-			},
-			Pcrs: platformPolicyPCRSelection(hashAlgID, tpm.config.PlatformPCR),
-		}.Execute(tpm.transport)
-		if err != nil {
-			if closeErr := closer(); closeErr != nil {
-				tpm.logger.Error("failed to close session after PolicyPCR error",
-					slog.String("error", closeErr.Error()))
-			}
-			return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyPCR execute: %v", err)}
+		if err := tpm.platformPolicyPCR(session, hashAlgID, pcrDigest); err != nil {
+			tpm.closeSession(closer, "platform policy")
+			return nil, nil, err
 		}
 		tpm.logger.Debug("tpm: PlatformPolicySession - PCR branch executed")
 	} else {
@@ -556,6 +545,50 @@ func (tpm *TPM2) platformPolicySession(
 			slog.String("branch2_auth", fmt.Sprintf("%x", branch2Digest)))
 	}
 
+	return session, closer, nil
+}
+
+// platformPolicyPCR executes TPM2_PolicyPCR over the platform PCR in session,
+// asserting pcrDigest, the digest of the platform PCR as it reads now.
+func (tpm *TPM2) platformPolicyPCR(
+	session tpm2.Session,
+	hashAlgID tpm2.TPMAlgID,
+	pcrDigest []byte) error {
+
+	_, err := tpm2.PolicyPCR{
+		PolicySession: session.Handle(),
+		PcrDigest:     tpm2.TPM2BDigest{Buffer: pcrDigest},
+		Pcrs:          platformPolicyPCRSelection(hashAlgID, tpm.config.PlatformPCR),
+	}.Execute(tpm.transport)
+	if err != nil {
+		return &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyPCR execute: %v", err)}
+	}
+	return nil
+}
+
+// platformPCRSession returns a policy session that has executed
+// TPM2_PolicyPCR over the live platform PCR and nothing else. It satisfies
+// the authPolicy of an object sealed to the platform policy without a
+// password, which is the PolicyPCR branch alone (see sealKeyInternal): the
+// session proves no secret, so it is unsalted. It fails with
+// TPM_RC_POLICY_FAIL at use once the platform state has moved.
+func (tpm *TPM2) platformPCRSession() (tpm2.Session, func() error, error) {
+	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	if err != nil {
+		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+	}
+	pcrDigest, err := tpm.PlatformPolicyDigestHash()
+	if err != nil {
+		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+	}
+	session, closer, err := tpm.startPolicySession(hashAlgID, nil)
+	if err != nil {
+		return nil, noopCloser, &errs.Joined{Lead: ErrPlatformPolicySession, Cause: err}
+	}
+	if err := tpm.platformPolicyPCR(session, hashAlgID, pcrDigest); err != nil {
+		tpm.closeSession(closer, "platform PCR policy")
+		return nil, noopCloser, err
+	}
 	return session, closer, nil
 }
 
@@ -831,57 +864,12 @@ func (tpm *TPM2) createKeySession(
 			return session, closer, err
 		}
 	} else if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
-
-		// Determine whether the key has a meaningful (non-empty) auth value.
-		// See CreateSession for the full rationale on why empty auth must be
-		// treated as nil to avoid TPM_RC_BAD_AUTH after restart.
-		var keyAuth []byte
-		if keyAttrs.Password != nil {
-			keyAuth = keyAttrs.Password.Bytes()
-		}
-
-		if len(keyAuth) > 0 {
-			// Password + PlatformPolicy: use platform policy password branch.
-			// The key's auth value must be passed so the session HMAC
-			// includes it (TPM 2.0 Part 1, Section 19.6).
-			pin, pinErr := tpm.loadPlatformPolicyPin(keyAttrs, backend)
-			if pinErr != nil {
-				return nil, noopCloser, pinErr
-			}
-			session, closer, err = tpm.platformPolicySession(keyAuth, pin)
-			if err != nil {
-				if closer == nil {
-					closer = noopCloser
-				}
-				return session, closer, err
-			}
-		} else {
-			// PlatformPolicy without password: use platform policy PCR branch
-			session, closer, err = tpm.PlatformPolicySession(nil)
-			if err != nil {
-				if closer == nil {
-					closer = noopCloser
-				}
-				return session, closer, err
-			}
+		session, closer, err = tpm.platformKeySession(keyAttrs, backend)
+		if err != nil {
+			return nil, noopCloser, err
 		}
 	} else {
-
-		var keyAuth []byte
-		if keyAttrs.Password != nil {
-			// Check if password is valid (error passwords return error from String())
-			_, err = keyAttrs.Password.String()
-			if err != nil {
-				// noopCloser, not nil: UnsealKey registers its deferred
-				// closer call before inspecting this error, so returning a nil
-				// closer here panicked inside the deferred function instead of
-				// reporting the bad password. A panic unwinding through the
-				// unseal path skips the transient-object flushes below it.
-				return nil, noopCloser, err
-			}
-			keyAuth = keyAttrs.Password.Bytes()
-		}
-		session, closer, err = tpm.objectAuthSession(keyAuth, encryptNone)
+		session, closer, err = tpm.passwordKeySession(keyAttrs)
 		if err != nil {
 			return nil, noopCloser, err
 		}
@@ -892,6 +880,51 @@ func (tpm *TPM2) createKeySession(
 	}
 
 	return session, closer, nil
+}
+
+// platformKeySession answers the USER role of a key bound to the platform
+// policy, PolicyOR(PolicyPCR, PolicyAuthValue). A key with a non-empty auth
+// value takes the PolicyAuthValue branch, its PolicyPCR operand rebuilt from
+// the pin recorded beside the key in backend; one without takes the PolicyPCR
+// branch against the live platform PCR. An empty auth value is treated as
+// none, for the reason CreateSession gives. backend may be nil, in which case
+// the platform backend is used.
+func (tpm *TPM2) platformKeySession(
+	keyAttrs *types.KeyAttributes,
+	backend store.KeyBackend) (tpm2.Session, func() error, error) {
+
+	var keyAuth []byte
+	if keyAttrs.Password != nil {
+		keyAuth = keyAttrs.Password.Bytes()
+	}
+	if len(keyAuth) == 0 {
+		return tpm.PlatformPolicySession(nil)
+	}
+
+	// The key's auth value must be passed so the session HMAC includes it
+	// (TPM 2.0 Part 1, Section 19.6).
+	pin, err := tpm.loadPlatformPolicyPin(keyAttrs, backend)
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	return tpm.platformPolicySession(keyAuth, pin)
+}
+
+// passwordKeySession answers the USER role of a key bound to no policy with
+// its auth value, proven through a salted HMAC session when it has one.
+func (tpm *TPM2) passwordKeySession(
+	keyAttrs *types.KeyAttributes) (tpm2.Session, func() error, error) {
+
+	var keyAuth []byte
+	if keyAttrs.Password != nil {
+		// A password that cannot be read (RequiredPassword) is reported
+		// here, before any session is started.
+		if _, err := keyAttrs.Password.String(); err != nil {
+			return nil, noopCloser, err
+		}
+		keyAuth = keyAttrs.Password.Bytes()
+	}
+	return tpm.objectAuthSession(keyAuth, encryptNone)
 }
 
 // Loads the requested TPMAlgKeyedHash encrypted public and private

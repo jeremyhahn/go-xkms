@@ -16,11 +16,13 @@ the folder in the same commit that changes the behavior.
 | Feature | What it covers |
 |---------|----------------|
 | [acme-issuance](acme-issuance/) | ACME RFC 8555 server and client, ARI, DNS-01/HTTP-01, TPM enrollment |
+| [attestation-evidence](attestation-evidence/) | RFC 9334 evidence-level primitives: TPM2_Quote, AK and EK certificate chains, strict TCG crypto-agile event-log parsing and replay, TPM2_Certify and IAK/IDevID re-exports, and signed reference values (CoRIM), all in `sdk/go/evidence` |
 | [attestation-verifier](attestation-verifier/) | The generic, backend-agnostic `pkg/attestation` API — chain/signature verification (`Verifier`) and per-format key-binding invariants (`VerifyInvariants`) — that gates CSR issuance on hardware provenance for any format, TPM2/PIV/Android included |
 | [attested-peer](attested-peer/) | Is the other end of a connection a currently attested system? The quote→verdict primitive, IDevID/IAK credential validation, and TLS channel binding |
 | [audit-log](audit-log/) | Tamper-evident audit records and their signing chain |
 | [auth-factors](auth-factors/) | Factor composition, adapters, and the identity/key-domain split |
 | [avr-device-backend](avr-device-backend/) | An AVR device with a secure-element identity as an xkms key provider and DICE attester, over the arduino-generic wire protocol |
+| [backup](backup/) | Whole-node backup/restore over the embedded go-qrdb node's shard-snapshot capability (`backup:*`); per-key export/import is [key-management](key-management/) |
 | [certificate-authority](certificate-authority/) | `TrustedCA` — cross-signed root pool, AIA import, DANE TLSA publishing |
 | [clustering](clustering/) | Embedding a go-qrdb clustered node behind the `raft` build tag: Raft config mapping, inter-node mTLS provisioning, not-leader redirects, the `xkmsctl cluster`/`rebalance` control plane, the read-only REST cluster status/membership surface for the web console, and cluster CA key custody |
 | [crypto-backends](crypto-backends/) | The `Backend` contract and every software, hardware and cloud implementation |
@@ -32,7 +34,7 @@ the folder in the same commit that changes the behavior.
 | [host-embedding](host-embedding/) | Mounting the `xkms` ServiceModule in a qrdb-embedding host: the host supplies dependencies (qrdb client, barrier registry, PIN backend, sealer, CA config, PCR reader), `pkg/compose` builds the Password Manager, SSH, CA, platform store, credential and policy stores through the same path as `xkmsd`, and the barrier routes stay the host's unless it opts in |
 | [init-ceremony](init-ceremony/) | `xkmsd init` — the KMS+CA half and the delegated IAM half |
 | [key-management](key-management/) | Key lifecycle, key providers, symmetric and asymmetric operations |
-| [luks](luks/) | The root module's `pkg/luks`: FIPS-aware LUKS volume lifecycle (`Manager`/`Executor`) and TPM 2.0 passphrase sealing (`TPMSealer`); `xkey`'s own LUKS2 implementation is documented separately in `xkey/docs/luks/` |
+| [luks](luks/) | The single LUKS implementation in the stack: FIPS-aware volume lifecycle (`Manager`/`Executor`, `LibExecutor` on `go-luks2`) and TPM 2.0 passphrase sealing (`TPMSealer`, configurable Platform-SRK/Shared-SRK parent). `xkey` consumes it through `sdk/go/luks`; its desktop-specific glue is documented separately in `xkey/docs/luks/` |
 | [multi-tenancy](multi-tenancy/) | Per-tenant isolation, tenant barriers, tenant-scoped keys |
 | [observability](observability/) | Prometheus instrumentation — operation counters/histograms, backend health, keys/certs totals, connection tracking |
 | [oidc-credentials](oidc-credentials/) | Server-side OIDC credentials: named OAuth/OIDC logins on the tenant barrier, tenant-shared or personal, kept fresh by a leader-elected scheduler; rotating refresh tokens under a per-credential lock with compare-and-swap; device-flow and import logins; `GetAccessToken` by reference and the codex `chatgptAuthTokens` projection — alongside xkey's unchanged local OIDC on the shared `pkg/oidc` core |
@@ -47,6 +49,7 @@ the folder in the same commit that changes the behavior.
 | [release-engineering](release-engineering/) | Cutting an -alpha release in two steps — `make release-alpha` prepares a pull request, `make release-tag` tags it once merged — the lockstep tag namespaces, the reciprocal `go.mod` pin edges, the exported-API growth gate |
 | [sealing-and-barrier](sealing-and-barrier/) | Hardware and cloud seal strategies contributed to the qrdb barrier |
 | [share-custody](share-custody/) | Shamir share custody, custodian groups and share collection |
+| [sign-server](sign-server/) | Embeddable, node-local, sign-only xkms server (`pkg/signserver`, `sdk/go/signserver`): an exclusive SO_PEERCRED unix socket a remote-mode PKCS#11 module signs through, with only named keys exposed, and CGO-free key provisioning under the CKA_LABEL/CKA_ID the module exposes |
 | [signing](signing/) | The embedded SDK's `Sign`/`Verify` — persisted per-blob checksums (`SignOptions.BlobCN`, `VerifyOpts.IntegrityCheck`) shared by every backend |
 | [ssh-agent-sessions](ssh-agent-sessions/) | Serving an xkms-held key over an ephemeral SSH agent socket with no connection target — git commit signing, `ssh-keygen -Y sign` |
 | [ssh-keys](ssh-keys/) | SSH keys (software or backend-backed), host-key pins, and authorized_keys entries — key lifecycle, `pkg/ssh/keys`/`known_hosts`/`authorized`, and the REST/gRPC/MCP/CLI surface over them |

@@ -764,24 +764,6 @@ func TestSeal_TPMPolicyRefusedOffTPM(t *testing.T) {
 	assert.Nil(t, sealer.lastSealOpts, "a refused request never reaches the backend")
 }
 
-// TestSeal_NoTPMPolicyCarriesNoSealPolicy proves a seal without a TPM policy
-// carries no PCR seal policy: the PCR-selection path that bound nothing was
-// removed.
-func TestSeal_NoTPMPolicyCarriesNoSealPolicy(t *testing.T) {
-	sealer := setupSealableService(t)
-	svc, err := Get()
-	require.NoError(t, err)
-
-	_, err = svc.Seal(context.Background(), &transport.SealRequest{
-		Backend: "software",
-		Data:    []byte("secret"),
-	})
-	require.NoError(t, err)
-
-	require.NotNil(t, sealer.lastSealOpts)
-	assert.Nil(t, sealer.lastSealOpts.TPMPolicy)
-}
-
 // TestTPMSealedObject names the TPM2 sealed object a key ID names, bound to
 // the policy the request named, and refuses to name one without a key ID.
 func TestTPMSealedObject(t *testing.T) {

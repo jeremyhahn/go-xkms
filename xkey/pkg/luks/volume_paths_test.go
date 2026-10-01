@@ -24,57 +24,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestVolume_Create_ParentIsFile verifies Create reports a typed create_dir
-// error when the container's parent path is not a directory. This is the
-// deterministic (privilege-independent) failure of the very first step of
-// container creation.
-func TestVolume_Create_ParentIsFile(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	blocker := filepath.Join(dir, "not-a-directory")
-	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
-
-	v := NewVolumeWithPaths(filepath.Join(blocker, "vault.luks"), filepath.Join(dir, "mnt"))
-
-	err := v.Create(1<<20, "passphrase")
-	require.Error(t, err)
-
-	var volErr *VolumeError
-	require.ErrorAs(t, err, &volErr)
-	assert.Equal(t, "create_dir", volErr.Operation)
-	assert.Equal(t, blocker, volErr.Path)
-	assert.NotNil(t, volErr.Unwrap())
-}
-
-// TestVolume_Create_NegativeSizeCleansUp verifies that a failed truncate does
-// not leave a partially created container file behind. A leftover zero-byte
-// file would make every later Create return ErrVolumeAlreadyExists.
-func TestVolume_Create_NegativeSizeCleansUp(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	luksPath := filepath.Join(dir, "sub", "vault.luks")
-
-	v := NewVolumeWithPaths(luksPath, filepath.Join(dir, "mnt"))
-
-	err := v.Create(-1, "passphrase")
-	require.Error(t, err)
-
-	var volErr *VolumeError
-	require.ErrorAs(t, err, &volErr)
-	assert.Equal(t, "truncate", volErr.Operation)
-
-	_, statErr := os.Stat(luksPath)
-	assert.True(t, os.IsNotExist(statErr), "the partially created container must be removed")
-	assert.False(t, v.Exists())
-}
-
 // TestVolume_Unlock_AlreadyMounted uses the root filesystem, which is always a
 // mount point, to verify Unlock refuses to stack a second mount.
 func TestVolume_Unlock_AlreadyMounted(t *testing.T) {
-	t.Parallel()
-
 	luksPath := filepath.Join(t.TempDir(), "vault.luks")
 	require.NoError(t, os.WriteFile(luksPath, []byte("container"), 0600))
 
@@ -84,7 +36,6 @@ func TestVolume_Unlock_AlreadyMounted(t *testing.T) {
 	require.True(t, mounted, "/ must be reported as mounted")
 
 	assert.ErrorIs(t, v.Unlock("passphrase"), ErrVolumeAlreadyMounted)
-	assert.Empty(t, v.LoopDevice, "no loop device may be attached when the mount check fails")
 }
 
 func TestVolume_GetMountPoint(t *testing.T) {

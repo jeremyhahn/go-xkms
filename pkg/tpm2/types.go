@@ -498,6 +498,21 @@ var (
 	ErrInvalidSealBackend        = errors.New("tpm: opts.Backend must implement store.KeyBackend")
 	ErrSSRKNotAvailable          = errors.New("tpm: SSRK not available, TPM may not be provisioned")
 
+	// ErrSealUnprotected is returned when a sealed object would be bound to
+	// neither a policy nor a non-empty password: its USER role would answer
+	// an empty password, so anyone able to load it could unseal it.
+	ErrSealUnprotected = errors.New("tpm: a sealed object needs a policy or a password")
+
+	// ErrSealAuthPolicyConflict is returned when a seal names both a
+	// caller-computed AuthPolicy digest and a TPM policy: an object has one
+	// authPolicy.
+	ErrSealAuthPolicyConflict = errors.New("tpm: a seal takes an AuthPolicy digest or a TPM policy, not both")
+
+	// ErrSealAuthPolicySize is returned when a caller-computed AuthPolicy
+	// digest is not the size of the sealed object's name algorithm digest,
+	// so no policy session could ever reach it.
+	ErrSealAuthPolicySize = errors.New("tpm: the AuthPolicy digest does not match the sealed object's name algorithm")
+
 	// TPM_RC errors
 	ErrCommandNotSupported = tpm2.TPMRC(0xb0143)
 

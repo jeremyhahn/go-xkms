@@ -1381,6 +1381,32 @@ func (m *mockXKMSService) BarrierGenerateRootToken(ctx context.Context, req *tra
 	return nil, nil
 }
 
+// Backup operations
+
+func (m *mockXKMSService) CreateBackup(ctx context.Context, req *transport.BackupRequest) (*transport.BackupInfo, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) ListBackups(ctx context.Context) ([]transport.BackupInfo, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) GetBackup(ctx context.Context, id string) (*transport.BackupInfo, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) DeleteBackup(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *mockXKMSService) RestoreBackup(ctx context.Context, req *transport.RestoreRequest) (*transport.RestoreResult, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) VerifyBackup(ctx context.Context, id string) (*transport.VerifyResult, error) {
+	return nil, nil
+}
+
 // Custodian group operations
 
 func (m *mockXKMSService) CreateCustodianGroup(ctx context.Context, req *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
