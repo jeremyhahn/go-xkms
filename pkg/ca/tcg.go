@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -777,7 +778,7 @@ func (ca *CA) ImportEndorsementKeyCertificate(cert *x509.Certificate) error {
 	}
 
 	// Warn when the TCG EK OID is absent; some manufacturer certs omit it.
-	if !hasTCGEKCertificateEKU(cert) {
+	if !evidence.HasEKCertificateEKU(cert) {
 		slog.Warn("ca: importing EK certificate without TCG EK OID extension",
 			"cn", cert.Subject.CommonName)
 	}
@@ -805,7 +806,7 @@ func (ca *CA) EndorsementKeyCertificate(cn string) (*x509.Certificate, error) {
 	}
 
 	// Warn when the TCG EK OID is absent.
-	if !hasTCGEKCertificateEKU(cert) {
+	if !evidence.HasEKCertificateEKU(cert) {
 		slog.Warn("ca: retrieved EK certificate without TCG EK OID extension",
 			"cn", cn)
 	}

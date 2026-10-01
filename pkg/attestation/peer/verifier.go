@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	evid "github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
 )
 
 // Verifier renders a Verdict on a peer's attestation evidence under a
@@ -163,14 +165,19 @@ func (o *outcome) checkAKCertificate(evidence *Evidence, policy *Policy, now tim
 		o.fail(absent("no attestation key certificate in evidence; tcg-cap-verifiedTPMRestricted cannot be checked (TCG DevID v1 r12 §8.2)"))
 		return nil
 	}
-	leaf, extra, f := parseAKCertificates(evidence.AKCertificatePEM)
-	if f != nil {
-		o.fail(f)
+	leaf, extra, err := evid.ParseCertificatesPEM(evidence.AKCertificatePEM)
+	if err != nil {
+		o.fail(fromEvidence(err))
 		return nil
 	}
-	key, f := verifyAKCertificate(leaf, extra, policy, now)
-	if f != nil {
-		o.fail(f)
+	key, err := evid.VerifyAKCertificate(leaf, extra, evid.AKCertificateOptions{
+		Roots:             policy.Anchors,
+		Intermediates:     policy.Intermediates,
+		Now:               now,
+		AllowUnrestricted: policy.AllowUnrestrictedAK,
+	})
+	if err != nil {
+		o.fail(fromEvidence(err))
 		return nil
 	}
 	o.verdict.Checks.AKCertificate = true
@@ -180,28 +187,28 @@ func (o *outcome) checkAKCertificate(evidence *Evidence, policy *Policy, now tim
 // checkQuote parses the TPMS_ATTEST. It is not itself one of the eight
 // checks, but every check that reads the quote depends on it, and it stamps
 // the TPM clock information onto the verdict.
-func (o *outcome) checkQuote(evidence *Evidence) *quote {
+func (o *outcome) checkQuote(evidence *Evidence) *evid.Quote {
 	if len(evidence.Quote) == 0 {
 		o.fail(absent("no quote in evidence"))
 		return nil
 	}
-	q, f := parseQuote(evidence.Quote)
-	if f != nil {
-		o.fail(f)
+	q, err := evid.ParseQuote(evidence.Quote)
+	if err != nil {
+		o.fail(fromEvidence(err))
 		return nil
 	}
 	o.verdict.Clock = ClockInfo{
-		Clock:        q.attest.ClockInfo.Clock,
-		ResetCount:   q.attest.ClockInfo.ResetCount,
-		RestartCount: q.attest.ClockInfo.RestartCount,
-		Safe:         bool(q.attest.ClockInfo.Safe),
+		Clock:        q.Clock.Clock,
+		ResetCount:   q.Clock.ResetCount,
+		RestartCount: q.Clock.RestartCount,
+		Safe:         q.Clock.Safe,
 	}
-	o.verdict.FirmwareVersion = q.attest.FirmwareVersion
+	o.verdict.FirmwareVersion = q.FirmwareVersion
 	return q
 }
 
 // checkSignature verifies the attestation key's signature over the quote.
-func (o *outcome) checkSignature(evidence *Evidence, q *quote, key crypto.PublicKey) {
+func (o *outcome) checkSignature(evidence *Evidence, q *evid.Quote, key crypto.PublicKey) {
 	if len(evidence.Signature) == 0 {
 		o.fail(absent("no quote signature in evidence"))
 		return
@@ -214,8 +221,8 @@ func (o *outcome) checkSignature(evidence *Evidence, q *quote, key crypto.Public
 		o.fail(absent("signature not evaluated: quote did not parse"))
 		return
 	}
-	if f := verifySignature(key, q.hash, evidence.Quote, evidence.Signature); f != nil {
-		o.fail(f)
+	if err := q.VerifySignature(key, evidence.Signature); err != nil {
+		o.fail(fromEvidence(err))
 		return
 	}
 	o.verdict.Checks.Signature = true
@@ -225,7 +232,7 @@ func (o *outcome) checkSignature(evidence *Evidence, q *quote, key crypto.Public
 // channel, the channel binding. The two are one value in the quote, so a
 // quote that carries the bare nonce under a binding policy passes the nonce
 // check and fails the binding check; anything else fails both.
-func (o *outcome) checkQualifyingData(evidence *Evidence, q *quote, policy *Policy) {
+func (o *outcome) checkQualifyingData(evidence *Evidence, q *evid.Quote, policy *Policy) {
 	bound := len(policy.ChannelBinding) > 0
 	if !bound {
 		o.verdict.Checks.ChannelBinding = true
@@ -241,7 +248,7 @@ func (o *outcome) checkQualifyingData(evidence *Evidence, q *quote, policy *Poli
 		return
 	}
 
-	extra := q.attest.ExtraData.Buffer
+	extra := q.ExtraData
 	expected := QualifyingData(evidence.Nonce, policy.ChannelBinding)
 	if subtle.ConstantTimeCompare(extra, expected) == 1 {
 		o.verdict.Checks.Nonce = true
@@ -261,7 +268,7 @@ func (o *outcome) checkQualifyingData(evidence *Evidence, q *quote, policy *Poli
 }
 
 // checkPCRDigest proves the reported values against the signed digest.
-func (o *outcome) checkPCRDigest(evidence *Evidence, q *quote) {
+func (o *outcome) checkPCRDigest(evidence *Evidence, q *evid.Quote) {
 	if len(evidence.PCRs) == 0 {
 		o.fail(absent("no PCR values in evidence; the peer must report the values it quoted"))
 		return
@@ -270,8 +277,8 @@ func (o *outcome) checkPCRDigest(evidence *Evidence, q *quote) {
 		o.fail(absent("PCR digest not evaluated: quote did not parse"))
 		return
 	}
-	if f := q.verifyPCRDigest(evidence.PCRs); f != nil {
-		o.fail(f)
+	if err := q.VerifyPCRValues(evidence.PCRs); err != nil {
+		o.fail(fromEvidence(err))
 		return
 	}
 	o.verdict.Checks.PCRDigest = true
@@ -280,7 +287,7 @@ func (o *outcome) checkPCRDigest(evidence *Evidence, q *quote) {
 // checkRequiredPCRs confirms the quote covers every register the policy
 // insists on. A register the peer did not quote is an absence: the evidence
 // does not cover what the policy needs, and nothing about it was wrong.
-func (o *outcome) checkRequiredPCRs(q *quote, policy *Policy) {
+func (o *outcome) checkRequiredPCRs(q *evid.Quote, policy *Policy) {
 	if len(policy.RequiredPCRs) == 0 {
 		o.verdict.Checks.RequiredPCRs = true
 		return
@@ -291,12 +298,12 @@ func (o *outcome) checkRequiredPCRs(q *quote, policy *Policy) {
 	}
 	var missing []int
 	for _, idx := range policy.RequiredPCRs {
-		if !q.covers(idx) {
+		if !q.Covers(idx) {
 			missing = append(missing, idx)
 		}
 	}
 	if len(missing) > 0 {
-		o.fail(absent("required PCR " + formatIndices(missing) + " was not quoted"))
+		o.fail(absent("required PCR " + evid.FormatIndices(missing) + " was not quoted"))
 		return
 	}
 	o.verdict.Checks.RequiredPCRs = true
@@ -317,8 +324,8 @@ func (o *outcome) checkBaseline(evidence *Evidence, policy *Policy) {
 		o.fail(absent("no PCR baseline in policy; nothing to compare the quoted state against"))
 		return
 	}
-	if f := compareBaseline(o.verdict.PCRs, policy.Baseline); f != nil {
-		o.fail(f)
+	if err := evid.ComparePCRs(o.verdict.PCRs, policy.Baseline); err != nil {
+		o.fail(fromEvidence(err))
 		return
 	}
 	o.verdict.Checks.Baseline = true

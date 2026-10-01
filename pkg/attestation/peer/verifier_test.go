@@ -182,24 +182,6 @@ func TestVerify_UnrestrictedCertificateIsRefused(t *testing.T) {
 	}
 }
 
-func TestVerify_LegacyPolicyIdentifierIsAccepted(t *testing.T) {
-	f := newFixture(t)
-	ev := f.evidence(t)
-	leaf, _, fail := parseAKCertificates(ev.AKCertificatePEM)
-	if fail != nil {
-		t.Fatal(fail.reason)
-	}
-	leaf.Policies = nil
-	leaf.PolicyIdentifiers = append(leaf.PolicyIdentifiers, oidTCGVerifiedTPMRestricted)
-	if !carriesVerifiedTPMRestricted(leaf) {
-		t.Fatal("legacy PolicyIdentifiers form not recognised")
-	}
-	leaf.PolicyIdentifiers = nil
-	if carriesVerifiedTPMRestricted(leaf) {
-		t.Fatal("certificate with no policies reported as Restricted")
-	}
-}
-
 func TestVerify_CertificateFromForeignCAIsCryptographic(t *testing.T) {
 	f := newFixture(t)
 	other := newTestCA(t)

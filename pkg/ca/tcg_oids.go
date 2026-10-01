@@ -17,6 +17,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
 )
 
 // TCG Object Identifiers for TPM certificate extensions
@@ -83,7 +85,9 @@ var (
 	OIDTCGDiceKpECA          = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 12}
 
 	// TCG Certificate Types (2.23.133.8)
-	OIDTCGKpEKCertificate       = asn1.ObjectIdentifier{2, 23, 133, 8, 1}
+	// OIDTCGKpEKCertificate is the evidence primitive's value; one OID, one
+	// declaration.
+	OIDTCGKpEKCertificate       = evidence.OIDTCGKpEKCertificate
 	OIDTCGKpPlatformCertificate = asn1.ObjectIdentifier{2, 23, 133, 8, 2}
 	OIDTCGKpAIKCertificate      = asn1.ObjectIdentifier{2, 23, 133, 8, 3}
 

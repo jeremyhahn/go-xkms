@@ -48,6 +48,8 @@ type defaultProfileRegistry struct {
 //   - ca: Certificate Authority (subordinate CA)
 //   - fido2-attestation: FIDO2 authenticator attestation (WebAuthn L2 8.2.1)
 //   - dice-idevid: DICE initial device identity (DICE Certificate Profiles 5.1.6.1)
+//   - ipsec-vtep: IKEv2 tunnel endpoint (RFC 4945), caller-supplied names
+//   - x509-svid: SPIFFE X.509-SVID leaf, caller-supplied names
 //
 // Thread-safe: Yes
 func NewDefaultProfileRegistry() ProfileRegistry {
@@ -78,6 +80,8 @@ func (r *defaultProfileRegistry) registerBuiltinProfiles() {
 		NewTCGDeviceIdentityProfile(),
 		NewFIDO2AttestationProfile(),
 		NewDICEDeviceIdentityProfile(),
+		NewIPsecVTEPProfile(),
+		NewX509SVIDProfile(),
 	}
 
 	for _, profile := range profiles {
