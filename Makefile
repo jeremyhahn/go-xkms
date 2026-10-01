@@ -2779,10 +2779,22 @@ integration-test-xkey-oath:
 	$(call run_in_devcontainer,cd xkey && $(GO) test -v -tags='integration' ./test/integration/oath/... -timeout 5m,integration-test-xkey-oath)
 	@echo "$(GREEN)✓ xkey OATH integration tests complete$(RESET)"
 
-.PHONY: integration-test-xkey-password
-## integration-test-xkey-password: Run static password CLI integration tests
-integration-test-xkey-password:
-	$(call run_in_devcontainer,cd xkey && $(GO) test -v -tags='integration' ./test/integration/password/... -timeout 5m,integration-test-xkey-password)
+.PHONY: integration-test-password-vault
+## integration-test-password-vault: Password store and personal vault end to end (devcontainer): every
+## vault factor on its real token against a real xkmsd, recovery, isolation, the xKey browser bridge
+# One suite (xkey/test/integration/password) covers xkey's local store and the
+# server vault. It builds xkmsd, xkmsctl, xkey and the test binary as the
+# devcontainer user, then runs the test binary as root: the passkey leg opens
+# /dev/uhid for xkey's virtual FIDO2 authenticator.
+PASSWORD_VAULT_BIN := $(DEVCONTAINER_REPO)/build/bin
+integration-test-password-vault: stage-gomodauth
+	$(call run_in_devcontainer,if [ -s .devcontainer/gomodauth.env ]; then . .devcontainer/gomodauth.env; fi; mkdir -p build/bin && \
+		$(GO) build -buildvcs=false -tags 'codec_cbor codec_json codec_msgpack' -o build/bin/xkmsd ./cmd/xkmsd && \
+		$(GO) build -buildvcs=false -tags 'codec_cbor codec_json codec_msgpack' -o build/bin/xkmsctl ./cmd/xkmsctl && \
+		cd xkey && GOWORK=off $(GO) build -buildvcs=false -tags 'codec_json pkcs11' -o ../build/bin/xkey ./cmd/xkey && \
+		GOWORK=off $(GO) test -c -tags 'integration passwordvault codec_json pkcs11' -o ../build/bin/password-vault.test ./test/integration/password && \
+		cd test/integration/password && sudo -E env XKMSD_BIN=$(PASSWORD_VAULT_BIN)/xkmsd XKMSCTL_BIN=$(PASSWORD_VAULT_BIN)/xkmsctl XKEY_CLI_BIN=$(PASSWORD_VAULT_BIN)/xkey \
+		$(PASSWORD_VAULT_BIN)/password-vault.test -test.v -test.count=1 -test.timeout 20m,integration-test-password-vault)
 
 .PHONY: integration-test-xkey-touch
 ## integration-test-xkey-touch: Run touch CLI integration tests
@@ -2844,7 +2856,7 @@ integration-test-xkey-luks:
 
 .PHONY: integration-test-xkey
 ## integration-test-xkey: Run all xkey integration tests (FIDO2, CTAP, OIDC, PIV, OATH, Password, Touch, SSH, LUKS)
-integration-test-xkey: integration-test-xkey-backends integration-test-xkey-ctap integration-test-xkey-piv integration-test-xkey-oath integration-test-xkey-password integration-test-xkey-touch integration-test-xkey-ssh integration-test-xkey-luks
+integration-test-xkey: integration-test-xkey-backends integration-test-xkey-ctap integration-test-xkey-piv integration-test-xkey-oath integration-test-password-vault integration-test-xkey-touch integration-test-xkey-ssh integration-test-xkey-luks
 	@echo "$(GREEN)✓ All xkey integration tests complete$(RESET)"
 
 .PHONY: coverage-uhid-integration
