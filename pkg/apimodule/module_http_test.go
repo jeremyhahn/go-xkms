@@ -80,6 +80,9 @@ func TestRegisterHTTP_FullSurface(t *testing.T) {
 	want := map[key]rest.RouteSpec{}
 	var wantOrder int
 	for _, spec := range rest.Routes() {
+		if rest.IsHostRoute(spec) {
+			continue
+		}
 		k := key{spec.Method, spec.Pattern}
 		if _, dup := want[k]; !dup {
 			want[k] = spec
@@ -220,4 +223,18 @@ func TestRegisterHTTP_VariantRoutesRegisterOnce(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, n, "variant routes must register exactly once")
+}
+
+// TestRegisterHTTP_LeavesTheHostsRoutesToTheHost proves the module never
+// registers a route the qrdb host serves itself: the host claims GET
+// /health, and a second owner panics at boot.
+func TestRegisterHTTP_LeavesTheHostsRoutesToTheHost(t *testing.T) {
+	m, err := NewModule(func() *xkms.XKMSService { return nil })
+	require.NoError(t, err)
+	reg, recs := newCaptureRegistrar()
+	m.RegisterHTTP(reg)
+	for _, rec := range *recs {
+		assert.NotEqual(t, "/health", rec.pattern, "%s %s is the host's", rec.method, rec.pattern)
+	}
+	assert.NotEmpty(t, *recs)
 }

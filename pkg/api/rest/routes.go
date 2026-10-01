@@ -121,6 +121,19 @@ func IsBarrierRoute(spec RouteSpec) bool {
 	return false
 }
 
+// hostHealthPattern is the liveness route a qrdb host's REST server serves
+// itself (GET /health, its node health), so a module never registers it.
+const hostHealthPattern = "/health"
+
+// IsHostRoute reports whether spec is a route the qrdb host serves itself
+// when xkms runs as its ServiceModule: /health, whose GET the host claims
+// (a route has exactly one owner; a second registration panics at boot).
+// HEAD /health goes with it, so the two methods never answer from
+// different handlers. The standalone xkms REST server still serves both.
+func IsHostRoute(spec RouteSpec) bool {
+	return spec.Pattern == hostHealthPattern
+}
+
 // Routes returns the full REST route table. Order is stable and grouped by
 // capability; the table is data, so tests can assert the exact surface.
 func Routes() []RouteSpec {

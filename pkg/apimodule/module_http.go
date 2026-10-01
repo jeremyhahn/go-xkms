@@ -89,6 +89,10 @@ func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 		if rest.IsBarrierRoute(spec) && !m.servesBarrierRoutes() {
 			continue
 		}
+		// The host serves its own /health.
+		if rest.IsHostRoute(spec) {
+			continue
+		}
 		key := routeKey{spec.Method, spec.Pattern}
 		if _, seen := variants[key]; !seen {
 			order = append(order, key)
