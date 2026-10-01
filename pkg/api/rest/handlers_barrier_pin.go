@@ -584,6 +584,7 @@ func barrierCredentialsFromRequest(pw secureio.PasswordField) (seal.Credentials,
 	if buf == nil || buf.Size() == 0 {
 		return seal.Credentials{}, false, nil
 	}
+	//secure:unborrowed allocates-protected seal.CredentialsFor copies the secret into its own protected Credentials enclave
 	creds, err := seal.CredentialsFor(buf.Bytes())
 	if err != nil {
 		return seal.Credentials{}, false, err

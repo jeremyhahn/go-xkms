@@ -58,6 +58,7 @@ import (
 	"errors"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Algorithms a key factor's challenge is sealed with.
@@ -110,12 +111,13 @@ var (
 
 // Sealed is a freshly sealed factor secret. The server keeps Algorithm,
 // Challenge and Check on the factor and discards Secret once it has wrapped
-// the DEK with it.
+// the DEK with it. Secret lives in protected memory; the caller owns it and
+// must Destroy it.
 type Sealed struct {
 	Algorithm string
 	Challenge []byte
 	Check     []byte
-	Secret    []byte
+	Secret    *secure.Secret
 }
 
 // ParsePublicKey returns the public key of a factor from its PKIX DER
@@ -170,18 +172,23 @@ func Seal(pub crypto.PublicKey) (*Sealed, error) {
 	if err != nil {
 		return nil, err
 	}
-	var sealed *Sealed
+	var challenge, secret []byte
 	switch alg {
 	case AlgorithmECDHES:
-		sealed, err = sealECDH(pub.(*ecdsa.PublicKey), fingerprint)
+		challenge, secret, err = sealECDH(pub.(*ecdsa.PublicKey), fingerprint)
 	default:
-		sealed, err = sealRSA(pub.(*rsa.PublicKey))
+		challenge, secret, err = sealRSA(pub.(*rsa.PublicKey))
 	}
 	if err != nil {
 		return nil, err
 	}
-	sealed.Check = Check(sealed.Secret)
-	return sealed, nil
+	check := Check(secret)
+	// NewSecret wipes secret on every return path.
+	protected, err := secure.NewSecret(secret)
+	if err != nil {
+		return nil, &ProtectError{Err: err}
+	}
+	return &Sealed{Algorithm: alg, Challenge: challenge, Check: check, Secret: protected}, nil
 }
 
 // Check returns the key-check value of secret.
@@ -289,47 +296,50 @@ func secretKDF(fingerprint string) *types.KDFParams {
 	}
 }
 
-func sealECDH(pub *ecdsa.PublicKey, fingerprint string) (*Sealed, error) {
+// sealECDH returns the challenge (the ephemeral public key) and the secret
+// derived from the ephemeral-static agreement. The caller owns secret.
+func sealECDH(pub *ecdsa.PublicKey, fingerprint string) (challenge, secret []byte, err error) {
 	curve, err := ecdhCurve(pub.Curve)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	static, err := pub.ECDH()
 	if err != nil {
-		return nil, ErrInvalidPublicKey
+		return nil, nil, ErrInvalidPublicKey
 	}
 	ephemeral, err := curve.GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, &RandomError{Err: err}
+		return nil, nil, &RandomError{Err: err}
 	}
 	z, err := ephemeral.ECDH(static)
 	if err != nil {
-		return nil, ErrInvalidPublicKey
+		return nil, nil, ErrInvalidPublicKey
 	}
 	defer clear(z)
-	secret, err := secretKDF(fingerprint).Derive(z)
+	challenge, err = x509.MarshalPKIXPublicKey(ephemeral.PublicKey())
 	if err != nil {
-		return nil, &DeriveError{Err: err}
+		return nil, nil, &DeriveError{Err: err}
 	}
-	challenge, err := x509.MarshalPKIXPublicKey(ephemeral.PublicKey())
+	secret, err = secretKDF(fingerprint).Derive(z)
 	if err != nil {
-		clear(secret)
-		return nil, &DeriveError{Err: err}
+		return nil, nil, &DeriveError{Err: err}
 	}
-	return &Sealed{Algorithm: AlgorithmECDHES, Challenge: challenge, Secret: secret}, nil
+	return challenge, secret, nil
 }
 
-func sealRSA(pub *rsa.PublicKey) (*Sealed, error) {
-	secret := make([]byte, SecretLength)
+// sealRSA returns a fresh random secret and its RSA-OAEP-256 encryption to
+// pub. The caller owns secret.
+func sealRSA(pub *rsa.PublicKey) (challenge, secret []byte, err error) {
+	secret = make([]byte, SecretLength)
 	if _, err := rand.Read(secret); err != nil {
-		return nil, &RandomError{Err: err}
+		return nil, nil, &RandomError{Err: err}
 	}
-	challenge, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pub, secret, nil)
+	challenge, err = rsa.EncryptOAEP(sha256.New(), rand.Reader, pub, secret, nil)
 	if err != nil {
 		clear(secret)
-		return nil, &RandomError{Err: err}
+		return nil, nil, &RandomError{Err: err}
 	}
-	return &Sealed{Algorithm: AlgorithmRSAOAEP256, Challenge: challenge, Secret: secret}, nil
+	return challenge, secret, nil
 }
 
 // RandomError wraps a failure of the system random source or of RSA
@@ -343,6 +353,18 @@ func (e *RandomError) Error() string { return "vaultkey: seal: " + e.Err.Error()
 
 // Unwrap returns the underlying failure.
 func (e *RandomError) Unwrap() error { return e.Err }
+
+// ProtectError wraps a failure moving a freshly drawn secret into protected
+// memory.
+type ProtectError struct {
+	Err error
+}
+
+// Error implements the error interface.
+func (e *ProtectError) Error() string { return "vaultkey: protect secret: " + e.Err.Error() }
+
+// Unwrap returns the underlying failure.
+func (e *ProtectError) Unwrap() error { return e.Err }
 
 // DeriveError wraps a failure deriving or encoding a sealed secret.
 type DeriveError struct {

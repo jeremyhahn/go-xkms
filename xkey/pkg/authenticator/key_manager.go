@@ -240,7 +240,8 @@ func adoptProtected(dst **secure.Buffer, buf *secure.Buffer) {
 
 // unwrapIntoProtected unwraps AES-GCM wrapped key material directly into a
 // freshly allocated protected buffer, borrowing the protected wrapping key
-// only for the decrypt. The plaintext never exists on the ordinary Go heap.
+// only to build the cipher and the destination only for the decrypt. The
+// plaintext never exists on the ordinary Go heap.
 //
 // The order of operations is load-bearing, not stylistic: secure.NewBuffer is
 // purge-class and takes the same purgeMu that WithBytes holds as a reader, so
@@ -268,14 +269,22 @@ func unwrapIntoProtected(key *secure.Buffer, wrapped []byte) (*secure.Buffer, er
 		return nil, &SentinelCauseError{Sentinel: ErrKeyManagerProtectedMemory, Cause: err}
 	}
 
-	// Borrow-class read, released before the withKeyWrapper borrow below.
-	// The slice stays valid for the life of dst; holding it across the
-	// callback is the documented Bytes residue (go-qrdb#74), accepted because
-	// no shape that holds the borrow instead can allocate or write without
-	// nesting.
-	raw := dst.Bytes()
-
-	if err := withKeyWrapper(key, func(w KeyWrapper) error {
+	// The two borrows are taken one after the other, never nested: the
+	// wrapping key is borrowed only to expand it into the AES-GCM key
+	// schedule (which crypto/aes keeps on the heap whether or not a borrow
+	// is held, and which retains no reference to the key bytes), then dst
+	// is borrowed for the decrypt itself, so the plaintext is written
+	// straight into protected memory under a held lock.
+	var w *AESGCMKeyWrapper
+	if err := withKeyBytes(key, func(b []byte) error {
+		var werr error
+		w, werr = NewAESGCMKeyWrapper(b)
+		return werr
+	}); err != nil {
+		dst.Destroy()
+		return nil, err
+	}
+	if err := dst.WithBytes(func(raw []byte) error {
 		return w.UnwrapInto(wrapped, raw)
 	}); err != nil {
 		dst.Destroy()
@@ -1063,8 +1072,9 @@ func (km *KeyManager) ChangeSOPIN(currentSMK []byte, newPIN string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrKeyManagerProtectedMemory, Cause: err}
 	}
-	akBytes := akBuf.Bytes()
-	if err := oldWrapper.UnwrapInto(km.state.WrappedAK, akBytes); err != nil {
+	if err := akBuf.WithBytes(func(akBytes []byte) error {
+		return oldWrapper.UnwrapInto(km.state.WrappedAK, akBytes)
+	}); err != nil {
 		akBuf.Destroy()
 		return km.state.SOPINManager.RecordFailure()
 	}

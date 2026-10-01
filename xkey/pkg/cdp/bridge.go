@@ -101,7 +101,7 @@ func (c *StoredCredential) PrivateKeyString() string {
 	}
 	var out string
 	if err := c.privateKey.WithBytes(func(b []byte) error {
-		out = string(b)
+		out = string(b) //secure:unwiped serialization boundary: the CDP WebAuthn wire JSON carries the key as a string
 		return nil
 	}); err != nil {
 		return ""

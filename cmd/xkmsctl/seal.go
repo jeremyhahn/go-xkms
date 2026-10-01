@@ -119,7 +119,14 @@ func openPassword(password *secure.Secret) (string, error) {
 		return "", &WrappedError{Sentinel: ErrPasswordOpenFailed, Err: err}
 	}
 	defer buf.Destroy()
-	return string(buf.Bytes()), nil
+	var wire string
+	if err := buf.WithBytes(func(b []byte) error {
+		wire = string(b) //secure:unwiped the seal/unseal wire request carries the authorization value as a string field
+		return nil
+	}); err != nil {
+		return "", &WrappedError{Sentinel: ErrPasswordOpenFailed, Err: err}
+	}
+	return wire, nil
 }
 
 // sealData seals data using the SDK client (handles both embedded and remote protocols)

@@ -186,7 +186,7 @@ func oidcProtectedFieldString(buf *secure.Buffer) string {
 	// surfacing even though this function has no error to return it
 	// through.
 	if err := buf.WithBytes(func(b []byte) error {
-		out = string(b)
+		out = string(b) //secure:unwiped string boundary: the token accessors feed HTTP requests, exec payloads and display lines, all string-typed
 		return nil
 	}); err != nil {
 		slog.Warn("oidc: read from a destroyed protected buffer", "error", err)

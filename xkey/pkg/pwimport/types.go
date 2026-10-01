@@ -149,7 +149,14 @@ func (p *ParsedEntry) passwordString() (string, error) {
 		return "", &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
 	}
 	defer buf.Destroy()
-	return string(buf.Bytes()), nil
+	var out string
+	if err := buf.WithBytes(func(b []byte) error {
+		out = string(b) //secure:unwiped serialization boundary: xkms.StaticPassword carries the password as a string
+		return nil
+	}); err != nil {
+		return "", &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
+	}
+	return out, nil
 }
 
 // ToStaticPassword converts a ParsedEntry to a StaticPassword. Returns

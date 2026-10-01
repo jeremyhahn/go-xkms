@@ -167,7 +167,12 @@ func (s *BackendStore) Put(ctx context.Context, key *Key) error {
 		return &KeyMaterialError{Op: "open secret for put", Err: err}
 	}
 	defer buf.Destroy()
-	env.MaterialPEM = string(buf.Bytes())
+	if err := buf.WithBytes(func(pemBytes []byte) error {
+		env.MaterialPEM = string(pemBytes) //secure:unwiped the persisted envelope's MaterialPEM is a JSON string field; its on-disk format is fixed
+		return nil
+	}); err != nil {
+		return &KeyMaterialError{Op: "open secret for put", Err: err}
+	}
 
 	data, jerr := json.Marshal(&env)
 	if jerr != nil {

@@ -167,7 +167,7 @@ func SelfTest(ctx context.Context, tok vaultkey.Token) error {
 	if err != nil {
 		return err
 	}
-	defer clear(sealed.Secret)
+	defer sealed.Secret.Destroy()
 	fingerprint, err := vaultkey.Fingerprint(tok.Public())
 	if err != nil {
 		return err

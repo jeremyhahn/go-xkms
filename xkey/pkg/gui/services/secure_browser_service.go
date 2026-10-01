@@ -29,7 +29,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jeremyhahn/go-xkms/pkg/urlsafety"
+	"github.com/jeremyhahn/go-xkms/sdk/go/urlsafety"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nssdb"
 )

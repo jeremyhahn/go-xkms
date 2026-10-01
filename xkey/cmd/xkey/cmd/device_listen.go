@@ -159,7 +159,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 	defer localPrivateKey.Destroy()
 
 	// Reconstruct the Noise static key from stored private key
-	localStaticKey, err := pairing.LoadStaticKey(localPrivateKey.Bytes())
+	localStaticKey, err := loadLocalStaticKey(localPrivateKey)
 	if err != nil {
 		return &WrappedError{Msg: "failed to reconstruct local key", Err: err}
 	}

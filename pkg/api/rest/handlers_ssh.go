@@ -22,6 +22,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest/secureio"
@@ -482,12 +483,14 @@ func (p *buffersProvider) Passphrase(_ context.Context, _ string) (*secure.Buffe
 	if p == nil || p.buf == nil || p.buf.Size() == 0 {
 		return nil, &SSHNilError{Field: "passphrase"}
 	}
-	cloned, err := secure.NewBuffer(p.buf.Size())
+	// CopyOut holds p.buf's borrow across the copy; NewBufferFromBytes then
+	// moves that copy into the clone's own enclave and wipes it on every
+	// path, so no second borrow is ever nested inside the first.
+	plain, err := qrdbsecure.CopyOut(p.buf)
 	if err != nil {
 		return nil, err
 	}
-	copy(cloned.Bytes(), p.buf.Bytes())
-	return cloned, nil
+	return secure.NewBufferFromBytes(plain)
 }
 
 // restSignRequestDTO is the server-side wire form of

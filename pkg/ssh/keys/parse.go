@@ -14,6 +14,7 @@
 package keys
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -22,6 +23,7 @@ import (
 	"errors"
 	"time"
 
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"golang.org/x/crypto/ssh"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -52,12 +54,25 @@ func ParsePEM(ctx context.Context, pemBuf *secure.Buffer, provider secure.Passph
 	if pemBuf == nil {
 		return nil, &NilInputError{Field: "pem"}
 	}
-	pemBytes := pemBuf.Bytes()
-	if len(pemBytes) == 0 {
+	// The unencrypted parse runs under pemBuf's borrow. On success the PEM
+	// is also cloned there for sealing below: NewSecret wipes its source
+	// slice, and the caller's Buffer must not be disturbed (the caller will
+	// Destroy it themselves).
+	var signer ssh.Signer
+	var sealed []byte
+	var err error
+	if berr := pemBuf.WithBytes(func(pemBytes []byte) error {
+		if len(pemBytes) == 0 {
+			return &NilInputError{Field: "pem"}
+		}
+		signer, err = ssh.ParsePrivateKey(pemBytes)
+		if err == nil {
+			sealed = bytes.Clone(pemBytes)
+		}
+		return nil
+	}); berr != nil {
 		return nil, &NilInputError{Field: "pem"}
 	}
-
-	signer, err := ssh.ParsePrivateKey(pemBytes)
 	if err != nil {
 		var missing *ssh.PassphraseMissingError
 		if !errors.As(err, &missing) {
@@ -66,19 +81,15 @@ func ParsePEM(ctx context.Context, pemBuf *secure.Buffer, provider secure.Passph
 		if provider == nil {
 			return nil, &PassphraseRequiredError{}
 		}
-		signer, err = parseWithPassphrase(ctx, pemBytes, provider)
+		signer, sealed, err = parseWithPassphrase(ctx, pemBuf, provider)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	// Seal the PEM bytes into a Secret so the only long-lived copy of
-	// the private key material lives inside an enclave. We copy out of
-	// the caller's Buffer first — NewSecret wipes its source slice, and
-	// we must not disturb the caller's Buffer (the caller will Destroy
-	// it themselves).
-	sealed := make([]byte, len(pemBytes))
-	copy(sealed, pemBytes)
+	// the private key material lives inside an enclave. NewSecret wipes
+	// sealed on every path.
 	material, secErr := secure.NewSecret(sealed)
 	if secErr != nil {
 		return nil, &KeyMaterialError{Op: "seal pem", Err: secErr}
@@ -101,19 +112,41 @@ func ParsePEM(ctx context.Context, pemBuf *secure.Buffer, provider secure.Passph
 }
 
 // parseWithPassphrase prompts the provider, parses, and destroys the
-// passphrase Buffer before returning — independent of success.
-func parseWithPassphrase(ctx context.Context, pemBytes []byte, provider secure.PassphraseProvider) (ssh.Signer, error) {
+// passphrase Buffer before returning — independent of success. On success it
+// also returns a clone of the PEM, which the caller owns and must seal or
+// wipe.
+//
+// The passphrase is copied out of its Buffer (and wiped on return) rather
+// than borrowed, so the parse holds exactly one borrow — pemBuf's — and never
+// nests a second one inside it.
+func parseWithPassphrase(ctx context.Context, pemBuf *secure.Buffer, provider secure.PassphraseProvider) (ssh.Signer, []byte, error) {
 	pwBuf, err := provider.Passphrase(ctx, "SSH key passphrase: ")
 	if err != nil {
-		return nil, &PEMParseError{Err: err}
+		return nil, nil, &PEMParseError{Err: err}
 	}
-	defer pwBuf.Destroy()
-
-	signer, err := ssh.ParsePrivateKeyWithPassphrase(pemBytes, pwBuf.Bytes())
+	passphrase, err := qrdbsecure.CopyOut(pwBuf)
+	pwBuf.Destroy()
 	if err != nil {
-		return nil, &PEMParseError{Err: err}
+		return nil, nil, &PEMParseError{Err: err}
 	}
-	return signer, nil
+	defer secure.Wipe(passphrase)
+
+	var signer ssh.Signer
+	var sealed []byte
+	var parseErr error
+	if err := pemBuf.WithBytes(func(pemBytes []byte) error {
+		signer, parseErr = ssh.ParsePrivateKeyWithPassphrase(pemBytes, passphrase)
+		if parseErr == nil {
+			sealed = bytes.Clone(pemBytes)
+		}
+		return nil
+	}); err != nil {
+		return nil, nil, &NilInputError{Field: "pem"}
+	}
+	if parseErr != nil {
+		return nil, nil, &PEMParseError{Err: parseErr}
+	}
+	return signer, sealed, nil
 }
 
 // AlgorithmFromPublicKey maps a parsed ssh.PublicKey to an Algorithm

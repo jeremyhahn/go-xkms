@@ -18,6 +18,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Returns the Endorsement Public Key
@@ -196,6 +197,8 @@ func applyDevIDConfig(
 	if err != nil {
 		return err
 	}
+	// NewPassword copies into its own enclave and leaves the source alone.
+	defer secure.Wipe(passwordBytes)
 	pw, err := types.NewPassword(passwordBytes)
 	if err != nil {
 		return err

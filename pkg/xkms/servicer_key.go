@@ -1101,6 +1101,7 @@ func (s *XKMSService) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByI
 		return nil, roleLookupError("wrapping key", req.WrappingKeyID, err)
 	}
 
+	//secure:unwiped wrapped is ciphertext, the response's WrappedKey; securecopy cannot tell it from the plaintext AES-KW register it was read out of
 	wrapped, err := wrapKeyMaterial(ctx, wrappingBackend, wrappingVersion.attrs, req.Algorithm, wrapParams{
 		iv:        req.IV,
 		aad:       req.AAD,
@@ -1295,6 +1296,7 @@ func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKe
 		oaepLabel: req.OAEPLabel,
 	}
 	keyMaterial, _, err := firstSuccess(versions, func(v keyVersion) ([]byte, error) {
+		//secure:unwiped returned through firstSuccess into keyMaterial, which the defer below wipes; securecopy does not follow a function literal's return
 		return unwrapKeyMaterial(ctx, unwrappingBackend, v.attrs, req.Algorithm, params, req.WrappedKey)
 	})
 	if err != nil {

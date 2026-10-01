@@ -82,6 +82,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 
 	apitransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/mcptool"
@@ -346,19 +347,23 @@ func (k *mcpKeysClient) Import(ctx context.Context, req ImportRequest, provider 
 		PEM:     req.PEM,
 		Comment: req.Comment,
 	}
+	var passphrase []byte
 	if provider != nil {
 		buf, err := provider.Passphrase(ctx, "SSH key passphrase: ")
 		if err != nil {
 			return nil, err
 		}
-		body.Passphrase = make([]byte, buf.Size())
-		copy(body.Passphrase, buf.Bytes())
+		passphrase, err = qrdbsecure.CopyOut(buf)
 		buf.Destroy()
+		if err != nil {
+			return nil, err
+		}
+		body.Passphrase = passphrase
 	}
 	var out Key
 	err := k.c.call(ctx, "ssh.keys.import", body, &out)
 	// Wipe the passphrase copy regardless of outcome.
-	secure.Wipe(body.Passphrase)
+	secure.Wipe(passphrase)
 	body.Passphrase = nil
 	if err != nil {
 		return nil, err

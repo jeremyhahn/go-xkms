@@ -631,8 +631,15 @@ func (a *Authenticator) GetPINToken(session *PINUVAuthSession, pin *secure.Secre
 	if openErr != nil {
 		return nil, &errs.Joined{Lead: ErrPINTokenFailed, Cause: openErr}
 	}
-	pinHash := sha256.Sum256(pinBuf.Bytes())
+	var pinHash [sha256.Size]byte
+	hashErr := pinBuf.WithBytes(func(p []byte) error {
+		pinHash = sha256.Sum256(p)
+		return nil
+	})
 	pinBuf.Destroy()
+	if hashErr != nil {
+		return nil, &errs.Joined{Lead: ErrPINTokenFailed, Cause: hashErr}
+	}
 	pinHashEnc, err := session.Encrypt(pinHash[:16])
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrPINTokenFailed, Cause: err}

@@ -27,6 +27,8 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
+
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -250,23 +252,27 @@ func (k *restKeysClient) Import(ctx context.Context, req ImportRequest, provider
 		Comment: req.Comment,
 		PEM:     req.PEM,
 	}
+	var passphrase []byte
 	if provider != nil {
 		pwBuf, err := provider.Passphrase(ctx, "SSH key passphrase: ")
 		if err != nil {
 			return nil, err
 		}
-		wire.Passphrase = make([]byte, pwBuf.Size())
-		copy(wire.Passphrase, pwBuf.Bytes())
+		passphrase, err = qrdbsecure.CopyOut(pwBuf)
 		pwBuf.Destroy()
+		if err != nil {
+			return nil, err
+		}
+		wire.Passphrase = passphrase
 	}
 
 	body, err := k.c.do(ctx, http.MethodPost, "/keys/import", wire)
 	// Wipe the passphrase copy regardless of outcome. secure.Wipe zeroes
-	// the backing array in place; wire.Passphrase itself (not a copy of
-	// it, unlike a string conversion) is what k.c.do marshaled, so this
-	// actually erases the plaintext rather than a byte slice the marshal
-	// call never touched.
-	secure.Wipe(wire.Passphrase)
+	// the backing array in place; passphrase shares its backing array with
+	// wire.Passphrase (not a copy of it, unlike a string conversion), which
+	// is what k.c.do marshaled, so this actually erases the plaintext rather
+	// than a byte slice the marshal call never touched.
+	secure.Wipe(passphrase)
 	wire.Passphrase = nil
 	if err != nil {
 		return nil, err

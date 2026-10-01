@@ -197,9 +197,12 @@ func (s *Server) sealNoiseStaticKey(key *noiseproto.StaticKey) error {
 	}
 	defer buf.Destroy()
 
-	if err := noiseproto.EncodeStaticKey(buf.Bytes(), key); err != nil {
+	if err := buf.WithBytes(func(b []byte) error {
+		return noiseproto.EncodeStaticKey(b, key)
+	}); err != nil {
 		return &ErrBarrierKeySeal{Key: noiseStaticKeyBarrierKey, Err: err}
 	}
+	//secure:unborrowed injected-interface s.barrier is the configured storage barrier, which encrypts through its own protected memory
 	if err := s.barrier.Put(context.Background(), noiseStaticKeyBarrierKey, buf.Bytes()); err != nil {
 		return &ErrBarrierKeySeal{Key: noiseStaticKeyBarrierKey, Err: err}
 	}
@@ -228,6 +231,7 @@ func (s *Server) sealP256StaticKey(key *bootstrap.P256StaticKey) error {
 	}
 	defer buf.Destroy()
 
+	//secure:unborrowed injected-interface s.barrier is the configured storage barrier, which encrypts through its own protected memory
 	if err := s.barrier.Put(context.Background(), p256StaticKeyBarrierKey, buf.Bytes()); err != nil {
 		return &ErrBarrierKeySeal{Key: p256StaticKeyBarrierKey, Err: err}
 	}
@@ -271,13 +275,17 @@ func (s *Server) loadOrPersistNoiseStaticKeyFile() (*noiseproto.StaticKey, error
 		return nil, err
 	}
 	defer buf.Destroy()
-	if err := noiseproto.EncodeStaticKey(buf.Bytes(), key); err != nil {
+	if err := buf.WithBytes(func(b []byte) error {
+		if err := noiseproto.EncodeStaticKey(b, key); err != nil {
+			return err
+		}
+		if err := writeHexKeyFileAtomic(path, b); err != nil {
+			return &ErrFileWrite{Path: path, Err: err}
+		}
+		return nil
+	}); err != nil {
 		key.Destroy()
 		return nil, err
-	}
-	if err := writeHexKeyFileAtomic(path, buf.Bytes()); err != nil {
-		key.Destroy()
-		return nil, &ErrFileWrite{Path: path, Err: err}
 	}
 
 	s.logger.Warn("No barrier configured: the Noise static key is persisted in plaintext at " +
@@ -314,9 +322,14 @@ func (s *Server) loadOrPersistP256StaticKeyFile() (*bootstrap.P256StaticKey, err
 		return nil, err
 	}
 	defer buf.Destroy()
-	if err := writeHexKeyFileAtomic(path, buf.Bytes()); err != nil {
+	if err := buf.WithBytes(func(b []byte) error {
+		if err := writeHexKeyFileAtomic(path, b); err != nil {
+			return &ErrFileWrite{Path: path, Err: err}
+		}
+		return nil
+	}); err != nil {
 		key.Destroy()
-		return nil, &ErrFileWrite{Path: path, Err: err}
+		return nil, err
 	}
 
 	s.logger.Warn("No barrier configured: the P-256 bootstrap static key is persisted in " +

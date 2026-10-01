@@ -14,6 +14,7 @@
 package store
 
 import (
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	pwenclave "github.com/jeremyhahn/go-xkms/pkg/password"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -70,9 +71,10 @@ func (p *ClearPassword) Bytes() []byte {
 	if p == nil || p.buf == nil {
 		return nil
 	}
-	src := p.buf.Bytes()
-	out := make([]byte, len(src))
-	copy(out, src)
+	out, err := qrdbsecure.CopyOut(p.buf)
+	if err != nil {
+		return nil
+	}
 	return out
 }
 
@@ -84,7 +86,14 @@ func (p *ClearPassword) String() (string, error) {
 	if p == nil || p.buf == nil {
 		return "", nil
 	}
-	return string(p.buf.Bytes()), nil
+	var s string
+	if err := p.buf.WithBytes(func(b []byte) error {
+		s = string(b) //secure:unwiped types.Password.String's contract returns a Go string, documented above as living until GC
+		return nil
+	}); err != nil {
+		return "", nil
+	}
+	return s, nil
 }
 
 // Clear destroys the underlying enclave. Safe to call on a zero-value

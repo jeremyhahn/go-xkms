@@ -2507,6 +2507,7 @@ func (m *Module) fillBackendKeyValue(ctx AccessContext, objectHandle ObjectHandl
 		return false, CKR_OK // the object manager already reported the real problem
 	}
 
+	//secure:unwiped C_GetAttributeValue's contract hands CKA_VALUE to the application in its template; the copy is the caller's from here
 	value, valueRV := m.secretKeyValue(obj)
 	if valueRV != CKR_OK {
 		// The object says the value may be revealed but the backend will not
@@ -6572,6 +6573,9 @@ func (m *Module) DigestKey(sessionHandle SessionHandle, keyHandle ObjectHandle) 
 	// A key the token may not reveal genuinely cannot be digested, and
 	// CKR_KEY_INDIGESTIBLE is the code the spec lists for that.
 	keyValue, valueRV := m.secretKeyValue(keyObj)
+	// secretKeyValue hands back a fresh copy; the digest absorbs it, so it is
+	// wiped on the way out rather than left for the garbage collector.
+	defer secure.Wipe(keyValue)
 	if valueRV != CKR_OK || len(keyValue) == 0 {
 		return CKR_KEY_INDIGESTIBLE
 	}

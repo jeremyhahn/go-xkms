@@ -85,8 +85,12 @@ func (k *Key) SignerWithClose() (ssh.Signer, func(), error) {
 	if err != nil {
 		return nil, nil, &KeyMaterialError{Op: "open secret for persistent signer", Err: err}
 	}
-	inner, err := ssh.ParsePrivateKey(buf.Bytes())
-	if err != nil {
+	var inner ssh.Signer
+	if err := buf.WithBytes(func(pemBytes []byte) error {
+		var perr error
+		inner, perr = ssh.ParsePrivateKey(pemBytes)
+		return perr
+	}); err != nil {
 		buf.Destroy()
 		return nil, nil, &PEMParseError{Err: err}
 	}
@@ -163,11 +167,19 @@ func (s *enclaveSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error
 	}
 	defer buf.Destroy()
 
-	signer, err := ssh.ParsePrivateKey(buf.Bytes())
-	if err != nil {
-		return nil, &PEMParseError{Err: err}
+	var sig *ssh.Signature
+	if err := buf.WithBytes(func(pemBytes []byte) error {
+		signer, perr := ssh.ParsePrivateKey(pemBytes)
+		if perr != nil {
+			return &PEMParseError{Err: perr}
+		}
+		var serr error
+		sig, serr = signer.Sign(rand, data)
+		return serr
+	}); err != nil {
+		return nil, err
 	}
-	return signer.Sign(rand, data)
+	return sig, nil
 }
 
 // SignWithAlgorithm implements ssh.AlgorithmSigner so RSA keys can produce
@@ -182,14 +194,23 @@ func (s *enclaveSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm
 	}
 	defer buf.Destroy()
 
-	signer, err := ssh.ParsePrivateKey(buf.Bytes())
-	if err != nil {
-		return nil, &PEMParseError{Err: err}
+	var sig *ssh.Signature
+	if err := buf.WithBytes(func(pemBytes []byte) error {
+		signer, perr := ssh.ParsePrivateKey(pemBytes)
+		if perr != nil {
+			return &PEMParseError{Err: perr}
+		}
+		var serr error
+		if as, ok := signer.(ssh.AlgorithmSigner); ok {
+			sig, serr = as.SignWithAlgorithm(rand, data, algorithm)
+		} else {
+			sig, serr = signer.Sign(rand, data)
+		}
+		return serr
+	}); err != nil {
+		return nil, err
 	}
-	if as, ok := signer.(ssh.AlgorithmSigner); ok {
-		return as.SignWithAlgorithm(rand, data, algorithm)
-	}
-	return signer.Sign(rand, data)
+	return sig, nil
 }
 
 // persistentSigner is an ssh.Signer that retains the decrypted PEM

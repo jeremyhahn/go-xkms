@@ -33,8 +33,8 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
-	"github.com/jeremyhahn/go-xkms/pkg/oidc"
-	"github.com/jeremyhahn/go-xkms/pkg/urlsafety"
+	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
+	"github.com/jeremyhahn/go-xkms/sdk/go/urlsafety"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	oidcaws "github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/handlers"

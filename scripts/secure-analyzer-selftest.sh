@@ -91,6 +91,10 @@ expect_hit 'call to ssh.ParsePrivateKey is forbidden' \
 	'rule 2: ssh.ParsePrivateKey'
 expect_hit 'field "Password" holds sensitive material as string' \
 	'rule 3: a holder field with no scope-clause cover'
+expect_hit 'secure.Buffer.Bytes holds no borrow across the read' \
+	'rule 4: an unborrowed secure.Buffer.Bytes read'
+expect_hit 'string(...) converts protected bytes to a string' \
+	'securecopy: string(view) of protected bytes'
 
 # --- The clean fixture must stay silent AND exit 0. -------------------------
 if [ "$clean_rc" -ne 0 ]; then
@@ -108,13 +112,31 @@ fi
 
 # --- KEYING regression (go-xkms#607): a line shift must not invalidate an
 #     allowlist entry, and a genuinely removed finding must still go stale. -
+echo "secure-analyzer selftest: every diagnostic the pinned analyzer emits classifies"
+
+# rule_for is a verbatim table of the pinned analyzer's messages. When a
+# go-qrdb bump rewords one, or adds a rule, every finding of that shape stops
+# classifying and the sweep fails with "does not match any known securecheck
+# rule message" -- on main, after the bump has merged, if the bump skipped
+# CI (go-xkms v0.48.0-alpha). Classifying every line the bad fixture produces
+# here moves that failure onto the bump's own PR.
+# shellcheck source=scripts/secure-analyzer-key.sh
+. "$ROOT/scripts/secure-analyzer-key.sh"
+while IFS= read -r diagline; do
+	printf '%s\n' "$diagline" | grep -Eq '^[^:]+\.go:[0-9]+:[0-9]+: ' || continue
+	msg=$(printf '%s\n' "$diagline" | sed -E 's/^[^:]+:[0-9]+:[0-9]+: //')
+	if rule=$(rule_for "$msg"); then
+		note "ok: classifies as [$rule] -- $msg"
+	else
+		fail "rule_for does not classify a message the pinned analyzer emits:
+      $msg"
+	fi
+done <"$bad_out"
+
 echo "secure-analyzer selftest: keying regression (go-xkms#607)"
 
 SYMTOOL="$WORK/secure-analyzer-symbol"
 "$ROOT/scripts/secure-analyzer.sh" --build-symtool "$SYMTOOL"
-
-# shellcheck source=scripts/secure-analyzer-key.sh
-. "$ROOT/scripts/secure-analyzer-key.sh"
 
 KEYWORK="$WORK/keying"
 mkdir -p "$KEYWORK"

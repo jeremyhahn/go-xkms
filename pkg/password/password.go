@@ -24,6 +24,7 @@ import (
 	"crypto/subtle"
 	"errors"
 
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -65,7 +66,13 @@ func NewPassword(password []byte) (types.Password, error) {
 	if err != nil {
 		return nil, ErrEnclaveUnavailable
 	}
-	copy(buf.Bytes(), password)
+	if err := buf.WithBytes(func(b []byte) error {
+		copy(b, password)
+		return nil
+	}); err != nil {
+		buf.Destroy()
+		return nil, ErrEnclaveUnavailable
+	}
 	return &ClearPassword{buf: buf}, nil
 }
 
@@ -83,7 +90,13 @@ func NewPasswordFromString(password string) (types.Password, error) {
 	if err != nil {
 		return nil, ErrEnclaveUnavailable
 	}
-	copy(buf.Bytes(), password)
+	if err := buf.WithBytes(func(b []byte) error {
+		copy(b, password)
+		return nil
+	}); err != nil {
+		buf.Destroy()
+		return nil, ErrEnclaveUnavailable
+	}
 	return &ClearPassword{buf: buf}, nil
 }
 
@@ -96,7 +109,14 @@ func (p *ClearPassword) String() (string, error) {
 	if p.buf == nil {
 		return "", ErrPasswordZeroed
 	}
-	return string(p.buf.Bytes()), nil
+	var s string
+	if err := p.buf.WithBytes(func(b []byte) error {
+		s = string(b) //secure:unwiped types.Password.String's contract returns a Go string, documented above as surviving until GC
+		return nil
+	}); err != nil {
+		return "", ErrPasswordZeroed
+	}
+	return s, nil
 }
 
 // Bytes returns a defensive copy of the password bytes.
@@ -107,9 +127,10 @@ func (p *ClearPassword) Bytes() []byte {
 	if p.buf == nil {
 		return nil
 	}
-	src := p.buf.Bytes()
-	result := make([]byte, len(src))
-	copy(result, src)
+	result, err := qrdbsecure.CopyOut(p.buf)
+	if err != nil {
+		return nil
+	}
 	return result
 }
 

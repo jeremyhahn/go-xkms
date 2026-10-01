@@ -25,14 +25,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/localtpm"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/vaultkey"
-	"github.com/jeremyhahn/go-xkms/pkg/vaulttoken"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
+	"github.com/jeremyhahn/go-xkms/sdk/go/vaulttoken"
 )
 
 // This file is the key-factor half of the vault verbs: a vault factor whose
@@ -106,7 +101,7 @@ func addKeySourceFlags(cmd *cobra.Command) {
 // or a backend lookup for a TPM.
 type keySource struct {
 	ref    client.PasswordVaultKeyRef
-	token  vaultkey.Token
+	token  vaulttoken.Token
 	cert   *x509.Certificate
 	lookup vaulttoken.Lookup
 	close  func()
@@ -169,7 +164,7 @@ func softwareKeySource(keyFile, certFile string) (*keySource, error) {
 	if err != nil {
 		return nil, err
 	}
-	tok, err := vaultkey.NewKeyToken(priv)
+	tok, err := vaulttoken.NewKeyToken(priv)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +180,7 @@ func softwareKeySource(keyFile, certFile string) (*keySource, error) {
 // vaultTPM is the host's TPM as the vault's TPM key source uses it: the
 // key backend of the TPM policy service, and Close.
 type vaultTPM interface {
-	Backend() *tpm2backend.Backend
+	Backend() *client.TPM2Backend
 	Close() error
 }
 
@@ -198,8 +193,8 @@ var openTPMHost = func(dataDir, device string) (vaultTPM, error) {
 
 // openFileStore opens the file store rooted at dir, the engine xkey uses
 // unless its config selects another.
-func openFileStore(dir string) (storage.Backend, error) {
-	return storage.OpenEngine(storage.EngineConfig{Kind: storage.EngineFile, Path: dir})
+func openFileStore(dir string) (client.StorageBackend, error) {
+	return client.StorageOpenEngine(client.StorageEngineConfig{Kind: client.StorageEngineFile, Path: dir})
 }
 
 // tpmKeySource opens the TPM with its key store and policy registry in
@@ -216,7 +211,7 @@ func tpmKeySource(cmd *cobra.Command, factor, dataDir, keyID string) (*keySource
 		return nil, err
 	}
 	if policy == "" && factor == vaulttoken.FactorTPM {
-		policy = types.TPMPolicyPlatform
+		policy = client.TPMPolicyPlatform
 	}
 	host, err := openTPMHost(dataDir, device)
 	if err != nil {
@@ -227,7 +222,7 @@ func tpmKeySource(cmd *cobra.Command, factor, dataDir, keyID string) (*keySource
 			return nil, errors.Join(err, host.Close())
 		}
 	}
-	src, err := backendKeySource(host.Backend(), string(xkms.BackendTPM2), keyID, host.Close)
+	src, err := backendKeySource(host.Backend(), string(client.BackendTPM2), keyID, host.Close)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +233,7 @@ func tpmKeySource(cmd *cobra.Command, factor, dataDir, keyID string) (*keySource
 // createTPMKey creates EC P-256 encryption key keyID in the TPM, bound to
 // policy, unless it exists. The TPM policy service records the binding, so
 // the policy lists the key and cannot be deleted under it.
-func createTPMKey(kp types.KeyProvider, keyID, policy string) error {
+func createTPMKey(kp client.KeyProvider, keyID, policy string) error {
 	ctx := context.Background()
 	if keys, err := kp.ListKeys(ctx); err == nil {
 		for _, k := range keys {
@@ -247,9 +242,9 @@ func createTPMKey(kp types.KeyProvider, keyID, policy string) error {
 			}
 		}
 	}
-	_, err := kp.GenerateKey(ctx, &types.KeyAttributes{
-		CN: keyID, KeyAlgorithm: x509.ECDSA, KeyType: types.KeyTypeEncryption,
-		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()}, TPMPolicy: policy,
+	_, err := kp.GenerateKey(ctx, &client.KeyAttributes{
+		CN: keyID, KeyAlgorithm: x509.ECDSA, KeyType: client.KeyTypeEncryption,
+		ECCAttributes: &client.ECCAttributes{Curve: elliptic.P256()}, TPMPolicy: policy,
 	})
 	return err
 }
@@ -258,12 +253,12 @@ func createTPMKey(kp types.KeyProvider, keyID, policy string) error {
 // factor resolves through.
 // The key provider belongs to what opened it, and closeFn -- that owner's
 // Close -- is the source's close.
-func backendKeySource(kp types.KeyProvider, name, keyID string, closeFn func() error) (*keySource, error) {
-	b, err := xkms.New(&xkms.BackendConfig{Backend: kp, CertStorage: storage.New()})
+func backendKeySource(kp client.KeyProvider, name, keyID string, closeFn func() error) (*keySource, error) {
+	b, err := client.NewServiceBackend(&client.ServiceBackendConfig{Backend: kp, CertStorage: client.NewStorageMemory()})
 	if err != nil {
 		return nil, errors.Join(err, closeFn())
 	}
-	lookup := func(string) (xkms.Backend, error) { return b, nil }
+	lookup := func(string) (client.ServiceBackend, error) { return b, nil }
 	return &keySource{
 		ref:    client.PasswordVaultKeyRef{Backend: name, KeyID: keyID},
 		lookup: lookup,
@@ -302,8 +297,8 @@ func (s *keySource) key(ctx context.Context, factor string) (*vaulttoken.Key, er
 		return nil, vaulttoken.ErrCertificateRequired
 	}
 	if s.cert != nil {
-		a, errA := vaultkey.Fingerprint(s.token.Public())
-		b, errB := vaultkey.Fingerprint(s.cert.PublicKey)
+		a, errA := vaulttoken.Fingerprint(s.token.Public())
+		b, errB := vaulttoken.Fingerprint(s.cert.PublicKey)
 		if errA != nil || errB != nil || a != b {
 			return nil, vaulttoken.ErrCertificateMismatch
 		}

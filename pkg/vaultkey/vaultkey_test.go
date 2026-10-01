@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 func factorOf(t *testing.T, s *Sealed, pub crypto.PublicKey) Factor {
@@ -76,11 +77,11 @@ func TestSealOpen_EveryKeyTypeOnTheSoftwareBackend(t *testing.T) {
 			require.NoError(t, err)
 			sealed, err := Seal(tok.Public())
 			require.NoError(t, err)
-			require.Len(t, sealed.Secret, SecretLength)
+			require.Len(t, plainSecret(t, sealed.Secret), SecretLength)
 
 			got, err := Open(ctx, tok, factorOf(t, sealed, tok.Public()))
 			require.NoError(t, err)
-			assert.Equal(t, sealed.Secret, got)
+			assert.Equal(t, plainSecret(t, sealed.Secret), got)
 		})
 	}
 }
@@ -94,7 +95,7 @@ func TestSeal_FreshSecretEveryTime(t *testing.T) {
 	require.NoError(t, err)
 	b, err := Seal(&k.PublicKey)
 	require.NoError(t, err)
-	assert.NotEqual(t, a.Secret, b.Secret)
+	assert.NotEqual(t, plainSecret(t, a.Secret), plainSecret(t, b.Secret))
 	assert.NotEqual(t, a.Challenge, b.Challenge)
 	assert.Equal(t, AlgorithmECDHES, a.Algorithm)
 }
@@ -134,7 +135,7 @@ func TestOpen_RSA(t *testing.T) {
 	assert.Equal(t, AlgorithmRSAOAEP256, sealed.Algorithm)
 	got, err := Open(context.Background(), tok, factorOf(t, sealed, &k.PublicKey))
 	require.NoError(t, err)
-	assert.Equal(t, sealed.Secret, got)
+	assert.Equal(t, plainSecret(t, sealed.Secret), got)
 }
 
 func TestSeal_UnsupportedKeys(t *testing.T) {
@@ -202,4 +203,21 @@ func TestParsePublicKey(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidPublicKey)
 	_, _, err = ParsePublicKey(nil, []byte("junk"))
 	assert.ErrorIs(t, err, ErrInvalidPublicKey)
+}
+
+// plainSecret returns a copy of a sealed factor secret's plaintext for
+// comparison, wiped when the test ends.
+func plainSecret(t *testing.T, s *secure.Secret) []byte {
+	t.Helper()
+	require.NotNil(t, s)
+	buf, err := s.Open()
+	require.NoError(t, err)
+	defer buf.Destroy()
+	var out []byte
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		out = append([]byte(nil), b...)
+		return nil
+	}))
+	t.Cleanup(func() { secure.Wipe(out) })
+	return out
 }

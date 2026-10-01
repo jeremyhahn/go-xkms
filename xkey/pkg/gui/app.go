@@ -38,7 +38,6 @@ import (
 	tpmtransport "github.com/google/go-tpm/tpm2/transport"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpmdev"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
@@ -3779,7 +3778,7 @@ func (a *App) HideWindow() {
 // TCG persistent handles: 0x81010001 (RSA 2048) and 0x81010002 (ECC P-256).
 // Returns the handle of the first one found, or 0 if neither exists.
 func detectEKHandle(log *slog.Logger, device string) uint32 {
-	f, err := tpmdev.Open(device)
+	f, err := xkmssdk.OpenTPMDevice(device)
 	if err != nil {
 		return 0
 	}

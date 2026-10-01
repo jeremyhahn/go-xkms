@@ -214,7 +214,13 @@ func NewPKCS11TLSConfig(cfg *PKCS11TLSConfig) (*tls.Config, func(), error) {
 		return nil, nil, err
 	}
 	defer pinBuf.Destroy()
-	pin := string(pinBuf.Bytes())
+	var pin string
+	if err := pinBuf.WithBytes(func(b []byte) error {
+		pin = string(b) //secure:unwiped pkcs11module.Config's UserPIN/SOPIN and miekg/pkcs11 Login take the PIN as a Go string
+		return nil
+	}); err != nil {
+		return nil, nil, err
+	}
 
 	mod := cfg.Module
 	moduleOwned := mod == nil

@@ -1490,8 +1490,12 @@ func (c *backupCredential) keyFor(encrypted *backup.EncryptedBackup) (*backup.Ke
 	if c.key != nil {
 		return c.key, nil
 	}
-	key, err := encrypted.PasswordKey(c.password.Bytes())
-	if err != nil {
+	var key *backup.Key
+	if err := c.password.WithBytes(func(password []byte) error {
+		var derr error
+		key, derr = encrypted.PasswordKey(password)
+		return derr
+	}); err != nil {
 		return nil, classifyBackupDecryptError(err)
 	}
 	c.key = key

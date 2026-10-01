@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"gopkg.in/yaml.v3"
 )
 
@@ -655,6 +656,8 @@ func IAKAttributesFromConfig(
 	if err != nil {
 		return nil, err
 	}
+	// NewPassword copies into its own enclave and leaves the source alone.
+	defer secure.Wipe(passwordBytes)
 	password, err := types.NewPassword(passwordBytes)
 	if err != nil {
 		return nil, err
@@ -780,6 +783,8 @@ func IDevIDAttributesFromConfig(config IDevIDConfig) (*types.KeyAttributes, erro
 	if err != nil {
 		return nil, err
 	}
+	// NewPassword copies into its own enclave and leaves the source alone.
+	defer secure.Wipe(passwordBytes)
 	password, err := types.NewPassword(passwordBytes)
 	if err != nil {
 		return nil, err
@@ -866,6 +871,8 @@ func LDevIDAttributesFromConfig(config LDevIDConfig) (*types.KeyAttributes, erro
 	if err != nil {
 		return nil, err
 	}
+	// NewPassword copies into its own enclave and leaves the source alone.
+	defer secure.Wipe(passwordBytes)
 	password, err := types.NewPassword(passwordBytes)
 	if err != nil {
 		return nil, err

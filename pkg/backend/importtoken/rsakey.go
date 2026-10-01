@@ -95,8 +95,12 @@ func (k *SealedRSAKey) Use(fn func(*rsa.PrivateKey) error) error {
 	}
 	defer buf.Destroy()
 
-	parsed, err := x509.ParsePKCS8PrivateKey(buf.Bytes())
-	if err != nil {
+	var parsed any
+	if err := buf.WithBytes(func(der []byte) error {
+		var perr error
+		parsed, perr = x509.ParsePKCS8PrivateKey(der)
+		return perr
+	}); err != nil {
 		return &errs.Wrapped{Msg: "failed to parse wrapping key", Err: err}
 	}
 	rsaKey, ok := parsed.(*rsa.PrivateKey)

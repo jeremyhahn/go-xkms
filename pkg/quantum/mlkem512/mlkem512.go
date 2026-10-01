@@ -47,6 +47,7 @@ import (
 
 	"github.com/cloudflare/circl/kem/mlkem/mlkem512"
 
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -208,8 +209,10 @@ func (k *MLKEM512) ExportSecretKey() []byte {
 	}
 	defer buf.Destroy()
 
-	result := make([]byte, buf.Size())
-	copy(result, buf.Bytes())
+	result, err := qrdbsecure.CopyOut(buf)
+	if err != nil {
+		return nil
+	}
 	return result
 }
 

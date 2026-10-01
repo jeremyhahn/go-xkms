@@ -449,14 +449,9 @@ func (k *vaultKeyring) wrap(cred VaultCredential, dek []byte) (*vaultFactor, err
 		params := k.kdfParams()
 		f.ArgonTime, f.ArgonMemory, f.ArgonThreads = params.Time, params.Memory, params.Threads
 	case cred.Type.IsKeyFactor():
-		sealed, err := sealKeyFactor(f, cred)
+		keySecret, err := sealKeyFactor(f, cred)
 		if err != nil {
 			return nil, err
-		}
-		// NewSecret wipes sealed; only its sealed form is stored.
-		keySecret, err := secure.NewSecret(sealed)
-		if err != nil {
-			return nil, &VaultCryptoError{Op: "seal", Err: err}
 		}
 		defer keySecret.Destroy()
 		secret = keySecret
@@ -489,9 +484,9 @@ func (k *vaultKeyring) unwrap(f *vaultFactor, secret *secure.Secret) ([]byte, er
 }
 
 // sealKeyFactor records a key factor's key on f and draws its secret, sealed
-// to the key (vaultkey.Seal). It returns the secret, which the caller wraps
-// the DEK with and then zeroes: only its sealed form is stored.
-func sealKeyFactor(f *vaultFactor, cred VaultCredential) ([]byte, error) {
+// to the key (vaultkey.Seal). It returns the secret in protected memory; the
+// caller wraps the DEK with it and destroys it: only its sealed form is stored.
+func sealKeyFactor(f *vaultFactor, cred VaultCredential) (*secure.Secret, error) {
 	pub, cert, err := vaultkey.ParsePublicKey(cred.PublicKey, cred.Certificate)
 	if err != nil {
 		return nil, &VaultKeyError{Err: err}
@@ -526,7 +521,20 @@ func (f *vaultFactor) kek(secret *secure.Secret) ([]byte, error) {
 		return nil, &VaultCryptoError{Op: "open", Err: err}
 	}
 	defer buf.Destroy()
-	plaintext := buf.Bytes()
+	var key []byte
+	if err := buf.WithBytes(func(plaintext []byte) error {
+		var derr error
+		key, derr = f.deriveKEK(plaintext)
+		return derr
+	}); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+// deriveKEK runs the factor's KDF over plaintext. It is called only from
+// inside kek's borrow, so it must not reach into pkg/secure.
+func (f *vaultFactor) deriveKEK(plaintext []byte) ([]byte, error) {
 	switch f.Type {
 	case FactorPassphrase:
 		if f.ArgonTime == 0 || f.ArgonMemory == 0 || f.ArgonThreads == 0 {

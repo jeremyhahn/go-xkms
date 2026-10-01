@@ -144,7 +144,7 @@ func runDeviceRelay(cmd *cobra.Command, args []string) (runErr error) {
 	// per invocation: a relay that generated a new key every run could
 	// never be pinned to by anything, and never proved it was the same
 	// laptop the phone paired with.
-	localStaticKey, err := pairing.LoadStaticKey(localPrivateKey.Bytes())
+	localStaticKey, err := loadLocalStaticKey(localPrivateKey)
 	if err != nil {
 		return &WrappedError{Msg: "failed to reconstruct local key", Err: err}
 	}

@@ -127,20 +127,24 @@ func generateNoiseKey(outputFile string) {
 		return
 	}
 	defer buf.Destroy()
-	encoded := buf.Bytes()
 
-	if err := bootstrap.EncodeNoiseStaticKey(encoded, key); err != nil {
-		handleError(&WrappedError{Sentinel: ErrEncodeKeyFailed, Err: err})
+	// The borrow is held across the encode and the file write, so a
+	// concurrent shutdown wipe cannot unmap the pages mid-read.
+	if err := buf.WithBytes(func(encoded []byte) error {
+		if err := bootstrap.EncodeNoiseStaticKey(encoded, key); err != nil {
+			return &WrappedError{Sentinel: ErrEncodeKeyFailed, Err: err}
+		}
+		encoded[bootstrap.NoiseHexKeySize] = '\n'
+		if err := writeNoiseKeyFile(outputFile, encoded); err != nil {
+			return &WrappedError{Sentinel: ErrWriteKeyFileFailed, Err: err}
+		}
+		return nil
+	}); err != nil {
+		handleError(err)
 		return
 	}
-	encoded[bootstrap.NoiseHexKeySize] = '\n'
 
 	publicHex := hex.EncodeToString(key.Public)
-
-	if err := writeNoiseKeyFile(outputFile, encoded); err != nil {
-		handleError(&WrappedError{Sentinel: ErrWriteKeyFileFailed, Err: err})
-		return
-	}
 
 	fmt.Printf("Private key written to: %s\n", outputFile)
 	fmt.Printf("Public key:  %s\n", publicHex)

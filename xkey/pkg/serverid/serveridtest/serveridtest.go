@@ -11,7 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-
 // Package serveridtest provides HTTPS test servers that each present their
 // own certificate, and so their own server identity. httptest's TLS
 // servers all share one built-in certificate, which makes every one of them

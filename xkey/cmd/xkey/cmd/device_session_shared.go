@@ -67,6 +67,23 @@ func unsealDeviceLocalKey(device *PairedDevice, logger *slog.Logger) (*secure.Bu
 	return pairing.UnsealLocalNoiseKey(barrier, device.LocalNoisePrivateKey)
 }
 
+// loadLocalStaticKey copies the unsealed local Noise scalar in priv into a
+// Noise static key's own protected memory, holding priv's borrow across the
+// read so a concurrent shutdown wipe cannot unmap the pages mid-copy. priv
+// stays the caller's to destroy.
+func loadLocalStaticKey(priv *secure.Buffer) (*pairing.StaticKey, error) {
+	var key *pairing.StaticKey
+	err := priv.WithBytes(func(scalar []byte) error {
+		var lerr error
+		key, lerr = pairing.LoadStaticKey(scalar)
+		return lerr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
 // newLiveAttestor builds the verifier the phone backend calls after its
 // handshake, for surfaces that connect through PhoneKeyBackend rather than
 // openDeviceSession (#129) -- and, since go-xkms#1306, the verifier

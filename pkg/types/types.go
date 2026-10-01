@@ -36,6 +36,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-enclave"
@@ -894,7 +895,13 @@ func NewPassword(password []byte) (Password, error) {
 	if err != nil {
 		return nil, ErrEnclaveUnavailable
 	}
-	copy(buf.Bytes(), password)
+	if err := buf.WithBytes(func(b []byte) error {
+		copy(b, password)
+		return nil
+	}); err != nil {
+		buf.Destroy()
+		return nil, ErrEnclaveUnavailable
+	}
 	return &ClearPassword{buf: buf}, nil
 }
 
@@ -915,7 +922,13 @@ func NewPasswordFromString(password string) (Password, error) {
 	if err != nil {
 		return nil, ErrEnclaveUnavailable
 	}
-	copy(buf.Bytes(), password)
+	if err := buf.WithBytes(func(b []byte) error {
+		copy(b, password)
+		return nil
+	}); err != nil {
+		buf.Destroy()
+		return nil, ErrEnclaveUnavailable
+	}
 	return &ClearPassword{buf: buf}, nil
 }
 
@@ -927,7 +940,14 @@ func (p *ClearPassword) String() (string, error) {
 	if p == nil || p.buf == nil {
 		return "", nil
 	}
-	return string(p.buf.Bytes()), nil
+	var s string
+	if err := p.buf.WithBytes(func(b []byte) error {
+		s = string(b) //secure:unwiped Password.String's contract returns a Go string; callers that can wipe use Bytes
+		return nil
+	}); err != nil {
+		return "", nil
+	}
+	return s, nil
 }
 
 // Bytes returns a defensive copy of the password bytes. Callers treat
@@ -937,9 +957,10 @@ func (p *ClearPassword) Bytes() []byte {
 	if p == nil || p.buf == nil {
 		return nil
 	}
-	src := p.buf.Bytes()
-	out := make([]byte, len(src))
-	copy(out, src)
+	out, err := qrdbsecure.CopyOut(p.buf)
+	if err != nil {
+		return nil
+	}
 	return out
 }
 

@@ -11,7 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-
 // Package grpcauth holds the client-side gRPC call authentication shared by
 // the network gRPC transport and the Unix-socket transport: the configured
 // login JWT presented as "authorization: Bearer" metadata on every RPC.

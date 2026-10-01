@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/pkg/fido2"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -82,7 +83,21 @@ func (k *SimulatedKey) checkPIN(pin *secure.Secret) error {
 		return err
 	}
 	defer kbuf.Destroy()
-	if !bytes.Equal(buf.Bytes(), kbuf.Bytes()) {
+	// Two borrows may not nest, so the presented PIN is copied out under
+	// its own borrow and compared inside the enrolled PIN's.
+	presented, err := qrdbsecure.CopyOut(buf)
+	if err != nil {
+		return err
+	}
+	defer secure.Wipe(presented)
+	match := false
+	if err := kbuf.WithBytes(func(enrolled []byte) error {
+		match = bytes.Equal(presented, enrolled)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if !match {
 		return fido2.ErrInvalidPIN
 	}
 	return nil

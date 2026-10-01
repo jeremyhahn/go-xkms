@@ -32,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/quantum/mldsa87"
 	"github.com/jeremyhahn/go-xkms/pkg/quantum/mlkem1024"
 	"github.com/jeremyhahn/go-xkms/pkg/quantum/mlkem512"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Seed sizes for quantum key storage. The PKCS#11 module stores seeds (not
@@ -466,6 +467,7 @@ func (qcm *QuantumCryptoManager) generateMLKEM512KeyPair() (*QuantumKeyPair, err
 
 	secretKey := make([]byte, len(exportedKey))
 	copy(secretKey, exportedKey)
+	secure.Wipe(exportedKey)
 
 	pubKeyCopy := make([]byte, len(publicKey))
 	copy(pubKeyCopy, publicKey)
@@ -507,6 +509,7 @@ func (qcm *QuantumCryptoManager) generateMLKEM768KeyPair() (*QuantumKeyPair, err
 
 	secretKey := make([]byte, len(exportedKey))
 	copy(secretKey, exportedKey)
+	secure.Wipe(exportedKey)
 
 	pubKeyCopy := make([]byte, len(publicKey))
 	copy(pubKeyCopy, publicKey)
@@ -547,6 +550,7 @@ func (qcm *QuantumCryptoManager) generateMLKEM1024KeyPair() (*QuantumKeyPair, er
 
 	secretKey := make([]byte, len(exportedKey))
 	copy(secretKey, exportedKey)
+	secure.Wipe(exportedKey)
 
 	pubKeyCopy := make([]byte, len(publicKey))
 	copy(pubKeyCopy, publicKey)

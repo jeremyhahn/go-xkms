@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 func init() {
@@ -47,10 +48,13 @@ func buildVaultBarrierStrategy(ctx context.Context, dataDir string) (xkms.Sealin
 		return nil, nil, &BarrierError{Operation: "resolve_credentials", Err: err}
 	}
 
+	// The backend config takes the token as a string, so the byte copy only
+	// bridges to that conversion and is wiped on the way out.
 	token, err := xkms.SecretValueBytes(vaultCfg.Token)
 	if err != nil {
 		return nil, nil, &BarrierError{Operation: "resolve_credentials", Err: err}
 	}
+	defer secure.Wipe(token)
 
 	storageDir := filepath.Join(dataDir, "barrier", "cloudkms", "vault")
 	metaStorage, err := xkms.NewFileStorageBackend(storageDir)

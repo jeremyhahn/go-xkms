@@ -64,6 +64,14 @@
 #    (secure.Wipe, secure.Buffer) and is not part of the exemption; only the
 #    import line is listed -- the symbol is always the banned import path
 #    itself, and a file only ever imports a given path once.
+#    Status (2026-10-01): #60 was closed into go-truststrap's go-enclave
+#    adoption (#19, landed on its main as #73), which moves these three
+#    signatures to *enclave.MemoryEnclave. No go-truststrap tag carries it
+#    yet -- v0.4.0-alpha is still the newest -- so these four entries stay
+#    until that tag exists and this repository bumps to it. go-qrdb v0.25
+#    reworded rule 1's message ("is forbidden; use ..."), which made the
+#    sweep miss the classification and report these entries stale while the
+#    imports were still present; rule_for now matches both wordings.
 #
 # 2. rule-2 narrowing filed on go-qrdb (rule 2) -- pkg/ssh/keys already
 #    parses only *secure.Buffer/*secure.Secret-backed bytes at every one of
@@ -89,7 +97,7 @@ pkg/trust/bootstrap/suite_test.go	1	github.com/awnumar/memguard	go-truststrap#60
 
 # --- rule-2 narrowing filed on go-qrdb: already Buffer/Secret-backed -------
 pkg/ssh/keys/parse.go	2	ssh.ParsePrivateKey(pemBytes)	rule-2 narrowing filed on go-qrdb: pemBytes is the caller's *secure.Buffer-backed bytes (see ParsePEM's pemBuf parameter); ParsePrivateKey is the only way to detect an unencrypted key before falling back to ParsePrivateKeyWithPassphrase
-pkg/ssh/keys/signer.go	2	ssh.ParsePrivateKey(buf.Bytes())	rule-2 narrowing filed on go-qrdb: buf.Bytes() is opened from k.Material or s.key.Material, both *secure.Secret, at all three call sites this text matches (persistentSigner construction, enclaveSigner.Sign, enclaveSigner.SignWithAlgorithm)
+pkg/ssh/keys/signer.go	2	ssh.ParsePrivateKey(pemBytes)	rule-2 narrowing filed on go-qrdb: pemBytes is the WithBytes view of a buffer opened from k.Material or s.key.Material, both *secure.Secret, at all three call sites this text matches (persistentSigner construction, enclaveSigner.Sign, enclaveSigner.SignWithAlgorithm)
 
 # --- Pre-existing rule-3 findings (holder fields typed string/[]byte) ------
 #

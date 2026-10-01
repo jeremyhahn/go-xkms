@@ -198,7 +198,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) (err error) {
 	// scalar would be left sitting in protected memory nothing releases.
 	defer localPrivateKey.Destroy()
 
-	localKey, err := pairing.LoadStaticKey(localPrivateKey.Bytes())
+	localKey, err := loadLocalStaticKey(localPrivateKey)
 	if err != nil {
 		return &WrappedError{Msg: "failed to load local noise key", Err: err}
 	}

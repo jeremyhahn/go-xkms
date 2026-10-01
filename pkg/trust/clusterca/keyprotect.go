@@ -226,6 +226,7 @@ func passwordFromSecret(sec *secure.Secret) (types.Password, error) {
 		return nil, err
 	}
 	defer buf.Destroy()
+	//secure:unborrowed allocates-protected types.NewPassword copies the passphrase into its own protected Buffer
 	return types.NewPassword(buf.Bytes())
 }
 

@@ -24,15 +24,45 @@
 # end -- the same behavior scripts/secure-analyzer.sh's own sweep has.
 
 # rule_for classifies MSG ($1, a diagnostic's text after "file:line:col: ")
-# as 1, 2 or 3, matching the three Reportf messages
-# pkg/secure/analyzer/analyzer.go's three rules produce (verbatim, read from
-# the pinned go-qrdb dependency). Prints nothing and fails on anything else:
-# an unrecognized shape is a hard failure, never a silently unkeyed finding.
+# by the Reportf messages the pinned go-qrdb vet tool produces (verbatim, read
+# from pkg/secure/analyzer in that dependency). Prints nothing and fails on
+# anything else: an unrecognized shape is a hard failure, never a silently
+# unkeyed finding.
+#
+#   1     raw memguard import (analyzer.go). go-qrdb v0.25 reworded it from
+#         "... is forbidden outside pkg/secure" to "... is forbidden; use
+#         ...", so the pattern stops at "is forbidden" and matches both.
+#   2     ssh.ParsePrivateKey (analyzer.go).
+#   3     string/[]byte holder field (analyzer.go).
+#   4     unborrowed secure.Buffer.Bytes, or a malformed //secure:unborrowed
+#         directive (unborrowed.go, go-qrdb#428).
+#   copy  securecopy: a copy-out of protected bytes never wiped, returned or
+#         consumed, or a string(...) of protected bytes (copyout.go,
+#         go-qrdb#459).
+#
+# Rule 4 and securecopy carry their own per-site directives
+# (//secure:unborrowed, //secure:unwiped) and are never allowlistable; see
+# process_diagnostics.
 rule_for() {
 	case "$1" in
-	'import of '*' is forbidden outside pkg/secure'*) echo 1 ;;
+	'import of '*' is forbidden'*) echo 1 ;;
 	'call to '*' is forbidden; use '*) echo 2 ;;
 	'field '*' holds sensitive material as '*) echo 3 ;;
+	'secure.Buffer.Bytes holds no borrow across the read'*) echo 4 ;;
+	'malformed //secure:unborrowed directive'*) echo 4 ;;
+	*' copies protected bytes into ordinary memory that is never wiped, returned or consumed'*) echo copy ;;
+	'string(...) converts protected bytes to a string'*) echo copy ;;
+	*) return 1 ;;
+	esac
+}
+
+# per_site_rule reports whether RULE ($1) is one whose only exemption is a
+# directive written at the site itself. go-qrdb#429 argued against an
+# allowlist for these, and the analyzer already reads the directive, so a
+# finding here is always a defect to fix (or to justify at the site).
+per_site_rule() {
+	case "$1" in
+	4|copy) return 0 ;;
 	*) return 1 ;;
 	esac
 }
@@ -106,6 +136,11 @@ process_diagnostics() {
 			echo "  FAIL (diagnostic does not match any known securecheck rule message): $diagline"
 			continue
 		}
+		if per_site_rule "$rule"; then
+			fails=$((fails + 1))
+			echo "  FAIL [$rule] (fix it, or justify it with the analyzer's own directive at the site; the allowlist does not apply): ${prefix}${diagline}"
+			continue
+		fi
 		symbol=$(symbol_for "$rule" "$moduledir/$relfile" "$lineno" "$colno" "$msg" "$moduledir") || {
 			fails=$((fails + 1))
 			echo "  FAIL (could not derive an allowlist symbol for): $diagline"

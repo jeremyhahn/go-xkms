@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-enclave"
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -878,8 +879,16 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 		if openErr != nil {
 			return nil, errors.Join(ErrFIDO2PINSetFailed, openErr, auth.Close())
 		}
-		err := auth.SetInitialPIN(pinBuf.Bytes())
+		// SetInitialPIN persists through the authenticator's storage and
+		// audit interfaces, which must not run inside a borrow, so the PIN
+		// is copied out under one and the copy wiped once the call returns.
+		pin, copyErr := qrdbsecure.CopyOut(pinBuf)
 		pinBuf.Destroy()
+		if copyErr != nil {
+			return nil, errors.Join(ErrFIDO2PINSetFailed, copyErr, auth.Close())
+		}
+		err := auth.SetInitialPIN(pin)
+		secure.Wipe(pin)
 		if err != nil {
 			closeErr := auth.Close()
 			if errors.Is(err, authenticator.ErrPINAlreadySet) {

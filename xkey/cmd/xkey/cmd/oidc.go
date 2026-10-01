@@ -41,8 +41,8 @@ import (
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/pkg/oidc"
-	"github.com/jeremyhahn/go-xkms/pkg/urlsafety"
+	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
+	"github.com/jeremyhahn/go-xkms/sdk/go/urlsafety"
 )
 
 // Default OIDC configuration values.

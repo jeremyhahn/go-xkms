@@ -19,6 +19,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpmdev"
 )
 
 // ---------------------------------------------------------------------------
@@ -866,3 +867,8 @@ var UnmarshalPublic = tpm2.UnmarshalPublic
 
 // MarshalPublic serializes a TPMTPublic structure to bytes.
 var MarshalPublic = tpm2.MarshalPublic
+
+// OpenTPMDevice opens the TPM character device at path for reading and
+// writing. It refuses a hardware TPM inside a test binary that has not opted
+// in, so no test can reach the host's TPM by accident.
+var OpenTPMDevice = tpmdev.Open

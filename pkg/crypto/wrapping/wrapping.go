@@ -42,6 +42,7 @@ import (
 	"encoding/binary"
 	"hash"
 
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -145,24 +146,33 @@ func WrapRSAAES(keyMaterial []byte, publicKey *rsa.PublicKey, algorithm backend.
 		return nil, &CryptoError{Op: "alloc aes key buffer", Err: err}
 	}
 	defer aesKeyBuf.Destroy()
-	if _, rerr := rand.Read(aesKeyBuf.Bytes()); rerr != nil {
-		return nil, &CryptoError{Op: "read random aes key", Err: rerr}
-	}
 
-	// Step 2: Wrap the AES key with RSA-OAEP. The AES key plaintext is
-	// provided from the Buffer; the wrapped output is non-sensitive.
-	wrappedAESKey, encErr := rsa.EncryptOAEP(h, rand.Reader, publicKey, aesKeyBuf.Bytes(), nil)
-	if encErr != nil {
-		return nil, &CryptoError{Op: "rsa.EncryptOAEP (aes key)", Err: encErr}
+	// Step 2: Wrap the AES key with RSA-OAEP. The key is generated and
+	// read under one borrow; the wrapped output is non-sensitive.
+	var wrappedAESKey []byte
+	if err := aesKeyBuf.WithBytes(func(aesKey []byte) error {
+		if _, rerr := rand.Read(aesKey); rerr != nil {
+			return &CryptoError{Op: "read random aes key", Err: rerr}
+		}
+		w, encErr := rsa.EncryptOAEP(h, rand.Reader, publicKey, aesKey, nil)
+		if encErr != nil {
+			return &CryptoError{Op: "rsa.EncryptOAEP (aes key)", Err: encErr}
+		}
+		wrappedAESKey = w
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	// Step 3: Wrap keyMaterial with AES-KWP. WrapAESKWP reads
 	// the AES key and plaintext; its own internal intermediates use
 	// secure.Buffer.
+	//secure:unborrowed allocates-protected WrapAESKWP allocates its own register secure.Buffer, which pkg/secure forbids inside a WithBytes borrow
 	wrappedMaterial, kwpErr := WrapAESKWP(keyMaterial, aesKeyBuf.Bytes())
 	if kwpErr != nil {
 		return nil, kwpErr
 	}
+	defer secure.Wipe(wrappedMaterial)
 
 	// Step 4: Concatenate with length prefix.
 	aesKeyLen := uint32(len(wrappedAESKey))
@@ -217,6 +227,7 @@ func UnwrapRSAAES(wrappedKey []byte, privateKey *rsa.PrivateKey, algorithm backe
 
 	// Unwrap the material using the AES key inside the Buffer. The
 	// returned plaintext is sensitive — hand it off to the caller.
+	//secure:unborrowed allocates-protected UnwrapAESKWP allocates its own register secure.Buffer, which pkg/secure forbids inside a WithBytes borrow
 	plaintext, kwpErr := UnwrapAESKWP(wrappedMaterial, aesBuf.Bytes())
 	if kwpErr != nil {
 		return nil, kwpErr
@@ -257,67 +268,61 @@ func WrapAESKWP(plaintext, key []byte) ([]byte, error) {
 	binary.BigEndian.PutUint32(aiv[0:4], 0xA65959A6)
 	binary.BigEndian.PutUint32(aiv[4:8], uint32(len(plaintext)))
 
-	// Pad plaintext to an 8-byte multiple inside a Buffer.
+	// The register block is the AIV followed by the plaintext zero-padded
+	// to an 8-byte multiple; it is the only place the plaintext is staged,
+	// so it lives in one Buffer and every round runs under one borrow.
 	padLen := (8 - (len(plaintext) % 8)) % 8
-	padded, pErr := secure.NewBuffer(len(plaintext) + padLen)
-	if pErr != nil {
-		return nil, &CryptoError{Op: "alloc padded plaintext", Err: pErr}
-	}
-	defer padded.Destroy()
-	copy(padded.Bytes(), plaintext)
-	paddedBytes := padded.Bytes()
-
-	// Special case: total padded length == 8.
-	if len(paddedBytes) == 8 {
-		// Per RFC 5649 §4.1, the single-block case is one AES call: the
-		// ciphertext block C[0] is the encryption of A concatenated with P[1].
-		in := [16]byte{}
-		copy(in[0:8], aiv[:])
-		copy(in[8:16], paddedBytes)
-		out := make([]byte, 16)
-		block.Encrypt(out, in[:])
-		return out, nil
-	}
-
-	// General case: n * 8-byte blocks plus AIV.
-	n := len(paddedBytes) / 8
+	n := (len(plaintext) + padLen) / 8
 	regLen := (n + 1) * 8
 	registers, rerr := secure.NewBuffer(regLen)
 	if rerr != nil {
 		return nil, &CryptoError{Op: "alloc register buffer", Err: rerr}
 	}
 	defer registers.Destroy()
-	rb := registers.Bytes()
-	copy(rb[0:8], aiv[:])
-	copy(rb[8:], paddedBytes)
 
-	// Perform 6*n rounds. The register buffer is sliced into 8-byte
-	// windows R[0..n]; we keep a scratch buffer for B = E(K, A || R[i]).
-	// B itself is not sensitive per-iteration (ciphertext), but we keep
-	// it small and stack-local by reusing the same 16-byte array.
-	var b [16]byte
-	for j := 0; j <= 5; j++ {
-		for i := 1; i <= n; i++ {
-			copy(b[0:8], rb[0:8])
-			copy(b[8:16], rb[i*8:(i+1)*8])
-			block.Encrypt(b[:], b[:])
+	var out []byte
+	if err := registers.WithBytes(func(rb []byte) error {
+		copy(rb[0:8], aiv[:])
+		copy(rb[8:], plaintext)
 
-			// A = MSB(64, B) XOR t
-			t := uint64(n*j + i)
-			copy(rb[0:8], b[0:8])
-			for k := 7; k >= 0; k-- {
-				rb[7-k] ^= byte(t >> (uint(k) * 8))
+		// Special case: total padded length == 8. Per RFC 5649 §4.1, the
+		// single-block case is one AES call: the ciphertext block C[0] is
+		// the encryption of A concatenated with P[1].
+		if n == 1 {
+			block.Encrypt(rb, rb)
+		} else {
+			// Perform 6*n rounds. The register buffer is sliced into 8-byte
+			// windows R[0..n]; b is the scratch block B = E(K, A || R[i]),
+			// wiped once the rounds finish.
+			var b [16]byte
+			for j := 0; j <= 5; j++ {
+				for i := 1; i <= n; i++ {
+					copy(b[0:8], rb[0:8])
+					copy(b[8:16], rb[i*8:(i+1)*8])
+					block.Encrypt(b[:], b[:])
+
+					// A = MSB(64, B) XOR t
+					t := uint64(n*j + i)
+					copy(rb[0:8], b[0:8])
+					for k := 7; k >= 0; k-- {
+						rb[7-k] ^= byte(t >> (uint(k) * 8))
+					}
+					// Register R[i] takes the least significant 64 bits of B.
+					copy(rb[i*8:(i+1)*8], b[8:16])
+				}
 			}
-			// Register R[i] takes the least significant 64 bits of B.
-			copy(rb[i*8:(i+1)*8], b[8:16])
+			secure.Wipe(b[:])
 		}
-	}
 
-	// Copy the register contents to the returned []byte. The returned
-	// ciphertext is not sensitive — it's the wrapped output intended
-	// for external storage.
-	out := make([]byte, regLen)
-	copy(out, rb)
+		// Copy the register contents to the returned []byte. The returned
+		// ciphertext is not sensitive — it's the wrapped output intended
+		// for external storage.
+		out = make([]byte, regLen)
+		copy(out, rb)
+		return nil
+	}); err != nil {
+		return nil, &CryptoError{Op: "aes-kwp wrap", Err: err}
+	}
 	return out, nil
 }
 
@@ -406,86 +411,80 @@ func UnwrapAESKWP(ciphertext, key []byte) ([]byte, error) {
 
 	n := (len(ciphertext) / 8) - 1
 
-	// Special case: n == 1. RFC 5649 section 4.2 decrypts the lone pair of
-	// blocks with a single AES-ECB operation; the verification that follows is
-	// the same one the general case runs, so it goes through the same helper.
-	if n == 1 {
-		single, serr := secure.NewBuffer(16)
-		if serr != nil {
-			return nil, &CryptoError{Op: "alloc register buffer (unwrap single block)", Err: serr}
-		}
-		defer single.Destroy()
-		out := single.Bytes()
-		block.Decrypt(out, ciphertext)
-
-		mli, verr := verifyKWPIntegrity(out, 1)
-		if verr != nil {
-			return nil, verr
-		}
-		// The plaintext portion (out[8:8+mli]) is sensitive — move it
-		// into a Buffer briefly, then return a caller-owned slice.
-		return encloseAndCopy(out[8 : 8+mli])
-	}
-
-	// General case: unwrap into a register buffer (secure.Buffer).
+	// Unwrap into a register buffer (secure.Buffer); every round, the
+	// verification and the copy-out of the recovered plaintext run under
+	// one borrow.
 	regLen := (n + 1) * 8
 	registers, rerr := secure.NewBuffer(regLen)
 	if rerr != nil {
 		return nil, &CryptoError{Op: "alloc register buffer (unwrap)", Err: rerr}
 	}
 	defer registers.Destroy()
-	rb := registers.Bytes()
-	copy(rb, ciphertext)
 
-	var b [16]byte
-	for j := 5; j >= 0; j-- {
-		for i := n; i >= 1; i-- {
-			copy(b[0:8], rb[0:8])
-			t := uint64(n*j + i)
-			for k := 7; k >= 0; k-- {
-				b[7-k] ^= byte(t >> (uint(k) * 8))
+	var plaintext []byte
+	if err := registers.WithBytes(func(rb []byte) error {
+		copy(rb, ciphertext)
+
+		// Special case: n == 1. RFC 5649 section 4.2 decrypts the lone pair
+		// of blocks with a single AES-ECB operation; the verification that
+		// follows is the same one the general case runs.
+		if n == 1 {
+			block.Decrypt(rb, rb)
+		} else {
+			var b [16]byte
+			for j := 5; j >= 0; j-- {
+				for i := n; i >= 1; i-- {
+					copy(b[0:8], rb[0:8])
+					t := uint64(n*j + i)
+					for k := 7; k >= 0; k-- {
+						b[7-k] ^= byte(t >> (uint(k) * 8))
+					}
+					copy(b[8:16], rb[i*8:(i+1)*8])
+					block.Decrypt(b[:], b[:])
+					copy(rb[0:8], b[0:8])
+					copy(rb[i*8:(i+1)*8], b[8:16])
+				}
 			}
-			copy(b[8:16], rb[i*8:(i+1)*8])
-			block.Decrypt(b[:], b[:])
-			copy(rb[0:8], b[0:8])
-			copy(rb[i*8:(i+1)*8], b[8:16])
+			secure.Wipe(b[:])
 		}
-	}
 
-	mli, verr := verifyKWPIntegrity(rb, n)
-	if verr != nil {
-		return nil, verr
-	}
+		mli, verr := verifyKWPIntegrity(rb, n)
+		if verr != nil {
+			return verr
+		}
 
-	// The unwrapped plaintext sits in rb[8 : 8+mli]. Copy it out; the
-	// register buffer is destroyed by the deferred Destroy above.
-	return encloseAndCopy(rb[8 : 8+mli])
+		// The unwrapped plaintext sits in rb[8 : 8+mli]. Copy it out for
+		// the caller; the register buffer is destroyed by the deferred
+		// Destroy above.
+		plaintext = make([]byte, mli)
+		copy(plaintext, rb[8:8+mli])
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return plaintext, nil
 }
 
-// encloseAndCopy runs the sensitive src through a *secure.Buffer and
-// returns a fresh caller-owned slice. The source slice is wiped via
-// secure.Wipe.
+// encloseAndCopy moves the sensitive src into a *secure.Buffer, which wipes
+// src, and returns a fresh caller-owned copy read out under the Buffer's
+// borrow (secure.CopyOut).
 //
-// This helper exists so every "returning sensitive bytes to a caller"
-// site has the same pattern: the material takes a round trip through
-// a locked buffer even though we cannot control what the caller does
-// next. Combined with the documented contract ("callers MUST move
-// immediately into a Buffer/Secret"), this bounds the plaintext
-// lifetime to a single stack frame on both sides of the boundary.
+// UnwrapRSAOAEP uses it for rsa.DecryptOAEP's heap-allocated output: the
+// decrypted slice is wiped here, and what the caller receives is a single
+// copy it owns and must move into a Buffer/Secret and wipe.
 func encloseAndCopy(src []byte) ([]byte, error) {
 	if len(src) == 0 {
 		return nil, &EmptyInputError{Field: "src"}
 	}
-	buf, err := secure.NewBuffer(len(src))
+	buf, err := secure.NewBufferFromBytes(src)
 	if err != nil {
 		return nil, &CryptoError{Op: "enclose sensitive result", Err: err}
 	}
 	defer buf.Destroy()
-	copy(buf.Bytes(), src)
-	out := make([]byte, len(src))
-	copy(out, buf.Bytes())
-	// Best-effort wipe of our caller-supplied source.
-	secure.Wipe(src)
+	out, err := qrdbsecure.CopyOut(buf)
+	if err != nil {
+		return nil, &CryptoError{Op: "copy out sensitive result", Err: err}
+	}
 	return out, nil
 }
 
@@ -527,30 +526,38 @@ func WrapAESKW(plaintext, kek []byte) ([]byte, error) {
 		return nil, &CryptoError{Op: "alloc register buffer (aes-kw wrap)", Err: rerr}
 	}
 	defer registers.Destroy()
-	rb := registers.Bytes()
-	copy(rb[0:8], aesKWDefaultIV[:])
-	copy(rb[8:], plaintext)
 
-	// RFC 3394 section 2.2.1, the wrapping algorithm: 6*n rounds of
-	// B = AES(K, A | R[i]), A = MSB(64,B) XOR t, R[i] = LSB(64,B).
-	var b [16]byte
-	for j := 0; j <= 5; j++ {
-		for i := 1; i <= n; i++ {
-			copy(b[0:8], rb[0:8])
-			copy(b[8:16], rb[i*8:(i+1)*8])
-			block.Encrypt(b[:], b[:])
+	var out []byte
+	if err := registers.WithBytes(func(rb []byte) error {
+		copy(rb[0:8], aesKWDefaultIV[:])
+		copy(rb[8:], plaintext)
 
-			t := uint64(n*j + i)
-			copy(rb[0:8], b[0:8])
-			for k := 7; k >= 0; k-- {
-				rb[7-k] ^= byte(t >> (uint(k) * 8))
+		// RFC 3394 section 2.2.1, the wrapping algorithm: 6*n rounds of
+		// B = AES(K, A | R[i]), A = MSB(64,B) XOR t, R[i] = LSB(64,B).
+		var b [16]byte
+		for j := 0; j <= 5; j++ {
+			for i := 1; i <= n; i++ {
+				copy(b[0:8], rb[0:8])
+				copy(b[8:16], rb[i*8:(i+1)*8])
+				block.Encrypt(b[:], b[:])
+
+				t := uint64(n*j + i)
+				copy(rb[0:8], b[0:8])
+				for k := 7; k >= 0; k-- {
+					rb[7-k] ^= byte(t >> (uint(k) * 8))
+				}
+				copy(rb[i*8:(i+1)*8], b[8:16])
 			}
-			copy(rb[i*8:(i+1)*8], b[8:16])
 		}
-	}
+		secure.Wipe(b[:])
 
-	out := make([]byte, regLen)
-	copy(out, rb)
+		// The registers now hold the wrapped (non-sensitive) output.
+		out = make([]byte, regLen)
+		copy(out, rb)
+		return nil
+	}); err != nil {
+		return nil, &CryptoError{Op: "aes-kw wrap", Err: err}
+	}
 	return out, nil
 }
 
@@ -578,34 +585,45 @@ func UnwrapAESKW(wrapped, kek []byte) ([]byte, error) {
 		return nil, &CryptoError{Op: "alloc register buffer (aes-kw unwrap)", Err: rerr}
 	}
 	defer registers.Destroy()
-	rb := registers.Bytes()
-	copy(rb, wrapped)
 
-	// RFC 3394 section 2.2.2, the unwrapping algorithm: the inverse 6*n
-	// rounds, run with i and j in reverse order.
-	var b [16]byte
-	for j := 5; j >= 0; j-- {
-		for i := n; i >= 1; i-- {
-			copy(b[0:8], rb[0:8])
-			t := uint64(n*j + i)
-			for k := 7; k >= 0; k-- {
-				b[7-k] ^= byte(t >> (uint(k) * 8))
+	var plaintext []byte
+	if err := registers.WithBytes(func(rb []byte) error {
+		copy(rb, wrapped)
+
+		// RFC 3394 section 2.2.2, the unwrapping algorithm: the inverse 6*n
+		// rounds, run with i and j in reverse order.
+		var b [16]byte
+		for j := 5; j >= 0; j-- {
+			for i := n; i >= 1; i-- {
+				copy(b[0:8], rb[0:8])
+				t := uint64(n*j + i)
+				for k := 7; k >= 0; k-- {
+					b[7-k] ^= byte(t >> (uint(k) * 8))
+				}
+				copy(b[8:16], rb[i*8:(i+1)*8])
+				block.Decrypt(b[:], b[:])
+				copy(rb[0:8], b[0:8])
+				copy(rb[i*8:(i+1)*8], b[8:16])
 			}
-			copy(b[8:16], rb[i*8:(i+1)*8])
-			block.Decrypt(b[:], b[:])
-			copy(rb[0:8], b[0:8])
-			copy(rb[i*8:(i+1)*8], b[8:16])
 		}
-	}
+		secure.Wipe(b[:])
 
-	// RFC 3394 section 2.2.2 step 3: the recovered A must equal the initial
-	// value. subtle.ConstantTimeCompare rather than a byte loop with an early
-	// return, which would leak through timing how many leading octets of a
-	// forged blob matched -- the loop is the whole authenticity check for
-	// CKM_AES_KEY_WRAP, and unwrap is reachable with attacker-chosen input.
-	if subtle.ConstantTimeCompare(rb[0:8], aesKWDefaultIV[:]) != 1 {
-		return nil, &MalformedWrappedKeyError{Reason: "invalid AES-KW integrity check value"}
-	}
+		// RFC 3394 section 2.2.2 step 3: the recovered A must equal the
+		// initial value. subtle.ConstantTimeCompare rather than a byte loop
+		// with an early return, which would leak through timing how many
+		// leading octets of a forged blob matched -- the loop is the whole
+		// authenticity check for CKM_AES_KEY_WRAP, and unwrap is reachable
+		// with attacker-chosen input.
+		if subtle.ConstantTimeCompare(rb[0:8], aesKWDefaultIV[:]) != 1 {
+			return &MalformedWrappedKeyError{Reason: "invalid AES-KW integrity check value"}
+		}
 
-	return encloseAndCopy(rb[8:])
+		// The unwrapped plaintext is rb[8:]; copy it out for the caller.
+		plaintext = make([]byte, len(rb)-8)
+		copy(plaintext, rb[8:])
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return plaintext, nil
 }

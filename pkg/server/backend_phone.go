@@ -19,6 +19,7 @@ import (
 
 	phonebackend "github.com/jeremyhahn/go-xkms/pkg/backend/phone"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	// Register the Android platform verifier for phone attestation.
 	_ "github.com/jeremyhahn/go-xkms/pkg/backend/phone/android"
@@ -96,6 +97,7 @@ func (s *Server) RegisterPhoneBackend(sender phonebackend.Sender) error {
 	if err != nil {
 		return errors.Join(ErrPhoneBackendCreate, err)
 	}
+	defer secure.Wipe(noiseStaticKey)
 
 	backendConfig := &phonebackend.Config{
 		Transport:      phoneCfg.Transport,

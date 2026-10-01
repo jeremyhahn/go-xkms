@@ -17,6 +17,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Clears the TPM as described in TCG Part 3: Commands - Section 24.6 - TPM2_Clear
@@ -411,6 +412,9 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 			if err != nil {
 				return err
 			}
+			// store.NewPassword copies into its own enclave and leaves the
+			// source alone.
+			defer secure.Wipe(hierarchyAuthBytes)
 			if len(hierarchyAuthBytes) > 0 {
 				auth, err := store.NewPassword(hierarchyAuthBytes)
 				if err != nil {

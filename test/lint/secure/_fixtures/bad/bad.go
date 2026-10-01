@@ -29,6 +29,8 @@ import (
 	"github.com/awnumar/memguard" // rule 1: raw memguard import outside pkg/secure
 
 	"golang.org/x/crypto/ssh" // rule 2: paired with the banned call below
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure" // rule 4 and securecopy
 )
 
 // holder is a rule-3 finding with no scope-clause cover: not generated, not
@@ -48,4 +50,21 @@ func useMemguard() *memguard.LockedBuffer {
 // what backs pemBytes.
 func useParsePrivateKey(pemBytes []byte) (ssh.Signer, error) {
 	return ssh.ParsePrivateKey(pemBytes)
+}
+
+// unborrowedRead exercises rule 4: secure.Buffer.Bytes read with no borrow
+// held across the read and no //secure:unborrowed directive.
+func unborrowedRead(buf *secure.Buffer) int {
+	return len(buf.Bytes())
+}
+
+// leakedString exercises securecopy: string(view) copies protected bytes
+// into a string, which can never be wiped.
+func leakedString(buf *secure.Buffer) string {
+	var s string
+	_ = buf.WithBytes(func(view []byte) error {
+		s = string(view)
+		return nil
+	})
+	return s
 }

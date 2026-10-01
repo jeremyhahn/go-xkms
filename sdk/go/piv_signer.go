@@ -109,8 +109,14 @@ func (s *PIVCryptoSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpt
 		// transport (REST/gRPC/QUIC/MCP), so it carries the PIN as a plain
 		// string -- the unavoidable copy at that transport-serialization
 		// boundary.
-		req.PIN = string(buf.Bytes())
+		err = buf.WithBytes(func(pin []byte) error {
+			req.PIN = string(pin) //secure:unwiped PIVSignRequest.PIN is a string serialized onto the SDK transport
+			return nil
+		})
 		buf.Destroy()
+		if err != nil {
+			return nil, err
+		}
 	}
 	resp, err := SignPIV(context.Background(), req)
 	if err != nil {

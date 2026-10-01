@@ -9,6 +9,22 @@ Step one PREPARES a pull request and stops. Step two, run only after that pull
 request has been reviewed and merged, TAGS and publishes. Nothing publishes
 without a merged pull request in between — that is the whole point.
 
+### Before anything reaches `main`: CI-only gates must pass
+
+`make test` and `make lint` are not the whole gate. CI's `Lint`, `Static
+Analysis` and `Architecture Gates` jobs run checks no local default target
+does — `make fmt-check`, `make secure-analyzer` (go-qrdb's secure-memory
+analyzer over every module and tag set), `make secure-analyzer-selftest`,
+`make vet-integration`, `make check-public-literals`, and the sdk/go-only
+import gates for `xkmsctl` and `xkey` — and a dependency bump can turn any of
+them red with no change to this repository's own code. Every change,
+release commits included, reaches `main` through a pull request whose CI run
+is fully green, `CI Gate` included. Never push straight to `main` to save a
+CI cycle: v0.48.0-alpha did, and shipped a red `main` (gofmt drift, 118
+go-qrdb v0.25 secure-analyzer findings, and `pkg/*` imports in `xkmsctl` and
+`xkey`) that v0.49.0-alpha exists to repair. Run the make targets listed in
+`.github/workflows/ci.yml` locally before opening the pull request.
+
 ### Step one: prepare
 
 **1. Decide the version.** Pre-1.0, MINOR is where breakage lives: a breaking

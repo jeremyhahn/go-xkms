@@ -149,7 +149,7 @@ func (c *OATHCredentialInfo) SecretString() string {
 	}
 	var out string
 	if err := c.secret.WithBytes(func(b []byte) error {
-		out = string(b)
+		out = string(b) //secure:unwiped serialization boundary: the backup archive and oath.Credential.SetSecret carry the secret as a string
 		return nil
 	}); err != nil {
 		return ""
@@ -284,7 +284,7 @@ func (p *PasswordInfo) PasswordString() string {
 	}
 	var out string
 	if err := p.password.WithBytes(func(b []byte) error {
-		out = string(b)
+		out = string(b) //secure:unwiped serialization boundary: the backup archive carries the password as a string
 		return nil
 	}); err != nil {
 		return ""

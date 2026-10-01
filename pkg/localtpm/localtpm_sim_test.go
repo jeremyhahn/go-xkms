@@ -82,7 +82,14 @@ func TestHost_CreatesKeysUnderANamedPolicy(t *testing.T) {
 	factor := vaultkey.Factor{Fingerprint: fingerprint, Algorithm: sealed.Algorithm, Challenge: sealed.Challenge, Check: sealed.Check}
 	opened, err := vaultkey.Open(ctx, token, factor)
 	require.NoError(t, err)
-	assert.Equal(t, sealed.Secret, opened)
+	defer sealed.Secret.Destroy()
+	want, err := sealed.Secret.Open()
+	require.NoError(t, err)
+	defer want.Destroy()
+	require.NoError(t, want.WithBytes(func(b []byte) error {
+		assert.Equal(t, b, opened)
+		return nil
+	}))
 
 	require.NoError(t, host.TPM().ExtendPCR(simPCR, "sha256", []byte("platform change")))
 	_, err = vaultkey.Open(ctx, token, factor)
