@@ -68,6 +68,34 @@ var (
 	// here turns that silent corruption into an error before anything is sent.
 	ErrImportKeyTypeRequired = errors.New("--key-type is required (rsa, ecdsa, ed25519, or aes)")
 
+	// Backup command errors (go-xkms#728)
+
+	// ErrBackupDestinationRequired is returned when --destination is not
+	// provided for backup create.
+	ErrBackupDestinationRequired = errors.New("--destination is required")
+
+	// ErrBackupIDRequired is returned when --id is not provided for a
+	// command that requires a backup ID.
+	ErrBackupIDRequired = errors.New("--id is required")
+
+	// ErrCreateBackupFailed is the sentinel error "failed to create backup".
+	ErrCreateBackupFailed = errors.New("failed to create backup")
+
+	// ErrListBackupsFailed is the sentinel error "failed to list backups".
+	ErrListBackupsFailed = errors.New("failed to list backups")
+
+	// ErrGetBackupFailed is the sentinel error "failed to get backup".
+	ErrGetBackupFailed = errors.New("failed to get backup")
+
+	// ErrDeleteBackupFailed is the sentinel error "failed to delete backup".
+	ErrDeleteBackupFailed = errors.New("failed to delete backup")
+
+	// ErrRestoreBackupFailed is the sentinel error "failed to restore backup".
+	ErrRestoreBackupFailed = errors.New("failed to restore backup")
+
+	// ErrVerifyBackupFailed is the sentinel error "failed to verify backup".
+	ErrVerifyBackupFailed = errors.New("failed to verify backup")
+
 	// Custodian group errors
 
 	// ErrCustodianNameRequired is returned when --name is not provided for custodian create.

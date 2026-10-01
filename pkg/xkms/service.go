@@ -118,6 +118,15 @@ type XKMSService struct {
 	webauthnService *webauthn.Service
 	custodians      subsystem[qrdbtransport.CustodianGroupClient]
 	shares          subsystem[qrdbtransport.ShareClient]
+
+	// backup is the embedded qrdb node's backup client (owner ruling
+	// 2026-09-30, go-xkms#728): whole-node backup is a shard snapshot of the
+	// node's barrier-encrypted, replicated state, captured and restored
+	// entirely through go-qrdb/sdk/go — xkms persists no backup state of its
+	// own and keeps no local copy of go-qrdb's snapshot/restore logic. Nil
+	// until SetBackupClient is called, in which case every BackupServicer
+	// method returns ErrNotConfigured.
+	backup          subsystem[qrdbtransport.BackupClient]
 	userAuthFactors qrdbtransport.UserAuthFactorClient
 
 	// tokenIssuer mints and revokes the browser/desktop session token
@@ -349,6 +358,13 @@ func (s *XKMSService) SetCustodianClient(c qrdbtransport.CustodianGroupClient) {
 // implementation detail.
 func (s *XKMSService) SetShareClient(c qrdbtransport.ShareClient) {
 	s.shares.store(c)
+}
+
+// SetBackupClient wires the embedded qrdb node's backup client into the
+// service. xkms presents its own backup/restore API on top of it; the shard
+// snapshot, checksum and encryption logic all stay in go-qrdb (go-xkms#728).
+func (s *XKMSService) SetBackupClient(c qrdbtransport.BackupClient) {
+	s.backup.store(c)
 }
 
 // SetUserAuthFactorClient wires the embedded qrdb node's user-side auth-factor

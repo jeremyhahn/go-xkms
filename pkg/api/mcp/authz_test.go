@@ -771,6 +771,15 @@ var goldenMethodPermissions = map[string]string{
 	"xkms.verifySOPIN":      "pin:read",
 	"xkms.verifyUserPIN":    "pin:read",
 
+	// Whole-node backup/restore — pkg/api/grpc/service_backup.go (owner
+	// ruling 2026-09-30, go-xkms#728).
+	"xkms.createBackup":  "backup:create",
+	"xkms.listBackups":   "backup:list",
+	"xkms.getBackup":     "backup:read",
+	"xkms.deleteBackup":  "backup:delete",
+	"xkms.restoreBackup": "backup:restore",
+	"xkms.verifyBackup":  "backup:verify",
+
 	// Custodian groups — pkg/api/grpc/service_custodian_share_tenant.go
 	// (go-xkms#773).
 	"xkms.addCustodianMember":    "ceremony:enroll_custodian",
@@ -831,7 +840,7 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
 		auth.ResourceTPMPolicy: {},
 		auth.ResourcePIN:       {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
-		auth.ResourceUsers: {},
+		auth.ResourceUsers: {}, auth.ResourceBackup: {},
 	}
 
 	for method, perm := range methodPermissions {

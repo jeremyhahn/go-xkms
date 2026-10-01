@@ -90,6 +90,11 @@ type Deps struct {
 	// owns its barrier keeps it out of xkms's reach.
 	ServeBarrier bool
 
+	// Backup is the host's qrdb node backup client (qrdb Client.Backup()).
+	// Unlike Custodians/Shares it is not gated on ServeBarrier: whole-node
+	// backup/restore is independent of barrier custody (go-xkms#728).
+	Backup qrdbtransport.BackupClient
+
 	// Logger receives one line per feature built or left off. Nil selects
 	// slog.Default().
 	Logger *slog.Logger
@@ -135,6 +140,9 @@ type Stores struct {
 
 	// Invite is the enrollment-invitation store (go-xkms#1294 part B).
 	Invite xkms.InviteStore
+
+	// Backup is the whole-node backup client (go-xkms#728).
+	Backup qrdbtransport.BackupClient
 
 	// Disabled holds one *FeatureDisabledError or *FeatureBuildError per
 	// feature Build left off.
@@ -236,6 +244,11 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 		})
 	}
 
+	if b.need(FeatureBackup, d.Backup != nil, "backup client") {
+		st.Backup = d.Backup
+		b.logger.Info("xkms feature on", "feature", FeatureBackup)
+	}
+
 	return st, nil
 }
 
@@ -281,6 +294,9 @@ func (st *Stores) Wire(svc *xkms.XKMSService) {
 	}
 	if st.Invite != nil {
 		svc.SetInviteStore(st.Invite)
+	}
+	if st.Backup != nil {
+		svc.SetBackupClient(st.Backup)
 	}
 }
 

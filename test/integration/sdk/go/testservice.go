@@ -1299,6 +1299,32 @@ func (s *TestXKMSService) TenantVTPMStop(context.Context, string) (*xkms.TenantV
 	return nil, ErrNotImplemented
 }
 
+// Backup operations (go-xkms#728)
+
+func (s *TestXKMSService) CreateBackup(ctx context.Context, req *xkms.BackupRequest) (*xkms.BackupInfo, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) ListBackups(ctx context.Context) ([]xkms.BackupInfo, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) GetBackup(ctx context.Context, id string) (*xkms.BackupInfo, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) DeleteBackup(ctx context.Context, id string) error {
+	return ErrNotImplemented
+}
+
+func (s *TestXKMSService) RestoreBackup(ctx context.Context, req *xkms.RestoreRequest) (*xkms.RestoreResult, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) VerifyBackup(ctx context.Context, id string) (*xkms.VerifyResult, error) {
+	return nil, ErrNotImplemented
+}
+
 // Custodian group operations
 
 // CreateCustodianGroup creates a new custodian group.
