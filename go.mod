@@ -37,6 +37,7 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-enclave v0.6.0-alpha
 	github.com/jeremyhahn/go-frost v0.3.0-alpha
+	github.com/jeremyhahn/go-luks2 v0.2.0-alpha
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
 	github.com/jeremyhahn/go-qrdb v0.20.2-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.20.2-alpha
@@ -101,6 +102,7 @@ require (
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.59.0 // indirect
 	github.com/RaduBerinde/axisds v0.1.0 // indirect
 	github.com/RaduBerinde/btreemap v0.0.0-20260105202824-d3184786f603 // indirect
+	github.com/anatol/devmapper.go v0.0.0-20250316020617-2671eefd35d7 // indirect
 	github.com/awnumar/memcall v0.5.0 // indirect
 	github.com/aws/aws-sdk-go v1.55.8 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.36 // indirect

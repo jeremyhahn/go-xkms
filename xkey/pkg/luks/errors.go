@@ -15,72 +15,48 @@ package luks
 
 import (
 	"errors"
-	"fmt"
+
+	sdkluks "github.com/jeremyhahn/go-xkms/sdk/go/luks"
 )
 
 // Package-level sentinel errors.
 var (
-	ErrVolumeNotFound       = errors.New("luks: volume not found")
-	ErrVolumeAlreadyExists  = errors.New("luks: encrypted container already exists - use 'xkey luks2 wipe' first to destroy existing data")
-	ErrVolumeNotMounted     = errors.New("luks: volume not mounted")
-	ErrVolumeAlreadyMounted = errors.New("luks: volume already mounted")
-	ErrInvalidPassphrase    = errors.New("luks: invalid passphrase")
-	ErrPassphraseMismatch   = errors.New("luks: passphrase confirmation mismatch")
-	ErrLoopDeviceSetup      = errors.New("luks: failed to setup loop device")
-	ErrLUKSFormat           = errors.New("luks: failed to format volume")
-	ErrLUKSUnlock           = errors.New("luks: failed to unlock volume")
-	ErrLUKSLock             = errors.New("luks: failed to lock volume")
-	ErrFilesystemCreate     = errors.New("luks: failed to create filesystem")
-	ErrMountFailed          = errors.New("luks: failed to mount volume")
-	ErrUnmountFailed        = errors.New("luks: failed to unmount volume")
-	ErrDataCopyFailed       = errors.New("luks: failed to copy data")
-	ErrPermissionDenied     = errors.New("luks: permission denied (requires root)")
+	// ErrVolumeNotFound reports that no LUKS container exists at the
+	// configured path. It is sdkluks.ErrVolumeNotFound to errors.Is.
+	ErrVolumeNotFound = sdkluks.ErrVolumeNotFound
 
-	// ErrKeyringUnavailable is the identity of every KeyringError: the kernel
-	// keyring is not usable by this process, so no volume can be unlocked.
-	ErrKeyringUnavailable = errors.New("luks: the kernel keyring is unavailable to this process")
+	// ErrVolumeAlreadyExists reports that a LUKS container already exists
+	// at the configured path, with xkey's own CLI remedy. It is
+	// sdkluks.ErrVolumeAlreadyExists to errors.Is.
+	ErrVolumeAlreadyExists error = volumeAlreadyExistsError{}
+
+	// ErrVolumeNotMounted reports that an operation requiring a mounted
+	// volume found it unmounted. It is sdkluks.ErrNotMounted to errors.Is.
+	ErrVolumeNotMounted = sdkluks.ErrNotMounted
+
+	// ErrVolumeAlreadyMounted reports an attempt to mount a volume that is
+	// already mounted. It is sdkluks.ErrAlreadyMounted to errors.Is.
+	ErrVolumeAlreadyMounted = sdkluks.ErrAlreadyMounted
+
+	ErrPassphraseMismatch = errors.New("luks: passphrase confirmation mismatch")
+	ErrPermissionDenied   = errors.New("luks: permission denied (requires root)")
 )
 
-// KeyringError reports a failed kernel keyring preflight. It is
-// ErrKeyringUnavailable to errors.Is, and it unwraps to go-luks2's own
-// classification (luks2.ErrKeyringBlocked for a seccomp policy,
-// luks2.ErrKeyringUnsupported for a kernel without key support,
-// luks2.ErrKeyringQuotaExhausted, luks2.ErrKeyringFailed), whose message
-// names the syscalls and the remedy.
-type KeyringError struct {
-	// Err is go-luks2's classified error.
-	Err error
-}
+// volumeAlreadyExistsError carries xkey's CLI-specific remedy text while
+// still answering true to errors.Is(err, sdkluks.ErrVolumeAlreadyExists):
+// the production Executor's own ErrVolumeAlreadyExists (reached only on the
+// rare TOCTOU race between Volume.Exists and the Executor's own check)
+// means the same thing to a caller, just without the xkey-specific hint.
+type volumeAlreadyExistsError struct{}
 
 // Error implements the error interface.
-func (e *KeyringError) Error() string {
-	return "luks: kernel keyring preflight failed: " + e.Err.Error()
+func (volumeAlreadyExistsError) Error() string {
+	return "luks: encrypted container already exists - use 'xkey luks2 wipe' first to destroy existing data"
 }
 
-// Unwrap returns go-luks2's classified error.
-func (e *KeyringError) Unwrap() error { return e.Err }
-
-// Is reports ErrKeyringUnavailable as this error's identity.
-func (e *KeyringError) Is(target error) bool { return target == ErrKeyringUnavailable }
-
-// VolumeError represents a LUKS volume operation error.
-type VolumeError struct {
-	Operation string
-	Path      string
-	Err       error
-}
-
-// Error returns the error message.
-func (e *VolumeError) Error() string {
-	if e.Path != "" {
-		return fmt.Sprintf("luks: %s failed for %s: %v", e.Operation, e.Path, e.Err)
-	}
-	return fmt.Sprintf("luks: %s failed: %v", e.Operation, e.Err)
-}
-
-// Unwrap returns the underlying error.
-func (e *VolumeError) Unwrap() error {
-	return e.Err
+// Is reports sdkluks.ErrVolumeAlreadyExists as this error's identity.
+func (volumeAlreadyExistsError) Is(target error) bool {
+	return target == sdkluks.ErrVolumeAlreadyExists
 }
 
 // MessageError is a typed error that carries a preformatted message. It

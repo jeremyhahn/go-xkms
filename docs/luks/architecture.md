@@ -1,108 +1,137 @@
 # LUKS (root module) — Architecture
 
-> **Status: NORMATIVE** · Feature: `luks` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `luks` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## Scope
 
-`pkg/luks` is the root go-xkms module's LUKS support. It has two halves that
-are packaged together but not wired to each other:
+`pkg/luks` is the root go-xkms module's LUKS support, and — as of
+go-xkms#917 — the **single** LUKS implementation in this repository. It has
+three parts:
 
 1. **Volume lifecycle** — `Manager`, `VolumeConfig`, `Executor`
    (`pkg/luks/manager.go`, `pkg/luks/config.go`): a FIPS-aware state machine
-   for creating, unlocking, and locking one LUKS container, delegating the
-   actual disk operations to a caller-supplied `Executor`.
-2. **TPM 2.0 passphrase sealing** — `TPMSealer`
-   (`pkg/luks/tpm.go`): seals and unseals a random LUKS passphrase against a
-   TPM 2.0, producing a `systemd-tpm2`-compatible LUKS2 token.
+   for creating, unlocking, mounting, unmounting and locking one LUKS
+   container, delegating the actual disk operations to an `Executor`.
+2. **Production `Executor`** — `LibExecutor` (`pkg/luks/executor.go`): the
+   `go-luks2`-backed implementation of that seam. There is now exactly one
+   production `Executor` in the stack; nothing else drives `cryptsetup`,
+   `dmsetup`, loop devices or mounts.
+3. **TPM 2.0 passphrase sealing** — `TPMSealer` (`pkg/luks/tpm.go`): seals
+   and unseals a random LUKS passphrase against a TPM 2.0, parented to
+   either go-xkms's own Platform SRK or the TCG Shared SRK (`SealParent`,
+   `pkg/luks/config.go`).
 
-Both halves are exported together as `pkg/luks` and re-exported verbatim by
-`sdk/go/luks` (`sdk/go/luks/luks.go`).
-
-This document is about `pkg/luks` only. Two other things in this repository
-are also named "luks" and are **out of scope** here — see "Neighboring
-packages named luks" below.
+All three are exported together as `pkg/luks` and re-exported by
+`sdk/go/luks` (`sdk/go/luks/luks.go`), the only way any other module —
+including `xkey` — is allowed to reach this package.
 
 ## Why the package exists
 
 LUKS volume software needs two things a plain `cryptsetup` wrapper doesn't
 give you: a KDF choice that respects the process's FIPS 140 policy, and (for
 unattended systems) a way to protect the passphrase itself without a human
-typing it in — hence the TPM sealer. `pkg/luks` provides both as small,
-independently testable pieces, and leaves the actual `cryptsetup`/`dmsetup`
-invocation to an injected seam rather than owning a subprocess dependency in
-the root module.
+typing it in — hence the TPM sealer. Before go-xkms#917, this logic existed
+twice: once here as an untested state machine with no production `Executor`,
+and once in `xkey/pkg/luks` as a complete, working implementation driving
+`github.com/jeremyhahn/go-luks2` directly. go-xkms#917 collapsed that into
+one implementation, here, built on `go-luks2`; `xkey` now consumes it
+through `sdk/go/luks` and keeps only what is genuinely desktop-specific
+(privilege-drop chown after mount, secure wipe of a retired container — see
+"Neighboring packages named luks" below).
 
 ## Volume lifecycle: `Manager` + `Executor`
 
-`Manager` (`pkg/luks/manager.go:52-183`) tracks mount/unlock state with
+`Manager` (`pkg/luks/manager.go`) tracks mount/unlock state with
 `sync/atomic` (`mounted`, `unlocked` fields, lock-free reads via `IsMounted`/
 `IsUnlocked`) and validates every request against that state before it
-reaches disk (go-xkms#917):
+reaches disk:
 
 - `Create` rejects `sizeBytes <= 0` (`ErrInvalidSize`) and an empty
-  passphrase (`ErrEmptyPassphrase`) before calling the executor
-  (`pkg/luks/manager.go:92-103`).
+  passphrase (`ErrEmptyPassphrase`) before calling the executor.
 - `Unlock` rejects an empty passphrase, and `ErrAlreadyUnlocked` if the
-  volume is already unlocked, before calling the executor
-  (`pkg/luks/manager.go:108-120`).
+  volume is already unlocked, before calling the executor.
 - `Lock` rejects with `ErrNotUnlocked` if the volume is not currently
-  unlocked, then clears both `unlocked` and `mounted` state on success
-  (`pkg/luks/manager.go:124-134`).
+  unlocked, then clears both `unlocked` and `mounted` state on success.
 - `Mount` rejects with `ErrNotUnlocked` if the volume is not unlocked and
   `ErrAlreadyMounted` if it is already mounted, then sets `mounted` on
-  success (`pkg/luks/manager.go:139-151`).
+  success.
 - `Unmount` rejects with `ErrNotMounted` if the volume is not currently
-  mounted, then clears `mounted` on success
-  (`pkg/luks/manager.go:156-165`).
+  mounted, then clears `mounted` on success.
 
-`Executor` (`pkg/luks/manager.go:26-50`) is the seam: "Production
-implementations call cryptsetup, dmsetup, and mount; test code supplies
-lightweight mocks." It declares `Create`, `Unlock`, `Lock`, `Mount`,
-`Unmount`, `IsMounted`, `IsUnlocked`. Every `Executor` method receives the
-full `*VolumeConfig`, which is how a `cryptsetup`-backed implementation is
-expected to translate `VolumeConfig.KDF` into `cryptsetup luksFormat --pbkdf`
-and `VolumeConfig.PBKDFIterTime` into `--iter-time` — `pkg/luks` defines the
-contract but performs none of that translation itself. `Executor.IsMounted`/
-`IsUnlocked` are live queries an implementation can use to reconcile state;
-`Manager` does not call them itself — see "What `Manager` does not do" below.
+`Executor` (`pkg/luks/manager.go`) is the seam: "Production implementations
+call cryptsetup, dmsetup, and mount; test code supplies lightweight mocks."
+It declares `Create`, `Unlock`, `Lock`, `Mount`, `Unmount`, `IsMounted`,
+`IsUnlocked`. `Executor.IsMounted`/`IsUnlocked` are live kernel queries an
+implementation can use to reconcile state; `Manager` does not call them
+itself (its own `IsMounted`/`IsUnlocked` report only the atomic bookkeeping
+— see "What `Manager` does not do" below). A caller that wants the kernel's
+own ground truth without a `Manager` calls `Executor.IsMounted`/`IsUnlocked`
+directly, or the package-level `IsMounted`/`IsUnlocked`/`IsLUKSVolume`
+functions (`pkg/luks/executor.go`), which is exactly what `xkey.Volume` does
+(see "Neighboring packages" below).
 
-**No concrete `Executor` implementation exists in this repository.** This was
-verified by searching both the root module and the `xkey` module for anything
-implementing the full method set against `*luks.VolumeConfig`; the only types
-satisfying the interface are the mocks in `pkg/luks/manager_test.go`. `xkey`'s
-own LUKS2 volume code (`xkey/pkg/luks`, driving `xkey luks2 *`) is a separate,
-self-contained implementation built on `github.com/jeremyhahn/go-luks2` (see
-`xkey/go.mod`, pinned at `v0.2.0-alpha`) — it does not implement
-`luks.Executor` and does not construct a `luks.Manager`. See "Neighboring
-packages named luks" below.
+### `Manager` is per-process, not per-host
 
-`github.com/jeremyhahn/go-luks2` is a pure-Go LUKS2 implementation — no
-`cryptsetup` subprocess — already vetted and in production use by `xkey`
-in this same repository, and is the library go-xkms#917's triage identified
-for a `pkg/luks` production `Executor`. It is not yet a dependency of the
-root `go-xkms` module (only of the `xkey` nested module), so adding it here
-is an explicit, separate decision pending owner approval; wiring an
-`Executor` implementation on top of it is tracked under go-xkms#917 rather
-than done in the same change that wired the state machine below.
+`Manager`'s atomic state starts at zero every time one is constructed. That
+fits a long-lived daemon (one `Manager` built once at startup, held for the
+process's life) but not a one-call-per-invocation CLI: a fresh `Manager`
+constructed for a second command has no memory of the first command's
+`Unlock`. Callers in that second shape — `xkey.Volume` is the only one today
+— talk to an `Executor` directly and derive "already unlocked" / "already
+mounted" from the kernel via `IsMounted`/`IsUnlocked`, not from a `Manager`.
+
+### `LibExecutor` — the production `Executor`
+
+`LibExecutor` (`pkg/luks/executor.go`) is built on
+`github.com/jeremyhahn/go-luks2`, now a direct dependency of the root
+`go-xkms` module (`go.mod`). It is the one implementation of the `Executor`
+seam in this repository:
+
+- `Create` formats a new LUKS2 container: creates the sparse container file
+  (`O_EXCL`, so a concurrent `Create` cannot race past the existence check),
+  attaches a loop device (`go-luks2.SetupLoopDevice`), formats
+  (`go-luks2.Format`, with `VolumeConfig.KDF`/`PBKDFIterTime` passed through
+  as `FormatOptions.KDFType`/`PBKDFIterTime`), unlocks long enough to create
+  a filesystem (`go-luks2.MakeFilesystem`), then locks and detaches the loop
+  device. The container is left locked.
+- `Unlock` attaches a loop device to the container file and opens the LUKS
+  mapping (`go-luks2.Unlock`). **`go-luks2.Unlock` needs a block device, and
+  a file-backed container has none until one is attached — this loop-device
+  attach/detach is the production behavior go-xkms#917 added**; the state
+  machine in `Manager` has no opinion about it, and the old, untested
+  `Executor` seam never implemented it.
+- `Lock` closes the mapping (`go-luks2.Lock`) and detaches whatever loop
+  device `go-luks2.FindLoopDevice` resolves for the container file — not a
+  loop device cached from `Unlock`, so `Lock` works correctly even called
+  from a different `LibExecutor` instance (or process) than the one that
+  ran `Unlock`.
+- `Mount`/`Unmount` wrap `go-luks2.Mount`/`Unmount`. `Mount` re-asserts
+  `0700` on the mount point after mounting (a freshly formatted ext4 root
+  inode defaults to `0755`), unmounting on a failed `chmod` rather than
+  leaving a world-listable volume mounted.
+- Every `Create`/`Unlock` runs `EnsureKeyringAvailable` (`pkg/luks/keyring.go`)
+  first: `go-luks2.Unlock` hands dm-crypt the volume key by kernel-keyring
+  reference, so a container that blocks `add_key`/`keyctl`/`request_key`
+  (Docker's default seccomp profile does) must be refused before a loop
+  device is attached or a container file is created, not after.
+
+Errors from every step are a typed `*ExecutorError{Operation, Path, Err}`
+(`pkg/luks/errors.go`), named by the step that failed (`"create_dir"`,
+`"setup_loop"`, `"luks_format"`, `"luks_unlock"`, `"create_fs"`,
+`"luks_lock"`, `"detach_loop"`, `"mount"`, `"chmod_mountpoint"`, `"unmount"`),
+with cleanup failures joined in via `errors.Join` rather than discarded.
 
 ### What `Manager` does not do
 
 `Manager.IsMounted` and `Manager.IsUnlocked` report internal `atomic.Bool`
 state only, driven exclusively by `Mount`/`Unmount`/`Unlock`/`Lock`
 succeeding — never by asking the executor or the OS. `Manager` never calls
-`Executor.IsMounted`/`Executor.IsUnlocked`; those two `Executor` methods
-exist for an implementation's own reconciliation use, not for `Manager`'s
-state machine. A caller relying on `Manager.IsMounted()`/`IsUnlocked()` is
-relying on this package's own bookkeeping, which is only as accurate as the
-sequence of `Mount`/`Unmount`/`Unlock`/`Lock` calls that produced it — there
-is still no concrete `Executor`, so nothing in this repository exercises
-that bookkeeping against a real LUKS volume today.
+`Executor.IsMounted`/`Executor.IsUnlocked`.
 
 ### FIPS-aware KDF selection
 
-`VolumeConfig.SetDefaults` (`pkg/luks/config.go:98-105`) fills an empty `KDF`
-via `DefaultKDF()` (`pkg/luks/config.go:64-72`), which checks the Go
-standard library's own FIPS state:
+`VolumeConfig.SetDefaults` fills an empty `KDF` via `DefaultKDF()`, which
+checks the Go standard library's own FIPS state:
 
 ```go
 func DefaultKDF() KDFType {
@@ -113,124 +142,142 @@ func DefaultKDF() KDFType {
 }
 ```
 
-`crypto/fips140.Enabled()` is the same stdlib signal used across go-xkms (see
-`docs/fips/README.md`) — this package keeps no separate approved-algorithm
-list of its own. Argon2id is the non-FIPS default (memory-hard, stronger
-brute-force resistance); PBKDF2-HMAC-SHA256 is substituted in FIPS mode
-because Argon2 is not FIPS-approved. The code comment on `DefaultKDF`
-cites go-xkms#21 as the origin of this FIPS-policy hookup.
+`crypto/fips140.Enabled()` is the same stdlib signal used across go-xkms —
+this package keeps no separate approved-algorithm list of its own.
+Argon2id is the non-FIPS default (memory-hard, stronger brute-force
+resistance); PBKDF2-HMAC-SHA256 is substituted in FIPS mode because Argon2
+is not FIPS-approved (go-xkms#21).
 
 ## TPM 2.0 passphrase sealing: `TPMSealer`
 
-`TPMSealer` (`pkg/luks/tpm.go:114-123`) seals a freshly generated 32-byte
-passphrase as a TPM keyed-hash object and returns a token payload shaped like
-`systemd-cryptsetup`'s `"systemd-tpm2"` LUKS2 token
-(`TPMTokenType = "systemd-tpm2"`, `pkg/luks/tpm.go:40`), so a volume sealed
-this way is inspectable with the same tooling used to read `systemd-tpm2`
-tokens. Every `Seal`/`Unseal` call opens a fresh TPM transport via the
-injected `TPMOpener` and closes it before returning
-(`pkg/luks/tpm.go:103-106`) — the sealer keeps no TPM session state between
-calls, so it is safe to share across goroutines.
+`TPMSealer` (`pkg/luks/tpm.go`) seals a freshly generated 32-byte passphrase
+as a TPM keyed-hash object and returns a `*luks2.Token` (go-luks2's own
+LUKS2 token type, which already carries native `tpm2-*` fields) to persist
+in the volume's LUKS2 header. Unlike the pre-#917 sealer, `TPMSealer` drives
+no TPM command of its own except the PolicyPCR trial session the SSRK path
+needs (see below) — every actual seal/unseal is delegated to a
+`TPMSealUnsealer` (satisfied by `*pkg/tpm2.TPM2`), the same `Seal`/`Unseal`
+every other go-xkms TPM secret goes through. This closes go-xkms#917's
+second finding: `pkg/luks` is no longer "a second TPM sealing implementation
+beside `pkg/tpm2.(*TPM2).Seal`" — it has none.
 
-The passphrase crosses the TPM bus only encrypted, in both directions. The
-sealer drives go-tpm on its own transport rather than through a
-`pkg/tpm2.TPM2`, so it hands that transport to `pkg/tpm2`'s transport-level
-session layer (`pkg/luks/tpm.go:107-113`): `CommandEncryptionSession` on
-`TPM2_Create` and `ResponseEncryptionSession` on `TPM2_Unseal`, each a salted
-session that authorizes nothing and exists only to encrypt the one parameter
-carrying the passphrase. Salting is against an ephemeral NULL-hierarchy key,
-so the SSRK parent and the EK are never touched. The session code exists once,
-in `pkg/tpm2`; the rejected alternative — a second copy of the salt and
-parameter-encryption logic inside `pkg/luks`, to keep its dependency set
-small — would have been a parallel implementation of the TPM session layer.
+### Configurable storage parent: `SealParent`
 
-### Parent key: the TCG Storage Root Key, not the go-xkms Platform SRK
+go-xkms#917's central decision: the TPM parent a LUKS passphrase seals under
+is now an explicit config, `TPMSealerConfig{Parent SealParent, PCRBank
+string}` (`pkg/luks/config.go`), not a hardcoded handle.
 
-`DefaultTPMParentHandle = 0x81000001` (`pkg/luks/tpm.go:42-45`). Cross-checked
-against `pkg/tpm2/config.go:272-275`, handle `0x81000001` is documented there
-as **the SSRK — the Shared Storage Root Key, the TCG-standard storage parent**
-that "carries NO platform policy" and is provisioned once, untouched
-thereafter. It is a *different* key from go-xkms's own Platform SRK (PSRK,
-`PlatformSRKConfig` in the same file), which is bound to a platform PCR
-measurement and lives at a different handle.
+**`SealParentPSRK` (the default, `SealParent` zero value).** Seals under
+go-xkms's own Platform SRK (PSRK), bound to go-xkms's platform PCR policy —
+`pkg/tpm2`'s existing `types.TPMPolicyPlatform` mechanism, the same
+PolicyOR(PolicyPCR, PolicyAuthValue) digest every other platform-policy-bound
+secret in go-xkms uses. The token type is `XKMSTPMTokenType =
+"xkms-tpm2"`. This is in line with go-xkms#681 (go-xkms seals only under the
+PSRK, with USER PIN plus platform PCR policy authorization): the sealed
+LUKS passphrase sits under the one storage parent every other go-xkms secret
+sits under, and unattended boot-time unlock goes through go-xkms's own
+auto-unseal path (go-xkms#677), not systemd-cryptsetup. `TPMSealer` does not
+set a PIN on the sealed child object itself (only a random guard password —
+see below); the platform PCR branch alone gates unattended unseal, exactly
+as the barrier's own TPM2 auto-unseal strategy does.
 
-`pkg/luks.TPMSealer` seals under the SSRK, using `libtpm2.PasswordAuth(nil)`
-— empty authorization — for the parent handle in both `Create`
-(`pkg/luks/tpm.go:247-255`) and `Load` (`pkg/luks/tpm.go:323-331`). This is
-the standard TCG pattern for a storage parent: the SRK's own authorization is
-never a PIN in this codebase (`pkg/tpm2/config.go` confirms the SSRK is
-"untouched" and carries no auth policy of its own); a TPM2_Create or
-TPM2_Load under it needs no secret because the *child* object's own
-authorization is what actually gates its use. `TPMSealer.WithParentHandle`
-(`pkg/luks/tpm.go:143-151`) lets a caller point at a different persistent
-handle, including a PSRK, but `pkg/luks` itself never does so by default, and
-nothing in this package resolves or requires a USER PIN.
+**`SealParentSSRK`.** Seals under the TCG-standard Shared SRK (handle
+`0x81000001`) with empty parent auth, matching the pre-#917 behavior but now
+as an explicit, documented, opt-in choice rather than the only option. The
+sealed object's policy is a **plain PolicyPCR digest** over the caller's PCR
+selection — not go-xkms's platform policy, which systemd-cryptsetup cannot
+build a session for — computed by `computePCRPolicyDigest`
+(`pkg/luks/tpm.go`) via a trial `PolicySession` + `PolicyPCR`, the one piece
+of TPM session code this package still owns (it is PCR-digest arithmetic,
+not sealing: the actual `TPM2_Create` is still `pkg/tpm2.TPM2.Seal`, given
+the digest as `types.TPMSealPolicy.AuthPolicy`). The token type is
+`TPMTokenType = "systemd-tpm2"`, matching `systemd-cryptsetup`'s own token so
+`systemd-cryptenroll`/crypttab can unlock the volume at boot without
+go-xkms running at all. This is the documented, narrow exception to
+go-xkms#681 the pre-#917 code took without recording it.
 
-**This diverges from the project TPM rule** that go-xkms seals only under the
-Platform SRK (PSRK), with USER PIN plus platform PCR policy authorization
-(go-xkms#681). `pkg/luks` seals under the SSRK with empty parent auth. The
-reason is systemd compatibility: `TPMTokenType` is `systemd-tpm2`, and
-systemd-cryptsetup resolves the SRK at 0x81000001 when it unlocks at boot.
-Whether to move to the PSRK (and give up systemd-cryptsetup unlock) or to
-record an explicit exception is an open decision, tracked in go-xkms#917.
-This document records what the code does today.
+**`TPMSealer.UnsealPassphrase` refuses an SSRK token.** `SealPassphrase`
+works for both parents; `UnsealPassphrase` dispatches on the *sealer's own
+configured parent* (not the token's `Type` field) and returns
+`ErrTPMSSRKUnsealUnsupported` for `SealParentSSRK` without touching the TPM.
+This is not a missing feature: `pkg/tpm2`'s `Unseal` only knows how to build
+a policy session for its platform policy or a named/authorized policy
+(`pkg/tpm2/authorized_policy_session.go`) — neither is a plain, caller-chosen
+PolicyPCR digest, so there is no existing, reusable session-construction
+path for it. Building one would be exactly the "parallel sealer"
+go-xkms#917 says not to add. `systemd-cryptsetup` builds that PolicyPCR
+session itself at boot; go-xkms was never going to be the one unsealing an
+SSRK-parented token.
 
-### Child object: PCR policy, not a password
+### Guard password: closing the empty-auth bypass
 
-The sealed keyed-hash object's own authorization is a PCR policy digest, built
-by `computePCRPolicyDigest` (`pkg/luks/tpm.go:440-469`) via a trial
-`PolicySession` + `PolicyPCR`, and bound into the object template as
-`AdminWithPolicy: true` with no `UserAuth` (`pkg/luks/tpm.go:205-223`). Even
-an empty PCR selection still produces a (trivial) policy
-(`buildPCRSelection`, `pkg/luks/tpm.go:399-424`) — the comment at
-`pkg/luks/tpm.go:195-199` explains this is deliberate: a keyed-hash object
-with no policy at all would require `userAuth` instead, which this design
-does not want. `UnsealPassphrase` (`pkg/luks/tpm.go:291-372`) replays the same
-PCR selection recorded in the token and fails closed
-(`ErrTPMUnsealFailed`) if the live PCR state does not satisfy it — there is
-no fallback path that returns the passphrase without a policy match.
+Every object `pkg/tpm2` creates from `KeyedHashTemplate` (the only template
+`sealKeyInternal` uses) carries `ObjectAttributes.UserWithAuth = true` and
+is never cleared for either seal path here. TPM 2.0 semantics: an object
+with `UserWithAuth` set answers its USER role to *either* a plain
+password/HMAC session presenting the object's `authValue` (empty counts as
+a match when `authValue` itself is empty) *or* a policy session satisfying
+`AuthPolicy`. A sealed object with no `Password` set and `UserWithAuth`
+still set is therefore unsealable by a trivial empty-password
+`TPM2_Unseal` — bypassing the PCR gate entirely, for both `SealParentPSRK`
+and `SealParentSSRK`.
 
-### Token format and blob packing
+`randomGuardPassword` (`pkg/luks/tpm.go`) closes this: both seal paths set
+`KeyAttributes.Password` to 32 fresh random bytes, generated, used once as
+the `TPM2_Create` sensitive area's `UserAuth`, and discarded (`Clear()`'d)
+before `SealPassphrase` returns — nobody, including go-xkms itself, retains
+it afterward. This forces the password branch of `UserWithAuth` to require a
+secret nobody has, so the *only* practical way to satisfy the object's USER
+role is the PolicyPCR branch — closing the bypass without touching
+`pkg/tpm2`'s shared, widely-used `sealKeyInternal`.
+`TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy`
+(`pkg/luks/tpm_simulator_test.go`) proves a bare `TPM2_Unseal` with
+`PasswordAuth(nil)` against an SSRK-sealed object fails. This same gap
+exists for any `pkg/tpm2` caller that seals under the platform policy
+without setting a `Password` of its own; closing it generally, in
+`pkg/tpm2` itself, is outside this package's scope and is called out
+separately for owner triage (go-xkms#917's PR discussion).
 
-`TPMToken` (`pkg/luks/tpm.go:73-84`) carries the sealed object as a single
-base64 field, `TPM2Blob`, packed by `EncodeTPMSealBlobs`
-(`pkg/luks/tpm.go:505-522`) as `base64(uint32BE(len(public)) | public |
-private)` and unpacked by `DecodeTPMSealBlobs`
-(`pkg/luks/tpm.go:524-540`), which returns `ErrTPMInvalidToken` on a length
-mismatch or bad base64 rather than panicking or silently truncating.
+### Token format
+
+`*luks2.Token` (`github.com/jeremyhahn/go-luks2/pkg/luks2`) is go-luks2's
+own LUKS2 token type, already shaped with native `tpm2-*` fields
+(`TPM2Blob`, `TPM2PCRBank`, `TPM2PCRs`, `TPM2KeyHandle`, `TPM2PolicyHash`)
+matching `systemd-tpm2`'s convention — this package no longer defines its
+own parallel `TPMToken` struct. `TPM2Blob` packs the sealed object's public
+and private areas as `base64(uint32BE(len(public)) | public | private)`
+(`EncodeTPMSealBlobs`/`DecodeTPMSealBlobs`, unchanged wire format from the
+pre-#917 sealer). Persisting the token into a volume's LUKS2 header (via
+`go-luks2.ImportToken`) and adding the corresponding keyslot (via
+`go-luks2.AddKey`) is the caller's responsibility — `TPMSealer` only seals
+and unseals; it does not touch a LUKS2 header.
 
 ### Passphrase handling
 
-`TPMSealResult.Passphrase` is a `*secure.Buffer`
-(`sdk/go/secure` → go-qrdb's `secure` package, per the SDK-boundary rule),
-not a plain `[]byte` — the doc comment on `TPMSealResult`
-(`pkg/luks/tpm.go:86-101`) states the passphrase "lives in an mlocked,
-canary-guarded `*secure.Buffer`... between `SealPassphrase` and the caller
-consuming it," and requires the caller to call `Passphrase.Destroy()` once
-consumed. The narrower `Seal` method (`pkg/luks/tpm.go:153-173`) copies the
-bytes out of the buffer, destroys it itself via `defer`, and returns a plain
-`[]byte` — used by "the narrow handler interfaces used by downstream LUKS
-backends" per its own doc comment; callers of `Seal` do not manage the
-secure buffer, callers of `SealPassphrase` do.
+`TPMSealResult.Passphrase` is a `*secure.Buffer` (`sdk/go/secure` → go-qrdb's
+`secure` package, per the SDK-boundary rule), not a plain `[]byte` — the
+caller MUST call `Passphrase.Destroy()` once the passphrase has been
+persisted (e.g. handed to `go-luks2.AddKey`) or otherwise consumed.
 
 ## Fail-closed behavior (verified)
 
 - `NewManager` returns `ErrNilExecutor` for a nil executor and propagates
-  `VolumeConfig.Validate()` errors before constructing anything
-  (`pkg/luks/manager.go:58-70`).
+  `VolumeConfig.Validate()` errors before constructing anything.
 - `Manager.Create`/`Unlock` refuse an empty passphrase or non-positive size
-  before the executor is ever called (`pkg/luks/manager.go:86-110`).
+  before the executor is ever called.
 - Every executor error is wrapped as `&errs.Joined{Lead: ErrOperationFailed,
-  Cause: err}` (`pkg/luks/manager.go:93-96, 105-107, 114-116`) — a caller can
-  `errors.Is(err, ErrOperationFailed)` without losing the underlying cause.
-- `DefaultTPMOpener` returns `ErrTPMNoTransport` (wrapped with the OS error
-  via `errs.Detail`) when `/dev/tpmrm0` cannot be opened, instead of silently
-  proceeding without a TPM (`pkg/luks/tpm.go:60-71`).
-- `NewTPMSealer(_, nil)` returns `ErrTPMNoTransport` rather than constructing
-  a sealer that would fail later (`pkg/luks/tpm.go:125-141`).
+  Cause: err}` — a caller can `errors.Is(err, ErrOperationFailed)` without
+  losing the underlying cause.
+- `LibExecutor.Create` refuses with `ErrVolumeAlreadyExists` before touching
+  the container file, and `LibExecutor.Unlock` refuses with
+  `ErrVolumeNotFound` before attaching a loop device.
+- `NewTPMSealer(nil, _)` returns `ErrTPMNoTransport` rather than
+  constructing a sealer that would fail later; an invalid `SealParent` or
+  `PCRBank` is refused at construction (`SealParentInvalidError`,
+  `ErrInvalidPCRBank`), not at the first seal.
 - A PCR-policy mismatch, a load failure, or a malformed token all return a
-  typed error (`ErrTPMUnsealFailed`, `ErrTPMInvalidToken`) — there is no code
-  path in `UnsealPassphrase` that returns a zero-value or best-effort
+  typed error (`ErrTPMUnsealFailed`, `ErrTPMInvalidToken`) — there is no
+  code path in `UnsealPassphrase` that returns a zero-value or best-effort
   passphrase on failure.
 
 ## Neighboring packages named luks (out of scope here)
@@ -238,30 +285,30 @@ secure buffer, callers of `SealPassphrase` do.
 - **`pkg/storage/luks`** (root module) — a `storage.Backend` that wraps a
   `VolumeOperator` interface and fails closed (`ErrVolumeLocked`) until a
   volume is unlocked. It does **not** import `pkg/luks` — its
-  `VolumeOperator` interface exists specifically "to prevent import cycles
-  between the main module and the xkey module whose `luks.Volume` satisfies
-  this contract" (`pkg/storage/luks/backend.go:20-23`). This is the
-  fail-closed storage gate described in detail in
+  `VolumeOperator` interface exists specifically to prevent an import cycle
+  between the root module and `xkey`, whose `luks.Volume` satisfies this
+  contract. This is the fail-closed storage gate described in detail in
   [`../../xkey/docs/luks/architecture.md`](../../xkey/docs/luks/architecture.md)
   §"The gate: `pkg/storage/luks.Backend`" — read that document for its
   design, not this one.
-- **`xkey/pkg/luks`** — xKey's own LUKS2 container implementation
-  (`xkey luks2 create|unseal|lock|migrate|wipe`, `pkg/gui/services.StorageService`),
-  built on `github.com/jeremyhahn/go-luks2`. This is the actual
-  `cryptsetup`-equivalent code that runs in production today; it is
-  documented in full in [`../../xkey/docs/luks/`](../../xkey/docs/luks/) and
-  is not re-documented here.
+- **`xkey/pkg/luks`** — xKey's desktop/CLI-facing LUKS glue
+  (`xkey luks2 create|unseal|lock|migrate|wipe`,
+  `pkg/gui/services.StorageService`). As of go-xkms#917 it no longer drives
+  `go-luks2` itself: `xkey.Volume` is a thin wrapper around `sdk/go/luks`'s
+  `Executor` (`sdkluks.NewLibExecutor()`), and only the genuinely
+  xkey-specific behavior remains local — privilege-drop chown after mount
+  (`resolveCallingUser`/`chownTreeToCallingUser`, driven by `SUDO_UID`/
+  `PKEXEC_UID`) and secure container wipe (`Wipe`, DoD/NIST pattern
+  sequences). Documented in full in
+  [`../../xkey/docs/luks/`](../../xkey/docs/luks/).
 
 ## Consumers
 
-Grepping the root module (and `xkey`, which is a separate Go module in the
-same repository) for `"github.com/jeremyhahn/go-xkms/pkg/luks"` finds exactly
-one importer: `sdk/go/luks/luks.go`, a type-and-value re-export with no
-additional logic. Its own package comment states the intent: "Downstream
-consumers (go-quicbaas SDK shims, go-trusted-platform's LUKS backend) reach
-LUKS + TPM sealing through this package instead of importing
-`go-xkms/pkg/luks` directly." Those downstream consumers live in other
-repositories and are out of scope for this document under the cross-project
-boundary; nothing in this repository currently calls the SDK re-export
-either — `pkg/luks` is fully implemented and tested but has no in-tree
-caller yet.
+`sdk/go/luks/luks.go` is the only importer of `pkg/luks` in this repository,
+by design — its own package comment states the intent: downstream consumers
+reach LUKS + TPM sealing through this package instead of importing
+`go-xkms/pkg/luks` directly. As of go-xkms#917, `xkey/pkg/luks` is the first
+in-tree consumer of that re-export (previously `pkg/luks` had no in-tree
+caller at all). Consumers outside this repository (go-quicbaas SDK shims,
+go-trusted-platform's LUKS backend) are out of scope here under the
+cross-project boundary.

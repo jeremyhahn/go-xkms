@@ -1,6 +1,17 @@
 # LUKS2 Encrypted Storage — Engineering
 
-> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
+
+> **go-xkms#917:** `xkey/pkg/luks.Volume`'s `Create`/`Unlock`/`Mount`/
+> `Lock`/`Unmount` delegate to a package-level `volumeExecutor
+> sdkluks.Executor` (`sdkluks.NewLibExecutor()` by default), not to
+> `github.com/jeremyhahn/go-luks2` directly. `Volume.IsMounted`/`IsOpen` read
+> through `sdkluks.IsMounted`/`IsUnlocked` (package vars `checkMounted`/
+> `checkUnlocked` in `detect.go`, kept for test substitution). `Volume`'s own
+> method set, used throughout this document, is unchanged. See
+> [`../../../docs/luks/engineering.md`](../../../docs/luks/engineering.md)
+> for the shared `Executor`/`Manager`/`TPMSealer` contract this package now
+> builds on.
 
 ## Exported surface
 

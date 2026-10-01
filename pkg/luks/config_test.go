@@ -204,3 +204,92 @@ func TestVolumeConfig_SetDefaults_PreservesExistingIterTime(t *testing.T) {
 	assert.Equal(t, 5000, cfg.PBKDFIterTime,
 		"SetDefaults must not overwrite an explicitly set PBKDFIterTime")
 }
+
+// ---------------------------------------------------------------------------
+// SealParent
+// ---------------------------------------------------------------------------
+
+func TestSealParent_String(t *testing.T) {
+	assert.Equal(t, "psrk", SealParentPSRK.String())
+	assert.Equal(t, "ssrk", SealParentSSRK.String())
+	assert.Equal(t, "invalid", SealParent(99).String())
+}
+
+func TestSealParent_Validate(t *testing.T) {
+	require.NoError(t, SealParentPSRK.Validate())
+	require.NoError(t, SealParentSSRK.Validate())
+
+	err := SealParent(99).Validate()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidSealParent)
+	var target *SealParentInvalidError
+	require.ErrorAs(t, err, &target)
+	assert.Equal(t, uint8(99), target.Value)
+}
+
+func TestParseSealParent(t *testing.T) {
+	cases := []struct {
+		in   string
+		want SealParent
+	}{
+		{"", SealParentPSRK},
+		{"psrk", SealParentPSRK},
+		{"PSRK", SealParentPSRK},
+		{"  ssrk  ", SealParentSSRK},
+		{"SSRK", SealParentSSRK},
+	}
+	for _, tc := range cases {
+		got, err := ParseSealParent(tc.in)
+		require.NoError(t, err, "input %q", tc.in)
+		assert.Equal(t, tc.want, got, "input %q", tc.in)
+	}
+}
+
+func TestParseSealParent_Invalid(t *testing.T) {
+	_, err := ParseSealParent("shared")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidSealParent)
+	var target *SealParentInvalidError
+	require.ErrorAs(t, err, &target)
+	assert.Equal(t, "shared", target.Raw)
+}
+
+// ---------------------------------------------------------------------------
+// TPMSealerConfig
+// ---------------------------------------------------------------------------
+
+func TestTPMSealerConfig_SetDefaults(t *testing.T) {
+	cfg := &TPMSealerConfig{}
+	cfg.SetDefaults()
+	assert.Equal(t, "sha256", cfg.PCRBank)
+}
+
+func TestTPMSealerConfig_SetDefaults_PreservesExplicitBank(t *testing.T) {
+	cfg := &TPMSealerConfig{PCRBank: "sha384"}
+	cfg.SetDefaults()
+	assert.Equal(t, "sha384", cfg.PCRBank)
+}
+
+func TestTPMSealerConfig_Validate_Valid(t *testing.T) {
+	cfg := &TPMSealerConfig{Parent: SealParentSSRK, PCRBank: "sha512"}
+	require.NoError(t, cfg.Validate())
+}
+
+func TestTPMSealerConfig_Validate_EmptyBankAllowed(t *testing.T) {
+	cfg := &TPMSealerConfig{Parent: SealParentPSRK}
+	require.NoError(t, cfg.Validate())
+}
+
+func TestTPMSealerConfig_Validate_InvalidParent(t *testing.T) {
+	cfg := &TPMSealerConfig{Parent: SealParent(7)}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidSealParent)
+}
+
+func TestTPMSealerConfig_Validate_InvalidBank(t *testing.T) {
+	cfg := &TPMSealerConfig{PCRBank: "sha3"}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidPCRBank)
+}

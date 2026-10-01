@@ -17,7 +17,10 @@
 // callers can supply platform-specific implementations (or test mocks).
 package luks
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	// ErrNotMounted is returned when an operation requires a mounted volume
@@ -59,8 +62,8 @@ var (
 	// NewManager.
 	ErrNilExecutor = errors.New("luks: executor must not be nil")
 
-	// ErrTPMNoTransport is returned when no TPMOpener could be resolved —
-	// the host has no /dev/tpmrm0 and no simulator was injected.
+	// ErrTPMNoTransport is returned when NewTPMSealer is given a nil
+	// TPMSealUnsealer.
 	ErrTPMNoTransport = errors.New("luks: no tpm transport available")
 
 	// ErrTPMPolicyFailed is returned when the PCR policy digest could not
@@ -75,11 +78,105 @@ var (
 	// (most commonly because current PCR state does not match the policy).
 	ErrTPMUnsealFailed = errors.New("luks: tpm unseal failed")
 
-	// ErrTPMInvalidHandle is returned when the requested persistent handle
-	// string could not be parsed as a uint32.
-	ErrTPMInvalidHandle = errors.New("luks: invalid tpm handle")
-
-	// ErrTPMInvalidToken is returned when the TPM LUKS token JSON could not
-	// be parsed.
+	// ErrTPMInvalidToken is returned when the TPM LUKS token could not be
+	// decoded.
 	ErrTPMInvalidToken = errors.New("luks: invalid tpm token payload")
+
+	// ErrInvalidSealParent is the identity of every SealParentInvalidError:
+	// a SealParent value or config string that names neither the Platform
+	// SRK nor the Shared SRK.
+	ErrInvalidSealParent = errors.New("luks: invalid tpm seal parent")
+
+	// ErrInvalidPCRBank is returned when a TPMSealerConfig.PCRBank names
+	// anything other than sha1, sha256, sha384 or sha512.
+	ErrInvalidPCRBank = errors.New("luks: invalid tpm pcr bank")
+
+	// ErrTPMSSRKUnsealUnsupported is returned by TPMSealer.UnsealPassphrase
+	// for a SealParentSSRK token. go-xkms deliberately does not unseal
+	// systemd-tpm2 tokens: pkg/tpm2's Unseal only builds policy sessions
+	// for its platform policy or a named/authorized policy, neither of
+	// which is the plain PolicyPCR digest an SSRK-parented LUKS token
+	// carries. systemd-cryptsetup builds that session itself at boot; see
+	// docs/luks/architecture.md.
+	ErrTPMSSRKUnsealUnsupported = errors.New("luks: unsealing an ssrk-parented token is not supported; systemd-cryptsetup unseals it at boot")
+
+	// ErrTPMPCRSelectionNotSupported is returned when a caller supplies a
+	// PCR selection to TPMSealer.SealPassphrase under SealParentPSRK. The
+	// Platform SRK path always binds to go-xkms's platform PCR policy,
+	// whose PCR selection is fixed by pkg/tpm2 configuration, not chosen
+	// per call.
+	ErrTPMPCRSelectionNotSupported = errors.New("luks: explicit pcr selection is not supported when sealing under the platform srk")
+
+	// ErrVolumeAlreadyExists is returned by the production Executor's
+	// Create when a container file already exists at the configured path.
+	ErrVolumeAlreadyExists = errors.New("luks: encrypted container already exists")
+
+	// ErrVolumeNotFound is returned by the production Executor when the
+	// configured container file does not exist.
+	ErrVolumeNotFound = errors.New("luks: volume not found")
 )
+
+// SealParentInvalidError reports a SealParent value or raw config string
+// that names neither "psrk" nor "ssrk". Raw is set when the value came from
+// parsing a config string; Value is set when it came from an out-of-range
+// SealParent constant.
+type SealParentInvalidError struct {
+	Raw   string
+	Value uint8
+}
+
+// Error implements the error interface.
+func (e *SealParentInvalidError) Error() string {
+	if e.Raw != "" {
+		return fmt.Sprintf("%s: %q (must be \"psrk\" or \"ssrk\")", ErrInvalidSealParent.Error(), e.Raw)
+	}
+	return fmt.Sprintf("%s: value %d (must be SealParentPSRK or SealParentSSRK)", ErrInvalidSealParent.Error(), e.Value)
+}
+
+// Unwrap reports ErrInvalidSealParent so callers can match with errors.Is.
+func (e *SealParentInvalidError) Unwrap() error { return ErrInvalidSealParent }
+
+// ExecutorError reports which production LUKS operation failed and against
+// which path or device, wrapping the underlying cause.
+type ExecutorError struct {
+	Operation string
+	Path      string
+	Err       error
+}
+
+// Error implements the error interface.
+func (e *ExecutorError) Error() string {
+	if e.Path != "" {
+		return fmt.Sprintf("luks: %s failed for %s: %v", e.Operation, e.Path, e.Err)
+	}
+	return fmt.Sprintf("luks: %s failed: %v", e.Operation, e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ExecutorError) Unwrap() error { return e.Err }
+
+// KeyringError reports a failed kernel keyring preflight. It is
+// ErrKeyringUnavailable to errors.Is, and it unwraps to go-luks2's own
+// classification (luks2.ErrKeyringBlocked for a seccomp policy,
+// luks2.ErrKeyringUnsupported for a kernel without key support,
+// luks2.ErrKeyringQuotaExhausted, luks2.ErrKeyringFailed), whose message
+// names the syscalls and the remedy.
+type KeyringError struct {
+	// Err is go-luks2's classified error.
+	Err error
+}
+
+// Error implements the error interface.
+func (e *KeyringError) Error() string {
+	return "luks: kernel keyring preflight failed: " + e.Err.Error()
+}
+
+// Unwrap returns go-luks2's classified error.
+func (e *KeyringError) Unwrap() error { return e.Err }
+
+// Is reports ErrKeyringUnavailable as this error's identity.
+func (e *KeyringError) Is(target error) bool { return target == ErrKeyringUnavailable }
+
+// ErrKeyringUnavailable is the identity of every KeyringError: the kernel
+// keyring is not usable by this process, so no volume can be unlocked.
+var ErrKeyringUnavailable = errors.New("luks: the kernel keyring is unavailable to this process")
