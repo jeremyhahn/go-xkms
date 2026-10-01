@@ -205,8 +205,13 @@ func TestCheckUSBDeviceRunning(t *testing.T) {
 // --- Start command with uninitialized transport ---
 
 func TestRunUSBDeviceStart_TransportNotInitialized(t *testing.T) {
-	// The xkms singleton is not initialized in unit tests, so
-	// NewEmbeddedTransport should fail.
+	// The test's precondition is an uninitialized xkms singleton, so
+	// NewEmbeddedTransport fails before any device starts. It establishes
+	// that itself rather than trusting that no earlier test in the process
+	// initialized xkms: with a live singleton this call would start a real
+	// virtual CCID device and block until a signal.
+	newPIVProcess()
+	t.Cleanup(newPIVProcess)
 	err := runUSBDeviceStart(usbDeviceStartCmd, nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUSBDeviceTransportCreateFailed),

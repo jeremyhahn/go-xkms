@@ -341,6 +341,10 @@ extension-build-firefox:
 
 .PHONY: test
 ## test: Run all unit tests with coverage
+# Unit tests never reach the host's hardware TPM (go-xkms pkg/tpm2/tpmdev):
+# this flag holds every process a test runs to that rule too. Opt in with
+# XKMS_TEST_HARDWARE_TPM=1.
+test: export XKMS_DENY_HARDWARE_TPM := 1
 test:
 	@echo "$(CYAN)$(BOLD)Running unit tests...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)

@@ -78,6 +78,11 @@ func isolateProvisionEnv(t *testing.T) string {
 	barrierTPMDevice, barrierTPMSimulator = "/nonexistent-tpm-device-for-test", false
 	t.Cleanup(func() { barrierTPMDevice, barrierTPMSimulator = previousDevice, previousSimulator })
 
+	// Provisioning initializes the process-wide xkms service and PIV
+	// manager (the software PIV key store); a later test must start from
+	// neither, as a new xkey process does.
+	t.Cleanup(newPIVProcess)
+
 	return agentHome
 }
 
