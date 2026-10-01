@@ -273,7 +273,11 @@ func (c *Client) Connect(ctx context.Context) error {
 		Transport: &http.Transport{TLSClientConfig: tlsConfig},
 	}
 
-	mcpClient, err := mcpclient.NewStreamableHttpClient(baseURL, mcptransport.WithHTTPBasicClient(httpClient))
+	httpOpts := []mcptransport.StreamableHTTPCOption{mcptransport.WithHTTPBasicClient(httpClient)}
+	if headers := c.requestHeaders(); len(headers) > 0 {
+		httpOpts = append(httpOpts, mcptransport.WithHTTPHeaders(headers))
+	}
+	mcpClient, err := mcpclient.NewStreamableHttpClient(baseURL, httpOpts...)
 	if err != nil {
 		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
@@ -299,6 +303,20 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.client = mcpClient
 	c.connected = true
 	return nil
+}
+
+// requestHeaders returns the HTTP headers every MCP request carries: the
+// configured extra headers, and the JWT (transport.WithJWTToken) as a bearer
+// Authorization header.
+func (c *Client) requestHeaders() map[string]string {
+	headers := make(map[string]string, len(c.config.Headers)+1)
+	for k, v := range c.config.Headers {
+		headers[k] = v
+	}
+	if c.config.JWTToken != "" {
+		headers["Authorization"] = "Bearer " + c.config.JWTToken
+	}
+	return headers
 }
 
 // buildTLSConfig constructs the TLS configuration from the client's

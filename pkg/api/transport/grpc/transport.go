@@ -96,6 +96,17 @@ func (t *Transport) transportCredentialsOption() (grpc.DialOption, error) {
 		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil // insecure-ok: explicit-config transport. Allowlisted in Makefile check-insecure-tls.
 	}
 
+	// A caller-built tls.Config (transport.WithTLSConfig: a CA bundle held
+	// in memory, hardware-backed mTLS, pinning) is used as given; without
+	// one, the configuration is built from the file paths below.
+	if t.config.TLSConfig != nil {
+		tlsConfig := t.config.TLSConfig.Clone()
+		if tlsConfig.MinVersion < tls.VersionTLS13 {
+			tlsConfig.MinVersion = tls.VersionTLS13
+		}
+		return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
+	}
+
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS13,
 	}
@@ -125,6 +136,29 @@ func (t *Transport) transportCredentialsOption() (grpc.DialOption, error) {
 	return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
 }
 
+// bearerCredentials presents the configured JWT on every RPC as
+// "authorization: Bearer <token>" metadata, over TLS only.
+type bearerCredentials struct{ token string }
+
+// GetRequestMetadata implements credentials.PerRPCCredentials.
+func (b bearerCredentials) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	return map[string]string{"authorization": "Bearer " + b.token}, nil
+}
+
+// RequireTransportSecurity implements credentials.PerRPCCredentials: a
+// bearer token never crosses a plaintext connection.
+func (bearerCredentials) RequireTransportSecurity() bool { return true }
+
+// authDialOptions returns the dial options that authenticate every RPC: the
+// configured JWT (transport.WithJWTToken) as bearer metadata. A
+// connection to a redirected leader carries the same options.
+func (t *Transport) authDialOptions() []grpc.DialOption {
+	if t.config == nil || t.config.JWTToken == "" {
+		return nil
+	}
+	return []grpc.DialOption{grpc.WithPerRPCCredentials(bearerCredentials{token: t.config.JWTToken})}
+}
+
 // Connect establishes a connection to the xkms server via gRPC.
 func (t *Transport) Connect(ctx context.Context) error {
 	credsOpt, err := t.transportCredentialsOption()
@@ -137,6 +171,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 		credsOpt,
 		grpc.WithChainUnaryInterceptor(t.notLeaderInterceptor),
 	}
+	opts = append(opts, t.authDialOptions()...)
 
 	// Connect to the server
 	conn, err := grpc.NewClient(t.config.Address, opts...)

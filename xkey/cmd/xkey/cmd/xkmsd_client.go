@@ -46,6 +46,13 @@ const (
 	envXKeyXKMSdURL = "XKEY_XKMSD_URL"
 	envXKMSdToken   = "XKMSD_TOKEN"
 	envXKMSdTLSCA   = "XKMSD_TLS_CA"
+
+	// envXKMSdTLSCert and envXKMSdTLSKey name an mTLS client credential
+	// presented to TLS-bearing transports. The unified server's gRPC and
+	// MCP transports authenticate module calls by client certificate, so a
+	// bearer token alone reaches only REST and QUIC.
+	envXKMSdTLSCert = "XKMSD_TLS_CERT"
+	envXKMSdTLSKey  = "XKMSD_TLS_KEY"
 )
 
 // cfgKeyXKMSdURL is the viper key bound to the global --xkmsd-url flag.
@@ -97,6 +104,11 @@ type XKMSdEndpoint struct {
 	// Token is the bearer/JWT token presented to the server. Empty when no
 	// token is configured.
 	Token string
+
+	// TLSCertFile and TLSKeyFile are the PEM mTLS client credential
+	// presented on TLS-bearing transports. Both or neither.
+	TLSCertFile string
+	TLSKeyFile  string
 
 	// TLSCAFile is the PEM CA bundle used to verify the server on
 	// TLS-bearing transports. Empty means the system trust store.
@@ -170,9 +182,11 @@ func resolveXKMSdEndpoint(cmd *cobra.Command) (XKMSdEndpoint, error) {
 	}
 
 	return XKMSdEndpoint{
-		URL:       serverURL,
-		Token:     strings.TrimSpace(os.Getenv(envXKMSdToken)),
-		TLSCAFile: resolveXKMSdTLSCAFile(cmd),
+		URL:         serverURL,
+		Token:       strings.TrimSpace(os.Getenv(envXKMSdToken)),
+		TLSCAFile:   resolveXKMSdTLSCAFile(cmd),
+		TLSCertFile: strings.TrimSpace(os.Getenv(envXKMSdTLSCert)),
+		TLSKeyFile:  strings.TrimSpace(os.Getenv(envXKMSdTLSKey)),
 	}, nil
 }
 
@@ -318,7 +332,11 @@ func (e XKMSdEndpoint) Client() (transport.Client, error) {
 	if selected.tls {
 		// transport.BuildTLSConfig is the SDK's shared TLS builder; an empty
 		// CAFile selects the system root pool.
-		tlsConfig, err := transport.BuildTLSConfig(transport.TLSOptions{CAFile: e.TLSCAFile})
+		tlsConfig, err := transport.BuildTLSConfig(transport.TLSOptions{
+			CAFile:   e.TLSCAFile,
+			CertFile: e.TLSCertFile,
+			KeyFile:  e.TLSKeyFile,
+		})
 		if err != nil {
 			return nil, &SentinelCauseError{Sentinel: ErrXKMSdTLSConfigFailed, Cause: err}
 		}

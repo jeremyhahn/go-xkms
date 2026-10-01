@@ -100,7 +100,7 @@ func (t *Transport) notLeaderInterceptor(
 		return err
 	}
 
-	leaderConn, dialErr := grpc.NewClient(leaderAddr, t.credsOpt)
+	leaderConn, dialErr := grpc.NewClient(leaderAddr, append([]grpc.DialOption{t.credsOpt}, t.authDialOptions()...)...)
 	if dialErr != nil {
 		// Dialing the leader is best-effort: if it fails, the caller still
 		// sees the original typed not-leader error rather than a dial error

@@ -66,6 +66,8 @@ func isolateXKMSdEndpoint(t *testing.T) {
 	t.Setenv(envXKeyXKMSdURL, "")
 	t.Setenv(envXKMSdToken, "")
 	t.Setenv(envXKMSdTLSCA, "")
+	t.Setenv(envXKMSdTLSCert, "")
+	t.Setenv(envXKMSdTLSKey, "")
 
 	t.Cleanup(func() {
 		xkmsdURL = previousFlag
@@ -440,6 +442,72 @@ func TestXKMSdEndpoint_Client_ThreadsTokenAndCABundle(t *testing.T) {
 	assert.True(t, configured.Config().TLSEnabled)
 	require.NotNil(t, configured.Config().TLSConfig, "TLS transports must receive a TLS config")
 	assert.NotNil(t, configured.Config().TLSConfig.RootCAs, "the configured CA bundle must be the trust anchor")
+}
+
+func TestResolveXKMSdEndpoint_ClientCertificateFromEnv(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+
+	xkmsdURL = "grpcs://xkmsd.example.com:9443"
+	t.Setenv(envXKMSdTLSCert, " /etc/xkey/admin-cert.pem ")
+	t.Setenv(envXKMSdTLSKey, "/etc/xkey/admin-key.pem")
+
+	endpoint, err := resolveXKMSdEndpoint(nil)
+	require.NoError(t, err)
+	assert.Equal(t, "/etc/xkey/admin-cert.pem", endpoint.TLSCertFile)
+	assert.Equal(t, "/etc/xkey/admin-key.pem", endpoint.TLSKeyFile)
+}
+
+func TestXKMSdEndpoint_Client_ThreadsClientCertificate(t *testing.T) {
+	certFile, keyFile := writeTestClientCredential(t)
+
+	client, err := XKMSdEndpoint{
+		URL:         "grpcs://xkmsd.example.com:9443",
+		TLSCAFile:   writeTestCABundle(t),
+		TLSCertFile: certFile,
+		TLSKeyFile:  keyFile,
+	}.Client()
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+
+	configured, ok := client.(configuredTransport)
+	require.True(t, ok)
+	require.NotNil(t, configured.Config().TLSConfig)
+	assert.Len(t, configured.Config().TLSConfig.Certificates, 1, "the mTLS client credential is presented")
+}
+
+func TestXKMSdEndpoint_Client_UnreadableClientCertificate(t *testing.T) {
+	client, err := XKMSdEndpoint{
+		URL:         "grpcs://xkmsd.example.com:9443",
+		TLSCertFile: filepath.Join(t.TempDir(), "absent-cert.pem"),
+		TLSKeyFile:  filepath.Join(t.TempDir(), "absent-key.pem"),
+	}.Client()
+	assert.Nil(t, client)
+	assert.ErrorIs(t, err, ErrXKMSdTLSConfigFailed)
+}
+
+// writeTestClientCredential writes a self-signed client certificate and its
+// key, and returns their paths.
+func writeTestClientCredential(t *testing.T) (certFile, keyFile string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "admin"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	certFile = filepath.Join(dir, "cert.pem")
+	keyFile = filepath.Join(dir, "key.pem")
+	require.NoError(t, os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
+	require.NoError(t, os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600))
+	return certFile, keyFile
 }
 
 func TestXKMSdEndpoint_Client_TokenOnPlaintextTransport(t *testing.T) {
