@@ -227,7 +227,7 @@ func TestRegisterHTTP_VariantRoutesRegisterOnce(t *testing.T) {
 
 // TestRegisterHTTP_LeavesTheHostsRoutesToTheHost proves the module never
 // registers a route the qrdb host serves itself: the host claims GET
-// /health, and a second owner panics at boot.
+// /health and GET /v1/ca/bootstrap, and a second owner panics at boot.
 func TestRegisterHTTP_LeavesTheHostsRoutesToTheHost(t *testing.T) {
 	m, err := NewModule(func() *xkms.XKMSService { return nil })
 	require.NoError(t, err)
@@ -235,6 +235,7 @@ func TestRegisterHTTP_LeavesTheHostsRoutesToTheHost(t *testing.T) {
 	m.RegisterHTTP(reg)
 	for _, rec := range *recs {
 		assert.NotEqual(t, "/health", rec.pattern, "%s %s is the host's", rec.method, rec.pattern)
+		assert.NotEqual(t, "/v1/ca/bootstrap", rec.pattern, "%s %s is the host's", rec.method, rec.pattern)
 	}
 	assert.NotEmpty(t, *recs)
 }

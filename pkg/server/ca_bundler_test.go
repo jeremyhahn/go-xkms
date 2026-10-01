@@ -273,3 +273,23 @@ func TestNewCAInstanceBundler_CertError(t *testing.T) {
 	var bundleErr *ErrCABundleGet
 	assert.True(t, errors.As(err, &bundleErr))
 }
+
+// TestBootstrapCABundle_ServesTheBundlerOnceStartSetsIt proves the provider
+// qrdb serves GET /v1/ca/bootstrap from: no bundle until Start computes the
+// bundler, then that bundler's bundle, read per request.
+func TestBootstrapCABundle_ServesTheBundlerOnceStartSetsIt(t *testing.T) {
+	s := &Server{}
+	_, err := s.bootstrapCABundle(t.Context())
+	assert.ErrorIs(t, err, ErrBootstrapCABundleUnavailable)
+
+	certPEM, _ := generateTestCA(t)
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	require.NoError(t, os.WriteFile(path, certPEM, 0o600))
+	bundler, err := newTLSCABundler(path)
+	require.NoError(t, err)
+	s.bootstrapBundler.Store(bundler)
+
+	bundle, err := s.bootstrapCABundle(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, certPEM, bundle)
+}

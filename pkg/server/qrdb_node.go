@@ -172,6 +172,9 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	serverOpts := []qrdbsdk.ServerOption{
 		qrdbsdk.WithAuditLogger(sink),
 		qrdbsdk.WithFactorRegistry(s.factorRegistry),
+		// qrdb serves GET /v1/ca/bootstrap, first-contact trust, from xkmsd's
+		// CA bundle; the xkms module leaves the route to it.
+		qrdbsdk.WithBootstrapCABundle(s.bootstrapCABundle),
 	}
 
 	// Unified API server: qrdb's transports are TLS-only and take their

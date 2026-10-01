@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -382,6 +383,11 @@ type Server struct {
 	// gRPC transports both read this same field rather than each other's
 	// package-level state.
 	grpcCABundler grpcinternal.CABundler
+
+	// bootstrapBundler is the same bundler, published for the provider go-qrdb
+	// serves GET /v1/ca/bootstrap from (bootstrapCABundle). Atomic because the
+	// node's REST server reads it from request goroutines.
+	bootstrapBundler atomic.Pointer[tlsCABundler]
 
 	// Credential service for managing backend credentials
 	credentialService *credentialspkg.Service
@@ -2654,6 +2660,7 @@ func (s *Server) Start() error {
 		} else {
 			rest.SetCABundler(bundler)
 			s.grpcCABundler = bundler
+			s.bootstrapBundler.Store(bundler)
 			s.logger.Info("CA bundler initialized from TLS CA file", "ca_file", s.config.TLS.CAFile)
 		}
 	} else if s.config.TLS.Enabled && s.ca != nil && s.ca.IsInitialized() {
@@ -2664,6 +2671,7 @@ func (s *Server) Start() error {
 		} else {
 			rest.SetCABundler(bundler)
 			s.grpcCABundler = bundler
+			s.bootstrapBundler.Store(bundler)
 			s.logger.Info("CA bundler initialized from CA instance")
 		}
 	}

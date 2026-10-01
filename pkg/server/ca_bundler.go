@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"os"
@@ -83,4 +84,16 @@ func newCAInstanceBundler(caInstance caInstanceProvider) (*tlsCABundler, error) 
 		certPEM: certPEM,
 		cert:    cert,
 	}, nil
+}
+
+// bootstrapCABundle is the provider go-qrdb serves GET /v1/ca/bootstrap from
+// (qrdbsdk.WithBootstrapCABundle): qrdb owns the one route, xkmsd supplies
+// its CA bundle -- the bundler Start computes, read per request. Before
+// Start has computed one it reports ErrBootstrapCABundleUnavailable.
+func (s *Server) bootstrapCABundle(context.Context) ([]byte, error) {
+	b := s.bootstrapBundler.Load()
+	if b == nil {
+		return nil, ErrBootstrapCABundleUnavailable
+	}
+	return b.CABundle()
 }
