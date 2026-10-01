@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jeremyhahn/go-luks2/pkg/luks2"
+	sdkluks "github.com/jeremyhahn/go-xkms/sdk/go/luks"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
@@ -26,43 +26,32 @@ import (
 // MapperName is the device-mapper name for the LUKS volume.
 const MapperName = "xkey"
 
-// LUKS2 magic bytes: "LUKS" followed by 0xba 0xbe.
-var luks2Magic = []byte{'L', 'U', 'K', 'S', 0xba, 0xbe}
-
-// IsLUKSVolume checks if the given file is a LUKS volume by reading the magic header.
+// IsLUKSVolume checks if the given file is a LUKS volume by reading the
+// magic header. It forwards to go-xkms/pkg/luks's canonical implementation.
 func IsLUKSVolume(path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = f.Close() }()
-
-	// Read the first 6 bytes (LUKS magic)
-	magic := make([]byte, 6)
-	n, err := f.Read(magic)
-	if err != nil || n < 6 {
-		return false
-	}
-
-	// Check for LUKS magic
-	for i := 0; i < 6; i++ {
-		if magic[i] != luks2Magic[i] {
-			return false
-		}
-	}
-	return true
+	return sdkluks.IsLUKSVolume(path)
 }
+
+// checkMounted and checkUnlocked forward to go-xkms/pkg/luks's canonical
+// mount/unlock-state checks. Each is a package variable, following the same
+// pattern as checkKeyringAvailable used to (see keyring.go's history), so
+// unit tests can stand in for the kernel instead of requiring a real mount
+// or dm-crypt mapping.
+var (
+	checkMounted  = sdkluks.IsMounted
+	checkUnlocked = sdkluks.IsUnlocked
+)
 
 // IsMounted checks if the data directory is currently mounted. It returns
 // an error when the mount state could not be determined; callers must not
 // treat that as "not mounted".
 func IsMounted(mountPoint string) (bool, error) {
-	return luks2.IsMounted(mountPoint)
+	return checkMounted(mountPoint)
 }
 
 // IsLUKSOpen checks if the LUKS volume is currently unlocked.
 func IsLUKSOpen(mapperName string) bool {
-	return luks2.IsUnlocked(mapperName)
+	return checkUnlocked(mapperName)
 }
 
 // NewVolumeFromHome creates a Volume using paths from the unified xhome.Home.

@@ -1,5 +1,5 @@
-// Copyright (c) 2025 Jeremy Hahn
-// Copyright (c) 2025 Automate The Things, LLC
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
 //
 // This file is part of go-xkms.
 //
@@ -15,8 +15,6 @@ package luks
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/jeremyhahn/go-luks2/pkg/luks2"
@@ -80,36 +78,4 @@ func TestEnsureKeyringAvailable_ProbesEveryCall(t *testing.T) {
 	failing = true
 	require.Error(t, EnsureKeyringAvailable(), "an exhausted quota after a success is still caught")
 	assert.Equal(t, 5, *calls)
-}
-
-// TestVolume_Unlock_RefusesBeforeTouchingTheLoopDevice proves the preflight
-// runs after the volume checks and before any loop device is attached: with
-// the keyring unavailable, Unlock on an existing container returns the typed
-// refusal, never a loop-device error.
-func TestVolume_Unlock_RefusesBeforeTouchingTheLoopDevice(t *testing.T) {
-	withKeyringCheck(t, func() error { return luks2.ErrKeyringBlocked })
-	container := filepath.Join(t.TempDir(), "xkey.luks")
-	require.NoError(t, os.WriteFile(container, make([]byte, 4096), 0600))
-	vol := NewVolumeWithPaths(container, filepath.Join(t.TempDir(), "mnt"))
-
-	err := vol.Unlock("passphrase")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrKeyringUnavailable), "%v", err)
-	var volErr *VolumeError
-	assert.False(t, errors.As(err, &volErr), "no loop device may have been attempted: %v", err)
-}
-
-// TestVolume_Create_RefusesBeforeCreatingTheContainer proves that with the
-// keyring unavailable Create refuses before the container file exists, so
-// nothing is left on disk that cannot be opened.
-func TestVolume_Create_RefusesBeforeCreatingTheContainer(t *testing.T) {
-	withKeyringCheck(t, func() error { return luks2.ErrKeyringUnsupported })
-	container := filepath.Join(t.TempDir(), "xkey.luks")
-	vol := NewVolumeWithPaths(container, filepath.Join(t.TempDir(), "mnt"))
-
-	err := vol.Create(1024*1024, "passphrase")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrKeyringUnavailable), "%v", err)
-	assert.True(t, errors.Is(err, luks2.ErrKeyringUnsupported))
-	assert.NoFileExists(t, container)
 }
