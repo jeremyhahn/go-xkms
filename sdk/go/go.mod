@@ -7,7 +7,7 @@ require (
 	github.com/google/go-tpm v0.9.8
 	github.com/jeremyhahn/go-enclave v0.6.1-alpha
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.25.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.25.1-alpha
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
 	github.com/jeremyhahn/go-xkms v0.46.0-alpha
 	github.com/quic-go/quic-go v0.63.0
@@ -144,7 +144,7 @@ require (
 	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.25.0-alpha // indirect
+	github.com/jeremyhahn/go-qrdb v0.25.1-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.15.0-alpha // indirect
 	github.com/jeremyhahn/go-xkms/xkey v0.46.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
