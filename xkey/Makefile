@@ -94,7 +94,8 @@ DEV_TAGS := ble codec_json $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
 # ~25s on machines without BLE hardware. Integration tests use BUILD_TAGS
 # (with ble) for real hardware testing in the devcontainer.
 # Note: PKCS#11 is included in test tags since it doesn't require hardware for unit tests.
-TEST_TAGS := production codec_json $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
+# tpm_simulator runs the TPM tests on the in-process simulator (no device).
+TEST_TAGS := production codec_json tpm_simulator $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
 
 # Go parameters
 GO := go

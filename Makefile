@@ -937,6 +937,7 @@ test:
 	@$(MAKE) --no-print-directory test-scripts
 	@$(MAKE) --no-print-directory test-go
 	@$(MAKE) --no-print-directory test-nofrost
+	@$(MAKE) --no-print-directory test-pkcs11
 	@$(MAKE) --no-print-directory test-web
 	@echo "$(GREEN)$(BOLD)✓ All unit tests passed (shell + Go + web)!$(RESET)"
 
@@ -989,6 +990,15 @@ test-go: check-insecure-tls
 		cat $(COVERAGE_DIR)/test.log | grep -E "FAIL|panic" | head -20; \
 		exit $$EXIT_CODE; \
 	fi'
+
+.PHONY: test-pkcs11
+## test-pkcs11: Run the pkcs11-tagged password-vault key-factor tests (pkg/vaulttoken)
+## on SoftHSM, whose token lives in a temp directory. test-go builds without
+## pkcs11 (CGO), so without this lane those tests never run.
+test-pkcs11:
+	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 vault key-factor tests...$(RESET)"
+	@$(GOTEST) -v -race -timeout 30m -tags="$(TEST_TAGS) pkcs11" ./pkg/vaulttoken/...
+	@echo "$(GREEN)✓ PKCS#11 vault key-factor tests passed$(RESET)"
 
 .PHONY: test-nofrost
 ## test-nofrost: Run the !frost stub-build unit tests (pkg/api/rest, pkg/api/mcp,
