@@ -1,6 +1,6 @@
 # TPM 2.0 — CLI
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 `xkmsctl` has **no `tpm` command group**. The TPM is reached through whichever
 feature is using it, by selecting it as the backend or strategy:
@@ -9,7 +9,7 @@ feature is using it, by selecting it as the backend or strategy:
 |---|---|---|
 | put a key in the TPM | `xkmsctl --backend tpm2 key generate …` | [`../key-management/cli.md`](../key-management/cli.md) |
 | attest a TPM-resident key | `xkmsctl key attest <id> --backend tpm2` | [`../key-management/cli.md`](../key-management/cli.md) |
-| seal data to platform state | `xkmsctl seal <data> --backend tpm2` | [`../sealing-and-barrier/cli.md`](../sealing-and-barrier/cli.md) |
+| seal data to platform state | `xkmsctl seal <data> --backend tpm2 --tpm-policy platform` | [`../sealing-and-barrier/cli.md`](../sealing-and-barrier/cli.md) |
 | protect the barrier with the TPM | `xkmsctl barrier init --barrier-strategy tpm2` | [`../sealing-and-barrier/cli.md`](../sealing-and-barrier/cli.md) |
 | manage the TPM-backed PIN | `xkmsctl pin …` | [`../pin-management/cli.md`](../pin-management/cli.md) |
 | store PIV certificates in NV | `xkmsctl piv …` (server configured `tpm2`) | [`../piv-smartcard/cli.md`](../piv-smartcard/cli.md) |

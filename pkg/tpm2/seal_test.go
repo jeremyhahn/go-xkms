@@ -78,6 +78,13 @@ func TestSealUnseal(t *testing.T) {
 					}}
 
 				_, err = tpm.SealKey(keyAttrs, nil, false)
+				if !passwdOpt {
+					// Neither a policy nor a password: nothing would
+					// protect the object, so the seal is refused.
+					assert.ErrorIs(t, err, ErrSealUnprotected)
+					_ = tpm.Close()
+					continue
+				}
 				assert.Nil(t, err)
 
 				// Retrieve the AES-256 key protected

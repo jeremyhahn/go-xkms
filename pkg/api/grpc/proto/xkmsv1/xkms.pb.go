@@ -7960,10 +7960,12 @@ type SealRequest struct {
 	KeyId   string                 `protobuf:"bytes,2,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
 	Data    []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
 	Aad     []byte                 `protobuf:"bytes,4,opt,name=aad,proto3" json:"aad,omitempty"` // Additional authenticated data (optional)
-	// The sealed object's authorization value (TPM2).
+	// The TPM2 sealed object's authorization value. With a TPM policy it counts
+	// only inside the policy; without one it is the object's only protection.
 	Password string `protobuf:"bytes,5,opt,name=password,proto3" json:"password,omitempty"`
-	// The TPM policy of the tenant's scope a TPM2 sealed object is bound to;
-	// empty is the built-in "platform" policy.
+	// The TPM policy a TPM2 sealed object is bound to: "platform", a named
+	// policy of the tenant's scope, or empty for none. A TPM2 seal needs a
+	// policy, a password or both.
 	TpmPolicy     string `protobuf:"bytes,6,opt,name=tpm_policy,json=tpmPolicy,proto3" json:"tpm_policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

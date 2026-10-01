@@ -1,6 +1,6 @@
 # Sealing and Barrier — User Guide
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## What the barrier is
 
@@ -123,12 +123,15 @@ Separate from the barrier — this uses the backend's own mechanism:
 
 ```
 xkmsctl can-seal --backend tpm2
-xkmsctl seal "secret payload" --backend tpm2
+xkmsctl seal "secret payload" --backend tpm2 --tpm-policy platform
 xkmsctl unseal "$SEALED"
 ```
 
-TPM sealing here is PCR-bound: the data unseals only on a machine in the same
-measured state.
+TPM sealing here is bound to what you name: `--tpm-policy platform` (or a
+named policy) makes the data unseal only on a machine in the same measured
+state, `--password` makes it unseal only with the password, and both makes the
+password a recovery path inside the policy. A TPM seal with neither is
+refused.
 
 Sealing belongs to your tenant. With `--key-id`, the key must be one of your
 tenant's keys; another tenant's key reads as "key not found". Without it, a

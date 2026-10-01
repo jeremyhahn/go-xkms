@@ -39,15 +39,9 @@ func (tpm *TPM2) NVWrite(
 		return ErrNVSecretTooLarge
 	}
 
-	var policyDigest tpm2.TPM2BDigest
-	var policyRead bool
-	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
-		var pdErr error
-		policyDigest, pdErr = tpm.PlatformPolicyDigest()
-		if pdErr != nil {
-			return pdErr
-		}
-		policyRead = true
+	policyDigest, policyRead, err := tpm.nvPlatformPolicy(keyAttrs)
+	if err != nil {
+		return err
 	}
 
 	hierarchy := keyAttrs.TPMAttributes.Hierarchy
@@ -61,8 +55,8 @@ func (tpm *TPM2) NVWrite(
 				NameAlg:    hashAlg,
 				AuthPolicy: policyDigest,
 				Attributes: tpm2.TPMANV{
-					AuthRead:   true,
-					AuthWrite:  true,
+					AuthRead:   !policyRead,
+					AuthWrite:  !policyRead,
 					NT:         tpm2.TPMNTOrdinary,
 					NoDA:       true,
 					OwnerRead:  true,
@@ -257,22 +251,13 @@ func (tpm *TPM2) NVRead(
 	//   TPMA_NV_OWNERREAD, no owner auth
 	//     → Owner-hierarchy with empty auth (backward compat).
 	var authHandle tpm2.AuthHandle
-	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform && attrs.PolicyRead {
-		// PCR-branch policy session: call PlatformPolicySession(nil) directly
-		// so the session digest matches the PolicyOR(PCR, AuthValue) AuthPolicy
-		// stored in the NV public area.  CreateKeySession is NOT used because
-		// the key password ("test" in tests) is unrelated to the NV index
-		// authValue (always empty for NV indices defined by NVWrite).
-		session, closer, err := tpm.PlatformPolicySession(nil)
+	if attrs.PolicyRead {
+		var closer func() error
+		authHandle, closer, err = tpm.nvPolicyReadAuthorization(handle, readPubRsp.NVName, nvPub.AuthPolicy.Buffer)
 		if err != nil {
 			return nil, err
 		}
 		defer tpm.closeSession(closer, "NVRead policy")
-		authHandle = tpm2.AuthHandle{
-			Handle: handle,
-			Name:   readPubRsp.NVName,
-			Auth:   session,
-		}
 	} else {
 		var closer func() error
 		authHandle, closer, err = tpm.nvReadAuthorization(handle, readPubRsp.NVName, attrs, hierarchyAuth)
@@ -354,15 +339,9 @@ func (tpm *TPM2) NVDefineCounter(keyAttrs *types.KeyAttributes) error {
 		hierarchyAuth = keyAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
 	}
 
-	var policyDigest tpm2.TPM2BDigest
-	var policyRead bool
-	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
-		var pdErr error
-		policyDigest, pdErr = tpm.PlatformPolicyDigest()
-		if pdErr != nil {
-			return pdErr
-		}
-		policyRead = true
+	policyDigest, policyRead, err := tpm.nvPlatformPolicy(keyAttrs)
+	if err != nil {
+		return err
 	}
 
 	hierarchy := keyAttrs.TPMAttributes.Hierarchy
@@ -377,8 +356,8 @@ func (tpm *TPM2) NVDefineCounter(keyAttrs *types.KeyAttributes) error {
 				NameAlg:    hashAlg,
 				AuthPolicy: policyDigest,
 				Attributes: tpm2.TPMANV{
-					AuthRead:   true,
-					AuthWrite:  true,
+					AuthRead:   !policyRead,
+					AuthWrite:  !policyRead,
 					NT:         tpm2.TPMNTCounter,
 					NoDA:       true,
 					OwnerRead:  true,
@@ -389,7 +368,7 @@ func (tpm *TPM2) NVDefineCounter(keyAttrs *types.KeyAttributes) error {
 			}),
 	}
 
-	err := tpm.nvDefineSpace(hierarchy, hierarchyAuth, &defs)
+	err = tpm.nvDefineSpace(hierarchy, hierarchyAuth, &defs)
 	if err != nil {
 		tpm.logger.Error("NVDefineSpace for counter failed", slog.String("error", err.Error()))
 		return err
@@ -436,15 +415,9 @@ func (tpm *TPM2) NVDefineExtend(keyAttrs *types.KeyAttributes) error {
 		hierarchyAuth = keyAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
 	}
 
-	var policyDigest tpm2.TPM2BDigest
-	var policyRead bool
-	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
-		var pdErr error
-		policyDigest, pdErr = tpm.PlatformPolicyDigest()
-		if pdErr != nil {
-			return pdErr
-		}
-		policyRead = true
+	policyDigest, policyRead, err := tpm.nvPlatformPolicy(keyAttrs)
+	if err != nil {
+		return err
 	}
 
 	hierarchy := keyAttrs.TPMAttributes.Hierarchy
@@ -464,8 +437,8 @@ func (tpm *TPM2) NVDefineExtend(keyAttrs *types.KeyAttributes) error {
 				NameAlg:    hashAlg,
 				AuthPolicy: policyDigest,
 				Attributes: tpm2.TPMANV{
-					AuthRead:   true,
-					AuthWrite:  true,
+					AuthRead:   !policyRead,
+					AuthWrite:  !policyRead,
 					NT:         tpm2.TPMNTExtend,
 					NoDA:       true,
 					OwnerRead:  true,
@@ -692,21 +665,13 @@ func (tpm *TPM2) NVReadCounter(keyAttrs *types.KeyAttributes) (uint64, error) {
 
 	// Select the authorization path per TCG Part 3 §31.13.
 	var authHandle tpm2.AuthHandle
-	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
-		session, closer, err := tpm.CreateSession(keyAttrs)
+	if attrs.PolicyRead {
+		var closer func() error
+		authHandle, closer, err = tpm.nvPolicyReadAuthorization(handle, readPubRsp.NVName, nvPub.AuthPolicy.Buffer)
 		if err != nil {
 			return 0, err
 		}
-		defer func() {
-			if err := closer(); err != nil {
-				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
-			}
-		}()
-		authHandle = tpm2.AuthHandle{
-			Handle: handle,
-			Name:   readPubRsp.NVName,
-			Auth:   session,
-		}
+		defer tpm.closeSession(closer, "NV policy read")
 	} else {
 		var closer func() error
 		authHandle, closer, err = tpm.nvReadAuthorization(handle, readPubRsp.NVName, attrs, hierarchyAuth)
@@ -786,21 +751,13 @@ func (tpm *TPM2) NVReadExtend(keyAttrs *types.KeyAttributes) ([]byte, error) {
 
 	// Select the authorization path per TCG Part 3 §31.13.
 	var authHandle tpm2.AuthHandle
-	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
-		session, closer, err := tpm.CreateSession(keyAttrs)
+	if attrs.PolicyRead {
+		var closer func() error
+		authHandle, closer, err = tpm.nvPolicyReadAuthorization(handle, readPubRsp.NVName, nvPub.AuthPolicy.Buffer)
 		if err != nil {
 			return nil, err
 		}
-		defer func() {
-			if err := closer(); err != nil {
-				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
-			}
-		}()
-		authHandle = tpm2.AuthHandle{
-			Handle: handle,
-			Name:   readPubRsp.NVName,
-			Auth:   session,
-		}
+		defer tpm.closeSession(closer, "NV policy read")
 	} else {
 		var closer func() error
 		authHandle, closer, err = tpm.nvReadAuthorization(handle, readPubRsp.NVName, attrs, hierarchyAuth)
@@ -933,6 +890,41 @@ func (tpm *TPM2) nvReadAuthorization(
 	default:
 		return tpm2.AuthHandle{}, noopCloser, ErrNVReadNotAuthorized
 	}
+}
+
+// nvPlatformPolicy returns the authPolicy of a new NV index keyAttrs binds to
+// the platform policy, and whether it is bound. An NV index defined here
+// never has an auth value, so its policy is the PolicyPCR branch alone
+// (platformPCRPolicyDigest): a PolicyAuthValue branch would open it to an
+// empty one. A bound index is defined without TPMA_NV_AUTHREAD and
+// TPMA_NV_AUTHWRITE, so its empty auth value authorizes nothing: it is read
+// through its policy (TPMA_NV_POLICYREAD) or by the owner, and written by
+// the owner.
+func (tpm *TPM2) nvPlatformPolicy(keyAttrs *types.KeyAttributes) (tpm2.TPM2BDigest, bool, error) {
+	if keyAttrs.TPMPolicy != types.TPMPolicyPlatform {
+		return tpm2.TPM2BDigest{}, false, nil
+	}
+	digest, err := tpm.platformPCRPolicyDigest()
+	if err != nil {
+		return tpm2.TPM2BDigest{}, false, err
+	}
+	return digest, true, nil
+}
+
+// nvPolicyReadAuthorization returns the authorization for reading an NV
+// index through its read policy (TPMA_NV_POLICYREAD), authPolicy: the
+// PolicyPCR branch of the platform policy (platformPCRBranchSession). The
+// returned closer flushes the policy session.
+func (tpm *TPM2) nvPolicyReadAuthorization(
+	handle tpm2.TPMHandle,
+	name tpm2.TPM2BName,
+	authPolicy []byte) (tpm2.AuthHandle, func() error, error) {
+
+	session, closer, err := tpm.platformPCRBranchSession(authPolicy)
+	if err != nil {
+		return tpm2.AuthHandle{}, noopCloser, err
+	}
+	return tpm2.AuthHandle{Handle: handle, Name: name, Auth: session}, closer, nil
 }
 
 // nvChunkSizeFallback is the conservative default chunk size used when the

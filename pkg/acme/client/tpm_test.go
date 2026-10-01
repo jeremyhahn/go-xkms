@@ -843,7 +843,7 @@ func (m *mockXKMSTPM) ReadPCRs(pcrList []uint) ([]xkmssdk.PCRBank, error) {
 	return nil, nil
 }
 
-func (m *mockXKMSTPM) RSADecrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, blob []byte) ([]byte, error) {
+func (m *mockXKMSTPM) RSADecrypt(keyAttrs *xkmssdk.KeyAttributes, backend xkmssdk.TPMKeyBackend, blob []byte) ([]byte, error) {
 	return nil, nil
 }
 

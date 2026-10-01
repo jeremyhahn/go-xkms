@@ -2354,10 +2354,12 @@ message SealRequest {
   string key_id = 2;
   bytes data = 3;
   bytes aad = 4; // Additional authenticated data (optional)
-  // The sealed object's authorization value (TPM2).
+  // The TPM2 sealed object's authorization value. With a TPM policy it counts
+  // only inside the policy; without one it is the object's only protection.
   string password = 5;
-  // The TPM policy of the tenant's scope a TPM2 sealed object is bound to;
-  // empty is the built-in "platform" policy.
+  // The TPM policy a TPM2 sealed object is bound to: "platform", a named
+  // policy of the tenant's scope, or empty for none. A TPM2 seal needs a
+  // policy, a password or both.
   string tpm_policy = 6;
 }
 

@@ -498,6 +498,11 @@ var (
 	ErrInvalidSealBackend        = errors.New("tpm: opts.Backend must implement store.KeyBackend")
 	ErrSSRKNotAvailable          = errors.New("tpm: SSRK not available, TPM may not be provisioned")
 
+	// ErrSealUnprotected is returned when a sealed object would be bound to
+	// neither a policy nor a non-empty password: its USER role would answer
+	// an empty password, so anyone able to load it could unseal it.
+	ErrSealUnprotected = errors.New("tpm: a sealed object needs a policy or a password")
+
 	// TPM_RC errors
 	ErrCommandNotSupported = tpm2.TPMRC(0xb0143)
 

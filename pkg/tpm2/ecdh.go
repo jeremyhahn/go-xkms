@@ -83,10 +83,10 @@ func (tpm *TPM2) ECDHZGen(
 	// the password branch of the PolicyOR was unreachable from here, so the
 	// key was usable only while the PCRs were unchanged, with no recovery.
 	//
-	// createKeySession selects the branch from the key's own attributes and
+	// objectSession selects the branch from the key's own authPolicy and
 	// resolves the policy pin from the backend the key's blobs live in, so
 	// ECDH keys behave like every other platform-policy key.
-	auth, closer, err := tpm.createKeySession(keyAttrs, backend)
+	auth, closer, err := tpm.objectSession(keyAttrs, backend, loadResponse.ObjectHandle)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create key session", Err: err}
 	}

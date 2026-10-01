@@ -71,13 +71,13 @@ func TestNVRead_EveryCommandFailurePropagates(t *testing.T) {
 			return err
 		}
 	},
-		// Commands 11 and 12 are the deferred FlushContexts of the salted
+		// Commands 10 and 11 are the deferred FlushContexts of the salted
 		// session that encrypted the data on its way out and of the
-		// platform-policy session: NVRead has already read and returned the
-		// data by the time they run, so their failures are logged (see the
-		// defers in NVRead) and must not turn a successful read into an
-		// error.
-		11, 12)
+		// PolicyPCR session the index's read policy takes: NVRead has already
+		// read and returned the data by the time they run, so their failures
+		// are logged (see the defers in NVRead) and must not turn a
+		// successful read into an error.
+		10, 11)
 }
 
 // TestNVDefineCounter_EveryCommandFailurePropagates sweeps NVDefineCounter's
