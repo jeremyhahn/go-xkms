@@ -13,7 +13,14 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
-import type { PasswordInfo, PasswordStoreStatusResponse, PasswordStoreUnlockRequest } from "@go-xkms/sdk";
+import type {
+  PasswordInfo,
+  PasswordStoreStatusResponse,
+  PasswordStoreUnlockRequest,
+  PasswordVaultEnrollRequest,
+  PasswordVaultEnrollResponse,
+  PasswordVaultStatusResponse,
+} from "@go-xkms/sdk";
 
 const status = vi.fn<() => Promise<PasswordStoreStatusResponse>>();
 const list = vi.fn<() => Promise<{ passwords: PasswordInfo[]; total: number }>>();
@@ -21,9 +28,11 @@ const unlock = vi.fn<(req: PasswordStoreUnlockRequest) => Promise<PasswordStoreS
 const lock = vi.fn<() => Promise<PasswordStoreStatusResponse>>();
 const add = vi.fn();
 const del = vi.fn();
+const vaultStatus = vi.fn<() => Promise<PasswordVaultStatusResponse>>();
+const vaultEnroll = vi.fn<(req: PasswordVaultEnrollRequest) => Promise<PasswordVaultEnrollResponse>>();
 
 vi.mock("../src/stores/sdkClient.ts", () => ({
-  getSDKClient: () => ({ passwords: { status, list, unlock, lock, add, delete: del } }),
+  getSDKClient: () => ({ passwords: { status, list, unlock, lock, add, delete: del, vaultStatus, vaultEnroll } }),
   resetSDKClient: () => {},
 }));
 
@@ -51,6 +60,7 @@ function entry(over: Partial<PasswordInfo> = {}): PasswordInfo {
 beforeEach(() => {
   vi.clearAllMocks();
   toasts.length = 0;
+  vaultStatus.mockResolvedValue({ initialized: true, unlocked: false, factors: [] });
 });
 
 describe("PasswordsView", () => {
@@ -72,8 +82,8 @@ describe("PasswordsView", () => {
 
     render(PasswordsView);
 
-    expect(await screen.findByText("locked")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("PIN")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Passphrase")).toBeInTheDocument();
+    expect(screen.getByText("locked")).toBeInTheDocument();
     expect(list).not.toHaveBeenCalled();
     expect(screen.queryByText("github")).not.toBeInTheDocument();
   });
@@ -95,7 +105,7 @@ describe("PasswordsView", () => {
     expect(await screen.findByText("vault backend unreachable")).toBeInTheDocument();
   });
 
-  it("unlocks with the entered PIN and reloads the entry list", async () => {
+  it("unlocks with the entered passphrase and reloads the entry list", async () => {
     status.mockResolvedValueOnce({ available: true, is_locked: true, barrier_sealed: false, password_count: 0, message: "" });
     unlock.mockResolvedValue({ available: true, is_locked: false, barrier_sealed: false, password_count: 1, message: "" });
     status.mockResolvedValueOnce({ available: true, is_locked: false, barrier_sealed: false, password_count: 1, message: "" });
@@ -103,13 +113,13 @@ describe("PasswordsView", () => {
 
     render(PasswordsView);
 
-    const pinInput = await screen.findByPlaceholderText("PIN");
-    await fireEvent.input(pinInput, { target: { value: "445566" } });
+    const input = await screen.findByPlaceholderText("Passphrase");
+    await fireEvent.input(input, { target: { value: "my vault passphrase" } });
     await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
 
     await waitFor(() => expect(unlock).toHaveBeenCalledOnce());
-    // PasswordStoreUnlockRequest carries exactly `pin` — nothing else.
-    expect(unlock.mock.calls[0]![0]).toEqual({ pin: "445566" });
+    // The session opens with the user's own passphrase, never a PIN.
+    expect(unlock.mock.calls[0]![0]).toEqual({ factor: "passphrase", passphrase: "my vault passphrase" });
     expect(await screen.findByText("github")).toBeInTheDocument();
   });
 
@@ -174,5 +184,43 @@ describe("PasswordsView", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(del).toHaveBeenCalledWith("pw-9"));
+  });
+
+  it("creates the vault on first use and shows the recovery code once", async () => {
+    vaultStatus.mockResolvedValue({ initialized: false, unlocked: false, factors: [] });
+    status.mockResolvedValueOnce({ available: true, is_locked: true, barrier_sealed: false, password_count: 0, message: "" });
+    vaultEnroll.mockResolvedValue({
+      factor: { id: "f1", factor: "passphrase", created_at: "2026-09-30T00:00:00Z" },
+      recovery_code: "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567",
+    });
+    status.mockResolvedValueOnce({ available: true, is_locked: false, barrier_sealed: false, password_count: 0, message: "" });
+    list.mockResolvedValue({ passwords: [], total: 0 });
+
+    render(PasswordsView);
+
+    const create = await screen.findByRole("button", { name: "Create vault" });
+    expect(create).toBeDisabled();
+    await fireEvent.input(screen.getByPlaceholderText("Passphrase (8+ characters)"), { target: { value: "first passphrase" } });
+    await fireEvent.input(screen.getByPlaceholderText("Confirm passphrase"), { target: { value: "first passphrase" } });
+    await fireEvent.click(create);
+
+    await waitFor(() => expect(vaultEnroll).toHaveBeenCalledOnce());
+    expect(vaultEnroll.mock.calls[0]![0]).toEqual({ factor: "passphrase", passphrase: "first passphrase", label: "web console" });
+    expect(await screen.findByText("ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "I have stored it" }));
+    await waitFor(() => expect(screen.queryByText("ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567")).not.toBeInTheDocument());
+  });
+
+  it("refuses to create a vault with mismatched passphrases", async () => {
+    vaultStatus.mockResolvedValue({ initialized: false, unlocked: false, factors: [] });
+    status.mockResolvedValue({ available: true, is_locked: true, barrier_sealed: false, password_count: 0, message: "" });
+
+    render(PasswordsView);
+
+    const create = await screen.findByRole("button", { name: "Create vault" });
+    await fireEvent.input(screen.getByPlaceholderText("Passphrase (8+ characters)"), { target: { value: "first passphrase" } });
+    await fireEvent.input(screen.getByPlaceholderText("Confirm passphrase"), { target: { value: "other passphrase" } });
+    expect(create).toBeDisabled();
+    expect(vaultEnroll).not.toHaveBeenCalled();
   });
 });
