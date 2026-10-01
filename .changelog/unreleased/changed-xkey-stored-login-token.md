@@ -1,4 +1,0 @@
-- **xkey presents the stored login on its server calls, CLI and GUI.** `xkey auth login` stored a session token that only the GUI's API explorer read (from an always-empty in-memory store). Now:
-  - `pkg/tokenstore` gains `Open` (the file-backed store `xkey auth login` writes, shared by the CLI and GUI) and `LoginToken` (no login is no token; an expired login is a `*LoginExpiredError` naming `xkey auth refresh`);
-  - every CLI server call (`resolveXKMSdEndpoint`, the share client) presents `XKMSD_TOKEN` when set, otherwise the login stored for that server URL. The lookup never creates the xKey home or the store;
-  - the GUI opens the same store (`xhome.Home.AuthDir`): a server connection presents the login stored for its URL and refuses an expired one, and the API explorer reads the real store instead of an empty one.
