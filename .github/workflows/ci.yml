@@ -1043,6 +1043,15 @@ jobs:
         run: |
           sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
 
+      # The secure-analyzer sweep reads `go vet -vettool` output and fails on
+      # any line that is not a securecheck diagnostic, so a cold module cache
+      # ("go: downloading ...") fails it, and the aborted module then reports
+      # its allowlist entries as stale. Lint's vet steps warmed the cache
+      # before this job was split out; download every module up front here.
+      - name: Download modules
+        run: |
+          for m in . sdk/go xkey web/desktop; do (cd "$m" && go mod download); done
+
       # `make vet` only reaches files that compile untagged (or, for xkey,
       # under LINT_TAGS_xkey) -- every file behind an `integration` (or
       # other suite) build tag is invisible to it, which is how #636/#638
