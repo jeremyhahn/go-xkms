@@ -145,33 +145,88 @@ type Server struct {
 	// Dir is the server's work directory (config, data, log).
 	Dir string
 
+	// URLs maps each transport the server serves to the URL a client dials
+	// it at: "rest" always; "unix", "grpc", "quic" and "mcp" with
+	// WithAllTransports.
+	URLs map[string]string
+
+	// Data is the server's data directory.
+	Data string
+
 	cmd    *exec.Cmd
 	exited chan struct{}
 	err    error
 	log    string
 }
 
+// Option configures the server Start runs.
+type Option func(*options)
+
+// options are the Start settings.
+type options struct {
+	allTransports bool
+}
+
+// WithAllTransports serves every transport, not only REST: gRPC, MCP and
+// HTTP/3 (QUIC, on the REST port) over TLS on kernel-assigned loopback
+// ports, and gRPC on a Unix socket in the work directory. Server.URLs names
+// each.
+func WithAllTransports() Option {
+	return func(o *options) { o.allTransports = true }
+}
+
+// listeners are the server's listen addresses.
+type listeners struct {
+	rest, grpc, quic, mcp int
+	socket                string
+}
+
 // Start starts the xkmsd binary at bin over a new data
 // directory under dir and returns once the server serves, its barrier is
 // initialized and its CA is trusted.
-func Start(bin, dir string) (*Server, error) {
-	port, err := freePort()
-	if err != nil {
+func Start(bin, dir string, opts ...Option) (*Server, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	var l listeners
+	var err error
+	if l.rest, err = freePort(); err != nil {
 		return nil, err
 	}
+	data := filepath.Join(dir, "data")
 	s := &Server{
-		URL:    fmt.Sprintf("https://localhost:%d", port),
+		URL:    fmt.Sprintf("https://localhost:%d", l.rest),
 		CAFile: filepath.Join(dir, "ca.pem"),
 		Dir:    dir,
+		Data:   data,
 		log:    filepath.Join(dir, "xkmsd.log"),
 		exited: make(chan struct{}),
 	}
-	data := filepath.Join(dir, "data")
+	s.URLs = map[string]string{"rest": s.URL}
+	if o.allTransports {
+		if l.grpc, err = freePort(); err != nil {
+			return nil, err
+		}
+		if l.mcp, err = freePort(); err != nil {
+			return nil, err
+		}
+		// xkmsd's own QUIC listener; clients reach HTTP/3 on the unified
+		// server's REST port.
+		if l.quic, err = freePort(); err != nil {
+			return nil, err
+		}
+		l.socket = filepath.Join(dir, "run", "xkms.sock")
+		s.URLs["unix"] = "unix://" + l.socket
+		s.URLs["grpc"] = fmt.Sprintf("grpcs://127.0.0.1:%d", l.grpc)
+		s.URLs["quic"] = fmt.Sprintf("quic://localhost:%d", l.rest)
+		s.URLs["mcp"] = fmt.Sprintf("mcps://localhost:%d", l.mcp)
+	}
 	if err := os.MkdirAll(data, 0o700); err != nil {
 		return nil, err
 	}
 	config := filepath.Join(dir, "xkmsd.yaml")
-	if err := os.WriteFile(config, []byte(serverConfig(port, data)), 0o600); err != nil {
+	if err := os.WriteFile(config, []byte(serverConfig(l, data)), 0o600); err != nil {
 		return nil, err
 	}
 	logFile, err := os.Create(s.log)
@@ -196,7 +251,7 @@ func Start(bin, dir string) (*Server, error) {
 		run  func() error
 	}{
 		{"initialize the barrier through the sealed window", func() error { return s.initializeBarrier(data) }},
-		{"wait for the server", func() error { return s.waitServing(port) }},
+		{"wait for the server", func() error { return s.waitServing(l) }},
 		{"trust the server's CA", s.trustCA},
 		{"find the first-boot admin credential", func() error { return s.findAdminCredential(data) }},
 	}
@@ -333,18 +388,32 @@ func (s *Server) initializeBarrier(data string) error {
 	}
 }
 
-// waitServing waits until the unsealed server accepts connections.
-func (s *Server) waitServing(port int) error {
+// waitServing waits until the unsealed server accepts connections on every
+// listener it serves.
+func (s *Server) waitServing(l listeners) error {
+	targets := [][2]string{{"tcp", fmt.Sprintf("127.0.0.1:%d", l.rest)}}
+	if l.socket != "" {
+		targets = append(targets,
+			[2]string{"unix", l.socket},
+			[2]string{"tcp", fmt.Sprintf("127.0.0.1:%d", l.grpc)},
+			[2]string{"tcp", fmt.Sprintf("127.0.0.1:%d", l.mcp)})
+	}
 	deadline := time.Now().Add(startTimeout)
-	for {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
-		if err == nil {
-			return conn.Close()
-		}
-		if err := s.wait(deadline); err != nil {
-			return err
+	for _, target := range targets {
+		for {
+			conn, err := net.DialTimeout(target[0], target[1], time.Second)
+			if err == nil {
+				if err := conn.Close(); err != nil {
+					return err
+				}
+				break
+			}
+			if err := s.wait(deadline); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 // trustCA fetches the server's CA bundle trust-on-first-use over the public
@@ -411,17 +480,11 @@ func freePort() (int, error) {
 }
 
 // serverConfig is the xkmsd configuration of the test server.
-func serverConfig(port int, data string) string {
+func serverConfig(l listeners, data string) string {
 	return fmt.Sprintf(`server:
   host: "localhost"
   rest_port: %[1]d
-protocols:
-  unix: false
-  rest: true
-  grpc: false
-  quic: false
-  mcp: false
-tls:
+%[4]stls:
   enabled: true
   server_cn: localhost
   min_version: TLS1.3
@@ -474,5 +537,33 @@ backends:
 barrier:
   enabled: true
   strategy: passphrase
-`, port, data, RelyingParty)
+`, l.rest, data, RelyingParty, transportConfig(l))
+}
+
+// transportConfig is the server configuration's transport section: REST
+// alone, or every transport when l names the others.
+func transportConfig(l listeners) string {
+	if l.socket == "" {
+		return `protocols:
+  unix: false
+  rest: true
+  grpc: false
+  quic: false
+  mcp: false
+`
+	}
+	return fmt.Sprintf(`  grpc_port: %d
+  quic_port: %d
+  mcp_port: %d
+protocols:
+  unix: true
+  rest: true
+  grpc: true
+  quic: true
+  mcp: true
+unix:
+  socket_path: %s
+  socket_mode: "0600"
+  protocol: grpc
+`, l.grpc, l.quic, l.mcp, l.socket)
 }
