@@ -94,14 +94,16 @@ func TestBuildOfflineModule_InitializesWithoutNetwork(t *testing.T) {
 		t.Fatal("no global module should be installed before the test builds one")
 	}
 
-	if err := buildOfflineModule(); err != nil {
+	m, err := buildOfflineModule()
+	if err != nil {
 		t.Fatalf("buildOfflineModule: %v", err)
 	}
-	if !module.HasGlobalModule() {
-		t.Fatal("buildOfflineModule must install the global module")
+	t.Cleanup(func() { m.Finalize() })
+	if module.HasGlobalModule() {
+		t.Fatal("buildOfflineModule must not install the global module; initializeOffline does")
 	}
 
-	if rv := module.GetGlobalModule().Initialize(nil); rv != module.CKR_OK {
+	if rv := m.Initialize(nil); rv != module.CKR_OK {
 		t.Fatalf("offline module Initialize returned %s, want CKR_OK (no network should be required)", rv)
 	}
 
@@ -126,10 +128,12 @@ func TestBuildOfflineModule_PassphraseStrategyBuildsSealedStore(t *testing.T) {
 	module.ResetGlobalModule()
 	t.Cleanup(module.ResetGlobalModule)
 
-	if err := buildOfflineModule(); err != nil {
+	m, err := buildOfflineModule()
+	if err != nil {
 		t.Fatalf("buildOfflineModule (passphrase): %v", err)
 	}
-	if rv := module.GetGlobalModule().Initialize(nil); rv != module.CKR_OK {
+	t.Cleanup(func() { m.Finalize() })
+	if rv := m.Initialize(nil); rv != module.CKR_OK {
 		t.Fatalf("offline passphrase-mode Initialize returned %s, want CKR_OK", rv)
 	}
 }

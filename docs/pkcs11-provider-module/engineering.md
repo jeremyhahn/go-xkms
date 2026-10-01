@@ -72,6 +72,20 @@ trimmed) opts out.
 
 The offline root key path is `pkcs11/token/root-key`.
 
+### Offline module lifecycle
+
+`C_Initialize` in offline mode goes through `initializeOffline()`, which holds
+one lock while it decides, builds, installs and initializes. It builds the
+embedded service and a module wired to it when no global module is installed,
+and **rebuilds** it when the installed module is the one the library built and
+has been finalized: `C_Finalize` closes and drops the embedded client and the
+object store, so that module cannot come back up on its own. PKCS#11 v3.2 §5.4
+allows initializing again after `C_Finalize`, and `p11-kit server` always does
+it (a probe initialize and finalize, then the RPC client's initialize). A global
+module a Go caller installed (xkey) is never replaced; it is initialized as it
+is. The token itself lives in the key and state directories, so a rebuilt module
+sees the same token, PINs and keys.
+
 ### Remote mode and token identity
 
 | Variable | Purpose |

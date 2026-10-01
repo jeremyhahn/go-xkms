@@ -57,6 +57,14 @@ var (
 	// ErrInvalidAlgorithm is returned when an invalid algorithm is specified.
 	ErrInvalidAlgorithm = errors.New("azurekv: invalid algorithm")
 
+	// ErrRawECDSADigestUnsupported is returned when a raw ECDSA signature
+	// (no named hash, PKCS#11's CKM_ECDSA) is requested over a digest Azure
+	// Key Vault cannot sign: Key Vault pairs each curve with one algorithm
+	// (P-256/ES256, P-384/ES384, P-521/ES512) and requires the digest to be
+	// exactly that algorithm's hash size, so it cannot truncate a digest of
+	// another length to the curve order as raw ECDSA allows.
+	ErrRawECDSADigestUnsupported = errors.New("azurekv: raw ECDSA digest length does not match the key's curve")
+
 	// ErrSignatureFailed is returned when signature verification fails.
 	ErrSignatureFailed = errors.New("azurekv: signature verification failed")
 
