@@ -849,6 +849,12 @@ jobs:
     needs: [lint, build, arch-gates, changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier != 'true'
 
+    # Same cgroup-unaware Go toolchain bound as the `test` job above (see its
+    # comment): unbounded GOMAXPROCS OOM-killed pkg/api/rest in the fast tier.
+    env:
+      GOMEMLIMIT: 10GiB
+      GOMAXPROCS: 8
+
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -1613,6 +1619,12 @@ jobs:
     # Full tier only (TWO-TIER PIPELINE note, top of file).
     needs: [lint, build, arch-gates, changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
+
+    # Same cgroup-unaware Go toolchain bound as the `test` job above (see its
+    # comment): unbounded GOMAXPROCS OOM-killed pkg/api/rest in the fast tier.
+    env:
+      GOMEMLIMIT: 10GiB
+      GOMAXPROCS: 8
 
     steps:
       - name: Checkout code
