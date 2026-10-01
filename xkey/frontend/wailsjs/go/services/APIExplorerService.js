@@ -26,6 +26,14 @@ export function ListAvailableTokens() {
   return window['go']['services']['APIExplorerService']['ListAvailableTokens']();
 }
 
+export function SetAuditLogger(arg1) {
+  return window['go']['services']['APIExplorerService']['SetAuditLogger'](arg1);
+}
+
 export function SetContext(arg1) {
   return window['go']['services']['APIExplorerService']['SetContext'](arg1);
+}
+
+export function SetPolicy(arg1) {
+  return window['go']['services']['APIExplorerService']['SetPolicy'](arg1);
 }

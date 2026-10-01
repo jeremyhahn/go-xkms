@@ -18,6 +18,10 @@ export function MigrateToEncrypted(arg1, arg2, arg3) {
   return window['go']['services']['StorageService']['MigrateToEncrypted'](arg1, arg2, arg3);
 }
 
+export function RequireUnlocked() {
+  return window['go']['services']['StorageService']['RequireUnlocked']();
+}
+
 export function SetContext(arg1) {
   return window['go']['services']['StorageService']['SetContext'](arg1);
 }

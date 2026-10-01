@@ -30,6 +30,10 @@ export function SOPINSupported() {
   return window['go']['services']['PINService']['SOPINSupported']();
 }
 
+export function SetAppLockService(arg1) {
+  return window['go']['services']['PINService']['SetAppLockService'](arg1);
+}
+
 export function SetAuditLogger(arg1) {
   return window['go']['services']['PINService']['SetAuditLogger'](arg1);
 }
@@ -44,6 +48,10 @@ export function SetContext(arg1) {
 
 export function SetPINService(arg1) {
   return window['go']['services']['PINService']['SetPINService'](arg1);
+}
+
+export function SetPolicy(arg1) {
+  return window['go']['services']['PINService']['SetPolicy'](arg1);
 }
 
 export function SetSOPIN(arg1, arg2) {

@@ -82,6 +82,123 @@ export namespace autofill {
 
 }
 
+export namespace config {
+	
+	export class PolicySection {
+	    min_pin_length: number;
+	    pin_max_attempts: number;
+	    require_so_pin: boolean;
+	    require_user_pin: boolean;
+	    require_encrypted_storage: boolean;
+	    storage_type: string;
+	    require_tpm: boolean;
+	    platform_pcr_bank: string;
+	    allowed_backends: string[];
+	    default_backend: string;
+	    fido2_always_uv: boolean;
+	    fido2_require_user_presence: boolean;
+	    fido2_user_intent_check: boolean;
+	    attestation_mode: string;
+	    allow_auto_unseal: boolean;
+	    user_can_configure_auto_unseal: boolean;
+	    user_can_configure_theme: boolean;
+	    user_can_manage_trust_store: boolean;
+	    user_can_view_audit_log: boolean;
+	    user_can_manage_sealed_data: boolean;
+	    user_can_change_own_pin: boolean;
+	    api_explorer_enabled: boolean;
+	    api_explorer_sandbox_policy: string;
+	    developer_tools_enabled: boolean;
+	    user_can_toggle_dev_tools: boolean;
+	    extension_enabled: boolean;
+	    extension_require_authentication: boolean;
+	    extension_require_pairing: boolean;
+	    extension_force_audit: boolean;
+	    extension_allowed_domains: string[];
+	    extension_blocked_domains: string[];
+	    extension_max_fills_per_minute: number;
+	    user_can_configure_extension: boolean;
+	    pairing_allow_unattestable_devices: boolean;
+	    lock_pairing_attestation_policy: boolean;
+	    pairing_allowed_applications: pairing.AllowedApplication[];
+	    pairing_allow_unpinned_signatures: boolean;
+	    lock_pairing_application_policy: boolean;
+	    phone_sync_allow_secret_export: boolean;
+	    lock_phone_sync_policy: boolean;
+	    organization_name: string;
+	    policy_version: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PolicySection(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.min_pin_length = source["min_pin_length"];
+	        this.pin_max_attempts = source["pin_max_attempts"];
+	        this.require_so_pin = source["require_so_pin"];
+	        this.require_user_pin = source["require_user_pin"];
+	        this.require_encrypted_storage = source["require_encrypted_storage"];
+	        this.storage_type = source["storage_type"];
+	        this.require_tpm = source["require_tpm"];
+	        this.platform_pcr_bank = source["platform_pcr_bank"];
+	        this.allowed_backends = source["allowed_backends"];
+	        this.default_backend = source["default_backend"];
+	        this.fido2_always_uv = source["fido2_always_uv"];
+	        this.fido2_require_user_presence = source["fido2_require_user_presence"];
+	        this.fido2_user_intent_check = source["fido2_user_intent_check"];
+	        this.attestation_mode = source["attestation_mode"];
+	        this.allow_auto_unseal = source["allow_auto_unseal"];
+	        this.user_can_configure_auto_unseal = source["user_can_configure_auto_unseal"];
+	        this.user_can_configure_theme = source["user_can_configure_theme"];
+	        this.user_can_manage_trust_store = source["user_can_manage_trust_store"];
+	        this.user_can_view_audit_log = source["user_can_view_audit_log"];
+	        this.user_can_manage_sealed_data = source["user_can_manage_sealed_data"];
+	        this.user_can_change_own_pin = source["user_can_change_own_pin"];
+	        this.api_explorer_enabled = source["api_explorer_enabled"];
+	        this.api_explorer_sandbox_policy = source["api_explorer_sandbox_policy"];
+	        this.developer_tools_enabled = source["developer_tools_enabled"];
+	        this.user_can_toggle_dev_tools = source["user_can_toggle_dev_tools"];
+	        this.extension_enabled = source["extension_enabled"];
+	        this.extension_require_authentication = source["extension_require_authentication"];
+	        this.extension_require_pairing = source["extension_require_pairing"];
+	        this.extension_force_audit = source["extension_force_audit"];
+	        this.extension_allowed_domains = source["extension_allowed_domains"];
+	        this.extension_blocked_domains = source["extension_blocked_domains"];
+	        this.extension_max_fills_per_minute = source["extension_max_fills_per_minute"];
+	        this.user_can_configure_extension = source["user_can_configure_extension"];
+	        this.pairing_allow_unattestable_devices = source["pairing_allow_unattestable_devices"];
+	        this.lock_pairing_attestation_policy = source["lock_pairing_attestation_policy"];
+	        this.pairing_allowed_applications = this.convertValues(source["pairing_allowed_applications"], pairing.AllowedApplication);
+	        this.pairing_allow_unpinned_signatures = source["pairing_allow_unpinned_signatures"];
+	        this.lock_pairing_application_policy = source["lock_pairing_application_policy"];
+	        this.phone_sync_allow_secret_export = source["phone_sync_allow_secret_export"];
+	        this.lock_phone_sync_policy = source["lock_phone_sync_policy"];
+	        this.organization_name = source["organization_name"];
+	        this.policy_version = source["policy_version"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace events {
 	
 	export class Event {
@@ -305,6 +422,27 @@ export namespace ipc {
 		}
 	}
 	
+	
+	export class UnlockResult {
+	    success: boolean;
+	    error?: string;
+	    unlocked?: string[];
+	    still_locked?: string[];
+	    remaining_attempts?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new UnlockResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.error = source["error"];
+	        this.unlocked = source["unlocked"];
+	        this.still_locked = source["still_locked"];
+	        this.remaining_attempts = source["remaining_attempts"];
+	    }
+	}
 
 }
 
@@ -363,6 +501,20 @@ export namespace net {
 
 export namespace oidc {
 	
+	export class Callback {
+	    Host: string;
+	    Port: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Callback(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Host = source["Host"];
+	        this.Port = source["Port"];
+	    }
+	}
 	export class Provider {
 	    issuer: string;
 	    authorization_endpoint: string;
@@ -373,6 +525,7 @@ export namespace oidc {
 	    revocation_endpoint?: string;
 	    introspection_endpoint?: string;
 	    end_session_endpoint?: string;
+	    device_authorization_endpoint?: string;
 	    scopes_supported?: string[];
 	    response_types_supported?: string[];
 	    response_modes_supported?: string[];
@@ -399,6 +552,7 @@ export namespace oidc {
 	        this.revocation_endpoint = source["revocation_endpoint"];
 	        this.introspection_endpoint = source["introspection_endpoint"];
 	        this.end_session_endpoint = source["end_session_endpoint"];
+	        this.device_authorization_endpoint = source["device_authorization_endpoint"];
 	        this.scopes_supported = source["scopes_supported"];
 	        this.response_types_supported = source["response_types_supported"];
 	        this.response_modes_supported = source["response_modes_supported"];
@@ -415,7 +569,53 @@ export namespace oidc {
 }
 
 export namespace pairing {
-
+	
+	export class AllowedApplication {
+	    package_name: string;
+	    signing_digests?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AllowedApplication(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.package_name = source["package_name"];
+	        this.signing_digests = source["signing_digests"];
+	    }
+	}
+	export class ApplicationPolicy {
+	    allowed_applications: AllowedApplication[];
+	    allow_unpinned_signatures: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ApplicationPolicy(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.allowed_applications = this.convertValues(source["allowed_applications"], AllowedApplication);
+	        this.allow_unpinned_signatures = source["allow_unpinned_signatures"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class PairedDeviceAttestationPolicy {
 	    enabled: boolean;
 	    boot_hash: string;
@@ -425,11 +625,11 @@ export namespace pairing {
 	    min_security_level: string;
 	    // Go type: time
 	    set_at: any;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PairedDeviceAttestationPolicy(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
@@ -440,7 +640,7 @@ export namespace pairing {
 	        this.min_security_level = source["min_security_level"];
 	        this.set_at = this.convertValues(source["set_at"], null);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -463,7 +663,7 @@ export namespace pairing {
 }
 
 export namespace pin {
-
+	
 	export class LockoutStatus {
 	    failed_attempts: number;
 	    max_attempts: number;
@@ -645,6 +845,18 @@ export namespace seal {
 		    }
 		    return a;
 		}
+	}
+	export class StorageBarrier {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new StorageBarrier(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
 	}
 
 }
@@ -1280,6 +1492,7 @@ export namespace services {
 	}
 	export class BarrierAutoUnsealService {
 	
+	
 	    static createFrom(source: any = {}) {
 	        return new BarrierAutoUnsealService(source);
 	    }
@@ -1807,6 +2020,22 @@ export namespace services {
 	        this.verified = source["verified"];
 	    }
 	}
+	export class EnrollmentApprovalResult {
+	    request_id: string;
+	    certificate_pem: number[];
+	    ca_certificate_pem: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new EnrollmentApprovalResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.request_id = source["request_id"];
+	        this.certificate_pem = source["certificate_pem"];
+	        this.ca_certificate_pem = source["ca_certificate_pem"];
+	    }
+	}
 	export class EnrollmentCodeInfo {
 	    code: string;
 	    expires_at: string;
@@ -1828,6 +2057,7 @@ export namespace services {
 	    AllowedDomains: string[];
 	    BlockedDomains: string[];
 	    MaxFillsPerMinute: number;
+	    UserCanConfigure: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new EnterpriseExtensionPolicy(source);
@@ -1841,147 +2071,7 @@ export namespace services {
 	        this.AllowedDomains = source["AllowedDomains"];
 	        this.BlockedDomains = source["BlockedDomains"];
 	        this.MaxFillsPerMinute = source["MaxFillsPerMinute"];
-	    }
-	}
-	export class LocalTPMPolicies {
-	
-	    static createFrom(source: any = {}) {
-	        return new LocalTPMPolicies(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	
-	    }
-	}
-	export class OIDCServerCredentialInfo {
-	    tenant_id?: string;
-	    scope: string;
-	    owner?: string;
-	    name: string;
-	    template?: string;
-	    issuer?: string;
-	    client_id?: string;
-	    scopes?: string[];
-	    status: string;
-	    status_reason?: string;
-	    expires_at?: string;
-	    refreshable: boolean;
-	    last_refresh?: string;
-	    last_error?: string;
-	    device_login?: OIDCServerDeviceLogin;
-	    created_at?: string;
-	    updated_at?: string;
-	    created_by?: string;
-	    supports_device: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new OIDCServerCredentialInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.tenant_id = source["tenant_id"];
-	        this.scope = source["scope"];
-	        this.owner = source["owner"];
-	        this.name = source["name"];
-	        this.template = source["template"];
-	        this.issuer = source["issuer"];
-	        this.client_id = source["client_id"];
-	        this.scopes = source["scopes"];
-	        this.status = source["status"];
-	        this.status_reason = source["status_reason"];
-	        this.expires_at = source["expires_at"];
-	        this.refreshable = source["refreshable"];
-	        this.last_refresh = source["last_refresh"];
-	        this.last_error = source["last_error"];
-	        this.device_login = this.convertValues(source["device_login"], OIDCServerDeviceLogin);
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	        this.created_by = source["created_by"];
-	        this.supports_device = source["supports_device"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	export class OIDCServerDeviceLogin {
-	    user_code: string;
-	    verification_uri: string;
-	    verification_uri_complete?: string;
-	    interval_seconds: number;
-	    expires_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new OIDCServerDeviceLogin(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.user_code = source["user_code"];
-	        this.verification_uri = source["verification_uri"];
-	        this.verification_uri_complete = source["verification_uri_complete"];
-	        this.interval_seconds = source["interval_seconds"];
-	        this.expires_at = source["expires_at"];
-	    }
-	}
-	export class OIDCServerTemplateInfo {
-	    name: string;
-	    description: string;
-	    issuer?: string;
-	    scopes?: string[];
-	    requires_issuer: boolean;
-	    supports_device: boolean;
-	    supports_import: boolean;
-	    no_refresh: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new OIDCServerTemplateInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.description = source["description"];
-	        this.issuer = source["issuer"];
-	        this.scopes = source["scopes"];
-	        this.requires_issuer = source["requires_issuer"];
-	        this.supports_device = source["supports_device"];
-	        this.supports_import = source["supports_import"];
-	        this.no_refresh = source["no_refresh"];
-	    }
-	}
-	export class OIDCServerTokens {
-	    access_token: string;
-	    refresh_token?: string;
-	    id_token?: string;
-	    expires_at?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new OIDCServerTokens(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.access_token = source["access_token"];
-	        this.refresh_token = source["refresh_token"];
-	        this.id_token = source["id_token"];
-	        this.expires_at = source["expires_at"];
+	        this.UserCanConfigure = source["UserCanConfigure"];
 	    }
 	}
 	export class SealerInfo {
@@ -2546,9 +2636,8 @@ export namespace services {
 	export class GenerateKeyParams {
 	    key_id: string;
 	    backend: string;
-	    purpose: string;
+	    purpose?: string;
 	    algorithm: string;
-	    key_type: string;
 	    key_size?: number;
 	    curve?: string;
 	    exportable?: boolean;
@@ -2568,7 +2657,6 @@ export namespace services {
 	        this.backend = source["backend"];
 	        this.purpose = source["purpose"];
 	        this.algorithm = source["algorithm"];
-	        this.key_type = source["key_type"];
 	        this.key_size = source["key_size"];
 	        this.curve = source["curve"];
 	        this.exportable = source["exportable"];
@@ -2971,6 +3059,18 @@ export namespace services {
 		    return a;
 		}
 	}
+	export class LocalTPMPolicies {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalTPMPolicies(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
 	export class LockoutInfo {
 	    counter: number;
 	    max_fail: number;
@@ -3343,7 +3443,137 @@ export namespace services {
 	        this.file_name = source["file_name"];
 	    }
 	}
+	export class OIDCServerDeviceLogin {
+	    user_code: string;
+	    verification_uri: string;
+	    verification_uri_complete?: string;
+	    interval_seconds: number;
+	    expires_at: string;
 	
+	    static createFrom(source: any = {}) {
+	        return new OIDCServerDeviceLogin(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.user_code = source["user_code"];
+	        this.verification_uri = source["verification_uri"];
+	        this.verification_uri_complete = source["verification_uri_complete"];
+	        this.interval_seconds = source["interval_seconds"];
+	        this.expires_at = source["expires_at"];
+	    }
+	}
+	export class OIDCServerCredentialInfo {
+	    tenant_id?: string;
+	    scope: string;
+	    owner?: string;
+	    name: string;
+	    template?: string;
+	    issuer?: string;
+	    client_id?: string;
+	    scopes?: string[];
+	    status: string;
+	    status_reason?: string;
+	    expires_at?: string;
+	    refreshable: boolean;
+	    last_refresh?: string;
+	    last_error?: string;
+	    device_login?: OIDCServerDeviceLogin;
+	    created_at?: string;
+	    updated_at?: string;
+	    created_by?: string;
+	    supports_device: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new OIDCServerCredentialInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tenant_id = source["tenant_id"];
+	        this.scope = source["scope"];
+	        this.owner = source["owner"];
+	        this.name = source["name"];
+	        this.template = source["template"];
+	        this.issuer = source["issuer"];
+	        this.client_id = source["client_id"];
+	        this.scopes = source["scopes"];
+	        this.status = source["status"];
+	        this.status_reason = source["status_reason"];
+	        this.expires_at = source["expires_at"];
+	        this.refreshable = source["refreshable"];
+	        this.last_refresh = source["last_refresh"];
+	        this.last_error = source["last_error"];
+	        this.device_login = this.convertValues(source["device_login"], OIDCServerDeviceLogin);
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	        this.created_by = source["created_by"];
+	        this.supports_device = source["supports_device"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class OIDCServerTemplateInfo {
+	    name: string;
+	    description: string;
+	    issuer?: string;
+	    scopes?: string[];
+	    requires_issuer: boolean;
+	    supports_device: boolean;
+	    supports_import: boolean;
+	    no_refresh: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new OIDCServerTemplateInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.issuer = source["issuer"];
+	        this.scopes = source["scopes"];
+	        this.requires_issuer = source["requires_issuer"];
+	        this.supports_device = source["supports_device"];
+	        this.supports_import = source["supports_import"];
+	        this.no_refresh = source["no_refresh"];
+	    }
+	}
+	export class OIDCServerTokens {
+	    access_token: string;
+	    refresh_token?: string;
+	    id_token?: string;
+	    expires_at?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new OIDCServerTokens(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.access_token = source["access_token"];
+	        this.refresh_token = source["refresh_token"];
+	        this.id_token = source["id_token"];
+	        this.expires_at = source["expires_at"];
+	    }
+	}
 	
 	
 	export class PCRValue {
@@ -3712,18 +3942,6 @@ export namespace services {
 		}
 	}
 	
-	export class PasswordProtectionService {
-	
-	
-	    static createFrom(source: any = {}) {
-	        return new PasswordProtectionService(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	
-	    }
-	}
 	export class PasswordProtectionStatus {
 	    mode: string;
 	    tpm_available: boolean;
@@ -3767,6 +3985,11 @@ export namespace services {
 	    factor: string;
 	    label: string;
 	    created_at: string;
+	    key_fingerprint?: string;
+	    key_backend?: string;
+	    key_id?: string;
+	    tpm_policy?: string;
+	    certificate_subject?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PasswordVaultFactor(source);
@@ -3778,6 +4001,11 @@ export namespace services {
 	        this.factor = source["factor"];
 	        this.label = source["label"];
 	        this.created_at = source["created_at"];
+	        this.key_fingerprint = source["key_fingerprint"];
+	        this.key_backend = source["key_backend"];
+	        this.key_id = source["key_id"];
+	        this.tpm_policy = source["tpm_policy"];
+	        this.certificate_subject = source["certificate_subject"];
 	    }
 	}
 	export class PasswordVaultEnrollResult {
@@ -3812,10 +4040,12 @@ export namespace services {
 		    return a;
 		}
 	}
+	
 	export class PasswordVaultStatus {
 	    initialized: boolean;
 	    unlocked: boolean;
 	    factors: PasswordVaultFactor[];
+	    passkey_rp_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PasswordVaultStatus(source);
@@ -3826,6 +4056,7 @@ export namespace services {
 	        this.initialized = source["initialized"];
 	        this.unlocked = source["unlocked"];
 	        this.factors = this.convertValues(source["factors"], PasswordVaultFactor);
+	        this.passkey_rp_id = source["passkey_rp_id"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -3886,7 +4117,6 @@ export namespace services {
 	        this.initialized = source["initialized"];
 	    }
 	}
-	
 	export class ProbeResult {
 	    library_path: string;
 	    display_name: string;
@@ -5002,7 +5232,7 @@ export namespace services {
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -5022,6 +5252,7 @@ export namespace services {
 		}
 	}
 	export class TPMPolicyService {
+	
 	
 	    static createFrom(source: any = {}) {
 	        return new TPMPolicyService(source);
@@ -5065,7 +5296,7 @@ export namespace services {
 	        this.approved = source["approved"];
 	        this.branches = this.convertValues(source["branches"], transport.TPMPolicyBranchVerification);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -5220,6 +5451,20 @@ export namespace services {
 	        this.dns_over_tls = source["dns_over_tls"];
 	        this.server_static_key = source["server_static_key"];
 	        this.spki_pin_sha256 = source["spki_pin_sha256"];
+	    }
+	}
+	export class UnlockOutcome {
+	    Unlocked: string[];
+	    StillLocked: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new UnlockOutcome(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Unlocked = source["Unlocked"];
+	        this.StillLocked = source["StillLocked"];
 	    }
 	}
 	export class UpdatePasswordParams {
@@ -5404,6 +5649,7 @@ export namespace staticpw {
 	    read_only?: boolean;
 	    owner_id?: string;
 	    shared?: boolean;
+	    attributes?: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
 	        return new StaticPassword(source);
@@ -5426,6 +5672,7 @@ export namespace staticpw {
 	        this.read_only = source["read_only"];
 	        this.owner_id = source["owner_id"];
 	        this.shared = source["shared"];
+	        this.attributes = source["attributes"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -5661,6 +5908,28 @@ export namespace transport {
 	        this.ready = source["ready"];
 	    }
 	}
+	export class TPMPolicyCondition {
+	    type: string;
+	    bank?: string;
+	    pcrs?: number[];
+	    pcr_values?: Record<number, string>;
+	    pcr_digest?: string;
+	    localities?: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TPMPolicyCondition(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.bank = source["bank"];
+	        this.pcrs = source["pcrs"];
+	        this.pcr_values = source["pcr_values"];
+	        this.pcr_digest = source["pcr_digest"];
+	        this.localities = source["localities"];
+	    }
+	}
 	export class TPMPolicyBranch {
 	    conditions: TPMPolicyCondition[];
 	    approved: boolean;
@@ -5674,7 +5943,7 @@ export namespace transport {
 	        this.conditions = this.convertValues(source["conditions"], TPMPolicyCondition);
 	        this.approved = source["approved"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -5707,28 +5976,6 @@ export namespace transport {
 	        this.match = source["match"];
 	        this.mismatched = source["mismatched"];
 	        this.approved = source["approved"];
-	    }
-	}
-	export class TPMPolicyCondition {
-	    type: string;
-	    bank?: string;
-	    pcrs?: number[];
-	    pcr_values?: Record<number, string>;
-	    pcr_digest?: string;
-	    localities?: number[];
-	
-	    static createFrom(source: any = {}) {
-	        return new TPMPolicyCondition(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.type = source["type"];
-	        this.bank = source["bank"];
-	        this.pcrs = source["pcrs"];
-	        this.pcr_values = source["pcr_values"];
-	        this.pcr_digest = source["pcr_digest"];
-	        this.localities = source["localities"];
 	    }
 	}
 
@@ -5856,6 +6103,7 @@ export namespace x509 {
 	    RawSubjectPublicKeyInfo: number[];
 	    RawSubject: number[];
 	    RawIssuer: number[];
+	    RawSignatureAlgorithm: number[];
 	    Signature: number[];
 	    SignatureAlgorithm: number;
 	    PublicKeyAlgorithm: number;
@@ -5918,6 +6166,7 @@ export namespace x509 {
 	        this.RawSubjectPublicKeyInfo = source["RawSubjectPublicKeyInfo"];
 	        this.RawSubject = source["RawSubject"];
 	        this.RawIssuer = source["RawIssuer"];
+	        this.RawSignatureAlgorithm = source["RawSignatureAlgorithm"];
 	        this.Signature = source["Signature"];
 	        this.SignatureAlgorithm = source["SignatureAlgorithm"];
 	        this.PublicKeyAlgorithm = source["PublicKeyAlgorithm"];

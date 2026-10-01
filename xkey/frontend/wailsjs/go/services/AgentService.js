@@ -6,8 +6,16 @@ export function ApproveEnrollment(arg1) {
   return window['go']['services']['AgentService']['ApproveEnrollment'](arg1);
 }
 
+export function ApproveEnrollmentWithCertificate(arg1) {
+  return window['go']['services']['AgentService']['ApproveEnrollmentWithCertificate'](arg1);
+}
+
 export function GenerateEnrollmentCode() {
   return window['go']['services']['AgentService']['GenerateEnrollmentCode']();
+}
+
+export function GenerateEnrollmentCodeWithValidity(arg1) {
+  return window['go']['services']['AgentService']['GenerateEnrollmentCodeWithValidity'](arg1);
 }
 
 export function GetServerStatus() {

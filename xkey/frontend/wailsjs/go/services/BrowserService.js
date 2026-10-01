@@ -29,3 +29,7 @@ export function SetContext(arg1) {
 export function SetTrustBundlePath(arg1) {
   return window['go']['services']['BrowserService']['SetTrustBundlePath'](arg1);
 }
+
+export function SetTrustSyncer(arg1) {
+  return window['go']['services']['BrowserService']['SetTrustSyncer'](arg1);
+}

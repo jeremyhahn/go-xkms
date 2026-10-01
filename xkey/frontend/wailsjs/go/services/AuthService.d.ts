@@ -20,3 +20,5 @@ export function Logout():Promise<void>;
 export function SetContext(arg1:context.Context):Promise<void>;
 
 export function SetModeUser():Promise<void>;
+
+export function SetVerifiedPolicyHandler(arg1:services.VerifiedPolicyHandler):Promise<void>;

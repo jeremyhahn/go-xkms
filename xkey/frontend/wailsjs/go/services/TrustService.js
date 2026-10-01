@@ -70,6 +70,10 @@ export function SeedEmbeddedRoots(arg1) {
   return window['go']['services']['TrustService']['SeedEmbeddedRoots'](arg1);
 }
 
+export function SetAuditLogger(arg1) {
+  return window['go']['services']['TrustService']['SetAuditLogger'](arg1);
+}
+
 export function SetBrowserExport(arg1, arg2) {
   return window['go']['services']['TrustService']['SetBrowserExport'](arg1, arg2);
 }
@@ -84,6 +88,10 @@ export function SetElevator(arg1) {
 
 export function SetOnMutate(arg1) {
   return window['go']['services']['TrustService']['SetOnMutate'](arg1);
+}
+
+export function SetPolicy(arg1) {
+  return window['go']['services']['TrustService']['SetPolicy'](arg1);
 }
 
 export function SetStore(arg1) {

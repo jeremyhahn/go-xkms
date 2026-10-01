@@ -4,6 +4,7 @@ import {pin} from '../models';
 import {services} from '../models';
 import {audit} from '../models';
 import {context} from '../models';
+import {config} from '../models';
 
 export function ChangeSOPIN(arg1:string,arg2:string):Promise<void>;
 
@@ -19,6 +20,8 @@ export function ResetLockout(arg1:string):Promise<void>;
 
 export function SOPINSupported():Promise<boolean>;
 
+export function SetAppLockService(arg1:services.appLockAttemptsResetter):Promise<void>;
+
 export function SetAuditLogger(arg1:audit.Logger):Promise<void>;
 
 export function SetBarrierService(arg1:services.BarrierService):Promise<void>;
@@ -26,6 +29,8 @@ export function SetBarrierService(arg1:services.BarrierService):Promise<void>;
 export function SetContext(arg1:context.Context):Promise<void>;
 
 export function SetPINService(arg1:pin.Service):Promise<void>;
+
+export function SetPolicy(arg1:config.PolicySection):Promise<void>;
 
 export function SetSOPIN(arg1:string,arg2:string):Promise<void>;
 

@@ -26,10 +26,22 @@ export function IsConnected() {
   return window['go']['services']['ConnectionService']['IsConnected']();
 }
 
+export function SSHClient() {
+  return window['go']['services']['ConnectionService']['SSHClient']();
+}
+
 export function SetContext(arg1) {
   return window['go']['services']['ConnectionService']['SetContext'](arg1);
 }
 
 export function SetEventEmitter(arg1) {
   return window['go']['services']['ConnectionService']['SetEventEmitter'](arg1);
+}
+
+export function SetServerName(arg1) {
+  return window['go']['services']['ConnectionService']['SetServerName'](arg1);
+}
+
+export function SetTokenStore(arg1) {
+  return window['go']['services']['ConnectionService']['SetTokenStore'](arg1);
 }

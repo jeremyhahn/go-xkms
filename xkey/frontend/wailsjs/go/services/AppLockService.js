@@ -10,6 +10,10 @@ export function GetStatus() {
   return window['go']['services']['AppLockService']['GetStatus']();
 }
 
+export function HandleUnlock(arg1) {
+  return window['go']['services']['AppLockService']['HandleUnlock'](arg1);
+}
+
 export function IsLocked() {
   return window['go']['services']['AppLockService']['IsLocked']();
 }
@@ -26,6 +30,10 @@ export function RecordActivity() {
   return window['go']['services']['AppLockService']['RecordActivity']();
 }
 
+export function ResetAttempts() {
+  return window['go']['services']['AppLockService']['ResetAttempts']();
+}
+
 export function SetAutoLockMinutes(arg1) {
   return window['go']['services']['AppLockService']['SetAutoLockMinutes'](arg1);
 }
@@ -38,6 +46,10 @@ export function SetContext(arg1) {
   return window['go']['services']['AppLockService']['SetContext'](arg1);
 }
 
+export function SetDataDir(arg1) {
+  return window['go']['services']['AppLockService']['SetDataDir'](arg1);
+}
+
 export function SetEmitFunc(arg1) {
   return window['go']['services']['AppLockService']['SetEmitFunc'](arg1);
 }
@@ -48,4 +60,8 @@ export function SetLockOnScreenLock(arg1) {
 
 export function Unlock(arg1) {
   return window['go']['services']['AppLockService']['Unlock'](arg1);
+}
+
+export function UnlockVerified(arg1) {
+  return window['go']['services']['AppLockService']['UnlockVerified'](arg1);
 }

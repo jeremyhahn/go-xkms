@@ -14,6 +14,10 @@ export function GetBackend() {
   return window['go']['services']['BarrierService']['GetBackend']();
 }
 
+export function GetBarrier() {
+  return window['go']['services']['BarrierService']['GetBarrier']();
+}
+
 export function GetSealInfo() {
   return window['go']['services']['BarrierService']['GetSealInfo']();
 }
@@ -44,6 +48,10 @@ export function SetAuditLogger(arg1) {
 
 export function SetBaseBackendFactory(arg1) {
   return window['go']['services']['BarrierService']['SetBaseBackendFactory'](arg1);
+}
+
+export function SetCloudKMSStrategyFunc(arg1) {
+  return window['go']['services']['BarrierService']['SetCloudKMSStrategyFunc'](arg1);
 }
 
 export function SetContext(arg1) {

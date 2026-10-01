@@ -7,6 +7,8 @@ import {ssh} from '../models';
 import {slog} from '../models';
 import {backendregistry} from '../models';
 
+export function Connected():Promise<boolean>;
+
 export function DeleteKey(arg1:string):Promise<void>;
 
 export function ExportPublic(arg1:string):Promise<string>;
@@ -33,6 +35,8 @@ export function SetLogger(arg1:slog.Logger):Promise<void>;
 
 export function SetRegistry(arg1:backendregistry.Registry):Promise<void>;
 
-export function SetRemoteClientFunc(arg1:any):Promise<void>;
+export function SetServerClient(arg1:ssh.Client):Promise<void>;
+
+export function SetServerUnavailable(arg1:Error):Promise<void>;
 
 export function SupportedAlgorithms(arg1:string):Promise<Array<string>>;

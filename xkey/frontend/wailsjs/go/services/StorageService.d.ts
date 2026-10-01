@@ -11,6 +11,8 @@ export function LockVolume():Promise<void>;
 
 export function MigrateToEncrypted(arg1:number,arg2:string,arg3:boolean):Promise<void>;
 
+export function RequireUnlocked():Promise<void>;
+
 export function SetContext(arg1:context.Context):Promise<void>;
 
 export function SetElevator(arg1:services.Elevator):Promise<void>;

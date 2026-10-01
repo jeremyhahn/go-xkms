@@ -86,6 +86,10 @@ export function SetStorage(arg1) {
   return window['go']['services']['FIDO2Service']['SetStorage'](arg1);
 }
 
+export function SetTPMEnrollment(arg1, arg2) {
+  return window['go']['services']['FIDO2Service']['SetTPMEnrollment'](arg1, arg2);
+}
+
 export function SetTokenStore(arg1) {
   return window['go']['services']['FIDO2Service']['SetTokenStore'](arg1);
 }

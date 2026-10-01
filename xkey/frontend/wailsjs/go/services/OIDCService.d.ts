@@ -9,6 +9,8 @@ export function AddProvider(arg1:services.OIDCProviderEntry):Promise<void>;
 
 export function BrowseScriptFile():Promise<string>;
 
+export function Callback():Promise<oidc.Callback>;
+
 export function Close():Promise<void>;
 
 export function DeleteProvider(arg1:string):Promise<void>;
@@ -55,9 +57,15 @@ export function RefreshToken(arg1:string):Promise<services.OIDCTokenInfo>;
 
 export function SaveScript(arg1:string,arg2:string):Promise<services.OIDCSavedScript>;
 
+export function SetAWSEndpointOverrides(arg1:string,arg2:string):Promise<void>;
+
 export function SetBackend(arg1:storage.Backend,arg2:string):Promise<void>;
 
 export function SetBrowserOpen(arg1:services.BrowserOpenFunc):Promise<void>;
+
+export function SetCallback(arg1:string,arg2:number):Promise<void>;
+
+export function SetCallbackUnavailable(arg1:Error):Promise<void>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
 

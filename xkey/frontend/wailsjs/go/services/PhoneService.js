@@ -46,12 +46,24 @@ export function Pair(arg1) {
   return window['go']['services']['PhoneService']['Pair'](arg1);
 }
 
+export function ResolvedApplicationPolicy(arg1) {
+  return window['go']['services']['PhoneService']['ResolvedApplicationPolicy'](arg1);
+}
+
+export function RetainedKeyCount() {
+  return window['go']['services']['PhoneService']['RetainedKeyCount']();
+}
+
 export function Scan(arg1) {
   return window['go']['services']['PhoneService']['Scan'](arg1);
 }
 
 export function SetAttestationPolicy(arg1) {
   return window['go']['services']['PhoneService']['SetAttestationPolicy'](arg1);
+}
+
+export function SetBarrierService(arg1) {
+  return window['go']['services']['PhoneService']['SetBarrierService'](arg1);
 }
 
 export function SetContext(arg1) {
@@ -62,8 +74,16 @@ export function SetDeviceAsBackend(arg1, arg2) {
   return window['go']['services']['PhoneService']['SetDeviceAsBackend'](arg1, arg2);
 }
 
+export function SetEnterpriseSealed(arg1) {
+  return window['go']['services']['PhoneService']['SetEnterpriseSealed'](arg1);
+}
+
 export function SetEventEmitter(arg1) {
   return window['go']['services']['PhoneService']['SetEventEmitter'](arg1);
+}
+
+export function SetPolicy(arg1) {
+  return window['go']['services']['PhoneService']['SetPolicy'](arg1);
 }
 
 export function SetStatusChangeFunc(arg1) {

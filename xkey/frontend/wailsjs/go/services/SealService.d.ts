@@ -5,6 +5,7 @@ import {storage} from '../models';
 import {audit} from '../models';
 import {context} from '../models';
 import {transport} from '../models';
+import {config} from '../models';
 
 export function AutoSelectDefault():Promise<void>;
 
@@ -22,8 +23,6 @@ export function DeleteBlob(arg1:string):Promise<void>;
 
 export function ListBlobs():Promise<Array<services.SealedBlobEntry>>;
 
-export function MigrateFrom(arg1:string):Promise<number>;
-
 export function SealData(arg1:services.SealRequest):Promise<services.SealedBlobEntry>;
 
 export function SetAuditLogger(arg1:audit.Logger):Promise<void>;
@@ -37,6 +36,8 @@ export function SetContext(arg1:context.Context):Promise<void>;
 export function SetDefaultBackend(arg1:string):Promise<void>;
 
 export function SetLocalClient(arg1:transport.Client):Promise<void>;
+
+export function SetPolicy(arg1:config.PolicySection):Promise<void>;
 
 export function SetStorageDir(arg1:string):Promise<void>;
 

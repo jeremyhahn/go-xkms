@@ -37,3 +37,7 @@ export function SetContext(arg1) {
 export function SetModeUser() {
   return window['go']['services']['AuthService']['SetModeUser']();
 }
+
+export function SetVerifiedPolicyHandler(arg1) {
+  return window['go']['services']['AuthService']['SetVerifiedPolicyHandler'](arg1);
+}

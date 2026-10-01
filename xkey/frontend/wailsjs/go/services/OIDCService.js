@@ -10,6 +10,10 @@ export function BrowseScriptFile() {
   return window['go']['services']['OIDCService']['BrowseScriptFile']();
 }
 
+export function Callback() {
+  return window['go']['services']['OIDCService']['Callback']();
+}
+
 export function Close() {
   return window['go']['services']['OIDCService']['Close']();
 }
@@ -102,12 +106,24 @@ export function SaveScript(arg1, arg2) {
   return window['go']['services']['OIDCService']['SaveScript'](arg1, arg2);
 }
 
+export function SetAWSEndpointOverrides(arg1, arg2) {
+  return window['go']['services']['OIDCService']['SetAWSEndpointOverrides'](arg1, arg2);
+}
+
 export function SetBackend(arg1, arg2) {
   return window['go']['services']['OIDCService']['SetBackend'](arg1, arg2);
 }
 
 export function SetBrowserOpen(arg1) {
   return window['go']['services']['OIDCService']['SetBrowserOpen'](arg1);
+}
+
+export function SetCallback(arg1, arg2) {
+  return window['go']['services']['OIDCService']['SetCallback'](arg1, arg2);
+}
+
+export function SetCallbackUnavailable(arg1) {
+  return window['go']['services']['OIDCService']['SetCallbackUnavailable'](arg1);
 }
 
 export function SetContext(arg1) {

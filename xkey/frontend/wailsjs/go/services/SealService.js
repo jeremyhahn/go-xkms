@@ -34,10 +34,6 @@ export function ListBlobs() {
   return window['go']['services']['SealService']['ListBlobs']();
 }
 
-export function MigrateFrom(arg1) {
-  return window['go']['services']['SealService']['MigrateFrom'](arg1);
-}
-
 export function SealData(arg1) {
   return window['go']['services']['SealService']['SealData'](arg1);
 }
@@ -64,6 +60,10 @@ export function SetDefaultBackend(arg1) {
 
 export function SetLocalClient(arg1) {
   return window['go']['services']['SealService']['SetLocalClient'](arg1);
+}
+
+export function SetPolicy(arg1) {
+  return window['go']['services']['SealService']['SetPolicy'](arg1);
 }
 
 export function SetStorageDir(arg1) {

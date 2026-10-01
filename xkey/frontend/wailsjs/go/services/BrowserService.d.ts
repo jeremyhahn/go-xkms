@@ -16,3 +16,5 @@ export function SetConfig(arg1:services.BrowserConfig):Promise<void>;
 export function SetContext(arg1:context.Context):Promise<void>;
 
 export function SetTrustBundlePath(arg1:string):Promise<void>;
+
+export function SetTrustSyncer(arg1:services.TrustSyncer):Promise<void>;

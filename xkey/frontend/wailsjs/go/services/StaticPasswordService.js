@@ -6,8 +6,16 @@ export function AddPassword(arg1) {
   return window['go']['services']['StaticPasswordService']['AddPassword'](arg1);
 }
 
+export function ApproveBrowserVaultRequest(arg1) {
+  return window['go']['services']['StaticPasswordService']['ApproveBrowserVaultRequest'](arg1);
+}
+
 export function BackupPasswords(arg1, arg2, arg3, arg4) {
   return window['go']['services']['StaticPasswordService']['BackupPasswords'](arg1, arg2, arg3, arg4);
+}
+
+export function BrowserUnlockWithKeyFactor(arg1, arg2, arg3) {
+  return window['go']['services']['StaticPasswordService']['BrowserUnlockWithKeyFactor'](arg1, arg2, arg3);
 }
 
 export function CreateFolder(arg1) {
@@ -26,12 +34,20 @@ export function DeletePasswordForce(arg1) {
   return window['go']['services']['StaticPasswordService']['DeletePasswordForce'](arg1);
 }
 
-export function EnrollPassphrase(arg1, arg2) {
-  return window['go']['services']['StaticPasswordService']['EnrollPassphrase'](arg1, arg2);
+export function DenyBrowserVaultRequest(arg1) {
+  return window['go']['services']['StaticPasswordService']['DenyBrowserVaultRequest'](arg1);
+}
+
+export function EnrollKeyFactor(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['services']['StaticPasswordService']['EnrollKeyFactor'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function EnrollPasskey(arg1, arg2) {
   return window['go']['services']['StaticPasswordService']['EnrollPasskey'](arg1, arg2);
+}
+
+export function EnrollPassphrase(arg1, arg2) {
+  return window['go']['services']['StaticPasswordService']['EnrollPassphrase'](arg1, arg2);
 }
 
 export function Generate(arg1, arg2, arg3, arg4, arg5) {
@@ -90,6 +106,10 @@ export function PreviewImport(arg1) {
   return window['go']['services']['StaticPasswordService']['PreviewImport'](arg1);
 }
 
+export function RecoverWithKeyFactor(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['services']['StaticPasswordService']['RecoverWithKeyFactor'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
 export function RecoverWithPasskey(arg1, arg2, arg3) {
   return window['go']['services']['StaticPasswordService']['RecoverWithPasskey'](arg1, arg2, arg3);
 }
@@ -126,6 +146,10 @@ export function SetAccessMode(arg1) {
   return window['go']['services']['StaticPasswordService']['SetAccessMode'](arg1);
 }
 
+export function SetAuditLogger(arg1) {
+  return window['go']['services']['StaticPasswordService']['SetAuditLogger'](arg1);
+}
+
 export function SetClient(arg1) {
   return window['go']['services']['StaticPasswordService']['SetClient'](arg1);
 }
@@ -134,12 +158,20 @@ export function SetContext(arg1) {
   return window['go']['services']['StaticPasswordService']['SetContext'](arg1);
 }
 
+export function SetEventEmitter(arg1) {
+  return window['go']['services']['StaticPasswordService']['SetEventEmitter'](arg1);
+}
+
 export function SetStore(arg1) {
   return window['go']['services']['StaticPasswordService']['SetStore'](arg1);
 }
 
 export function Unlock(arg1) {
   return window['go']['services']['StaticPasswordService']['Unlock'](arg1);
+}
+
+export function UnlockWithKeyFactor() {
+  return window['go']['services']['StaticPasswordService']['UnlockWithKeyFactor']();
 }
 
 export function UnlockWithPasskey(arg1) {
@@ -152,24 +184,4 @@ export function UpdatePassword(arg1) {
 
 export function VaultStatus() {
   return window['go']['services']['StaticPasswordService']['VaultStatus']();
-}
-
-export function EnrollKeyFactor(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['services']['StaticPasswordService']['EnrollKeyFactor'](arg1, arg2, arg3, arg4, arg5);
-}
-
-export function RecoverWithKeyFactor(arg1, arg2, arg3, arg4, arg5, arg6) {
-  return window['go']['services']['StaticPasswordService']['RecoverWithKeyFactor'](arg1, arg2, arg3, arg4, arg5, arg6);
-}
-
-export function UnlockWithKeyFactor() {
-  return window['go']['services']['StaticPasswordService']['UnlockWithKeyFactor']();
-}
-
-export function ApproveBrowserVaultRequest(arg1) {
-  return window['go']['services']['StaticPasswordService']['ApproveBrowserVaultRequest'](arg1);
-}
-
-export function DenyBrowserVaultRequest(arg1) {
-  return window['go']['services']['StaticPasswordService']['DenyBrowserVaultRequest'](arg1);
 }

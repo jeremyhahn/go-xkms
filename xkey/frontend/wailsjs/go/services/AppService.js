@@ -82,6 +82,10 @@ export function SetPhoneStatusFunc(arg1) {
   return window['go']['services']['AppService']['SetPhoneStatusFunc'](arg1);
 }
 
+export function SetPolicy(arg1) {
+  return window['go']['services']['AppService']['SetPolicy'](arg1);
+}
+
 export function SetRemoteKeyCountFunc(arg1) {
   return window['go']['services']['AppService']['SetRemoteKeyCountFunc'](arg1);
 }

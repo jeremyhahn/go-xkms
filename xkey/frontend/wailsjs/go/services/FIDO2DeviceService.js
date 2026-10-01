@@ -6,6 +6,10 @@ export function ApproveTouchRequest() {
   return window['go']['services']['FIDO2DeviceService']['ApproveTouchRequest']();
 }
 
+export function AttachPresenceHandler(arg1) {
+  return window['go']['services']['FIDO2DeviceService']['AttachPresenceHandler'](arg1);
+}
+
 export function DenyTouchRequest() {
   return window['go']['services']['FIDO2DeviceService']['DenyTouchRequest']();
 }

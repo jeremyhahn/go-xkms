@@ -13,3 +13,7 @@ export function GetEntries(arg1) {
 export function SetContext(arg1) {
   return window['go']['services']['AuditService']['SetContext'](arg1);
 }
+
+export function SetPolicy(arg1) {
+  return window['go']['services']['AuditService']['SetPolicy'](arg1);
+}

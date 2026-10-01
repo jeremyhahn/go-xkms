@@ -3,6 +3,7 @@
 import {services} from '../models';
 import {audit} from '../models';
 import {context} from '../models';
+import {config} from '../models';
 
 export function GetConfig():Promise<services.GUIConfigData>;
 
@@ -43,6 +44,8 @@ export function SetPINStatusFunc(arg1:services.PINStatusFunc):Promise<void>;
 export function SetPIVCertCountFunc(arg1:services.PIVCertCountFunc):Promise<void>;
 
 export function SetPhoneStatusFunc(arg1:services.PhoneStatusFunc):Promise<void>;
+
+export function SetPolicy(arg1:config.PolicySection):Promise<void>;
 
 export function SetRemoteKeyCountFunc(arg1:services.RemoteKeyCountFunc):Promise<void>;
 
