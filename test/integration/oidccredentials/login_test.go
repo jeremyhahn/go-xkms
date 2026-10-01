@@ -102,13 +102,14 @@ func TestXKeyLoginServesEveryTransport(t *testing.T) {
 	})
 }
 
-// certOnlyTransports are the transports whose server-side authenticator
-// (qrdb's unified gRPC and MCP servers) still accepts only an mTLS client
-// certificate, refusing a bearer token on its own ("no_peer_cert"). xkey
-// presents the stored login on them as on every transport; until qrdb
-// accepts it there, the cell also presents the certificate the server
-// demands. On unix, REST and QUIC the stored login is the only credential.
-var certOnlyTransports = map[string]bool{"grpc": true, "mcp": true}
+// certOnlyTransports are the transports where the stored login alone does
+// not yet authenticate. xkmsd verifies its session tokens in the embedded
+// qrdb node's auth chain (bearerAuthenticator, through qrdb's
+// WithAuthenticators), which covers gRPC; on MCP qrdb hands the request's
+// Authorization header to authenticators only through a context accessor
+// its SDK does not re-export, so until it does the MCP cell also presents
+// the client certificate the server demands.
+var certOnlyTransports = map[string]bool{"mcp": true}
 
 // pivToken initializes a SoftHSM token private to the test and points
 // xkey's PIV at it through home's xkey config, so the PIV key outlives each

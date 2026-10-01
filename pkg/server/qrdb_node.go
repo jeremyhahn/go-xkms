@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/webui"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -150,8 +151,17 @@ func (s *Server) initEmbeddedQRDBNode() error {
 		return &QRDBNodeError{Stage: "initialize factor registry", Err: err}
 	}
 
+	// xkmsd's session tokens authenticate on the node's own chain (the
+	// unified gRPC and MCP surfaces) as well as on xkms's REST routes. The
+	// live authenticator holder exists before the node serves, so the
+	// authenticator initializeAuthentication installs later (and every
+	// reload) is the one that verifies.
+	if s.liveAuthenticator == nil {
+		s.liveAuthenticator = auth.NewLiveAuthenticator(nil)
+	}
 	nodeOpts := []qrdbnode.NodeOption{
 		qrdbnode.WithLogger(s.logger),
+		qrdbnode.WithAuthenticators(&bearerAuthenticator{live: s.liveAuthenticator}),
 	}
 
 	// The audit sink and the hardware auth-factor registry are wired into the
