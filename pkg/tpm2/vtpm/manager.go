@@ -135,6 +135,11 @@ func NewManager(cfg Config, keys StateKeyProvider) (*Manager, error) {
 	if cfg.Binary == "" {
 		cfg.Binary = defaultBinary
 	}
+	resolved, err := resolveBinary(cfg.Binary)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Binary = resolved
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -145,6 +150,32 @@ func NewManager(cfg Config, keys StateKeyProvider) (*Manager, error) {
 		logger:    logger,
 		instances: make(map[string]*instance),
 	}, nil
+}
+
+// resolveBinary validates Config.Binary once, at construction (gosec G204:
+// the value comes from node configuration, so Start must never run an
+// exec.Command built from a name or path nobody has checked). A bare name
+// (no path separator) is resolved through exec.LookPath, which on this
+// platform already confirms an executable regular file; a path is checked
+// directly with os.Stat. Either way the result is an absolute or
+// already-verified path, resolved once rather than re-searched on PATH at
+// every Start.
+func resolveBinary(binary string) (string, error) {
+	if !strings.Contains(binary, string(os.PathSeparator)) {
+		resolved, err := exec.LookPath(binary)
+		if err != nil {
+			return "", &BinaryError{Binary: binary, Err: err}
+		}
+		return resolved, nil
+	}
+	info, err := os.Stat(binary)
+	if err != nil {
+		return "", &BinaryError{Binary: binary, Err: err}
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return "", &BinaryError{Binary: binary, Err: errBinaryNotExecutable}
+	}
+	return binary, nil
 }
 
 // Start starts the tenant's vTPM and returns once its command socket accepts
@@ -313,6 +344,9 @@ func (m *Manager) spawn(inst *instance) (*process, error) {
 		return nil, &StartError{Tenant: inst.tenant, Err: err}
 	}
 
+	// #nosec G204 -- m.cfg.Binary is resolved and verified once, by
+	// resolveBinary in NewManager, to a regular, executable file; this is
+	// not a re-search of a tainted PATH value at every Start.
 	cmd := exec.Command(m.cfg.Binary, "socket", "--tpm2",
 		"--tpmstate", "dir="+inst.stateDir+",mode=0600",
 		"--server", "type=unixio,path="+inst.socket+",mode=0600",

@@ -33,8 +33,9 @@ import (
 // the requested RP fido2.ErrCredentialNotFound, exactly as the CTAP layer
 // reports them.
 type SimulatedKey struct {
-	// PIN is the key's client PIN.
-	PIN string
+	// PIN is the key's client PIN, sealed in protected memory. Nil means the
+	// key has no PIN configured.
+	PIN *secure.Secret
 
 	// Received records every hmac-secret salt the key evaluated, in order.
 	Received [][]byte
@@ -46,21 +47,42 @@ type SimulatedKey struct {
 	credentials map[string][]byte // rpID + "/" + credential ID -> secret
 }
 
-// NewSimulatedKey returns a key whose PIN is pin.
+// NewSimulatedKey returns a key whose PIN is pin. An empty pin leaves the
+// key with no PIN configured.
 func NewSimulatedKey(pin string) *SimulatedKey {
-	return &SimulatedKey{PIN: pin, credentials: map[string][]byte{}}
+	k := &SimulatedKey{credentials: map[string][]byte{}}
+	if pin == "" {
+		return k
+	}
+	sealed, err := secure.NewSecret([]byte(pin))
+	if err != nil {
+		// NewSecret only fails on a non-positive size, which pin != ""
+		// already rules out: a test fixture construction bug, not a
+		// runtime condition callers can recover from.
+		panic(err)
+	}
+	k.PIN = sealed
+	return k
 }
 
 func (k *SimulatedKey) checkPIN(pin *secure.Secret) error {
 	if pin == nil {
 		return fido2.ErrPINRequired
 	}
+	if k.PIN == nil {
+		return fido2.ErrInvalidPIN
+	}
 	buf, err := pin.Open()
 	if err != nil {
 		return err
 	}
 	defer buf.Destroy()
-	if string(buf.Bytes()) != k.PIN {
+	kbuf, err := k.PIN.Open()
+	if err != nil {
+		return err
+	}
+	defer kbuf.Destroy()
+	if !bytes.Equal(buf.Bytes(), kbuf.Bytes()) {
 		return fido2.ErrInvalidPIN
 	}
 	return nil
