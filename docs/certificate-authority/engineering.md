@@ -1,6 +1,6 @@
 # Certificate Authority — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 ## Exported surface — `pkg/ca`
 
@@ -134,6 +134,73 @@ Attestation* v1.00 r12 §8.1 and §8.2:
 
 Constructors are `pkg/ca/constructors.go`; configuration types are
 `pkg/ca/config.go` (`Identity`, and the CA config it hangs off).
+
+### Overlay identity surface (`pkg/ca`)
+
+| Symbol | Purpose |
+|---|---|
+| `ProfileNameIPsecVTEP`, `NewIPsecVTEPProfile` | IKEv2 endpoint profile: `id-kp-ipsecIKE` (`OIDIPsecIKE`, 1.3.6.1.5.5.7.3.17) as the only EKU, digitalSignature, cA false; ECDSA P-256/P-384 or RSA ≥ 3072 |
+| `ProfileNameX509SVID`, `NewX509SVIDProfile` | SPIFFE X.509-SVID leaf: serverAuth + clientAuth, digitalSignature (+ keyEncipherment for RSA), cA false; ECDSA P-256/P-384/P-521, RSA ≥ 2048, Ed25519 |
+| `NameConstraints` | RFC 5280 name constraints; `Validate` refuses nil or host-bit ranges and malformed domains |
+| `SubordinateCARequest`, `SubordinateIssuer`, `(*CA).IssueSubordinateCA` | certify a caller-held key as a name-constrained CA (pathLen 0 unless `AllowSubordinates`; default lifetime `DefaultSubordinateLifetime`, never past the issuer) |
+| `CertificateSpec.NameConstraints` | constraints for `Issuer.Issue`; refused on a non-CA template |
+| `SignOptions.Validity` | lifetime as a duration; overrides `ValidityDays` |
+| `CallerSANProfile`, `LifetimeBoundedProfile`, `TemplateValidator` | optional profile contracts |
+| `AttestationEvidence`, `OIDAttestationEvidence`, `CreateAttestationEvidenceExtension`, `ParseAttestationEvidenceExtension` | the `tp-attestationEvidence` extension |
+
+`TrustedCA` is unchanged: `IssueSubordinateCA` lives on `*CA` behind the separate
+`SubordinateIssuer` interface, so existing `TrustedCA` implementations keep
+compiling. Assert `trustedCA.(ca.SubordinateIssuer)`.
+
+The extension, OID 1.3.6.1.4.1.29377.101.23 (non-critical):
+
+```asn1
+AttestationEvidence ::= SEQUENCE {
+    verdictID           UTF8String,
+    pcrDigestAlgorithm  OBJECT IDENTIFIER,  -- id-sha256 | id-sha384 | id-sha512
+    pcrDigest           OCTET STRING,       -- length matches the algorithm
+    attestedAt          GeneralizedTime     -- UTC, one-second precision
+}
+```
+
+Overlay-profile invariants:
+
+- Under a `CallerSANProfile`, the CSR's subject and names never reach the
+  certificate. Every caller-supplied name must parse (`ErrInvalidSAN`); none
+  at all is `ErrCallerSANsRequired`.
+- `SPIFFETrustDomain`, `SPIFFEKind` or `SPIFFEName` with a caller-named profile
+  is `ErrTenantSPIFFEWithCallerSANs`. `TenantID` alone is accepted: it only
+  records which tenant may revoke the certificate.
+- A caller-named certificate with an empty CommonName (an SVID may have no
+  subject) is not written to the CN-keyed certificate store. It stays
+  revocable, because `RevokeCert` takes the certificate and its tenant is
+  recorded by serial.
+- A lifetime above a `LifetimeBoundedProfile`'s maximum is
+  `ErrValidityExceedsProfile`. It is never clamped.
+- `Issuer.Template` refuses any leaf whose names violate the issuer's name
+  constraints (`ErrNameConstraintViolation`), and runs the profile's
+  `ValidateTemplate` last, after extra extensions are attached.
+- `ipsec-vtep` refuses a duplicate or undecodable evidence extension
+  (`ErrInvalidAttestationEvidence`).
+- A relying party verifying an `ipsec-vtep` certificate with `crypto/x509` must
+  pass `ExtKeyUsageAny`; Go's default EKU check requires serverAuth.
+
+## Exported surface — `pkg/spiffe` (re-exported by `sdk/go/spiffe`)
+
+| Name | Contract |
+|---|---|
+| `ParseTrustDomain(name) (TrustDomain, error)` | bare name only; `[a-z0-9._-]`, at most 255 bytes |
+| `TrustDomain.ID(segments...)`, `TrustDomain.IDFromPath(path)` | build `spiffe://<td>/<path>`; each segment non-empty, not `.`/`..`, `[A-Za-z0-9._-]`; a segment carrying `/` is refused, never split |
+| `ParseWorkloadID(s)`, `WorkloadIDFromURL(u)` | validate a SPIFFE ID; no user info, port, query, fragment, trailing `/`; at most 2048 bytes |
+| `WorkloadID.TrustDomain`, `.Path`, `.String`, `.URL`, `.IsZero` | accessors; `URL()` is ready for a template's `URIs` |
+| `WorkloadID.MemberOf(td)` | trust-domain membership |
+| `WorkloadID.HasPathPrefix(prefix)` | whole-segment prefix match; `"/"` admits everything; an invalid prefix admits nothing |
+| `ValidatePath`, `ValidatePathPrefix` | the path and prefix rules above |
+| `InvalidIDError{Input, Err}` | wraps one sentinel: `ErrTrustDomainEmpty`, `ErrTrustDomainCharacters`, `ErrTrustDomainTooLong`, `ErrSchemeInvalid`, `ErrSegmentEmpty`, `ErrSegmentDotted`, `ErrSegmentCharacters`, `ErrIDTooLong`, `ErrIDComponents`, `ErrPathPrefixInvalid` |
+| `ID`, `BuildURI`, `ParseID`, `TenantFromURIs`, `KindUser`, `KindService` | the tenant-scoped shape, unchanged |
+
+The tenant-scoped shape keeps its own, looser name rules: usernames such as
+e-mail addresses are valid tenant names and are not SPIFFE path segments.
 
 ## Invariants
 
@@ -610,6 +677,21 @@ up.
 - **Parity** — `CommandDefinition` entries exist for `ca-bundle`,
   `ca-certificate`, `ca-crl`, `ca-issue`, `ca-revoke`, `ca-sign-csr`,
   `ca-status`, `cert-info`, `cert-list`, `tls-cert`.
+
+### Overlay profile tests
+
+`pkg/ca/profile_ipsec_svid_test.go`, `name_constraints_test.go` and
+`attestation_evidence_test.go` cover the following, and
+`sdk/go/ca_overlay_profiles_test.go` repeats the end-to-end flow through the
+SDK names only:
+
+- issuance under subordinates constrained to an IPv4 /24, an IPv6 /64 and a
+  trust domain, with full `x509.Verify` of each leaf;
+- that a CSR's own names, subject and evidence extension are ignored;
+- every refusal: missing names, foreign names, tenant SPIFFE options,
+  lifetime, key type and evidence encoding;
+- agreement between the pre-sign constraint check and `crypto/x509` path
+  validation.
 
 ## Observability
 

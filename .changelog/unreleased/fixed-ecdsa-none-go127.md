@@ -1,0 +1,1 @@
+- **`CKM_ECDSA` and every ECDSA sign under hash `"NONE"` work on Go 1.27.** Go 1.27's `ecdsa.PrivateKey.Sign` refuses `crypto.Hash(0)`, so signing a caller-supplied ECDSA digest failed. The service now names the SHA-2 function the digest length implies (28, 32, 48 or 64 bytes) and refuses any other length, SHA-1's included, with `ErrInvalidHashFunction`.

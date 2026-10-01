@@ -598,67 +598,76 @@ func Initialize(config *ServiceConfig) error {
 	var initErr error
 
 	initOnce.Do(func() {
-		if config == nil {
-			initErr = ErrNilConfig
-			return
-		}
-
-		if len(config.Backends) == 0 {
-			initErr = ErrNoBackendsConfigured
-			return
-		}
-
-		// Validate every configured name before anything is registered.
-		//
-		// RegisterServiceBackend validates the single name it is handed, and
-		// LookupBackend validates on every lookup, so a name that reaches the
-		// service through those paths has been checked. Initialize assigned
-		// its maps verbatim, which left the bulk entry point — exported to
-		// embedders as ServiceInitialize — as the one way to install a name no
-		// other path would have admitted.
-		//
-		// The canonical charset is lowercase, so this also makes a
-		// fold-collision unconstructible rather than merely unlikely: two
-		// names differing only by case cannot both be valid, and downstream
-		// code that compares names case-insensitively (pkg/api/mcp's import
-		// guard does) can no longer be pointed at the wrong backend by
-		// registering both.
-		if initErr = validateConfiguredBackendNames(config); initErr != nil {
-			return
-		}
-
-		// Resolve the default backend deterministically. A name the caller
-		// configured is authoritative and must be present — substituting some
-		// other store for a default that was named but not loaded hides an
-		// operator error and changes where keys land. Only when no default is
-		// configured does the package fallback rule apply.
-		//
-		// Ranging config.Backends to take "the first" entry read Go's
-		// randomized map iteration order, so an embedder that supplied several
-		// backends and no default got a different one on each start, and keys
-		// written before a restart were looked for in another store after it.
-		defaultBackend := config.DefaultBackend
-		if defaultBackend == "" {
-			defaultBackend = ResolveDefaultBackend("", config.Backends)
-		}
-
-		// Verify default backend exists
-		if _, ok := config.Backends[defaultBackend]; !ok {
-			initErr = &ErrBackendLookup{
-				Sentinel: ErrDefaultBackendNotFound,
-				Name:     validation.SanitizeForLog(defaultBackend),
-			}
-			return
-		}
-
-		service = &XKMSService{
-			backends:       config.Backends,
-			keyProviders:   config.KeyProviders,
-			defaultBackend: defaultBackend,
-		}
+		service, initErr = NewService(config)
 	})
 
 	return initErr
+}
+
+// NewService builds an XKMSService from config without touching the
+// process-wide singleton that Initialize and Get manage.
+//
+// An embedder that runs its own, separately scoped key service next to
+// whatever else the process composes (the node-local signing server in
+// pkg/signserver is one) uses this: the instance owns exactly the backends it
+// was given, and nothing reached through Get can see or close them. The
+// validation is the one Initialize applies, because Initialize is built on it.
+func NewService(config *ServiceConfig) (*XKMSService, error) {
+	if config == nil {
+		return nil, ErrNilConfig
+	}
+
+	if len(config.Backends) == 0 {
+		return nil, ErrNoBackendsConfigured
+	}
+
+	// Validate every configured name before anything is registered.
+	//
+	// RegisterServiceBackend validates the single name it is handed, and
+	// LookupBackend validates on every lookup, so a name that reaches the
+	// service through those paths has been checked. Initialize assigned
+	// its maps verbatim, which left the bulk entry point — exported to
+	// embedders as ServiceInitialize — as the one way to install a name no
+	// other path would have admitted.
+	//
+	// The canonical charset is lowercase, so this also makes a
+	// fold-collision unconstructible rather than merely unlikely: two
+	// names differing only by case cannot both be valid, and downstream
+	// code that compares names case-insensitively (pkg/api/mcp's import
+	// guard does) can no longer be pointed at the wrong backend by
+	// registering both.
+	if err := validateConfiguredBackendNames(config); err != nil {
+		return nil, err
+	}
+
+	// Resolve the default backend deterministically. A name the caller
+	// configured is authoritative and must be present — substituting some
+	// other store for a default that was named but not loaded hides an
+	// operator error and changes where keys land. Only when no default is
+	// configured does the package fallback rule apply.
+	//
+	// Ranging config.Backends to take "the first" entry read Go's
+	// randomized map iteration order, so an embedder that supplied several
+	// backends and no default got a different one on each start, and keys
+	// written before a restart were looked for in another store after it.
+	defaultBackend := config.DefaultBackend
+	if defaultBackend == "" {
+		defaultBackend = ResolveDefaultBackend("", config.Backends)
+	}
+
+	// Verify default backend exists
+	if _, ok := config.Backends[defaultBackend]; !ok {
+		return nil, &ErrBackendLookup{
+			Sentinel: ErrDefaultBackendNotFound,
+			Name:     validation.SanitizeForLog(defaultBackend),
+		}
+	}
+
+	return &XKMSService{
+		backends:       config.Backends,
+		keyProviders:   config.KeyProviders,
+		defaultBackend: defaultBackend,
+	}, nil
 }
 
 // Reset clears the service (useful for testing)
@@ -715,10 +724,30 @@ func GetBackend(name string) (Backend, error) {
 		return nil, ErrNotInitialized
 	}
 
-	service.mu.RLock()
-	defer service.mu.RUnlock()
+	return service.lookupBackend(name)
+}
 
-	b, ok := service.backends[name]
+// DefaultBackend returns the default backend
+func DefaultBackend() (Backend, error) {
+	if !IsInitialized() {
+		return nil, ErrNotInitialized
+	}
+
+	return service.lookupDefaultBackend()
+}
+
+// lookupBackend returns the backend registered in s under name. The service's
+// own registry is the one consulted, so an instance built by NewService
+// resolves its own backends and never the process-wide service's.
+func (s *XKMSService) lookupBackend(name string) (Backend, error) {
+	if err := validation.ValidateBackendName(name); err != nil {
+		return nil, &ErrBackendNameValidation{Err: err}
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	b, ok := s.backends[name]
 	if !ok {
 		return nil, &ErrBackendLookup{
 			Sentinel: ErrBackendNotFound,
@@ -729,24 +758,20 @@ func GetBackend(name string) (Backend, error) {
 	return b, nil
 }
 
-// DefaultBackend returns the default backend
-func DefaultBackend() (Backend, error) {
-	if !IsInitialized() {
-		return nil, ErrNotInitialized
-	}
+// lookupDefaultBackend returns s's default backend.
+func (s *XKMSService) lookupDefaultBackend() (Backend, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	service.mu.RLock()
-	defer service.mu.RUnlock()
-
-	if service.defaultBackend == "" {
+	if s.defaultBackend == "" {
 		return nil, ErrNoDefaultBackend
 	}
 
-	b, ok := service.backends[service.defaultBackend]
+	b, ok := s.backends[s.defaultBackend]
 	if !ok {
 		return nil, &ErrBackendLookup{
 			Sentinel: ErrBackendNotFound,
-			Name:     service.defaultBackend,
+			Name:     s.defaultBackend,
 		}
 	}
 

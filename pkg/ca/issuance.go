@@ -132,6 +132,10 @@ type CertificateSpec struct {
 	// Certificate Transparency poison or SCT list, a network-zone extension —
 	// appended after the CA and the profile have added their own.
 	ExtraExtensions []pkix.Extension
+
+	// NameConstraints, when set, are encoded onto the certificate. Only a CA
+	// certificate may carry them; the template is refused otherwise.
+	NameConstraints *NameConstraints
 }
 
 // Template builds the finished, policy-applied certificate template for spec.
@@ -179,6 +183,11 @@ func (iss *Issuer) Template(spec *CertificateSpec) (*x509.Certificate, error) {
 		IPAddresses:        spec.IPAddresses,
 		URIs:               spec.URIs,
 
+		// crypto/x509 ignores the template's PublicKey when signing (Sign
+		// passes the key separately); it is set so a profile's Apply and
+		// ValidateTemplate can see which key is being certified.
+		PublicKey: spec.PublicKey,
+
 		// Certificates assert basic constraints by default — RFC 5280 section
 		// 4.2.1.9 — and a profile whose certificates must omit the extension
 		// clears this in Apply. The TCG credential profiles and the ACME leaf
@@ -203,6 +212,16 @@ func (iss *Issuer) Template(spec *CertificateSpec) (*x509.Certificate, error) {
 
 	if err := applyProfile(template, spec.Profile, spec.Request); err != nil {
 		return nil, err
+	}
+
+	if spec.NameConstraints != nil {
+		if !template.IsCA {
+			return nil, &errs.Detail{Err: ErrInvalidNameConstraints, Detail: "name constraints are only valid on a CA certificate"}
+		}
+		if err := spec.NameConstraints.Validate(); err != nil {
+			return nil, err
+		}
+		spec.NameConstraints.apply(template)
 	}
 
 	applyRevocationEndpoints(template, iss.Identity)
@@ -235,6 +254,22 @@ func (iss *Issuer) Template(spec *CertificateSpec) (*x509.Certificate, error) {
 	}
 
 	template.ExtraExtensions = append(template.ExtraExtensions, spec.ExtraExtensions...)
+
+	// Refuse names the issuer's own name constraints forbid: the signature
+	// would produce a certificate no conforming relying party accepts.
+	if err := checkIssuerNameConstraints(iss.Certificate, template); err != nil {
+		return nil, err
+	}
+
+	if validator, ok := spec.Profile.(TemplateValidator); ok {
+		if err := validator.ValidateTemplate(template); err != nil {
+			return nil, &errs.Joined{
+				Lead:   ErrInvalidProfile,
+				Detail: fmt.Sprintf("profile %q", spec.Profile.Name()),
+				Cause:  err,
+			}
+		}
+	}
 
 	return template, nil
 }

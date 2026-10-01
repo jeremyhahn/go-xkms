@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — User Guide
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114)
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 ## What you get
 
@@ -74,6 +74,25 @@ Leave `tenant_id` unset, or set it to your own tenant.
 
 There is an `XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT` and it defaults to off.
 Turning it on sends token operations over an unauthenticated channel.
+
+### Remote mode against a node-local sign server
+
+A daemon that embeds the [sign server](../sign-server/user.md) creates the
+keys and serves a unix socket. Point the consumer's module at it:
+
+```
+export XKMS_PKCS11_TARGET=unix:///run/<daemon>/ike.sock
+export XKMS_PKCS11_STORAGE_TYPE=remote
+export XKMS_PKCS11_TOKEN_LABEL=ike
+export XKMS_PKCS11_DEFAULT_BACKEND=tpm2
+```
+
+The consumer finds its key by the `CKA_LABEL` or `CKA_ID` the daemon chose, and
+signs with `CKM_ECDSA`. A process whose uid the server does not list fails at
+`C_Initialize` with `CKR_DEVICE_ERROR`.
+
+Upgrading from an earlier release: system-scope remote tokens moved to
+`pkcs11state/system/<token>/`. Re-provision them; there is no migration.
 
 ## PINs come from the environment
 

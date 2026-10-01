@@ -332,6 +332,15 @@ func (s *XKMSService) Sign(ctx context.Context, req *transport.SignRequest) (res
 	return resp, nil
 }
 
+// ecdsaDigestHashes maps the length of a caller-supplied ECDSA digest to the
+// SHA-2 function that produced it. SHA-1 is deliberately absent.
+var ecdsaDigestHashes = map[int]crypto.Hash{
+	28: crypto.SHA224,
+	32: crypto.SHA256,
+	48: crypto.SHA384,
+	64: crypto.SHA512,
+}
+
 // signWith signs req's data with the key attrs describes in b. See Sign.
 func signWith(ctx context.Context, b Backend, attrs *types.KeyAttributes, req *transport.SignRequest) (*transport.SignResponse, error) {
 	signer, err := b.Signer(ctx, attrs)
@@ -401,6 +410,22 @@ func signWith(ctx context.Context, b Backend, attrs *types.KeyAttributes, req *t
 
 	if err := checkSuppliedDigestLength(req.DataIsDigest, h, digest); err != nil {
 		return nil, err
+	}
+
+	// A caller-built ECDSA digest under "NONE" (PKCS#11 CKM_ECDSA) names no
+	// hash. ECDSA needs none to sign it, but a crypto.Signer has to be told
+	// one: Go's ecdsa.PrivateKey.Sign refuses crypto.Hash(0) since Go 1.27,
+	// and a TPM or PKCS#11 signer derives its signing scheme from the hash.
+	// The digest length names the SHA-2 function that produced it.
+	if h == 0 && attrs.KeyAlgorithm == x509.ECDSA {
+		inferred, ok := ecdsaDigestHashes[len(digest)]
+		if !ok {
+			return nil, &ErrValidation{
+				Sentinel: ErrInvalidHashFunction,
+				Detail:   "an ECDSA digest signed under hash \"NONE\" must be 28, 32, 48 or 64 bytes (SHA-224/256/384/512)",
+			}
+		}
+		h = inferred
 	}
 
 	// An in-process RSA key signs through crypto/rsa, which under

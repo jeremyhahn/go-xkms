@@ -16,6 +16,7 @@ the folder in the same commit that changes the behavior.
 | Feature | What it covers |
 |---------|----------------|
 | [acme-issuance](acme-issuance/) | ACME RFC 8555 server and client, ARI, DNS-01/HTTP-01, TPM enrollment |
+| [attestation-evidence](attestation-evidence/) | RFC 9334 evidence-level primitives: TPM2_Quote, AK and EK certificate chains, strict TCG crypto-agile event-log parsing and replay, TPM2_Certify and IAK/IDevID re-exports, and signed reference values (CoRIM), all in `sdk/go/evidence` |
 | [attestation-verifier](attestation-verifier/) | The generic, backend-agnostic `pkg/attestation` API — chain/signature verification (`Verifier`) and per-format key-binding invariants (`VerifyInvariants`) — that gates CSR issuance on hardware provenance for any format, TPM2/PIV/Android included |
 | [attested-peer](attested-peer/) | Is the other end of a connection a currently attested system? The quote→verdict primitive, IDevID/IAK credential validation, and TLS channel binding |
 | [audit-log](audit-log/) | Tamper-evident audit records and their signing chain |
@@ -47,6 +48,7 @@ the folder in the same commit that changes the behavior.
 | [release-engineering](release-engineering/) | Cutting an -alpha release in two steps — `make release-alpha` prepares a pull request, `make release-tag` tags it once merged — the lockstep tag namespaces, the reciprocal `go.mod` pin edges, the exported-API growth gate |
 | [sealing-and-barrier](sealing-and-barrier/) | Hardware and cloud seal strategies contributed to the qrdb barrier |
 | [share-custody](share-custody/) | Shamir share custody, custodian groups and share collection |
+| [sign-server](sign-server/) | Embeddable, node-local, sign-only xkms server (`pkg/signserver`, `sdk/go/signserver`): an exclusive SO_PEERCRED unix socket a remote-mode PKCS#11 module signs through, with only named keys exposed, and CGO-free key provisioning under the CKA_LABEL/CKA_ID the module exposes |
 | [signing](signing/) | The embedded SDK's `Sign`/`Verify` — persisted per-blob checksums (`SignOptions.BlobCN`, `VerifyOpts.IntegrityCheck`) shared by every backend |
 | [ssh-agent-sessions](ssh-agent-sessions/) | Serving an xkms-held key over an ephemeral SSH agent socket with no connection target — git commit signing, `ssh-keygen -Y sign` |
 | [ssh-keys](ssh-keys/) | SSH keys (software or backend-backed), host-key pins, and authorized_keys entries — key lifecycle, `pkg/ssh/keys`/`known_hosts`/`authorized`, and the REST/gRPC/MCP/CLI surface over them |

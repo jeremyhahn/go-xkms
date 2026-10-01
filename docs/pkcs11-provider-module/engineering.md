@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-01
 
 ## Build
 
@@ -28,6 +28,27 @@ Go-side logic is `pkg/pkcs11/module` (sessions, objects, mechanisms, crypto,
 errors), `pkg/pkcs11/localseal` (offline at-rest), `pkg/pkcs11/manager` (token
 management), and `pkg/pkcs11state.Store` (`NewStore(backend storage.Backend)`)
 for the remote state plane.
+
+### Go surface for CGO-free callers
+
+| Name | Contract |
+|---|---|
+| `ProvisionECKeyPair(ctx, ProvisionConfig, KeyPairRequest) (*ProvisionedKeyPair, error)` | create a P-256 or P-384 key pair with the requested `CKA_LABEL`/`CKA_ID` on the token; initializes an uninitialized token with `SOPIN` and sets the user PIN; idempotent |
+| `ProvisionConfig{Client, Storage, Backend, Timeout}` | the key service transport, the token store, the backend that holds the key |
+| `KeyPairRequest{Label, ID, Curve, UserPIN, SOPIN, TokenLabel}` | the key to create |
+| `ProvisionedKeyPair{Label, ID, KeyID, Backend, Curve, PublicKey, Created}` | `KeyID` is what a sign request names; `Created` is false for an existing identical key |
+| `NewRemoteStorage(client PKCS11StateClient, tenantID, token)` | the token store a remote-mode module reads |
+| `ProvisionError{Step, Err}` | the Cryptoki step that failed |
+
+Idempotency: the same label, id and curve returns the existing key with
+`Created` false. A different key under either the label or the id, or the same
+pair on another curve, is `ErrProvisionKeyConflict` and nothing is created.
+Other sentinels: `ErrProvisionClientRequired`, `ErrProvisionStorageRequired`,
+`ErrProvisionLabelRequired`, `ErrProvisionIDRequired`,
+`ErrProvisionCurveUnsupported`, `ErrProvisionUserPINRequired`,
+`ErrProvisionSOPINRequired`, `ErrProvisionECPoint`. A wrong PIN surfaces as the
+module's `ErrPINIncorrect` under `ProvisionError{Step: "C_Login(CKU_USER)"}`.
+The same names are re-exported by `sdk/go/signserver`.
 
 ## Configuration — environment only
 
@@ -148,12 +169,34 @@ process, whose own FIPS posture governs it.
 ## Persistence
 
 - **Remote mode** — token and object state through `pkg/pkcs11state.Store` over
-  the `PKCS11State*` RPCs, into go-qrdb.
+  the `PKCS11State*` RPCs, keyed `pkcs11state/<tenant>/<token>/<key>`, with the
+  system scope under `pkcs11state/system/<token>/`.
 - **Offline mode** — key material under `XKMS_PKCS11_LOCAL_KEYDIR`, protected by
   `pkg/pkcs11/localseal` per `XKMS_PKCS11_SEAL_STRATEGY`, rooted at
   `pkcs11/token/root-key`.
 
 Handles are ephemeral; state is durable. A restart re-derives handles from state.
+
+### CKM_ECDSA and caller-supplied digests
+
+CKM_ECDSA signs a digest the caller built, so the module sends the digest under
+hash `"NONE"`. Since Go 1.27, `ecdsa.PrivateKey.Sign` refuses
+`crypto.Hash(0)`, and a TPM or PKCS#11 signer derives its scheme from the hash.
+The service therefore names the SHA-2 function the digest length implies: 28,
+32, 48 or 64 bytes map to SHA-224, SHA-256, SHA-384 or SHA-512. Any other
+length, including SHA-1's 20, is refused with `ErrInvalidHashFunction`.
+
+### Confirmed mechanisms and lookup
+
+The sequence an IKE daemon (strongSwan's pkcs11 plugin) issues is verified
+through the C ABI against a remote-mode token served by
+[`../sign-server/`](../sign-server/engineering.md), and in Go by the
+`pkg/signserver` tests: `C_GetFunctionList`, `C_Initialize` with
+`CKF_OS_LOCKING_OK`, `C_GetSlotList`, `C_OpenSession`, `C_Login(CKU_USER)`,
+`C_FindObjects` by `CKA_CLASS`+`CKA_LABEL` and by `CKA_CLASS`+`CKA_ID` (both
+naming the same object), `C_SignInit(CKM_ECDSA)`, then `C_Sign` with a length
+query and the real call. The signature is raw `r || s`: 64 bytes on P-256, 96 on
+P-384, and it verifies under OpenSSL.
 
 ## PIN lockout
 

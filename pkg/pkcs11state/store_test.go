@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -232,4 +233,30 @@ func TestStore_CompareAndDelete_UnsupportedBackendIsAnError(t *testing.T) {
 	require.ErrorIs(t, err, ErrCompareAndDeleteUnsupported,
 		"a backend without the capability must refuse with an error, never emulate the guard")
 	assert.False(t, deleted)
+}
+
+// TestStore_SystemScopeSurvivesAPathNormalizingBackend is the regression for
+// the system scope's empty path segment: file storage collapsed
+// "pkcs11state//tok0/", so List returned keys the scope prefix no longer
+// stripped and a remote-mode module saw none of its objects.
+func TestStore_SystemScopeSurvivesAPathNormalizingBackend(t *testing.T) {
+	backend, err := file.New(t.TempDir())
+	require.NoError(t, err)
+	s, err := NewStore(backend)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	require.NoError(t, s.Put(ctx, "", "tok0", "pkcs11/objects/1", []byte("a")))
+	require.NoError(t, s.Put(ctx, "", "tok0", "pkcs11/objects/2", []byte("b")))
+	require.NoError(t, s.Put(ctx, "tenant-a", "tok0", "pkcs11/objects/1", []byte("t")))
+
+	keys, err := s.List(ctx, "", "tok0", "pkcs11/objects/")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"pkcs11/objects/1", "pkcs11/objects/2"}, keys)
+
+	// The system scope is the system tenant's own namespace.
+	got, found, err := s.Get(ctx, "system", "tok0", "pkcs11/objects/2")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, []byte("b"), got)
 }

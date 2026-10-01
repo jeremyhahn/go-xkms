@@ -639,3 +639,92 @@ var (
 	DefaultServerKeyUsage                        = pkgca.DefaultServerKeyUsage
 	DefaultTLSConfig                             = pkgca.DefaultTLSConfig
 )
+
+// ---------------------------------------------------------------------------
+// Profile selection, name-constrained subordinates and the attestation
+// evidence extension. A consumer names a profile on
+// TrustedCASignOptions.Profile; the constants below are the registry names.
+// ---------------------------------------------------------------------------
+
+// Registry names of the built-in certificate profiles.
+const (
+	ProfileNameCA                 = pkgca.ProfileNameCA
+	ProfileNameACMELeaf           = pkgca.ProfileNameACMELeaf
+	ProfileNameTCGEndorsementKey  = pkgca.ProfileNameTCGEndorsementKey
+	ProfileNameTCGAttestationKey  = pkgca.ProfileNameTCGAttestationKey
+	ProfileNameTCGInitialAK       = pkgca.ProfileNameTCGInitialAK
+	ProfileNameTCGDeviceIdentity  = pkgca.ProfileNameTCGDeviceIdentity
+	ProfileNameFIDO2Attestation   = pkgca.ProfileNameFIDO2Attestation
+	ProfileNameDICEDeviceIdentity = pkgca.ProfileNameDICEDeviceIdentity
+
+	// ProfileNameIPsecVTEP issues IKEv2 tunnel-endpoint certificates:
+	// id-kp-ipsecIKE, caller-supplied IP SANs, 30-day default lifetime.
+	ProfileNameIPsecVTEP = pkgca.ProfileNameIPsecVTEP
+
+	// ProfileNameX509SVID issues SPIFFE X.509-SVID leaves: one caller-supplied
+	// SPIFFE URI SAN, serverAuth+clientAuth, 1-hour default lifetime.
+	ProfileNameX509SVID = pkgca.ProfileNameX509SVID
+)
+
+// DefaultSubordinateLifetime is the lifetime of a subordinate CA whose request
+// names none.
+const DefaultSubordinateLifetime = pkgca.DefaultSubordinateLifetime
+
+// NameConstraints is the RFC 5280 name constraints of a subordinate CA. URI
+// constraints bind only the host (the SPIFFE trust domain), never a path.
+type NameConstraints = pkgca.NameConstraints
+
+// SubordinateCARequest describes a name-constrained subordinate CA for a
+// caller-held key.
+type SubordinateCARequest = pkgca.SubordinateCARequest
+
+// SubordinateIssuer is implemented by a CA that issues name-constrained
+// subordinate CAs. The *CA a TrustedCA constructor returns implements it:
+// assert `trustedCA.(SubordinateIssuer)`.
+type SubordinateIssuer = pkgca.SubordinateIssuer
+
+// CallerSANProfile, LifetimeBoundedProfile and TemplateValidator are the
+// optional profile contracts a custom ProfileProvider may implement.
+type (
+	CallerSANProfile       = pkgca.CallerSANProfile
+	LifetimeBoundedProfile = pkgca.LifetimeBoundedProfile
+	TemplateValidator      = pkgca.TemplateValidator
+)
+
+// AttestationEvidence is the content of the tp-attestationEvidence extension
+// a caller attaches to an ipsec-vtep certificate.
+type AttestationEvidence = pkgca.AttestationEvidence
+
+// OIDIPsecIKE is id-kp-ipsecIKE (1.3.6.1.5.5.7.3.17).
+var OIDIPsecIKE = pkgca.OIDIPsecIKE
+
+// OIDAttestationEvidence identifies the tp-attestationEvidence extension
+// (1.3.6.1.4.1.29377.101.23).
+var OIDAttestationEvidence = pkgca.OIDAttestationEvidence
+
+var (
+	// NewIPsecVTEPProfile creates the ipsec-vtep profile.
+	NewIPsecVTEPProfile = pkgca.NewIPsecVTEPProfile
+	// NewX509SVIDProfile creates the x509-svid profile.
+	NewX509SVIDProfile = pkgca.NewX509SVIDProfile
+	// CreateAttestationEvidenceExtension encodes evidence for
+	// TrustedCASignOptions.ExtraExtensions.
+	CreateAttestationEvidenceExtension = pkgca.CreateAttestationEvidenceExtension
+	// ParseAttestationEvidenceExtension reads the evidence a certificate carries.
+	ParseAttestationEvidenceExtension = pkgca.ParseAttestationEvidenceExtension
+)
+
+// Errors returned by caller-named profiles, lifetimes, name constraints and
+// the evidence extension.
+var (
+	ErrCACallerSANsRequired         = pkgca.ErrCallerSANsRequired
+	ErrCATenantSPIFFEWithCallerSANs = pkgca.ErrTenantSPIFFEWithCallerSANs
+	ErrCAInvalidSAN                 = pkgca.ErrInvalidSAN
+	ErrCAInvalidValidity            = pkgca.ErrInvalidValidity
+	ErrCAValidityExceedsProfile     = pkgca.ErrValidityExceedsProfile
+	ErrCAValidityExceedsIssuer      = pkgca.ErrValidityExceedsIssuer
+	ErrCAUnsupportedProfileKey      = pkgca.ErrUnsupportedProfileKey
+	ErrCAInvalidNameConstraints     = pkgca.ErrInvalidNameConstraints
+	ErrCANameConstraintViolation    = pkgca.ErrNameConstraintViolation
+	ErrCAInvalidAttestationEvidence = pkgca.ErrInvalidAttestationEvidence
+)
