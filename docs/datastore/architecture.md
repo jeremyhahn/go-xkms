@@ -1,6 +1,6 @@
 # Datastore — Architecture
 
-> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## The problem
 
@@ -154,6 +154,11 @@ backend name anymore — there is nothing left to switch on. An invalid
   `Datastore.Path` — they exist *before* the datastore they eventually
   promote into is available to open, by construction, not by choice. See
   engineering.md's "Genuinely pre-datastore material" section.
+- **It does not absorb secrets whose job is to leave the server as a file**
+  (`--output` exports, ACME client cert/key deploy to a web-server path, the
+  first-boot admin credential's generate-and-distribute copy) — go-xkms#1323,
+  2026-09-30 ruling. See engineering.md's "Secrets that intentionally leave
+  the server" section.
 - **The SDK/library composition path (`pkg/xkms/register_*.go`,
   `pkg/xkms/auto.go`) is unified onto the same shared datastore as of
   go-xkms#1345 batch 2** — but through a `storage.Backend` handle

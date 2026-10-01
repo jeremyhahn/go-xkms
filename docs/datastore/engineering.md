@@ -1,6 +1,6 @@
 # Datastore — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-09-30
 
 ## Exported surface
 
@@ -299,6 +299,39 @@ to open, and stays outside it by construction, not by omission:
 
 All four resolve their root from `cfg.Datastore.Path`, not a separate
 configuration knob — there is still exactly one path an operator names.
+
+## Secrets that intentionally leave the server, not a datastore gap
+
+go-xkms#1323's audit of hand-rolled file writes also found a second category,
+distinct from "genuinely pre-datastore material" above: material whose job
+*is* to leave the server as a file, for a consumer that is never xkms itself.
+Moving these into the datastore would not close a gap — it would strand the
+consumer, since nothing would still write the file the consumer needs. Per
+the owner's 2026-09-30 ruling, these stay files and will move onto
+go-qrdb's exported atomic-write helper once it ships, same as every other
+file write in this repository; they do not become datastore entities.
+
+| What | Where | Who reads the file |
+|---|---|---|
+| `--output` exports (a Shamir share, a CA/key/cert PEM, a decrypted key) | `cmd/xkmsctl/{init,ca,cert,key,platform}.go`, `xkey/cmd/xkey/cmd/{share,ca,seal_store}.go`, `xkey/pkg/gui/services/key_service.go` | The operator who explicitly asked for the file with `--output`; the datastore already holds the canonical copy (where one exists) |
+| ACME client certificate/key deploy | `pkg/acme/client/service/deploy.go` | A third-party web server (nginx, Apache, ...) that `TLSConfig.Certificates` or an equivalent loads certificates from a filesystem path, not from xkms |
+| First-boot administrator credential | `pkg/server/firstboot.go` `PersistAdminCredential` | The bootstrap operator, by the same generate-and-distribute contract qrdbd uses: once issued, the private key is handed over and must not also persist server-side — a server that retained a copy of the admin's own authentication key would defeat the credential's purpose. (This item is also genuinely pre-datastore in the timing sense documented above: `xkmsd init` persists it before `xkmsd run` ever opens the datastore for API traffic.) |
+
+xkey (the desktop module) has no datastore of its own to receive anything
+moved out of a file: it has no embedded qrdb node (it is a `sdk/go`-only
+client; see `CLAUDE.md`'s SDK boundary) and, where it talks to one, it is the
+*remote* `xkmsd` server's datastore, reached over the wire — not a local
+store xkey could write "internal state" into unilaterally. xkey's own
+offline-capable analogue is `pkg/gui/services.BarrierService`'s local,
+seal-strategy-protected KV (`xkey/docs/seal/architecture.md`), which several
+services (`SealService`, `OIDCService`) already route through when a barrier
+is open, falling back to a plaintext file only when no barrier was ever
+initialized on the host (`xkey/docs/seal/architecture.md`'s "sealed-blob
+store" section, and the `device_barrier_shared.go` #42 ruling for the Noise
+pairing key in `devices.yaml`). `xkey/cmd/xkey/cmd/device_enroll.go`'s
+agent mTLS enrollment material is a further pre-reach exception of its own:
+it is the credential xkey needs to reach the remote server at all, so it
+cannot itself live behind that server's datastore.
 
 ## The SDK/library composition path (`pkg/xkms`, `pkg/datastore`, `pkg/embeddednode`)
 
