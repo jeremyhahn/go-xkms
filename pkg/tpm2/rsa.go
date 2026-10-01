@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -352,6 +353,61 @@ func (tpm *TPM2) RSADecrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, blob []b
 	if err != nil {
 		tpm.logger.Error("RSA decrypt failed", slog.String("error", err.Error()))
 		return nil, err
+	}
+	return response.Message.Buffer, nil
+}
+
+// RSADecryptKey decrypts an RSA-OAEP (SHA-256, empty label) ciphertext with
+// the RSA key keyAttrs names, whose blobs are in backend. Unlike
+// RSADecrypt it loads the key and authorizes it the way every other use of
+// a key is authorized -- the key's own session, the platform policy's
+// branches included (createKeySession) -- so it works for keys bound to a
+// TPM policy. The plaintext leaves the TPM encrypted under a salted session
+// of its own.
+func (tpm *TPM2) RSADecryptKey(keyAttrs *types.KeyAttributes, ciphertext []byte, backend store.KeyBackend) ([]byte, error) {
+	if keyAttrs == nil {
+		return nil, store.ErrInvalidKeyAttributes
+	}
+	loaded, err := tpm.LoadKeyPair(keyAttrs, nil, backend)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to load key", Err: err}
+	}
+	defer tpm.Flush(loaded.ObjectHandle)
+
+	auth, closer, err := tpm.createKeySession(keyAttrs, backend)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create key session", Err: err}
+	}
+	defer func() {
+		if err := closer(); err != nil {
+			tpm.logger.Error("failed to close key session", slog.String("error", err.Error()))
+		}
+	}()
+
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptOut)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create encryption session", Err: err}
+	}
+	defer tpm.closeSession(closeEncSession, "RSADecryptKey encryption")
+
+	response, err := tpm2.RSADecrypt{
+		KeyHandle: tpm2.AuthHandle{
+			Handle: loaded.ObjectHandle,
+			Name:   loaded.Name,
+			Auth:   auth,
+		},
+		CipherText: tpm2.TPM2BPublicKeyRSA{Buffer: ciphertext},
+		InScheme: tpm2.TPMTRSADecrypt{
+			Scheme: tpm2.TPMAlgOAEP,
+			Details: tpm2.NewTPMUAsymScheme(
+				tpm2.TPMAlgOAEP,
+				&tpm2.TPMSEncSchemeOAEP{HashAlg: tpm2.TPMAlgSHA256},
+			),
+		},
+	}.Execute(tpm.transport, encSession)
+	if err != nil {
+		tpm.logger.Error("RSA decrypt failed", slog.String("cn", keyAttrs.CN), slog.String("error", err.Error()))
+		return nil, &errs.Wrapped{Msg: "RSA decrypt failed", Err: err}
 	}
 	return response.Message.Buffer, nil
 }

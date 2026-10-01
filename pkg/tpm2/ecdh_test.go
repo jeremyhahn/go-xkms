@@ -56,3 +56,13 @@ func TestECDHZGen_InterfaceCompliance(t *testing.T) {
 	// that's required by the TrustedPlatformModule interface
 	var _ TrustedPlatformModule = (*TPM2)(nil)
 }
+
+// TestRSADecryptKey_NilKeyAttributes tests error handling for nil key
+// attributes before any TPM command.
+func TestRSADecryptKey_NilKeyAttributes(t *testing.T) {
+	tpm := &TPM2{}
+	_, err := tpm.RSADecryptKey(nil, []byte{1}, nil)
+	if err != store.ErrInvalidKeyAttributes {
+		t.Errorf("expected ErrInvalidKeyAttributes, got %v", err)
+	}
+}

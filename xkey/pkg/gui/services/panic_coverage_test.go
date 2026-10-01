@@ -237,6 +237,9 @@ func (m *allPanicTPM) ReadPCRs(_ []uint) ([]xkms.PCRBank, error) {
 func (m *allPanicTPM) RSADecrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]byte, error) {
 	panic("allPanicTPM: RSADecrypt")
 }
+func (m *allPanicTPM) RSADecryptKey(_ *xkms.KeyAttributes, _ []byte, _ xkms.TPMKeyBackend) ([]byte, error) {
+	panic("allPanicTPM: RSADecryptKey")
+}
 func (m *allPanicTPM) RSAEncrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]byte, error) {
 	panic("allPanicTPM: RSAEncrypt")
 }

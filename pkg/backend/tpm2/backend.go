@@ -18,6 +18,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/rsa"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -754,11 +755,14 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 	if err != nil {
 		return nil, err
 	}
-	decrypter, ok := key.(crypto.Decrypter)
+	signer, ok := key.(*tpm2Signer)
 	if !ok {
 		return nil, &errs.Detail{Err: ErrDecryptionNotSupported, Detail: "key does not implement crypto.Decrypter"}
 	}
-	return decrypter, nil
+	if _, isRSA := signer.publicKey.(*rsa.PublicKey); !isRSA {
+		return nil, &errs.Detail{Err: ErrDecryptionNotSupported, Detail: "only RSA keys decrypt; EC keys agree (DeriveKeyECDH)"}
+	}
+	return &tpm2Decrypter{tpm2Signer: signer}, nil
 }
 
 // RotateKey is not supported for TPM2 keys as they are hardware-backed.
@@ -894,19 +898,21 @@ type tpm2Decrypter struct {
 	*tpm2Signer
 }
 
-// Decrypt decrypts ciphertext with the private key using the TPM. Like Sign,
-// it opens the key's TPM scope for this call only.
-func (d *tpm2Decrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.DecrypterOpts) (_ []byte, err error) {
+// Decrypt decrypts an RSA-OAEP ciphertext with the private key in the TPM,
+// authorized by the key's own session (its TPM policy). Like Sign, it opens
+// the key's TPM scope for this call only. The TPM decrypts OAEP with
+// SHA-256 and an empty label; any other OAEP parameters, and PKCS #1 v1.5,
+// are refused rather than answered with a different scheme.
+func (d *tpm2Decrypter) Decrypt(_ io.Reader, ciphertext []byte, opts crypto.DecrypterOpts) (_ []byte, err error) {
 	d.backend.mu.RLock()
 	defer d.backend.mu.RUnlock()
 
 	if d.backend.closed {
 		return nil, ErrNotInitialized
 	}
-
-	// Only RSA keys decrypt, through the TPM's RSADecrypt.
-	if d.attrs.KeyAlgorithm != x509.RSA {
-		return nil, &errs.Detail{Err: ErrDecryptionNotSupported, Detail: "only RSA decryption is supported"}
+	oaep, ok := opts.(*rsa.OAEPOptions)
+	if !ok || oaep.Hash != crypto.SHA256 || (oaep.MGFHash != 0 && oaep.MGFHash != crypto.SHA256) || len(oaep.Label) != 0 {
+		return nil, &errs.Detail{Err: ErrDecryptionNotSupported, Detail: "the TPM decrypts RSA-OAEP with SHA-256 and no label only"}
 	}
 
 	scope, err := d.backend.scope(context.Background(), d.attrs.TenantID)
@@ -915,23 +921,7 @@ func (d *tpm2Decrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.D
 	}
 	defer func() { err = errors.Join(err, scope.close()) }()
 
-	// Load the key first to get the handle
-	loadResp, err := scope.tpm.LoadKeyPair(scope.bind(d.attrs), nil, scope.keys)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to load key", Err: err}
-	}
-	defer scope.tpm.Flush(loadResp.ObjectHandle)
-
-	// Read the public to get the name
-	pub, err := tpm2.ReadPublic{
-		ObjectHandle: loadResp.ObjectHandle,
-	}.Execute(scope.tpm.Transport())
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to read public", Err: err}
-	}
-
-	// Decrypt
-	plaintext, err := scope.tpm.RSADecrypt(loadResp.ObjectHandle, pub.Name, ciphertext)
+	plaintext, err := scope.tpm.RSADecryptKey(scope.bind(d.attrs), ciphertext, scope.keys)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "TPM decrypt failed", Err: err}
 	}

@@ -847,6 +847,10 @@ func (m *mockXKMSTPM) RSADecrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, blo
 	return nil, nil
 }
 
+func (m *mockXKMSTPM) RSADecryptKey(keyAttrs *xkmssdk.KeyAttributes, ciphertext []byte, backend xkmssdk.TPMKeyBackend) ([]byte, error) {
+	return nil, nil
+}
+
 func (m *mockXKMSTPM) RSAEncrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, message []byte) ([]byte, error) {
 	return nil, nil
 }

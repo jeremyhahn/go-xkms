@@ -283,6 +283,12 @@ func (m *mockTPM) RSADecrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, blob []
 	}
 	return m.decryptValue, nil
 }
+func (m *mockTPM) RSADecryptKey(keyAttrs *types.KeyAttributes, ciphertext []byte, backend store.KeyBackend) ([]byte, error) {
+	if m.rsaDecryptErr != nil {
+		return nil, m.rsaDecryptErr
+	}
+	return m.decryptValue, nil
+}
 func (m *mockTPM) RSAEncrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, message []byte) ([]byte, error) {
 	return nil, nil
 }
@@ -1350,22 +1356,35 @@ func TestBackend_Signer_Success(t *testing.T) {
 	}
 }
 
-func TestBackend_Decrypter_ReturnsError(t *testing.T) {
+func TestBackend_Decrypter_RSAKeyDecryptsThroughTheKeySession(t *testing.T) {
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key: %v", err)
 	}
-	mockTpm := &mockTPM{parsePublicKeyValue: &rsaKey.PublicKey}
+	mockTpm := &mockTPM{parsePublicKeyValue: &rsaKey.PublicKey, decryptValue: []byte("plaintext")}
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicData: []byte("mock-public-blob")}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: mockKb, srkAttrs: srkAttrs}
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	_, err = b.Decrypter(context.Background(), attrs)
-	if err == nil {
-		t.Error("Expected error because GetKey returns tpm2Signer not tpm2Decrypter")
+
+	dec, err := b.Decrypter(context.Background(), attrs)
+	if err != nil {
+		t.Fatalf("Decrypter: %v", err)
 	}
-	if !errors.Is(err, ErrDecryptionNotSupported) {
-		t.Errorf("Expected ErrDecryptionNotSupported, got %v", err)
+	pt, err := dec.Decrypt(rand.Reader, []byte("ciphertext"), &rsa.OAEPOptions{Hash: crypto.SHA256})
+	if err != nil {
+		t.Fatalf("Decrypt: %v", err)
+	}
+	if string(pt) != "plaintext" {
+		t.Errorf("Decrypt = %q, want the TPM's plaintext", pt)
+	}
+	if _, err := dec.Decrypt(rand.Reader, []byte("ciphertext"), nil); !errors.Is(err, ErrDecryptionNotSupported) {
+		t.Errorf("PKCS #1 v1.5 must be refused, got %v", err)
+	}
+
+	mockTpm.rsaDecryptErr = errors.New("tpm refused")
+	if _, err := dec.Decrypt(rand.Reader, []byte("ciphertext"), &rsa.OAEPOptions{Hash: crypto.SHA256}); err == nil {
+		t.Error("a TPM failure must surface")
 	}
 }
 

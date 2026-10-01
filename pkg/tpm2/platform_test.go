@@ -406,6 +406,9 @@ func (m *mockTPMForPKS) ReadPCRs(_ []uint) ([]PCRBank, error) { return nil, nil 
 func (m *mockTPMForPKS) RSADecrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]byte, error) {
 	return nil, nil
 }
+func (m *mockTPMForPKS) RSADecryptKey(_ *types.KeyAttributes, _ []byte, _ store.KeyBackend) ([]byte, error) {
+	return nil, nil
+}
 func (m *mockTPMForPKS) RSAEncrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]byte, error) {
 	return nil, nil
 }

@@ -420,6 +420,9 @@ func (m *mockTPM) ReadHandle(handle tpm2.TPMHandle) (tpm2.TPM2BName, tpm2.TPMTPu
 func (m *mockTPM) RSADecrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]byte, error) {
 	panic("mockTPM: RSADecrypt not expected")
 }
+func (m *mockTPM) RSADecryptKey(_ *xkms.KeyAttributes, _ []byte, _ xkms.TPMKeyBackend) ([]byte, error) {
+	panic("mockTPM: RSADecryptKey not expected")
+}
 func (m *mockTPM) RSAEncrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]byte, error) {
 	panic("mockTPM: RSAEncrypt not expected")
 }

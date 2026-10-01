@@ -181,6 +181,9 @@ type TrustedPlatformModule interface {
 	ReadHandle(handle tpm2.TPMHandle) (tpm2.TPM2BName, tpm2.TPMTPublic, error)
 	ReadPCRs(pcrList []uint) ([]PCRBank, error)
 	RSADecrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, blob []byte) ([]byte, error)
+	// RSADecryptKey decrypts an RSA-OAEP-SHA-256 ciphertext with the key
+	// keyAttrs names, authorized by the key's own session (its TPM policy).
+	RSADecryptKey(keyAttrs *types.KeyAttributes, ciphertext []byte, backend store.KeyBackend) ([]byte, error)
 	RSAEncrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, message []byte) ([]byte, error)
 	SaveKeyPair(
 		keyAttrs *types.KeyAttributes,

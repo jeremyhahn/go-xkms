@@ -15,7 +15,9 @@ package tpm2
 
 import (
 	"context"
-	"crypto/rsa"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
 	"errors"
 	"os"
@@ -47,16 +49,19 @@ func TestListKeys_ReadDirError(t *testing.T) {
 
 // TestDecrypter_KeyDoesNotImplementDecrypter verifies error when key doesn't implement crypto.Decrypter
 func TestDecrypter_KeyDoesNotImplementDecrypter(t *testing.T) {
-	rsaKey := &rsa.PublicKey{E: 65537}
-	mockTpm := &mockTPM{parsePublicKeyValue: rsaKey}
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mockTpm := &mockTPM{parsePublicKeyValue: &ecKey.PublicKey}
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	mockKb := &mockKeyBackend{getData: []byte("mock-blob"), publicData: []byte("mock-public")}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: mockKb, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "test-key"}
-	_, err := b.Decrypter(context.Background(), attrs)
+	_, err = b.Decrypter(context.Background(), attrs)
 	if err == nil {
-		t.Error("Expected error because tpm2Signer does not implement crypto.Decrypter")
+		t.Error("Expected error: an EC key agrees, it does not decrypt")
 	}
 	if !errors.Is(err, ErrDecryptionNotSupported) {
 		t.Errorf("Expected ErrDecryptionNotSupported, got %v", err)
