@@ -60,6 +60,10 @@ const (
 
 	// devicesDirName is the paired device configs directory.
 	devicesDirName = "devices"
+
+	// AuthDirName is the server-login directory under the data directory:
+	// the registered servers and the login tokens `xkey auth login` stores.
+	AuthDirName = "auth"
 )
 
 // override allows tests to inject a specific root directory without
@@ -192,6 +196,12 @@ func (h *Home) ConfigPath() string {
 // DataDir returns the path to the barrier-encrypted data directory.
 func (h *Home) DataDir() string {
 	return filepath.Join(h.Root, dataDirName)
+}
+
+// AuthDir returns the path to the server-login directory (registered
+// servers and stored login tokens) under the data directory.
+func (h *Home) AuthDir() string {
+	return filepath.Join(h.DataDir(), AuthDirName)
 }
 
 // TrustDir returns the path to the trust store directory.

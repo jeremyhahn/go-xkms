@@ -374,6 +374,7 @@ func TestHome_PathAccessors(t *testing.T) {
 	}{
 		{"ConfigPath", h.ConfigPath(), filepath.Join(root, "config.yaml")},
 		{"DataDir", h.DataDir(), filepath.Join(root, "data")},
+		{"AuthDir", h.AuthDir(), filepath.Join(root, "data", "auth")},
 		{"TrustDir", h.TrustDir(), filepath.Join(root, "trust")},
 		{"CADir", h.CADir(), filepath.Join(root, "ca")},
 		{"DevicesDir", h.DevicesDir(), filepath.Join(root, "devices")},

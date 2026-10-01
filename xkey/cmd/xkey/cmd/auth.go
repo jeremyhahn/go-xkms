@@ -31,12 +31,13 @@ import (
 	webauthnclient "github.com/jeremyhahn/go-xkms/sdk/go/webauthnclient"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/cobra"
 )
 
 // Auth command defaults.
 const (
-	defaultAuthStoragePath = "auth"
+	defaultAuthStoragePath = xhome.AuthDirName
 	defaultAuthTimeout     = 30 * time.Second
 )
 
@@ -1106,27 +1107,17 @@ func openServerRegistry(logger *slog.Logger) (serverregistry.ServerRegistry, fun
 	return registry, cleanup, nil
 }
 
-// openTokenStore creates a file-backed token store.
-// The returned cleanup function closes the store and storage backend.
+// openTokenStore opens the file-backed login token store.
+// The returned cleanup function closes the store and its storage backend.
 func openTokenStore(logger *slog.Logger) (tokenstore.TokenStore, func(), error) {
 	storagePath, err := authStoragePath()
 	if err != nil {
 		return nil, nil, errors.Join(ErrAuthStorageCreationFailed, err)
 	}
 
-	backend, err := xkms.NewFileStorageBackend(storagePath)
+	store, err := tokenstore.Open(storagePath)
 	if err != nil {
-		return nil, nil, errors.Join(ErrAuthStorageCreationFailed, err)
-	}
-
-	kvStore, err := xkms.NewKVStoreAdapter(backend)
-	if err != nil {
-		return nil, nil, errors.Join(ErrAuthTokenStoreCreationFailed, err, backend.Close())
-	}
-
-	store, err := tokenstore.NewDAOStore(kvStore)
-	if err != nil {
-		return nil, nil, errors.Join(ErrAuthTokenStoreCreationFailed, err, backend.Close())
+		return nil, nil, errors.Join(ErrAuthTokenStoreCreationFailed, err)
 	}
 
 	// cleanup's signature is func() -- there is no error return to the
@@ -1134,9 +1125,6 @@ func openTokenStore(logger *slog.Logger) (tokenstore.TokenStore, func(), error) 
 	cleanup := func() {
 		if closeErr := store.Close(); closeErr != nil {
 			logger.Warn("failed to close auth token store", slog.String("error", closeErr.Error()))
-		}
-		if closeErr := backend.Close(); closeErr != nil {
-			logger.Warn("failed to close auth storage backend", slog.String("error", closeErr.Error()))
 		}
 	}
 

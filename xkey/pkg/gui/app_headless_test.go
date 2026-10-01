@@ -84,6 +84,8 @@ func TestNewApp_NilConfig_ConstructsFullyWiredApp(t *testing.T) {
 	assert.NotNil(t, app.setupWizardService)
 	assert.NotNil(t, app.auditStore)
 	assert.NotNil(t, app.backendRegistry)
+	require.NotNil(t, app.loginTokens, "server calls read the login store `xkey auth login` writes")
+	assert.DirExists(t, filepath.Join(os.Getenv("XKEY_HOME"), "data", "auth"))
 
 	software, err := app.BackendRegistry().Get("software")
 	require.NoError(t, err, "the software backend must always be registered")

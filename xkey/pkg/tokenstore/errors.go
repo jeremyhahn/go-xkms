@@ -36,7 +36,40 @@ var (
 
 	// ErrTokenExpired is returned when a token has expired.
 	ErrTokenExpired = errors.New("tokenstore: token has expired")
+
+	// ErrInvalidDir is returned when a file store is opened with no
+	// directory.
+	ErrInvalidDir = errors.New("tokenstore: store directory cannot be empty")
 )
+
+// OpenError is returned when the file-backed store cannot be opened.
+type OpenError struct {
+	Dir   string
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *OpenError) Error() string {
+	return fmt.Sprintf("tokenstore: open %s: %v", e.Dir, e.Cause)
+}
+
+// Unwrap returns the underlying cause.
+func (e *OpenError) Unwrap() error { return e.Cause }
+
+// LoginExpiredError is returned when the stored login for a server has
+// expired. It matches ErrTokenExpired.
+type LoginExpiredError struct {
+	ServerURL string
+}
+
+// Error implements the error interface.
+func (e *LoginExpiredError) Error() string {
+	return fmt.Sprintf("tokenstore: the login for %s has expired; run `xkey auth refresh --server %s` or log in again",
+		e.ServerURL, e.ServerURL)
+}
+
+// Is reports a match with ErrTokenExpired.
+func (e *LoginExpiredError) Is(target error) bool { return target == ErrTokenExpired }
 
 // ErrDAOCreation is returned when the DAO layer fails to initialize.
 type ErrDAOCreation struct {

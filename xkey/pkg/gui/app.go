@@ -131,6 +131,7 @@ type App struct {
 	browserService           *services.BrowserService
 	secureBrowserService     *services.SecureBrowserService
 	apiExplorerService       *services.APIExplorerService
+	loginTokens              *tokenstore.FileStore // nil when the store could not be opened
 	shareService             *services.ShareService
 	custodianService         *services.CustodianService
 	tenantService            *services.TenantService
@@ -329,6 +330,16 @@ func dataDir() (string, error) {
 		return "", err
 	}
 	return h.EnsureDataDir()
+}
+
+// openLoginTokenStore opens the login token store in the xKey home, the
+// same store `xkey auth login` writes.
+func openLoginTokenStore() (*tokenstore.FileStore, error) {
+	home, err := xhome.Resolve()
+	if err != nil {
+		return nil, err
+	}
+	return tokenstore.Open(home.AuthDir())
 }
 
 // BackendRegistry returns the application's backend registry. It is safe
@@ -1846,9 +1857,23 @@ func NewApp(cfg *GUIConfig) *App {
 		}
 	})
 
+	// The login token store `xkey auth login` writes: every server call the
+	// GUI makes (a connection, the API explorer) presents the login stored
+	// for its server. Without it neither presents a stored login.
+	loginTokens, loginErr := openLoginTokenStore()
+	if loginErr != nil {
+		log.Error("login token store unavailable; server calls present no stored login", "error", loginErr)
+	} else {
+		connSvc.SetTokenStore(loginTokens)
+	}
+
+	var explorerTokens tokenstore.TokenStore
+	if loginTokens != nil {
+		explorerTokens = loginTokens
+	}
 	apiExplorerSvc, err := services.NewAPIExplorerService(&services.ExplorerConfig{
 		Logger:       log,
-		TokenStore:   tokenstore.NewMemoryTokenStore(),
+		TokenStore:   explorerTokens,
 		Registry:     serverregistry.NewMemoryServerRegistry(),
 		TrustStore:   xkmssdk.NewStorageMemory(),
 		HistoryStore: xkmssdk.NewStorageMemory(),
@@ -1941,6 +1966,7 @@ func NewApp(cfg *GUIConfig) *App {
 		browserService:           browserSvc,
 		secureBrowserService:     secureBrowserSvc,
 		apiExplorerService:       apiExplorerSvc,
+		loginTokens:              loginTokens,
 		sealProtectionSvc:        sealProtSvc,
 		appLockService:           appLockSvc,
 		pkcs11Service:            services.NewPKCS11Service(),
@@ -3490,6 +3516,13 @@ func (a *App) shutdown(ctx context.Context) {
 		shutdownStep(a.log, "server-disconnect", 1*time.Second, func() error {
 			if a.connectionService.IsConnected() {
 				return a.connectionService.Disconnect()
+			}
+			return nil
+		})
+
+		shutdownStep(a.log, "login-token-store", 1*time.Second, func() error {
+			if a.loginTokens != nil {
+				return a.loginTokens.Close()
 			}
 			return nil
 		})

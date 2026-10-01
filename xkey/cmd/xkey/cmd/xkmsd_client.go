@@ -16,6 +16,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net/url"
 	"os"
 	"sort"
@@ -27,6 +28,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // This file is the single place where the xkey CLI turns configuration into
@@ -172,7 +176,7 @@ func xkmsdSupportedSchemes() string {
 //  3. the xkmsd_url config key,
 //  4. the xkmsd.address key of the unified xkey config.
 //
-// The auth token comes from XKMSD_TOKEN. The CA bundle comes from a --tls-ca
+// The auth token comes from resolveXKMSdToken. The CA bundle comes from a --tls-ca
 // flag when the command declares one, then XKMSD_TLS_CA, then the config's
 // xkmsd.tls_ca_file. cmd may be nil for callers outside a cobra invocation.
 func resolveXKMSdEndpoint(cmd *cobra.Command) (XKMSdEndpoint, error) {
@@ -181,13 +185,57 @@ func resolveXKMSdEndpoint(cmd *cobra.Command) (XKMSdEndpoint, error) {
 		return XKMSdEndpoint{}, ErrXKMSdURLRequired
 	}
 
+	token, err := resolveXKMSdToken(serverURL)
+	if err != nil {
+		return XKMSdEndpoint{}, err
+	}
+
 	return XKMSdEndpoint{
 		URL:         serverURL,
-		Token:       strings.TrimSpace(os.Getenv(envXKMSdToken)),
+		Token:       token,
 		TLSCAFile:   resolveXKMSdTLSCAFile(cmd),
 		TLSCertFile: strings.TrimSpace(os.Getenv(envXKMSdTLSCert)),
 		TLSKeyFile:  strings.TrimSpace(os.Getenv(envXKMSdTLSKey)),
 	}, nil
+}
+
+// resolveXKMSdToken returns the bearer token presented to serverURL: the
+// explicit XKMSD_TOKEN when set, otherwise the login `xkey auth login
+// --server <serverURL>` stored for that server. No stored login is no token
+// (the call relies on mTLS or the Unix socket's peer credentials); an
+// expired one is an error naming the refresh command.
+func resolveXKMSdToken(serverURL string) (string, error) {
+	if token := strings.TrimSpace(os.Getenv(envXKMSdToken)); token != "" {
+		return token, nil
+	}
+
+	// Read-only: inspecting the login store never creates the xKey home or
+	// the store. Without either, nothing was ever logged in.
+	dir, err := featureDataDirExisting(defaultAuthStoragePath)
+	if errors.Is(err, xhome.ErrHomeNotResolved) {
+		return "", nil
+	}
+	if err != nil {
+		return "", &SentinelCauseError{Sentinel: ErrAuthTokenLoadFailed, Cause: err}
+	}
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+
+	store, err := tokenstore.Open(dir)
+	if err != nil {
+		return "", &SentinelCauseError{Sentinel: ErrAuthTokenLoadFailed, Cause: err}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), xkmsdConnectTimeout)
+	defer cancel()
+	token, err := tokenstore.LoginToken(ctx, store, serverURL)
+	if closeErr := store.Close(); closeErr != nil {
+		err = errors.Join(err, closeErr)
+	}
+	if err != nil {
+		return "", &SentinelCauseError{Sentinel: ErrAuthTokenLoadFailed, Cause: err}
+	}
+	return token, nil
 }
 
 // resolveXKMSdURL applies the URL precedence chain. It returns an empty

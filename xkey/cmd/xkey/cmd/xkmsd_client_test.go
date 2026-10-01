@@ -14,6 +14,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -21,6 +22,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"io/fs"
+	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -39,6 +42,7 @@ import (
 	resttransport "github.com/jeremyhahn/go-xkms/sdk/go/transport/rest"
 	unixtransport "github.com/jeremyhahn/go-xkms/sdk/go/transport/unix"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
 
 // configuredTransport exposes the resolved transport configuration. Every SDK
@@ -68,6 +72,9 @@ func isolateXKMSdEndpoint(t *testing.T) {
 	t.Setenv(envXKMSdTLSCA, "")
 	t.Setenv(envXKMSdTLSCert, "")
 	t.Setenv(envXKMSdTLSKey, "")
+	// The stored-login lookup reads the xKey data directory: keep it in a
+	// temp dir so no test reads or writes the host's.
+	t.Setenv("XKEY_DATA_DIR", t.TempDir())
 
 	t.Cleanup(func() {
 		xkmsdURL = previousFlag
@@ -694,4 +701,83 @@ func TestDefaultClientFactory_BuildsTransportClient(t *testing.T) {
 	configured, ok := client.(configuredTransport)
 	require.True(t, ok)
 	assert.Equal(t, "/run/xkms/xkms.sock", configured.Config().Address)
+}
+
+// --- stored login token ---
+
+// storeLogin saves a login entry the way `xkey auth login` does, into the
+// isolated data directory.
+func storeLogin(t *testing.T, entry *tokenstore.TokenEntry) {
+	t.Helper()
+	store, cleanup, err := openTokenStore(slog.Default())
+	require.NoError(t, err)
+	defer cleanup()
+	require.NoError(t, store.Save(context.Background(), entry))
+}
+
+func TestResolveXKMSdEndpoint_UsesStoredLogin(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	xkmsdURL = "https://xkmsd.example.com:8443"
+	storeLogin(t, &tokenstore.TokenEntry{
+		ServerURL: "https://xkmsd.example.com:8443", Token: "stored.jwt", ExpiresAt: time.Now().Add(time.Hour),
+	})
+
+	endpoint, err := resolveXKMSdEndpoint(nil)
+	require.NoError(t, err)
+	assert.Equal(t, "stored.jwt", endpoint.Token)
+}
+
+func TestResolveXKMSdEndpoint_ExplicitTokenBeatsStoredLogin(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	xkmsdURL = "https://xkmsd.example.com:8443"
+	storeLogin(t, &tokenstore.TokenEntry{ServerURL: xkmsdURL, Token: "stored.jwt"})
+	t.Setenv(envXKMSdToken, "explicit.jwt")
+
+	endpoint, err := resolveXKMSdEndpoint(nil)
+	require.NoError(t, err)
+	assert.Equal(t, "explicit.jwt", endpoint.Token)
+}
+
+func TestResolveXKMSdEndpoint_NoLoginNoToken(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	xkmsdURL = "https://xkmsd.example.com:8443"
+	storeLogin(t, &tokenstore.TokenEntry{ServerURL: "https://other.example.com:8443", Token: "other.jwt"})
+
+	endpoint, err := resolveXKMSdEndpoint(nil)
+	require.NoError(t, err)
+	assert.Empty(t, endpoint.Token, "a login for another server is never presented")
+}
+
+func TestResolveXKMSdEndpoint_NoStoreIsNotCreated(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	xkmsdURL = "https://xkmsd.example.com:8443"
+
+	endpoint, err := resolveXKMSdEndpoint(nil)
+	require.NoError(t, err)
+	assert.Empty(t, endpoint.Token)
+	_, statErr := os.Stat(filepath.Join(os.Getenv("XKEY_DATA_DIR"), defaultAuthStoragePath))
+	assert.True(t, errors.Is(statErr, fs.ErrNotExist), "resolving a token must not create the login store")
+}
+
+func TestResolveXKMSdEndpoint_ExpiredLoginFails(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	xkmsdURL = "https://xkmsd.example.com:8443"
+	storeLogin(t, &tokenstore.TokenEntry{
+		ServerURL: xkmsdURL, Token: "old.jwt", ExpiresAt: time.Now().Add(-time.Minute),
+	})
+
+	_, err := resolveXKMSdEndpoint(nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthTokenLoadFailed)
+	assert.ErrorIs(t, err, tokenstore.ErrTokenExpired)
+}
+
+func TestDefaultShareClientFactory_UsesStoredLogin(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	storeLogin(t, &tokenstore.TokenEntry{
+		ServerURL: "https://share.example.com:8443", Token: "old.jwt", ExpiresAt: time.Now().Add(-time.Minute),
+	})
+
+	_, err := defaultShareClientFactory("https://share.example.com:8443")
+	assert.ErrorIs(t, err, tokenstore.ErrTokenExpired, "the share client resolves the same stored login")
 }

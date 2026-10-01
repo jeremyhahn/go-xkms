@@ -235,8 +235,10 @@ resolves in this order (`resolveXKMSdEndpoint`):
 3. the `xkmsd_url` config key
 4. the `xkmsd.address` key of the unified xkey config
 
-The auth token comes from `XKMSD_TOKEN`; the CA bundle from `--tls-ca`, then
-`XKMSD_TLS_CA`, then `xkmsd.tls_ca_file`.
+The auth token is `XKMSD_TOKEN` when set; otherwise xkey presents the login
+`xkey auth login --server <url>` stored for that same server URL (an expired
+login fails with the `xkey auth refresh` command to run). The CA bundle comes
+from `--tls-ca`, then `XKMSD_TLS_CA`, then `xkmsd.tls_ca_file`.
 
 **2. The commands that use server mode** are `xkey ca`, `xkey password`,
 `xkey platform-store` and `xkey agent`. `xkey agent start` *requires* it —

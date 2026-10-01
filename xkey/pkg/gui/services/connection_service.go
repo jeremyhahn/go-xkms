@@ -16,10 +16,12 @@ package services
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -54,6 +56,11 @@ type ConnectionService struct {
 	client  xkms.Client
 	state   atomic.Value // stores *ConnectionInfo
 	emitter func(events.Event)
+
+	// tokens is the login token store `xkey auth login` writes; a
+	// connection presents the login stored for its server. Nil presents
+	// none.
+	tokens tokenstore.TokenStore
 }
 
 // NewConnectionService creates a new ConnectionService with a disconnected
@@ -75,6 +82,47 @@ func (s *ConnectionService) SetContext(ctx context.Context) {
 // SetEventEmitter sets the callback used to emit events to the frontend.
 func (s *ConnectionService) SetEventEmitter(fn func(events.Event)) {
 	s.emitter = fn
+}
+
+// SetTokenStore sets the login token store a connection reads its bearer
+// token from. It is called once at startup, before any Connect.
+func (s *ConnectionService) SetTokenStore(store tokenstore.TokenStore) {
+	s.tokens = store
+}
+
+// connectionURL is the scheme-qualified server URL of a connection, the
+// key its login is stored under: the same URL forms the xkey CLI accepts
+// in XKMSD_URL (https://, grpcs://, quic://, mcps://, unix://, ...).
+func connectionURL(protocol, address string, tlsEnabled bool) string {
+	if strings.Contains(address, "://") {
+		return address
+	}
+	switch protocol {
+	case "unix", "quic":
+		// A Unix socket has no TLS to signal; QUIC always runs TLS.
+		return protocol + "://" + address
+	}
+	scheme := protocol // grpc, mcp
+	if protocol == "rest" {
+		scheme = "http"
+	}
+	if tlsEnabled {
+		scheme += "s"
+	}
+	return scheme + "://" + address
+}
+
+// loginToken returns the stored login token for the connection's server,
+// or "" when no store is set or no login is stored.
+func (s *ConnectionService) loginToken(protocol, address string, tlsEnabled bool) (string, error) {
+	if s.tokens == nil {
+		return "", nil
+	}
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return tokenstore.LoginToken(ctx, s.tokens, connectionURL(protocol, address, tlsEnabled))
 }
 
 // GetConnectionInfo returns the current connection state.
@@ -132,8 +180,12 @@ func (s *ConnectionService) Connect(
 		SPKIPin:  spkiPin,
 	})
 
+	token, err := s.loginToken(protocol, address, tlsEnabled)
+	if err != nil {
+		return s.setErrorState(protocol, address, tlsEnabled, "login_token", err), err
+	}
+
 	var client xkms.Client
-	var err error
 
 	if spkiPin != "" {
 		// Use functional options with SPKI pinning for trust-on-first-use.
@@ -145,6 +197,9 @@ func (s *ConnectionService) Connect(
 		if caFile != "" {
 			opts = append(opts, xkms.WithTLSCAFile(caFile))
 		}
+		if token != "" {
+			opts = append(opts, xkms.WithJWTToken(token))
+		}
 		client, err = xkms.NewWithOptions(opts...)
 	} else {
 		cfg := &xkms.BackendConfig{
@@ -152,6 +207,7 @@ func (s *ConnectionService) Connect(
 			Address:    address,
 			TLSEnabled: tlsEnabled,
 			TLSCAFile:  caFile,
+			JWTToken:   token,
 		}
 		client, err = xkms.New(cfg)
 	}
