@@ -369,6 +369,29 @@ func NewEndpointProvider(issuer string, ep Endpoints, httpClient *http.Client) (
 	}, nil
 }
 
+// DiscoverProvider fetches issuer's discovery document and returns the
+// provider it describes. Unlike NewProvider it needs no client
+// configuration: it serves a caller that records the discovered endpoints
+// once and uses them later through NewEndpointProvider.
+func DiscoverProvider(ctx context.Context, issuer string, httpClient *http.Client) (*Provider, error) {
+	parsed, err := url.Parse(issuer)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, ErrInvalidIssuer
+	}
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: DefaultHTTPTimeout}
+	}
+	p := &Provider{
+		Issuer:     strings.TrimSuffix(issuer, "/"),
+		httpClient: httpClient,
+		jwksCache:  &JWKSCache{},
+	}
+	if err := p.Discover(ctx); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
 // HasTokenEndpoint reports whether the provider has a token endpoint, the
 // one endpoint every token request (exchange, refresh, device poll) needs.
 func (p *Provider) HasTokenEndpoint() bool {

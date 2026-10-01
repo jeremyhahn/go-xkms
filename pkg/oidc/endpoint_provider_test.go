@@ -43,6 +43,34 @@ func TestNewEndpointProvider(t *testing.T) {
 	assert.False(t, nilProvider.HasTokenEndpoint())
 }
 
+func TestDiscoverProvider(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != WellKnownPath {
+			http.NotFound(w, r)
+			return
+		}
+		base := "http://" + r.Host
+		writeJSON(t, w, http.StatusOK, map[string]string{
+			"issuer":                        base,
+			"authorization_endpoint":        base + "/authorize",
+			"token_endpoint":                base + "/token",
+			"jwks_uri":                      base + "/jwks",
+			"device_authorization_endpoint": base + "/device",
+		})
+	}))
+	defer srv.Close()
+
+	p, err := DiscoverProvider(context.Background(), srv.URL, srv.Client())
+	require.NoError(t, err)
+	assert.Equal(t, srv.URL+"/token", p.TokenEndpoint)
+	assert.Equal(t, srv.URL+"/device", p.DeviceAuthorizationEndpoint)
+
+	_, err = DiscoverProvider(context.Background(), "::bad", nil)
+	assert.ErrorIs(t, err, ErrInvalidIssuer)
+	_, err = DiscoverProvider(context.Background(), srv.URL+"/missing", srv.Client())
+	assert.ErrorIs(t, err, ErrDiscoveryFailed)
+}
+
 // TestRefreshWithoutDiscovery proves a token-only provider refreshes: a
 // credential imported or device-approved never needs discovery.
 func TestRefreshWithoutDiscovery(t *testing.T) {
