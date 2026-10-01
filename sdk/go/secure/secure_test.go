@@ -137,22 +137,6 @@ func TestCallbackProviderNilFn(t *testing.T) {
 	}
 }
 
-// TestPurgeBeforeInit returns NotInitializedError, exercising that error
-// re-export path without actually catching signals in the test binary.
-func TestPurgeBeforeInit(t *testing.T) {
-	// Purge is a package-global; if another test in the binary called
-	// CatchInterrupt, this test is a no-op (we simply verify that if it
-	// errors, it's the typed error we expect).
-	err := xkmssecure.Purge()
-	if err == nil {
-		return
-	}
-	var notInit *xkmssecure.NotInitializedError
-	if !errors.As(err, &notInit) {
-		t.Fatalf("Purge returned unexpected error: %T %v", err, err)
-	}
-}
-
 // TestWipe zeros a caller slice via the re-exported helper.
 func TestWipe(t *testing.T) {
 	buf := []byte("zap-this")

@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/google/go-tpm/tpm2"
@@ -210,7 +212,7 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 		EK: &tpm2lib.EKConfig{
 			CertHandle:    0, // Use cert store instead of NVRAM (simulator has 1024 byte limit)
 			Handle:        0x81010001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),
 
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
@@ -227,7 +229,7 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 		},
 		SSRK: &tpm2lib.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),
 
 			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{

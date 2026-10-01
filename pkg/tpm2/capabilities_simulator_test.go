@@ -7,8 +7,9 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +30,7 @@ func createSimNoStore(t *testing.T) TrustedPlatformModule {
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),
 
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
@@ -53,7 +54,7 @@ func createSimNoStore(t *testing.T) TrustedPlatformModule {
 		GoldenPCRs:      []uint{0, 7},
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),
 
 			KeyAlgorithm: "RSA",
 			RSAConfig: &store.RSAConfig{

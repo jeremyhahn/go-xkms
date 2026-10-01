@@ -30,6 +30,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/require"
 
@@ -39,7 +41,6 @@ import (
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // ekCertificateForSimulator issues a certificate over the simulator's real
@@ -144,7 +145,8 @@ func TestTPMKEKStrategy_RealTPMCredentialActivation(t *testing.T) {
 // the in-process go-tpm-tools simulator. Credential activation needs the IAK,
 // which the backend's own first-boot path (EK + SRK only) does not create, so
 // this test provisions the complete identity hierarchy itself.
-func simulatorTPMConfig() *pkgtpm2.Config {
+func simulatorTPMConfig(t testing.TB) *pkgtpm2.Config {
+	t.Helper()
 	return &pkgtpm2.Config{
 		UseSimulator:                 true,
 		Hash:                         crypto.SHA256.String(),
@@ -154,14 +156,14 @@ func simulatorTPMConfig() *pkgtpm2.Config {
 		EK: &pkgtpm2.EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(tpmstore.DEFAULT_PASSWORD)),
 
 			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig:    &tpmstore.RSAConfig{KeySize: 2048},
 		},
 		SSRK: &pkgtpm2.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(tpmstore.DEFAULT_PASSWORD)),
 
 			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig:    &tpmstore.RSAConfig{KeySize: 2048},
@@ -186,7 +188,7 @@ func newProvisionedSimulatorBackend(t *testing.T) (*tpm2backend.Backend, pkgtpm2
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	keyBackend := tpmstore.NewFileBackend(logger, storage.NewMemory())
-	config := simulatorTPMConfig()
+	config := simulatorTPMConfig(t)
 
 	tpmIface, err := pkgtpm2.NewTPM2(&pkgtpm2.Params{
 		Logger:  logger,

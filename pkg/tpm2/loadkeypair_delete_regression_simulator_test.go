@@ -63,7 +63,7 @@ import (
 func deleteKeyRegressionFixture(t *testing.T) (tpm TrustedPlatformModule, srkAttrs *types.KeyAttributes, backend store.KeyBackend) {
 	t.Helper()
 
-	_, tpm = createSim(false)
+	_, tpm = createSim(t, false)
 	t.Cleanup(func() { _ = tpm.Close() })
 
 	// createKey provisions a fresh SRK (Password "srk-pass") under the EK
@@ -165,7 +165,7 @@ func TestDeleteKey_RSA_UsesParentAuthNotChildAuth_Simulator(t *testing.T) {
 // that forgot to set one) paniced instead of failing gracefully. It must now
 // return the typed store.ErrInvalidParentAttributes sentinel.
 func TestLoadKeyPair_NilParent_ReturnsTypedError_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 	tpmImpl := tpm.(*TPM2)
 
@@ -184,7 +184,7 @@ func TestLoadKeyPair_NilParent_ReturnsTypedError_Simulator(t *testing.T) {
 // TestLoadKeyPairFromBlobs_NilParent_ReturnsTypedError_Simulator mirrors the
 // above for LoadKeyPairFromBlobs, which had the identical defect.
 func TestLoadKeyPairFromBlobs_NilParent_ReturnsTypedError_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 	tpmImpl := tpm.(*TPM2)
 

@@ -12,7 +12,7 @@
 //     Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package secure re-exports go-qrdb's secure-memory types so go-xkms SDK
-// consumers never need to import the upstream qrdb path or raw memguard.
+// consumers never need to import the upstream qrdb path or raw go-enclave.
 //
 // Every identifier is a direct alias or thin delegation to the canonical
 // implementation in github.com/jeremyhahn/go-qrdb/sdk/go/secure — see that
@@ -73,9 +73,12 @@ type (
 	// I/O failure.
 	ProviderError = qrdbsecure.ProviderError
 
-	// NotInitializedError is returned by Purge when CatchInterrupt has
-	// not yet been called.
-	NotInitializedError = qrdbsecure.NotInitializedError
+	// NestedBorrowError is returned when a borrow is opened inside another
+	// borrow of the same value.
+	NestedBorrowError = qrdbsecure.NestedBorrowError
+
+	// EmptyBorrowError is returned when a borrow yields no bytes.
+	EmptyBorrowError = qrdbsecure.EmptyBorrowError
 )
 
 // NewSecret seals src into a new Secret. On return, src is wiped — the
@@ -113,25 +116,12 @@ func NewCallbackProvider(fn func(ctx context.Context, prompt string) ([]byte, er
 	return qrdbsecure.NewCallbackProvider(fn)
 }
 
-// CatchInterrupt wires SIGINT/SIGTERM to purge all mlocked memory before
-// process exit. Call once, early in main().
-//
-// The installed handler hard os.Exit(1)s from inside the signal handler, so a
-// daemon that drives its own graceful shutdown must use EnablePurge instead:
-// CatchInterrupt's exit always wins the race and the shutdown path (including
-// storage Close) never runs.
-func CatchInterrupt() { qrdbsecure.CatchInterrupt() }
-
-// EnablePurge arms the secure subsystem so Purge works, WITHOUT installing
-// memguard's process signal handler. Use it in daemons that own their own
-// SIGINT/SIGTERM handling and drive a graceful shutdown, paired with a
-// deferred Purge in main().
-func EnablePurge() { qrdbsecure.EnablePurge() }
-
-// Purge performs an immediate, synchronous wipe of all mlocked memory.
-// Returns NotInitializedError if CatchInterrupt has not run.
-func Purge() error { return qrdbsecure.Purge() }
-
-// PurgeOrPanic is a convenience for deferred cleanup in main(). Panics
-// if CatchInterrupt was not called.
-func PurgeOrPanic() { qrdbsecure.PurgeOrPanic() }
+// WipeAll destroys every live locked-memory enclave the process holds --
+// every outstanding Buffer and every plaintext a Secret.Open produced --
+// and the process sealer's key material, so every live Secret becomes
+// unopenable. It returns how many enclaves were still held. It belongs to
+// the binary that owns the process, deferred at startup so it runs on every
+// orderly exit; library code never calls it. It replaces the memguard-era
+// CatchInterrupt/Purge pair: the binary drives its own signal handling and
+// graceful shutdown, which runs the deferred WipeAll.
+func WipeAll() (int, error) { return qrdbsecure.WipeAll() }

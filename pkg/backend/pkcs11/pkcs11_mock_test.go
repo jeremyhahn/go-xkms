@@ -27,6 +27,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -148,7 +150,7 @@ func TestBackend_Close_PoolCleanup(t *testing.T) {
 	config := &Config{
 		Library:    tempLib,
 		TokenLabel: "test-pool-cleanup",
-		PIN:        types.NewLiteralSecretValue([]byte("1234")),
+		PIN:        secrettest.Literal(t, []byte("1234")),
 
 		KeyStorage:  storage.New(),
 		CertStorage: storage.New(),
@@ -183,9 +185,9 @@ func TestBackend_Initialize_AlreadyInitializedMock(t *testing.T) {
 	config := &Config{
 		Library:    tempLib,
 		TokenLabel: "test-init-already",
-		PIN:        types.NewLiteralSecretValue([]byte("1234")),
+		PIN:        secrettest.Literal(t, []byte("1234")),
 
-		SOPIN: types.NewLiteralSecretValue([]byte("5678")),
+		SOPIN: secrettest.Literal(t, []byte("5678")),
 
 		KeyStorage:  storage.New(),
 		CertStorage: storage.New(),
@@ -217,7 +219,7 @@ func TestBackend_loginUser_NewContext(t *testing.T) {
 	config := &Config{
 		Library:    tempLib,
 		TokenLabel: "test-login-new",
-		PIN:        types.NewLiteralSecretValue([]byte("5678")),
+		PIN:        secrettest.Literal(t, []byte("5678")),
 
 		KeyStorage:  storage.New(),
 		CertStorage: storage.New(),

@@ -15,7 +15,7 @@ import (
 // just a session object that constructs without error, and that a wrong auth
 // is still refused through it.
 func TestHMACSession_Salted_VerifiesCorrectAuth(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	srkAttrs := createKey(tpm, false).Parent
@@ -32,7 +32,7 @@ func TestHMACSession_Salted_VerifiesCorrectAuth(t *testing.T) {
 // authorizes that key. It is exported on the TrustedPlatformModule interface,
 // so it must work for any caller that reaches it directly.
 func TestHMACSaltedSession_ProducesUsableSession(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	srkAttrs := createKey(tpm, false).Parent

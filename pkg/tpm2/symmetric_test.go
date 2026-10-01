@@ -27,6 +27,8 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/google/go-tpm/tpm2"
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -60,7 +62,7 @@ var _ store.KeyBackend = (*errStoreKeyBackend)(nil)
 
 // TestGenerateSymmetricKey tests generating an AES symmetric key in the TPM
 func TestGenerateSymmetricKey(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	// Cast to *TPM2 to access GenerateSymmetricKey
@@ -95,7 +97,7 @@ func TestGenerateSymmetricKey(t *testing.T) {
 
 // TestGetSymmetricKey tests retrieving an existing symmetric key
 func TestGetSymmetricKey(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -129,7 +131,7 @@ func TestGetSymmetricKey(t *testing.T) {
 // errors.Is(err, backend.ErrKeyNotFound), matching the not-found contract
 // every other backend method already honors (#801, #808, #816).
 func TestGetSymmetricKey_NotFound(t *testing.T) {
-	_, tpmInterface := createSim(false)
+	_, tpmInterface := createSim(t, false)
 	defer func() { _ = tpmInterface.Close() }()
 
 	tpmObj, ok := tpmInterface.(*TPM2)
@@ -156,7 +158,7 @@ func TestGetSymmetricKey_NotFound(t *testing.T) {
 // exist yet" and silently generate a replacement for a hardware-backed
 // key (#816).
 func TestGetSymmetricKey_RetrievalError(t *testing.T) {
-	_, tpmInterface := createSim(false)
+	_, tpmInterface := createSim(t, false)
 	defer func() { _ = tpmInterface.Close() }()
 
 	tpmObj, ok := tpmInterface.(*TPM2)
@@ -196,7 +198,7 @@ func TestGetSymmetricKey_NoTransport(t *testing.T) {
 // propagates GetSymmetricKey's not-found classification for a key that
 // was never generated, rather than a generic wrapped error.
 func TestSymmetricEncrypter_NotFound(t *testing.T) {
-	_, tpmInterface := createSim(false)
+	_, tpmInterface := createSim(t, false)
 	defer func() { _ = tpmInterface.Close() }()
 
 	tpmObj, ok := tpmInterface.(*TPM2)
@@ -219,7 +221,7 @@ func TestSymmetricEncrypter_NotFound(t *testing.T) {
 // propagates ErrKeyRetrievalFailed, not ErrKeyNotFound, for a key-store
 // failure that does not mean the key is absent.
 func TestSymmetricEncrypter_RetrievalError(t *testing.T) {
-	_, tpmInterface := createSim(false)
+	_, tpmInterface := createSim(t, false)
 	defer func() { _ = tpmInterface.Close() }()
 
 	tpmObj, ok := tpmInterface.(*TPM2)
@@ -242,7 +244,7 @@ func TestSymmetricEncrypter_RetrievalError(t *testing.T) {
 
 // TestSymmetricEncryptDecrypt tests encrypting and decrypting data
 func TestSymmetricEncryptDecrypt(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -298,7 +300,7 @@ func TestSymmetricEncryptDecrypt(t *testing.T) {
 
 // TestSymmetricEncryptWithAAD tests encryption with additional authenticated data
 func TestSymmetricEncryptWithAAD(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -353,7 +355,7 @@ func TestSymmetricEncryptWithAAD(t *testing.T) {
 
 // TestSymmetricDecryptInvalidTag tests decryption with a corrupted authentication tag
 func TestSymmetricDecryptInvalidTag(t *testing.T) {
-	_, tpmInterface := createSim(false)
+	_, tpmInterface := createSim(t, false)
 	defer func() { _ = tpmInterface.Close() }()
 
 	tpmObj, ok := tpmInterface.(*TPM2)
@@ -390,7 +392,7 @@ func TestSymmetricDecryptInvalidTag(t *testing.T) {
 // mismatched nonce length, so a caller-controlled nonce must be validated
 // before it reaches Open.
 func TestSymmetricDecrypt_WrongNonceLength(t *testing.T) {
-	_, tpmInterface := createSim(false)
+	_, tpmInterface := createSim(t, false)
 	defer func() { _ = tpmInterface.Close() }()
 
 	tpmObj, ok := tpmInterface.(*TPM2)
@@ -435,7 +437,7 @@ func TestSymmetricDecrypt_WrongNonceLength(t *testing.T) {
 // TestSymmetricDecrypt_NilData verifies that Decrypt rejects nil
 // EncryptedData with a typed error instead of a nil-pointer panic.
 func TestSymmetricDecrypt_NilData(t *testing.T) {
-	_, tpmInterface := createSim(false)
+	_, tpmInterface := createSim(t, false)
 	defer func() { _ = tpmInterface.Close() }()
 
 	tpmObj, ok := tpmInterface.(*TPM2)
@@ -460,7 +462,7 @@ func TestSymmetricDecrypt_NilData(t *testing.T) {
 
 // TestNonceReuse tests that the TPM2 backend detects and prevents nonce reuse
 func TestNonceReuse(t *testing.T) {
-	_, tpm := createSimWithTracker(false)
+	_, tpm := createSimWithTracker(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -510,7 +512,7 @@ func TestNonceReuse(t *testing.T) {
 
 // TestBytesLimit tests that the TPM2 backend enforces AEAD bytes limits
 func TestBytesLimit(t *testing.T) {
-	_, tpm := createSimWithTracker(false)
+	_, tpm := createSimWithTracker(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -573,7 +575,7 @@ func TestBytesLimit(t *testing.T) {
 
 // TestGenerateSymmetricKeyErrors tests error conditions for key generation
 func TestGenerateSymmetricKeyErrors(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -612,7 +614,7 @@ func TestGenerateSymmetricKeyErrors(t *testing.T) {
 
 // TestKeyAlreadyExists tests that generating a key with existing name fails
 func TestKeyAlreadyExists(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -639,7 +641,7 @@ func TestKeyAlreadyExists(t *testing.T) {
 
 // TestTracker tests that the tracker is properly initialized and accessible
 func TestTracker(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -652,7 +654,7 @@ func TestTracker(t *testing.T) {
 
 // TestRSAEncrypt_Basic tests RSA encryption with EK handle
 func TestRSAEncrypt_Basic(t *testing.T) {
-	_, tpmInterface := createSim(false)
+	_, tpmInterface := createSim(t, false)
 	defer func() { _ = tpmInterface.Close() }()
 
 	tpmObj, ok := tpmInterface.(*TPM2)
@@ -679,7 +681,7 @@ func TestRSAEncrypt_Basic(t *testing.T) {
 
 // TestRSAEncrypt_InvalidHandle tests RSA encryption with invalid handle
 func TestRSAEncrypt_InvalidHandle(t *testing.T) {
-	_, tpmInterface := createSim(false)
+	_, tpmInterface := createSim(t, false)
 	defer func() { _ = tpmInterface.Close() }()
 
 	tpmObj, ok := tpmInterface.(*TPM2)
@@ -693,7 +695,7 @@ func TestRSAEncrypt_InvalidHandle(t *testing.T) {
 }
 
 // createSimWithTracker creates a simulated TPM with a custom AEAD tracker
-func createSimWithTracker(entropy bool) (*slog.Logger, TrustedPlatformModule) {
+func createSimWithTracker(t testing.TB, entropy bool) (*slog.Logger, TrustedPlatformModule) {
 	logger := slog.Default()
 
 	buf := make([]byte, 8)
@@ -727,7 +729,7 @@ func createSimWithTracker(entropy bool) (*slog.Logger, TrustedPlatformModule) {
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),
 
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
@@ -752,7 +754,7 @@ func createSimWithTracker(entropy bool) (*slog.Logger, TrustedPlatformModule) {
 		PlatformPCRBank: debugPCRBank,
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),
 
 			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{

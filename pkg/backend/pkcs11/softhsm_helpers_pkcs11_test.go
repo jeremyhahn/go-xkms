@@ -18,8 +18,9 @@ package pkcs11
 import (
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/internal/softhsmtest"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
 	"github.com/stretchr/testify/require"
 )
@@ -37,8 +38,8 @@ func newProvisionedBackend(t *testing.T, label string) *Backend {
 	token := softhsmtest.Provision(t, label)
 
 	config := testConfig(token.Library, token.Label)
-	config.PIN = types.NewLiteralSecretValue([]byte(token.UserPIN))
-	config.SOPIN = types.NewLiteralSecretValue([]byte(token.SOPIN))
+	config.PIN = secrettest.Literal(t, []byte(token.UserPIN))
+	config.SOPIN = secrettest.Literal(t, []byte(token.SOPIN))
 
 	b, err := NewBackend(config)
 	require.NoError(t, err, "pkcs11 backend must construct")

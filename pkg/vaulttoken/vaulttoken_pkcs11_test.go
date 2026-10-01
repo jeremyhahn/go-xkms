@@ -21,6 +21,8 @@ import (
 	"crypto/x509"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -41,8 +43,8 @@ func newSoftHSMBackend(t *testing.T, label string) xkms.Backend {
 	kp, err := pkcs11backend.NewBackend(&pkcs11backend.Config{
 		Library:     token.Library,
 		TokenLabel:  token.Label,
-		PIN:         types.NewLiteralSecretValue([]byte(token.UserPIN)),
-		SOPIN:       types.NewLiteralSecretValue([]byte(token.SOPIN)),
+		PIN:         secrettest.Literal(t, []byte(token.UserPIN)),
+		SOPIN:       secrettest.Literal(t, []byte(token.SOPIN)),
 		KeyStorage:  storage.New(),
 		CertStorage: storage.New(),
 	})

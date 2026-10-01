@@ -17,6 +17,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -29,7 +31,7 @@ func TestBarrierAWSKMSConfig_Validate(t *testing.T) {
 	withCreds := &BarrierAWSKMSConfig{
 		Region:          "us-east-1",
 		AccessKeyID:     "AKIAEXAMPLE",
-		SecretAccessKey: xkms.NewLiteralSecretValue([]byte("s3cr3t")),
+		SecretAccessKey: secrettest.Literal(t, []byte("s3cr3t")),
 	}
 	if err := withCreds.Validate(); err != nil {
 		t.Fatalf("Validate() = %v, want nil when both access_key_id and secret_access_key are set", err)
@@ -44,7 +46,7 @@ func TestBarrierAWSKMSConfig_Validate_Errors(t *testing.T) {
 		{"nil config", nil},
 		{"missing region", &BarrierAWSKMSConfig{}},
 		{"access key without secret", &BarrierAWSKMSConfig{Region: "us-east-1", AccessKeyID: "AKIAEXAMPLE"}},
-		{"secret without access key", &BarrierAWSKMSConfig{Region: "us-east-1", SecretAccessKey: xkms.NewLiteralSecretValue([]byte("x"))}},
+		{"secret without access key", &BarrierAWSKMSConfig{Region: "us-east-1", SecretAccessKey: secrettest.Literal(t, []byte("x"))}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -139,7 +141,7 @@ func TestBarrierAzureKVConfig_Validate(t *testing.T) {
 		VaultURL:     "https://my-vault.vault.azure.net/",
 		TenantID:     "tenant",
 		ClientID:     "client",
-		ClientSecret: xkms.NewLiteralSecretValue([]byte("s3cr3t")),
+		ClientSecret: secrettest.Literal(t, []byte("s3cr3t")),
 	}
 	if err := withCreds.Validate(); err != nil {
 		t.Fatalf("Validate() = %v, want nil when tenant_id, client_id and client_secret are all set", err)
@@ -155,7 +157,7 @@ func TestBarrierAzureKVConfig_Validate_Errors(t *testing.T) {
 		{"missing vault_url", &BarrierAzureKVConfig{}},
 		{"tenant only", &BarrierAzureKVConfig{VaultURL: "https://v.vault.azure.net/", TenantID: "t"}},
 		{"client id and secret without tenant", &BarrierAzureKVConfig{
-			VaultURL: "https://v.vault.azure.net/", ClientID: "c", ClientSecret: xkms.NewLiteralSecretValue([]byte("x")),
+			VaultURL: "https://v.vault.azure.net/", ClientID: "c", ClientSecret: secrettest.Literal(t, []byte("x")),
 		}},
 	}
 	for _, c := range cases {

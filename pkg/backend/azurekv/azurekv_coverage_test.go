@@ -29,6 +29,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -423,14 +425,14 @@ func TestHasServicePrincipal(t *testing.T) {
 			name: "complete",
 			config: &Config{
 				ClientID: "id", TenantID: "tenant",
-				ClientSecret: types.NewLiteralSecretValue([]byte("secret")),
+				ClientSecret: secrettest.Literal(t, []byte("secret")),
 			},
 			want: true,
 		},
 		{name: "empty", config: &Config{}, want: false},
 		{name: "missing secret", config: &Config{ClientID: "id", TenantID: "tenant"}, want: false},
-		{name: "missing tenant", config: &Config{ClientID: "id", ClientSecret: types.NewLiteralSecretValue([]byte("s"))}, want: false},
-		{name: "missing client id", config: &Config{TenantID: "tenant", ClientSecret: types.NewLiteralSecretValue([]byte("s"))}, want: false},
+		{name: "missing tenant", config: &Config{ClientID: "id", ClientSecret: secrettest.Literal(t, []byte("s"))}, want: false},
+		{name: "missing client id", config: &Config{TenantID: "tenant", ClientSecret: secrettest.Literal(t, []byte("s"))}, want: false},
 	}
 
 	for _, tt := range tests {
@@ -450,7 +452,7 @@ func TestNewClientSecretCredential(t *testing.T) {
 	b := &Backend{config: &Config{
 		TenantID:     "11111111-1111-1111-1111-111111111111",
 		ClientID:     "22222222-2222-2222-2222-222222222222",
-		ClientSecret: types.NewLiteralSecretValue([]byte("super-secret")),
+		ClientSecret: secrettest.Literal(t, []byte("super-secret")),
 	}}
 
 	cred, err := b.newClientSecretCredential(nil)
@@ -501,7 +503,7 @@ func TestInitClient_ServicePrincipalPath(t *testing.T) {
 		VaultURL:     "https://test-vault.vault.azure.net/",
 		TenantID:     "11111111-1111-1111-1111-111111111111",
 		ClientID:     "22222222-2222-2222-2222-222222222222",
-		ClientSecret: types.NewLiteralSecretValue([]byte("super-secret")),
+		ClientSecret: secrettest.Literal(t, []byte("super-secret")),
 		KeyStorage:   storage.New(),
 		CertStorage:  storage.New(),
 	})
@@ -525,7 +527,7 @@ func TestConfigString_MasksSecrets(t *testing.T) {
 		VaultURL:     "https://test-vault.vault.azure.net/",
 		TenantID:     "11111111-2222-3333-4444-555555555555",
 		ClientID:     "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-		ClientSecret: types.NewLiteralSecretValue([]byte("do-not-leak-me")),
+		ClientSecret: secrettest.Literal(t, []byte("do-not-leak-me")),
 		Debug:        true,
 	}
 

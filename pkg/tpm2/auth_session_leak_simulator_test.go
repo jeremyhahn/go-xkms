@@ -100,7 +100,7 @@ func savedSessionCount(t *testing.T, tr transport.TPM) int {
 // shared by the rest of this package's simulator tests.
 func verifyAuthSessionFixture(t *testing.T) (tpmImpl *TPM2, handle tpm2.TPMHandle, goodAuth, badAuth []byte) {
 	t.Helper()
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	t.Cleanup(func() { _ = tpm.Close() })
 
 	srkAttrs := createKey(tpm, false).Parent

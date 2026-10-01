@@ -19,6 +19,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/internal/softhsmtest"
 	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -42,8 +44,8 @@ func newSoftHSMCABackend(t *testing.T) xkms.Backend {
 		CN:          "ca-multi-keystore-pkcs11",
 		Library:     token.Library,
 		TokenLabel:  token.Label,
-		PIN:         types.NewLiteralSecretValue([]byte(token.UserPIN)),
-		SOPIN:       types.NewLiteralSecretValue([]byte(token.SOPIN)),
+		PIN:         secrettest.Literal(t, []byte(token.UserPIN)),
+		SOPIN:       secrettest.Literal(t, []byte(token.SOPIN)),
 		KeyStorage:  storage.NewMemory(),
 		CertStorage: storage.NewMemory(),
 	})

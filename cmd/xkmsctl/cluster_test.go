@@ -41,6 +41,7 @@ type fakeClusterControl struct {
 	gotShardID   uint64
 	gotReplicaID uint64
 	gotRaftAddr  string
+	gotIdentity  string
 }
 
 func (f *fakeClusterControl) Members(_ context.Context, shardID uint64) ([]qrdbsdk.Member, error) {
@@ -59,10 +60,11 @@ func (f *fakeClusterControl) Leader(_ context.Context, shardID uint64) (uint64, 
 	return f.leaderID, f.hasLeader, nil
 }
 
-func (f *fakeClusterControl) AddReplica(_ context.Context, shardID, replicaID uint64, raftAddr string) error {
+func (f *fakeClusterControl) AddReplica(_ context.Context, shardID, replicaID uint64, raftAddr, identity string) error {
 	f.gotShardID = shardID
 	f.gotReplicaID = replicaID
 	f.gotRaftAddr = raftAddr
+	f.gotIdentity = identity
 	return f.addErr
 }
 
@@ -313,9 +315,12 @@ func TestClusterAdd_Success(t *testing.T) {
 	installClusterControlFactory(t, &QRDBControlClient{Cluster: fake})
 
 	out, err := runClusterCmd(t, "cluster", "add",
-		"--shard", "3", "--replica-id", "9", "--raft-address", "10.0.0.9:63001")
+		"--shard", "3", "--replica-id", "9", "--raft-address", "10.0.0.9:63001", "--identity", "spki:ab12")
 	if err != nil {
 		t.Fatalf("cluster add: %v", err)
+	}
+	if fake.gotIdentity != "spki:ab12" {
+		t.Errorf("AddReplica got identity %q, want spki:ab12", fake.gotIdentity)
 	}
 	if fake.gotShardID != 3 || fake.gotReplicaID != 9 || fake.gotRaftAddr != "10.0.0.9:63001" {
 		t.Errorf("AddReplica got (%d, %d, %q), want (3, 9, 10.0.0.9:63001)",

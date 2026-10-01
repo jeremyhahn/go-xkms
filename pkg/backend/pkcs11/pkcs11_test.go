@@ -28,6 +28,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -68,7 +70,7 @@ func TestBackend_Config(t *testing.T) {
 		CN:         "test-hsm",
 		Library:    "/usr/lib/softhsm/libsofthsm2.so",
 		TokenLabel: "my-token",
-		PIN:        types.NewLiteralSecretValue([]byte("1234")),
+		PIN:        secrettest.Literal(t, []byte("1234")),
 	}
 
 	b := &Backend{
@@ -554,7 +556,7 @@ func TestBackend_Login(t *testing.T) {
 		config := &Config{
 			Library:    tempLib,
 			TokenLabel: "test",
-			PIN:        types.NewLiteralSecretValue([]byte("1234")),
+			PIN:        secrettest.Literal(t, []byte("1234")),
 
 			KeyStorage:  storage.New(),
 			CertStorage: storage.New(),

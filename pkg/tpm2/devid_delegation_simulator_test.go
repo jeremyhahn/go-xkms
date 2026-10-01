@@ -24,6 +24,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -377,7 +379,7 @@ func TestCreateIDevID_PlatformPolicyProvisionsThePlatformDelegation(t *testing.T
 func TestCreateIDevID_PlatformPolicyKeepsTheAuthValuePath(t *testing.T) {
 	h := newDelegationHarness(t, func(c *Config) {
 		c.IDevID.PlatformPolicy = true
-		c.IDevID.Password = types.NewLiteralSecretValue([]byte("idevid-user-secret"))
+		c.IDevID.Password = secrettest.Literal(t, []byte("idevid-user-secret"))
 
 	})
 	public, _, _ := h.readPolicyNV(t, DevIDKeySigning)
@@ -527,7 +529,7 @@ func TestIAKAttributes_ColdCacheKeepsPlatformPolicy(t *testing.T) {
 // the authorizing.
 func TestIDevIDAttributes_ColdCacheKeepsPassword(t *testing.T) {
 	const authValue = "idevid-auth-value"
-	h := newDelegationHarness(t, func(c *Config) { c.IDevID.Password = types.NewLiteralSecretValue([]byte(authValue)) })
+	h := newDelegationHarness(t, func(c *Config) { c.IDevID.Password = secrettest.Literal(t, []byte(authValue)) })
 	require.Equal(t, []byte(authValue), h.IDevID.Password.Bytes(), "provisioning recorded the authValue")
 
 	h.TPM.idevidAttrs = nil // the cold cache a restarted process sees
@@ -562,7 +564,7 @@ func assertTPMAuthRefused(t *testing.T, err error) {
 // CreateKeySession authorizes the rebuilt key with it.
 func TestIAKAttributes_ColdCacheKeepsPassword(t *testing.T) {
 	const authValue = "iak-auth-value"
-	h := newDelegationHarness(t, func(c *Config) { c.IAK.Password = types.NewLiteralSecretValue([]byte(authValue)) })
+	h := newDelegationHarness(t, func(c *Config) { c.IAK.Password = secrettest.Literal(t, []byte(authValue)) })
 	require.Equal(t, []byte(authValue), h.IAK.Password.Bytes(), "provisioning recorded the authValue")
 
 	h.TPM.iakAttrs = nil // the cold cache a restarted process sees

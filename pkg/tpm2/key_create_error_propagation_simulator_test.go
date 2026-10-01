@@ -53,7 +53,7 @@ func newUnprovisionedSimHarness(t *testing.T, mutate func(*Config)) *simHarness 
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = storageFactory.Close() })
 
-	config := newSimConfig()
+	config := newSimConfig(t)
 	if mutate != nil {
 		mutate(config)
 	}

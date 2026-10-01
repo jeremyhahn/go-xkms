@@ -53,7 +53,7 @@ func (f *grpcFakeClusterReader) LeaderEndpoint(context.Context, uint64, string) 
 	return f.leaderEndpoint, nil
 }
 
-func (f *grpcFakeClusterReader) AddReplica(context.Context, uint64, uint64, string) error {
+func (f *grpcFakeClusterReader) AddReplica(context.Context, uint64, uint64, string, string) error {
 	return nil
 }
 

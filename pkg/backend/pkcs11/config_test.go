@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -52,9 +54,9 @@ func TestConfig_Validate(t *testing.T) {
 				CN:         "test",
 				Library:    tempLib,
 				TokenLabel: "test-token",
-				PIN:        types.NewLiteralSecretValue([]byte("1234")),
+				PIN:        secrettest.Literal(t, []byte("1234")),
 
-				SOPIN: types.NewLiteralSecretValue([]byte("5678")),
+				SOPIN: secrettest.Literal(t, []byte("5678")),
 
 				KeyStorage:  storage.New(),
 				CertStorage: storage.New(),
@@ -97,7 +99,7 @@ func TestConfig_Validate(t *testing.T) {
 				CN:         "test",
 				Library:    tempLib,
 				TokenLabel: "test-token",
-				PIN:        types.NewLiteralSecretValue([]byte("123")),
+				PIN:        secrettest.Literal(t, []byte("123")),
 			},
 			wantErr: true,
 			errType: ErrInvalidPINLength,
@@ -108,7 +110,7 @@ func TestConfig_Validate(t *testing.T) {
 				CN:         "test",
 				Library:    tempLib,
 				TokenLabel: "test-token",
-				SOPIN:      types.NewLiteralSecretValue([]byte("12")),
+				SOPIN:      secrettest.Literal(t, []byte("12")),
 			},
 			wantErr: true,
 			errType: ErrInvalidSOPINLength,
@@ -208,9 +210,9 @@ func TestConfig_String(t *testing.T) {
 		Library:    "/usr/lib/softhsm/libsofthsm2.so",
 		TokenLabel: "test-token",
 		Slot:       &slot,
-		PIN:        types.NewLiteralSecretValue([]byte("secret1234")),
+		PIN:        secrettest.Literal(t, []byte("secret1234")),
 
-		SOPIN: types.NewLiteralSecretValue([]byte("sosecret5678")),
+		SOPIN: secrettest.Literal(t, []byte("sosecret5678")),
 	}
 
 	result := config.String()

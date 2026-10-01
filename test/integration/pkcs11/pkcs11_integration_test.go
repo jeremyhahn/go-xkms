@@ -34,6 +34,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -87,7 +89,7 @@ func TestPKCS11Integration(t *testing.T) {
 	backendCfg := &pkcs11.Config{
 		Library:    libPath,
 		TokenLabel: "test-token",
-		PIN:        types.NewLiteralSecretValue([]byte("1234")),
+		PIN:        secrettest.Literal(t, []byte("1234")),
 
 		KeyStorage:  keyStorage,
 		CertStorage: certStorage,

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -254,7 +256,7 @@ func TestPlatformSRKAttributesFromConfig_HierarchyAuthNeverFromConfig(t *testing
 	ssrk := &SRKConfig{
 		Handle:        0x81000001,
 		KeyAlgorithm:  x509.RSA.String(),
-		HierarchyAuth: types.NewLiteralSecretValue([]byte("ssrk-only-secret")),
+		HierarchyAuth: secrettest.Literal(t, []byte("ssrk-only-secret")),
 		RSAConfig:     &store.RSAConfig{KeySize: 2048},
 	}
 

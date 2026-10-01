@@ -152,11 +152,15 @@ func createAzureKVBackend() (types.SymmetricKeyProvider, error) {
 	}
 
 	// Create Azure Key Vault backend configuration
+	secret, err := types.NewLiteralSecretValue([]byte(clientSecret))
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to seal the client secret", Err: err}
+	}
 	backendCfg := &azurekv.Config{
 		VaultURL:     vaultURL,
 		TenantID:     tenantID,
 		ClientID:     clientID,
-		ClientSecret: types.NewLiteralSecretValue([]byte(clientSecret)),
+		ClientSecret: secret,
 		KeyStorage:   storage,
 		CertStorage:  storage,
 	}

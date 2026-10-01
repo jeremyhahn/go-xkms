@@ -57,7 +57,7 @@ func TestMinimalInstallOptions_EnablesOnlyEKAndSSRK(t *testing.T) {
 // simulator (empty Lockout auth, matching createSim's Provision(nil)) and
 // still preserves the TCG-standard EK afterward.
 func TestFactoryResetWithClear_EmptyLockout_ClearSucceeds(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl, ok := tpm.(*TPM2)
@@ -139,7 +139,7 @@ func TestSetHierarchyAuth_ReinstallRecovery_MismatchedRetryFails(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBackupEKCertificates_NoCertStoreReturnsEarly(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl, ok := tpm.(*TPM2)
@@ -155,7 +155,7 @@ func TestBackupEKCertificates_NoCertStoreReturnsEarly(t *testing.T) {
 }
 
 func TestBackupEKCertificates_ImportSucceeds(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl, ok := tpm.(*TPM2)
@@ -178,7 +178,7 @@ func TestBackupEKCertificates_ImportSucceeds(t *testing.T) {
 }
 
 func TestBackupEKCertificates_ImportFailureIsLoggedNotPanicked(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl, ok := tpm.(*TPM2)

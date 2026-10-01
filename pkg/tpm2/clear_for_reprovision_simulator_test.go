@@ -23,7 +23,7 @@ func freshSimTPM(t *testing.T) *TPM2 {
 	require.NoError(t, err, "the in-process TPM simulator must open; build with -tags tpm_simulator")
 	t.Cleanup(func() { _ = sim.Close() })
 
-	config := newSimConfig()
+	config := newSimConfig(t)
 	params := &Params{
 		Logger:    testLogger(),
 		Config:    config,

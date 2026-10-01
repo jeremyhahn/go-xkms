@@ -28,7 +28,6 @@ import (
 	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/web"
 )
 
@@ -50,37 +49,28 @@ var subcommands = map[string]func([]string) int{
 
 func main() {
 	// runProcess reports the process exit code instead of calling os.Exit
-	// directly, so the deferred secure.Purge inside it always runs — an
-	// os.Exit inside a function that owns a pending defer skips it.
+	// directly, so the deferred WipeAll inside it always runs — an os.Exit
+	// inside a function that owns a pending defer skips it.
 	os.Exit(runProcess())
 }
 
-// runProcess wires the process-owned protected-memory lifecycle around run:
-// the interrupt handler that purges mlocked memory before exit, and the
-// teardown that runs once run has returned.
+// runProcess wires the process-owned protected-memory teardown around run:
+// once run has returned -- on every orderly exit, including the graceful
+// shutdown run drives on SIGINT/SIGTERM -- enclave.WipeAll destroys every
+// locked-memory enclave the process holds. go-qrdb's Secret/Buffer and
+// go-xkms's own MemoryEnclaves (pintpm2's cached FIDO2 hash, sealed backend
+// DEKs) are all go-enclave memory on one registry, so this one call sweeps
+// them all, as cmd/qrdbd's start does.
 //
-// secure.Purge (go-qrdb's memguard-backed Secret/Buffer) and enclave.WipeAll
-// (go-xkms's own go-enclave-backed MemoryEnclaves -- pintpm2's cached FIDO2
-// hash, sealed backend DEKs) are two distinct protected-memory subsystems
-// with no shared lifecycle hook, so the binary that owns process exit calls
-// both. Libraries in this repo call neither: WipeAll is a process-wide
-// teardown that belongs only to the binary (go-xkms#623), and specifically
-// to the one call that owns the real process's exit -- not to run, which
-// tests also call directly to reach its flag-parsing and dispatch branches.
-// A WipeAll wired into run instead destroyed every MemoryEnclave live
-// anywhere in the test binary each time one of those tests called it,
-// including sealers other tests in the same package were still using
-// (go-xkms#1153).
+// Libraries in this repo never call WipeAll: it is a process-wide teardown
+// that belongs only to the binary (go-xkms#623), and specifically to the one
+// call that owns the real process's exit -- not to run, which tests also call
+// directly to reach its flag-parsing and dispatch branches. A WipeAll wired
+// into run instead destroyed every MemoryEnclave live anywhere in the test
+// binary each time one of those tests called it, including sealers other
+// tests in the same package were still using (go-xkms#1153).
 func runProcess() int {
-	// Wire the process signal handler so SIGINT/SIGTERM purge all
-	// mlocked memory before exit, and arrange for a graceful Purge on
-	// any orderly shutdown path. Mirrors the qrdbd pattern exactly.
-	// See pkg/secure/interrupt.go in go-qrdb.
-	secure.CatchInterrupt()
 	defer func() {
-		if err := secure.Purge(); err != nil {
-			fmt.Fprintf(os.Stderr, "xkmsd: secure.Purge: %v\n", err)
-		}
 		if count, err := enclave.WipeAll(); err != nil {
 			fmt.Fprintf(os.Stderr, "xkmsd: enclave.WipeAll: %d still held, %v\n", count, err)
 		}

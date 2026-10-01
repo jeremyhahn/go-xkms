@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -476,7 +478,7 @@ func TestGetTracker_DefaultTracker(t *testing.T) {
 	config := &Config{
 		Library:    tempLib,
 		TokenLabel: "test-token",
-		PIN:        types.NewLiteralSecretValue([]byte("1234")),
+		PIN:        secrettest.Literal(t, []byte("1234")),
 
 		KeyStorage:  storage.New(),
 		CertStorage: storage.New(),

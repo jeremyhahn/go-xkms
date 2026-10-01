@@ -122,7 +122,7 @@ func (a *testAdminClient) Peers(ctx context.Context) (*db.PeersResponse, error) 
 	return a.peers, nil
 }
 
-func (a *testAdminClient) AddMember(ctx context.Context, shardID, replicaID uint64, raftAddr string) error {
+func (a *testAdminClient) AddMember(ctx context.Context, shardID, replicaID uint64, raftAddr, identity string) error {
 	return nil
 }
 

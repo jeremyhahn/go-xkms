@@ -31,7 +31,7 @@ import (
 // contract (WithBytes, Open, Clear).
 type SecretValue = qrdbsecret.SecretValue
 
-// NewLiteralSecretValue seals value into its own memguard enclave and
+// NewLiteralSecretValue seals value into its own go-enclave sealed enclave and
 // returns a SecretValue carrying it, with no Raw reference (the caller
 // already holds resolved plaintext — it did not come from resolving a
 // reference string). Every call seals a fresh enclave, even for the same
@@ -48,8 +48,9 @@ type SecretValue = qrdbsecret.SecretValue
 // a protected target secret.ConfigProcessor walks, since a literal there is
 // refused with *secret.UnresolvableTargetError by design — it is for a
 // runtime-only value (a CLI flag, a Go-code default) that the walker never
-// reaches.
-func NewLiteralSecretValue(value []byte) *SecretValue {
+// reaches. A value that cannot be sealed is an error (qrdb's
+// *secret.SealFailedError), never a SecretValue that reports empty.
+func NewLiteralSecretValue(value []byte) (*SecretValue, error) {
 	return qrdbsecret.NewSecretValue("", value, qrdbsecret.StrategyLiteral)
 }
 

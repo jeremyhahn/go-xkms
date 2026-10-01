@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	phonebackend "github.com/jeremyhahn/go-xkms/pkg/backend/phone"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
@@ -47,12 +49,13 @@ func (m *mockPhoneSender) SendRequest(ctx context.Context, req *pairing.Request)
 }
 
 // newTestPhoneConfig returns a valid PhoneConfig for testing.
-func newTestPhoneConfig() *config.PhoneConfig {
+func newTestPhoneConfig(t testing.TB) *config.PhoneConfig {
+	t.Helper()
 	return &config.PhoneConfig{
 		Enabled:        true,
 		Transport:      "tcp",
 		DeviceAddress:  "127.0.0.1:9876",
-		NoiseStaticKey: types.NewLiteralSecretValue([]byte("aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233")),
+		NoiseStaticKey: secrettest.Literal(t, []byte("aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233")),
 
 		PhoneStaticKey: "11223344556677881122334455667788112233445566778811223344556677aa",
 		RequestTimeout: 5 * time.Second,
@@ -88,7 +91,7 @@ func newTestServerForPhoneWithCredentials(t *testing.T, phoneCfg *config.PhoneCo
 }
 
 func TestRegisterPhoneBackend_Success(t *testing.T) {
-	phoneCfg := newTestPhoneConfig()
+	phoneCfg := newTestPhoneConfig(t)
 	srv := newTestServerForPhone(t, phoneCfg)
 
 	sender := &mockPhoneSender{}
@@ -109,7 +112,7 @@ func TestRegisterPhoneBackend_Success(t *testing.T) {
 }
 
 func TestRegisterPhoneBackend_NilSender(t *testing.T) {
-	phoneCfg := newTestPhoneConfig()
+	phoneCfg := newTestPhoneConfig(t)
 	srv := newTestServerForPhone(t, phoneCfg)
 
 	err := srv.RegisterPhoneBackend(nil)
@@ -124,7 +127,7 @@ func TestRegisterPhoneBackend_NilSender(t *testing.T) {
 }
 
 func TestRegisterPhoneBackend_ReplaceExisting(t *testing.T) {
-	phoneCfg := newTestPhoneConfig()
+	phoneCfg := newTestPhoneConfig(t)
 	srv := newTestServerForPhone(t, phoneCfg)
 
 	// Register the first phone backend.
@@ -177,7 +180,7 @@ func TestRegisterPhoneBackend_NilConfig(t *testing.T) {
 
 func TestRegisterPhoneBackend_DefaultTimeout(t *testing.T) {
 	// Create a phone config with zero RequestTimeout to verify default is applied.
-	phoneCfg := newTestPhoneConfig()
+	phoneCfg := newTestPhoneConfig(t)
 	phoneCfg.RequestTimeout = 0
 	srv := newTestServerForPhone(t, phoneCfg)
 
@@ -198,7 +201,7 @@ func TestRegisterPhoneBackend_DefaultTimeout(t *testing.T) {
 }
 
 func TestRegisterPhoneBackend_ConcurrentAccess(t *testing.T) {
-	phoneCfg := newTestPhoneConfig()
+	phoneCfg := newTestPhoneConfig(t)
 	srv := newTestServerForPhone(t, phoneCfg)
 
 	// Register and unregister concurrently to verify mutex safety.
@@ -235,7 +238,7 @@ func TestRegisterPhoneBackend_ConcurrentAccess(t *testing.T) {
 }
 
 func TestUnregisterPhoneBackend_Success(t *testing.T) {
-	phoneCfg := newTestPhoneConfig()
+	phoneCfg := newTestPhoneConfig(t)
 	srv := newTestServerForPhone(t, phoneCfg)
 
 	// Register a phone backend first.
@@ -261,7 +264,7 @@ func TestUnregisterPhoneBackend_Success(t *testing.T) {
 }
 
 func TestUnregisterPhoneBackend_NotRegistered(t *testing.T) {
-	phoneCfg := newTestPhoneConfig()
+	phoneCfg := newTestPhoneConfig(t)
 	srv := newTestServerForPhone(t, phoneCfg)
 
 	// Unregister when no phone backend is registered.
@@ -275,7 +278,7 @@ func TestUnregisterPhoneBackend_NotRegistered(t *testing.T) {
 }
 
 func TestUnregisterPhoneBackend_ClosesBackend(t *testing.T) {
-	phoneCfg := newTestPhoneConfig()
+	phoneCfg := newTestPhoneConfig(t)
 	srv := newTestServerForPhone(t, phoneCfg)
 
 	sender := &mockPhoneSender{}
@@ -328,7 +331,7 @@ func TestInitPhoneBackend_NilConfig(t *testing.T) {
 }
 
 func TestInitPhoneBackend_Enabled(t *testing.T) {
-	phoneCfg := newTestPhoneConfig()
+	phoneCfg := newTestPhoneConfig(t)
 	srv := newTestServerForPhone(t, phoneCfg)
 
 	err := srv.initPhoneBackend()
@@ -384,7 +387,7 @@ func TestRegisterPhoneBackend_ResolvableCredentialReference(t *testing.T) {
 	const noiseKeyHex = "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233"
 	require.NoError(t, svc.StoreCredential(context.Background(), credName, []byte(noiseKeyHex)))
 
-	phoneCfg := newTestPhoneConfig()
+	phoneCfg := newTestPhoneConfig(t)
 	phoneCfg.NoiseStaticKey = &types.SecretValue{Raw: "credential://" + credName}
 
 	srv := newTestServerForPhoneWithCredentials(t, phoneCfg, svc)
@@ -417,7 +420,7 @@ func TestRegisterPhoneBackend_ResolvableCredentialReference(t *testing.T) {
 func TestResolveConfigSecrets_UnresolvableCredentialReference(t *testing.T) {
 	svc := newManualCredentialService(t)
 
-	phoneCfg := newTestPhoneConfig()
+	phoneCfg := newTestPhoneConfig(t)
 	phoneCfg.NoiseStaticKey = &types.SecretValue{Raw: "credential://does-not-exist"}
 
 	srv := newTestServerForPhoneWithCredentials(t, phoneCfg, svc)
@@ -451,7 +454,7 @@ func TestResolveConfigSecrets_UnresolvableCredentialReference(t *testing.T) {
 // silently using the reference text as the Noise key — the exact go-xkms#610
 // regression this fix closes.
 func TestRegisterPhoneBackend_UnresolvedReferenceWithoutCredentialService(t *testing.T) {
-	phoneCfg := newTestPhoneConfig()
+	phoneCfg := newTestPhoneConfig(t)
 	phoneCfg.NoiseStaticKey = &types.SecretValue{Raw: "credential://phone-noise-key"}
 
 	// No credential service: srv.credentialService stays nil, so

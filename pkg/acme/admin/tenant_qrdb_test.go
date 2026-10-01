@@ -80,6 +80,16 @@ func (f *fakeTenantServicer) DeleteTenant(ctx context.Context, tenantID string) 
 	return nil
 }
 
+// ReconcileDeletedTenants has no residue to remove: the fake hard-deletes.
+func (f *fakeTenantServicer) ReconcileDeletedTenants(context.Context) (*tenantpkg.ReconcileReport, error) {
+	return &tenantpkg.ReconcileReport{}, nil
+}
+
+// ListDeletedTenants reports no deleted tenants: the fake hard-deletes.
+func (f *fakeTenantServicer) ListDeletedTenants(context.Context, string, int) (*tenantpkg.DeletedTenantsPage, error) {
+	return &tenantpkg.DeletedTenantsPage{}, nil
+}
+
 func (f *fakeTenantServicer) UpdateTenant(ctx context.Context, tenantID string, patch qrdbsdk.TenantPatch) (*qrdbsdk.ServiceTenantInfo, error) {
 	t, ok := f.tenants[tenantID]
 	if !ok {

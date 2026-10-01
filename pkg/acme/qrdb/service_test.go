@@ -81,8 +81,8 @@ func (m *mockTransport) Status(ctx context.Context) (*db.StatusResponse, error) 
 func (m *mockTransport) Peers(ctx context.Context) (*db.PeersResponse, error) {
 	return m.admin.Peers(ctx)
 }
-func (m *mockTransport) AddMember(ctx context.Context, shardID, replicaID uint64, raftAddr string) error {
-	return m.admin.AddMember(ctx, shardID, replicaID, raftAddr)
+func (m *mockTransport) AddMember(ctx context.Context, shardID, replicaID uint64, raftAddr, identity string) error {
+	return m.admin.AddMember(ctx, shardID, replicaID, raftAddr, identity)
 }
 func (m *mockTransport) RemoveMember(ctx context.Context, shardID, replicaID uint64) error {
 	return m.admin.RemoveMember(ctx, shardID, replicaID)

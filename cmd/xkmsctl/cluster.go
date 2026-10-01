@@ -118,8 +118,10 @@ type ClusterControlClient interface {
 	// and whether a leader is currently known.
 	Leader(ctx context.Context, shardID uint64) (replicaID uint64, hasLeader bool, err error)
 
-	// AddReplica adds a replica to the shard.
-	AddReplica(ctx context.Context, shardID, replicaID uint64, raftAddr string) error
+	// AddReplica adds a replica to the shard. identity is the replica's Raft
+	// member identity (spki:<sha256-hex>), or "" for the one the cluster has
+	// already committed for it.
+	AddReplica(ctx context.Context, shardID, replicaID uint64, raftAddr, identity string) error
 
 	// RemoveReplica removes a replica from the shard.
 	RemoveReplica(ctx context.Context, shardID, replicaID uint64) error
@@ -330,12 +332,13 @@ func newClusterMembersCmd() *cobra.Command {
 }
 
 // newClusterAddCmd implements
-// "cluster add --replica-id N --raft-address host:port [--shard]".
+// "cluster add --replica-id N --raft-address host:port [--identity] [--shard]".
 func newClusterAddCmd() *cobra.Command {
 	var (
 		shardID   uint64
 		replicaID uint64
 		raftAddr  string
+		identity  string
 	)
 
 	cmd := &cobra.Command{
@@ -348,7 +351,7 @@ func newClusterAddCmd() *cobra.Command {
 			}
 			defer closeFuncQuietly(closer)
 
-			if err := ctrl.Cluster.AddReplica(cmd.Context(), shardID, replicaID, raftAddr); err != nil {
+			if err := ctrl.Cluster.AddReplica(cmd.Context(), shardID, replicaID, raftAddr, identity); err != nil {
 				return &WrappedError{Sentinel: ErrClusterAddReplicaFailed, Err: err}
 			}
 
@@ -361,6 +364,7 @@ func newClusterAddCmd() *cobra.Command {
 	cmd.Flags().Uint64Var(&shardID, "shard", defaultShardID, "shard ID to modify")
 	cmd.Flags().Uint64Var(&replicaID, "replica-id", 0, "replica ID to add (required)")
 	cmd.Flags().StringVar(&raftAddr, "raft-address", "", "replica Raft address host:port (required)")
+	cmd.Flags().StringVar(&identity, "identity", "", "replica Raft member identity, spki:<sha256-hex> as `qrdbd node-identity --cert` prints it (required for a node the cluster has not committed)")
 	markFlagRequired(cmd, "replica-id")
 	markFlagRequired(cmd, "raft-address")
 	return cmd

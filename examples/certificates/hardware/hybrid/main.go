@@ -65,10 +65,14 @@ func main() {
 	// Step 2: Create PKCS#11 backend
 	log.Println("\n[Step 2] Creating PKCS#11 backend...")
 
+	pin, err := types.NewLiteralSecretValue([]byte("1234"))
+	if err != nil {
+		log.Fatalf("Failed to seal the PIN: %v", err)
+	}
 	backend, err := pkcs11.NewBackend(&pkcs11.Config{
 		Library:    "/usr/lib/softhsm/libsofthsm2.so",
 		TokenLabel: "hybrid-demo",
-		PIN:        types.NewLiteralSecretValue([]byte("1234")),
+		PIN:        pin,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create PKCS#11 backend: %v", err)

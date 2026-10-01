@@ -88,7 +88,7 @@ func TestClusterClientAdapter_AddReplica_UnknownShard(t *testing.T) {
 	adapter, cleanup := newClusterAdapterForTest(t)
 	defer cleanup()
 
-	err := adapter.AddReplica(context.Background(), 999999, 2, "127.0.0.1:0")
+	err := adapter.AddReplica(context.Background(), 999999, 2, "127.0.0.1:0", "")
 	require.Error(t, err, "adding a replica to an unknown shard must fail, not silently succeed")
 }
 

@@ -25,6 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/tcp"
@@ -131,7 +133,7 @@ func NewTPM2TestSetup(t *testing.T) *TPM2TestSetup {
 		EK: &tpm2ks.EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),
 
 			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{
@@ -149,7 +151,7 @@ func NewTPM2TestSetup(t *testing.T) *TPM2TestSetup {
 		},
 		SSRK: &tpm2ks.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),
 
 			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{

@@ -30,7 +30,7 @@ func TestSealUnseal(t *testing.T) {
 
 			for _, passwdOpt := range passwdOpts {
 
-				logger, tpm := createSim(policyOpt)
+				logger, tpm := createSim(t, policyOpt)
 
 				ekAttrs, err := tpm.EKAttributes()
 				assert.Nil(t, err)
@@ -115,7 +115,7 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 
 	for _, passwdOpt := range passwdOpts {
 
-		_, tpm := createSim(false)
+		_, tpm := createSim(t, false)
 
 		ekAttrs, err := tpm.EKAttributes()
 		assert.Nil(t, err)
@@ -249,7 +249,7 @@ func TestCreateKeyWithoutPolicy(t *testing.T) {
 
 	for _, passwdOpt := range passwdOpts {
 
-		_, tpm := createSim(false)
+		_, tpm := createSim(t, false)
 
 		ekAttrs, err := tpm.EKAttributes()
 		assert.Nil(t, err)

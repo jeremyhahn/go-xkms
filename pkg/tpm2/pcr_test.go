@@ -15,7 +15,7 @@ import (
 
 func TestIsPlatformPCRExtended_AfterProvisioning(t *testing.T) {
 	// The simulator extends PCR 16 during provisioning with the golden measurement
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2, ok := tpm.(*TPM2)
@@ -29,7 +29,7 @@ func TestIsPlatformPCRExtended_AfterProvisioning(t *testing.T) {
 }
 
 func TestExtendPCR_EmptyData(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2, ok := tpm.(*TPM2)
@@ -41,7 +41,7 @@ func TestExtendPCR_EmptyData(t *testing.T) {
 }
 
 func TestExtendPCR_EmptySlice(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2, ok := tpm.(*TPM2)
@@ -53,7 +53,7 @@ func TestExtendPCR_EmptySlice(t *testing.T) {
 }
 
 func TestExtendPCR_InvalidHashAlgorithm(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2, ok := tpm.(*TPM2)
@@ -65,7 +65,7 @@ func TestExtendPCR_InvalidHashAlgorithm(t *testing.T) {
 }
 
 func TestExtendPCR_SHA1_ValidInput(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2, ok := tpm.(*TPM2)
@@ -77,7 +77,7 @@ func TestExtendPCR_SHA1_ValidInput(t *testing.T) {
 }
 
 func TestExtendPCR_SHA256_ValidInput(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2, ok := tpm.(*TPM2)
@@ -94,7 +94,7 @@ func TestExtendPCR_SHA256_ValidInput(t *testing.T) {
 }
 
 func TestExtendPCR_SHA384_ValidInput(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2, ok := tpm.(*TPM2)
@@ -106,7 +106,7 @@ func TestExtendPCR_SHA384_ValidInput(t *testing.T) {
 }
 
 func TestExtendPCR_SHA512_ValidInput(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2, ok := tpm.(*TPM2)
@@ -118,7 +118,7 @@ func TestExtendPCR_SHA512_ValidInput(t *testing.T) {
 }
 
 func TestExtendPCR_UnknownHashAlgorithm(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2, ok := tpm.(*TPM2)
@@ -132,7 +132,7 @@ func TestExtendPCR_UnknownHashAlgorithm(t *testing.T) {
 }
 
 func TestExtendPCR_MultipleExtensions(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2, ok := tpm.(*TPM2)

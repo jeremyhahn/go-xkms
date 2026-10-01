@@ -29,39 +29,18 @@ func TestNewTerminalProvider(t *testing.T) {
 	}
 }
 
-// TestPurgeLifecycle pins the forwarding contract of CatchInterrupt,
-// EnablePurge, Purge and PurgeOrPanic end to end: PurgeOrPanic panics until
-// the subsystem is armed, and stops panicking once it is.
-//
-// This depends on no earlier test in this package having armed the secure
-// subsystem (secure_test.go and secure_reexport_test.go do not call
-// CatchInterrupt or EnablePurge). The "zz_" file name prefix keeps this file
-// last in the package's test compilation order, so TestPurgeBeforeInit in
-// secure_test.go still observes the pre-arm NotInitializedError path when
-// the whole package's tests run together.
-func TestPurgeLifecycle(t *testing.T) {
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("PurgeOrPanic did not panic before the subsystem was armed")
-			}
-		}()
-		xkmssecure.PurgeOrPanic()
-	}()
-
-	xkmssecure.CatchInterrupt()
-	xkmssecure.EnablePurge() // idempotent: CatchInterrupt already armed the subsystem
-
-	if err := xkmssecure.Purge(); err != nil {
-		t.Fatalf("Purge after CatchInterrupt: %v", err)
+// TestWipeAll pins the forwarding of WipeAll: a Buffer live when it runs is
+// destroyed with every other enclave. The "zz_" prefix keeps it last in the
+// package, since it wipes everything the package's tests hold.
+func TestWipeAll(t *testing.T) {
+	buf, err := xkmssecure.NewBufferFromBytes([]byte("wiped by WipeAll"))
+	if err != nil {
+		t.Fatalf("NewBufferFromBytes: %v", err)
 	}
-
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Fatalf("PurgeOrPanic panicked after the subsystem was armed: %v", r)
-			}
-		}()
-		xkmssecure.PurgeOrPanic()
-	}()
+	if _, err := xkmssecure.WipeAll(); err != nil {
+		t.Fatalf("WipeAll: %v", err)
+	}
+	if b := buf.Bytes(); len(b) != 0 {
+		t.Fatalf("the buffer survived WipeAll: %d bytes", len(b))
+	}
 }

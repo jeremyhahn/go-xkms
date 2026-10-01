@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -91,7 +93,7 @@ func TestNewBackend(t *testing.T) {
 				VaultURL:     "https://test-vault.vault.azure.net/",
 				TenantID:     "tenant-id",
 				ClientID:     "client-id",
-				ClientSecret: types.NewLiteralSecretValue([]byte("client-secret")),
+				ClientSecret: secrettest.Literal(t, []byte("client-secret")),
 
 				KeyStorage:  storage.New(),
 				CertStorage: storage.New(),

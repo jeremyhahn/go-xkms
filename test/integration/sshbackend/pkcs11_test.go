@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/internal/softhsmtest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -79,9 +81,9 @@ func newSoftHSMProvider(t *testing.T, lib string) types.KeyProvider {
 	provider, err := xkms.NewPKCS11Backend(&xkms.PKCS11BackendConfig{
 		Library:    lib,
 		TokenLabel: "ssh-backend-test",
-		PIN:        types.NewLiteralSecretValue([]byte(pin)),
+		PIN:        secrettest.Literal(t, []byte(pin)),
 
-		SOPIN: types.NewLiteralSecretValue([]byte(soPIN)),
+		SOPIN: secrettest.Literal(t, []byte(soPIN)),
 
 		KeyStorage:  keyStorage,
 		CertStorage: certStorage,

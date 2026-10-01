@@ -17,6 +17,8 @@ import (
 	"crypto/x509"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -145,7 +147,7 @@ func TestIDevIDAttributesFromConfig_AlwaysCarriesANonNilPassword(t *testing.T) {
 				Handle:       0x81020000,
 				Hash:         "SHA-256",
 				KeyAlgorithm: x509.RSA.String(),
-				Password:     types.NewLiteralSecretValue([]byte(tc.password)),
+				Password:     secrettest.Literal(t, []byte(tc.password)),
 
 				PlatformPolicy:     true,
 				SignatureAlgorithm: x509.SHA256WithRSA.String(),

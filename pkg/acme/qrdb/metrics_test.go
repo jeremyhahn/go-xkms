@@ -212,7 +212,7 @@ func (a *mockMetricsAdmin) Status(_ context.Context) (*db.StatusResponse, error)
 func (a *mockMetricsAdmin) Peers(_ context.Context) (*db.PeersResponse, error) {
 	return a.peersResp, a.peersErr
 }
-func (a *mockMetricsAdmin) AddMember(_ context.Context, _, _ uint64, _ string) error {
+func (a *mockMetricsAdmin) AddMember(_ context.Context, _, _ uint64, _, _ string) error {
 	return nil
 }
 func (a *mockMetricsAdmin) RemoveMember(_ context.Context, _, _ uint64) error {

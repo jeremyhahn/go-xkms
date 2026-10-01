@@ -488,12 +488,20 @@ func (m *memoryManager) Connect(moduleID string, slotID uint, userPin, soPin str
 	}
 
 	// Create PKCS#11 backend
+	pinSecret, err := types.NewLiteralSecretValue([]byte(userPin))
+	if err != nil {
+		return nil, errors.Join(err, mod.p11ctx.CloseSession(session))
+	}
+	soPINSecret, err := types.NewLiteralSecretValue([]byte(soPin))
+	if err != nil {
+		return nil, errors.Join(err, mod.p11ctx.CloseSession(session))
+	}
 	slotIDPtr := int(slotID)
 	config := &pkcs11backend.Config{
 		Library:     mod.info.LibraryPath,
 		Slot:        &slotIDPtr,
-		PIN:         types.NewLiteralSecretValue([]byte(userPin)),
-		SOPIN:       types.NewLiteralSecretValue([]byte(soPin)),
+		PIN:         pinSecret,
+		SOPIN:       soPINSecret,
 		TokenLabel:  slotInfo.Label,
 		KeyStorage:  keyStorage,
 		CertStorage: certStorage,

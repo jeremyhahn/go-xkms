@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -30,7 +32,7 @@ import (
 
 // Test NV Define and Delete operations
 func TestNVDefineAndDelete_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -100,7 +102,7 @@ func TestNVDefineAndDelete_Simulator(t *testing.T) {
 
 // Test NV Write and Read operations
 func TestNVWriteAndRead_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -196,7 +198,7 @@ func TestNVWriteAndRead_Simulator(t *testing.T) {
 
 // Test NVReadPublic operation
 func TestNVReadPublic_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -263,7 +265,7 @@ func TestNVReadPublic_Simulator(t *testing.T) {
 
 // Test PCR Read operations
 func TestReadPCRs_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	pcrs := []uint{0, 1, 2, 3, 7, 16}
@@ -311,7 +313,7 @@ func pcrValue(t *testing.T, banks []PCRBank, algorithm string, pcrIndex uint) []
 // TestPCRExtend_Simulator pins the TCG extend semantics for PCR 16:
 // PCRnew = H(PCRold || digest), applied to the extended bank only.
 func TestPCRExtend_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -366,7 +368,7 @@ func TestPCRExtend_Simulator(t *testing.T) {
 // so PCR 16 is already extended when this test runs.
 // This test verifies the method correctly detects the extended state.
 func TestIsPlatformPCRExtended_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	// After provisioning, PCR 16 should be extended (provisioning calls CreatePlatformPolicy)
@@ -383,7 +385,7 @@ func TestIsPlatformPCRExtended_Simulator(t *testing.T) {
 
 // Test Random Number Generation
 func TestRandomBytes_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	testSizes := []int{16, 32, 48, 64}
@@ -412,7 +414,7 @@ func TestRandomBytes_Simulator(t *testing.T) {
 
 // Test Large Random Byte Generation
 func TestRandomBytes_LargeSize_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	largeSizes := []int{100, 256, 512, 1024}
@@ -436,7 +438,7 @@ func TestRandomBytes_LargeSize_Simulator(t *testing.T) {
 
 // Test Random with invalid length
 func TestRandomBytes_InvalidLength_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	_, err := tpm.RandomBytes(0)
@@ -450,7 +452,7 @@ func TestRandomBytes_InvalidLength_Simulator(t *testing.T) {
 
 // Test Random() default 32 bytes
 func TestRandom_Default32Bytes_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	randomBytes, err := tpm.Random()
@@ -469,7 +471,7 @@ func TestRandom_Default32Bytes_Simulator(t *testing.T) {
 
 // Test RandomHex encoding
 func TestRandomHex_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	hexBytes, err := tpm.RandomHex(32)
@@ -482,7 +484,7 @@ func TestRandomHex_Simulator(t *testing.T) {
 
 // Test TPM Info
 func TestInfo_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	info, err := tpm.Info()
@@ -492,7 +494,7 @@ func TestInfo_Simulator(t *testing.T) {
 
 // Test Fixed Properties
 func TestFixedProperties_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	props, err := tpm.FixedProperties()
@@ -506,7 +508,7 @@ func TestFixedProperties_Simulator(t *testing.T) {
 
 // Test PCR operations with invalid index
 func TestReadPCRs_InvalidIndex_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	_, err := tpm.ReadPCRs([]uint{24})
@@ -519,7 +521,7 @@ func TestReadPCRs_InvalidIndex_Simulator(t *testing.T) {
 
 // Test Multiple PCR Extend operations
 func TestPCRExtend_Multiple_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -578,7 +580,7 @@ func TestPCRExtend_Multiple_Simulator(t *testing.T) {
 
 // Test ReadHandle operation
 func TestReadHandle_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	ekHandle := tpm2.TPMHandle(tpm.Config().EK.Handle)
@@ -593,7 +595,7 @@ func TestReadHandle_Simulator(t *testing.T) {
 
 // Test capabilities with encrypted session
 func TestCapabilities_EncryptedSession_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	props, err := tpm.FixedProperties()
@@ -604,7 +606,7 @@ func TestCapabilities_EncryptedSession_Simulator(t *testing.T) {
 
 // Test random bytes with entropy mode
 func TestRandomBytes_EntropyMode_Simulator(t *testing.T) {
-	_, tpm := createSim(true)
+	_, tpm := createSim(t, true)
 	defer func() { _ = tpm.Close() }()
 
 	randomBytes, err := tpm.RandomBytes(64)
@@ -620,7 +622,7 @@ func TestRandomBytes_EntropyMode_Simulator(t *testing.T) {
 
 // Test simultaneous PCR bank reads
 func TestReadPCRs_AllBanks_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	allPCRs := make([]uint, 24)
@@ -669,7 +671,7 @@ func BenchmarkRandomBytes_Simulator(b *testing.B) {
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(b, []byte(store.DEFAULT_PASSWORD)),
 
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
@@ -692,7 +694,7 @@ func BenchmarkRandomBytes_Simulator(b *testing.B) {
 		PlatformPCRBank: debugPCRBank,
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(b, []byte(store.DEFAULT_PASSWORD)),
 
 			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{
@@ -737,7 +739,7 @@ func BenchmarkRandomBytes_Simulator(b *testing.B) {
 
 // Test io.Reader interface implementation
 func TestRead_Interface_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	data := make([]byte, 128)
@@ -757,7 +759,7 @@ func TestRead_Interface_Simulator(t *testing.T) {
 
 // Test PCR extend with multiple hash algorithms
 func TestPCRExtend_MultipleAlgorithms_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -798,7 +800,7 @@ func TestPCRExtend_MultipleAlgorithms_Simulator(t *testing.T) {
 
 // Test NV operations with different data sizes
 func TestNVWriteAndRead_VariableSizes_Simulator(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -1055,7 +1057,7 @@ func TestVerifyECDSASignatureStateless_InvalidSignature_Cov(t *testing.T) {
 // TestCreateTCG_CSR_IDEVID_NilEKCert tests that CreateTCG_CSR_IDEVID
 // returns an error when EK certificate is nil
 func TestCreateTCG_CSR_IDEVID_NilEKCert(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Impl := tpm.(*TPM2)
@@ -1259,7 +1261,7 @@ func TestSignValidateNilAttributes(t *testing.T) {
 
 // TestEKECCWithNilAttribute tests EKECC with nil ECC public key
 func TestEKECCWithNilAttribute(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	t.Run("returns cached ECC key", func(t *testing.T) {
@@ -1283,7 +1285,7 @@ func TestEKECCWithNilAttribute(t *testing.T) {
 
 // TestSSRKPublicErrorHandling tests SSRKPublic error paths
 func TestSSRKPublicErrorHandling(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	t.Run("returns SSRK name and public area", func(t *testing.T) {
@@ -1475,7 +1477,7 @@ func TestInstallHierarchyAuthError(t *testing.T) {
 // TestProvisionEKCertWithNilCertStore tests ProvisionEKCert edge cases
 func TestProvisionEKCertWithNilCertStore(t *testing.T) {
 	t.Run("returns error with invalid DER certificate", func(t *testing.T) {
-		_, tpm := createSim(false)
+		_, tpm := createSim(t, false)
 		defer func() { _ = tpm.Close() }()
 
 		tpmImpl, ok := tpm.(*TPM2)
@@ -1518,7 +1520,7 @@ func TestProvisionEKCertWithNilCertStore(t *testing.T) {
 // TestInstallWithConfig tests Install function with various configurations
 func TestInstallWithConfig(t *testing.T) {
 	t.Run("successfully installs with valid config", func(t *testing.T) {
-		_, tpm := createSim(false)
+		_, tpm := createSim(t, false)
 		defer func() { _ = tpm.Close() }()
 
 		// TPM is already provisioned by createSim, so we just verify state
@@ -1556,7 +1558,7 @@ func TestDeleteKeyTransientHandle(t *testing.T) {
 
 // TestSignValidateWithTransport tests SignValidate with actual transport errors
 func TestSignValidateWithTransport(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	t.Run("returns error for invalid handle", func(t *testing.T) {
@@ -1645,7 +1647,7 @@ func TestOpenSocketPath(t *testing.T) {
 
 // TestSSRKPublicWithProvisionedTPM tests SSRKPublic on a provisioned TPM
 func TestSSRKPublicWithProvisionedTPM(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	t.Run("returns valid SSRK public data", func(t *testing.T) {
@@ -1777,7 +1779,7 @@ func TestDeleteKeyWithBackend(t *testing.T) {
 // TPM_NT_COUNTER, the same defect as issue #138. Asserting the failure kept
 // the defect in place; the round trip asserts the behaviour instead.
 func TestProvisionEKCertNVRAM(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl, ok := tpm.(*TPM2)
@@ -1886,7 +1888,7 @@ func TestSignValidateECDSA(t *testing.T) {
 
 // TestDeleteKeyPersistentWithoutAuth tests DeleteKey with persistent handle but no auth
 func TestDeleteKeyPersistentWithoutAuth(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	t.Run("handles missing hierarchy auth gracefully", func(t *testing.T) {
@@ -2005,7 +2007,7 @@ func TestOpenMultipleTimes(t *testing.T) {
 
 // TestInstallCreatesPlatformPolicy tests Install creates platform policy
 func TestInstallCreatesPlatformPolicy(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	t.Run("platform policy digest is set after provisioning", func(t *testing.T) {
@@ -2145,7 +2147,7 @@ func TestInstallCreatesIDevID(t *testing.T) {
 func TestInstallPreservesExistingKeys(t *testing.T) {
 	t.Run("Install preserves existing keys", func(t *testing.T) {
 		// Use createSim which provisions the TPM
-		_, tpm := createSim(false)
+		_, tpm := createSim(t, false)
 		defer func() { _ = tpm.Close() }()
 
 		// Get EK attributes before re-running Install

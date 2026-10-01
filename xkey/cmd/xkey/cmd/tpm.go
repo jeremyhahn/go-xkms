@@ -118,6 +118,10 @@ func openTPM() (xkms.TrustedPlatformModule, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: getLogLevel(),
 	}))
+	hierarchyAuth, err := xkms.NewLiteralSecretValue([]byte(tpmCfg.hierarchyAuth))
+	if err != nil {
+		return nil, err
+	}
 
 	config := &xkms.TPMConfig{
 		Device:       tpmCfg.device,
@@ -127,7 +131,7 @@ func openTPM() (xkms.TrustedPlatformModule, error) {
 			Handle:        0x81010001,
 			CertHandle:    0x01C00002,
 			KeyAlgorithm:  "RSA",
-			HierarchyAuth: xkms.NewLiteralSecretValue([]byte(tpmCfg.hierarchyAuth)),
+			HierarchyAuth: hierarchyAuth,
 		},
 		SSRK: &xkms.SRKConfig{
 			Handle:       0x81000001,
@@ -192,6 +196,10 @@ func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: getLogLevel(),
 	}))
+	hierarchyAuth, err := xkms.NewLiteralSecretValue([]byte(tpmCfg.hierarchyAuth))
+	if err != nil {
+		return nil, err
+	}
 
 	// Set defaults
 	effectivePCRBank := xkms.PCRBankSHA256
@@ -213,7 +221,7 @@ func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator
 			Handle:        0x81010001,
 			CertHandle:    0x01C00002,
 			KeyAlgorithm:  "RSA",
-			HierarchyAuth: xkms.NewLiteralSecretValue([]byte(tpmCfg.hierarchyAuth)),
+			HierarchyAuth: hierarchyAuth,
 		},
 		SSRK: &xkms.SRKConfig{
 			Handle:       0x81000001,

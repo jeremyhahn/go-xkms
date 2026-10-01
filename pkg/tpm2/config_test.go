@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -543,7 +545,7 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				KeyAlgorithm:       x509.RSA.String(),
 				SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 				Handle:             0x81020000,
-				Password:           types.NewLiteralSecretValue([]byte("secret")),
+				Password:           secrettest.Literal(t, []byte("secret")),
 
 				RSAConfig: &store.RSAConfig{KeySize: 2048},
 			},
@@ -695,7 +697,7 @@ func TestEKAttributesFromConfigTableDriven(t *testing.T) {
 				KeyAlgorithm:  x509.RSA.String(),
 				Handle:        0x81010001,
 				CertHandle:    0x01C00002,
-				HierarchyAuth: types.NewLiteralSecretValue([]byte("password")),
+				HierarchyAuth: secrettest.Literal(t, []byte("password")),
 
 				RSAConfig: &store.RSAConfig{KeySize: 2048},
 			},
@@ -716,7 +718,7 @@ func TestEKAttributesFromConfigTableDriven(t *testing.T) {
 				KeyAlgorithm:  x509.RSA.String(),
 				Handle:        0x81010001,
 				CertHandle:    0x01C00002,
-				HierarchyAuth: types.NewLiteralSecretValue([]byte("password")),
+				HierarchyAuth: secrettest.Literal(t, []byte("password")),
 
 				RSAConfig: &store.RSAConfig{KeySize: 2048},
 			},
@@ -830,7 +832,7 @@ func TestSRKAttributesFromConfigTableDriven(t *testing.T) {
 			config: SRKConfig{
 				KeyAlgorithm:  x509.RSA.String(),
 				Handle:        0x81000001,
-				HierarchyAuth: types.NewLiteralSecretValue([]byte("password")),
+				HierarchyAuth: secrettest.Literal(t, []byte("password")),
 
 				RSAConfig: &store.RSAConfig{KeySize: 2048},
 			},
@@ -1121,7 +1123,7 @@ func TestConfigStructTags_Extended(t *testing.T) {
 		PlatformPCRBank:              "sha256",
 		IdentityProvisioningStrategy: "IAK_IDEVID_SINGLE_PASS",
 		UseEntropy:                   true,
-		LockoutAuth:                  types.NewLiteralSecretValue([]byte("test-lockout")),
+		LockoutAuth:                  secrettest.Literal(t, []byte("test-lockout")),
 
 		PlatformAddress: "localhost:2322",
 		GoldenPCRs:      []uint{0, 7, 9, 10},
@@ -1147,10 +1149,10 @@ func TestEKConfigStructure_Extended(t *testing.T) {
 		CN:            "test-ek",
 		Debug:         true,
 		Handle:        0x81010001,
-		HierarchyAuth: types.NewLiteralSecretValue([]byte("test-auth")),
+		HierarchyAuth: secrettest.Literal(t, []byte("test-auth")),
 
 		KeyAlgorithm: "RSA",
-		Password:     types.NewLiteralSecretValue([]byte("test-password")),
+		Password:     secrettest.Literal(t, []byte("test-password")),
 
 		PlatformPolicy: true,
 	}
@@ -1170,10 +1172,10 @@ func TestSRKConfigStructure_Extended(t *testing.T) {
 		CN:            "test-srk",
 		Debug:         true,
 		Handle:        0x81000001,
-		HierarchyAuth: types.NewLiteralSecretValue([]byte("test-auth")),
+		HierarchyAuth: secrettest.Literal(t, []byte("test-auth")),
 
 		KeyAlgorithm: "RSA",
-		Password:     types.NewLiteralSecretValue([]byte("test-password")),
+		Password:     secrettest.Literal(t, []byte("test-password")),
 	}
 
 	assert.Equal(t, "test-srk", config.CN)
@@ -1195,7 +1197,7 @@ func TestIDevIDConfigStructure_Extended(t *testing.T) {
 		Manufacturer: "Test Manufacturer",
 		Model:        "Test Model",
 		Pad:          true,
-		Password:     types.NewLiteralSecretValue([]byte("test-password")),
+		Password:     secrettest.Literal(t, []byte("test-password")),
 
 		PlatformPolicy:     true,
 		Serial:             "12345",
@@ -1227,7 +1229,7 @@ func TestIAKConfigStructure_Extended(t *testing.T) {
 		Handle:       0x81010002,
 		Hash:         "SHA-256",
 		KeyAlgorithm: "RSA",
-		Password:     types.NewLiteralSecretValue([]byte("test-password")),
+		Password:     secrettest.Literal(t, []byte("test-password")),
 
 		PlatformPolicy:     true,
 		SignatureAlgorithm: "SHA256WithRSAPSS",
@@ -1266,7 +1268,7 @@ func TestLDevIDConfigStructure_Extended(t *testing.T) {
 		KeyAlgorithm: "RSA",
 		Model:        "Test Model",
 		Pad:          true,
-		Password:     types.NewLiteralSecretValue([]byte("test-password")),
+		Password:     secrettest.Literal(t, []byte("test-password")),
 
 		PlatformPolicy:     true,
 		Serial:             "67890",
@@ -1295,7 +1297,7 @@ func TestLAKConfigStructure_Extended(t *testing.T) {
 		Handle:       0x81020011,
 		Hash:         "SHA-256",
 		KeyAlgorithm: "ECDSA",
-		Password:     types.NewLiteralSecretValue([]byte("test-password")),
+		Password:     secrettest.Literal(t, []byte("test-password")),
 
 		PlatformPolicy:     true,
 		SignatureAlgorithm: "ECDSAWithSHA256",

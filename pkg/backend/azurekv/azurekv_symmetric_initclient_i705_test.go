@@ -19,8 +19,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // TestInitSecretsClient_DefaultCredentialPath mirrors
@@ -66,7 +67,7 @@ func TestInitSecretsClient_ServicePrincipalPath(t *testing.T) {
 		VaultURL:     "https://test-vault.vault.azure.net/",
 		TenantID:     "11111111-1111-1111-1111-111111111111",
 		ClientID:     "22222222-2222-2222-2222-222222222222",
-		ClientSecret: types.NewLiteralSecretValue([]byte("super-secret")),
+		ClientSecret: secrettest.Literal(t, []byte("super-secret")),
 		KeyStorage:   storage.New(),
 		CertStorage:  storage.New(),
 	})

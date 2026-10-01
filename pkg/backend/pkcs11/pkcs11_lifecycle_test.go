@@ -22,9 +22,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/internal/softhsmtest"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -240,7 +241,7 @@ func TestBackend_Login_WrongPIN(t *testing.T) {
 	token := softhsmtest.Provision(t, "login-wrong-pin")
 
 	config := testConfig(token.Library, token.Label)
-	config.PIN = types.NewLiteralSecretValue([]byte("0000")) // valid length, wrong value
+	config.PIN = secrettest.Literal(t, []byte("0000")) // valid length, wrong value
 	require.NotEqual(t, token.UserPIN, secretValueString(config.PIN))
 
 	b, err := NewBackend(config)
@@ -254,7 +255,7 @@ func TestBackend_Login_WrongPIN(t *testing.T) {
 
 	// The token must not have been damaged: the correct PIN still works.
 	// SoftHSM only locks the user PIN after three consecutive failures.
-	b.config.PIN = types.NewLiteralSecretValue([]byte(token.UserPIN))
+	b.config.PIN = secrettest.Literal(t, []byte(token.UserPIN))
 	require.NoError(t, b.Login(), "the correct PIN must still be accepted after one failure")
 	require.NotNil(t, b.Pool())
 }
@@ -280,7 +281,7 @@ func TestBackend_Login_UnknownTokenLabel(t *testing.T) {
 	token := softhsmtest.Provision(t, "login-label-present")
 
 	config := testConfig(token.Library, "no-such-token")
-	config.PIN = types.NewLiteralSecretValue([]byte(token.UserPIN))
+	config.PIN = secrettest.Literal(t, []byte(token.UserPIN))
 
 	b, err := NewBackend(config)
 	require.NoError(t, err)
@@ -301,7 +302,7 @@ func TestBackend_Login_BadLibrary(t *testing.T) {
 	require.NoError(t, os.WriteFile(fake, []byte("this is not an ELF shared object"), 0o600))
 
 	config := testConfig(fake, "irrelevant")
-	config.PIN = types.NewLiteralSecretValue([]byte("1234"))
+	config.PIN = secrettest.Literal(t, []byte("1234"))
 
 	b, err := NewBackend(config)
 	require.NoError(t, err, "NewBackend only checks that the path exists")
@@ -523,7 +524,7 @@ func TestBackend_Close_ReleasesOwnedContext(t *testing.T) {
 	token := softhsmtest.Provision(t, "close-owned-ctx")
 
 	config := testConfig(token.Library, token.Label)
-	config.PIN = types.NewLiteralSecretValue([]byte(token.UserPIN))
+	config.PIN = secrettest.Literal(t, []byte(token.UserPIN))
 
 	b, err := NewBackend(config)
 	require.NoError(t, err)

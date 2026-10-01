@@ -36,7 +36,7 @@ import (
 // test reaches tpm2AESEncrypter's own AES-GCM selection, the one this
 // change touches, without tripping over that unrelated TPM-session gap.
 func TestSymmetricEncryptDecrypt_AgreesWithArbitraryIVGCMUsable(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -105,7 +105,7 @@ func TestSymmetricEncryptDecrypt_AgreesWithArbitraryIVGCMUsable(t *testing.T) {
 // framing. This does not depend on the process's FIPS posture: the fields
 // are checked before any AEAD construction runs.
 func TestSymmetricDecrypt_RandomNonceModeRejectsWrongLengthNonce(t *testing.T) {
-	_, tpm := createSim(false)
+	_, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)

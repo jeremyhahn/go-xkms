@@ -65,8 +65,8 @@ func (a *clusterClientAdapter) LeaderEndpoint(ctx context.Context, shardID uint6
 }
 
 // AddReplica adds a replica to the shard's Raft group.
-func (a *clusterClientAdapter) AddReplica(ctx context.Context, shardID, replicaID uint64, raftAddr string) error {
-	return a.cluster.AddReplica(ctx, shardID, replicaID, raftAddr)
+func (a *clusterClientAdapter) AddReplica(ctx context.Context, shardID, replicaID uint64, raftAddr, identity string) error {
+	return a.cluster.AddReplica(ctx, shardID, replicaID, raftAddr, identity)
 }
 
 // RemoveReplica removes a replica from the shard's Raft group.

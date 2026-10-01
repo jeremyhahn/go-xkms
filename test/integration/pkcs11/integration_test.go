@@ -30,6 +30,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -112,9 +114,9 @@ func setupSoftHSM(t *testing.T) (*pkcs11.Config, func()) {
 		Library:       getTestLibrary(),
 		LibraryConfig: configPath,
 		TokenLabel:    testTokenName,
-		PIN:           types.NewLiteralSecretValue([]byte(testUserPIN)),
+		PIN:           secrettest.Literal(t, []byte(testUserPIN)),
 
-		SOPIN: types.NewLiteralSecretValue([]byte(testSOPIN)),
+		SOPIN: secrettest.Literal(t, []byte(testSOPIN)),
 
 		KeyStorage:  keyStorage,
 		CertStorage: certStorage,

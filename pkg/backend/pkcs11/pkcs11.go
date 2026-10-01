@@ -715,8 +715,16 @@ func (b *Backend) Initialize(soPIN, userPIN string) error {
 		return ErrInvalidPINLength
 	}
 
-	b.config.SOPIN = types.NewLiteralSecretValue([]byte(soPIN))
-	b.config.PIN = types.NewLiteralSecretValue([]byte(userPIN))
+	soSecret, err := types.NewLiteralSecretValue([]byte(soPIN))
+	if err != nil {
+		return err
+	}
+	userSecret, err := types.NewLiteralSecretValue([]byte(userPIN))
+	if err != nil {
+		return err
+	}
+	b.config.SOPIN = soSecret
+	b.config.PIN = userSecret
 
 	// If pool already exists, we're already initialized
 	if b.pool != nil {

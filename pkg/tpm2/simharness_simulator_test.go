@@ -11,9 +11,10 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,7 +69,7 @@ func newSimHarnessWithHTTPClient(t *testing.T, mutate func(*Config), httpClient 
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = storageFactory.Close() })
 
-	config := newSimConfig()
+	config := newSimConfig(t)
 	if mutate != nil {
 		mutate(config)
 	}
@@ -109,7 +110,8 @@ func newSimHarnessWithHTTPClient(t *testing.T, mutate func(*Config), httpClient 
 // newSimConfig returns the baseline simulator configuration shared by the
 // harness. It mirrors the long-standing createSim configuration in tpm_test.go
 // so behaviour observed here matches the rest of the package's simulator tests.
-func newSimConfig() *Config {
+func newSimConfig(t testing.TB) *Config {
+	t.Helper()
 	return &Config{
 		UseEntropy:   false,
 		UseSimulator: false, // Transport is supplied explicitly.
@@ -117,7 +119,7 @@ func newSimConfig() *Config {
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),
 
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
@@ -141,7 +143,7 @@ func newSimConfig() *Config {
 		GoldenPCRs:      []uint{0, 7},
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),
 
 			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{

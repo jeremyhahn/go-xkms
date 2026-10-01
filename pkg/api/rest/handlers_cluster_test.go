@@ -64,7 +64,7 @@ func (f *fakeClusterClient) LeaderEndpoint(_ context.Context, _ uint64, _ string
 	return "", nil
 }
 
-func (f *fakeClusterClient) AddReplica(_ context.Context, _, _ uint64, _ string) error {
+func (f *fakeClusterClient) AddReplica(_ context.Context, _, _ uint64, _, _ string) error {
 	return nil
 }
 

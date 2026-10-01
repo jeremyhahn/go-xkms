@@ -306,7 +306,6 @@ const (
 // Seal core interfaces.
 type (
 	QRDBEncryptionBarrier = qrdb.EncryptionBarrier
-	QRDBTenantKeyManager  = qrdb.TenantKeyManager
 )
 
 // Seal strategy types.

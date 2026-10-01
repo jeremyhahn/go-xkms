@@ -61,7 +61,7 @@ type ClusterEndpointResolver interface {
 // ClusterMutator applies Raft membership changes to a shard.
 type ClusterMutator interface {
 	// AddReplica adds a replica to the shard's Raft group.
-	AddReplica(ctx context.Context, shardID, replicaID uint64, raftAddr string) error
+	AddReplica(ctx context.Context, shardID, replicaID uint64, raftAddr, identity string) error
 
 	// RemoveReplica removes a replica from the shard's Raft group.
 	RemoveReplica(ctx context.Context, shardID, replicaID uint64) error

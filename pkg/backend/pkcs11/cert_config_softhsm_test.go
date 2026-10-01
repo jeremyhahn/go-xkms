@@ -19,6 +19,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
@@ -183,8 +185,8 @@ func TestBackend_createHardwareStorage_YubiKeyBranch(t *testing.T) {
 		config: &Config{
 			Library:    "/usr/lib/ykcs11.so",
 			TokenLabel: provisioned.config.TokenLabel,
-			PIN:        types.NewLiteralSecretValue([]byte("123456")),
-			SOPIN:      types.NewLiteralSecretValue([]byte("87654321")),
+			PIN:        secrettest.Literal(t, []byte("123456")),
+			SOPIN:      secrettest.Literal(t, []byte("87654321")),
 		},
 		pool: provisioned.pool,
 	}
@@ -230,7 +232,7 @@ func TestBackend_createHardwareStorage_YubiKeyUserPINError(t *testing.T) {
 		config: &Config{
 			Library:    "/usr/lib/ykcs11.so",
 			TokenLabel: provisioned.config.TokenLabel,
-			SOPIN:      types.NewLiteralSecretValue([]byte("87654321")),
+			SOPIN:      secrettest.Literal(t, []byte("87654321")),
 			PIN:        &types.SecretValue{Raw: "credential://unresolved"},
 		},
 		pool: provisioned.pool,

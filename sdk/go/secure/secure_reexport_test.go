@@ -37,18 +37,19 @@ import (
 // ----------------------------------------------------------------------------
 
 var (
-	_ *qrdbsecure.Secret              = (*secure.Secret)(nil)
-	_ *qrdbsecure.Buffer              = (*secure.Buffer)(nil)
-	_ qrdbsecure.PassphraseProvider   = (secure.PassphraseProvider)(nil)
-	_ *qrdbsecure.TerminalProvider    = (*secure.TerminalProvider)(nil)
-	_ *qrdbsecure.StdinProvider       = (*secure.StdinProvider)(nil)
-	_ *qrdbsecure.CallbackProvider    = (*secure.CallbackProvider)(nil)
-	_ *qrdbsecure.NilSecretError      = (*secure.NilSecretError)(nil)
-	_ *qrdbsecure.NilBufferError      = (*secure.NilBufferError)(nil)
-	_ *qrdbsecure.OpenError           = (*secure.OpenError)(nil)
-	_ *qrdbsecure.InvalidSizeError    = (*secure.InvalidSizeError)(nil)
-	_ *qrdbsecure.ProviderError       = (*secure.ProviderError)(nil)
-	_ *qrdbsecure.NotInitializedError = (*secure.NotInitializedError)(nil)
+	_ *qrdbsecure.Secret            = (*secure.Secret)(nil)
+	_ *qrdbsecure.Buffer            = (*secure.Buffer)(nil)
+	_ qrdbsecure.PassphraseProvider = (secure.PassphraseProvider)(nil)
+	_ *qrdbsecure.TerminalProvider  = (*secure.TerminalProvider)(nil)
+	_ *qrdbsecure.StdinProvider     = (*secure.StdinProvider)(nil)
+	_ *qrdbsecure.CallbackProvider  = (*secure.CallbackProvider)(nil)
+	_ *qrdbsecure.NilSecretError    = (*secure.NilSecretError)(nil)
+	_ *qrdbsecure.NilBufferError    = (*secure.NilBufferError)(nil)
+	_ *qrdbsecure.OpenError         = (*secure.OpenError)(nil)
+	_ *qrdbsecure.InvalidSizeError  = (*secure.InvalidSizeError)(nil)
+	_ *qrdbsecure.ProviderError     = (*secure.ProviderError)(nil)
+	_ *qrdbsecure.NestedBorrowError = (*secure.NestedBorrowError)(nil)
+	_ *qrdbsecure.EmptyBorrowError  = (*secure.EmptyBorrowError)(nil)
 )
 
 // TestAliasedValuesCrossTheModuleBoundary proves at runtime that a Secret built

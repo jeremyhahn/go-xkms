@@ -88,7 +88,7 @@ func (f *fakeClusterClient) LeaderEndpoint(_ context.Context, shardID uint64, pr
 	return f.leaderEndpoint, nil
 }
 
-func (f *fakeClusterClient) AddReplica(_ context.Context, shardID, replicaID uint64, raftAddr string) error {
+func (f *fakeClusterClient) AddReplica(_ context.Context, shardID, replicaID uint64, raftAddr, _ string) error {
 	f.addCalls = append(f.addCalls, addReplicaCall{shardID: shardID, replicaID: replicaID, raftAddr: raftAddr})
 	return f.addErr
 }

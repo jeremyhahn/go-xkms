@@ -44,7 +44,7 @@ func TestState_FreshTPM(t *testing.T) {
 	require.NoError(t, err, "the in-process TPM simulator must open; build with -tags tpm_simulator")
 	t.Cleanup(func() { _ = sim.Close() })
 
-	config := newSimConfig()
+	config := newSimConfig(t)
 	params := &Params{
 		Logger:    testLogger(),
 		Config:    config,
@@ -111,7 +111,7 @@ func TestState_OwnedTPM(t *testing.T) {
 	require.NoError(t, err, "the in-process TPM simulator must open; build with -tags tpm_simulator")
 	t.Cleanup(func() { _ = sim.Close() })
 
-	config := newSimConfig()
+	config := newSimConfig(t)
 	params := &Params{
 		Logger:    testLogger(),
 		Config:    config,

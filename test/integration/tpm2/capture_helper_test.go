@@ -9,10 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
+
 	"github.com/google/go-tpm/tpm2/transport"
 	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // setupTPM2WithCapture creates a TPM2 instance with traffic capture enabled
@@ -59,7 +60,7 @@ func setupTPM2WithCapture(t *testing.T) (tpm2lib.TrustedPlatformModule, *TPMCapt
 		EK: &tpm2lib.EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),
 
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
@@ -76,7 +77,7 @@ func setupTPM2WithCapture(t *testing.T) (tpm2lib.TrustedPlatformModule, *TPMCapt
 		},
 		SSRK: &tpm2lib.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			HierarchyAuth: secrettest.Literal(t, []byte(store.DEFAULT_PASSWORD)),
 
 			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{
