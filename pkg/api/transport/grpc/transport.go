@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport/grpcauth"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/pbconv"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
@@ -136,27 +137,14 @@ func (t *Transport) transportCredentialsOption() (grpc.DialOption, error) {
 	return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
 }
 
-// bearerCredentials presents the configured JWT on every RPC as
-// "authorization: Bearer <token>" metadata, over TLS only.
-type bearerCredentials struct{ token string }
-
-// GetRequestMetadata implements credentials.PerRPCCredentials.
-func (b bearerCredentials) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
-	return map[string]string{"authorization": "Bearer " + b.token}, nil
-}
-
-// RequireTransportSecurity implements credentials.PerRPCCredentials: a
-// bearer token never crosses a plaintext connection.
-func (bearerCredentials) RequireTransportSecurity() bool { return true }
-
 // authDialOptions returns the dial options that authenticate every RPC: the
 // configured JWT (transport.WithJWTToken) as bearer metadata. A
 // connection to a redirected leader carries the same options.
 func (t *Transport) authDialOptions() []grpc.DialOption {
-	if t.config == nil || t.config.JWTToken == "" {
+	if t.config == nil {
 		return nil
 	}
-	return []grpc.DialOption{grpc.WithPerRPCCredentials(bearerCredentials{token: t.config.JWTToken})}
+	return grpcauth.DialOptions(t.config.JWTToken)
 }
 
 // Connect establishes a connection to the xkms server via gRPC.

@@ -137,10 +137,3 @@ func TestConnect_UntrustedServerIsRefused(t *testing.T) {
 	require.NoError(t, err)
 	assert.Error(t, tr.Connect(context.Background()))
 }
-
-func TestBearerCredentials(t *testing.T) {
-	md, err := bearerCredentials{token: "t"}.GetRequestMetadata(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"authorization": "Bearer t"}, md)
-	assert.True(t, bearerCredentials{}.RequireTransportSecurity(), "a bearer token never crosses plaintext")
-}

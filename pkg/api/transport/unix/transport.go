@@ -35,13 +35,14 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport/grpcauth"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/pbconv"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials/local"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -149,10 +150,14 @@ func (t *Transport) Connect(ctx context.Context) error {
 
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 	} else {
-		// This package dials only "unix://" addresses (see grpc.NewClient below):
-		// a Unix domain socket, with no network path for a MITM.
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials())) // insecure-ok: Unix domain socket. Allowlisted in Makefile check-insecure-tls.
+		// This package dials only "unix://" addresses (see grpc.NewClient
+		// below): a Unix domain socket, with no network path for a MITM.
+		// Local credentials state exactly that to gRPC, which is what lets
+		// the bearer token below ride the socket (it is refused on a
+		// connection gRPC considers plaintext).
+		opts = append(opts, grpc.WithTransportCredentials(local.NewCredentials()))
 	}
+	opts = append(opts, grpcauth.DialOptions(t.config.JWTToken)...)
 
 	conn, err := grpc.NewClient("unix://"+t.config.Address, opts...)
 	if err != nil {
