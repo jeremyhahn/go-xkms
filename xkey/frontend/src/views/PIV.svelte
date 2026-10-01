@@ -731,12 +731,6 @@
     color: var(--color-on-surface-variant);
   }
 
-  .slot-action {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: auto;
-  }
-
   .slot-empty {
     display: flex;
     flex-direction: column;

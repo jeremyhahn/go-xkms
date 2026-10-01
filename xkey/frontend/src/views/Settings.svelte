@@ -785,7 +785,7 @@
     }
   }
 
-  async function handleDevToolsToggle(e: CustomEvent<boolean>): void {
+  async function handleDevToolsToggle(e: CustomEvent<boolean>): Promise<void> {
     const newValue = e.detail;
     const { error } = await callBackendWithError<void>('AppService', 'SetDeveloperTools', newValue);
     if (error) {

@@ -23,7 +23,8 @@
     description: string;
     config: Array<{ key: string; value: string }>;
     algorithms: string[];
-    capabilities: BackendCapabilityInfo;
+    /** Absent when the backend reported none. */
+    capabilities?: BackendCapabilityInfo;
   }
 
   let backends: BackendDetail[] = [];
@@ -76,7 +77,7 @@
               description: b.description,
               config,
               algorithms: b.algorithms || [],
-              capabilities: b.capabilities || {},
+              capabilities: b.capabilities,
             };
           });
       }
@@ -129,7 +130,10 @@
   }
 
   // Helper to get capability display items
-  function getCapabilityItems(caps: BackendCapabilityInfo): Array<{ name: string; enabled: boolean; icon: string }> {
+  function getCapabilityItems(caps: BackendCapabilityInfo | undefined): Array<{ name: string; enabled: boolean; icon: string }> {
+    if (!caps) {
+      return [];
+    }
     return [
       { name: 'Signing', enabled: caps.signing || false, icon: mdiFileSign },
       { name: 'Encryption', enabled: caps.encryption || false, icon: mdiLock },

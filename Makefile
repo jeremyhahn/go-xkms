@@ -542,6 +542,7 @@ build-xkey-local:
 WEB_APP_DIR := web/app
 SDK_TS_DIR := sdk/ts
 SVELTE_AUTH_DIR := sdk/ts/svelte-auth
+XKEY_FRONTEND_DIR := xkey/frontend
 NPM := $(shell command -v npm 2>/dev/null)
 
 .PHONY: build-sdk-ts
@@ -623,8 +624,33 @@ else
 	@cd $(SVELTE_AUTH_DIR) && npm ci --silent && npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Type-checking and testing web/app...$(RESET)"
 	@cd $(WEB_APP_DIR) && npm ci --silent && npm run check && npm run test:coverage
+	@echo "$(CYAN)$(BOLD)→ Type-checking and testing the xKey GUI frontend...$(RESET)"
+	@cd $(XKEY_FRONTEND_DIR) && npm ci --silent && npm run check -- --fail-on-warnings && npm test
 	@echo "$(GREEN)✓ web UI tests passed$(RESET)"
 endif
+
+# The xKey GUI's Wails bindings are generated from its Go services. The wails
+# CLI is run at the version xkey/go.mod pins, as pkg@version so its own
+# dependencies stay out of xkey's module, with the build tags wails.json names.
+XKEY_WAILS_VERSION = $(shell awk '/github.com\/wailsapp\/wails\/v2 /{print $$2}' xkey/go.mod)
+XKEY_WAILS_TAGS = $(shell sed -n 's/.*"tags": *"\([^"]*\)".*/\1/p' xkey/wails.json)
+
+.PHONY: generate-wailsjs
+## generate-wailsjs: Regenerate the xKey GUI's Wails bindings (xkey/frontend/wailsjs)
+generate-wailsjs:
+	@echo "$(CYAN)$(BOLD)→ Generating the xKey GUI's Wails bindings ($(XKEY_WAILS_VERSION))...$(RESET)"
+	@cd xkey && out=$$(GOWORK=off $(GO) run github.com/wailsapp/wails/v2/cmd/wails@$(XKEY_WAILS_VERSION) generate module -tags "$(XKEY_WAILS_TAGS)" 2>&1) || { echo "$$out"; exit 1; }
+
+.PHONY: check-wailsjs
+## check-wailsjs: Fail when the committed Wails bindings differ from the Go services
+check-wailsjs: generate-wailsjs
+	@if [ -n "$$(git -c core.fileMode=false status --porcelain --untracked-files=all -- $(XKEY_FRONTEND_DIR)/wailsjs)" ]; then \
+		echo "$(RED)$(BOLD)✗ The xKey GUI's Wails bindings are out of date with its Go services:$(RESET)"; \
+		git -c core.fileMode=false status --short -- $(XKEY_FRONTEND_DIR)/wailsjs; \
+		echo "$(YELLOW)  Commit the regenerated $(XKEY_FRONTEND_DIR)/wailsjs (make generate-wailsjs).$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✓ Wails bindings match the Go services$(RESET)"
 
 .PHONY: test-web-e2e
 ## test-web-e2e: Playwright mock-API tier (hermetic; no server required)
@@ -939,6 +965,7 @@ test:
 	@$(MAKE) --no-print-directory test-nofrost
 	@$(MAKE) --no-print-directory test-pkcs11
 	@$(MAKE) --no-print-directory test-web
+	@$(MAKE) --no-print-directory check-wailsjs
 	@echo "$(GREEN)$(BOLD)✓ All unit tests passed (shell + Go + web)!$(RESET)"
 
 .PHONY: test-scripts

@@ -1,0 +1,8 @@
+- **The xKey GUI frontend type-checks clean, and `make test` keeps it that way.**
+  - `svelte-check` reported 15 errors and 2 warnings; all are fixed.
+    - Type drift: `pin_max_attempts` on `SetupChoices`, `sealer_backend` on `GUIConfig`, and a stale `backend_id` on the password add/update params, which the Go service never had.
+    - The `clickOutside` action now declares its `on:clickoutside` event through Svelte's `ActionReturn`.
+    - Smaller fixes: an async function typed `void`, a `size="small"` button, nullable backend capabilities, dead CSS, and a documented-but-unrendered console title.
+    - One was a real bug: the Admin view dropped each backend's `metadata`, so YubiKey detection by library path and the slot re-probe on connect never ran.
+  - `make test` (`test-web`) now runs the xKey frontend's `svelte-check --fail-on-warnings` and its vitest suite, neither of which `make test` ran before.
+- **A Wails bindings drift guard.** `make check-wailsjs` (run by `make test`) regenerates the bindings with the wails CLI at the version `xkey/go.mod` pins (as `pkg@version`, so its dependencies stay out of xkey's module) and the tags `wails.json` names, then fails on any difference from the committed `xkey/frontend/wailsjs`. `make generate-wailsjs` regenerates them. Five binding files are committed as 0755, the mode the generator writes, so regeneration leaves the tree clean.

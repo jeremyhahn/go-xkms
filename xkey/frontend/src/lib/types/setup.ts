@@ -69,6 +69,7 @@ export interface SetupChoices {
   // Enterprise policy fields (frontend-only, used in enterprise wizard)
   organization_name?: string;
   min_pin_length?: number;
+  pin_max_attempts?: number;
   require_encrypted_storage?: boolean;
   require_tpm?: boolean;
   allow_auto_unseal?: boolean;

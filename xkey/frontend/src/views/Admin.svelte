@@ -155,6 +155,7 @@
     icon: string;
     deviceName?: string;
     description?: string;
+    metadata?: Record<string, string>;
   }[] = [];
 
   // UI State
@@ -300,6 +301,7 @@
         icon: iconMap[b.type] || mdiKey,
         deviceName: b.device_name,
         description: b.description,
+        metadata: b.metadata,
       }));
     }
     loading = false;
@@ -1103,7 +1105,7 @@
             {:else}
               <div class="detection-status detection-error">
                 <span class="text-body-medium">{yukDetectError}</span>
-                <Button variant="outline" on:click={detectYubiKey} size="small">Retry Detection</Button>
+                <Button variant="outline" on:click={detectYubiKey} size="sm">Retry Detection</Button>
               </div>
             {/if}
           </div>

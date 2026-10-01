@@ -95,6 +95,9 @@
 
   {#if status}
     <div class="ssh-console-status" role="status" aria-live="polite">
+      {#if title}
+        <span class="ssh-console-title">{title}</span>
+      {/if}
       {status}
       {#if closed}
         <span class="closed-hint">(closed)</span>
@@ -203,6 +206,11 @@
   .closed-hint {
     margin-left: 6px;
     color: rgba(255, 100, 100, 0.8);
+  }
+
+  .ssh-console-title {
+    font-weight: 600;
+    margin-right: 8px;
   }
 
   /* ── Host-key confirmation overlay ── */

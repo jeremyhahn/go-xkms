@@ -84,6 +84,8 @@ export interface GUIConfig {
   fido2_user_intent_check: boolean;
   developer_tools: boolean;
   barrier_auto_unseal_enabled: boolean;
+  /** The default sealing backend ("tpm2", "passphrase", ...); empty for the software default. */
+  sealer_backend?: string;
 }
 
 export interface AutoUnsealStatus {
@@ -615,8 +617,9 @@ export interface AddPasswordParams {
   match_patterns?: string[];
   notes: string;
   folder_path: string;
-  backend_id: string;
   expires_at: string;
+  /** Marks the entry read-only. */
+  read_only?: boolean;
 }
 
 export interface UpdatePasswordParams {
@@ -629,7 +632,6 @@ export interface UpdatePasswordParams {
   match_patterns?: string[];
   notes: string;
   folder_path: string;
-  backend_id: string;
   expires_at: string;
 }
 
