@@ -25,7 +25,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
@@ -119,7 +118,7 @@ func (k *MLDSAPrivateKey) ExportSecretKey() []byte {
 		return nil
 	}
 	defer buf.Destroy()
-	out, err := qrdbsecure.CopyOut(buf)
+	out, err := secure.CopyOut(buf)
 	if err != nil {
 		return nil
 	}
@@ -251,7 +250,7 @@ func (k *MLKEMPrivateKey) ExportSecretKey() []byte {
 		return nil
 	}
 	defer buf.Destroy()
-	out, err := qrdbsecure.CopyOut(buf)
+	out, err := secure.CopyOut(buf)
 	if err != nil {
 		return nil
 	}

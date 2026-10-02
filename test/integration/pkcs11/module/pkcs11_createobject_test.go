@@ -184,9 +184,17 @@ func TestCreateObjectImportedKEKWrapsAndUnwrapsAgainstTheDaemon(t *testing.T) {
 	if rv != module.CKR_OK {
 		t.Fatalf("C_GetAttributeValue(CKA_VALUE) on the unwrapped key returned %s", rv.String())
 	}
-	if !bytes.Equal(attrs[0].Value, targetBytes) {
-		t.Errorf("the unwrapped key is not the key that was wrapped\n got: %x\nwant: %x",
-			attrs[0].Value, targetBytes)
+	// The value comes back sealed in Attribute.Secret; borrow it to compare and
+	// release it afterwards.
+	defer module.ReleaseAttributes(attrs)
+	if err := attrs[0].WithValue(func(value []byte) error {
+		if !bytes.Equal(value, targetBytes) {
+			t.Errorf("the unwrapped key is not the key that was wrapped\n got: %x\nwant: %x",
+				value, targetBytes)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("reading the unwrapped key's value: %v", err)
 	}
 }
 

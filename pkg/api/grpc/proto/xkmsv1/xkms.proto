@@ -2422,7 +2422,10 @@ message SealRequest {
   bytes aad = 4; // Additional authenticated data (optional)
   // The TPM2 sealed object's authorization value. With a TPM policy it counts
   // only inside the policy; without one it is the object's only protection.
-  string password = 5;
+  // It is bytes, not string, so a server can hold it as a slice it wipes. The
+  // wire type is unchanged (both are length-delimited), so peers built against
+  // the string field still interoperate for any UTF-8 password.
+  bytes password = 5;
   // The TPM policy a TPM2 sealed object is bound to: "platform", a named
   // policy of the tenant's scope, or empty for none. A TPM2 seal needs a
   // policy, a password or both.
@@ -2462,8 +2465,9 @@ message UnsealRequest {
   bytes tpm_private = 8;
   bytes wrapped_dek = 9;
   map<string, string> metadata = 10;
-  // The sealed object's authorization value (TPM2).
-  string password = 11;
+  // The sealed object's authorization value (TPM2). bytes for the reason
+  // SealRequest.password is.
+  bytes password = 11;
   // key_version is the sealing key version SealResponse.key_version
   // reported. 0 tries every enabled version, newest first.
   uint32 key_version = 12;

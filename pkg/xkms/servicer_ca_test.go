@@ -1344,7 +1344,7 @@ func TestSignCSR_Attestation_MalformedTrailingCert(t *testing.T) {
 	svc, genuine := signingServiceWithAnchor(t, "yubikey-piv")
 
 	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv",
-		[][]byte{genuine.leafDER, []byte{0x30, 0x82, 0xff, 0xff}}, genuine.leafKey)
+		[][]byte{genuine.leafDER, {0x30, 0x82, 0xff, 0xff}}, genuine.leafKey)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrAttestationVerificationFailed)

@@ -240,16 +240,17 @@ func adoptProtected(dst **secure.Buffer, buf *secure.Buffer) {
 
 // unwrapIntoProtected unwraps AES-GCM wrapped key material directly into a
 // freshly allocated protected buffer, borrowing the protected wrapping key
-// only to build the cipher and the destination only for the decrypt. The
-// plaintext never exists on the ordinary Go heap.
+// only to build the cipher. The plaintext never exists on the ordinary Go
+// heap.
 //
-// The order of operations is load-bearing, not stylistic: secure.NewBuffer is
-// purge-class and takes the same purgeMu that WithBytes holds as a reader, so
-// the destination MUST be allocated before the borrow on key is entered — a
-// purge-class call inside a borrow self-deadlocks (go-qrdb pkg/secure:
-// "Nested borrows are forbidden"). The AES-GCM format makes that possible:
-// the plaintext length is derivable from the wrapped data without the key,
-// and the callback then touches only a plain slice, never pkg/secure.
+// The order of operations is load-bearing, not stylistic: a protected
+// allocation inside a borrow is a nested borrow, which pkg/secure forbids. So
+// the wrapping key is borrowed first, only long enough to expand it into the
+// cipher's key schedule (see keyWrapperFor); that borrow is released; the
+// destination is allocated; and the decrypt then runs under the destination's
+// own borrow with nothing but the cipher, a plain slice, in reach. The AES-GCM
+// format makes this possible: the plaintext length is derivable from the
+// wrapped data without the key.
 //
 // On any failure the destination buffer is destroyed before returning, so no
 // half-filled protected allocation leaks. Returns ErrKeyManagerLocked when
@@ -264,34 +265,46 @@ func unwrapIntoProtected(key *secure.Buffer, wrapped []byte) (*secure.Buffer, er
 		return nil, ErrInvalidWrappedData
 	}
 
+	wrapper, err := keyWrapperFor(key)
+	if err != nil {
+		return nil, err
+	}
+
 	dst, err := secure.NewBuffer(plainLen)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrKeyManagerProtectedMemory, Cause: err}
 	}
 
-	// The two borrows are taken one after the other, never nested: the
-	// wrapping key is borrowed only to expand it into the AES-GCM key
-	// schedule (which crypto/aes keeps on the heap whether or not a borrow
-	// is held, and which retains no reference to the key bytes), then dst
-	// is borrowed for the decrypt itself, so the plaintext is written
-	// straight into protected memory under a held lock.
-	var w *AESGCMKeyWrapper
-	if err := withKeyBytes(key, func(b []byte) error {
-		var werr error
-		w, werr = NewAESGCMKeyWrapper(b)
-		return werr
-	}); err != nil {
-		dst.Destroy()
-		return nil, err
-	}
 	if err := dst.WithBytes(func(raw []byte) error {
-		return w.UnwrapInto(wrapped, raw)
+		return wrapper.UnwrapInto(wrapped, raw)
 	}); err != nil {
 		dst.Destroy()
 		return nil, err
 	}
 
 	return dst, nil
+}
+
+// keyWrapperFor builds an AES-GCM KeyWrapper from a protected key. The key is
+// borrowed only to expand it into the cipher's key schedule, and that borrow is
+// released before keyWrapperFor returns. The wrapper outliving the borrow is
+// safe: aes.NewCipher copies the key into its schedule and retains no reference
+// to the borrowed slice.
+//
+// Returns ErrKeyManagerLocked when key is nil.
+func keyWrapperFor(key *secure.Buffer) (*AESGCMKeyWrapper, error) {
+	var wrapper *AESGCMKeyWrapper
+	if err := withKeyBytes(key, func(b []byte) error {
+		w, err := NewAESGCMKeyWrapper(b)
+		if err != nil {
+			return err
+		}
+		wrapper = w
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return wrapper, nil
 }
 
 // wrapFromProtected wraps the key material held in src under the protected
@@ -311,15 +324,8 @@ func unwrapIntoProtected(key *secure.Buffer, wrapped []byte) (*secure.Buffer, er
 // Returns ErrKeyManagerLocked when key is nil, ErrInvalidWrapSource when src
 // is nil or destroyed, and the KeyWrapper errors otherwise.
 func wrapFromProtected(key, src *secure.Buffer) ([]byte, error) {
-	var wrapper *AESGCMKeyWrapper
-	if err := withKeyBytes(key, func(b []byte) error {
-		w, err := NewAESGCMKeyWrapper(b)
-		if err != nil {
-			return err
-		}
-		wrapper = w
-		return nil
-	}); err != nil {
+	wrapper, err := keyWrapperFor(key)
+	if err != nil {
 		return nil, err
 	}
 	return wrapper.WrapFrom(src)

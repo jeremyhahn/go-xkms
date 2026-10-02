@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -293,7 +294,6 @@ func runOATHAdd(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 	defer enclave.Wipe(secretBytes)
-	secret := string(secretBytes)
 	uri, _ := cmd.Flags().GetString("uri")
 	otpType, _ := cmd.Flags().GetString("type")
 	algorithm, _ := cmd.Flags().GetString("algorithm")
@@ -328,7 +328,7 @@ func runOATHAdd(cmd *cobra.Command, args []string) (err error) {
 		if name == "" {
 			return ErrOATHMissingName
 		}
-		if secret == "" {
+		if len(secretBytes) == 0 {
 			return ErrOATHMissingSecret
 		}
 
@@ -342,8 +342,13 @@ func runOATHAdd(cmd *cobra.Command, args []string) (err error) {
 			Period:    period,
 			CreatedAt: time.Now(),
 		}
-		if err := cred.SetSecret(strings.ToUpper(secret)); err != nil {
-			return &SentinelCauseError{Sentinel: ErrOATHInvalidCredential, Cause: err}
+		// The upper-cased copy handed to the credential is wiped once it has
+		// been stored.
+		upperSecret := bytes.ToUpper(secretBytes)
+		setErr := cred.SetSecret(upperSecret)
+		enclave.Wipe(upperSecret)
+		if setErr != nil {
+			return &SentinelCauseError{Sentinel: ErrOATHInvalidCredential, Cause: setErr}
 		}
 
 		if err := cred.Validate(); err != nil {
@@ -407,10 +412,19 @@ func runOATHList(cmd *cobra.Command, args []string) (err error) {
 			_, _ = fmt.Fprintf(out, "  Counter:   %d\n", cred.Counter)
 		}
 		if showSecrets {
-			_, _ = fmt.Fprintf(out, "  Secret:    %s\n", cred.SecretString())
+			secret, secretErr := cred.Secret()
+			if secretErr != nil {
+				return &SentinelCauseError{Sentinel: ErrOATHInvalidCredential, Cause: secretErr}
+			}
+			_, _ = fmt.Fprintf(out, "  Secret:    %s\n", secret)
+			enclave.Wipe(secret)
 		}
 		if showURI {
-			_, _ = fmt.Fprintf(out, "  URI:       %s\n", cred.ToURI())
+			uri, uriErr := cred.ToURI()
+			if uriErr != nil {
+				return &SentinelCauseError{Sentinel: ErrOATHInvalidCredential, Cause: uriErr}
+			}
+			_, _ = fmt.Fprintf(out, "  URI:       %s\n", uri)
 		}
 		_, _ = fmt.Fprintln(out)
 	}

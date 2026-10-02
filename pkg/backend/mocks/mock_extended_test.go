@@ -109,3 +109,51 @@ func TestMockSymmetricEncrypter_Decrypt_NilData(t *testing.T) {
 		t.Fatal("Decrypt(nil, ...) should return an error, not panic")
 	}
 }
+
+// TestMockSymmetricKey_RawReturnsAnIndependentCopy verifies Raw hands back the
+// key material as a copy the caller may wipe without touching the enclaved
+// original.
+func TestMockSymmetricKey_RawReturnsAnIndependentCopy(t *testing.T) {
+	material := bytes.Repeat([]byte{0x5a}, 32)
+	buf, err := bufferizeKeyMaterial(append([]byte(nil), material...))
+	if err != nil {
+		t.Fatalf("bufferizeKeyMaterial() error = %v", err)
+	}
+	key := &MockSymmetricKey{keyMaterial: buf}
+	defer buf.Destroy()
+
+	first, err := key.Raw()
+	if err != nil {
+		t.Fatalf("Raw() error = %v", err)
+	}
+	if !bytes.Equal(first, material) {
+		t.Fatalf("Raw() = %x, want %x", first, material)
+	}
+	clear(first)
+
+	second, err := key.Raw()
+	if err != nil {
+		t.Fatalf("second Raw() error = %v", err)
+	}
+	if !bytes.Equal(second, material) {
+		t.Error("wiping the first copy altered the enclaved key material")
+	}
+}
+
+// TestMockSymmetricKey_RawOnZeroValue verifies a key whose material was never
+// set yields nil, and a destroyed one reports the error rather than zeros.
+func TestMockSymmetricKey_RawOnZeroValue(t *testing.T) {
+	raw, err := (&MockSymmetricKey{}).Raw()
+	if err != nil || raw != nil {
+		t.Errorf("zero-value Raw() = (%v, %v), want (nil, nil)", raw, err)
+	}
+
+	buf, err := bufferizeKeyMaterial(bytes.Repeat([]byte{1}, 32))
+	if err != nil {
+		t.Fatalf("bufferizeKeyMaterial() error = %v", err)
+	}
+	buf.Destroy()
+	if _, err := (&MockSymmetricKey{keyMaterial: buf}).Raw(); err == nil {
+		t.Error("Raw() on a destroyed buffer returned no error")
+	}
+}

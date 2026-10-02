@@ -678,13 +678,7 @@ func IAKAttributesFromConfig(
 	// so an empty config.Password still yields a non-nil ClearPassword, matching
 	// this function's pre-SecretValue behavior; callers branch on attrs.Password
 	// being nil vs non-nil-but-empty (see key.go, attestation.go).
-	passwordBytes, err := types.SecretValueBytes(config.Password)
-	if err != nil {
-		return nil, err
-	}
-	// NewPassword copies into its own enclave and leaves the source alone.
-	defer secure.Wipe(passwordBytes)
-	password, err := types.NewPassword(passwordBytes)
+	password, err := passwordFromSecretValue(config.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -896,13 +890,7 @@ func IDevIDAttributesFromConfig(config IDevIDConfig) (*types.KeyAttributes, erro
 	// so an empty config.Password still yields a non-nil ClearPassword, matching
 	// this function's pre-SecretValue behavior; callers branch on attrs.Password
 	// being nil vs non-nil-but-empty (see key.go, attestation.go).
-	passwordBytes, err := types.SecretValueBytes(config.Password)
-	if err != nil {
-		return nil, err
-	}
-	// NewPassword copies into its own enclave and leaves the source alone.
-	defer secure.Wipe(passwordBytes)
-	password, err := types.NewPassword(passwordBytes)
+	password, err := passwordFromSecretValue(config.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -984,13 +972,7 @@ func LDevIDAttributesFromConfig(config LDevIDConfig) (*types.KeyAttributes, erro
 	// so an empty config.Password still yields a non-nil ClearPassword, matching
 	// this function's pre-SecretValue behavior; callers branch on attrs.Password
 	// being nil vs non-nil-but-empty (see key.go, attestation.go).
-	passwordBytes, err := types.SecretValueBytes(config.Password)
-	if err != nil {
-		return nil, err
-	}
-	// NewPassword copies into its own enclave and leaves the source alone.
-	defer secure.Wipe(passwordBytes)
-	password, err := types.NewPassword(passwordBytes)
+	password, err := passwordFromSecretValue(config.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -1106,4 +1088,18 @@ func platformPolicyName(enabled bool) string {
 		return types.TPMPolicyPlatform
 	}
 	return ""
+}
+
+// passwordFromSecretValue seals sv's resolved plaintext into a
+// types.Password. A nil or unconfigured sv yields a non-nil, empty password
+// (TPM2's "no authentication"). The plaintext copy SecretValueBytes borrows
+// is wiped before returning, since types.NewPassword copies it into its own
+// enclave rather than taking ownership.
+func passwordFromSecretValue(sv *types.SecretValue) (types.Password, error) {
+	plaintext, err := types.SecretValueBytes(sv)
+	if err != nil {
+		return nil, err
+	}
+	defer secure.Wipe(plaintext)
+	return types.NewPassword(plaintext)
 }

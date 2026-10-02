@@ -476,8 +476,8 @@ func (p *sshStaticPassphraseProvider) Passphrase(_ context.Context, _ string) (*
 	if err != nil {
 		return nil, err
 	}
-	if err := buf.WithBytes(func(b []byte) error {
-		copy(b, p.data)
+	if err := buf.WithBytes(func(dst []byte) error {
+		copy(dst, p.data)
 		return nil
 	}); err != nil {
 		buf.Destroy()

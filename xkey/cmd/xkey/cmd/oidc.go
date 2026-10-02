@@ -41,7 +41,9 @@ import (
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/urlsafety"
 )
 
@@ -97,20 +99,22 @@ func openLaunchURL(rawURL string) error {
 	return browser.OpenURL(validated.String())
 }
 
-// OIDCExecPayload is the JSON structure passed to exec scripts.
+// OIDCExecPayload is the JSON structure passed to exec scripts. The tokens
+// are SecretBytes so they stay wipeable until the script has run; they encode
+// as the same JSON strings the fields held before. The owner calls Wipe.
 type OIDCExecPayload struct {
-	Provider     string   `json:"provider"`
-	Issuer       string   `json:"issuer"`
-	ClientID     string   `json:"client_id"`
-	AccessToken  string   `json:"access_token"`
-	RefreshToken string   `json:"refresh_token,omitempty"`
-	IDToken      string   `json:"id_token,omitempty"`
-	ExpiresAt    string   `json:"expires_at"`
-	ExpiresIn    int64    `json:"expires_in"`
-	Scopes       []string `json:"scopes"`
-	Subject      string   `json:"subject,omitempty"`
-	Email        string   `json:"email,omitempty"`
-	Name         string   `json:"name,omitempty"`
+	Provider     string           `json:"provider"`
+	Issuer       string           `json:"issuer"`
+	ClientID     string           `json:"client_id"`
+	AccessToken  xkms.SecretBytes `json:"access_token"`
+	RefreshToken xkms.SecretBytes `json:"refresh_token,omitempty"`
+	IDToken      xkms.SecretBytes `json:"id_token,omitempty"`
+	ExpiresAt    string           `json:"expires_at"`
+	ExpiresIn    int64            `json:"expires_in"`
+	Scopes       []string         `json:"scopes"`
+	Subject      string           `json:"subject,omitempty"`
+	Email        string           `json:"email,omitempty"`
+	Name         string           `json:"name,omitempty"`
 }
 
 // OIDCDiscoveryDocument represents the OIDC provider configuration.
@@ -123,14 +127,26 @@ type OIDCDiscoveryDocument struct {
 	ScopesSupported       []string `json:"scopes_supported"`
 }
 
-// OIDCTokenResponse represents the token endpoint response.
+// OIDCTokenResponse represents the token endpoint response. The tokens are
+// SecretBytes, decoded straight from the response without becoming Go strings;
+// the owner calls Wipe.
 type OIDCTokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int64  `json:"expires_in"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	IDToken      string `json:"id_token,omitempty"`
-	Scope        string `json:"scope,omitempty"`
+	AccessToken  xkms.SecretBytes `json:"access_token"`
+	TokenType    string           `json:"token_type"`
+	ExpiresIn    int64            `json:"expires_in"`
+	RefreshToken xkms.SecretBytes `json:"refresh_token,omitempty"`
+	IDToken      xkms.SecretBytes `json:"id_token,omitempty"`
+	Scope        string           `json:"scope,omitempty"`
+}
+
+// Wipe zeroes every token the response carries. Safe on a nil receiver.
+func (r *OIDCTokenResponse) Wipe() {
+	if r == nil {
+		return
+	}
+	r.AccessToken.Wipe()
+	r.RefreshToken.Wipe()
+	r.IDToken.Wipe()
 }
 
 // OIDCStoredToken represents a token stored in the token store. See
@@ -683,6 +699,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenExchangeFailed, Cause: err}
 	}
+	defer tokens.Wipe()
 
 	// Parse and validate ID token
 	claims, err := parseIDToken(tokens.IDToken)
@@ -740,7 +757,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 
 	// Start auto-refresh loop if specified
 	if autoRefresh > 0 {
-		if tokens.RefreshToken == "" {
+		if len(tokens.RefreshToken) == 0 {
 			_, _ = fmt.Fprintln(out, "\nWarning: No refresh token received. Auto-refresh will not work.")
 			_, _ = fmt.Fprintln(out, "Tip: Request the 'offline_access' scope to get a refresh token.")
 			return nil
@@ -811,7 +828,9 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 	defer token.Destroy()
 
 	// Parse ID token for claims
-	claims, err := parseIDToken(token.IDToken())
+	idToken := token.IDToken()
+	defer secure.Wipe(idToken)
+	claims, err := parseIDToken(idToken)
 	if err != nil {
 		// If we can't parse the ID token, still show what we have
 		claims = &OIDCIDTokenClaims{}
@@ -837,18 +856,22 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 	}
 
 	_, _ = fmt.Fprintln(out)
+	accessToken := token.AccessToken()
+	defer secure.Wipe(accessToken)
 	if showFull {
-		_, _ = fmt.Fprintf(out, "Access Token:  %s\n", token.AccessToken())
-		if token.IDToken() != "" {
-			_, _ = fmt.Fprintf(out, "ID Token:      %s\n", token.IDToken())
+		_, _ = fmt.Fprintf(out, "Access Token:  %s\n", accessToken)
+		if len(idToken) > 0 {
+			_, _ = fmt.Fprintf(out, "ID Token:      %s\n", idToken)
 		}
 		if token.HasRefreshToken() {
-			_, _ = fmt.Fprintf(out, "Refresh Token: %s\n", token.RefreshToken())
+			refreshToken := token.RefreshToken()
+			defer secure.Wipe(refreshToken)
+			_, _ = fmt.Fprintf(out, "Refresh Token: %s\n", refreshToken)
 		}
 	} else {
-		_, _ = fmt.Fprintf(out, "Access Token:  %s\n", truncateToken(token.AccessToken()))
-		if token.IDToken() != "" {
-			_, _ = fmt.Fprintf(out, "ID Token:      %s\n", truncateToken(token.IDToken()))
+		_, _ = fmt.Fprintf(out, "Access Token:  %s\n", truncateToken(accessToken))
+		if len(idToken) > 0 {
+			_, _ = fmt.Fprintf(out, "ID Token:      %s\n", truncateToken(idToken))
 		}
 	}
 
@@ -917,21 +940,24 @@ func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 	}
 
 	// Refresh tokens
-	newTokens, err := refreshTokens(tokenEndpoint, token.ClientID, token.RefreshToken(), tokenEncoding)
+	refreshToken := token.RefreshToken()
+	defer secure.Wipe(refreshToken)
+	newTokens, err := refreshTokens(tokenEndpoint, token.ClientID, refreshToken, tokenEncoding)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenRefreshFailed, Cause: err}
 	}
+	defer newTokens.Wipe()
 
 	// Update stored token
 	if err := token.SetAccessToken(newTokens.AccessToken); err != nil {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
 	}
-	if newTokens.RefreshToken != "" {
+	if len(newTokens.RefreshToken) > 0 {
 		if err := token.SetRefreshToken(newTokens.RefreshToken); err != nil {
 			return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
 		}
 	}
-	if newTokens.IDToken != "" {
+	if len(newTokens.IDToken) > 0 {
 		if err := token.SetIDToken(newTokens.IDToken); err != nil {
 			return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
 		}
@@ -1506,11 +1532,13 @@ func exchangeCodeForTokens(endpoint, clientID, clientSecret, code, redirectURL, 
 
 // refreshTokens refreshes tokens using a refresh token.
 // encoding selects the token request body format; see exchangeCodeForTokens.
-func refreshTokens(endpoint, clientID, refreshToken string, encoding oidc.TokenEncoding) (*OIDCTokenResponse, error) {
+func refreshTokens(endpoint, clientID string, refreshToken []byte, encoding oidc.TokenEncoding) (*OIDCTokenResponse, error) {
+	// url.Values is string-typed, so the refresh token becomes a string here
+	// and only here, to form the token request body.
 	data := url.Values{
 		"grant_type":    {"refresh_token"},
 		"client_id":     {clientID},
-		"refresh_token": {refreshToken},
+		"refresh_token": {string(refreshToken)},
 	}
 
 	return doOIDCTokenRequest(endpoint, data, encoding)
@@ -1545,6 +1573,7 @@ func doOIDCTokenRequest(endpoint string, data url.Values, encoding oidc.TokenEnc
 
 	var tokens OIDCTokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tokens); err != nil {
+		tokens.Wipe()
 		return nil, err
 	}
 
@@ -1552,12 +1581,14 @@ func doOIDCTokenRequest(endpoint string, data url.Values, encoding oidc.TokenEnc
 }
 
 // parseIDToken parses an ID token and extracts claims.
-func parseIDToken(idToken string) (*OIDCIDTokenClaims, error) {
-	if idToken == "" {
+func parseIDToken(idToken []byte) (*OIDCIDTokenClaims, error) {
+	if len(idToken) == 0 {
 		return &OIDCIDTokenClaims{}, nil
 	}
 
-	token, err := jwt.ParseSigned(idToken, []jose.SignatureAlgorithm{
+	// go-jose parses a compact JWS from a string, so the ID token becomes a
+	// string here and only here.
+	token, err := jwt.ParseSigned(string(idToken), []jose.SignatureAlgorithm{
 		jose.RS256, jose.RS384, jose.RS512,
 		jose.ES256, jose.ES384, jose.ES512,
 		jose.PS256, jose.PS384, jose.PS512,
@@ -1656,12 +1687,12 @@ const truncateTokenPrefixLen = 8
 // a full token, however short: the result is at most an 8-character prefix
 // followed by the token's total length, e.g. "abcd1234… (1234 chars)". An
 // empty token formats as "(0 chars)".
-func truncateToken(token string) string {
+func truncateToken(token []byte) string {
 	prefix := token
 	if len(prefix) > truncateTokenPrefixLen {
 		prefix = prefix[:truncateTokenPrefixLen]
 	}
-	if prefix == "" {
+	if len(prefix) == 0 {
 		return fmt.Sprintf("(%d chars)", len(token))
 	}
 	return fmt.Sprintf("%s… (%d chars)", prefix, len(token))
@@ -1754,12 +1785,15 @@ func runAutoRefresh(tokenEndpoint, clientID string, store *oidcCLITokenStore, to
 		}
 
 		// Refresh the token
-		newTokens, err := refreshTokens(tokenEndpoint, clientID, token.RefreshToken(), encoding)
+		refreshToken := token.RefreshToken()
+		defer secure.Wipe(refreshToken)
+		newTokens, err := refreshTokens(tokenEndpoint, clientID, refreshToken, encoding)
 		if err != nil {
 			log("  Error refreshing: %v\n", err)
 			updateStatus("error", fmt.Sprintf("refresh failed: %v", err))
 			return false
 		}
+		defer newTokens.Wipe()
 
 		// Update stored token
 		if err := token.SetAccessToken(newTokens.AccessToken); err != nil {
@@ -1767,14 +1801,14 @@ func runAutoRefresh(tokenEndpoint, clientID string, store *oidcCLITokenStore, to
 			updateStatus("error", fmt.Sprintf("failed to store token: %v", err))
 			return false
 		}
-		if newTokens.RefreshToken != "" {
+		if len(newTokens.RefreshToken) > 0 {
 			if err := token.SetRefreshToken(newTokens.RefreshToken); err != nil {
 				log("  Error storing token: %v\n", err)
 				updateStatus("error", fmt.Sprintf("failed to store token: %v", err))
 				return false
 			}
 		}
-		if newTokens.IDToken != "" {
+		if len(newTokens.IDToken) > 0 {
 			if err := token.SetIDToken(newTokens.IDToken); err != nil {
 				log("  Error storing token: %v\n", err)
 				updateStatus("error", fmt.Sprintf("failed to store token: %v", err))
@@ -1794,20 +1828,26 @@ func runAutoRefresh(tokenEndpoint, clientID string, store *oidcCLITokenStore, to
 
 		// Execute script if specified
 		if execCmd != "" {
-			claims, err := parseIDToken(token.IDToken())
+			idToken := token.IDToken()
+			defer secure.Wipe(idToken)
+			claims, err := parseIDToken(idToken)
 			if err != nil {
 				// A malformed ID token means the claims below cannot be
 				// trusted; skip this cycle's exec hook rather than run it
 				// with an empty Subject/Email/Name.
 				log("  Error parsing ID token, skipping exec hook: %v\n", err)
 			} else {
+				accessToken := token.AccessToken()
+				defer secure.Wipe(accessToken)
+				latestRefreshToken := token.RefreshToken()
+				defer secure.Wipe(latestRefreshToken)
 				payload := OIDCExecPayload{
 					Provider:     token.Issuer,
 					Issuer:       token.Issuer,
 					ClientID:     token.ClientID,
-					AccessToken:  token.AccessToken(),
-					RefreshToken: token.RefreshToken(),
-					IDToken:      token.IDToken(),
+					AccessToken:  accessToken,
+					RefreshToken: latestRefreshToken,
+					IDToken:      idToken,
 					ExpiresAt:    token.ExpiresAt.Format(time.RFC3339),
 					ExpiresIn:    newTokens.ExpiresIn,
 					Scopes:       token.Scopes,
@@ -1856,16 +1896,19 @@ func executeOIDCScript(out io.Writer, cmdStr string, payload OIDCExecPayload) er
 	if err != nil {
 		return &WrappedError{Msg: "failed to marshal payload", Err: err}
 	}
+	defer secure.Wipe(payloadJSON)
 	cmd.Stdin = bytes.NewReader(payloadJSON)
 
-	// Also set environment variables for simpler scripts
+	// Also set environment variables for simpler scripts. A process
+	// environment is []string, so the tokens become strings here and only
+	// here: this is the one place the script contract forces it.
 	cmd.Env = append(os.Environ(),
 		"OIDC_PROVIDER="+payload.Provider,
 		"OIDC_ISSUER="+payload.Issuer,
 		"OIDC_CLIENT_ID="+payload.ClientID,
-		"OIDC_ACCESS_TOKEN="+payload.AccessToken,
-		"OIDC_REFRESH_TOKEN="+payload.RefreshToken,
-		"OIDC_ID_TOKEN="+payload.IDToken,
+		"OIDC_ACCESS_TOKEN="+string(payload.AccessToken),
+		"OIDC_REFRESH_TOKEN="+string(payload.RefreshToken),
+		"OIDC_ID_TOKEN="+string(payload.IDToken),
 		"OIDC_EXPIRES_AT="+payload.ExpiresAt,
 		"OIDC_EXPIRES_IN="+fmt.Sprintf("%d", payload.ExpiresIn),
 		"OIDC_SCOPES="+strings.Join(payload.Scopes, " "),

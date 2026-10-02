@@ -120,7 +120,7 @@ func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.BackendStore
 	}
 	// The secret lives in protected memory behind SetSecret (#210); it is no
 	// longer a literal field.
-	require.NoError(t, githubCred.SetSecret("JBSWY3DPEHPK3PXP"))
+	require.NoError(t, githubCred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
 	require.NoError(t, oathStore.Add(githubCred))
 	oathSvc := NewOATHService(oathStore)
 

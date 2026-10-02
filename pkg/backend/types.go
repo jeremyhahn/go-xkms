@@ -15,6 +15,7 @@ package backend
 
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // This file provides convenience re-exports of types from pkg/types to the backend package.
@@ -207,8 +208,16 @@ func (p StaticPassword) Bytes() []byte {
 	return []byte(p)
 }
 
-func (p StaticPassword) String() (string, error) {
-	return string(p), nil
+// WithBytes lends a throwaway copy of the password to fn and wipes it.
+func (p StaticPassword) WithBytes(fn func([]byte) error) error {
+	b := p.Bytes()
+	defer secure.Wipe(b)
+	return fn(b)
+}
+
+// String returns types.PasswordRedacted, never the password.
+func (p StaticPassword) String() string {
+	return types.PasswordRedacted
 }
 
 func (p StaticPassword) Clear() {
@@ -222,8 +231,14 @@ func (p NoPassword) Bytes() []byte {
 	return nil
 }
 
-func (p NoPassword) String() (string, error) {
-	return "", nil
+// WithBytes calls fn with a nil slice: there is no password.
+func (p NoPassword) WithBytes(fn func([]byte) error) error {
+	return fn(nil)
+}
+
+// String returns types.PasswordRedacted.
+func (p NoPassword) String() string {
+	return types.PasswordRedacted
 }
 
 func (p NoPassword) Clear() {

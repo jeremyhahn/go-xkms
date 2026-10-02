@@ -1601,6 +1601,7 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 // within the caller's tenant (go-xkms#1228).
 func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params SealParams
+	defer params.Password.Wipe()
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
@@ -1652,6 +1653,7 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 // tenant's default sealing key -- does not unseal here (go-xkms#1228).
 func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UnsealParams
+	defer params.Password.Wipe()
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}

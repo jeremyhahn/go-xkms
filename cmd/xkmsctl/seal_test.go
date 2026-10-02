@@ -40,6 +40,12 @@ type mockSealClient struct {
 	// lastSeal and lastUnseal are the last requests received.
 	lastSeal   *client.SealRequest
 	lastUnseal *client.UnsealRequest
+
+	// sealPassword and unsealPassword are the passwords as they were when the
+	// request arrived. The caller wipes its request once the call returns, so
+	// the request itself no longer holds them.
+	sealPassword   string
+	unsealPassword string
 }
 
 func (m *mockSealClient) Connect(ctx context.Context) error {
@@ -53,11 +59,13 @@ func (m *mockSealClient) Close() error {
 
 func (m *mockSealClient) Seal(ctx context.Context, req *client.SealRequest) (*client.SealResponse, error) {
 	m.lastSeal = req
+	m.sealPassword = string(req.Password)
 	return m.sealResp, m.sealErr
 }
 
 func (m *mockSealClient) Unseal(ctx context.Context, req *client.UnsealRequest) (*client.UnsealResponse, error) {
 	m.lastUnseal = req
+	m.unsealPassword = string(req.Password)
 	return m.unsealResp, m.unsealErr
 }
 

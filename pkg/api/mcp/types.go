@@ -680,7 +680,7 @@ type SealParams struct {
 	// Password is the TPM2 sealed object's authorization value. With a TPM
 	// policy it counts only inside the policy; without one it is the
 	// object's only protection.
-	Password string `json:"password,omitempty"`
+	Password types.SecretBytes `json:"password,omitempty"`
 	// TPMPolicy names the TPM policy a TPM2 sealed object is bound to:
 	// "platform", a named policy of the tenant's scope, or empty for none. A
 	// TPM2 seal needs a policy, a password or both.
@@ -718,7 +718,7 @@ type UnsealParams struct {
 	// Metadata is the backend-specific data the seal returned.
 	Metadata map[string][]byte `json:"metadata,omitempty"`
 	// Password is the sealed object's authorization value (TPM2).
-	Password string `json:"password,omitempty"`
+	Password types.SecretBytes `json:"password,omitempty"`
 	// KeyVersion is the sealing key version the seal reported. Zero tries
 	// every enabled version, newest first.
 	KeyVersion uint32 `json:"key_version,omitempty"`

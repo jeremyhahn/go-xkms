@@ -14,12 +14,14 @@
 package cdp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -46,7 +48,7 @@ type StoredCredential struct {
 	// mlocked, guard-paged protected memory (go-xkms#587). It is
 	// unexported so no consumer can hold the key material as an
 	// unwipeable Go string; use SetPrivateKey to store it and
-	// PrivateKeyString to export a copy at a serialization boundary. nil
+	// PrivateKey to export a copy at a serialization boundary. nil
 	// means no private key is set. The persisted JSON form keeps the
 	// historical "PrivateKey" key via MarshalJSON/UnmarshalJSON.
 	privateKey *secure.Buffer
@@ -58,23 +60,19 @@ type StoredCredential struct {
 	SignCount int
 }
 
-// SetPrivateKey stores the standard-base64-encoded PKCS#8 private key in
-// protected memory, replacing (and destroying) any previous value. The
-// value is stored verbatim — exactly what field assignment used to do. An
-// empty key clears the stored value.
-//
-// The input string itself cannot be wiped; callers holding one already sit
-// at a serialization boundary (the CDP WebAuthn wire JSON) this package
-// cannot reach.
+// SetPrivateKey copies the standard-base64-encoded PKCS#8 private key into
+// protected memory, replacing (and destroying) any previous value. The value
+// is stored verbatim. An empty key clears the stored value. key stays the
+// caller's, who wipes it.
 //
 // Returns a wrapped ErrProtectedMemory if the protected allocation fails.
-func (c *StoredCredential) SetPrivateKey(key string) error {
-	if key == "" {
+func (c *StoredCredential) SetPrivateKey(key []byte) error {
+	if len(key) == 0 {
 		c.privateKey.Destroy()
 		c.privateKey = nil
 		return nil
 	}
-	buf, err := secure.NewBufferFromBytes([]byte(key))
+	buf, err := secure.NewBufferFromBytes(bytes.Clone(key))
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
 	}
@@ -88,25 +86,19 @@ func (c *StoredCredential) HasPrivateKey() bool {
 	return c != nil && c.privateKey != nil
 }
 
-// PrivateKeyString returns a copy of the standard-base64-encoded PKCS#8
-// private key as a string, or "" when no private key is set.
-//
-// A Go string cannot be wiped, so calling this re-mints exactly the
-// exposure the protected field exists to remove — it is for serialization
-// boundaries only (the CDP WebAuthn wire JSON, credential capture/sync),
-// where the surrounding format is a string anyway.
-func (c *StoredCredential) PrivateKeyString() string {
+// PrivateKey returns a caller-owned copy of the standard-base64-encoded PKCS#8
+// private key, or nil when no private key is set. The caller MUST wipe it
+// (secure.Wipe) as soon as it has been used. Returns a wrapped
+// ErrProtectedMemory if the protected buffer can no longer be read.
+func (c *StoredCredential) PrivateKey() ([]byte, error) {
 	if c == nil || c.privateKey == nil {
-		return ""
+		return nil, nil
 	}
-	var out string
-	if err := c.privateKey.WithBytes(func(b []byte) error {
-		out = string(b) //secure:unwiped serialization boundary: the CDP WebAuthn wire JSON carries the key as a string
-		return nil
-	}); err != nil {
-		return ""
+	out, err := secure.CopyOut(c.privateKey)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
 	}
-	return out
+	return out, nil
 }
 
 // storedCredentialJSON is the persisted JSON form of StoredCredential. It
@@ -115,12 +107,12 @@ func (c *StoredCredential) PrivateKeyString() string {
 // base64 string exactly as it did when PrivateKey was an exported string
 // field.
 type storedCredentialJSON struct {
-	CredentialID         string `json:"CredentialID"`
-	IsResidentCredential bool   `json:"IsResidentCredential"`
-	RpID                 string `json:"RpID"`
-	PrivateKey           string `json:"PrivateKey"`
-	UserHandle           string `json:"UserHandle"`
-	SignCount            int    `json:"SignCount"`
+	CredentialID         string           `json:"CredentialID"`
+	IsResidentCredential bool             `json:"IsResidentCredential"`
+	RpID                 string           `json:"RpID"`
+	PrivateKey           xkms.SecretBytes `json:"PrivateKey"`
+	UserHandle           string           `json:"UserHandle"`
+	SignCount            int              `json:"SignCount"`
 }
 
 // MarshalJSON implements json.Marshaler, exporting the protected private
@@ -138,20 +130,27 @@ type storedCredentialJSON struct {
 // both StoredCredential and *StoredCredential, so json.Marshal reaches it
 // either way.
 func (c StoredCredential) MarshalJSON() ([]byte, error) {
-	return json.Marshal(storedCredentialJSON{
+	privateKey, err := c.PrivateKey()
+	if err != nil {
+		return nil, err
+	}
+	defer secure.Wipe(privateKey)
+	wire := storedCredentialJSON{
 		CredentialID:         c.CredentialID,
 		IsResidentCredential: c.IsResidentCredential,
 		RpID:                 c.RpID,
-		PrivateKey:           c.PrivateKeyString(),
+		PrivateKey:           privateKey,
 		UserHandle:           c.UserHandle,
 		SignCount:            c.SignCount,
-	})
+	}
+	return json.Marshal(wire)
 }
 
 // UnmarshalJSON implements json.Unmarshaler, adopting the "PrivateKey"
 // JSON key into protected memory.
 func (c *StoredCredential) UnmarshalJSON(data []byte) error {
 	var aux storedCredentialJSON
+	defer aux.PrivateKey.Wipe()
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
@@ -214,6 +213,7 @@ func (b *Bridge) handleEvent(method string, params json.RawMessage) {
 	}
 
 	var ev credentialAddedEvent
+	defer ev.Credential.Wipe()
 	if err := json.Unmarshal(params, &ev); err != nil {
 		b.logger.Warn("CDP credentialAdded parse failed",
 			slog.String("error", err.Error()))
@@ -231,7 +231,7 @@ func (b *Bridge) persistCaptured(cred Credential) {
 		return
 	}
 
-	if cred.CredentialID == "" || cred.PrivateKey == "" {
+	if cred.CredentialID == "" || len(cred.PrivateKey) == 0 {
 		b.logger.Warn("CDP captured credential missing id or key; skipping",
 			slog.String("rpId", cred.RpID))
 		return
@@ -334,16 +334,29 @@ func (b *Bridge) SyncCredentials(ctx context.Context, credentials []StoredCreden
 	var failCount int
 
 	for i := range credentials {
+		privateKey, keyErr := credentials[i].PrivateKey()
+		if keyErr != nil {
+			failCount++
+			if firstErr == nil {
+				firstErr = keyErr
+			}
+			b.logger.Warn("failed to read credential key for sync",
+				slog.String("credentialId", credentials[i].CredentialID),
+				slog.String("error", keyErr.Error()))
+			continue
+		}
 		cred := &Credential{
 			CredentialID:         credentials[i].CredentialID,
 			IsResidentCredential: credentials[i].IsResidentCredential,
 			RpID:                 credentials[i].RpID,
-			PrivateKey:           credentials[i].PrivateKeyString(),
+			PrivateKey:           privateKey,
 			UserHandle:           credentials[i].UserHandle,
 			SignCount:            credentials[i].SignCount,
 		}
 
-		if err := b.client.AddCredential(ctx, b.authenticatorID, cred); err != nil {
+		addErr := b.client.AddCredential(ctx, b.authenticatorID, cred)
+		secure.Wipe(privateKey)
+		if err := addErr; err != nil {
 			failCount++
 			if firstErr == nil {
 				firstErr = err
@@ -392,6 +405,7 @@ func (b *Bridge) CaptureAll(ctx context.Context) error {
 
 	for i := range creds {
 		b.persistCaptured(creds[i])
+		creds[i].Wipe()
 	}
 
 	b.logger.Info("CDP shutdown credential sweep complete",

@@ -18,7 +18,6 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Returns the Endorsement Public Key
@@ -193,13 +192,7 @@ func applyDevIDConfig(
 	platformPolicy bool,
 	password *types.SecretValue) error {
 
-	passwordBytes, err := types.SecretValueBytes(password)
-	if err != nil {
-		return err
-	}
-	// NewPassword copies into its own enclave and leaves the source alone.
-	defer secure.Wipe(passwordBytes)
-	pw, err := types.NewPassword(passwordBytes)
+	pw, err := passwordFromSecretValue(password)
 	if err != nil {
 		return err
 	}
@@ -872,9 +865,8 @@ func (tpm *TPM2) CreateIAK(
 	var inScheme tpm2.TPMTSigScheme
 
 	if ekAttrs.TPMAttributes.HierarchyAuth != nil {
-		// Check if hierarchy auth is valid (error passwords return error from String())
-		_, err = ekAttrs.TPMAttributes.HierarchyAuth.String()
-		if err != nil {
+		// Check if hierarchy auth is readable (placeholder passwords report why not)
+		if err := requireReadable(ekAttrs.TPMAttributes.HierarchyAuth); err != nil {
 			return nil, err
 		}
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth.Bytes()

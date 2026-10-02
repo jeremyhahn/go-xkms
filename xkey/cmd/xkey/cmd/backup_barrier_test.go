@@ -94,7 +94,7 @@ func TestBackupLifecycle_BarrierBackedOATHStore(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, creds, 1)
 	assert.Equal(t, "BarrierOATH", creds[0].Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", creds[0].SecretString())
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(creds[0]))
 }
 
 func TestResolveOATHBackupStore_BarrierInitialized_UsesBackendStore(t *testing.T) {

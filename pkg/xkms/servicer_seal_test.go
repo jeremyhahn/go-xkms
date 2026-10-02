@@ -583,7 +583,7 @@ func TestUnseal_WithPassword(t *testing.T) {
 	_, err = svc.Unseal(context.Background(), &transport.UnsealRequest{
 		Backend:    "software",
 		Ciphertext: []byte("encrypted"),
-		Password:   "my-tpm-auth",
+		Password:   []byte("my-tpm-auth"),
 	})
 	require.NoError(t, err)
 
@@ -809,7 +809,7 @@ func TestSeal_PasswordMapping(t *testing.T) {
 	_, err = svc.Seal(context.Background(), &transport.SealRequest{
 		Backend:  "software",
 		Data:     []byte("secret"),
-		Password: "my-seal-password",
+		Password: []byte("my-seal-password"),
 	})
 	require.NoError(t, err)
 

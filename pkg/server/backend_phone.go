@@ -19,7 +19,7 @@ import (
 
 	phonebackend "github.com/jeremyhahn/go-xkms/pkg/backend/phone"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	// Register the Android platform verifier for phone attestation.
 	_ "github.com/jeremyhahn/go-xkms/pkg/backend/phone/android"
@@ -89,10 +89,9 @@ func (s *Server) RegisterPhoneBackend(sender phonebackend.Sender) error {
 	// *types.SecretReferenceUnresolvedError rather than using the unclaimed
 	// reference text as the Noise key.
 	//
-	// phonebackend.Config.NoiseStaticKey takes a plain hex string; the
-	// plaintext leaves phoneCfg.NoiseStaticKey's enclave only for this
-	// assignment, the accepted boundary for a downstream API that is not
-	// itself enclave-aware.
+	// phonebackend.Config.NoiseStaticKey is validated, never read, by the
+	// backend, so the plaintext is handed over as bytes and wiped below as
+	// soon as NewBackend returns.
 	noiseStaticKey, err := types.SecretValueBytes(phoneCfg.NoiseStaticKey)
 	if err != nil {
 		return errors.Join(ErrPhoneBackendCreate, err)
@@ -102,7 +101,7 @@ func (s *Server) RegisterPhoneBackend(sender phonebackend.Sender) error {
 	backendConfig := &phonebackend.Config{
 		Transport:      phoneCfg.Transport,
 		DeviceAddress:  phoneCfg.DeviceAddress,
-		NoiseStaticKey: string(noiseStaticKey),
+		NoiseStaticKey: types.SecretBytes(noiseStaticKey),
 		PhoneStaticKey: phoneCfg.PhoneStaticKey,
 		RequestTimeout: phoneCfg.RequestTimeout,
 		Logger:         s.logger,

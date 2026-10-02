@@ -39,6 +39,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/oidc"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // newDetachedOIDCCmd builds a private copy of an oidc subcommand's flags,
@@ -95,7 +96,7 @@ func TestOpenOIDCTokenStore_NoBarrier_WarnsAndUsesFileStore(t *testing.T) {
 	loaded, err := loadToken(cmd, defaultOIDCTokenStorePath)
 	require.NoError(t, err)
 	defer loaded.Destroy()
-	assert.Equal(t, "access-1", loaded.AccessToken())
+	assert.Equal(t, "access-1", string(loaded.AccessToken()))
 }
 
 func TestOpenOIDCTokenStore_BarrierInitialized_WritesCiphertextNotPlaintext(t *testing.T) {
@@ -129,8 +130,8 @@ func TestOpenOIDCTokenStore_BarrierInitialized_WritesCiphertextNotPlaintext(t *t
 	loaded, err := loadToken(loadCmd, defaultOIDCTokenStorePath)
 	require.NoError(t, err)
 	defer loaded.Destroy()
-	assert.Equal(t, "secret-access-token", loaded.AccessToken())
-	assert.Equal(t, "secret-refresh-token", loaded.RefreshToken())
+	assert.Equal(t, "secret-access-token", string(loaded.AccessToken()))
+	assert.Equal(t, "secret-refresh-token", string(loaded.RefreshToken()))
 }
 
 func TestOpenOIDCTokenStore_BarrierWrongPassword_TypedRefusal(t *testing.T) {
@@ -184,7 +185,7 @@ func TestOpenOIDCTokenStore_ExplicitTokenStoreFlagBypassesBarrier(t *testing.T) 
 	loaded, err := loadToken(cmd, store)
 	require.NoError(t, err)
 	defer loaded.Destroy()
-	assert.Equal(t, "explicit-access", loaded.AccessToken())
+	assert.Equal(t, "explicit-access", string(loaded.AccessToken()))
 }
 
 // TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick proves the
@@ -210,8 +211,8 @@ func TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick(t *testing.T
 		refreshes.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(OIDCTokenResponse{
-			AccessToken:  "rotated-access",
-			RefreshToken: "rotated-refresh",
+			AccessToken:  xkms.SecretBytes("rotated-access"),
+			RefreshToken: xkms.SecretBytes("rotated-refresh"),
 			ExpiresIn:    3600,
 		})
 	}))
@@ -260,5 +261,5 @@ func TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick(t *testing.T
 	loaded, err := store.Load()
 	require.NoError(t, err)
 	defer loaded.Destroy()
-	assert.Equal(t, "rotated-access", loaded.AccessToken())
+	assert.Equal(t, "rotated-access", string(loaded.AccessToken()))
 }

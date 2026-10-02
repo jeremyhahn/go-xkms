@@ -30,6 +30,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/pkg/oidc"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func TestOIDCCmd_Help(t *testing.T) {
@@ -529,13 +530,13 @@ func TestStoreAndLoadToken(t *testing.T) {
 		ExpiresAt: time.Now().Add(time.Hour),
 		Scopes:    []string{"openid", "profile", "email"},
 	}
-	if err := token.SetAccessToken("access-token-123"); err != nil {
+	if err := token.SetAccessToken([]byte("access-token-123")); err != nil {
 		t.Fatalf("SetAccessToken failed: %v", err)
 	}
-	if err := token.SetRefreshToken("refresh-token-456"); err != nil {
+	if err := token.SetRefreshToken([]byte("refresh-token-456")); err != nil {
 		t.Fatalf("SetRefreshToken failed: %v", err)
 	}
-	if err := token.SetIDToken("id-token-789"); err != nil {
+	if err := token.SetIDToken([]byte("id-token-789")); err != nil {
 		t.Fatalf("SetIDToken failed: %v", err)
 	}
 	defer token.Destroy()
@@ -553,10 +554,10 @@ func TestStoreAndLoadToken(t *testing.T) {
 	}
 	defer loaded.Destroy()
 
-	if loaded.AccessToken() != token.AccessToken() {
+	if !bytes.Equal(loaded.AccessToken(), token.AccessToken()) {
 		t.Errorf("AccessToken = %q, want %q", loaded.AccessToken(), token.AccessToken())
 	}
-	if loaded.RefreshToken() != token.RefreshToken() {
+	if !bytes.Equal(loaded.RefreshToken(), token.RefreshToken()) {
 		t.Errorf("RefreshToken = %q, want %q", loaded.RefreshToken(), token.RefreshToken())
 	}
 	if loaded.ClientID != token.ClientID {
@@ -684,7 +685,7 @@ func TestTruncateToken_NeverPrintsFullToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := truncateToken(tt.token)
+			got := truncateToken([]byte(tt.token))
 			if got != tt.want {
 				t.Errorf("truncateToken(%q) = %q, want %q", tt.token, got, tt.want)
 			}
@@ -734,7 +735,7 @@ func TestFormatDuration(t *testing.T) {
 }
 
 func TestParseIDToken_Empty(t *testing.T) {
-	claims, err := parseIDToken("")
+	claims, err := parseIDToken([]byte(""))
 	if err != nil {
 		t.Fatalf("parseIDToken failed: %v", err)
 	}
@@ -744,7 +745,7 @@ func TestParseIDToken_Empty(t *testing.T) {
 }
 
 func TestParseIDToken_Invalid(t *testing.T) {
-	_, err := parseIDToken("not-a-valid-jwt")
+	_, err := parseIDToken([]byte("not-a-valid-jwt"))
 	if err == nil {
 		t.Error("parseIDToken should fail with invalid token")
 	}
@@ -766,7 +767,7 @@ func TestOIDCTokenStore_FilePermissions(t *testing.T) {
 	cmd := oidcExplicitStoreCmd(t, storePath)
 
 	token := &OIDCStoredToken{Provider: "https://example.com"}
-	if err := token.SetAccessToken("secret-token"); err != nil {
+	if err := token.SetAccessToken([]byte("secret-token")); err != nil {
 		t.Fatalf("SetAccessToken failed: %v", err)
 	}
 	defer token.Destroy()
@@ -838,11 +839,11 @@ func TestExchangeCodeForTokens_Success(t *testing.T) {
 		}
 
 		response := OIDCTokenResponse{
-			AccessToken:  "access-token-123",
+			AccessToken:  xkms.SecretBytes("access-token-123"),
 			TokenType:    "Bearer",
 			ExpiresIn:    3600,
-			RefreshToken: "refresh-token-456",
-			IDToken:      "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IlRlc3QgVXNlciIsImlhdCI6MTUxNjIzOTAyMn0.test",
+			RefreshToken: xkms.SecretBytes("refresh-token-456"),
+			IDToken:      xkms.SecretBytes("eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IlRlc3QgVXNlciIsImlhdCI6MTUxNjIzOTAyMn0.test"),
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -855,10 +856,10 @@ func TestExchangeCodeForTokens_Success(t *testing.T) {
 		t.Fatalf("exchangeCodeForTokens failed: %v", err)
 	}
 
-	if tokens.AccessToken != "access-token-123" {
+	if string(tokens.AccessToken) != "access-token-123" {
 		t.Errorf("AccessToken = %q, want %q", tokens.AccessToken, "access-token-123")
 	}
-	if tokens.RefreshToken != "refresh-token-456" {
+	if string(tokens.RefreshToken) != "refresh-token-456" {
 		t.Errorf("RefreshToken = %q, want %q", tokens.RefreshToken, "refresh-token-456")
 	}
 	if tokens.ExpiresIn != 3600 {
@@ -901,7 +902,7 @@ func TestExchangeCodeForTokens_JSONEncoding(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(OIDCTokenResponse{
-			AccessToken: "access-token-123",
+			AccessToken: xkms.SecretBytes("access-token-123"),
 			TokenType:   "Bearer",
 			ExpiresIn:   3600,
 		})
@@ -912,7 +913,7 @@ func TestExchangeCodeForTokens_JSONEncoding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exchangeCodeForTokens with json encoding failed: %v", err)
 	}
-	if tokens.AccessToken != "access-token-123" {
+	if string(tokens.AccessToken) != "access-token-123" {
 		t.Errorf("AccessToken = %q, want %q", tokens.AccessToken, "access-token-123")
 	}
 }
@@ -941,7 +942,7 @@ func TestExchangeCodeForTokens_WithClientSecret(t *testing.T) {
 		}
 
 		response := OIDCTokenResponse{
-			AccessToken: "access-token-123",
+			AccessToken: xkms.SecretBytes("access-token-123"),
 			TokenType:   "Bearer",
 			ExpiresIn:   3600,
 		}
@@ -956,7 +957,7 @@ func TestExchangeCodeForTokens_WithClientSecret(t *testing.T) {
 		t.Fatalf("exchangeCodeForTokens failed: %v", err)
 	}
 
-	if tokens.AccessToken != "access-token-123" {
+	if string(tokens.AccessToken) != "access-token-123" {
 		t.Errorf("AccessToken = %q, want %q", tokens.AccessToken, "access-token-123")
 	}
 }
@@ -979,10 +980,10 @@ func TestRefreshTokens_Success(t *testing.T) {
 		}
 
 		response := OIDCTokenResponse{
-			AccessToken:  "new-access-token",
+			AccessToken:  xkms.SecretBytes("new-access-token"),
 			TokenType:    "Bearer",
 			ExpiresIn:    3600,
-			RefreshToken: "new-refresh-token",
+			RefreshToken: xkms.SecretBytes("new-refresh-token"),
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -990,15 +991,15 @@ func TestRefreshTokens_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tokens, err := refreshTokens(server.URL, "test-client", "old-refresh-token", oidc.TokenEncodingForm)
+	tokens, err := refreshTokens(server.URL, "test-client", []byte("old-refresh-token"), oidc.TokenEncodingForm)
 	if err != nil {
 		t.Fatalf("refreshTokens failed: %v", err)
 	}
 
-	if tokens.AccessToken != "new-access-token" {
+	if string(tokens.AccessToken) != "new-access-token" {
 		t.Errorf("AccessToken = %q, want %q", tokens.AccessToken, "new-access-token")
 	}
-	if tokens.RefreshToken != "new-refresh-token" {
+	if string(tokens.RefreshToken) != "new-refresh-token" {
 		t.Errorf("RefreshToken = %q, want %q", tokens.RefreshToken, "new-refresh-token")
 	}
 }
@@ -1009,7 +1010,7 @@ func TestRefreshTokens_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := refreshTokens(server.URL, "test-client", "expired-refresh-token", oidc.TokenEncodingForm)
+	_, err := refreshTokens(server.URL, "test-client", []byte("expired-refresh-token"), oidc.TokenEncodingForm)
 	if err == nil {
 		t.Error("refreshTokens should fail with error response")
 	}
@@ -1038,24 +1039,24 @@ func TestRefreshTokens_JSONEncoding(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(OIDCTokenResponse{
-			AccessToken: "new-access-token",
+			AccessToken: xkms.SecretBytes("new-access-token"),
 			TokenType:   "Bearer",
 			ExpiresIn:   3600,
 		})
 	}))
 	defer server.Close()
 
-	tokens, err := refreshTokens(server.URL, "test-client", "old-refresh-token", oidc.TokenEncodingJSON)
+	tokens, err := refreshTokens(server.URL, "test-client", []byte("old-refresh-token"), oidc.TokenEncodingJSON)
 	if err != nil {
 		t.Fatalf("refreshTokens with json encoding failed: %v", err)
 	}
-	if tokens.AccessToken != "new-access-token" {
+	if string(tokens.AccessToken) != "new-access-token" {
 		t.Errorf("AccessToken = %q, want %q", tokens.AccessToken, "new-access-token")
 	}
 }
 
 func TestRefreshTokens_UnknownEncodingRefused(t *testing.T) {
-	_, err := refreshTokens("http://unused.invalid", "test-client", "old-refresh-token", oidc.TokenEncoding("xml"))
+	_, err := refreshTokens("http://unused.invalid", "test-client", []byte("old-refresh-token"), oidc.TokenEncoding("xml"))
 	if err == nil {
 		t.Fatal("refreshTokens should refuse an unknown token encoding")
 	}
@@ -1072,13 +1073,13 @@ func TestOIDCStoredToken_JSON(t *testing.T) {
 		ExpiresAt: time.Date(2025, 1, 31, 12, 0, 0, 0, time.UTC),
 		Scopes:    []string{"openid", "profile"},
 	}
-	if err := token.SetAccessToken("access-token"); err != nil {
+	if err := token.SetAccessToken([]byte("access-token")); err != nil {
 		t.Fatalf("SetAccessToken failed: %v", err)
 	}
-	if err := token.SetRefreshToken("refresh-token"); err != nil {
+	if err := token.SetRefreshToken([]byte("refresh-token")); err != nil {
 		t.Fatalf("SetRefreshToken failed: %v", err)
 	}
-	if err := token.SetIDToken("id-token"); err != nil {
+	if err := token.SetIDToken([]byte("id-token")); err != nil {
 		t.Fatalf("SetIDToken failed: %v", err)
 	}
 	defer token.Destroy()
@@ -1103,13 +1104,13 @@ func TestOIDCStoredToken_JSON(t *testing.T) {
 	if decoded.ClientID != token.ClientID {
 		t.Errorf("ClientID = %q, want %q", decoded.ClientID, token.ClientID)
 	}
-	if decoded.AccessToken() != token.AccessToken() {
+	if !bytes.Equal(decoded.AccessToken(), token.AccessToken()) {
 		t.Errorf("AccessToken = %q, want %q", decoded.AccessToken(), token.AccessToken())
 	}
-	if decoded.RefreshToken() != token.RefreshToken() {
+	if !bytes.Equal(decoded.RefreshToken(), token.RefreshToken()) {
 		t.Errorf("RefreshToken = %q, want %q", decoded.RefreshToken(), token.RefreshToken())
 	}
-	if decoded.IDToken() != token.IDToken() {
+	if !bytes.Equal(decoded.IDToken(), token.IDToken()) {
 		t.Errorf("IDToken = %q, want %q", decoded.IDToken(), token.IDToken())
 	}
 	if len(decoded.Scopes) != len(token.Scopes) {
@@ -1119,9 +1120,9 @@ func TestOIDCStoredToken_JSON(t *testing.T) {
 
 func TestNewOIDCStoredToken_Success(t *testing.T) {
 	resp := &OIDCTokenResponse{
-		AccessToken:  "access-xyz",
-		RefreshToken: "refresh-xyz",
-		IDToken:      "id-xyz",
+		AccessToken:  xkms.SecretBytes("access-xyz"),
+		RefreshToken: xkms.SecretBytes("refresh-xyz"),
+		IDToken:      xkms.SecretBytes("id-xyz"),
 	}
 	expiresAt := time.Now().Add(time.Hour)
 
@@ -1141,16 +1142,16 @@ func TestNewOIDCStoredToken_Success(t *testing.T) {
 	if !tok.ExpiresAt.Equal(expiresAt) {
 		t.Errorf("ExpiresAt = %v, want %v", tok.ExpiresAt, expiresAt)
 	}
-	if tok.AccessToken() != "access-xyz" {
+	if string(tok.AccessToken()) != "access-xyz" {
 		t.Errorf("AccessToken() = %q, want access-xyz", tok.AccessToken())
 	}
-	if tok.RefreshToken() != "refresh-xyz" {
+	if string(tok.RefreshToken()) != "refresh-xyz" {
 		t.Errorf("RefreshToken() = %q, want refresh-xyz", tok.RefreshToken())
 	}
 	if !tok.HasRefreshToken() {
 		t.Error("HasRefreshToken() = false, want true")
 	}
-	if tok.IDToken() != "id-xyz" {
+	if string(tok.IDToken()) != "id-xyz" {
 		t.Errorf("IDToken() = %q, want id-xyz", tok.IDToken())
 	}
 }
@@ -1164,7 +1165,7 @@ func TestNewOIDCStoredToken_Success(t *testing.T) {
 // triggered from a Go unit test without OS-level intervention and is not
 // separately tested there either.
 func TestNewOIDCStoredToken_NoRefreshToken(t *testing.T) {
-	resp := &OIDCTokenResponse{AccessToken: "access-only"}
+	resp := &OIDCTokenResponse{AccessToken: xkms.SecretBytes("access-only")}
 
 	tok, err := newOIDCStoredToken("https://example.com", "https://example.com", "client-1",
 		resp, time.Now().Add(time.Hour), nil)
@@ -1176,7 +1177,7 @@ func TestNewOIDCStoredToken_NoRefreshToken(t *testing.T) {
 	if tok.HasRefreshToken() {
 		t.Error("HasRefreshToken() = true, want false for a response with no refresh token")
 	}
-	if tok.RefreshToken() != "" {
+	if string(tok.RefreshToken()) != "" {
 		t.Errorf("RefreshToken() = %q, want empty", tok.RefreshToken())
 	}
 }
@@ -1186,14 +1187,14 @@ func TestNewOIDCStoredToken_NoRefreshToken(t *testing.T) {
 // on a nil receiver (mirrors secure.Buffer.Destroy's own contract).
 func TestOIDCStoredToken_DestroyIsIdempotentAndSafeOnNil(t *testing.T) {
 	tok := &OIDCStoredToken{}
-	if err := tok.SetAccessToken("a"); err != nil {
+	if err := tok.SetAccessToken([]byte("a")); err != nil {
 		t.Fatalf("SetAccessToken failed: %v", err)
 	}
 
 	tok.Destroy()
 	tok.Destroy() // must not panic
 
-	if tok.AccessToken() != "" {
+	if string(tok.AccessToken()) != "" {
 		t.Errorf("AccessToken() after Destroy = %q, want empty", tok.AccessToken())
 	}
 
@@ -1262,11 +1263,11 @@ func TestOIDCDiscoveryDocument_JSON(t *testing.T) {
 
 func TestOIDCTokenResponse_JSON(t *testing.T) {
 	resp := OIDCTokenResponse{
-		AccessToken:  "access-token",
+		AccessToken:  xkms.SecretBytes("access-token"),
 		TokenType:    "Bearer",
 		ExpiresIn:    3600,
-		RefreshToken: "refresh-token",
-		IDToken:      "id-token",
+		RefreshToken: xkms.SecretBytes("refresh-token"),
+		IDToken:      xkms.SecretBytes("id-token"),
 		Scope:        "openid profile email",
 	}
 
@@ -1280,7 +1281,7 @@ func TestOIDCTokenResponse_JSON(t *testing.T) {
 		t.Fatalf("failed to unmarshal token response: %v", err)
 	}
 
-	if decoded.AccessToken != resp.AccessToken {
+	if string(decoded.AccessToken) != string(resp.AccessToken) {
 		t.Errorf("AccessToken = %q, want %q", decoded.AccessToken, resp.AccessToken)
 	}
 	if decoded.ExpiresIn != resp.ExpiresIn {
@@ -1322,7 +1323,7 @@ func TestStoreToken_CreatesDirectory(t *testing.T) {
 	cmd := oidcExplicitStoreCmd(t, storePath)
 
 	token := &OIDCStoredToken{Provider: "https://example.com"}
-	if err := token.SetAccessToken("test-token"); err != nil {
+	if err := token.SetAccessToken([]byte("test-token")); err != nil {
 		t.Fatalf("SetAccessToken failed: %v", err)
 	}
 	defer token.Destroy()

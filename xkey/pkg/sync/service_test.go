@@ -113,7 +113,7 @@ func (m *mockOATHAccessor) List() ([]*backup.OATHCredentialInfo, error) {
 	}
 	result := make([]*backup.OATHCredentialInfo, 0, len(m.creds))
 	for _, c := range m.creds {
-		result = append(result, c)
+		result = append(result, mustCloneOATH(c))
 	}
 	return result, nil
 }
@@ -126,15 +126,16 @@ func (m *mockOATHAccessor) Get(id string) (*backup.OATHCredentialInfo, error) {
 	if !ok {
 		return nil, errors.New("not found")
 	}
-	return c, nil
+	return mustCloneOATH(c), nil
 }
 
 func (m *mockOATHAccessor) Add(cred *backup.OATHCredentialInfo) error {
 	if m.addErr != nil {
 		return m.addErr
 	}
-	m.creds[cred.ID] = cred
-	m.added = append(m.added, cred)
+	kept := mustCloneOATH(cred)
+	m.creds[cred.ID] = kept
+	m.added = append(m.added, kept)
 	return nil
 }
 
@@ -142,8 +143,9 @@ func (m *mockOATHAccessor) Update(cred *backup.OATHCredentialInfo) error {
 	if m.updateErr != nil {
 		return m.updateErr
 	}
-	m.creds[cred.ID] = cred
-	m.updated = append(m.updated, cred)
+	kept := mustCloneOATH(cred)
+	m.creds[cred.ID] = kept
+	m.updated = append(m.updated, kept)
 	return nil
 }
 
@@ -169,7 +171,7 @@ func (m *mockPasswordAccessor) List() ([]*backup.PasswordInfo, error) {
 	}
 	result := make([]*backup.PasswordInfo, 0, len(m.passwords))
 	for _, p := range m.passwords {
-		result = append(result, p)
+		result = append(result, mustClonePassword(p))
 	}
 	return result, nil
 }
@@ -182,15 +184,16 @@ func (m *mockPasswordAccessor) Get(id string) (*backup.PasswordInfo, error) {
 	if !ok {
 		return nil, errors.New("not found")
 	}
-	return p, nil
+	return mustClonePassword(p), nil
 }
 
 func (m *mockPasswordAccessor) Add(pw *backup.PasswordInfo) error {
 	if m.addErr != nil {
 		return m.addErr
 	}
-	m.passwords[pw.ID] = pw
-	m.added = append(m.added, pw)
+	kept := mustClonePassword(pw)
+	m.passwords[pw.ID] = kept
+	m.added = append(m.added, kept)
 	return nil
 }
 
@@ -198,8 +201,9 @@ func (m *mockPasswordAccessor) Update(pw *backup.PasswordInfo) error {
 	if m.updateErr != nil {
 		return m.updateErr
 	}
-	m.passwords[pw.ID] = pw
-	m.updated = append(m.updated, pw)
+	kept := mustClonePassword(pw)
+	m.passwords[pw.ID] = kept
+	m.updated = append(m.updated, kept)
 	return nil
 }
 
@@ -279,7 +283,7 @@ func testCertFingerprint(cert *x509.Certificate) string {
 // string field. It panics on a protected-memory failure, which in a test
 // is a legitimate abort.
 func withOATHSecret(cred *backup.OATHCredentialInfo, secret string) *backup.OATHCredentialInfo {
-	if err := cred.SetSecret(secret); err != nil {
+	if err := cred.SetSecret([]byte(secret)); err != nil {
 		panic(err)
 	}
 	return cred
@@ -290,7 +294,7 @@ func withOATHSecret(cred *backup.OATHCredentialInfo, secret string) *backup.OATH
 // exported string field. It panics on a protected-memory failure, which in
 // a test is a legitimate abort.
 func withPassword(info *backup.PasswordInfo, password string) *backup.PasswordInfo {
-	if err := info.SetPassword(password); err != nil {
+	if err := info.SetPassword([]byte(password)); err != nil {
 		panic(err)
 	}
 	return info
@@ -845,7 +849,7 @@ func TestApplyOATHDelta_NewCredsAdded(t *testing.T) {
 		Credentials: []OATHCredentialSync{
 			{
 				ID: "oath-1", Name: "GitHub", Issuer: "GitHub",
-				AccountName: "user@example.com", Secret: "JBSWY3DPEHPK3PXP",
+				AccountName: "user@example.com", Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
 				Type: "totp", Algorithm: "SHA1", Digits: 6, Period: 30,
 				UpdatedAt: time.Now(),
 			},
@@ -873,7 +877,7 @@ func TestApplyOATHDelta_ExistingUpdatedWhenRemoteNewer(t *testing.T) {
 	delta := &OATHDelta{
 		Credentials: []OATHCredentialSync{
 			{
-				ID: "oath-1", Name: "GitHub Updated", Secret: "NEW_SECRET",
+				ID: "oath-1", Name: "GitHub Updated", Secret: mustSecretText("NEW_SECRET"),
 				Type: "totp", Algorithm: "SHA1", Digits: 6, Period: 30,
 				UpdatedAt: time.Now(),
 			},
@@ -901,7 +905,7 @@ func TestApplyOATHDelta_ExistingSkippedWhenZeroTimestamp(t *testing.T) {
 	delta := &OATHDelta{
 		Credentials: []OATHCredentialSync{
 			{
-				ID: "oath-1", Name: "GitHub Remote", Secret: "REMOTE_SECRET",
+				ID: "oath-1", Name: "GitHub Remote", Secret: mustSecretText("REMOTE_SECRET"),
 				Type: "totp", Algorithm: "SHA1", Digits: 6, Period: 30,
 				// UpdatedAt is zero
 			},
@@ -987,7 +991,7 @@ func TestApplyPasswordDelta_NoAccessor(t *testing.T) {
 
 	delta := &PasswordDelta{
 		Passwords: []PasswordSync{
-			{ID: "p1", Name: "Test", Password: "secret"},
+			{ID: "p1", Name: "Test", Password: mustSecretText("secret")},
 		},
 	}
 	result, err := svc.ApplyPasswordDelta(delta)
@@ -1003,7 +1007,7 @@ func TestApplyPasswordDelta_NewPasswordsAdded(t *testing.T) {
 	delta := &PasswordDelta{
 		Passwords: []PasswordSync{
 			{
-				ID: "pw-1", Name: "Server SSH", Password: "s3cret!",
+				ID: "pw-1", Name: "Server SSH", Password: mustSecretText("s3cret!"),
 				Username: "admin", UpdatedAt: time.Now(),
 			},
 		},
@@ -1029,7 +1033,7 @@ func TestApplyPasswordDelta_ExistingUpdatedWhenRemoteNewer(t *testing.T) {
 	delta := &PasswordDelta{
 		Passwords: []PasswordSync{
 			{
-				ID: "pw-1", Name: "Server SSH Updated", Password: "new-pass",
+				ID: "pw-1", Name: "Server SSH Updated", Password: mustSecretText("new-pass"),
 				UpdatedAt: time.Now(),
 			},
 		},
@@ -1055,7 +1059,7 @@ func TestApplyPasswordDelta_ExistingSkippedWhenZeroTimestamp(t *testing.T) {
 	delta := &PasswordDelta{
 		Passwords: []PasswordSync{
 			{
-				ID: "pw-1", Name: "Remote SSH", Password: "remote-pass",
+				ID: "pw-1", Name: "Remote SSH", Password: mustSecretText("remote-pass"),
 				// UpdatedAt is zero
 			},
 		},
@@ -1077,7 +1081,7 @@ func TestApplyPasswordDelta_AddError(t *testing.T) {
 
 	delta := &PasswordDelta{
 		Passwords: []PasswordSync{
-			{ID: "p1", Name: "Test", Password: "pass", UpdatedAt: time.Now()},
+			{ID: "p1", Name: "Test", Password: mustSecretText("pass"), UpdatedAt: time.Now()},
 		},
 	}
 
@@ -1098,7 +1102,7 @@ func TestApplyPasswordDelta_UpdateError(t *testing.T) {
 
 	delta := &PasswordDelta{
 		Passwords: []PasswordSync{
-			{ID: "p1", Name: "Updated", Password: "pass", UpdatedAt: time.Now()},
+			{ID: "p1", Name: "Updated", Password: mustSecretText("pass"), UpdatedAt: time.Now()},
 		},
 	}
 
@@ -1525,7 +1529,7 @@ func TestOATHDelta_JSONRoundTrip(t *testing.T) {
 		Credentials: []OATHCredentialSync{
 			{
 				ID: "oath-1", Name: "GitHub", Issuer: "GitHub",
-				AccountName: "user@example.com", Secret: "JBSWY3DPEHPK3PXP",
+				AccountName: "user@example.com", Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
 				Type: "totp", Algorithm: "SHA1", Digits: 6, Period: 30,
 				Counter: 0, UpdatedAt: now,
 			},
@@ -1542,7 +1546,7 @@ func TestOATHDelta_JSONRoundTrip(t *testing.T) {
 	require.Len(t, restored.Credentials, 1)
 	assert.Equal(t, "oath-1", restored.Credentials[0].ID)
 	assert.Equal(t, "GitHub", restored.Credentials[0].Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", restored.Credentials[0].Secret)
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", textOf(restored.Credentials[0].Secret))
 	assert.Equal(t, now, restored.Credentials[0].UpdatedAt)
 }
 
@@ -1552,7 +1556,7 @@ func TestPasswordDelta_JSONRoundTrip(t *testing.T) {
 		Passwords: []PasswordSync{
 			{
 				ID: "pw-1", Name: "Server SSH", Title: "Production",
-				Username: "admin", Password: "s3cret!",
+				Username: "admin", Password: mustSecretText("s3cret!"),
 				URL: "ssh://prod.example.com", Notes: "Primary",
 				FolderPath: "/servers", UpdatedAt: now,
 			},
@@ -1568,7 +1572,7 @@ func TestPasswordDelta_JSONRoundTrip(t *testing.T) {
 
 	require.Len(t, restored.Passwords, 1)
 	assert.Equal(t, "pw-1", restored.Passwords[0].ID)
-	assert.Equal(t, "s3cret!", restored.Passwords[0].Password)
+	assert.Equal(t, "s3cret!", textOf(restored.Passwords[0].Password))
 	assert.Equal(t, now, restored.Passwords[0].UpdatedAt)
 }
 
@@ -1686,7 +1690,7 @@ func TestEncodeCertPEM(t *testing.T) {
 func TestOATHSyncToInfo(t *testing.T) {
 	cs := &OATHCredentialSync{
 		ID: "oath-1", Name: "GitHub", Issuer: "GitHub",
-		AccountName: "user@example.com", Secret: "SECRET",
+		AccountName: "user@example.com", Secret: mustSecretText("SECRET"),
 		Type: "totp", Algorithm: "SHA256", Digits: 8, Period: 60,
 		Counter: 42,
 	}
@@ -1697,7 +1701,7 @@ func TestOATHSyncToInfo(t *testing.T) {
 	assert.Equal(t, cs.Name, info.Name)
 	assert.Equal(t, cs.Issuer, info.Issuer)
 	assert.Equal(t, cs.AccountName, info.AccountName)
-	assert.Equal(t, cs.Secret, info.SecretString())
+	assert.Equal(t, textOf(cs.Secret), secretText(info))
 	assert.Equal(t, cs.Type, info.Type)
 	assert.Equal(t, cs.Algorithm, info.Algorithm)
 	assert.Equal(t, cs.Digits, info.Digits)
@@ -1708,7 +1712,7 @@ func TestOATHSyncToInfo(t *testing.T) {
 func TestPasswordSyncToInfo(t *testing.T) {
 	ps := &PasswordSync{
 		ID: "pw-1", Name: "Server SSH", Title: "Production",
-		Username: "admin", Password: "s3cret!",
+		Username: "admin", Password: mustSecretText("s3cret!"),
 		URL: "ssh://prod.example.com", Notes: "Primary",
 		FolderPath: "/servers",
 	}
@@ -1719,7 +1723,7 @@ func TestPasswordSyncToInfo(t *testing.T) {
 	assert.Equal(t, ps.Name, info.Name)
 	assert.Equal(t, ps.Title, info.Title)
 	assert.Equal(t, ps.Username, info.Username)
-	assert.Equal(t, ps.Password, info.PasswordString())
+	assert.Equal(t, textOf(ps.Password), passwordText(info))
 	assert.Equal(t, ps.URL, info.URL)
 	assert.Equal(t, ps.Notes, info.Notes)
 	assert.Equal(t, ps.FolderPath, info.FolderPath)

@@ -64,7 +64,7 @@ func openDeviceSession(
 	// decode failure on any other field returns in between, and the raw
 	// scalar would be left sitting in protected memory nothing releases.
 	defer localPrivateKey.Destroy()
-	localKey, err := loadLocalStaticKey(localPrivateKey)
+	localKey, err := pairing.LoadStaticKeyFromBuffer(localPrivateKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: local key: %v", ErrSessionKeyDecode, err)
 	}
@@ -297,7 +297,7 @@ func newPairedDeviceBackendConfig(
 		return nil, &SentinelCauseError{Sentinel: attestation.ErrDeviceAttestVerifyFailed, Cause: err}
 	}
 
-	localKey, err := loadLocalStaticKey(localPrivateKey)
+	localKey, err := pairing.LoadStaticKeyFromBuffer(localPrivateKey)
 	if err != nil {
 		return nil, &WrappedError{Msg: "invalid local noise key", Err: err}
 	}

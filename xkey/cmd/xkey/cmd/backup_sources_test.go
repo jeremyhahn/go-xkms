@@ -717,7 +717,7 @@ func TestOATHStoreAdapter_ListAndAdd(t *testing.T) {
 		Period:      30,
 		Counter:     7,
 	}
-	require.NoError(t, restoredCred.SetSecret("JBSWY3DPEHPK3PXP"))
+	require.NoError(t, restoredCred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
 	require.NoError(t, adapter.Add(restoredCred))
 
 	creds, err := adapter.List()
@@ -725,7 +725,7 @@ func TestOATHStoreAdapter_ListAndAdd(t *testing.T) {
 	require.Len(t, creds, 1)
 	assert.Equal(t, "restored-id", creds[0].ID)
 	assert.Equal(t, "Restored", creds[0].Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", creds[0].SecretString())
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(creds[0]))
 	assert.Equal(t, int64(7), creds[0].Counter)
 }
 
@@ -758,14 +758,14 @@ func TestPasswordStoreAdapter_ListAndAdd(t *testing.T) {
 		URL:      "https://example.com",
 		Notes:    "note",
 	}
-	require.NoError(t, restoredPW.SetPassword("s3cret"))
+	require.NoError(t, restoredPW.SetPassword([]byte("s3cret")))
 	require.NoError(t, adapter.Add(restoredPW))
 
 	entries, err := adapter.List()
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "Restored", entries[0].Name)
-	assert.Equal(t, "s3cret", entries[0].PasswordString())
+	assert.Equal(t, "s3cret", passwordText(entries[0]))
 	assert.NotEmpty(t, entries[0].ID, "the store must derive an entry ID")
 }
 
@@ -823,7 +823,7 @@ func TestOATHStoreAdapter_GetAndUpdate(t *testing.T) {
 		Digits:    6,
 		Period:    30,
 	}
-	require.NoError(t, seed.SetSecret("JBSWY3DPEHPK3PXP"))
+	require.NoError(t, seed.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
 	require.NoError(t, adapter.Add(seed))
 
 	got, err := adapter.Get("get-and-update")
@@ -871,7 +871,7 @@ func TestPasswordStoreAdapter_GetAndUpdate(t *testing.T) {
 	adapter := &passwordStoreAdapter{store: store, path: path}
 
 	seed := &backup.PasswordInfo{Name: "Original", Title: "Entry"}
-	require.NoError(t, seed.SetPassword("s3cret"))
+	require.NoError(t, seed.SetPassword([]byte("s3cret")))
 	require.NoError(t, adapter.Add(seed))
 
 	entries, err := adapter.List()
@@ -883,7 +883,7 @@ func TestPasswordStoreAdapter_GetAndUpdate(t *testing.T) {
 	assert.Equal(t, "Original", got.Name)
 
 	got.Title = "Renamed Entry"
-	require.NoError(t, got.SetPassword("s3cret"))
+	require.NoError(t, got.SetPassword([]byte("s3cret")))
 	require.NoError(t, adapter.Update(got))
 
 	updated, err := adapter.Get(entries[0].ID)

@@ -19,6 +19,8 @@ import (
 	"errors"
 	"time"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 )
 
@@ -32,6 +34,7 @@ import (
 // success.
 func (b *Bridge) handleOATHAdd(_ context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemoteOATHAddParams
+	defer p.Credential.Destroy()
 	if err := unmarshalParams(params, &p); err != nil {
 		return nil, ErrBridgeInvalidParams
 	}
@@ -40,7 +43,7 @@ func (b *Bridge) handleOATHAdd(_ context.Context, params json.RawMessage) (inter
 		return nil, ErrBridgeInvalidParams
 	}
 
-	if p.Credential.Secret == "" {
+	if p.Credential.Secret.IsZero() {
 		return nil, ErrBridgeInvalidParams
 	}
 
@@ -162,9 +165,20 @@ func oathCredentialFromWire(info *OATHCredentialInfo) (*oath.Credential, error) 
 		cred.Period = oath.DefaultPeriod
 	}
 
-	if err := cred.SetSecret(info.Secret); err != nil {
+	if err := setCredentialSecret(cred, info.Secret); err != nil {
 		return nil, err
 	}
 
 	return cred, nil
+}
+
+// setCredentialSecret copies the secret a phone supplied into cred's protected
+// memory. The plaintext exists only for the duration of the call.
+func setCredentialSecret(cred *oath.Credential, secret xkms.SecretText) error {
+	plain, err := secret.Copy()
+	if err != nil {
+		return err
+	}
+	defer secure.Wipe(plain)
+	return cred.SetSecret(plain)
 }

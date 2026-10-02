@@ -19,6 +19,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
 )
@@ -79,6 +80,7 @@ func (b *Bridge) handleSyncTrustStore(_ context.Context, params json.RawMessage)
 // is configured, ErrSyncNotConfigured is returned.
 func (b *Bridge) handleSyncOATH(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemoteSyncOATHParams
+	defer p.Destroy()
 	if err := unmarshalParams(params, &p); err != nil {
 		return nil, ErrBridgeInvalidParams
 	}
@@ -104,6 +106,8 @@ func (b *Bridge) handleSyncOATH(ctx context.Context, params json.RawMessage) (in
 		return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
 	}
 
+	// The result shares local's secret slices; HandleRequest destroys the
+	// result once it has been encoded.
 	return &RemoteSyncOATHResult{
 		Added:   applied.Added,
 		Updated: applied.Updated,
@@ -120,6 +124,7 @@ func (b *Bridge) handleSyncOATH(ctx context.Context, params json.RawMessage) (in
 // is configured, ErrSyncNotConfigured is returned.
 func (b *Bridge) handleSyncPasswords(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemoteSyncPasswordsParams
+	defer p.Destroy()
 	if err := unmarshalParams(params, &p); err != nil {
 		return nil, ErrBridgeInvalidParams
 	}
@@ -145,6 +150,8 @@ func (b *Bridge) handleSyncPasswords(ctx context.Context, params json.RawMessage
 		return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
 	}
 
+	// The result shares local's password slices; HandleRequest destroys the
+	// result once it has been encoded.
 	return &RemoteSyncPasswordsResult{
 		Added:   applied.Added,
 		Updated: applied.Updated,
@@ -205,6 +212,7 @@ func (b *Bridge) handleSyncAll(ctx context.Context, params json.RawMessage) (int
 	if p.IncludePasswords {
 		local, err := b.syncService.ComputeLocalPasswordDelta()
 		if err != nil {
+			result.Destroy()
 			return nil, &SentinelCauseError{Sentinel: ErrSyncFailed, Cause: err}
 		}
 		result.Passwords = &RemoteSyncPasswordsResult{
@@ -262,12 +270,16 @@ func (b *Bridge) handleSyncStatus(_ context.Context, _ json.RawMessage) (interfa
 	if delta, dErr := b.syncService.ComputeLocalOATHDelta(); dErr == nil && delta != nil {
 		if data, mErr := json.Marshal(delta); mErr == nil {
 			checksums[syncChecksumOATH] = xkeysync.Checksum(data)
+			secure.Wipe(data)
 		}
+		delta.Destroy()
 	}
 	if delta, dErr := b.syncService.ComputeLocalPasswordDelta(); dErr == nil && delta != nil {
 		if data, mErr := json.Marshal(delta); mErr == nil {
 			checksums[syncChecksumPasswords] = xkeysync.Checksum(data)
+			secure.Wipe(data)
 		}
+		delta.Destroy()
 	}
 
 	return &RemoteSyncStatusResult{

@@ -91,10 +91,47 @@ expect_hit 'call to ssh.ParsePrivateKey is forbidden' \
 	'rule 2: ssh.ParsePrivateKey'
 expect_hit 'field "Password" holds sensitive material as string' \
 	'rule 3: a holder field with no scope-clause cover'
+
 expect_hit 'secure.Buffer.Bytes holds no borrow across the read' \
-	'rule 4: an unborrowed secure.Buffer.Bytes read'
+	'rule 4: Buffer.Bytes with no borrow held'
+expect_hit 'malformed //secure:unborrowed directive' \
+	'rule 5: malformed unborrowed directive'
 expect_hit 'string(...) converts protected bytes to a string' \
-	'securecopy: string(view) of protected bytes'
+	'rule 6: string() of protected bytes'
+expect_hit 'copies protected bytes into ordinary memory that is never wiped' \
+	'rule 7: an unwiped copy of protected bytes'
+
+# --- Every diagnostic must classify under a known rule and FAIL (rules 4-7
+#     are never allowlistable), so a reworded upstream message cannot slip
+#     through as "unrecognised" and a new finding cannot slip through as
+#     allowed. Uses the real process_diagnostics against an empty allowlist.
+SYMTOOL="$WORK/secure-analyzer-symbol"
+"$ROOT/scripts/secure-analyzer.sh" --build-symtool "$SYMTOOL"
+# shellcheck source=scripts/secure-analyzer-key.sh
+. "$ROOT/scripts/secure-analyzer-key.sh"
+ALLOWLIST="$WORK/empty-allowlist.txt"
+: >"$ALLOWLIST"
+: >"$WORK/hits"
+classify_out="$WORK/classify.out"
+before=$fails
+process_diagnostics "$bad_out" "" "$(cd "$ROOT" && pwd)" >"$classify_out"
+# process_diagnostics fails every rule 4-7 finding by design; those are the
+# findings under test, not selftest failures. Reset here, before the
+# assertions below, so a failed assertion still counts.
+fails=$before
+sed 's/^/  | /' "$classify_out"
+if grep -q 'does not match any known securecheck rule message' "$classify_out"; then
+	fail "a bad-fixture diagnostic was not recognised by rule_for"
+else
+	note "ok: every bad-fixture diagnostic classifies under a known rule"
+fi
+for r in 4 5 6 7; do
+	if grep -q "\[rule $r\]" "$classify_out"; then
+		note "ok: rule $r findings fail the gate, classified under their rule"
+	else
+		fail "rule $r finding was not failed under its own classification"
+	fi
+done
 
 # --- The clean fixture must stay silent AND exit 0. -------------------------
 if [ "$clean_rc" -ne 0 ]; then
@@ -112,31 +149,7 @@ fi
 
 # --- KEYING regression (go-xkms#607): a line shift must not invalidate an
 #     allowlist entry, and a genuinely removed finding must still go stale. -
-echo "secure-analyzer selftest: every diagnostic the pinned analyzer emits classifies"
-
-# rule_for is a verbatim table of the pinned analyzer's messages. When a
-# go-qrdb bump rewords one, or adds a rule, every finding of that shape stops
-# classifying and the sweep fails with "does not match any known securecheck
-# rule message" -- on main, after the bump has merged, if the bump skipped
-# CI (go-xkms v0.48.0-alpha). Classifying every line the bad fixture produces
-# here moves that failure onto the bump's own PR.
-# shellcheck source=scripts/secure-analyzer-key.sh
-. "$ROOT/scripts/secure-analyzer-key.sh"
-while IFS= read -r diagline; do
-	printf '%s\n' "$diagline" | grep -Eq '^[^:]+\.go:[0-9]+:[0-9]+: ' || continue
-	msg=$(printf '%s\n' "$diagline" | sed -E 's/^[^:]+:[0-9]+:[0-9]+: //')
-	if rule=$(rule_for "$msg"); then
-		note "ok: classifies as [$rule] -- $msg"
-	else
-		fail "rule_for does not classify a message the pinned analyzer emits:
-      $msg"
-	fi
-done <"$bad_out"
-
 echo "secure-analyzer selftest: keying regression (go-xkms#607)"
-
-SYMTOOL="$WORK/secure-analyzer-symbol"
-"$ROOT/scripts/secure-analyzer.sh" --build-symtool "$SYMTOOL"
 
 KEYWORK="$WORK/keying"
 mkdir -p "$KEYWORK"

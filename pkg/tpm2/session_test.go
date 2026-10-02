@@ -354,8 +354,12 @@ func (p *errorPasswordForSession) Bytes() []byte {
 	return nil
 }
 
-func (p *errorPasswordForSession) String() (string, error) {
-	return "", p.err
+func (p *errorPasswordForSession) WithBytes(func([]byte) error) error {
+	return p.err
+}
+
+func (p *errorPasswordForSession) String() string {
+	return types.PasswordRedacted
 }
 
 func (p *errorPasswordForSession) Clear() {

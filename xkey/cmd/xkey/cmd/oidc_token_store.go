@@ -27,6 +27,7 @@ package cmd
 // runs `xkey oidc login` again.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -73,8 +74,9 @@ type OIDCStoredToken struct {
 
 // newOIDCStoredToken builds an OIDCStoredToken from a freshly exchanged or
 // refreshed OIDCTokenResponse, moving its AccessToken/RefreshToken/IDToken
-// into protected memory. The caller owns the result and must call Destroy
-// on it when done, on every path.
+// into protected memory. The response keeps its own copies, which its owner
+// wipes with OIDCTokenResponse.Wipe. The caller owns the result and must call
+// Destroy on it when done, on every path.
 func newOIDCStoredToken(provider, issuer, clientID string, tokens *OIDCTokenResponse, expiresAt time.Time, scopes []string) (*OIDCStoredToken, error) {
 	t := &OIDCStoredToken{
 		Provider:  provider,
@@ -97,30 +99,31 @@ func newOIDCStoredToken(provider, issuer, clientID string, tokens *OIDCTokenResp
 	return t, nil
 }
 
-// SetAccessToken stores s as the protected access token, destroying any
-// previous value first. An empty s clears the field.
-func (t *OIDCStoredToken) SetAccessToken(s string) error {
-	return setOIDCProtectedField(&t.accessToken, s)
+// SetAccessToken copies b into protected memory as the access token,
+// destroying any previous value first. An empty b clears the field. b stays
+// the caller's, who wipes it.
+func (t *OIDCStoredToken) SetAccessToken(b []byte) error {
+	return setOIDCProtectedField(&t.accessToken, b)
 }
 
-// AccessToken returns a heap copy of the access token, or "" when none is
-// set. A Go string cannot be wiped, so this is for use at a boundary that
-// already materializes the value as a string -- an HTTP request, an exec
-// payload, or a display line -- never for holding the value across time.
-func (t *OIDCStoredToken) AccessToken() string {
-	return oidcProtectedFieldString(t.accessToken)
+// AccessToken returns a caller-owned copy of the access token, or nil when
+// none is set. The caller must wipe the copy as soon as it has been used
+// (secure.Wipe), and must not hold it across time.
+func (t *OIDCStoredToken) AccessToken() []byte {
+	return oidcProtectedFieldCopy(t.accessToken)
 }
 
-// SetRefreshToken stores s as the protected refresh token, destroying any
-// previous value first. An empty s clears the field.
-func (t *OIDCStoredToken) SetRefreshToken(s string) error {
-	return setOIDCProtectedField(&t.refreshToken, s)
+// SetRefreshToken copies b into protected memory as the refresh token,
+// destroying any previous value first. An empty b clears the field. b stays
+// the caller's, who wipes it.
+func (t *OIDCStoredToken) SetRefreshToken(b []byte) error {
+	return setOIDCProtectedField(&t.refreshToken, b)
 }
 
-// RefreshToken returns a heap copy of the refresh token, or "" when none is
-// set. See AccessToken's documentation for the same caution.
-func (t *OIDCStoredToken) RefreshToken() string {
-	return oidcProtectedFieldString(t.refreshToken)
+// RefreshToken returns a caller-owned copy of the refresh token, or nil when
+// none is set. See AccessToken for the wipe contract.
+func (t *OIDCStoredToken) RefreshToken() []byte {
+	return oidcProtectedFieldCopy(t.refreshToken)
 }
 
 // HasRefreshToken reports whether the token carries a refresh token.
@@ -128,16 +131,17 @@ func (t *OIDCStoredToken) HasRefreshToken() bool {
 	return t != nil && t.refreshToken != nil
 }
 
-// SetIDToken stores s as the protected ID token, destroying any previous
-// value first. An empty s clears the field.
-func (t *OIDCStoredToken) SetIDToken(s string) error {
-	return setOIDCProtectedField(&t.idToken, s)
+// SetIDToken copies b into protected memory as the ID token, destroying any
+// previous value first. An empty b clears the field. b stays the caller's,
+// who wipes it.
+func (t *OIDCStoredToken) SetIDToken(b []byte) error {
+	return setOIDCProtectedField(&t.idToken, b)
 }
 
-// IDToken returns a heap copy of the ID token, or "" when none is set. See
-// AccessToken's documentation for the same caution.
-func (t *OIDCStoredToken) IDToken() string {
-	return oidcProtectedFieldString(t.idToken)
+// IDToken returns a caller-owned copy of the ID token, or nil when none is
+// set. See AccessToken for the wipe contract.
+func (t *OIDCStoredToken) IDToken() []byte {
+	return oidcProtectedFieldCopy(t.idToken)
 }
 
 // Destroy wipes and releases every protected buffer the token holds. Safe to
@@ -151,20 +155,16 @@ func (t *OIDCStoredToken) Destroy() {
 	t.idToken.Destroy()
 }
 
-// setOIDCProtectedField adopts s into protected memory at *dst, destroying
-// whatever *dst held before. s itself is a Go string and cannot be wiped;
-// callers holding one already sit at a serialization boundary (an HTTP
-// response, JSON, user input) this package cannot reach further upstream.
-func setOIDCProtectedField(dst **secure.Buffer, s string) error {
-	if s == "" {
+// setOIDCProtectedField copies b into protected memory at *dst, destroying
+// whatever *dst held before. b stays the caller's: NewBufferFromBytes
+// consumes the clone made here, not b.
+func setOIDCProtectedField(dst **secure.Buffer, b []byte) error {
+	if len(b) == 0 {
 		(*dst).Destroy()
 		*dst = nil
 		return nil
 	}
-	// []byte(s) copies s into a fresh slice; NewBufferFromBytes wipes THAT
-	// copy on return, not the original string (Go strings are immutable and
-	// cannot be wiped in place).
-	buf, err := secure.NewBufferFromBytes([]byte(s))
+	buf, err := secure.NewBufferFromBytes(bytes.Clone(b))
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOIDCProtectedMemory, Cause: err}
 	}
@@ -173,53 +173,64 @@ func setOIDCProtectedField(dst **secure.Buffer, s string) error {
 	return nil
 }
 
-// oidcProtectedFieldString returns a heap copy of buf's contents, or "" for
-// a nil buf.
-func oidcProtectedFieldString(buf *secure.Buffer) string {
+// oidcProtectedFieldCopy returns a caller-owned copy of buf's contents, or
+// nil for a nil buf. The caller wipes it.
+func oidcProtectedFieldCopy(buf *secure.Buffer) []byte {
 	if buf == nil {
-		return ""
-	}
-	var out string
-	// WithBytes only fails when buf is nil or already destroyed -- ruled
-	// out by the check above for the nil case -- so a non-nil failure here
-	// means a caller used buf after Destroy, a lifecycle bug worth
-	// surfacing even though this function has no error to return it
-	// through.
-	if err := buf.WithBytes(func(b []byte) error {
-		out = string(b) //secure:unwiped string boundary: the token accessors feed HTTP requests, exec payloads and display lines, all string-typed
 		return nil
-	}); err != nil {
+	}
+	out, err := secure.CopyOut(buf)
+	if err != nil {
+		// CopyOut only fails when buf is already destroyed, so this means a
+		// caller used the token after Destroy: a lifecycle bug worth
+		// surfacing even though this function has no error to return it
+		// through.
 		slog.Warn("oidc: read from a destroyed protected buffer", "error", err)
+		return nil
 	}
 	return out
 }
 
 // oidcStoredTokenJSON is the at-rest wire form of OIDCStoredToken: the
 // persistence boundary where the protected fields necessarily materialize
-// as plain strings immediately before Put/Get on a xkms.StorageBackend
-// (barrier-encrypted, or, with no barrier, the plain file
-// resolveSecretStoreBackend falls back to).
+// immediately before Put/Get on a xkms.StorageBackend (barrier-encrypted, or,
+// with no barrier, the plain file resolveSecretStoreBackend falls back to).
+// The tokens are SecretBytes so they never become Go strings and encode as
+// the same JSON strings the fields held before.
 type oidcStoredTokenJSON struct {
-	Provider     string    `json:"provider"`
-	Issuer       string    `json:"issuer"`
-	ClientID     string    `json:"client_id"`
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token,omitempty"`
-	IDToken      string    `json:"id_token,omitempty"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	Scopes       []string  `json:"scopes,omitempty"`
+	Provider     string           `json:"provider"`
+	Issuer       string           `json:"issuer"`
+	ClientID     string           `json:"client_id"`
+	AccessToken  xkms.SecretBytes `json:"access_token"`
+	RefreshToken xkms.SecretBytes `json:"refresh_token,omitempty"`
+	IDToken      xkms.SecretBytes `json:"id_token,omitempty"`
+	ExpiresAt    time.Time        `json:"expires_at"`
+	Scopes       []string         `json:"scopes,omitempty"`
+}
+
+// wipe zeroes every token the wire form carries.
+func (j *oidcStoredTokenJSON) wipe() {
+	j.AccessToken.Wipe()
+	j.RefreshToken.Wipe()
+	j.IDToken.Wipe()
 }
 
 // MarshalJSON implements json.Marshaler, materializing the protected fields
 // at this serialization boundary.
 func (t *OIDCStoredToken) MarshalJSON() ([]byte, error) {
+	accessToken := t.AccessToken()
+	defer secure.Wipe(accessToken)
+	refreshToken := t.RefreshToken()
+	defer secure.Wipe(refreshToken)
+	idToken := t.IDToken()
+	defer secure.Wipe(idToken)
 	return json.Marshal(oidcStoredTokenJSON{
 		Provider:     t.Provider,
 		Issuer:       t.Issuer,
 		ClientID:     t.ClientID,
-		AccessToken:  t.AccessToken(),
-		RefreshToken: t.RefreshToken(),
-		IDToken:      t.IDToken(),
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		IDToken:      idToken,
 		ExpiresAt:    t.ExpiresAt,
 		Scopes:       t.Scopes,
 	})
@@ -229,6 +240,7 @@ func (t *OIDCStoredToken) MarshalJSON() ([]byte, error) {
 // token strings into protected memory.
 func (t *OIDCStoredToken) UnmarshalJSON(data []byte) error {
 	var aux oidcStoredTokenJSON
+	defer aux.wipe()
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}

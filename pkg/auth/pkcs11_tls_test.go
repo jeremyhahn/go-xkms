@@ -1821,3 +1821,93 @@ func searchSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+// TestInitOwnedToken_ProvisionsLoginableToken proves the []byte provisioning
+// sequence leaves a token whose user PIN works for the C_Login that follows.
+func TestInitOwnedToken_ProvisionsLoginableToken(t *testing.T) {
+	pkcs11module.ResetGlobalModule()
+	defer pkcs11module.ResetGlobalModule()
+
+	moduleCfg := pkcs11module.DefaultConfig()
+	moduleCfg.AutoInitToken = false
+	mod, err := pkcs11module.New(pkcs11module.WithClient(&authMockClient{}), pkcs11module.WithConfig(moduleCfg))
+	if err != nil {
+		t.Fatalf("pkcs11module.New: %v", err)
+	}
+	if rv := mod.Initialize(moduleCfg); rv != pkcs11module.CKR_OK {
+		t.Fatalf("Initialize: %s", rv)
+	}
+	defer mod.Finalize()
+
+	pin := []byte("1234")
+	if tlsErr := initOwnedToken(mod, 0, pin, pkcs11TLSTokenLabel); tlsErr != nil {
+		t.Fatalf("initOwnedToken: %v", tlsErr)
+	}
+
+	session, rv := mod.OpenSession(0, pkcs11module.CKF_RW_SESSION|pkcs11module.CKF_SERIAL_SESSION)
+	if rv != pkcs11module.CKR_OK {
+		t.Fatalf("OpenSession: %s", rv)
+	}
+	defer mod.CloseSession(session)
+	if rv := mod.Login(session, pkcs11module.CKU_USER, pin); rv != pkcs11module.CKR_OK {
+		t.Fatalf("user Login after provisioning: %s", rv)
+	}
+	mod.Logout(session)
+}
+
+// TestInitOwnedToken_InvalidSlot proves a provisioning failure is reported as
+// a typed module-initialization error naming the failing step.
+func TestInitOwnedToken_InvalidSlot(t *testing.T) {
+	pkcs11module.ResetGlobalModule()
+	defer pkcs11module.ResetGlobalModule()
+
+	moduleCfg := pkcs11module.DefaultConfig()
+	mod, err := pkcs11module.New(pkcs11module.WithClient(&authMockClient{}), pkcs11module.WithConfig(moduleCfg))
+	if err != nil {
+		t.Fatalf("pkcs11module.New: %v", err)
+	}
+	if rv := mod.Initialize(moduleCfg); rv != pkcs11module.CKR_OK {
+		t.Fatalf("Initialize: %s", rv)
+	}
+	defer mod.Finalize()
+
+	tlsErr := initOwnedToken(mod, 9999, []byte("1234"), pkcs11TLSTokenLabel)
+	if tlsErr == nil {
+		t.Fatal("expected error for an invalid slot")
+	}
+	if tlsErr.Op != "GetTokenInfo" || !errors.Is(tlsErr, ErrPKCS11ModuleInit) {
+		t.Errorf("got %v, want GetTokenInfo / ErrPKCS11ModuleInit", tlsErr)
+	}
+}
+
+// TestInitOwnedToken_LeavesAnInitializedTokenAlone proves a token the module
+// restored already initialized is not re-initialized: its user PIN still logs
+// in and an object an operator put on it survives, even though the PIN offered
+// here is different from the one the token was provisioned with.
+func TestInitOwnedToken_LeavesAnInitializedTokenAlone(t *testing.T) {
+	mod, _, modCleanup := setupPKCS11Module(t) // initialized, user PIN "1234"
+	defer modCleanup()
+
+	certDER, privKey, certID := createSelfSignedCert(t)
+	importSession, rv := mod.OpenSession(0, pkcs11module.CKF_RW_SESSION|pkcs11module.CKF_SERIAL_SESSION)
+	if rv != pkcs11module.CKR_OK {
+		t.Fatalf("OpenSession for import: %s", rv)
+	}
+	importCertAndKey(t, mod, importSession, certDER, privKey, certID)
+	mod.CloseSession(importSession)
+
+	if tlsErr := initOwnedToken(mod, 0, []byte("a-different-pin"), pkcs11TLSTokenLabel); tlsErr != nil {
+		t.Fatalf("initOwnedToken on an initialized token: %v", tlsErr)
+	}
+
+	// The original user PIN still works, and the certificate is still there.
+	cfg := &PKCS11TLSConfig{Module: mod, PIN: mustSecret(t, "1234")}
+	tlsCfg, cleanup, err := NewPKCS11TLSConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewPKCS11TLSConfig after initOwnedToken: %v", err)
+	}
+	defer cleanup()
+	if len(tlsCfg.Certificates) == 0 {
+		t.Fatal("the certificate on the token did not survive")
+	}
+}

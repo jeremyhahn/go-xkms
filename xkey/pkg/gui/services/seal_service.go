@@ -787,8 +787,11 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 		Backend:   backend,
 		Data:      plaintext,
 		TPMPolicy: req.TPMPolicy,
-		Password:  req.Password,
+		// The GUI binding delivers the password as a string, which cannot be
+		// wiped; the wire copy made here can be, and is.
+		Password: []byte(req.Password),
 	}
+	defer sdkReq.Password.Wipe()
 	objectName := ""
 	if isTPM {
 		objectName = sealedObjectPrefix + id
@@ -953,7 +956,8 @@ func (s *SealService) UnsealData(id string, password string) (result string, ret
 		Metadata:   blob.SealedData.Metadata,
 	}
 	if blob.BackendID == string(xkms.BackendTypeTPM2) {
-		sdkReq.Password = password
+		sdkReq.Password = []byte(password)
+		defer sdkReq.Password.Wipe()
 	}
 
 	ctx := s.ctx

@@ -1436,6 +1436,7 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 // (go-xkms#1228).
 func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 	var req SealRequest
+	defer req.Password.Wipe()
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
 		return
@@ -1496,6 +1497,7 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 // (go-xkms#1228).
 func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 	var req UnsealRequest
+	defer req.Password.Wipe()
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
 		return

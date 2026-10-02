@@ -13,6 +13,6 @@ import (
 // protected memory), so test literals hand the value in here instead.
 func oathCredWithSecret(t *testing.T, c *oath.Credential, secret string) *oath.Credential {
 	t.Helper()
-	require.NoError(t, c.SetSecret(secret))
+	require.NoError(t, c.SetSecret([]byte(secret)))
 	return c
 }

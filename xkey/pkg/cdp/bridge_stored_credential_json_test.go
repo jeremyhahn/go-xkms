@@ -58,7 +58,7 @@ func TestStoredCredential_JSON_GoldenFixture(t *testing.T) {
 	assert.Equal(t, legacy.RpID, decoded.RpID)
 	assert.Equal(t, legacy.UserHandle, decoded.UserHandle)
 	assert.Equal(t, legacy.SignCount, decoded.SignCount)
-	assert.Equal(t, legacy.PrivateKey, decoded.PrivateKeyString())
+	assert.Equal(t, legacy.PrivateKey, privateKeyText(&decoded))
 
 	reencoded, err := json.Marshal(decoded)
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestStoredCredential_JSON_GoldenFixture_NoPrivateKey(t *testing.T) {
 	var decoded StoredCredential
 	require.NoError(t, json.Unmarshal(golden, &decoded))
 	assert.False(t, decoded.HasPrivateKey())
-	assert.Equal(t, "", decoded.PrivateKeyString())
+	assert.Equal(t, "", privateKeyText(&decoded))
 
 	reencoded, err := json.Marshal(decoded)
 	require.NoError(t, err)
@@ -92,25 +92,25 @@ func TestStoredCredential_JSON_GoldenFixture_NoPrivateKey(t *testing.T) {
 func TestStoredCredential_SetPrivateKey_RoundTrip(t *testing.T) {
 	var cred StoredCredential
 	assert.False(t, cred.HasPrivateKey())
-	assert.Equal(t, "", cred.PrivateKeyString())
+	assert.Equal(t, "", privateKeyText(&cred))
 
-	require.NoError(t, cred.SetPrivateKey("cHJpdmF0ZS1rZXk"))
+	require.NoError(t, cred.SetPrivateKey([]byte("cHJpdmF0ZS1rZXk")))
 
 	assert.True(t, cred.HasPrivateKey())
-	assert.Equal(t, "cHJpdmF0ZS1rZXk", cred.PrivateKeyString())
+	assert.Equal(t, "cHJpdmF0ZS1rZXk", privateKeyText(&cred))
 }
 
 // TestStoredCredential_SetPrivateKey_EmptyClearsExisting proves
 // SetPrivateKey with an empty string clears a previously stored key.
 func TestStoredCredential_SetPrivateKey_EmptyClearsExisting(t *testing.T) {
 	var cred StoredCredential
-	require.NoError(t, cred.SetPrivateKey("will-be-cleared"))
+	require.NoError(t, cred.SetPrivateKey([]byte("will-be-cleared")))
 	require.True(t, cred.HasPrivateKey())
 
-	require.NoError(t, cred.SetPrivateKey(""))
+	require.NoError(t, cred.SetPrivateKey([]byte("")))
 
 	assert.False(t, cred.HasPrivateKey())
-	assert.Equal(t, "", cred.PrivateKeyString())
+	assert.Equal(t, "", privateKeyText(&cred))
 }
 
 // TestStoredCredential_UnmarshalJSON_InvalidJSON proves malformed JSON is

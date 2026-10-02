@@ -23,6 +23,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -917,6 +918,77 @@ func TestClearPassword_Clear(t *testing.T) {
 	for _, b := range bytes {
 		assert.Equal(t, byte(0), b)
 	}
+}
+
+// TestClearPassword_StringNeverReturnsTheSecret is the #1401 regression: a
+// Password formatted with %v, %s or String must not yield its plaintext.
+func TestClearPassword_StringNeverReturnsTheSecret(t *testing.T) {
+	pwd, err := NewPassword([]byte("hunter2"))
+	require.NoError(t, err)
+	defer pwd.Clear()
+
+	assert.Equal(t, PasswordRedacted, pwd.String())
+	assert.NotContains(t, fmt.Sprintf("%v|%s|%+v", pwd, pwd, pwd), "hunter2")
+	assert.Equal(t, []byte("hunter2"), pwd.Bytes(), "the secret is still reachable through Bytes")
+}
+
+func TestClearPassword_WithBytesLendsTheSecret(t *testing.T) {
+	pwd, err := NewPassword([]byte("hunter2"))
+	require.NoError(t, err)
+	defer pwd.Clear()
+
+	var seen string
+	require.NoError(t, pwd.WithBytes(func(b []byte) error {
+		seen = string(b)
+		return nil
+	}))
+	assert.Equal(t, "hunter2", seen)
+
+	want := errors.New("callback failed")
+	assert.ErrorIs(t, pwd.WithBytes(func([]byte) error { return want }), want)
+}
+
+func TestClearPassword_WithBytesEmptyLendsNil(t *testing.T) {
+	pwd, err := NewPassword(nil)
+	require.NoError(t, err)
+
+	called := false
+	require.NoError(t, pwd.WithBytes(func(b []byte) error {
+		called = true
+		assert.Nil(t, b)
+		return nil
+	}))
+	assert.True(t, called)
+}
+
+func TestClearPassword_StringAndBytesAreIndependentCopies(t *testing.T) {
+	pwd, err := NewPassword([]byte("hunter2"))
+	require.NoError(t, err)
+	defer pwd.Clear()
+
+	// Wiping a returned copy must not touch the enclaved original.
+	first := pwd.Bytes()
+	for i := range first {
+		first[i] = 0
+	}
+	assert.Equal(t, []byte("hunter2"), pwd.Bytes())
+}
+
+func TestClearPassword_AfterClearYieldsNothing(t *testing.T) {
+	pwd, err := NewPasswordFromString("hunter2")
+	require.NoError(t, err)
+	pwd.Clear()
+
+	assert.Equal(t, PasswordRedacted, pwd.String())
+	assert.Nil(t, pwd.Bytes())
+}
+
+func TestNewPassword_DoesNotWipeTheCallersSlice(t *testing.T) {
+	in := []byte("hunter2")
+	pwd, err := NewPassword(in)
+	require.NoError(t, err)
+	defer pwd.Clear()
+	assert.Equal(t, []byte("hunter2"), in)
 }
 
 func TestClearPassword_ClearEmpty(t *testing.T) {

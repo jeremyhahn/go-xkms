@@ -36,7 +36,6 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 
-	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-enclave"
@@ -856,21 +855,38 @@ type TPMAttributes struct {
 //
 // Key characteristics of Password:
 //   - Used for TPM UserAuth (key authentication/authorization)
-//   - Supports String() for human-readable passwords
+//   - String() is redacted: it never returns the secret, so formatting or
+//     logging a Password cannot leak it. Read the secret through Bytes
 //   - Can be cached via PlatformPassword for performance (see PasswordCacheConfig)
 //   - Typically used with KeyAttributes.Password field
 //
 // For sealed arbitrary data (not key auth), use Secret instead.
 type Password interface {
-	// Bytes returns the password as a byte slice
+	// Bytes returns the password as a caller-owned copy. The caller MUST
+	// wipe it (secure.Wipe) as soon as it has been used, and must not retain
+	// it. Returns nil for an empty, cleared or unavailable password.
 	Bytes() []byte
 
-	// String returns the password as a string
-	String() (string, error)
+	// WithBytes lends the password bytes to fn for the duration of the call
+	// and wipes any copy afterwards. fn must not retain or modify the slice,
+	// and must not allocate protected memory (borrows do not nest). An empty
+	// password calls fn with a nil slice. It returns the error that makes the
+	// password unreadable (a placeholder that holds none, a cleared or
+	// unavailable secret) without calling fn, and otherwise fn's error.
+	WithBytes(fn func([]byte) error) error
+
+	// String returns PasswordRedacted and never the secret, so a Password
+	// formatted with %v or %s, or written to a log, cannot leak it. A Go
+	// string can never be wiped; callers that need the secret use Bytes.
+	String() string
 
 	// Clear zeros out the password from memory
 	Clear()
 }
+
+// PasswordRedacted is what every Password implementation's String returns in
+// place of the secret.
+const PasswordRedacted = "[REDACTED]"
 
 // ClearPassword implements Password by holding the UserAuth bytes inside
 // a memguard-backed *secure.Buffer. The plaintext never sits on the
@@ -902,12 +918,20 @@ func NewPassword(password []byte) (Password, error) {
 	if len(password) == 0 {
 		return &ClearPassword{}, nil
 	}
-	buf, err := secure.NewBuffer(len(password))
+	return newClearPassword(len(password), func(dst []byte) { copy(dst, password) })
+}
+
+// newClearPassword allocates an enclave of size bytes and has fill write the
+// password into it while the borrow is held. A failed allocation or borrow
+// returns ErrEnclaveUnavailable rather than a usable Password: see
+// NewPassword.
+func newClearPassword(size int, fill func(dst []byte)) (Password, error) {
+	buf, err := secure.NewBuffer(size)
 	if err != nil {
 		return nil, ErrEnclaveUnavailable
 	}
-	if err := buf.WithBytes(func(b []byte) error {
-		copy(b, password)
+	if err := buf.WithBytes(func(dst []byte) error {
+		fill(dst)
 		return nil
 	}); err != nil {
 		buf.Destroy()
@@ -929,46 +953,33 @@ func NewPasswordFromString(password string) (Password, error) {
 	if len(password) == 0 {
 		return &ClearPassword{}, nil
 	}
-	buf, err := secure.NewBuffer(len(password))
-	if err != nil {
-		return nil, ErrEnclaveUnavailable
-	}
-	if err := buf.WithBytes(func(b []byte) error {
-		copy(b, password)
-		return nil
-	}); err != nil {
-		buf.Destroy()
-		return nil, ErrEnclaveUnavailable
-	}
-	return &ClearPassword{buf: buf}, nil
+	return newClearPassword(len(password), func(dst []byte) { copy(dst, password) })
 }
 
-// String returns the password as a Go string. Returns "" for an
-// empty or cleared password (never an error — the interface allows
-// an error only to accommodate alternate implementations such as
-// PlatformPassword that unseal from hardware).
-func (p *ClearPassword) String() (string, error) {
+// String returns PasswordRedacted. It never returns the password: a Go
+// string cannot be wiped, so the secret is only reachable through Bytes.
+func (p *ClearPassword) String() string {
+	return PasswordRedacted
+}
+
+// WithBytes lends the enclaved password bytes to fn. An empty or cleared
+// password calls fn with a nil slice, the intentional "no authentication"
+// case. It returns the enclave's error when the borrow fails.
+func (p *ClearPassword) WithBytes(fn func([]byte) error) error {
 	if p == nil || p.buf == nil {
-		return "", nil
+		return fn(nil)
 	}
-	var s string
-	if err := p.buf.WithBytes(func(b []byte) error {
-		s = string(b) //secure:unwiped Password.String's contract returns a Go string; callers that can wipe use Bytes
-		return nil
-	}); err != nil {
-		return "", nil
-	}
-	return s, nil
+	return p.buf.WithBytes(fn)
 }
 
-// Bytes returns a defensive copy of the password bytes. Callers treat
-// the returned slice as read-only; mutating it has no effect on the
-// enclaved original. Returns nil for an empty or cleared password.
+// Bytes returns a defensive copy of the password bytes. The caller owns
+// the copy and MUST secure.Wipe it after use; mutating it has no effect
+// on the enclaved original. Returns nil for an empty or cleared password.
 func (p *ClearPassword) Bytes() []byte {
 	if p == nil || p.buf == nil {
 		return nil
 	}
-	out, err := qrdbsecure.CopyOut(p.buf)
+	out, err := secure.CopyOut(p.buf)
 	if err != nil {
 		return nil
 	}
@@ -976,7 +987,7 @@ func (p *ClearPassword) Bytes() []byte {
 }
 
 // Clear destroys the enclave. Safe on a zero-value receiver and
-// idempotent. After Clear, Bytes returns nil and String returns "".
+// idempotent. After Clear, Bytes returns nil.
 func (p *ClearPassword) Clear() {
 	if p == nil || p.buf == nil {
 		return

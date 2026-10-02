@@ -187,13 +187,12 @@ func (f *PasswordField) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	// Decode straight into protected memory, holding the borrow across the
-	// write. decodeErr is kept apart from WithBytes' own error so a bad
-	// encoding stays a BadBodyError while a buffer failure does not.
-	var n int
-	var decodeErr error
-	if err := raw.WithBytes(func(b []byte) error {
-		n, decodeErr = base64.StdEncoding.Decode(b, encoded)
+	var (
+		n         int
+		decodeErr error
+	)
+	if err := raw.WithBytes(func(dst []byte) error {
+		n, decodeErr = base64.StdEncoding.Decode(dst, encoded)
 		return nil
 	}); err != nil {
 		raw.Destroy()
@@ -207,21 +206,18 @@ func (f *PasswordField) UnmarshalJSON(data []byte) error {
 		f.buf = raw
 		return nil
 	}
-	// Right-size: copy the n decoded bytes out under raw's borrow, destroy
-	// the oversized Buffer, and move the copy into an exactly-sized one.
-	// NewBufferFromBytes wipes the copy on every path, and no borrow is
-	// ever nested inside another.
-	var plain []byte
-	err = raw.WithBytes(func(b []byte) error {
-		plain = make([]byte, n)
-		copy(plain, b[:n])
-		return nil
-	})
+	// Right-size: move the decoded prefix into a fresh Buffer of exactly n
+	// bytes and destroy the oversized one. The bytes cross the heap in one
+	// borrow-held copy, wiped on every path below.
+	plain, err := secure.CopyOut(raw)
 	raw.Destroy()
 	if err != nil {
 		return err
 	}
-	trimmed, err := secure.NewBufferFromBytes(plain)
+	defer secure.Wipe(plain)
+	// NewBufferFromBytes wipes the n bytes it is given; the deferred Wipe
+	// above covers the whole copy, including the zero tail.
+	trimmed, err := secure.NewBufferFromBytes(plain[:n])
 	if err != nil {
 		return err
 	}

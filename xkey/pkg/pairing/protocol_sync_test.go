@@ -194,7 +194,7 @@ func TestSyncOATHCredential_JSONRoundTrip(t *testing.T) {
 		Name:        "GitHub",
 		Issuer:      "GitHub",
 		AccountName: "user@example.com",
-		Secret:      "JBSWY3DPEHPK3PXP",
+		Secret:      mustSecretText("JBSWY3DPEHPK3PXP"),
 		Type:        "totp",
 		Algorithm:   "SHA1",
 		Digits:      6,
@@ -210,6 +210,11 @@ func TestSyncOATHCredential_JSONRoundTrip(t *testing.T) {
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
 
+	// reflect.DeepEqual must not walk into a protected buffer, so the secret
+	// is compared through its text and cleared from both sides first.
+	assert.Equal(t, textOf(original.Secret), textOf(decoded.Secret))
+	original.Secret.Destroy()
+	decoded.Secret.Destroy()
 	assert.Equal(t, original, decoded)
 }
 
@@ -217,7 +222,7 @@ func TestSyncOATHCredential_OmitEmpty(t *testing.T) {
 	cred := SyncOATHCredential{
 		ID:     "oath-002",
 		Name:   "Minimal",
-		Secret: "SECRET",
+		Secret: mustSecretText("SECRET"),
 		Type:   "totp",
 	}
 
@@ -245,7 +250,7 @@ func TestSyncPassword_JSONRoundTrip(t *testing.T) {
 		Name:       "GitHub Login",
 		Title:      "GitHub",
 		Username:   "user@example.com",
-		Password:   "s3cret!",
+		Password:   mustSecretText("s3cret!"),
 		URL:        "https://github.com",
 		Notes:      "Personal account",
 		FolderPath: "Social/Code",
@@ -259,6 +264,11 @@ func TestSyncPassword_JSONRoundTrip(t *testing.T) {
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
 
+	// reflect.DeepEqual must not walk into a protected buffer, so the password
+	// is compared through its text and cleared from both sides first.
+	assert.Equal(t, textOf(original.Password), textOf(decoded.Password))
+	original.Password.Destroy()
+	decoded.Password.Destroy()
 	assert.Equal(t, original, decoded)
 }
 
@@ -266,7 +276,7 @@ func TestSyncPassword_OmitEmpty(t *testing.T) {
 	pwd := SyncPassword{
 		ID:       "pwd-002",
 		Name:     "Minimal",
-		Password: "pw",
+		Password: mustSecretText("pw"),
 	}
 
 	data, err := json.Marshal(pwd)
@@ -333,7 +343,7 @@ func TestLocalSyncTrustStoreResult_JSONRoundTrip(t *testing.T) {
 func TestLocalSyncOATHParams_JSONRoundTrip(t *testing.T) {
 	original := &LocalSyncOATHParams{
 		Credentials: []SyncOATHCredential{
-			{ID: "c1", Name: "GitHub", Secret: "SECRET", Type: "totp"},
+			{ID: "c1", Name: "GitHub", Secret: mustSecretText("SECRET"), Type: "totp"},
 		},
 	}
 
@@ -354,7 +364,7 @@ func TestLocalSyncOATHResult_JSONRoundTrip(t *testing.T) {
 		Updated: 1,
 		Skipped: 0,
 		Remote: []SyncOATHCredential{
-			{ID: "r1", Name: "Slack", Secret: "RSECRET", Type: "totp"},
+			{ID: "r1", Name: "Slack", Secret: mustSecretText("RSECRET"), Type: "totp"},
 		},
 	}
 
@@ -376,7 +386,7 @@ func TestLocalSyncOATHResult_JSONRoundTrip(t *testing.T) {
 func TestLocalSyncPasswordsParams_JSONRoundTrip(t *testing.T) {
 	original := &LocalSyncPasswordsParams{
 		Passwords: []SyncPassword{
-			{ID: "p1", Name: "GitHub", Password: "pw1"},
+			{ID: "p1", Name: "GitHub", Password: mustSecretText("pw1")},
 		},
 	}
 
@@ -397,7 +407,7 @@ func TestLocalSyncPasswordsResult_JSONRoundTrip(t *testing.T) {
 		Updated: 0,
 		Skipped: 2,
 		Remote: []SyncPassword{
-			{ID: "rp1", Name: "Remote Password", Password: "rpw"},
+			{ID: "rp1", Name: "Remote Password", Password: mustSecretText("rpw")},
 		},
 	}
 
@@ -494,7 +504,7 @@ func TestRemoteSyncTrustStoreResult_JSONRoundTrip(t *testing.T) {
 func TestRemoteSyncOATHParams_JSONRoundTrip(t *testing.T) {
 	original := &RemoteSyncOATHParams{
 		Credentials: []SyncOATHCredential{
-			{ID: "pc1", Name: "Phone Cred", Secret: "PS", Type: "totp"},
+			{ID: "pc1", Name: "Phone Cred", Secret: mustSecretText("PS"), Type: "totp"},
 		},
 	}
 
@@ -515,7 +525,7 @@ func TestRemoteSyncOATHResult_JSONRoundTrip(t *testing.T) {
 		Updated: 2,
 		Skipped: 3,
 		Local: []SyncOATHCredential{
-			{ID: "lc1", Name: "Laptop Cred", Secret: "LS", Type: "hotp"},
+			{ID: "lc1", Name: "Laptop Cred", Secret: mustSecretText("LS"), Type: "hotp"},
 		},
 	}
 
@@ -537,7 +547,7 @@ func TestRemoteSyncOATHResult_JSONRoundTrip(t *testing.T) {
 func TestRemoteSyncPasswordsParams_JSONRoundTrip(t *testing.T) {
 	original := &RemoteSyncPasswordsParams{
 		Passwords: []SyncPassword{
-			{ID: "pp1", Name: "Phone PW", Password: "ppw"},
+			{ID: "pp1", Name: "Phone PW", Password: mustSecretText("ppw")},
 		},
 	}
 
@@ -558,7 +568,7 @@ func TestRemoteSyncPasswordsResult_JSONRoundTrip(t *testing.T) {
 		Updated: 1,
 		Skipped: 0,
 		Local: []SyncPassword{
-			{ID: "lp1", Name: "Laptop PW", Password: "lpw"},
+			{ID: "lp1", Name: "Laptop PW", Password: mustSecretText("lpw")},
 		},
 	}
 
@@ -811,7 +821,7 @@ func TestNewRequest_SyncMethods(t *testing.T) {
 			method: MethodLocalSyncOATH,
 			params: &LocalSyncOATHParams{
 				Credentials: []SyncOATHCredential{
-					{ID: "c1", Name: "Test", Secret: "S", Type: "totp"},
+					{ID: "c1", Name: "Test", Secret: mustSecretText("S"), Type: "totp"},
 				},
 			},
 		},
@@ -820,7 +830,7 @@ func TestNewRequest_SyncMethods(t *testing.T) {
 			method: MethodLocalSyncPasswords,
 			params: &LocalSyncPasswordsParams{
 				Passwords: []SyncPassword{
-					{ID: "p1", Name: "Test", Password: "pw"},
+					{ID: "p1", Name: "Test", Password: mustSecretText("pw")},
 				},
 			},
 		},
@@ -843,7 +853,7 @@ func TestNewRequest_SyncMethods(t *testing.T) {
 			method: MethodRemoteSyncOATH,
 			params: &RemoteSyncOATHParams{
 				Credentials: []SyncOATHCredential{
-					{ID: "rc1", Name: "Remote", Secret: "RS", Type: "hotp"},
+					{ID: "rc1", Name: "Remote", Secret: mustSecretText("RS"), Type: "hotp"},
 				},
 			},
 		},
@@ -852,7 +862,7 @@ func TestNewRequest_SyncMethods(t *testing.T) {
 			method: MethodRemoteSyncPasswords,
 			params: &RemoteSyncPasswordsParams{
 				Passwords: []SyncPassword{
-					{ID: "rp1", Name: "Remote PW", Password: "rpw"},
+					{ID: "rp1", Name: "Remote PW", Password: mustSecretText("rpw")},
 				},
 			},
 		},

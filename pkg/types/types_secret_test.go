@@ -59,8 +59,7 @@ func TestKeyAttributesFromConfigResolved_CredentialURI(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, attrs.Password, "resolved password must be non-nil")
 
-	pw, err := attrs.Password.String()
-	require.NoError(t, err)
+	pw := string(attrs.Password.Bytes())
 	assert.Equal(t, "s3cret", pw, "password must equal the value returned by the credential resolver")
 }
 
@@ -82,8 +81,7 @@ func TestKeyAttributesFromConfigResolved_LiteralPassthrough(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, attrs.Password)
 
-	pw, err := attrs.Password.String()
-	require.NoError(t, err)
+	pw := string(attrs.Password.Bytes())
 	assert.Equal(t, "my-literal-password", pw)
 }
 
@@ -112,10 +110,8 @@ func TestKeyAttributesFromConfigResolved_NilRegistry(t *testing.T) {
 	// Both must carry the same password.
 	require.NotNil(t, attrsDirect.Password)
 	require.NotNil(t, attrsResolved.Password)
-	pwDirect, err := attrsDirect.Password.String()
-	require.NoError(t, err)
-	pwResolved, err := attrsResolved.Password.String()
-	require.NoError(t, err)
+	pwDirect := string(attrsDirect.Password.Bytes())
+	pwResolved := string(attrsResolved.Password.Bytes())
 	assert.Equal(t, pwDirect, pwResolved)
 }
 
@@ -147,15 +143,13 @@ func TestKeyAttributesFromConfigResolved_ParentPasswordResolved(t *testing.T) {
 
 	// Child password resolved.
 	require.NotNil(t, attrs.Password)
-	childPW, err := attrs.Password.String()
-	require.NoError(t, err)
+	childPW := string(attrs.Password.Bytes())
 	assert.Equal(t, "child-secret", childPW)
 
 	// Parent password resolved.
 	require.NotNil(t, attrs.Parent, "parent KeyAttributes must be set")
 	require.NotNil(t, attrs.Parent.Password, "parent password must be non-nil")
-	parentPW, err := attrs.Parent.Password.String()
-	require.NoError(t, err)
+	parentPW := string(attrs.Parent.Password.Bytes())
 	assert.Equal(t, "parent-secret", parentPW)
 }
 

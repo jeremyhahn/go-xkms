@@ -447,7 +447,9 @@ func TestSealData_TPMSealedObject(t *testing.T) {
 
 	require.NotNil(t, mock.lastSeal)
 	assert.Equal(t, "boot", mock.lastSeal.TPMPolicy)
-	assert.Equal(t, "pw", mock.lastSeal.Password)
+	assert.Equal(t, "pw", mock.sealPassword)
+	assert.Equal(t, make([]byte, len("pw")), []byte(mock.lastSeal.Password),
+		"the caller must wipe the request's password once the call returns")
 	assert.Contains(t, buf.String(), base64.StdEncoding.EncodeToString([]byte("pub")))
 	assert.Contains(t, buf.String(), base64.StdEncoding.EncodeToString([]byte("priv")))
 	assert.Contains(t, buf.String(), "xkms-sealing-key-tpm2")
@@ -464,7 +466,9 @@ func TestUnsealData_TPMSealedObject(t *testing.T) {
 	require.NotNil(t, mock.lastUnseal)
 	assert.Equal(t, []byte("pub"), mock.lastUnseal.TPMPublic)
 	assert.Equal(t, []byte("priv"), mock.lastUnseal.TPMPrivate)
-	assert.Equal(t, "pw", mock.lastUnseal.Password)
+	assert.Equal(t, "pw", mock.unsealPassword)
+	assert.Equal(t, make([]byte, len("pw")), []byte(mock.lastUnseal.Password),
+		"the caller must wipe the request's password once the call returns")
 	assert.Contains(t, buf.String(), "secret")
 }
 

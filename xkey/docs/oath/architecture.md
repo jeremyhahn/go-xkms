@@ -1,6 +1,6 @@
 # OATH TOTP/HOTP — Architecture
 
-> **Status: NORMATIVE** · Feature: `oath` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `oath` · Module: `go-xkms/xkey` · Last verified: 2026-10-01
 
 ## Scope
 
@@ -28,8 +28,8 @@ autofill, documented in [autofill/](../autofill/) — that service calls
 and `BackendID` (which store manages the credential; empty means the default
 store). The shared secret is never a plain Go field: it lives in an unexported
 `*secure.Buffer` (mlocked, guard-paged memory), set through `SetSecret` and
-read back only through `SecretString` at a serialization boundary
-(go-xkms#210). `MarshalJSON`/`UnmarshalJSON` round-trip the secret through the
+read back only through `Secret`, which returns a caller-owned `[]byte` copy
+the caller wipes (go-xkms#210, go-xkms#1398). `MarshalJSON`/`UnmarshalJSON` round-trip the secret through the
 historical `"secret"` JSON key without ever materializing it as a
 long-lived string.
 

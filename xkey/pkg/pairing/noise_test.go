@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -84,6 +85,49 @@ func TestLoadStaticKey_InvalidLength(t *testing.T) {
 			assert.ErrorIs(t, err, ErrInvalidNoiseMessage)
 		})
 	}
+}
+
+func TestLoadStaticKeyFromBuffer(t *testing.T) {
+	original, err := GenerateStaticKey()
+	require.NoError(t, err)
+	defer original.Destroy()
+
+	scalar := append([]byte(nil), original.Private...)
+	buf, err := secure.NewBufferFromBytes(scalar)
+	require.NoError(t, err)
+	defer buf.Destroy()
+
+	loaded, err := LoadStaticKeyFromBuffer(buf)
+	require.NoError(t, err)
+	defer loaded.Destroy()
+
+	assert.Equal(t, original.Private, loaded.Private)
+	assert.Equal(t, original.Public, loaded.Public)
+}
+
+func TestLoadStaticKeyFromBuffer_Invalid(t *testing.T) {
+	t.Run("wrong length", func(t *testing.T) {
+		buf, err := secure.NewBufferFromBytes(make([]byte, 16))
+		require.NoError(t, err)
+		defer buf.Destroy()
+
+		_, err = LoadStaticKeyFromBuffer(buf)
+		assert.ErrorIs(t, err, ErrInvalidNoiseMessage)
+	})
+	t.Run("destroyed buffer", func(t *testing.T) {
+		buf, err := secure.NewBufferFromBytes(make([]byte, NoiseKeySize))
+		require.NoError(t, err)
+		buf.Destroy()
+
+		_, err = LoadStaticKeyFromBuffer(buf)
+		var nilBuf *secure.NilBufferError
+		assert.ErrorAs(t, err, &nilBuf)
+	})
+	t.Run("nil buffer", func(t *testing.T) {
+		_, err := LoadStaticKeyFromBuffer(nil)
+		var nilBuf *secure.NilBufferError
+		assert.ErrorAs(t, err, &nilBuf)
+	})
 }
 
 func TestEncodeDecodeStaticKey(t *testing.T) {

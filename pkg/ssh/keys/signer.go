@@ -85,14 +85,10 @@ func (k *Key) SignerWithClose() (ssh.Signer, func(), error) {
 	if err != nil {
 		return nil, nil, &KeyMaterialError{Op: "open secret for persistent signer", Err: err}
 	}
-	var inner ssh.Signer
-	if err := buf.WithBytes(func(pemBytes []byte) error {
-		var perr error
-		inner, perr = ssh.ParsePrivateKey(pemBytes)
-		return perr
-	}); err != nil {
+	inner, err := parseSealedPEM(buf)
+	if err != nil {
 		buf.Destroy()
-		return nil, nil, &PEMParseError{Err: err}
+		return nil, nil, err
 	}
 
 	ps := &persistentSigner{
@@ -142,6 +138,21 @@ func (k *Key) BackendSigner(ctx context.Context, p BackendProvider) (ssh.Signer,
 	return sshSigner, nil
 }
 
+// parseSealedPEM parses the PEM held in buf into an ssh.Signer, holding the
+// buffer's borrow for the whole parse. Returns *PEMParseError when buf is
+// gone or the PEM does not parse.
+func parseSealedPEM(buf *secure.Buffer) (ssh.Signer, error) {
+	var signer ssh.Signer
+	if err := buf.WithBytes(func(pem []byte) error {
+		var parseErr error
+		signer, parseErr = ssh.ParsePrivateKey(pem)
+		return parseErr
+	}); err != nil {
+		return nil, &PEMParseError{Err: err}
+	}
+	return signer, nil
+}
+
 // enclaveSigner implements ssh.Signer by re-opening the underlying
 // Secret on each Sign call. This is intentional — see the docstring on
 // Key.Signer for the rationale.
@@ -167,19 +178,11 @@ func (s *enclaveSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error
 	}
 	defer buf.Destroy()
 
-	var sig *ssh.Signature
-	if err := buf.WithBytes(func(pemBytes []byte) error {
-		signer, perr := ssh.ParsePrivateKey(pemBytes)
-		if perr != nil {
-			return &PEMParseError{Err: perr}
-		}
-		var serr error
-		sig, serr = signer.Sign(rand, data)
-		return serr
-	}); err != nil {
+	signer, err := parseSealedPEM(buf)
+	if err != nil {
 		return nil, err
 	}
-	return sig, nil
+	return signer.Sign(rand, data)
 }
 
 // SignWithAlgorithm implements ssh.AlgorithmSigner so RSA keys can produce
@@ -194,23 +197,14 @@ func (s *enclaveSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm
 	}
 	defer buf.Destroy()
 
-	var sig *ssh.Signature
-	if err := buf.WithBytes(func(pemBytes []byte) error {
-		signer, perr := ssh.ParsePrivateKey(pemBytes)
-		if perr != nil {
-			return &PEMParseError{Err: perr}
-		}
-		var serr error
-		if as, ok := signer.(ssh.AlgorithmSigner); ok {
-			sig, serr = as.SignWithAlgorithm(rand, data, algorithm)
-		} else {
-			sig, serr = signer.Sign(rand, data)
-		}
-		return serr
-	}); err != nil {
+	signer, err := parseSealedPEM(buf)
+	if err != nil {
 		return nil, err
 	}
-	return sig, nil
+	if as, ok := signer.(ssh.AlgorithmSigner); ok {
+		return as.SignWithAlgorithm(rand, data, algorithm)
+	}
+	return signer.Sign(rand, data)
 }
 
 // persistentSigner is an ssh.Signer that retains the decrypted PEM

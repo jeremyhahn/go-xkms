@@ -383,7 +383,7 @@ type SealRequest struct {
 	// Password is the TPM2 sealed object's authorization value. With a TPM
 	// policy it counts only inside the policy; without one it is the
 	// object's only protection.
-	Password string `json:"password,omitempty"`
+	Password types.SecretBytes `json:"password,omitempty"`
 	// TPMPolicy names the TPM policy a TPM2 sealed object is bound to:
 	// "platform", a named policy of the tenant's scope, or empty for none. A
 	// TPM2 seal needs a policy, a password or both.
@@ -417,7 +417,7 @@ type UnsealRequest struct {
 	TPMPublic  []byte            `json:"tpm_public,omitempty"`  // TPM2 sealed object's public area
 	TPMPrivate []byte            `json:"tpm_private,omitempty"` // TPM2 sealed object's private area
 	WrappedDEK []byte            `json:"wrapped_dek,omitempty"` // Envelope-sealing backend's wrapped key
-	Password   string            `json:"password,omitempty"`    // Sealed object's authorization value (TPM2)
+	Password   types.SecretBytes `json:"password,omitempty"`    // Sealed object's authorization value (TPM2)
 	KeyVersion uint32            `json:"key_version,omitempty"` // Sealing key version the seal response reported
 }
 

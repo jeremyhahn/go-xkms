@@ -420,6 +420,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return classifyBackupDecryptError(err)
 	}
+	defer archive.Destroy()
 
 	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd), false)
 	if err != nil {
@@ -1014,6 +1015,9 @@ func (a *oathStoreAdapter) List() ([]*backup.OATHCredentialInfo, error) {
 	for _, cred := range creds {
 		info, convErr := oathCredentialToInfo(cred)
 		if convErr != nil {
+			for _, built := range out {
+				built.Destroy()
+			}
 			return nil, convErr
 		}
 		out = append(out, info)
@@ -1073,7 +1077,13 @@ func oathCredentialToInfo(cred *oath.Credential) (*backup.OATHCredentialInfo, er
 		Period:      cred.Period,
 		Counter:     oathCounterToInt64(cred.Counter),
 	}
-	if err := info.SetSecret(cred.SecretString()); err != nil {
+	secret, err := cred.Secret()
+	if err != nil {
+		return nil, err
+	}
+	defer secure.Wipe(secret)
+	if err := info.SetSecret(secret); err != nil {
+		info.Destroy()
 		return nil, err
 	}
 	return info, nil
@@ -1096,7 +1106,12 @@ func oathInfoToCredential(info *backup.OATHCredentialInfo, createdAt time.Time) 
 		Counter:     oathCounterFromInt64(info.Counter),
 		CreatedAt:   createdAt,
 	}
-	if err := cred.SetSecret(info.SecretString()); err != nil {
+	secret, err := info.Secret()
+	if err != nil {
+		return nil, err
+	}
+	defer secure.Wipe(secret)
+	if err := cred.SetSecret(secret); err != nil {
 		return nil, err
 	}
 	return cred, nil
@@ -1138,6 +1153,9 @@ func (a *passwordStoreAdapter) List() ([]*backup.PasswordInfo, error) {
 	for _, pw := range passwords {
 		info, convErr := passwordToInfo(pw)
 		if convErr != nil {
+			for _, built := range out {
+				built.Destroy()
+			}
 			return nil, convErr
 		}
 		out = append(out, info)
@@ -1160,15 +1178,32 @@ func (a *passwordStoreAdapter) Get(id string) (*backup.PasswordInfo, error) {
 // derives the entry ID from the name and folder, so restoring preserves
 // identity without carrying the stored ID across.
 func (a *passwordStoreAdapter) Add(info *backup.PasswordInfo) error {
-	return a.store.Add(&xkms.StaticPassword{
+	pw, err := staticPasswordFromInfo(info)
+	if err != nil {
+		return err
+	}
+	return a.store.Add(pw)
+}
+
+// staticPasswordFromInfo builds the store's entry from the service-facing
+// form. xkms.StaticPassword.Password is a string-typed field (the entry is
+// bound to the GUI and written to the store as JSON), so the password becomes
+// a string here and only here; the byte copy it is made from is wiped.
+func staticPasswordFromInfo(info *backup.PasswordInfo) (*xkms.StaticPassword, error) {
+	password, err := info.Password()
+	if err != nil {
+		return nil, err
+	}
+	defer secure.Wipe(password)
+	return &xkms.StaticPassword{
 		Name:       info.Name,
 		Title:      info.Title,
 		Username:   info.Username,
-		Password:   info.PasswordString(),
+		Password:   string(password),
 		URL:        info.URL,
 		Notes:      info.Notes,
 		FolderPath: info.FolderPath,
-	})
+	}, nil
 }
 
 // Update replaces an existing password entry. The store keys entries by an ID
@@ -1179,16 +1214,12 @@ func (a *passwordStoreAdapter) Update(info *backup.PasswordInfo) error {
 	if err != nil {
 		return err
 	}
-	return a.store.Update(&xkms.StaticPassword{
-		ID:         existing.ID,
-		Name:       info.Name,
-		Title:      info.Title,
-		Username:   info.Username,
-		Password:   info.PasswordString(),
-		URL:        info.URL,
-		Notes:      info.Notes,
-		FolderPath: info.FolderPath,
-	})
+	pw, err := staticPasswordFromInfo(info)
+	if err != nil {
+		return err
+	}
+	pw.ID = existing.ID
+	return a.store.Update(pw)
 }
 
 // passwordToInfo converts a stored password to the service-facing form
@@ -1205,7 +1236,12 @@ func passwordToInfo(pw *xkms.StaticPassword) (*backup.PasswordInfo, error) {
 		Notes:      pw.Notes,
 		FolderPath: pw.FolderPath,
 	}
-	if err := info.SetPassword(pw.Password); err != nil {
+	// []byte(pw.Password) copies the stored string into a slice that can be
+	// wiped; the string itself is the store's and outlives this call.
+	password := []byte(pw.Password)
+	defer secure.Wipe(password)
+	if err := info.SetPassword(password); err != nil {
+		info.Destroy()
 		return nil, err
 	}
 	return info, nil
@@ -1492,9 +1528,9 @@ func (c *backupCredential) keyFor(encrypted *backup.EncryptedBackup) (*backup.Ke
 	}
 	var key *backup.Key
 	if err := c.password.WithBytes(func(password []byte) error {
-		var derr error
-		key, derr = encrypted.PasswordKey(password)
-		return derr
+		var deriveErr error
+		key, deriveErr = encrypted.PasswordKey(password)
+		return deriveErr
 	}); err != nil {
 		return nil, classifyBackupDecryptError(err)
 	}

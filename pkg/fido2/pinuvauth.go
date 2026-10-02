@@ -632,8 +632,8 @@ func (a *Authenticator) GetPINToken(session *PINUVAuthSession, pin *secure.Secre
 		return nil, &errs.Joined{Lead: ErrPINTokenFailed, Cause: openErr}
 	}
 	var pinHash [sha256.Size]byte
-	hashErr := pinBuf.WithBytes(func(p []byte) error {
-		pinHash = sha256.Sum256(p)
+	hashErr := pinBuf.WithBytes(func(pinBytes []byte) error {
+		pinHash = sha256.Sum256(pinBytes)
 		return nil
 	})
 	pinBuf.Destroy()

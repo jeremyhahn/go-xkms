@@ -13,13 +13,26 @@
 
 package oath
 
+import secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
 // withSecret stores secret on cred and returns cred, preserving the shape of
 // the composite-literal tests written when the secret was an exported string
 // field. It panics on a protected-memory failure, which in a test is a
 // legitimate abort.
 func withSecret(cred *Credential, secret string) *Credential {
-	if err := cred.SetSecret(secret); err != nil {
+	if err := cred.SetSecret([]byte(secret)); err != nil {
 		panic(err)
 	}
 	return cred
+}
+
+// secretText returns the credential's secret as a string for assertions, or ""
+// when none is set. It panics on a protected-memory failure.
+func secretText(cred *Credential) string {
+	b, err := cred.Secret()
+	if err != nil {
+		panic(err)
+	}
+	defer secure.Wipe(b)
+	return string(b)
 }

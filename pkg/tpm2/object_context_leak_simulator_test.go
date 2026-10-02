@@ -399,13 +399,14 @@ func TestCreateKeySession_InvalidPassword_ReturnsCallableCloser(t *testing.T) {
 	assert.NoError(t, closer())
 }
 
-// errUnreadablePassword is what unreadablePassword.String reports.
+// errUnreadablePassword is what unreadablePassword.WithBytes reports.
 var errUnreadablePassword = errors.New("tpm2: test password is unreadable")
 
-// unreadablePassword is a types.Password whose String fails, which is the
+// unreadablePassword is a types.Password whose WithBytes fails, which is the
 // condition createKeySession reports rather than authorizing with.
 type unreadablePassword struct{}
 
-func (unreadablePassword) String() (string, error) { return "", errUnreadablePassword }
-func (unreadablePassword) Bytes() []byte           { return nil }
-func (unreadablePassword) Clear()                  {}
+func (unreadablePassword) WithBytes(func([]byte) error) error { return errUnreadablePassword }
+func (unreadablePassword) String() string                     { return types.PasswordRedacted }
+func (unreadablePassword) Bytes() []byte                      { return nil }
+func (unreadablePassword) Clear()                             {}

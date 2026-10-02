@@ -48,7 +48,7 @@ func validConfig() *Config {
 	return &Config{
 		Transport:      TransportBLE,
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "cafebabe05060708",
 	}
 }

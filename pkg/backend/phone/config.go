@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 const (
@@ -80,7 +81,11 @@ type Config struct {
 	DeviceAddress string `yaml:"device_address" json:"device_address"`
 
 	// NoiseStaticKey is the hex-encoded Noise static private key for this laptop.
-	NoiseStaticKey string `yaml:"noise_static_key" json:"noise_static_key"`
+	// It is held as bytes so its owner can wipe it, and is only validated here:
+	// the backend never reads it, so the owner wipes it as soon as NewBackend
+	// returns. It encodes as the same JSON string the field was before it became
+	// SecretBytes.
+	NoiseStaticKey types.SecretBytes `yaml:"noise_static_key" json:"noise_static_key"`
 
 	// PhoneStaticKey is the hex-encoded Noise static public key of the paired phone.
 	PhoneStaticKey string `yaml:"phone_static_key" json:"phone_static_key"`
@@ -126,7 +131,7 @@ func (c *Config) Validate() error {
 		return ErrMissingDeviceAddress
 	}
 
-	if c.NoiseStaticKey == "" {
+	if len(c.NoiseStaticKey) == 0 {
 		return ErrMissingNoiseStaticKey
 	}
 

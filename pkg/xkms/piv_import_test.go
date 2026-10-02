@@ -1160,3 +1160,32 @@ func (a *acceptingImportProvider) ExportKeyTo(_ context.Context, _ *types.KeyAtt
 func (a *acceptingImportProvider) ExportKeyMaterial(_ context.Context, _ *types.KeyAttributes) ([]byte, error) {
 	return nil, nil
 }
+
+// TestImportPIVKey_WipesTheRequestPIN proves the PIN a request carried is
+// zeroed on the success path and on every refusal, since the consumer owns it.
+func TestImportPIVKey_WipesTheRequestPIN(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	stub := newPIVImportStub()
+	_ = setupPIVForOps(t, stub)
+
+	for name, req := range map[string]*transport.ImportPIVKeyRequest{
+		"success":          {Backend: "software", Slot: "9a", PrivateKey: pemEncodePKCS8(t, key)},
+		"missing material": {Backend: "software", Slot: "9a"},
+		"invalid slot":     {Backend: "software", Slot: "zz", PrivateKey: pemEncodePKCS8(t, key)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pin := types.SecretBytes("123456")
+			backing := []byte(pin)
+			req.PIN = pin
+
+			_, _ = ImportPIVKey(context.Background(), req)
+
+			assert.Nil(t, req.PIN)
+			assert.Equal(t, make([]byte, len(backing)), backing, "the PIN's backing array must be zeroed")
+		})
+	}
+
+	_, err = ImportPIVKey(context.Background(), nil)
+	assert.ErrorIs(t, err, ErrPIVKeyMaterialRequired)
+}

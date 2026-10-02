@@ -26,7 +26,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -424,31 +423,27 @@ func (k *MockSymmetricKey) KeySize() int {
 	return k.keySize
 }
 
-// Raw returns a caller-owned copy of the raw key bytes, read under the
-// Buffer's borrow. A zero-value MockSymmetricKey (keyMaterial never set)
-// returns nil rather than an error, matching the pre-*secure.Buffer
+// Raw returns a copy of the raw key bytes; the caller owns the copy and
+// should wipe it. A zero-value MockSymmetricKey (keyMaterial never set)
+// returns nil rather than panicking, matching the pre-*secure.Buffer
 // zero-value behavior.
 func (k *MockSymmetricKey) Raw() ([]byte, error) {
 	if k.keyMaterial == nil {
 		return nil, nil
 	}
-	return qrdbsecure.CopyOut(k.keyMaterial)
+	return secure.CopyOut(k.keyMaterial)
 }
 
-// newMockCipher builds the AES block cipher for key, reading the key under
-// one borrow; aes.NewCipher expands it into its own schedule, so nothing
-// outlives the callback.
-func newMockCipher(key *secure.Buffer) (cipher.Block, error) {
+// newAESCipher builds an AES cipher from keyMaterial while holding the
+// borrow across the read, so the enclaved key is never touched unprotected.
+func newAESCipher(keyMaterial *secure.Buffer) (cipher.Block, error) {
 	var block cipher.Block
-	err := key.WithBytes(func(k []byte) error {
-		var cerr error
-		block, cerr = aes.NewCipher(k)
-		return cerr
+	err := keyMaterial.WithBytes(func(key []byte) error {
+		var cipherErr error
+		block, cipherErr = aes.NewCipher(key)
+		return cipherErr
 	})
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
-	}
-	return block, nil
+	return block, err
 }
 
 // NewMockSymmetricEncrypter builds a MockSymmetricEncrypter sealing
@@ -482,9 +477,9 @@ func (e *MockSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOp
 		return nil, e.EncryptError
 	}
 
-	block, err := newMockCipher(e.KeyMaterial)
+	block, err := newAESCipher(e.KeyMaterial)
 	if err != nil {
-		return nil, err
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
@@ -529,9 +524,9 @@ func (e *MockSymmetricEncrypter) Decrypt(encrypted *types.EncryptedData, opts *t
 		return nil, &errs.Message{Msg: "mocks: encrypted data is nil"}
 	}
 
-	block, err := newMockCipher(e.KeyMaterial)
+	block, err := newAESCipher(e.KeyMaterial)
 	if err != nil {
-		return nil, err
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
 	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)

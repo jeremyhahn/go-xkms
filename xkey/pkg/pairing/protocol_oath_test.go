@@ -120,7 +120,7 @@ func TestOATHCredentialInfo_JSONRoundTrip(t *testing.T) {
 		Name:        "GitHub",
 		Issuer:      "GitHub",
 		AccountName: "user@example.com",
-		Secret:      "JBSWY3DPEHPK3PXP",
+		Secret:      mustSecretText("JBSWY3DPEHPK3PXP"),
 		Type:        "totp",
 		Algorithm:   "SHA1",
 		Digits:      6,
@@ -135,6 +135,11 @@ func TestOATHCredentialInfo_JSONRoundTrip(t *testing.T) {
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
 
+	// reflect.DeepEqual must not walk into a protected buffer, so the secret
+	// is compared through its text and cleared from both sides first.
+	assert.Equal(t, textOf(original.Secret), textOf(decoded.Secret))
+	original.Destroy()
+	decoded.Destroy()
 	assert.Equal(t, original, decoded)
 }
 
@@ -143,7 +148,7 @@ func TestOATHCredentialInfo_JSONFieldNames(t *testing.T) {
 		Name:        "test",
 		Issuer:      "TestCo",
 		AccountName: "user@test.com",
-		Secret:      "SECRET",
+		Secret:      mustSecretText("SECRET"),
 		Type:        "totp",
 		Algorithm:   "SHA256",
 		Digits:      8,
@@ -171,7 +176,7 @@ func TestOATHCredentialInfo_JSONFieldNames(t *testing.T) {
 func TestOATHCredentialInfo_OmitEmpty(t *testing.T) {
 	info := OATHCredentialInfo{
 		Name:   "minimal",
-		Secret: "SECRET",
+		Secret: mustSecretText("SECRET"),
 		Type:   "totp",
 	}
 
@@ -195,7 +200,7 @@ func TestOATHCredentialInfo_HOTPCredential(t *testing.T) {
 	original := OATHCredentialInfo{
 		Name:    "AWS",
 		Issuer:  "Amazon",
-		Secret:  "NBSWY3DP",
+		Secret:  mustSecretText("NBSWY3DP"),
 		Type:    "hotp",
 		Digits:  6,
 		Counter: 42,
@@ -219,7 +224,7 @@ func TestLocalOATHAddParams_JSONRoundTrip(t *testing.T) {
 		Credential: OATHCredentialInfo{
 			Name:      "GitHub",
 			Issuer:    "GitHub",
-			Secret:    "JBSWY3DPEHPK3PXP",
+			Secret:    mustSecretText("JBSWY3DPEHPK3PXP"),
 			Type:      "totp",
 			Algorithm: "SHA1",
 			Digits:    6,
@@ -235,7 +240,7 @@ func TestLocalOATHAddParams_JSONRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, original.Credential.Name, decoded.Credential.Name)
-	assert.Equal(t, original.Credential.Secret, decoded.Credential.Secret)
+	assert.Equal(t, textOf(original.Credential.Secret), textOf(decoded.Credential.Secret))
 	assert.Equal(t, original.Credential.Type, decoded.Credential.Type)
 }
 
@@ -295,7 +300,7 @@ func TestLocalOATHListResult_JSONRoundTrip(t *testing.T) {
 			{
 				Name:      "GitHub",
 				Issuer:    "GitHub",
-				Secret:    "JBSWY3DPEHPK3PXP",
+				Secret:    mustSecretText("JBSWY3DPEHPK3PXP"),
 				Type:      "totp",
 				Algorithm: "SHA1",
 				Digits:    6,
@@ -304,7 +309,7 @@ func TestLocalOATHListResult_JSONRoundTrip(t *testing.T) {
 			{
 				Name:    "AWS",
 				Issuer:  "Amazon",
-				Secret:  "NBSWY3DP",
+				Secret:  mustSecretText("NBSWY3DP"),
 				Type:    "hotp",
 				Digits:  6,
 				Counter: 10,
@@ -452,7 +457,7 @@ func TestRemoteOATHAddParams_JSONRoundTrip(t *testing.T) {
 		Credential: OATHCredentialInfo{
 			Name:      "Slack",
 			Issuer:    "Slack",
-			Secret:    "NBSWY3DPEHPK3PXP",
+			Secret:    mustSecretText("NBSWY3DPEHPK3PXP"),
 			Type:      "totp",
 			Algorithm: "SHA256",
 			Digits:    6,
@@ -468,7 +473,7 @@ func TestRemoteOATHAddParams_JSONRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, original.Credential.Name, decoded.Credential.Name)
-	assert.Equal(t, original.Credential.Secret, decoded.Credential.Secret)
+	assert.Equal(t, textOf(original.Credential.Secret), textOf(decoded.Credential.Secret))
 }
 
 func TestRemoteOATHAddResult_JSONRoundTrip(t *testing.T) {
@@ -635,7 +640,7 @@ func TestNewRequest_OATHMethods(t *testing.T) {
 			params: &LocalOATHAddParams{
 				Credential: OATHCredentialInfo{
 					Name:   "GitHub",
-					Secret: "JBSWY3DPEHPK3PXP",
+					Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
 					Type:   "totp",
 				},
 			},
@@ -665,7 +670,7 @@ func TestNewRequest_OATHMethods(t *testing.T) {
 			params: &RemoteOATHAddParams{
 				Credential: OATHCredentialInfo{
 					Name:   "Slack",
-					Secret: "NBSWY3DP",
+					Secret: mustSecretText("NBSWY3DP"),
 					Type:   "totp",
 				},
 			},

@@ -114,7 +114,7 @@ func TestRunOATHAdd_NoBarrier_WarnsAndUsesFileStore(t *testing.T) {
 	defer func() { _ = fs.Close() }()
 	cred, err := fs.Get("slack")
 	require.NoError(t, err)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", cred.SecretString())
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(cred))
 }
 
 func TestRunOATHAdd_BarrierInitialized_WritesCiphertextNotPlaintext(t *testing.T) {
@@ -211,7 +211,7 @@ func TestRunOATHAdd_ExplicitStoreFlagBypassesBarrier(t *testing.T) {
 	defer func() { _ = fs.Close() }()
 	cred, err := fs.Get("explicit")
 	require.NoError(t, err)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", cred.SecretString())
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(cred))
 }
 
 // --- openOATHStore default resolution (go-xkms#929) ---
@@ -239,7 +239,7 @@ func TestOpenOATHStore_DefaultsUnderXKEYHome(t *testing.T) {
 	// The store file itself is created lazily on first write (oath.FileStore);
 	// prove the resolved path really is where writes land.
 	cred := &oath.Credential{ID: "github", Name: "GitHub", Type: oath.TypeTOTP, Algorithm: "SHA1", Digits: 6, Period: 30}
-	require.NoError(t, cred.SetSecret("JBSWY3DPEHPK3PXP"))
+	require.NoError(t, cred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
 	require.NoError(t, store.Add(cred))
 
 	_, statErr := os.Stat(want)

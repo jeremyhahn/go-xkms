@@ -20,7 +20,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
-	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // The raw memguard import above is forced, not a convenience:
@@ -193,19 +192,15 @@ func decodeP256StaticKey(hexKey []byte) (*bootstrap.P256StaticKey, error) {
 }
 
 // encodeP256StaticKeyHex is decodeP256StaticKey's inverse: it hex-encodes
-// key's private scalar and hands the result back as a *secure.Buffer, so
+// key's private scalar and hands the result back as a []byte, so
 // bootstrap_key_custody.go's sealing/persisting paths (go-xkms#35) can reach
 // go-truststrap's P-256 encode step without importing memguard themselves.
 //
 // The memguard.LockedBuffer bootstrap.EncodeP256StaticKey writes into is
-// destroyed before this function returns; the hex bytes it produced are
-// copied into the returned secure.Buffer (which itself wipes and copies
-// under the hood) rather than handed back as that LockedBuffer, for the same
-// reason decodeP256StaticKey never hands one to its own caller -- the
-// LockedBuffer handle is exactly what the secure-analyzer exemption above
-// stays scoped to this file for. The caller owns the returned buffer and
-// must Destroy it.
-func encodeP256StaticKeyHex(key *bootstrap.P256StaticKey) (*secure.Buffer, error) {
+// destroyed before this function returns. The hex bytes are copied out of it
+// because the barrier and the key file both take a []byte; the caller owns the
+// result and must wipe it with secure.Wipe on every path.
+func encodeP256StaticKeyHex(key *bootstrap.P256StaticKey) ([]byte, error) {
 	memBuf := memguard.NewBuffer(bootstrap.P256HexKeySize)
 	defer memBuf.Destroy()
 
@@ -213,8 +208,7 @@ func encodeP256StaticKeyHex(key *bootstrap.P256StaticKey) (*secure.Buffer, error
 		return nil, err
 	}
 
-	// NewBufferFromBytes copies memBuf.Bytes() into the new secure.Buffer and
-	// wipes the source in place; the deferred memBuf.Destroy() above then
-	// unmaps the (already wiped) protected pages.
-	return secure.NewBufferFromBytes(memBuf.Bytes())
+	hexKey := make([]byte, memBuf.Size())
+	copy(hexKey, memBuf.Bytes())
+	return hexKey, nil
 }

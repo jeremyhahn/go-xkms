@@ -70,7 +70,7 @@ func TestNewCredential_Success(t *testing.T) {
 			if cred.Type != tc.otpType {
 				t.Errorf("expected type %q, got %q", tc.otpType, cred.Type)
 			}
-			if cred.SecretString() == "" {
+			if secretText(cred) == "" {
 				t.Error("expected non-empty secret")
 			}
 			if cred.Algorithm != DefaultAlgorithm {
@@ -298,7 +298,7 @@ func TestParseURI_Success(t *testing.T) {
 			if tc.wantType == TypeHOTP && cred.Counter != tc.wantCounter {
 				t.Errorf("expected counter %d, got %d", tc.wantCounter, cred.Counter)
 			}
-			if cred.SecretString() == "" {
+			if secretText(cred) == "" {
 				t.Error("expected non-empty secret")
 			}
 		})
@@ -506,7 +506,10 @@ func TestCredential_ToURI_Success(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			uri := tc.cred.ToURI()
+			uri, uriErr := tc.cred.ToURI()
+			if uriErr != nil {
+				t.Fatalf("ToURI failed: %v", uriErr)
+			}
 			for _, part := range tc.wantParts {
 				if !strings.Contains(uri, part) {
 					t.Errorf("expected URI to contain %q, got %q", part, uri)
@@ -542,7 +545,10 @@ func TestCredential_ToURI_RoundTrip(t *testing.T) {
 				t.Fatalf("failed to parse URI: %v", err)
 			}
 
-			generatedURI := cred.ToURI()
+			generatedURI, uriErr := cred.ToURI()
+			if uriErr != nil {
+				t.Fatalf("ToURI failed: %v", uriErr)
+			}
 
 			// Parse the generated URI and compare fields
 			cred2, err := ParseURI(generatedURI)
@@ -559,8 +565,8 @@ func TestCredential_ToURI_RoundTrip(t *testing.T) {
 			if cred.AccountName != cred2.AccountName {
 				t.Errorf("account mismatch: %q vs %q", cred.AccountName, cred2.AccountName)
 			}
-			if cred.SecretString() != cred2.SecretString() {
-				t.Errorf("secret mismatch: %q vs %q", cred.SecretString(), cred2.SecretString())
+			if secretText(cred) != secretText(cred2) {
+				t.Errorf("secret mismatch: %q vs %q", secretText(cred), secretText(cred2))
 			}
 			if cred.Algorithm != cred2.Algorithm {
 				t.Errorf("algorithm mismatch: %q vs %q", cred.Algorithm, cred2.Algorithm)
@@ -1338,8 +1344,8 @@ func TestCredential_BackendID_JSONRoundTrip(t *testing.T) {
 			if decoded.Name != cred.Name {
 				t.Errorf("Name mismatch: want %q, got %q", cred.Name, decoded.Name)
 			}
-			if decoded.SecretString() != cred.SecretString() {
-				t.Errorf("Secret mismatch: want %q, got %q", cred.SecretString(), decoded.SecretString())
+			if secretText(&decoded) != secretText(cred) {
+				t.Errorf("Secret mismatch: want %q, got %q", secretText(cred), secretText(&decoded))
 			}
 		})
 	}

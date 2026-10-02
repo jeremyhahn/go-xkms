@@ -275,12 +275,20 @@ func DecodeResponse(data []byte) (*Response, error) {
 }
 
 // DecodeResult decodes the result field of a response into the provided type.
+//
+// A result that holds protected secrets (it has a Destroy method) is the
+// caller's to destroy once used. A result that fails part-way through decoding
+// is destroyed here, so a malformed peer response cannot strand the secrets it
+// did decode.
 func DecodeResult[T any](resp *Response) (*T, error) {
 	if resp.Error != nil {
 		return nil, resp.Error
 	}
 	var result T
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		if d, ok := any(&result).(interface{ Destroy() }); ok {
+			d.Destroy()
+		}
 		return nil, err
 	}
 	return &result, nil

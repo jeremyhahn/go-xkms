@@ -13,7 +13,11 @@
 
 package sync
 
-import "time"
+import (
+	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+)
 
 // SyncDirection indicates the direction of a sync operation.
 type SyncDirection string
@@ -131,42 +135,68 @@ type TrustStoreCertSync struct {
 	Tags        []string `json:"tags,omitempty"`
 }
 
-// OATHDelta represents OATH credential changes for sync.
+// OATHDelta represents OATH credential changes for sync. Its secrets live in
+// protected memory; its owner calls Destroy once the delta has been sent or
+// applied.
 type OATHDelta struct {
 	Credentials []OATHCredentialSync `json:"credentials"`
 }
 
-// OATHCredentialSync holds OATH credential data for sync.
-type OATHCredentialSync struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Issuer      string    `json:"issuer"`
-	AccountName string    `json:"account_name"`
-	Secret      string    `json:"secret"`
-	Type        string    `json:"type"`
-	Algorithm   string    `json:"algorithm"`
-	Digits      int       `json:"digits"`
-	Period      int       `json:"period"`
-	Counter     int64     `json:"counter"`
-	UpdatedAt   time.Time `json:"updated_at"`
+// Destroy wipes and releases every shared secret the delta carries. Safe on a
+// nil receiver.
+func (d *OATHDelta) Destroy() {
+	if d == nil {
+		return
+	}
+	for i := range d.Credentials {
+		d.Credentials[i].Secret.Destroy()
+	}
 }
 
-// PasswordDelta represents password changes for sync.
+// OATHCredentialSync holds OATH credential data for sync.
+type OATHCredentialSync struct {
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Issuer      string          `json:"issuer"`
+	AccountName string          `json:"account_name"`
+	Secret      xkms.SecretText `json:"secret"`
+	Type        string          `json:"type"`
+	Algorithm   string          `json:"algorithm"`
+	Digits      int             `json:"digits"`
+	Period      int             `json:"period"`
+	Counter     int64           `json:"counter"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+// PasswordDelta represents password changes for sync. Its passwords live in
+// protected memory; its owner calls Destroy once the delta has been sent or
+// applied.
 type PasswordDelta struct {
 	Passwords []PasswordSync `json:"passwords"`
 }
 
+// Destroy wipes and releases every password the delta carries. Safe on a nil
+// receiver.
+func (d *PasswordDelta) Destroy() {
+	if d == nil {
+		return
+	}
+	for i := range d.Passwords {
+		d.Passwords[i].Password.Destroy()
+	}
+}
+
 // PasswordSync holds password data for sync.
 type PasswordSync struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Title      string    `json:"title,omitempty"`
-	Username   string    `json:"username,omitempty"`
-	Password   string    `json:"password"`
-	URL        string    `json:"url,omitempty"`
-	Notes      string    `json:"notes,omitempty"`
-	FolderPath string    `json:"folder_path,omitempty"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID         string          `json:"id"`
+	Name       string          `json:"name"`
+	Title      string          `json:"title,omitempty"`
+	Username   string          `json:"username,omitempty"`
+	Password   xkms.SecretText `json:"password"`
+	URL        string          `json:"url,omitempty"`
+	Notes      string          `json:"notes,omitempty"`
+	FolderPath string          `json:"folder_path,omitempty"`
+	UpdatedAt  time.Time       `json:"updated_at"`
 }
 
 // CADelta represents CA certificate changes for sync.

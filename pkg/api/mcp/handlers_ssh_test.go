@@ -650,3 +650,31 @@ func TestSSHStaticPassphraseProvider(t *testing.T) {
 
 	assert.Equal(t, []byte("hunter2"), buf.Bytes())
 }
+
+// TestSSHStaticPassphraseProvider_IndependentCopy proves each call returns a
+// fresh buffer: destroying one leaves the provider and later calls intact.
+func TestSSHStaticPassphraseProvider_IndependentCopy(t *testing.T) {
+	provider := &sshStaticPassphraseProvider{data: []byte("hunter2")}
+
+	first, err := provider.Passphrase(context.Background(), "k")
+	require.NoError(t, err)
+	first.Destroy()
+
+	second, err := provider.Passphrase(context.Background(), "k")
+	require.NoError(t, err)
+	defer second.Destroy()
+	require.NoError(t, second.WithBytes(func(b []byte) error {
+		assert.Equal(t, []byte("hunter2"), b)
+		return nil
+	}))
+}
+
+// TestSSHStaticPassphraseProvider_EmptyData proves an empty passphrase is
+// refused rather than yielding a zero-length buffer.
+func TestSSHStaticPassphraseProvider_EmptyData(t *testing.T) {
+	provider := &sshStaticPassphraseProvider{}
+
+	buf, err := provider.Passphrase(context.Background(), "k")
+	require.Error(t, err)
+	assert.Nil(t, buf)
+}

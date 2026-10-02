@@ -14,9 +14,13 @@
 package backend_test
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func TestStaticPassword(t *testing.T) {
@@ -36,14 +40,35 @@ func TestStaticPassword(t *testing.T) {
 		}
 	})
 
-	t.Run("String returns correct string", func(t *testing.T) {
+	t.Run("String never returns the password", func(t *testing.T) {
 		pw := backend.StaticPassword("test123")
-		result, err := pw.String()
-		if err != nil {
-			t.Errorf("String() unexpected error: %v", err)
+		if got := pw.String(); got != types.PasswordRedacted {
+			t.Errorf("String() = %q, want %q", got, types.PasswordRedacted)
 		}
-		if result != "test123" {
-			t.Errorf("String() = %v, want %v", result, "test123")
+		if got := fmt.Sprintf("%v %s", pw, pw); strings.Contains(got, "test123") {
+			t.Errorf("formatting leaked the password: %q", got)
+		}
+	})
+
+	t.Run("WithBytes lends the password", func(t *testing.T) {
+		pw := backend.StaticPassword("test123")
+		var seen string
+		if err := pw.WithBytes(func(b []byte) error {
+			seen = string(b)
+			return nil
+		}); err != nil {
+			t.Fatalf("WithBytes() unexpected error: %v", err)
+		}
+		if seen != "test123" {
+			t.Errorf("WithBytes() lent %q, want %q", seen, "test123")
+		}
+	})
+
+	t.Run("WithBytes returns the callback error", func(t *testing.T) {
+		pw := backend.StaticPassword("test123")
+		want := errors.New("callback failed")
+		if err := pw.WithBytes(func([]byte) error { return want }); !errors.Is(err, want) {
+			t.Errorf("WithBytes() = %v, want %v", err, want)
 		}
 	})
 
@@ -63,14 +88,24 @@ func TestNoPassword(t *testing.T) {
 		}
 	})
 
-	t.Run("String returns empty string", func(t *testing.T) {
+	t.Run("String is redacted", func(t *testing.T) {
 		pw := backend.NoPassword{}
-		result, err := pw.String()
-		if err != nil {
-			t.Errorf("String() unexpected error: %v", err)
+		if got := pw.String(); got != types.PasswordRedacted {
+			t.Errorf("String() = %q, want %q", got, types.PasswordRedacted)
 		}
-		if result != "" {
-			t.Errorf("String() = %v, want empty string", result)
+	})
+
+	t.Run("WithBytes lends nil", func(t *testing.T) {
+		pw := backend.NoPassword{}
+		called := false
+		if err := pw.WithBytes(func(b []byte) error {
+			called = true
+			if b != nil {
+				t.Errorf("WithBytes() lent %v, want nil", b)
+			}
+			return nil
+		}); err != nil || !called {
+			t.Errorf("WithBytes() = %v, called = %v", err, called)
 		}
 	})
 

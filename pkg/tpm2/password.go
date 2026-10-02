@@ -21,6 +21,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-enclave"
 )
@@ -102,13 +103,30 @@ func (p *PlatformPassword) cacheTTL() time.Duration {
 	return time.Duration(ttl) * time.Second
 }
 
-// String returns the secret as a string.
-func (p *PlatformPassword) String() (string, error) {
+// requireReadable returns the error that makes pw unreadable, or nil when its
+// bytes can be borrowed. It lets a caller fail closed on a placeholder such as
+// store.RequiredPassword before it proceeds as though the key had no auth
+// value.
+func requireReadable(pw types.Password) error {
+	return pw.WithBytes(func([]byte) error { return nil })
+}
+
+// WithBytes lends the platform secret to fn and wipes it afterwards. Returns
+// ErrPlatformPasswordUnavailable, without calling fn, when the secret cannot
+// be retrieved.
+func (p *PlatformPassword) WithBytes(fn func([]byte) error) error {
 	secret := p.Bytes()
 	if secret == nil {
-		return "", ErrPlatformPasswordUnavailable
+		return ErrPlatformPasswordUnavailable
 	}
-	return string(secret), nil
+	defer secure.Wipe(secret)
+	return fn(secret)
+}
+
+// String returns types.PasswordRedacted. It never returns the secret: a Go
+// string can never be wiped, so the secret is only reachable through Bytes.
+func (p *PlatformPassword) String() string {
+	return types.PasswordRedacted
 }
 
 // Bytes returns the secret as bytes. If caching is enabled and the cache
@@ -280,9 +298,8 @@ func (p *PlatformPassword) Create() error {
 		p.keyAttrs.Password = pw
 		return nil
 	} else {
-		// Check if password is valid (error passwords return error from String())
-		_, err := p.keyAttrs.Password.String()
-		if err != nil {
+		// Check if password is readable (placeholder passwords report why not)
+		if err := requireReadable(p.keyAttrs.Password); err != nil {
 			return err
 		}
 		passwd = p.keyAttrs.Password.Bytes()

@@ -23,6 +23,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -34,7 +35,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 func factorOf(t *testing.T, s *Sealed, pub crypto.PublicKey) Factor {
@@ -77,11 +77,13 @@ func TestSealOpen_EveryKeyTypeOnTheSoftwareBackend(t *testing.T) {
 			require.NoError(t, err)
 			sealed, err := Seal(tok.Public())
 			require.NoError(t, err)
-			require.Len(t, plainSecret(t, sealed.Secret), SecretLength)
+			secret, err := sealed.TakeSecret()
+			require.NoError(t, err)
+			require.Len(t, secret, SecretLength)
 
 			got, err := Open(ctx, tok, factorOf(t, sealed, tok.Public()))
 			require.NoError(t, err)
-			assert.Equal(t, plainSecret(t, sealed.Secret), got)
+			assert.Equal(t, secret, got)
 		})
 	}
 }
@@ -95,7 +97,11 @@ func TestSeal_FreshSecretEveryTime(t *testing.T) {
 	require.NoError(t, err)
 	b, err := Seal(&k.PublicKey)
 	require.NoError(t, err)
-	assert.NotEqual(t, plainSecret(t, a.Secret), plainSecret(t, b.Secret))
+	aSecret, err := a.TakeSecret()
+	require.NoError(t, err)
+	bSecret, err := b.TakeSecret()
+	require.NoError(t, err)
+	assert.NotEqual(t, aSecret, bSecret)
 	assert.NotEqual(t, a.Challenge, b.Challenge)
 	assert.Equal(t, AlgorithmECDHES, a.Algorithm)
 }
@@ -135,7 +141,67 @@ func TestOpen_RSA(t *testing.T) {
 	assert.Equal(t, AlgorithmRSAOAEP256, sealed.Algorithm)
 	got, err := Open(context.Background(), tok, factorOf(t, sealed, &k.PublicKey))
 	require.NoError(t, err)
-	assert.Equal(t, plainSecret(t, sealed.Secret), got)
+	secret, err := sealed.TakeSecret()
+	require.NoError(t, err)
+	assert.Equal(t, secret, got)
+}
+
+// TestSealed_TakeSecretWipesOnUse proves the protected copy is destroyed by
+// the take: the secret comes out once, is the one Check was computed from, and
+// a second take is refused rather than served from anywhere.
+func TestSealed_TakeSecretWipesOnUse(t *testing.T) {
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	sealed, err := Seal(&k.PublicKey)
+	require.NoError(t, err)
+	buf := sealed.secret.Load()
+	require.NotNil(t, buf)
+
+	secret, err := sealed.TakeSecret()
+	require.NoError(t, err)
+	assert.Len(t, secret, SecretLength)
+	assert.Equal(t, sealed.Check, Check(secret))
+	assert.Zero(t, buf.Size(), "the protected buffer is destroyed once taken")
+
+	_, err = sealed.TakeSecret()
+	var taken *SecretTakenError
+	assert.ErrorAs(t, err, &taken)
+}
+
+// TestSealed_DestroyDiscardsUnread proves Destroy wipes a secret nobody took,
+// is idempotent, and leaves TakeSecret refusing.
+func TestSealed_DestroyDiscardsUnread(t *testing.T) {
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	sealed, err := Seal(&k.PublicKey)
+	require.NoError(t, err)
+	buf := sealed.secret.Load()
+	require.NotNil(t, buf)
+
+	sealed.Destroy()
+	sealed.Destroy()
+	assert.Zero(t, buf.Size())
+	_, err = sealed.TakeSecret()
+	var taken *SecretTakenError
+	assert.ErrorAs(t, err, &taken)
+}
+
+// TestSealed_ZeroValueHoldsNoSecret proves a Sealed that was never sealed
+// refuses to hand out a secret and tolerates Destroy.
+func TestSealed_ZeroValueHoldsNoSecret(t *testing.T) {
+	var sealed Sealed
+	sealed.Destroy()
+	_, err := sealed.TakeSecret()
+	var taken *SecretTakenError
+	assert.ErrorAs(t, err, &taken)
+	assert.Contains(t, taken.Error(), "already taken")
+}
+
+func TestProtectError(t *testing.T) {
+	cause := errors.New("no enclave")
+	err := &ProtectError{Err: cause}
+	assert.ErrorIs(t, err, cause)
+	assert.Contains(t, err.Error(), "no enclave")
 }
 
 func TestSeal_UnsupportedKeys(t *testing.T) {
@@ -203,21 +269,4 @@ func TestParsePublicKey(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidPublicKey)
 	_, _, err = ParsePublicKey(nil, []byte("junk"))
 	assert.ErrorIs(t, err, ErrInvalidPublicKey)
-}
-
-// plainSecret returns a copy of a sealed factor secret's plaintext for
-// comparison, wiped when the test ends.
-func plainSecret(t *testing.T, s *secure.Secret) []byte {
-	t.Helper()
-	require.NotNil(t, s)
-	buf, err := s.Open()
-	require.NoError(t, err)
-	defer buf.Destroy()
-	var out []byte
-	require.NoError(t, buf.WithBytes(func(b []byte) error {
-		out = append([]byte(nil), b...)
-		return nil
-	}))
-	t.Cleanup(func() { secure.Wipe(out) })
-	return out
 }

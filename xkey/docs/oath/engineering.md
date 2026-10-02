@@ -1,6 +1,6 @@
 # OATH TOTP/HOTP — Engineering
 
-> **Status: NORMATIVE** · Feature: `oath` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `oath` · Module: `go-xkms/xkey` · Last verified: 2026-10-01
 
 See [architecture.md](architecture.md) for the component map before reading
 this document.
@@ -16,16 +16,16 @@ type Credential struct {
 	Counter                        uint64
 	CreatedAt                      time.Time
 	BackendID                      string // empty == default store
-	// secret is unexported; see SetSecret/SecretString.
+	// secret is unexported; see SetSecret/Secret.
 }
 func NewCredential(name, issuer, otpType string) (*Credential, error)
 func NewCredentialFromManualEntry(accountName, issuer, secret string) (*Credential, error)
 func ParseURI(uri string) (*Credential, error)
 func GenerateSecret(length int) (string, error)
-func (c *Credential) SetSecret(secret string) error
-func (c *Credential) SecretString() string
+func (c *Credential) SetSecret(secret []byte) error // copies; the caller wipes secret
+func (c *Credential) Secret() ([]byte, error)       // caller-owned copy, nil when unset
 func (c *Credential) HasSecret() bool
-func (c *Credential) ToURI() string
+func (c *Credential) ToURI() (string, error) // embeds the secret
 func (c *Credential) Validate() error
 func (c *Credential) MarshalJSON() ([]byte, error)
 func (c *Credential) UnmarshalJSON(data []byte) error
@@ -105,7 +105,7 @@ func ScanScreenForOTP() (string, error)
 
 - **The shared secret is never a plain Go string in `Credential`.** It lives
   in an unexported `*secure.Buffer` (mlocked, guard-paged memory);
-  `SetSecret`/`SecretString` are the only crossing points, and JSON
+  `SetSecret`/`Secret` are the only crossing points, and JSON
   marshaling round-trips through the same protection (go-xkms#210).
 - **`crypto/hmac`'s internal ipad/opad copy during HMAC computation is the
   one accepted residue outside protected memory** — `crypto/hmac` exposes no

@@ -22,7 +22,6 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest/secureio"
@@ -483,13 +482,11 @@ func (p *buffersProvider) Passphrase(_ context.Context, _ string) (*secure.Buffe
 	if p == nil || p.buf == nil || p.buf.Size() == 0 {
 		return nil, &SSHNilError{Field: "passphrase"}
 	}
-	// CopyOut holds p.buf's borrow across the copy; NewBufferFromBytes then
-	// moves that copy into the clone's own enclave and wipes it on every
-	// path, so no second borrow is ever nested inside the first.
-	plain, err := qrdbsecure.CopyOut(p.buf)
+	plain, err := secure.CopyOut(p.buf)
 	if err != nil {
 		return nil, err
 	}
+	// NewBufferFromBytes wipes plain on every path, success or failure.
 	return secure.NewBufferFromBytes(plain)
 }
 

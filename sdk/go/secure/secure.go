@@ -35,6 +35,10 @@ type Secret = qrdbsecure.Secret
 // canary-guarded working copy. Always defer Destroy() after construction.
 type Buffer = qrdbsecure.Buffer
 
+// Borrower is the re-export of qrdb's Borrower -- the narrow interface (a
+// WithBytes method) CopyOut needs from a Buffer, Secret or enclave.
+type Borrower = qrdbsecure.Borrower
+
 // PassphraseProvider is the re-export of qrdb's PassphraseProvider
 // interface for reading passphrases directly into a Buffer.
 type PassphraseProvider = qrdbsecure.PassphraseProvider
@@ -102,6 +106,12 @@ func NewBufferFromBytes(src []byte) (*Buffer, error) {
 // Wipe clears a caller-owned []byte using memguard's
 // compiler-optimization-resistant wipe. No-op on empty slices.
 func Wipe(b []byte) { qrdbsecure.Wipe(b) }
+
+// CopyOut copies protected bytes into a fresh caller-owned slice, holding
+// the borrow across the whole copy. The caller owns the result and must
+// Wipe it. An empty source is refused with *EmptyBorrowError rather than
+// copied, so a caller never acts on a run of zeros.
+func CopyOut(b Borrower) ([]byte, error) { return qrdbsecure.CopyOut(b) }
 
 // NewTerminalProvider returns a TerminalProvider that reads passphrases
 // from /dev/tty.

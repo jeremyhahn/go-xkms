@@ -13,6 +13,8 @@
 
 package pairing
 
+import xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+
 // OATH credential sync method names for bidirectional OATH credential
 // management between laptop and phone. These methods enable credential
 // addition, listing, OTP generation, and removal on both sides.
@@ -47,16 +49,20 @@ const (
 // laptop and phone. It contains all fields needed to fully recreate
 // an OATH TOTP/HOTP credential on the receiving side.
 type OATHCredentialInfo struct {
-	Name        string `json:"name"`
-	Issuer      string `json:"issuer,omitempty"`
-	AccountName string `json:"account_name,omitempty"`
-	Secret      string `json:"secret"`              // Base32-encoded shared secret
-	Type        string `json:"type"`                // "totp" or "hotp"
-	Algorithm   string `json:"algorithm,omitempty"` // SHA1, SHA256, SHA512
-	Digits      int    `json:"digits,omitempty"`    // 6, 7, or 8
-	Period      int    `json:"period,omitempty"`    // TOTP period in seconds
-	Counter     uint64 `json:"counter,omitempty"`   // HOTP counter
+	Name        string          `json:"name"`
+	Issuer      string          `json:"issuer,omitempty"`
+	AccountName string          `json:"account_name,omitempty"`
+	Secret      xkms.SecretText `json:"secret"`              // Base32-encoded shared secret
+	Type        string          `json:"type"`                // "totp" or "hotp"
+	Algorithm   string          `json:"algorithm,omitempty"` // SHA1, SHA256, SHA512
+	Digits      int             `json:"digits,omitempty"`    // 6, 7, or 8
+	Period      int             `json:"period,omitempty"`    // TOTP period in seconds
+	Counter     uint64          `json:"counter,omitempty"`   // HOTP counter
 }
+
+// Destroy destroys the shared secret. The owner of the value calls it once the
+// credential has been sent or stored.
+func (c *OATHCredentialInfo) Destroy() { c.Secret.Destroy() }
 
 // --- local.oathAdd ---
 
@@ -82,6 +88,13 @@ type LocalOATHListParams struct{}
 // LocalOATHListResult contains the result of local.oathList.
 type LocalOATHListResult struct {
 	Credentials []OATHCredentialInfo `json:"credentials"`
+}
+
+// Destroy destroys the shared secret of every credential in the result.
+func (r *LocalOATHListResult) Destroy() {
+	for i := range r.Credentials {
+		r.Credentials[i].Destroy()
+	}
 }
 
 // --- local.oathGenerate ---

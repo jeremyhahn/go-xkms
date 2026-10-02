@@ -194,7 +194,7 @@ run_rung() {
 	process_diagnostics "$out" "$prefix" "$ROOT/$module"
 }
 
-echo "secure-analyzer: securecheck rules 1-4 and securecopy, every module, every declared combination"
+echo "secure-analyzer: securecheck rules 1-7, every module, every declared combination"
 set -- $RUNGS
 while [ $# -ge 2 ]; do
 	run_rung "$1" "$2"
@@ -214,10 +214,9 @@ if [ "$fails" -ne 0 ]; then
 		"  pkg/secure/analyzer/scope.go's four clauses -- read it before assuming a" \
 		"  finding is a false positive, and before adding an allowlist entry for" \
 		"  anything other than a pre-existing finding or one of the two named classes." \
-		"  Rule 4 (unborrowed secure.Buffer.Bytes) and securecopy (unwiped copy-outs)" \
-		"  are never allowlisted: fix the site with WithBytes / secure.CopyOut and a" \
-		"  wipe, or justify it there with //secure:unborrowed or //secure:unwiped" \
-		"  (go-qrdb pkg/secure/analyzer/unborrowed.go and copyout.go)."
+		"  Rules 4-7 (unborrowed Bytes, string conversion, unwiped copy-out) are never" \
+		"  allowlisted and carry no //secure: directive in this repository: fix the" \
+		"  site with WithBytes / secure.CopyOut and a wipe, or keep the value as []byte."
 fi
 
 echo "secure-analyzer: clean -- $rungs_run rung(s), $(awk -F'\t' '!/^[[:space:]]*#/ && NF>=4' "$ALLOWLIST" | wc -l | tr -d ' ') allowlist entries all still needed"

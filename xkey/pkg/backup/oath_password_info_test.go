@@ -26,12 +26,12 @@ import (
 // live in protected memory with HasSecret still reporting true.
 func TestOATHCredentialInfo_SetSecret_EmptyClearsExisting(t *testing.T) {
 	cred := &OATHCredentialInfo{}
-	require.NoError(t, cred.SetSecret("JBSWY3DPEHPK3PXP"))
+	require.NoError(t, cred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
 	require.True(t, cred.HasSecret())
 
-	require.NoError(t, cred.SetSecret(""))
+	require.NoError(t, cred.SetSecret([]byte("")))
 	assert.False(t, cred.HasSecret())
-	assert.Empty(t, cred.SecretString())
+	assert.Empty(t, secretText(cred))
 }
 
 // TestOATHCredentialInfo_HasSecret_NilReceiver verifies HasSecret is safe to
@@ -46,10 +46,10 @@ func TestOATHCredentialInfo_HasSecret_NilReceiver(t *testing.T) {
 // panicking.
 func TestOATHCredentialInfo_SecretString_NilCases(t *testing.T) {
 	var nilCred *OATHCredentialInfo
-	assert.Equal(t, "", nilCred.SecretString())
+	assert.Equal(t, "", secretText(nilCred))
 
 	empty := &OATHCredentialInfo{}
-	assert.Equal(t, "", empty.SecretString())
+	assert.Equal(t, "", secretText(empty))
 }
 
 // TestOATHCredentialInfo_MarshalJSON verifies the protected secret is
@@ -84,7 +84,7 @@ func TestOATHCredentialInfo_UnmarshalJSON(t *testing.T) {
 	assert.Equal(t, "GitHub", cred.Name)
 	assert.Equal(t, 6, cred.Digits)
 	assert.Equal(t, int64(5), cred.Counter)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", cred.SecretString())
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(&cred))
 }
 
 // TestOATHCredentialInfo_UnmarshalJSON_InvalidJSON verifies malformed JSON is
@@ -99,12 +99,12 @@ func TestOATHCredentialInfo_UnmarshalJSON_InvalidJSON(t *testing.T) {
 // SetPassword("") destroys a previously stored password.
 func TestPasswordInfo_SetPassword_EmptyClearsExisting(t *testing.T) {
 	info := &PasswordInfo{}
-	require.NoError(t, info.SetPassword("s3cret!"))
+	require.NoError(t, info.SetPassword([]byte("s3cret!")))
 	require.True(t, info.HasPassword())
 
-	require.NoError(t, info.SetPassword(""))
+	require.NoError(t, info.SetPassword([]byte("")))
 	assert.False(t, info.HasPassword())
-	assert.Empty(t, info.PasswordString())
+	assert.Empty(t, passwordText(info))
 }
 
 // TestPasswordInfo_HasPassword_NilReceiver verifies HasPassword is safe to
@@ -118,10 +118,10 @@ func TestPasswordInfo_HasPassword_NilReceiver(t *testing.T) {
 // "" for both a nil receiver and a receiver with no password set.
 func TestPasswordInfo_PasswordString_NilCases(t *testing.T) {
 	var nilInfo *PasswordInfo
-	assert.Equal(t, "", nilInfo.PasswordString())
+	assert.Equal(t, "", passwordText(nilInfo))
 
 	empty := &PasswordInfo{}
-	assert.Equal(t, "", empty.PasswordString())
+	assert.Equal(t, "", passwordText(empty))
 }
 
 // TestPasswordInfo_MarshalJSON verifies the protected password is exported
@@ -153,7 +153,7 @@ func TestPasswordInfo_UnmarshalJSON(t *testing.T) {
 
 	assert.Equal(t, "pw-1", info.ID)
 	assert.Equal(t, "admin", info.Username)
-	assert.Equal(t, "s3cret!", info.PasswordString())
+	assert.Equal(t, "s3cret!", passwordText(&info))
 }
 
 // TestPasswordInfo_UnmarshalJSON_InvalidJSON verifies malformed JSON is

@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -61,16 +62,16 @@ type Store interface {
 // PEM-encoded bytes exactly as ssh.MarshalPrivateKey produced them —
 // the wrap ceremony lives one layer up in the backend, not here.
 type storedEnvelope struct {
-	Version     int       `json:"v"`
-	Scope       string    `json:"scope"`
-	Owner       string    `json:"owner"`
-	Name        string    `json:"name"`
-	Algorithm   string    `json:"algo"`
-	Fingerprint string    `json:"fp"`
-	CreatedAt   time.Time `json:"created"`
-	Comment     string    `json:"comment,omitempty"`
-	PublicKey   string    `json:"pub"`               // authorized_keys line (no newline)
-	MaterialPEM string    `json:"pem_b64,omitempty"` // base64 JSON-string-encoded PEM; empty for backend-backed keys
+	Version     int               `json:"v"`
+	Scope       string            `json:"scope"`
+	Owner       string            `json:"owner"`
+	Name        string            `json:"name"`
+	Algorithm   string            `json:"algo"`
+	Fingerprint string            `json:"fp"`
+	CreatedAt   time.Time         `json:"created"`
+	Comment     string            `json:"comment,omitempty"`
+	PublicKey   string            `json:"pub"`               // authorized_keys line (no newline)
+	MaterialPEM types.SecretBytes `json:"pem_b64,omitempty"` // JSON-string-encoded PEM; empty for backend-backed keys
 
 	// BackendID / BackendKeyID identify the crypto backend holding the
 	// private half of a backend-backed key. When BackendID is set,
@@ -167,12 +168,12 @@ func (s *BackendStore) Put(ctx context.Context, key *Key) error {
 		return &KeyMaterialError{Op: "open secret for put", Err: err}
 	}
 	defer buf.Destroy()
-	if err := buf.WithBytes(func(pemBytes []byte) error {
-		env.MaterialPEM = string(pemBytes) //secure:unwiped the persisted envelope's MaterialPEM is a JSON string field; its on-disk format is fixed
-		return nil
-	}); err != nil {
-		return &KeyMaterialError{Op: "open secret for put", Err: err}
+	pem, err := secure.CopyOut(buf)
+	if err != nil {
+		return &KeyMaterialError{Op: "copy secret for put", Err: err}
 	}
+	defer secure.Wipe(pem)
+	env.MaterialPEM = pem
 
 	data, jerr := json.Marshal(&env)
 	if jerr != nil {
@@ -205,9 +206,13 @@ func (s *BackendStore) Delete(ctx context.Context, sc scope.Scope, owner, name s
 		return err
 	}
 	if sc == scope.Tenant {
-		if _, lerr := s.load(ctx, path, sc, owner, name); lerr != nil {
+		// The envelope is loaded only to prove ownership; its material is
+		// wiped whichever way the delete goes.
+		env, lerr := s.load(ctx, path, sc, owner, name)
+		if lerr != nil {
 			return lerr
 		}
+		defer env.wipe()
 	}
 	if derr := s.backend.Delete(ctx, path); derr != nil {
 		if isStorageNotFound(derr) {
@@ -236,6 +241,7 @@ func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) (
 		if jerr := json.Unmarshal(value, &env); jerr != nil {
 			return &SerializationError{Op: "unmarshal envelope", Err: jerr}
 		}
+		defer env.wipe()
 		if sc != "" && owner != "" && env.Owner != owner {
 			return nil
 		}
@@ -250,6 +256,11 @@ func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) (
 		return nil, &StorageError{Op: "scan", Err: err}
 	}
 	return out, nil
+}
+
+// wipe zeroes the envelope's private material.
+func (e *storedEnvelope) wipe() {
+	e.MaterialPEM.Wipe()
 }
 
 // read returns the envelope stored at path, or nil when there is none.
@@ -275,7 +286,11 @@ func (s *BackendStore) load(ctx context.Context, path string, sc scope.Scope, ow
 	if err != nil {
 		return nil, err
 	}
-	if env == nil || env.Owner != owner {
+	if env == nil {
+		return nil, notFound(sc, owner, name)
+	}
+	if env.Owner != owner {
+		env.wipe()
 		return nil, notFound(sc, owner, name)
 	}
 	return env, nil
@@ -288,7 +303,11 @@ func (s *BackendStore) checkOwner(ctx context.Context, path string, sc scope.Sco
 	if err != nil {
 		return err
 	}
-	if env != nil && env.Owner != owner {
+	if env == nil {
+		return nil
+	}
+	defer env.wipe()
+	if env.Owner != owner {
 		return &OwnerConflictError{ID: string(sc) + "/" + owner + "/" + name}
 	}
 	return nil
@@ -304,6 +323,7 @@ func notFound(sc scope.Scope, owner, name string) error {
 // envelopeToKey decodes an envelope and reconstructs the full *Key,
 // including sealing the PEM into a new Secret.
 func envelopeToKey(env *storedEnvelope) (*Key, error) {
+	defer env.wipe()
 	sc, err := scope.Parse(env.Scope)
 	if err != nil {
 		return nil, err
@@ -332,20 +352,16 @@ func envelopeToKey(env *storedEnvelope) (*Key, error) {
 		}, nil
 	}
 
-	if env.MaterialPEM == "" {
+	if len(env.MaterialPEM) == 0 {
 		return nil, &KeyMaterialError{Op: "envelope has no material", Err: errors.New("empty pem")}
 	}
-	pemCopy := []byte(env.MaterialPEM)
-	// Wipe the envelope's in-memory field so the JSON-unmarshal-allocated
-	// string no longer holds the plaintext. json.Unmarshal strings are
-	// immutable; we drop our reference by zeroing pemCopy after Secret
-	// construction below. The original string in env.MaterialPEM is
-	// unreachable after this function returns.
-	material, merr := secure.NewSecret(pemCopy)
+	// NewSecret takes ownership of the envelope's PEM bytes and wipes them
+	// on every path, so the envelope holds no plaintext afterwards.
+	material, merr := secure.NewSecret(env.MaterialPEM)
+	env.MaterialPEM = nil
 	if merr != nil {
 		return nil, &KeyMaterialError{Op: "seal envelope pem", Err: merr}
 	}
-	secure.Wipe(pemCopy)
 
 	return &Key{
 		Material:    material,
@@ -363,6 +379,7 @@ func envelopeToKey(env *storedEnvelope) (*Key, error) {
 // envelopeToKeyMetaOnly builds a *Key with Material=nil — used for
 // List results where we deliberately don't open every enclave.
 func envelopeToKeyMetaOnly(env *storedEnvelope) (*Key, error) {
+	defer env.wipe()
 	sc, err := scope.Parse(env.Scope)
 	if err != nil {
 		return nil, err

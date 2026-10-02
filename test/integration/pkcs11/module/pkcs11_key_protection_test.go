@@ -200,10 +200,10 @@ func TestBareTemplateKeyWithholdsItsValueFromTheDaemon(t *testing.T) {
 	attrs, rv := env.Module.GetAttributeValue(session, handle,
 		[]module.Attribute{{Type: module.CKA_VALUE}})
 
-	if rv == module.CKR_OK && len(attrs) == 1 && !attrs[0].Unavailable && len(attrs[0].Value) > 0 {
+	if rv == module.CKR_OK && len(attrs) == 1 && !attrs[0].Unavailable && attrs[0].ValueLen() > 0 {
 		t.Fatalf("C_GetAttributeValue(CKA_VALUE) released %d bytes of key material for a key "+
 			"generated from a bare template; footnote 7 withholds the value of a key that is "+
-			"CKA_SENSITIVE or not CKA_EXTRACTABLE, and this key is both", len(attrs[0].Value))
+			"CKA_SENSITIVE or not CKA_EXTRACTABLE, and this key is both", attrs[0].ValueLen())
 	}
 
 	if rv != module.CKR_ATTRIBUTE_SENSITIVE {
@@ -236,14 +236,17 @@ func TestExplicitlyUnprotectedKeyStillReleasesItsValue(t *testing.T) {
 	attrs, rv := env.Module.GetAttributeValue(session, handle,
 		[]module.Attribute{{Type: module.CKA_VALUE}})
 	RequireOK(t, rv, "C_GetAttributeValue(CKA_VALUE) on an explicitly readable key")
+	// A backend key's value comes back sealed in Attribute.Secret; the holder
+	// releases it once it has been read.
+	defer module.ReleaseAttributes(attrs)
 
 	if len(attrs) != 1 || attrs[0].Unavailable {
 		t.Fatal("C_GetAttributeValue(CKA_VALUE) withheld the value of a key whose own attributes " +
 			"say it may be revealed; the protective default must be a default, not a refusal")
 	}
-	if len(attrs[0].Value) != 32 {
+	if attrs[0].ValueLen() != 32 {
 		t.Errorf("C_GetAttributeValue(CKA_VALUE) returned %d bytes, want 32 for an AES-256 key",
-			len(attrs[0].Value))
+			attrs[0].ValueLen())
 	}
 }
 
@@ -291,9 +294,9 @@ func TestSensitiveButExtractableKeyWithholdsItsValue(t *testing.T) {
 
 	attrs, rv := env.Module.GetAttributeValue(session, handle,
 		[]module.Attribute{{Type: module.CKA_VALUE}})
-	if rv == module.CKR_OK && len(attrs) == 1 && !attrs[0].Unavailable && len(attrs[0].Value) > 0 {
+	if rv == module.CKR_OK && len(attrs) == 1 && !attrs[0].Unavailable && attrs[0].ValueLen() > 0 {
 		t.Fatalf("C_GetAttributeValue(CKA_VALUE) released %d bytes for a CKA_SENSITIVE key",
-			len(attrs[0].Value))
+			attrs[0].ValueLen())
 	}
 }
 

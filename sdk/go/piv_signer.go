@@ -106,17 +106,16 @@ func (s *PIVCryptoSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpt
 			return nil, err
 		}
 		// PIVSignRequest crosses the wire to the backend over the SDK's
-		// transport (REST/gRPC/QUIC/MCP), so it carries the PIN as a plain
-		// string -- the unavoidable copy at that transport-serialization
-		// boundary.
-		err = buf.WithBytes(func(pin []byte) error {
-			req.PIN = string(pin) //secure:unwiped PIVSignRequest.PIN is a string serialized onto the SDK transport
-			return nil
-		})
+		// transport (REST/gRPC/QUIC/MCP) as a types.SecretBytes, which
+		// encodes as the JSON string the wire has always carried without
+		// ever becoming a Go string. This copy is wiped on every path out.
+		pin, err := secure.CopyOut(buf)
 		buf.Destroy()
 		if err != nil {
 			return nil, err
 		}
+		defer secure.Wipe(pin)
+		req.PIN = pin
 	}
 	resp, err := SignPIV(context.Background(), req)
 	if err != nil {

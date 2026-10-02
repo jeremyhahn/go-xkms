@@ -120,13 +120,13 @@ func newMemoryOATHAccessor() *memoryOATHAccessor {
 func (m *memoryOATHAccessor) List() ([]*backup.OATHCredentialInfo, error) {
 	out := make([]*backup.OATHCredentialInfo, 0, len(m.creds))
 	for _, c := range m.creds {
-		out = append(out, c)
+		out = append(out, mustCloneOATH(c))
 	}
 	return out, nil
 }
 
 func (m *memoryOATHAccessor) Add(cred *backup.OATHCredentialInfo) error {
-	m.creds[cred.ID] = cred
+	m.creds[cred.ID] = mustCloneOATH(cred)
 	return nil
 }
 
@@ -135,11 +135,11 @@ func (m *memoryOATHAccessor) Get(id string) (*backup.OATHCredentialInfo, error) 
 	if !ok {
 		return nil, errTestCredentialNotFound
 	}
-	return cred, nil
+	return mustCloneOATH(cred), nil
 }
 
 func (m *memoryOATHAccessor) Update(cred *backup.OATHCredentialInfo) error {
-	m.creds[cred.ID] = cred
+	m.creds[cred.ID] = mustCloneOATH(cred)
 	return nil
 }
 
@@ -155,13 +155,13 @@ func newMemoryPasswordAccessor() *memoryPasswordAccessor {
 func (m *memoryPasswordAccessor) List() ([]*backup.PasswordInfo, error) {
 	out := make([]*backup.PasswordInfo, 0, len(m.passwords))
 	for _, p := range m.passwords {
-		out = append(out, p)
+		out = append(out, mustClonePassword(p))
 	}
 	return out, nil
 }
 
 func (m *memoryPasswordAccessor) Add(pw *backup.PasswordInfo) error {
-	m.passwords[pw.ID] = pw
+	m.passwords[pw.ID] = mustClonePassword(pw)
 	return nil
 }
 
@@ -170,11 +170,11 @@ func (m *memoryPasswordAccessor) Get(id string) (*backup.PasswordInfo, error) {
 	if !ok {
 		return nil, errTestCredentialNotFound
 	}
-	return pw, nil
+	return mustClonePassword(pw), nil
 }
 
 func (m *memoryPasswordAccessor) Update(pw *backup.PasswordInfo) error {
-	m.passwords[pw.ID] = pw
+	m.passwords[pw.ID] = mustClonePassword(pw)
 	return nil
 }
 
@@ -458,7 +458,7 @@ func TestBridge_HandleSyncOATH_NotConfigured(t *testing.T) {
 
 	req := newRemoteRequest(MethodRemoteSyncOATH, RemoteSyncOATHParams{
 		Credentials: []SyncOATHCredential{
-			{ID: "c1", Name: "GitHub", Secret: "SEC", Type: "totp"},
+			{ID: "c1", Name: "GitHub", Secret: mustSecretText("SEC"), Type: "totp"},
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
@@ -471,7 +471,7 @@ func TestBridge_HandleSyncOATH_NotConfigured(t *testing.T) {
 func TestBridge_HandleSyncOATH_Success(t *testing.T) {
 	svc, _, oathAcc, _ := newTestSyncService(t)
 	old := &backup.OATHCredentialInfo{ID: "c2", Name: "Slack (old)"}
-	require.NoError(t, old.SetSecret("SECOLD"))
+	require.NoError(t, old.SetSecret([]byte("SECOLD")))
 	require.NoError(t, oathAcc.Add(old))
 
 	client := &mockTransportClient{}
@@ -480,8 +480,8 @@ func TestBridge_HandleSyncOATH_Success(t *testing.T) {
 
 	req := newRemoteRequest(MethodRemoteSyncOATH, RemoteSyncOATHParams{
 		Credentials: []SyncOATHCredential{
-			{ID: "c1", Name: "GitHub", Secret: "SEC", Type: "totp"},
-			{ID: "c2", Name: "Slack (new)", Secret: "SEC2", Type: "totp", UpdatedAt: time.Now().UTC().Format(time.RFC3339)},
+			{ID: "c1", Name: "GitHub", Secret: mustSecretText("SEC"), Type: "totp"},
+			{ID: "c2", Name: "Slack (new)", Secret: mustSecretText("SEC2"), Type: "totp", UpdatedAt: time.Now().UTC().Format(time.RFC3339)},
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
@@ -518,7 +518,7 @@ func TestBridge_HandleSyncPasswords_NotConfigured(t *testing.T) {
 
 	req := newRemoteRequest(MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{
 		Passwords: []SyncPassword{
-			{ID: "p1", Name: "GitHub", Password: "pw1"},
+			{ID: "p1", Name: "GitHub", Password: mustSecretText("pw1")},
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
@@ -536,7 +536,7 @@ func TestBridge_HandleSyncPasswords_Success(t *testing.T) {
 
 	req := newRemoteRequest(MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{
 		Passwords: []SyncPassword{
-			{ID: "p1", Name: "GitHub", Password: "pw1"},
+			{ID: "p1", Name: "GitHub", Password: mustSecretText("pw1")},
 		},
 	})
 	resp := b.HandleRequest(context.Background(), req)
@@ -548,7 +548,7 @@ func TestBridge_HandleSyncPasswords_Success(t *testing.T) {
 
 	stored, err := pwAcc.Get("p1")
 	require.NoError(t, err)
-	assert.Equal(t, "pw1", stored.PasswordString())
+	assert.Equal(t, "pw1", passwordText(stored))
 }
 
 func TestBridge_HandleSyncPasswords_InvalidParams(t *testing.T) {
@@ -588,10 +588,10 @@ func TestBridge_HandleSyncAll_AllIncluded(t *testing.T) {
 	cert := newTestPIVCertificate(t, "laptop-cert")
 	ts.certs[certFingerprintForTest(cert)] = cert
 	cred := &backup.OATHCredentialInfo{ID: "c1", Name: "GitHub"}
-	require.NoError(t, cred.SetSecret("SEC"))
+	require.NoError(t, cred.SetSecret([]byte("SEC")))
 	require.NoError(t, oathAcc.Add(cred))
 	pw := &backup.PasswordInfo{ID: "p1", Name: "GitHub"}
-	require.NoError(t, pw.SetPassword("pw1"))
+	require.NoError(t, pw.SetPassword([]byte("pw1")))
 	require.NoError(t, pwAcc.Add(pw))
 
 	client := &mockTransportClient{}
@@ -677,8 +677,8 @@ var syncGatedMethods = []struct {
 	method string
 	params interface{}
 }{
-	{"OATH", MethodRemoteSyncOATH, RemoteSyncOATHParams{Credentials: []SyncOATHCredential{{ID: "c1", Name: "GitHub", Secret: "SEC", Type: "totp"}}}},
-	{"Passwords", MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{Passwords: []SyncPassword{{ID: "p1", Name: "GitHub", Password: "pw1"}}}},
+	{"OATH", MethodRemoteSyncOATH, RemoteSyncOATHParams{Credentials: []SyncOATHCredential{{ID: "c1", Name: "GitHub", Secret: mustSecretText("SEC"), Type: "totp"}}}},
+	{"Passwords", MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{Passwords: []SyncPassword{{ID: "p1", Name: "GitHub", Password: mustSecretText("pw1")}}}},
 	{"All", MethodRemoteSyncAll, RemoteSyncAllParams{IncludeTrustStore: true}},
 }
 
@@ -742,7 +742,7 @@ func TestBridge_SyncApproval_ReceivesMethodAndDeviceName(t *testing.T) {
 	require.NoError(t, err)
 
 	req := newRemoteRequest(MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{
-		Passwords: []SyncPassword{{ID: "p1", Name: "GitHub", Password: "pw1"}},
+		Passwords: []SyncPassword{{ID: "p1", Name: "GitHub", Password: mustSecretText("pw1")}},
 	})
 	b.HandleRequest(context.Background(), req)
 

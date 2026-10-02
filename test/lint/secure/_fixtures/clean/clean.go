@@ -23,17 +23,39 @@ package clean
 import (
 	"golang.org/x/crypto/ssh"
 
-	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	sdksecure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // holder is the compliant shape for bad.holder: the sensitive-named field
 // is backed by the SDK's secure wrapper instead of a raw string.
 type holder struct {
-	Password *secure.Secret
+	Password *sdksecure.Secret
 }
 
 // parseWithPassphrase is the compliant counterpart of bad.useParsePrivateKey:
 // the only entry point rule 2 allows.
 func parseWithPassphrase(pemBytes, passphrase []byte) (ssh.Signer, error) {
 	return ssh.ParsePrivateKeyWithPassphrase(pemBytes, passphrase)
+}
+
+// readBorrowed is the compliant counterpart of bad.readUnborrowed and
+// bad.toString: the read happens inside a held borrow and no copy leaves it.
+func readBorrowed(b *sdksecure.Buffer) (byte, error) {
+	var first byte
+	err := b.WithBytes(func(p []byte) error {
+		first = p[0]
+		return nil
+	})
+	return first, err
+}
+
+// copyWiped is the compliant counterpart of bad.copyUnwiped: the copy is
+// wiped before the function returns.
+func copyWiped(b *sdksecure.Buffer) error {
+	return b.WithBytes(func(p []byte) error {
+		cp := append([]byte(nil), p...)
+		defer sdksecure.Wipe(cp)
+		_ = len(cp)
+		return nil
+	})
 }

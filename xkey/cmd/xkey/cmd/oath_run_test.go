@@ -122,7 +122,7 @@ func TestRunOATHAdd_FromIndividualFlags(t *testing.T) {
 	cred, err := fs.Get("github")
 	require.NoError(t, err)
 	assert.Equal(t, "GitHub", cred.Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", cred.SecretString(), "the secret must be normalised to upper case")
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(cred), "the secret must be normalised to upper case")
 	assert.Equal(t, oath.TypeTOTP, cred.Type)
 	assert.Equal(t, 6, cred.Digits)
 }
@@ -202,7 +202,7 @@ func TestRunOATHAdd_SecretFromStdin(t *testing.T) {
 	defer func() { _ = fs.Close() }()
 	cred, err := fs.Get("stdin")
 	require.NoError(t, err)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", cred.SecretString())
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(cred))
 }
 
 // TestOATHAddCmd_NoSecretValueFlag pins go-xkms#1209: "xkey oath add" does

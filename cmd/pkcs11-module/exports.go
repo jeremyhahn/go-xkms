@@ -814,6 +814,9 @@ func C_GetAttributeValue(hSession C.CK_SESSION_HANDLE, hObject C.CK_OBJECT_HANDL
 	}
 
 	result, mrv := module.GetGlobalModule().GetAttributeValue(module.SessionHandle(hSession), module.ObjectHandle(hObject), template)
+	// The values are copies this call owns. Once they are in the caller's C
+	// buffers the Go side is wiped, and a sealed secret is destroyed.
+	defer module.ReleaseAttributes(result)
 
 	// Per PKCS#11 spec section 5.7.5: when the module returns
 	// CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID, or
@@ -3098,16 +3101,25 @@ func copyGoTemplateToCTemplate(attrs []module.Attribute, pTemplate C.CK_ATTRIBUT
 			continue
 		}
 
+		valueLen := attrs[i].ValueLen()
 		switch {
 		case cAttr.pValue == nil:
 			// Query mode - just set the length
-			cAttr.ulValueLen = C.CK_ULONG(len(attrs[i].Value))
-		case cAttr.ulValueLen >= C.CK_ULONG(len(attrs[i].Value)):
-			// Copy the value
-			if len(attrs[i].Value) > 0 {
-				C.memcpy(unsafe.Pointer(cAttr.pValue), unsafe.Pointer(&attrs[i].Value[0]), C.size_t(len(attrs[i].Value)))
+			cAttr.ulValueLen = C.CK_ULONG(valueLen)
+		case cAttr.ulValueLen >= C.CK_ULONG(valueLen):
+			// Copy the value straight from wherever the module holds it, so
+			// a sealed secret is only ever readable inside its borrow.
+			err := attrs[i].WithValue(func(value []byte) error {
+				if len(value) > 0 {
+					C.memcpy(unsafe.Pointer(cAttr.pValue), unsafe.Pointer(&value[0]), C.size_t(len(value)))
+				}
+				return nil
+			})
+			if err != nil {
+				cAttr.ulValueLen = ^C.CK_ULONG(0)
+				continue
 			}
-			cAttr.ulValueLen = C.CK_ULONG(len(attrs[i].Value))
+			cAttr.ulValueLen = C.CK_ULONG(valueLen)
 		default:
 			// Buffer too small - per PKCS#11 spec, report
 			// CK_UNAVAILABLE_INFORMATION and let the caller return

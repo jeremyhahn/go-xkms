@@ -137,9 +137,12 @@ func newParsedPassword(raw string) (*secure.Secret, error) {
 }
 
 // passwordString returns a copy of the entry's password as a string, or ""
-// when no password is set. It exists for the StaticPassword serialization
-// boundary in ToStaticPassword; callers that only need to compare or hash
-// the password should borrow it via Password.Open/WithBytes instead.
+// when no password is set. It is the one place an imported password becomes a
+// Go string: xkms.StaticPassword.Password is string-typed because the entry is
+// bound to the GUI (whose generated TypeScript models type it as a string) and
+// stored as JSON, so ToStaticPassword cannot take bytes. The byte copy the
+// string is made from is wiped before this returns. Callers that only need to
+// compare or hash the password borrow it via Password.Open/WithBytes instead.
 func (p *ParsedEntry) passwordString() (string, error) {
 	if p.Password == nil {
 		return "", nil
@@ -149,14 +152,12 @@ func (p *ParsedEntry) passwordString() (string, error) {
 		return "", &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
 	}
 	defer buf.Destroy()
-	var out string
-	if err := buf.WithBytes(func(b []byte) error {
-		out = string(b) //secure:unwiped serialization boundary: xkms.StaticPassword carries the password as a string
-		return nil
-	}); err != nil {
+	plain, err := secure.CopyOut(buf)
+	if err != nil {
 		return "", &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
 	}
-	return out, nil
+	defer secure.Wipe(plain)
+	return string(plain), nil
 }
 
 // ToStaticPassword converts a ParsedEntry to a StaticPassword. Returns

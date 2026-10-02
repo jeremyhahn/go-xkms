@@ -134,31 +134,31 @@ func TestCanonicalizeSecretBytes_InPlaceAndWipesTail(t *testing.T) {
 func TestCredentialSetSecret(t *testing.T) {
 	t.Run("stores the secret in protected memory verbatim", func(t *testing.T) {
 		cred := &Credential{}
-		require.NoError(t, cred.SetSecret("jbswy3dpehpk3pxp==")) // verbatim: no normalization
+		require.NoError(t, cred.SetSecret([]byte("jbswy3dpehpk3pxp=="))) // verbatim: no normalization
 		require.True(t, cred.HasSecret())
-		require.Equal(t, "jbswy3dpehpk3pxp==", cred.SecretString())
+		require.Equal(t, "jbswy3dpehpk3pxp==", secretText(cred))
 	})
 
 	t.Run("replacing destroys the previous protected buffer", func(t *testing.T) {
 		cred := &Credential{}
-		require.NoError(t, cred.SetSecret("JBSWY3DPEHPK3PXP"))
+		require.NoError(t, cred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
 		old := cred.secret
 		require.NotNil(t, old.Bytes())
 
-		require.NoError(t, cred.SetSecret("GEZDGNBVGY3TQOJQ"))
+		require.NoError(t, cred.SetSecret([]byte("GEZDGNBVGY3TQOJQ")))
 		require.Nil(t, old.Bytes(), "replaced secret buffer must be destroyed (wiped and unmapped)")
-		require.Equal(t, "GEZDGNBVGY3TQOJQ", cred.SecretString())
+		require.Equal(t, "GEZDGNBVGY3TQOJQ", secretText(cred))
 	})
 
 	t.Run("empty string clears and destroys the secret", func(t *testing.T) {
 		cred := &Credential{}
-		require.NoError(t, cred.SetSecret("JBSWY3DPEHPK3PXP"))
+		require.NoError(t, cred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
 		old := cred.secret
 
-		require.NoError(t, cred.SetSecret(""))
+		require.NoError(t, cred.SetSecret([]byte("")))
 		require.False(t, cred.HasSecret())
 		require.Nil(t, old.Bytes(), "cleared secret buffer must be destroyed")
-		require.Equal(t, "", cred.SecretString())
+		require.Equal(t, "", secretText(cred))
 	})
 }
 
@@ -170,12 +170,12 @@ func TestCredentialSetSecretBytes(t *testing.T) {
 
 		require.Equal(t, make([]byte, len(src)), src,
 			"source slice must be wiped on adoption")
-		require.Equal(t, "JBSWY3DPEHPK3PXP", cred.SecretString())
+		require.Equal(t, "JBSWY3DPEHPK3PXP", secretText(cred))
 	})
 
 	t.Run("empty slice clears the secret", func(t *testing.T) {
 		cred := &Credential{}
-		require.NoError(t, cred.SetSecret("JBSWY3DPEHPK3PXP"))
+		require.NoError(t, cred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
 		require.NoError(t, cred.setSecretBytes(nil))
 		require.False(t, cred.HasSecret())
 	})
@@ -184,7 +184,7 @@ func TestCredentialSetSecretBytes(t *testing.T) {
 func TestCredentialSecretCopy(t *testing.T) {
 	t.Run("returns an independent wipeable copy", func(t *testing.T) {
 		cred := &Credential{}
-		require.NoError(t, cred.SetSecret("JBSWY3DPEHPK3PXP"))
+		require.NoError(t, cred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
 
 		b, err := cred.secretCopy()
 		require.NoError(t, err)
@@ -194,7 +194,7 @@ func TestCredentialSecretCopy(t *testing.T) {
 		for i := range b {
 			b[i] = 0
 		}
-		require.Equal(t, "JBSWY3DPEHPK3PXP", cred.SecretString())
+		require.Equal(t, "JBSWY3DPEHPK3PXP", secretText(cred))
 	})
 
 	t.Run("no secret returns ErrInvalidSecret", func(t *testing.T) {
@@ -206,7 +206,7 @@ func TestCredentialSecretCopy(t *testing.T) {
 
 	t.Run("destroyed secret returns ErrInvalidSecret", func(t *testing.T) {
 		cred := &Credential{}
-		require.NoError(t, cred.SetSecret("JBSWY3DPEHPK3PXP"))
+		require.NoError(t, cred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
 		cred.secret.Destroy()
 
 		b, err := cred.secretCopy()
@@ -229,7 +229,7 @@ func TestCredentialJSONRoundTripPreservesWireFormat(t *testing.T) {
 
 	var decoded Credential
 	require.NoError(t, decoded.UnmarshalJSON(data))
-	require.Equal(t, cred.SecretString(), decoded.SecretString())
+	require.Equal(t, secretText(cred), secretText(&decoded))
 	require.Equal(t, cred.ID, decoded.ID)
 	require.Equal(t, cred.Algorithm, decoded.Algorithm)
 }
@@ -255,11 +255,13 @@ func TestOATHProtectedSecretFlows_NoDeadlock(t *testing.T) {
 		require.NoError(t, err)
 		var decoded Credential
 		require.NoError(t, decoded.UnmarshalJSON(data))
-		require.NoError(t, decoded.SetSecret(""))
+		require.NoError(t, decoded.SetSecret([]byte("")))
 
-		parsed, err := ParseURI(cred.ToURI())
+		uri, err := cred.ToURI()
 		require.NoError(t, err)
-		require.Equal(t, cred.SecretString(), parsed.SecretString())
+		parsed, err := ParseURI(uri)
+		require.NoError(t, err)
+		require.Equal(t, secretText(cred), secretText(parsed))
 	}
 }
 

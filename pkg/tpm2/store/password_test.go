@@ -4,8 +4,10 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,10 +22,17 @@ func TestClearPassword_NewPassword(t *testing.T) {
 	// Verify Bytes returns the password
 	assert.Equal(t, password, p.Bytes())
 
-	// Verify String returns the password as string
-	str, err := p.String()
-	assert.NoError(t, err)
-	assert.Equal(t, "test-password", str)
+	// String must never return the password
+	assert.Equal(t, types.PasswordRedacted, p.String())
+	assert.NotContains(t, fmt.Sprintf("%v %s", p, p), "test-password")
+
+	// WithBytes lends the password
+	var seen []byte
+	require.NoError(t, p.WithBytes(func(b []byte) error {
+		seen = append(seen, b...)
+		return nil
+	}))
+	assert.Equal(t, password, seen)
 }
 
 func TestClearPassword_NewPassword_DifferentValue(t *testing.T) {
@@ -36,10 +45,8 @@ func TestClearPassword_NewPassword_DifferentValue(t *testing.T) {
 	// Verify Bytes returns the password
 	assert.Equal(t, password, p.Bytes())
 
-	// Verify String returns the password as string
-	str, err := p.String()
-	assert.NoError(t, err)
-	assert.Equal(t, "clear-password", str)
+	// String must never return the password
+	assert.Equal(t, types.PasswordRedacted, p.String())
 }
 
 func TestClearPassword_Empty(t *testing.T) {
@@ -52,10 +59,17 @@ func TestClearPassword_Empty(t *testing.T) {
 	// Verify Bytes returns empty slice
 	assert.Empty(t, p.Bytes())
 
-	// Verify String returns empty string
-	str, err := p.String()
-	assert.NoError(t, err)
-	assert.Equal(t, "", str)
+	// String is redacted even when there is nothing to hide
+	assert.Equal(t, types.PasswordRedacted, p.String())
+
+	// WithBytes lends nil: an empty UserAuth means no authentication
+	called := false
+	require.NoError(t, p.WithBytes(func(b []byte) error {
+		called = true
+		assert.Empty(t, b)
+		return nil
+	}))
+	assert.True(t, called)
 }
 
 func TestClearPassword_Nil(t *testing.T) {
@@ -68,10 +82,17 @@ func TestClearPassword_Nil(t *testing.T) {
 	// Verify Bytes returns nil
 	assert.Nil(t, p.Bytes())
 
-	// Verify String returns empty string
-	str, err := p.String()
-	assert.NoError(t, err)
-	assert.Equal(t, "", str)
+	// String is redacted even when there is nothing to hide
+	assert.Equal(t, types.PasswordRedacted, p.String())
+
+	// WithBytes lends nil: an empty UserAuth means no authentication
+	called := false
+	require.NoError(t, p.WithBytes(func(b []byte) error {
+		called = true
+		assert.Empty(t, b)
+		return nil
+	}))
+	assert.True(t, called)
 }
 
 func TestClearPassword_Clear(t *testing.T) {
@@ -124,11 +145,18 @@ func TestRequiredPassword_Bytes(t *testing.T) {
 func TestRequiredPassword_String(t *testing.T) {
 	p := NewRequiredPassword()
 
-	// String should return ErrPasswordRequired
-	str, err := p.String()
-	assert.Error(t, err)
+	assert.Equal(t, types.PasswordRedacted, p.String())
+}
+
+func TestRequiredPassword_WithBytes(t *testing.T) {
+	p := NewRequiredPassword()
+
+	// WithBytes must fail closed without calling the callback
+	err := p.WithBytes(func([]byte) error {
+		t.Fatal("callback must not run for a required password")
+		return nil
+	})
 	assert.Equal(t, ErrPasswordRequired, err)
-	assert.Equal(t, "", str)
 }
 
 func TestRequiredPassword_Clear_ViaInterface(t *testing.T) {

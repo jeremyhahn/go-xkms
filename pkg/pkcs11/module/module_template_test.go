@@ -321,7 +321,18 @@ func TestModule_GetAttributeValue_FetchesBackendKeyMaterial(t *testing.T) {
 
 	attrs, rv := m.GetAttributeValue(session, keyHandle, []Attribute{{Type: CKA_VALUE}})
 	require.Equal(t, CKR_OK, rv, "an extractable, non-sensitive secret key must expose CKA_VALUE")
-	assert.Equal(t, []byte(mockKeyMaterial), attrs[0].Value,
+	defer ReleaseAttributes(attrs)
+
+	assert.Empty(t, attrs[0].Value, "the backend's material must stay sealed, not sit in Value")
+	require.NotNil(t, attrs[0].Secret)
+	assert.Equal(t, len(mockKeyMaterial), attrs[0].ValueLen())
+
+	var got []byte
+	require.NoError(t, attrs[0].WithValue(func(v []byte) error {
+		got = append([]byte(nil), v...)
+		return nil
+	}))
+	assert.Equal(t, []byte(mockKeyMaterial), got,
 		"CKA_VALUE must come back as the material the backend holds")
 	assert.False(t, attrs[0].Unavailable)
 }

@@ -5082,8 +5082,12 @@ func (m *mockPassword) Clear() {
 	}
 }
 
-func (m *mockPassword) String() (string, error) {
-	return string(m.data), nil
+func (m *mockPassword) WithBytes(fn func([]byte) error) error {
+	return fn(m.data)
+}
+
+func (m *mockPassword) String() string {
+	return types.PasswordRedacted
 }
 
 // TestDecodeSymmetricKey_WithEmptyPasswordBytes tests decodeSymmetricKey with empty password bytes

@@ -178,6 +178,44 @@ func selectRSAMechanism(opts crypto.SignerOpts) *pkcs11module.Mechanism {
 	return pkcs11module.NewMechanism(pkcs11module.CKM_RSA_PKCS)
 }
 
+// pkcs11TLSTokenLabel labels the token of a module NewPKCS11TLSConfig creates.
+const pkcs11TLSTokenLabel = "pkcs11-tls"
+
+// initOwnedToken provisions the token of a module NewPKCS11TLSConfig created
+// itself, exactly as an operator would: C_InitToken with pin as the Security
+// Officer PIN, then C_InitPIN setting the same pin as the user PIN. It returns
+// nil on success.
+//
+// A token that is already initialized (the module restores a persisted one) is
+// left alone, as Config.AutoInitToken left it: C_InitToken on it would reset
+// the user PIN and destroy the certificate and key the caller is about to look
+// up, or fail when the Security Officer PIN differs.
+func initOwnedToken(mod *pkcs11module.Module, slotID pkcs11module.SlotID, pin []byte, label string) *PKCS11TLSError {
+	info, rv := mod.GetTokenInfo(slotID)
+	if rv != pkcs11module.CKR_OK {
+		return &PKCS11TLSError{Op: "GetTokenInfo", Code: rv, Err: ErrPKCS11ModuleInit}
+	}
+	if info.Flags&pkcs11module.CKF_TOKEN_INITIALIZED != 0 {
+		return nil
+	}
+	if rv := mod.InitToken(slotID, pin, label); rv != pkcs11module.CKR_OK {
+		return &PKCS11TLSError{Op: "InitToken", Code: rv, Err: ErrPKCS11ModuleInit}
+	}
+	session, rv := mod.OpenSession(slotID, pkcs11module.CKF_RW_SESSION|pkcs11module.CKF_SERIAL_SESSION)
+	if rv != pkcs11module.CKR_OK {
+		return &PKCS11TLSError{Op: "OpenSession", Code: rv, Err: ErrPKCS11ModuleInit}
+	}
+	defer mod.CloseSession(session)
+	if rv := mod.Login(session, pkcs11module.CKU_SO, pin); rv != pkcs11module.CKR_OK {
+		return &PKCS11TLSError{Op: "Login", Code: rv, Err: ErrPKCS11ModuleInit}
+	}
+	defer mod.Logout(session)
+	if rv := mod.InitPIN(session, pin); rv != pkcs11module.CKR_OK {
+		return &PKCS11TLSError{Op: "InitPIN", Code: rv, Err: ErrPKCS11ModuleInit}
+	}
+	return nil
+}
+
 // NewPKCS11TLSConfig creates a tls.Config that uses a PKCS#11 token for
 // client authentication. It initializes the PKCS#11 module, opens a session,
 // authenticates, locates the certificate and matching private key, and
@@ -205,22 +243,19 @@ func NewPKCS11TLSConfig(cfg *PKCS11TLSConfig) (*tls.Config, func(), error) {
 		return nil, nil, ErrPKCS11PINRequired
 	}
 
-	// Opened once for the module config's UserPIN/SOPIN (moduleOwned only)
-	// and the session Login below -- pkcs11module.Config and miekg/pkcs11's
-	// Login both take a plain Go string, so this is the unavoidable copy at
-	// that boundary. Destroyed before NewPKCS11TLSConfig returns.
+	// The PIN leaves the Secret once, as a []byte held under one borrow and
+	// wiped on every path. Module.Login, InitToken and InitPIN all take the
+	// PIN as []byte, so it never becomes a string.
 	pinBuf, err := cfg.PIN.Open()
 	if err != nil {
 		return nil, nil, err
 	}
-	defer pinBuf.Destroy()
-	var pin string
-	if err := pinBuf.WithBytes(func(b []byte) error {
-		pin = string(b) //secure:unwiped pkcs11module.Config's UserPIN/SOPIN and miekg/pkcs11 Login take the PIN as a Go string
-		return nil
-	}); err != nil {
+	pin, err := secure.CopyOut(pinBuf)
+	pinBuf.Destroy()
+	if err != nil {
 		return nil, nil, err
 	}
+	defer secure.Wipe(pin)
 
 	mod := cfg.Module
 	moduleOwned := mod == nil
@@ -228,10 +263,11 @@ func NewPKCS11TLSConfig(cfg *PKCS11TLSConfig) (*tls.Config, func(), error) {
 	if moduleOwned {
 		// Create and initialize the PKCS#11 module.
 		moduleCfg := pkcs11module.DefaultConfig()
-		moduleCfg.AutoInitToken = true
-		moduleCfg.UserPIN = pin
-		moduleCfg.SOPIN = pin
-		moduleCfg.TokenLabel = "pkcs11-tls"
+		// pkcs11module.Config carries its PINs as strings, so the token
+		// is provisioned below with C_InitToken/C_InitPIN, which take
+		// []byte, rather than through Config.AutoInitToken.
+		moduleCfg.AutoInitToken = false
+		moduleCfg.TokenLabel = pkcs11TLSTokenLabel
 
 		var err error
 		mod, err = pkcs11module.New(pkcs11module.WithConfig(moduleCfg))
@@ -246,6 +282,11 @@ func NewPKCS11TLSConfig(cfg *PKCS11TLSConfig) (*tls.Config, func(), error) {
 				Code: rv,
 				Err:  ErrPKCS11ModuleInit,
 			}
+		}
+
+		if tlsErr := initOwnedToken(mod, pkcs11module.SlotID(cfg.SlotID), pin, pkcs11TLSTokenLabel); tlsErr != nil {
+			mod.Finalize()
+			return nil, nil, tlsErr
 		}
 	}
 
@@ -282,7 +323,7 @@ func NewPKCS11TLSConfig(cfg *PKCS11TLSConfig) (*tls.Config, func(), error) {
 
 	// Login as normal user. CKR_USER_ALREADY_LOGGED_IN is acceptable when
 	// the caller provides a pre-authenticated module.
-	rv = mod.Login(session, pkcs11module.CKU_USER, []byte(pin))
+	rv = mod.Login(session, pkcs11module.CKU_USER, pin)
 	if rv != pkcs11module.CKR_OK && rv != pkcs11module.CKR_USER_ALREADY_LOGGED_IN {
 		cleanup()
 		return nil, nil, &PKCS11TLSError{

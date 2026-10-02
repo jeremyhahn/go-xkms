@@ -19,6 +19,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // MetadataError reports a sealed-data metadata value that is not base64.
@@ -85,7 +86,7 @@ func SealRequestFromProto(r *pb.SealRequest, tenant string) *transport.SealReque
 		KeyID:     r.GetKeyId(),
 		Data:      r.GetData(),
 		AAD:       r.GetAad(),
-		Password:  r.GetPassword(),
+		Password:  types.SecretBytes(r.GetPassword()),
 		TPMPolicy: r.GetTpmPolicy(),
 		TenantID:  tenant,
 	}
@@ -164,7 +165,7 @@ func UnsealRequestFromProto(r *pb.UnsealRequest, tenant string) (*transport.Unse
 		TPMPrivate: r.GetTpmPrivate(),
 		WrappedDEK: r.GetWrappedDek(),
 		Metadata:   metadata,
-		Password:   r.GetPassword(),
+		Password:   types.SecretBytes(r.GetPassword()),
 		TenantID:   tenant,
 		KeyVersion: r.GetKeyVersion(),
 	}, nil

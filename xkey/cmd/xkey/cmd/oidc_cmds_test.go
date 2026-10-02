@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/oidc"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // oidcTestCmd builds a detached cobra command carrying every flag the OIDC
@@ -91,9 +92,9 @@ func setOIDCFlags(t *testing.T, cmd *cobra.Command, values map[string]string) {
 func mustOIDCStoredToken(t *testing.T, provider, issuer, clientID, access, refresh, idTok string, expiresAt time.Time, scopes []string) *OIDCStoredToken {
 	t.Helper()
 	tok := &OIDCStoredToken{Provider: provider, Issuer: issuer, ClientID: clientID, ExpiresAt: expiresAt, Scopes: scopes}
-	require.NoError(t, tok.SetAccessToken(access))
-	require.NoError(t, tok.SetRefreshToken(refresh))
-	require.NoError(t, tok.SetIDToken(idTok))
+	require.NoError(t, tok.SetAccessToken([]byte(access)))
+	require.NoError(t, tok.SetRefreshToken([]byte(refresh)))
+	require.NoError(t, tok.SetIDToken([]byte(idTok)))
 	return tok
 }
 
@@ -786,9 +787,9 @@ func TestRunOIDCRefresh_RotatesStoredTokens(t *testing.T) {
 			assert.Equal(t, "old-refresh", r.Form.Get("refresh_token"))
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(OIDCTokenResponse{
-				AccessToken:  "new-access",
-				RefreshToken: "new-refresh",
-				IDToken:      "new-id",
+				AccessToken:  xkms.SecretBytes("new-access"),
+				RefreshToken: xkms.SecretBytes("new-refresh"),
+				IDToken:      xkms.SecretBytes("new-id"),
 				ExpiresIn:    3600,
 			})
 		default:
@@ -808,9 +809,9 @@ func TestRunOIDCRefresh_RotatesStoredTokens(t *testing.T) {
 	token, err := loadToken(cmd, store)
 	require.NoError(t, err)
 	defer token.Destroy()
-	assert.Equal(t, "new-access", token.AccessToken())
-	assert.Equal(t, "new-refresh", token.RefreshToken(), "a rotated refresh token must be persisted")
-	assert.Equal(t, "new-id", token.IDToken())
+	assert.Equal(t, "new-access", string(token.AccessToken()))
+	assert.Equal(t, "new-refresh", string(token.RefreshToken()), "a rotated refresh token must be persisted")
+	assert.Equal(t, "new-id", string(token.IDToken()))
 	assert.True(t, token.ExpiresAt.After(time.Now()))
 }
 
@@ -871,8 +872,8 @@ func TestRunOIDCRefresh_WithProviderSkipsDiscoveryAndHonoursEncoding(t *testing.
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(OIDCTokenResponse{
-			AccessToken:  "new-access",
-			RefreshToken: "new-refresh",
+			AccessToken:  xkms.SecretBytes("new-access"),
+			RefreshToken: xkms.SecretBytes("new-refresh"),
 			ExpiresIn:    3600,
 		})
 	}))
@@ -899,7 +900,7 @@ func TestRunOIDCRefresh_WithProviderSkipsDiscoveryAndHonoursEncoding(t *testing.
 	token, err := loadToken(cmd, store)
 	require.NoError(t, err)
 	defer token.Destroy()
-	assert.Equal(t, "new-access", token.AccessToken())
+	assert.Equal(t, "new-access", string(token.AccessToken()))
 }
 
 func TestRunOIDCRefresh_UnknownProviderReturnsTypedError(t *testing.T) {
@@ -921,7 +922,7 @@ func TestExecuteOIDCScript_PassesTokenThroughEnvironment(t *testing.T) {
 	var buf bytes.Buffer
 	script := fmt.Sprintf(`printf '%%s|%%s|%%s' "$OIDC_ACCESS_TOKEN" "$OIDC_SUBJECT" "$OIDC_EXPIRES_IN" > %q`, marker)
 	require.NoError(t, executeOIDCScript(&buf, script, OIDCExecPayload{
-		AccessToken: "at-123",
+		AccessToken: xkms.SecretBytes("at-123"),
 		Subject:     "user-1",
 		ExpiresIn:   3600,
 	}))
@@ -935,7 +936,7 @@ func TestExecuteOIDCScript_PassesTokenThroughEnvironment(t *testing.T) {
 
 func TestExecuteOIDCScript_PropagatesFailure(t *testing.T) {
 	var buf bytes.Buffer
-	err := executeOIDCScript(&buf, "exit 3", OIDCExecPayload{AccessToken: "x"})
+	err := executeOIDCScript(&buf, "exit 3", OIDCExecPayload{AccessToken: xkms.SecretBytes("x")})
 	assert.Error(t, err, "a failing hook must surface as an error, not be swallowed")
 }
 
@@ -958,9 +959,9 @@ func TestRunAutoRefresh_MalformedIDToken_SkipsExecHook(t *testing.T) {
 		refreshes.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(OIDCTokenResponse{
-			AccessToken:  "rotated-access",
-			RefreshToken: "rotated-refresh",
-			IDToken:      "not-a-valid-jwt",
+			AccessToken:  xkms.SecretBytes("rotated-access"),
+			RefreshToken: xkms.SecretBytes("rotated-refresh"),
+			IDToken:      xkms.SecretBytes("not-a-valid-jwt"),
 			ExpiresIn:    3600,
 		})
 	}))

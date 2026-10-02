@@ -19,7 +19,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 
-	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/pkg/fido2"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -78,29 +77,24 @@ func (k *SimulatedKey) checkPIN(pin *secure.Secret) error {
 		return err
 	}
 	defer buf.Destroy()
+	// The candidate is copied out and wiped rather than nesting two
+	// borrows; the stored PIN is compared inside its own borrow.
+	candidate, err := secure.CopyOut(buf)
+	if err != nil {
+		return err
+	}
+	defer secure.Wipe(candidate)
 	kbuf, err := k.PIN.Open()
 	if err != nil {
 		return err
 	}
 	defer kbuf.Destroy()
-	// Two borrows may not nest, so the presented PIN is copied out under
-	// its own borrow and compared inside the enrolled PIN's.
-	presented, err := qrdbsecure.CopyOut(buf)
-	if err != nil {
-		return err
-	}
-	defer secure.Wipe(presented)
-	match := false
-	if err := kbuf.WithBytes(func(enrolled []byte) error {
-		match = bytes.Equal(presented, enrolled)
+	return kbuf.WithBytes(func(stored []byte) error {
+		if !bytes.Equal(candidate, stored) {
+			return fido2.ErrInvalidPIN
+		}
 		return nil
-	}); err != nil {
-		return err
-	}
-	if !match {
-		return fido2.ErrInvalidPIN
-	}
-	return nil
+	})
 }
 
 // EnrollKey creates a credential for cfg's relying party.

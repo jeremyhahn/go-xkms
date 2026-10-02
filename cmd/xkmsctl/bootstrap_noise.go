@@ -128,18 +128,20 @@ func generateNoiseKey(outputFile string) {
 	}
 	defer buf.Destroy()
 
-	// The borrow is held across the encode and the file write, so a
-	// concurrent shutdown wipe cannot unmap the pages mid-read.
-	if err := buf.WithBytes(func(encoded []byte) error {
+	// The encoding is written to the file inside the borrow, so the plaintext
+	// is only ever reachable while the buffer's pages are held mapped.
+	err = buf.WithBytes(func(encoded []byte) error {
 		if err := bootstrap.EncodeNoiseStaticKey(encoded, key); err != nil {
 			return &WrappedError{Sentinel: ErrEncodeKeyFailed, Err: err}
 		}
 		encoded[bootstrap.NoiseHexKeySize] = '\n'
+
 		if err := writeNoiseKeyFile(outputFile, encoded); err != nil {
 			return &WrappedError{Sentinel: ErrWriteKeyFileFailed, Err: err}
 		}
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		handleError(err)
 		return
 	}

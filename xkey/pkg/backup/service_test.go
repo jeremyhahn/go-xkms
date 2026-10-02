@@ -72,11 +72,21 @@ type mockOATHReader struct {
 	err   error
 }
 
+// List returns records of its own on every call, as the OATHReader contract
+// requires: the service destroys what it is handed.
 func (m *mockOATHReader) List() ([]*OATHCredentialInfo, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	return m.creds, nil
+	out := make([]*OATHCredentialInfo, 0, len(m.creds))
+	for _, c := range m.creds {
+		clone, err := c.Clone()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, clone)
+	}
+	return out, nil
 }
 
 type mockPasswordReader struct {
@@ -84,11 +94,21 @@ type mockPasswordReader struct {
 	err       error
 }
 
+// List returns records of its own on every call, as the PasswordReader
+// contract requires: the service destroys what it is handed.
 func (m *mockPasswordReader) List() ([]*PasswordInfo, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	return m.passwords, nil
+	out := make([]*PasswordInfo, 0, len(m.passwords))
+	for _, p := range m.passwords {
+		clone, err := p.Clone()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, clone)
+	}
+	return out, nil
 }
 
 type mockCAReader struct {
@@ -132,11 +152,17 @@ type mockOATHWriter struct {
 	err   error
 }
 
+// Add keeps a copy, as the OATHWriter contract requires: the service destroys
+// cred as soon as Add returns.
 func (m *mockOATHWriter) Add(cred *OATHCredentialInfo) error {
 	if m.err != nil {
 		return m.err
 	}
-	m.creds = append(m.creds, cred)
+	clone, err := cred.Clone()
+	if err != nil {
+		return err
+	}
+	m.creds = append(m.creds, clone)
 	return nil
 }
 
@@ -145,11 +171,17 @@ type mockPasswordWriter struct {
 	err       error
 }
 
+// Add keeps a copy, as the PasswordWriter contract requires: the service
+// destroys pw as soon as Add returns.
 func (m *mockPasswordWriter) Add(pw *PasswordInfo) error {
 	if m.err != nil {
 		return m.err
 	}
-	m.passwords = append(m.passwords, pw)
+	clone, err := pw.Clone()
+	if err != nil {
+		return err
+	}
+	m.passwords = append(m.passwords, clone)
 	return nil
 }
 
@@ -601,12 +633,12 @@ func TestCreateDecryptRoundTrip(t *testing.T) {
 	// Verify OATH round-trip.
 	require.Len(t, archive.OATHCreds, 2)
 	assert.Equal(t, oathCreds[0].ID, archive.OATHCreds[0].ID)
-	assert.Equal(t, oathCreds[0].SecretString(), archive.OATHCreds[0].Secret)
+	assert.Equal(t, secretText(oathCreds[0]), textOf(archive.OATHCreds[0].Secret))
 	assert.Equal(t, oathCreds[1].AccountName, archive.OATHCreds[1].AccountName)
 
 	// Verify password round-trip.
 	require.Len(t, archive.Passwords, 2)
-	assert.Equal(t, passwords[0].PasswordString(), archive.Passwords[0].Password)
+	assert.Equal(t, passwordText(passwords[0]), textOf(archive.Passwords[0].Password))
 	assert.Equal(t, passwords[1].FolderPath, archive.Passwords[1].FolderPath)
 
 	// Verify CA round-trip.
@@ -884,7 +916,7 @@ func TestRestorePasswords(t *testing.T) {
 	assert.Equal(t, 0, result.Skipped)
 	assert.Empty(t, result.Errors)
 	assert.Len(t, writer.passwords, 2)
-	assert.Equal(t, "s3cret!", writer.passwords[0].PasswordString())
+	assert.Equal(t, "s3cret!", passwordText(writer.passwords[0]))
 }
 
 func TestRestorePasswords_NilArchive(t *testing.T) {
@@ -902,7 +934,7 @@ func TestRestorePasswords_WriterError(t *testing.T) {
 
 	archive := &Archive{
 		Passwords: []PasswordEntry{
-			{ID: "p1", Name: "pw1", Password: "secret"},
+			{ID: "p1", Name: "pw1", Password: mustSecretText("secret")},
 		},
 	}
 

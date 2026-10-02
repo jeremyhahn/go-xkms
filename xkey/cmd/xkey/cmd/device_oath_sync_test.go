@@ -214,12 +214,14 @@ func TestCredentialToPhoneInfo(t *testing.T) {
 		CreatedAt:   time.Now(),
 	}, "JBSWY3DPEHPK3PXP")
 
-	info := credentialToPhoneInfo(cred)
+	info, infoErr := credentialToPhoneInfo(cred)
+	require.NoError(t, infoErr)
+	defer info.Destroy()
 
 	assert.Equal(t, cred.Name, info.Name)
 	assert.Equal(t, cred.Issuer, info.Issuer)
 	assert.Equal(t, cred.AccountName, info.AccountName)
-	assert.Equal(t, cred.SecretString(), info.Secret)
+	assert.Equal(t, secretText(cred), textOf(info.Secret))
 	assert.Equal(t, cred.Type, info.Type)
 	assert.Equal(t, cred.Algorithm, info.Algorithm)
 	assert.Equal(t, cred.Digits, info.Digits)
@@ -236,7 +238,9 @@ func TestCredentialToPhoneInfo_HOTP(t *testing.T) {
 		Counter: 42,
 	}, "JBSWY3DPEHPK3PXP")
 
-	info := credentialToPhoneInfo(cred)
+	info, infoErr := credentialToPhoneInfo(cred)
+	require.NoError(t, infoErr)
+	defer info.Destroy()
 
 	assert.Equal(t, oath.TypeHOTP, info.Type)
 	assert.Equal(t, 8, info.Digits)
@@ -248,7 +252,7 @@ func TestPhoneInfoToCredential(t *testing.T) {
 		Name:        "AWS",
 		Issuer:      "Amazon",
 		AccountName: "admin@example.com",
-		Secret:      "JBSWY3DPEHPK3PXP",
+		Secret:      mustSecretText("JBSWY3DPEHPK3PXP"),
 		Type:        "totp",
 		Algorithm:   "SHA256",
 		Digits:      8,
@@ -262,7 +266,7 @@ func TestPhoneInfoToCredential(t *testing.T) {
 	assert.Equal(t, info.Name, cred.Name)
 	assert.Equal(t, info.Issuer, cred.Issuer)
 	assert.Equal(t, info.AccountName, cred.AccountName)
-	assert.Equal(t, info.Secret, cred.SecretString())
+	assert.Equal(t, textOf(info.Secret), secretText(cred))
 	assert.Equal(t, info.Type, cred.Type)
 	assert.Equal(t, info.Algorithm, cred.Algorithm)
 	assert.Equal(t, info.Digits, cred.Digits)
@@ -273,7 +277,7 @@ func TestPhoneInfoToCredential(t *testing.T) {
 func TestPhoneInfoToCredential_Defaults(t *testing.T) {
 	info := pairing.OATHCredentialInfo{
 		Name:   "Simple",
-		Secret: "JBSWY3DPEHPK3PXP",
+		Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
 	}
 
 	cred, convErr := deviceInfoToCredential(info)
@@ -290,7 +294,7 @@ func TestPhoneInfoToCredential_Defaults(t *testing.T) {
 func TestPhoneInfoToCredential_EmptyNameWithIssuer(t *testing.T) {
 	info := pairing.OATHCredentialInfo{
 		Issuer: "TestIssuer",
-		Secret: "JBSWY3DPEHPK3PXP",
+		Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
 	}
 
 	cred, convErr := deviceInfoToCredential(info)
@@ -305,7 +309,7 @@ func TestPhoneInfoToCredential_WithIssuerAndAccount(t *testing.T) {
 		Name:        "GitHub",
 		Issuer:      "GitHub",
 		AccountName: "user@test.com",
-		Secret:      "JBSWY3DPEHPK3PXP",
+		Secret:      mustSecretText("JBSWY3DPEHPK3PXP"),
 		Type:        "totp",
 	}
 
@@ -319,7 +323,7 @@ func TestPhoneInfoToCredential_WithIssuerAndAccount(t *testing.T) {
 func TestPhoneInfoToCredential_HOTP(t *testing.T) {
 	info := pairing.OATHCredentialInfo{
 		Name:    "HotpService",
-		Secret:  "JBSWY3DPEHPK3PXP",
+		Secret:  mustSecretText("JBSWY3DPEHPK3PXP"),
 		Type:    "hotp",
 		Counter: 100,
 	}
@@ -348,14 +352,16 @@ func TestCredentialConversion_Roundtrip(t *testing.T) {
 	}, "JBSWY3DPEHPK3PXP")
 
 	// Convert to phone info and back
-	info := credentialToPhoneInfo(original)
+	info, infoErr := credentialToPhoneInfo(original)
+	require.NoError(t, infoErr)
+	defer info.Destroy()
 	roundtrip, convErr := deviceInfoToCredential(info)
 	require.NoError(t, convErr)
 
 	assert.Equal(t, original.Name, roundtrip.Name)
 	assert.Equal(t, original.Issuer, roundtrip.Issuer)
 	assert.Equal(t, original.AccountName, roundtrip.AccountName)
-	assert.Equal(t, original.SecretString(), roundtrip.SecretString())
+	assert.Equal(t, secretText(original), secretText(roundtrip))
 	assert.Equal(t, original.Type, roundtrip.Type)
 	assert.Equal(t, original.Algorithm, roundtrip.Algorithm)
 	assert.Equal(t, original.Digits, roundtrip.Digits)

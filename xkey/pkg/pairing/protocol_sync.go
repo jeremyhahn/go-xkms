@@ -13,6 +13,8 @@
 
 package pairing
 
+import xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+
 // Sync method names for bidirectional synchronization between laptop and phone.
 // These methods enable trust store, OATH credential, and password sync
 // operations in both directions.
@@ -66,32 +68,87 @@ type SyncCertificate struct {
 	Tags        []string `json:"tags,omitempty"`
 }
 
-// SyncOATHCredential represents an OATH credential for synchronization.
+// SyncOATHCredential represents an OATH credential for synchronization. The
+// secret is SecretText, which encodes as the same JSON string the field held
+// before, and is wiped by the owner of the value (see destroySyncOATH).
 type SyncOATHCredential struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Issuer      string `json:"issuer,omitempty"`
-	AccountName string `json:"account_name,omitempty"`
-	Secret      string `json:"secret"`
-	Type        string `json:"type"`
-	Algorithm   string `json:"algorithm,omitempty"`
-	Digits      int    `json:"digits,omitempty"`
-	Period      int    `json:"period,omitempty"`
-	Counter     int64  `json:"counter,omitempty"`
-	UpdatedAt   string `json:"updated_at,omitempty"` // RFC3339
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Issuer      string          `json:"issuer,omitempty"`
+	AccountName string          `json:"account_name,omitempty"`
+	Secret      xkms.SecretText `json:"secret"`
+	Type        string          `json:"type"`
+	Algorithm   string          `json:"algorithm,omitempty"`
+	Digits      int             `json:"digits,omitempty"`
+	Period      int             `json:"period,omitempty"`
+	Counter     int64           `json:"counter,omitempty"`
+	UpdatedAt   string          `json:"updated_at,omitempty"` // RFC3339
 }
 
-// SyncPassword represents a password entry for synchronization.
+// SyncPassword represents a password entry for synchronization. The password
+// is SecretText, which encodes as the same JSON string the field held
+// before, and is wiped by the owner of the value (see destroySyncPasswords).
 type SyncPassword struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Title      string `json:"title,omitempty"`
-	Username   string `json:"username,omitempty"`
-	Password   string `json:"password"`
-	URL        string `json:"url,omitempty"`
-	Notes      string `json:"notes,omitempty"`
-	FolderPath string `json:"folder_path,omitempty"`
-	UpdatedAt  string `json:"updated_at,omitempty"` // RFC3339
+	ID         string          `json:"id"`
+	Name       string          `json:"name"`
+	Title      string          `json:"title,omitempty"`
+	Username   string          `json:"username,omitempty"`
+	Password   xkms.SecretText `json:"password"`
+	URL        string          `json:"url,omitempty"`
+	Notes      string          `json:"notes,omitempty"`
+	FolderPath string          `json:"folder_path,omitempty"`
+	UpdatedAt  string          `json:"updated_at,omitempty"` // RFC3339
+}
+
+// destroySyncOATH destroys the secret of every credential in creds.
+func destroySyncOATH(creds []SyncOATHCredential) {
+	for i := range creds {
+		creds[i].Secret.Destroy()
+	}
+}
+
+// destroySyncPasswords destroys the password of every entry in passwords.
+func destroySyncPasswords(passwords []SyncPassword) {
+	for i := range passwords {
+		passwords[i].Password.Destroy()
+	}
+}
+
+// Destroy destroys the secrets the params carries.
+func (p *LocalSyncOATHParams) Destroy() { destroySyncOATH(p.Credentials) }
+
+// Destroy destroys the secrets the result carries.
+func (r *LocalSyncOATHResult) Destroy() { destroySyncOATH(r.Remote) }
+
+// Destroy destroys the passwords the params carries.
+func (p *LocalSyncPasswordsParams) Destroy() { destroySyncPasswords(p.Passwords) }
+
+// Destroy destroys the passwords the result carries.
+func (r *LocalSyncPasswordsResult) Destroy() { destroySyncPasswords(r.Remote) }
+
+// Destroy destroys the secrets the params carries.
+func (p *RemoteSyncOATHParams) Destroy() { destroySyncOATH(p.Credentials) }
+
+// Destroy destroys the secrets the result carries.
+func (r *RemoteSyncOATHResult) Destroy() { destroySyncOATH(r.Local) }
+
+// Destroy destroys the passwords the params carries.
+func (p *RemoteSyncPasswordsParams) Destroy() { destroySyncPasswords(p.Passwords) }
+
+// Destroy destroys the passwords the result carries.
+func (r *RemoteSyncPasswordsResult) Destroy() { destroySyncPasswords(r.Local) }
+
+// Destroy destroys the secrets the result carries. Safe on a nil receiver.
+func (r *RemoteSyncAllResult) Destroy() {
+	if r == nil {
+		return
+	}
+	if r.OATH != nil {
+		r.OATH.Destroy()
+	}
+	if r.Passwords != nil {
+		r.Passwords.Destroy()
+	}
 }
 
 // --- local.syncTrustStore ---

@@ -724,7 +724,7 @@ func (tpm *TPM2) devidKeySession(
 
 	var keyAuth []byte
 	if keyAttrs.Password != nil {
-		if _, err := keyAttrs.Password.String(); err != nil {
+		if err := requireReadable(keyAttrs.Password); err != nil {
 			return nil, noopCloser, err
 		}
 		keyAuth = keyAttrs.Password.Bytes()
@@ -919,7 +919,7 @@ func (tpm *TPM2) passwordKeySession(
 	if keyAttrs.Password != nil {
 		// A password that cannot be read (RequiredPassword) is reported
 		// here, before any session is started.
-		if _, err := keyAttrs.Password.String(); err != nil {
+		if err := requireReadable(keyAttrs.Password); err != nil {
 			return nil, noopCloser, err
 		}
 		keyAuth = keyAttrs.Password.Bytes()

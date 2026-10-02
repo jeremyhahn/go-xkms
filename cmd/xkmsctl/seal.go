@@ -109,22 +109,20 @@ func sealPassword(password string) (*secure.Secret, error) {
 }
 
 // openPassword opens a sealed object's authorization value for the wire
-// request, which carries it as a string. A nil password opens to "".
-func openPassword(password *secure.Secret) (string, error) {
+// request, which carries it as client.SecretBytes. A nil password opens to
+// nil. The caller owns the result and must Wipe it.
+func openPassword(password *secure.Secret) (client.SecretBytes, error) {
 	if password == nil {
-		return "", nil
+		return nil, nil
 	}
 	buf, err := password.Open()
 	if err != nil {
-		return "", &WrappedError{Sentinel: ErrPasswordOpenFailed, Err: err}
+		return nil, &WrappedError{Sentinel: ErrPasswordOpenFailed, Err: err}
 	}
 	defer buf.Destroy()
-	var wire string
-	if err := buf.WithBytes(func(b []byte) error {
-		wire = string(b) //secure:unwiped the seal/unseal wire request carries the authorization value as a string field
-		return nil
-	}); err != nil {
-		return "", &WrappedError{Sentinel: ErrPasswordOpenFailed, Err: err}
+	wire, err := secure.CopyOut(buf)
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrPasswordOpenFailed, Err: err}
 	}
 	return wire, nil
 }
@@ -151,6 +149,7 @@ func sealData(cfg *Config, printer *Printer, keyID string, data, aad []byte, tpm
 		handleError(err)
 		return
 	}
+	defer secure.Wipe(password)
 
 	// Prepare seal request
 	req := &client.SealRequest{
@@ -331,6 +330,7 @@ func unsealData(cfg *Config, printer *Printer, keyID string, ciphertext, nonce, 
 		handleError(err)
 		return
 	}
+	defer secure.Wipe(password)
 
 	// Prepare unseal request
 	req := &client.UnsealRequest{

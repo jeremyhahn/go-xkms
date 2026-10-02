@@ -568,9 +568,11 @@ func TestSealService_SealData_WithExplicitBackend(t *testing.T) {
 
 func TestSealService_SealData_TPMPasswordIsEnforcedByTheTPM(t *testing.T) {
 	var captured *transport.SealRequest
+	var capturedPassword string
 	mc := defaultSealMockClient()
 	mc.sealFn = func(_ context.Context, req *transport.SealRequest) (*transport.SealResponse, error) {
 		captured = req
+		capturedPassword = string(req.Password)
 		return &transport.SealResponse{Backend: req.Backend, Ciphertext: req.Data}, nil
 	}
 	svc := newSealServiceWithMockClient(t, mc)
@@ -581,7 +583,8 @@ func TestSealService_SealData_TPMPasswordIsEnforcedByTheTPM(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, entry.PasswordProtected)
 	require.NotNil(t, captured)
-	assert.Equal(t, "my-secret-password", captured.Password, "the TPM gets the password as the object's auth value")
+	assert.Equal(t, "my-secret-password", capturedPassword, "the TPM gets the password as the object's auth value")
+	assert.Nil(t, captured.Password, "the request's copy is wiped once the call returns")
 
 	// A tpm2 blob keeps no software hash: the TPM is the only check.
 	blob, loadErr := svc.loadBlobByID(entry.ID)

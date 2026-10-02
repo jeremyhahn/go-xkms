@@ -79,7 +79,9 @@ func syncedImportOptions() *truststore.AddCertificateOptions {
 
 // OATHAccessor provides read/write access to OATH credentials for sync.
 // It extends the backup reader/writer with Get and Update for conflict
-// resolution.
+// resolution. The records List and Get return are the caller's to destroy, so
+// each call returns records of its own; Add and Update copy what they keep, and
+// the caller destroys the record they were given as soon as they return.
 type OATHAccessor interface {
 	backup.OATHReader
 	backup.OATHWriter
@@ -89,7 +91,7 @@ type OATHAccessor interface {
 
 // PasswordAccessor provides read/write access to static passwords for sync.
 // It extends the backup reader/writer with Get and Update for conflict
-// resolution.
+// resolution, under the ownership rules OATHAccessor states.
 type PasswordAccessor interface {
 	backup.PasswordReader
 	backup.PasswordWriter
@@ -199,7 +201,8 @@ func (s *Service) ComputeLocalTrustStoreDelta() (*TrustStoreDelta, error) {
 	return delta, nil
 }
 
-// ComputeLocalOATHDelta returns all local OATH credentials as a delta.
+// ComputeLocalOATHDelta returns all local OATH credentials as a delta. The
+// caller owns the delta's secrets and must call OATHDelta.Destroy.
 func (s *Service) ComputeLocalOATHDelta() (*OATHDelta, error) {
 	if s.oath == nil {
 		return nil, nil
@@ -209,18 +212,29 @@ func (s *Service) ComputeLocalOATHDelta() (*OATHDelta, error) {
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrOATHSyncFailed, Cause: err}
 	}
+	// The delta holds copies of its own; the listed records are released here.
+	defer func() {
+		for _, c := range creds {
+			c.Destroy()
+		}
+	}()
 
 	delta := &OATHDelta{
 		Credentials: make([]OATHCredentialSync, 0, len(creds)),
 	}
 
 	for _, c := range creds {
+		secret, secretErr := c.SecretText()
+		if secretErr != nil {
+			delta.Destroy()
+			return nil, &SentinelCauseError{Sentinel: ErrOATHSyncFailed, Cause: secretErr}
+		}
 		delta.Credentials = append(delta.Credentials, OATHCredentialSync{
 			ID:          c.ID,
 			Name:        c.Name,
 			Issuer:      c.Issuer,
 			AccountName: c.AccountName,
-			Secret:      c.SecretString(),
+			Secret:      secret,
 			Type:        c.Type,
 			Algorithm:   c.Algorithm,
 			Digits:      c.Digits,
@@ -232,7 +246,8 @@ func (s *Service) ComputeLocalOATHDelta() (*OATHDelta, error) {
 	return delta, nil
 }
 
-// ComputeLocalPasswordDelta returns all local passwords as a delta.
+// ComputeLocalPasswordDelta returns all local passwords as a delta. The caller
+// owns the delta's passwords and must call PasswordDelta.Destroy.
 func (s *Service) ComputeLocalPasswordDelta() (*PasswordDelta, error) {
 	if s.passwords == nil {
 		return nil, nil
@@ -242,18 +257,29 @@ func (s *Service) ComputeLocalPasswordDelta() (*PasswordDelta, error) {
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrPasswordSyncFailed, Cause: err}
 	}
+	// The delta holds copies of its own; the listed records are released here.
+	defer func() {
+		for _, p := range passwords {
+			p.Destroy()
+		}
+	}()
 
 	delta := &PasswordDelta{
 		Passwords: make([]PasswordSync, 0, len(passwords)),
 	}
 
 	for _, p := range passwords {
+		password, passwordErr := p.PasswordText()
+		if passwordErr != nil {
+			delta.Destroy()
+			return nil, &SentinelCauseError{Sentinel: ErrPasswordSyncFailed, Cause: passwordErr}
+		}
 		delta.Passwords = append(delta.Passwords, PasswordSync{
 			ID:         p.ID,
 			Name:       p.Name,
 			Title:      p.Title,
 			Username:   p.Username,
-			Password:   p.PasswordString(),
+			Password:   password,
 			URL:        p.URL,
 			Notes:      p.Notes,
 			FolderPath: p.FolderPath,
@@ -346,7 +372,8 @@ func (s *Service) ApplyTrustStoreDelta(delta *TrustStoreDelta) (*SyncItemResult,
 }
 
 // ApplyOATHDelta applies remote OATH credentials using last-modified-wins
-// conflict resolution. For each credential:
+// conflict resolution. It copies what it keeps into protected memory and
+// leaves delta to its caller, who destroys it. For each credential:
 //   - Not present locally: add it
 //   - Present locally with older UpdatedAt: update with remote
 //   - Present locally with newer or equal UpdatedAt: skip (local wins)
@@ -364,6 +391,9 @@ func (s *Service) ApplyOATHDelta(delta *OATHDelta) (*SyncItemResult, error) {
 
 	for _, remote := range delta.Credentials {
 		local, err := s.oath.Get(remote.ID)
+		// Only whether the credential exists matters here, so the record Get
+		// returned is released straight away.
+		local.Destroy()
 		if err != nil {
 			// Credential does not exist locally, add it.
 			info, convErr := oathSyncToInfo(&remote)
@@ -373,7 +403,9 @@ func (s *Service) ApplyOATHDelta(delta *OATHDelta) (*SyncItemResult, error) {
 				result.Skipped++
 				continue
 			}
-			if addErr := s.oath.Add(info); addErr != nil {
+			addErr := s.oath.Add(info)
+			info.Destroy()
+			if addErr != nil {
 				result.Errors = append(result.Errors,
 					fmt.Sprintf("oath %s: add: %v", remote.ID, addErr))
 				result.Skipped++
@@ -395,7 +427,9 @@ func (s *Service) ApplyOATHDelta(delta *OATHDelta) (*SyncItemResult, error) {
 				result.Skipped++
 				continue
 			}
-			if updateErr := s.oath.Update(info); updateErr != nil {
+			updateErr := s.oath.Update(info)
+			info.Destroy()
+			if updateErr != nil {
 				result.Errors = append(result.Errors,
 					fmt.Sprintf("oath %s: update: %v", remote.ID, updateErr))
 				result.Skipped++
@@ -406,7 +440,6 @@ func (s *Service) ApplyOATHDelta(delta *OATHDelta) (*SyncItemResult, error) {
 		}
 
 		// Both timestamps are effectively zero; skip to avoid overwriting.
-		_ = local
 		result.Skipped++
 	}
 
@@ -414,7 +447,8 @@ func (s *Service) ApplyOATHDelta(delta *OATHDelta) (*SyncItemResult, error) {
 }
 
 // ApplyPasswordDelta applies remote passwords using last-modified-wins
-// conflict resolution. Same semantics as ApplyOATHDelta.
+// conflict resolution. Same semantics as ApplyOATHDelta, including that the
+// caller destroys delta.
 func (s *Service) ApplyPasswordDelta(delta *PasswordDelta) (*SyncItemResult, error) {
 	result := &SyncItemResult{DataType: DataTypePasswords}
 
@@ -429,6 +463,9 @@ func (s *Service) ApplyPasswordDelta(delta *PasswordDelta) (*SyncItemResult, err
 
 	for _, remote := range delta.Passwords {
 		local, err := s.passwords.Get(remote.ID)
+		// Only whether the password exists matters here, so the record Get
+		// returned is released straight away.
+		local.Destroy()
 		if err != nil {
 			// Password does not exist locally, add it.
 			info, convErr := passwordSyncToInfo(&remote)
@@ -438,7 +475,9 @@ func (s *Service) ApplyPasswordDelta(delta *PasswordDelta) (*SyncItemResult, err
 				result.Skipped++
 				continue
 			}
-			if addErr := s.passwords.Add(info); addErr != nil {
+			addErr := s.passwords.Add(info)
+			info.Destroy()
+			if addErr != nil {
 				result.Errors = append(result.Errors,
 					fmt.Sprintf("password %s: add: %v", remote.ID, addErr))
 				result.Skipped++
@@ -457,7 +496,9 @@ func (s *Service) ApplyPasswordDelta(delta *PasswordDelta) (*SyncItemResult, err
 				result.Skipped++
 				continue
 			}
-			if updateErr := s.passwords.Update(info); updateErr != nil {
+			updateErr := s.passwords.Update(info)
+			info.Destroy()
+			if updateErr != nil {
 				result.Errors = append(result.Errors,
 					fmt.Sprintf("password %s: update: %v", remote.ID, updateErr))
 				result.Skipped++
@@ -467,7 +508,6 @@ func (s *Service) ApplyPasswordDelta(delta *PasswordDelta) (*SyncItemResult, err
 			continue
 		}
 
-		_ = local
 		result.Skipped++
 	}
 
@@ -619,7 +659,8 @@ func oathSyncToInfo(cs *OATHCredentialSync) (*backup.OATHCredentialInfo, error) 
 		Period:      cs.Period,
 		Counter:     cs.Counter,
 	}
-	if err := info.SetSecret(cs.Secret); err != nil {
+	if err := info.SetSecretText(cs.Secret); err != nil {
+		info.Destroy()
 		return nil, err
 	}
 	return info, nil
@@ -636,7 +677,8 @@ func passwordSyncToInfo(ps *PasswordSync) (*backup.PasswordInfo, error) {
 		Notes:      ps.Notes,
 		FolderPath: ps.FolderPath,
 	}
-	if err := info.SetPassword(ps.Password); err != nil {
+	if err := info.SetPasswordText(ps.Password); err != nil {
+		info.Destroy()
 		return nil, err
 	}
 	return info, nil

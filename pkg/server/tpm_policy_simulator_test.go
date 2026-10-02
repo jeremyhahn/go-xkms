@@ -289,14 +289,14 @@ func TestTPMPolicy_SealWithoutPolicyOrPasswordRefused(t *testing.T) {
 	_, err := svc.Seal(sys, &transport.SealRequest{Backend: "tpm2", Data: []byte("unprotected")})
 	require.ErrorIs(t, err, pkgtpm2.ErrSealUnprotected)
 
-	protected, err := svc.Seal(sys, &transport.SealRequest{Backend: "tpm2", Data: []byte("protected"), Password: "object-password"})
+	protected, err := svc.Seal(sys, &transport.SealRequest{Backend: "tpm2", Data: []byte("protected"), Password: []byte("object-password")})
 	require.NoError(t, err)
 	got, err := svc.Unseal(sys, &transport.UnsealRequest{
 		Backend:    "tpm2",
 		KeyID:      protected.KeyID,
 		TPMPublic:  protected.TPMPublic,
 		TPMPrivate: protected.TPMPrivate,
-		Password:   "object-password",
+		Password:   []byte("object-password"),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []byte("protected"), got.Plaintext)

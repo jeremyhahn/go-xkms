@@ -453,10 +453,8 @@ func TestRequiredPassword_Clear(t *testing.T) {
 	// State should be unchanged
 	assert.Nil(t, p.Bytes())
 
-	str, err := p.String()
-	assert.Error(t, err)
-	assert.Equal(t, ErrPasswordRequired, err)
-	assert.Equal(t, "", str)
+	assert.Equal(t, types.PasswordRedacted, p.String())
+	assert.Equal(t, ErrPasswordRequired, p.WithBytes(func([]byte) error { return nil }))
 }
 
 func TestFileBackend_IntegrationWithStorageFactory(t *testing.T) {

@@ -26,6 +26,7 @@ import (
 	pkcs8backend "github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -73,9 +74,9 @@ func TestCA_CredentialPassword_EncryptedAtRest(t *testing.T) {
 	require.NotNil(t, attrs.Password, "resolved password must be non-nil")
 
 	// Verify the password was resolved correctly.
-	pw, err := attrs.Password.String()
-	require.NoError(t, err)
-	assert.Equal(t, credValue, pw, "password must equal the retrieved credential value")
+	pw := attrs.Password.Bytes()
+	defer secure.Wipe(pw)
+	assert.Equal(t, credValue, string(pw), "password must equal the retrieved credential value")
 
 	// Generate a CA key using a fail-closed pkcs8 backend and assert it is
 	// encrypted at rest (mirroring TestGenerateKey_WithPassword_ProducesEncryptedPKCS8).

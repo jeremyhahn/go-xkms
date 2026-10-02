@@ -309,6 +309,7 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return classifyBackupDecryptError(err)
 	}
+	defer archive.Destroy()
 
 	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd), false)
 	if err != nil {

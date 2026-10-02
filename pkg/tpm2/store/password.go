@@ -14,7 +14,6 @@
 package store
 
 import (
-	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	pwenclave "github.com/jeremyhahn/go-xkms/pkg/password"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -62,6 +61,16 @@ func NewPassword(password []byte) (types.Password, error) {
 	return pw, nil
 }
 
+// WithBytes lends the enclaved password bytes to fn. An empty or cleared
+// password calls fn with a nil slice: TPM2 reads an empty UserAuth as no
+// authentication.
+func (p *ClearPassword) WithBytes(fn func([]byte) error) error {
+	if p == nil || p.buf == nil {
+		return fn(nil)
+	}
+	return p.buf.WithBytes(fn)
+}
+
 // Bytes returns a defensive copy of the password bytes. Returns nil
 // for an empty / cleared password. The returned slice is an ordinary
 // Go slice (not enclaved) — callers pass it to TPM operations and
@@ -71,34 +80,23 @@ func (p *ClearPassword) Bytes() []byte {
 	if p == nil || p.buf == nil {
 		return nil
 	}
-	out, err := qrdbsecure.CopyOut(p.buf)
+	out, err := secure.CopyOut(p.buf)
 	if err != nil {
 		return nil
 	}
 	return out
 }
 
-// String returns the password as a Go string. Note: the string
-// escapes to the heap and lives there until GC reclaims it. Prefer
-// Bytes for hot paths; String exists for compatibility with existing
-// call sites that log or format the auth value.
-func (p *ClearPassword) String() (string, error) {
-	if p == nil || p.buf == nil {
-		return "", nil
-	}
-	var s string
-	if err := p.buf.WithBytes(func(b []byte) error {
-		s = string(b) //secure:unwiped types.Password.String's contract returns a Go string, documented above as living until GC
-		return nil
-	}); err != nil {
-		return "", nil
-	}
-	return s, nil
+// String returns types.PasswordRedacted. It never returns the password: a
+// Go string can never be wiped, so the secret is only reachable through
+// Bytes.
+func (p *ClearPassword) String() string {
+	return types.PasswordRedacted
 }
 
 // Clear destroys the underlying enclave. Safe to call on a zero-value
 // receiver and idempotent — memguard.Destroy itself is idempotent.
-// After Clear, Bytes returns nil and String returns an empty string.
+// After Clear, Bytes returns nil.
 func (p *ClearPassword) Clear() {
 	if p == nil || p.buf == nil {
 		return
@@ -121,9 +119,16 @@ func (p *RequiredPassword) Bytes() []byte {
 	return nil
 }
 
-// String returns ErrPasswordRequired
-func (p *RequiredPassword) String() (string, error) {
-	return "", ErrPasswordRequired
+// WithBytes returns ErrPasswordRequired without calling fn: the password
+// was required but never stored, and the caller must not proceed as if it
+// were empty.
+func (p *RequiredPassword) WithBytes(func([]byte) error) error {
+	return ErrPasswordRequired
+}
+
+// String returns types.PasswordRedacted; there is no secret to reveal.
+func (p *RequiredPassword) String() string {
+	return types.PasswordRedacted
 }
 
 // Clear is a no-op for RequiredPassword as there is no sensitive data to clear

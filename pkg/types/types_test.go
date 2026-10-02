@@ -1573,11 +1573,17 @@ func (p *TestPassword) Bytes() []byte {
 	return []byte(p.value)
 }
 
-func (p *TestPassword) String() (string, error) {
+func (p *TestPassword) WithBytes(fn func([]byte) error) error {
 	if p.err != nil {
-		return "", p.err
+		return p.err
 	}
-	return p.value, nil
+	b := []byte(p.value)
+	defer clear(b)
+	return fn(b)
+}
+
+func (p *TestPassword) String() string {
+	return PasswordRedacted
 }
 
 func (p *TestPassword) Clear() {
@@ -1804,9 +1810,7 @@ func TestClearPassword_BackwardCompatibility(t *testing.T) {
 	password2, err := NewPasswordFromString("test-string")
 	require.NoError(t, err)
 	require.NotNil(t, password2)
-	str, err := password2.String()
-	assert.NoError(t, err)
-	assert.Equal(t, "test-string", str)
+	assert.Equal(t, []byte("test-string"), password2.Bytes())
 }
 
 // TestNewPassword_EmptyIsIntentionalNotError verifies that an empty or nil

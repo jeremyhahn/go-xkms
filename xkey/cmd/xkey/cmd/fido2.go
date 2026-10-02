@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-enclave"
-	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -879,16 +878,14 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 		if openErr != nil {
 			return nil, errors.Join(ErrFIDO2PINSetFailed, openErr, auth.Close())
 		}
-		// SetInitialPIN persists through the authenticator's storage and
-		// audit interfaces, which must not run inside a borrow, so the PIN
-		// is copied out under one and the copy wiped once the call returns.
-		pin, copyErr := qrdbsecure.CopyOut(pinBuf)
+		// SetInitialPIN seals the PIN into protected memory of its own, so the
+		// PIN is copied out and wiped rather than lent across that call.
+		pin, err := secure.CopyOut(pinBuf)
 		pinBuf.Destroy()
-		if copyErr != nil {
-			return nil, errors.Join(ErrFIDO2PINSetFailed, copyErr, auth.Close())
+		if err == nil {
+			err = auth.SetInitialPIN(pin)
+			secure.Wipe(pin)
 		}
-		err := auth.SetInitialPIN(pin)
-		secure.Wipe(pin)
 		if err != nil {
 			closeErr := auth.Close()
 			if errors.Is(err, authenticator.ErrPINAlreadySet) {
@@ -1348,10 +1345,16 @@ func (d *fido2Device) persistCapturedCredential(cred cdp.StoredCredential) error
 		return errors.Join(ErrFIDO2CDPCaptureDecodeFailed, err)
 	}
 
-	pkcs8Key, err := decodeCDPField(cred.PrivateKeyString())
+	encodedKey, err := cred.PrivateKey()
 	if err != nil {
 		return errors.Join(ErrFIDO2CDPCaptureDecodeFailed, err)
 	}
+	defer secure.Wipe(encodedKey)
+	pkcs8Key, err := decodeCDPSecret(encodedKey)
+	if err != nil {
+		return errors.Join(ErrFIDO2CDPCaptureDecodeFailed, err)
+	}
+	defer secure.Wipe(pkcs8Key)
 
 	var userID []byte
 	if cred.UserHandle != "" {
@@ -1401,6 +1404,30 @@ func decodeCDPField(s string) ([]byte, error) {
 		return decoded, nil
 	}
 	return base64.RawStdEncoding.DecodeString(s)
+}
+
+// decodeCDPSecret is decodeCDPField for a secret field such as the private
+// key: it decodes straight from bytes into a slice the caller owns and wipes,
+// so the key never becomes a Go string. It accepts the same padded and
+// unpadded standard forms.
+func decodeCDPSecret(field []byte) ([]byte, error) {
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding} {
+		out := make([]byte, enc.DecodedLen(len(field)))
+		n, err := enc.Decode(out, field)
+		if err == nil {
+			return out[:n], nil
+		}
+		secure.Wipe(out)
+	}
+	return nil, base64.CorruptInputError(0)
+}
+
+// encodeCDPSecret is encodeCDPField for a secret field: the standard padded
+// base64 of raw as bytes the caller owns and wipes.
+func encodeCDPSecret(raw []byte) []byte {
+	out := make([]byte, base64.StdEncoding.EncodedLen(len(raw)))
+	base64.StdEncoding.Encode(out, raw)
+	return out
 }
 
 // encodeCDPField encodes raw bytes for transmission on the Chrome DevTools
@@ -1537,7 +1564,10 @@ func (d *fido2Device) syncCredentialsToCDPVia(ctx context.Context, syncer creden
 			UserHandle:           encodeCDPField(sc.UserID),
 			SignCount:            int(sc.SignCount),
 		}
-		if err := cdpCred.SetPrivateKey(encodeCDPField(pkcs8Key)); err != nil {
+		encodedKey := encodeCDPSecret(pkcs8Key)
+		setErr := cdpCred.SetPrivateKey(encodedKey)
+		secure.Wipe(encodedKey)
+		if err := setErr; err != nil {
 			secure.Wipe(pkcs8Key)
 			d.logger.Debug("skipping credential for CDP (protect failed)",
 				slog.String("credId", fmt.Sprintf("%x", sc.CredentialID)))

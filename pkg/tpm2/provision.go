@@ -417,6 +417,7 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 			defer secure.Wipe(hierarchyAuthBytes)
 			if len(hierarchyAuthBytes) > 0 {
 				auth, err := store.NewPassword(hierarchyAuthBytes)
+				secure.Wipe(hierarchyAuthBytes)
 				if err != nil {
 					return err
 				}

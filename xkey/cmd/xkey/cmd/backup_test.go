@@ -464,7 +464,7 @@ type oneBackupPassword struct{}
 // List returns the single entry.
 func (oneBackupPassword) List() ([]*backup.PasswordInfo, error) {
 	info := &backup.PasswordInfo{ID: "id-1", Name: "entry"}
-	if err := info.SetPassword("value"); err != nil {
+	if err := info.SetPassword([]byte("value")); err != nil {
 		return nil, err
 	}
 	return []*backup.PasswordInfo{info}, nil

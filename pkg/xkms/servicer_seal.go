@@ -203,6 +203,9 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 	if req == nil {
 		return nil, ErrNilRequest
 	}
+	// The request owns the sealed object's authorization value; the enclave
+	// copy made below is the only one that outlives this call.
+	defer req.Password.Wipe()
 
 	if len(req.Data) == 0 {
 		return nil, ErrNilData
@@ -238,8 +241,8 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 	}
 
 	// Map password for TPM sealed object authentication.
-	if req.Password != "" {
-		pw, pwErr := types.NewPasswordFromString(req.Password)
+	if len(req.Password) > 0 {
+		pw, pwErr := types.NewPassword(req.Password)
 		if pwErr != nil {
 			return nil, pwErr
 		}
@@ -284,6 +287,9 @@ func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) 
 	if req == nil {
 		return nil, ErrNilRequest
 	}
+	// The request owns the sealed object's authorization value; the enclave
+	// copy made below is the only one that outlives this call.
+	defer req.Password.Wipe()
 
 	// Accept either ciphertext (software/cloud backends) or TPM public+private
 	// blobs (TPM2 backend). At least one form of sealed data must be present.
@@ -323,8 +329,8 @@ func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) 
 
 	var password types.Password
 	// Map password for TPM sealed object authentication.
-	if req.Password != "" {
-		pw, pwErr := types.NewPasswordFromString(req.Password)
+	if len(req.Password) > 0 {
+		pw, pwErr := types.NewPassword(req.Password)
 		if pwErr != nil {
 			return nil, pwErr
 		}

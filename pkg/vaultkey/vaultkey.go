@@ -56,9 +56,10 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
+	"sync/atomic"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Algorithms a key factor's challenge is sealed with.
@@ -110,14 +111,42 @@ var (
 )
 
 // Sealed is a freshly sealed factor secret. The server keeps Algorithm,
-// Challenge and Check on the factor and discards Secret once it has wrapped
-// the DEK with it. Secret lives in protected memory; the caller owns it and
-// must Destroy it.
+// Challenge and Check on the factor and discards the secret once it has
+// wrapped the DEK with it.
+//
+// The secret lives in protected memory until it is taken: TakeSecret hands
+// it over exactly once and destroys the protected copy, and Destroy discards
+// it unread. Every Sealed must end in one of the two.
 type Sealed struct {
 	Algorithm string
 	Challenge []byte
 	Check     []byte
-	Secret    *secure.Secret
+
+	secret atomic.Pointer[secure.Buffer]
+}
+
+// TakeSecret returns the factor secret and destroys the protected copy. It
+// succeeds once: the caller owns the returned slice and must wipe it after
+// use, and every later call returns *SecretTakenError.
+func (s *Sealed) TakeSecret() ([]byte, error) {
+	buf := s.secret.Swap(nil)
+	if buf == nil {
+		return nil, &SecretTakenError{}
+	}
+	defer buf.Destroy()
+	secret, err := secure.CopyOut(buf)
+	if err != nil {
+		return nil, &ProtectError{Err: err}
+	}
+	return secret, nil
+}
+
+// Destroy discards the factor secret unread. It is safe to call after
+// TakeSecret and more than once.
+func (s *Sealed) Destroy() {
+	if buf := s.secret.Swap(nil); buf != nil {
+		buf.Destroy()
+	}
 }
 
 // ParsePublicKey returns the public key of a factor from its PKIX DER
@@ -162,7 +191,8 @@ func Fingerprint(pub crypto.PublicKey) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// Seal draws a fresh factor secret only pub's private key can recover.
+// Seal draws a fresh factor secret only pub's private key can recover. The
+// caller takes the secret with TakeSecret, or discards it with Destroy.
 func Seal(pub crypto.PublicKey) (*Sealed, error) {
 	alg, err := algorithmFor(pub)
 	if err != nil {
@@ -183,12 +213,15 @@ func Seal(pub crypto.PublicKey) (*Sealed, error) {
 		return nil, err
 	}
 	check := Check(secret)
-	// NewSecret wipes secret on every return path.
-	protected, err := secure.NewSecret(secret)
+	// NewBufferFromBytes moves secret into protected memory and wipes it on
+	// every path, so no ordinary-memory copy outlives this call.
+	buf, err := secure.NewBufferFromBytes(secret)
 	if err != nil {
 		return nil, &ProtectError{Err: err}
 	}
-	return &Sealed{Algorithm: alg, Challenge: challenge, Check: check, Secret: protected}, nil
+	sealed := &Sealed{Algorithm: alg, Challenge: challenge, Check: check}
+	sealed.secret.Store(buf)
+	return sealed, nil
 }
 
 // Check returns the key-check value of secret.
@@ -296,8 +329,6 @@ func secretKDF(fingerprint string) *types.KDFParams {
 	}
 }
 
-// sealECDH returns the challenge (the ephemeral public key) and the secret
-// derived from the ephemeral-static agreement. The caller owns secret.
 func sealECDH(pub *ecdsa.PublicKey, fingerprint string) (challenge, secret []byte, err error) {
 	curve, err := ecdhCurve(pub.Curve)
 	if err != nil {
@@ -316,22 +347,22 @@ func sealECDH(pub *ecdsa.PublicKey, fingerprint string) (challenge, secret []byt
 		return nil, nil, ErrInvalidPublicKey
 	}
 	defer clear(z)
-	challenge, err = x509.MarshalPKIXPublicKey(ephemeral.PublicKey())
+	secret, err = secretKDF(fingerprint).Derive(z)
 	if err != nil {
 		return nil, nil, &DeriveError{Err: err}
 	}
-	secret, err = secretKDF(fingerprint).Derive(z)
+	challenge, err = x509.MarshalPKIXPublicKey(ephemeral.PublicKey())
 	if err != nil {
+		clear(secret)
 		return nil, nil, &DeriveError{Err: err}
 	}
 	return challenge, secret, nil
 }
 
-// sealRSA returns a fresh random secret and its RSA-OAEP-256 encryption to
-// pub. The caller owns secret.
 func sealRSA(pub *rsa.PublicKey) (challenge, secret []byte, err error) {
 	secret = make([]byte, SecretLength)
 	if _, err := rand.Read(secret); err != nil {
+		clear(secret)
 		return nil, nil, &RandomError{Err: err}
 	}
 	challenge, err = rsa.EncryptOAEP(sha256.New(), rand.Reader, pub, secret, nil)
@@ -354,18 +385,6 @@ func (e *RandomError) Error() string { return "vaultkey: seal: " + e.Err.Error()
 // Unwrap returns the underlying failure.
 func (e *RandomError) Unwrap() error { return e.Err }
 
-// ProtectError wraps a failure moving a freshly drawn secret into protected
-// memory.
-type ProtectError struct {
-	Err error
-}
-
-// Error implements the error interface.
-func (e *ProtectError) Error() string { return "vaultkey: protect secret: " + e.Err.Error() }
-
-// Unwrap returns the underlying failure.
-func (e *ProtectError) Unwrap() error { return e.Err }
-
 // DeriveError wraps a failure deriving or encoding a sealed secret.
 type DeriveError struct {
 	Err error
@@ -376,3 +395,22 @@ func (e *DeriveError) Error() string { return "vaultkey: derive: " + e.Err.Error
 
 // Unwrap returns the underlying failure.
 func (e *DeriveError) Unwrap() error { return e.Err }
+
+// SecretTakenError is returned by TakeSecret when the secret was already
+// taken or destroyed.
+type SecretTakenError struct{}
+
+// Error implements the error interface.
+func (e *SecretTakenError) Error() string { return "vaultkey: the sealed secret was already taken" }
+
+// ProtectError wraps a failure moving a sealed secret into, or out of,
+// protected memory.
+type ProtectError struct {
+	Err error
+}
+
+// Error implements the error interface.
+func (e *ProtectError) Error() string { return "vaultkey: protect secret: " + e.Err.Error() }
+
+// Unwrap returns the underlying failure.
+func (e *ProtectError) Unwrap() error { return e.Err }

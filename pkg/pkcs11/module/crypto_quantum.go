@@ -457,13 +457,15 @@ func (qcm *QuantumCryptoManager) generateMLKEM512KeyPair() (*QuantumKeyPair, err
 			"failed to generate ML-KEM-512 key pair", err)
 	}
 
-	// ExportSecretKey returns the 64-byte seed. Copy before Clean().
+	// ExportSecretKey returns the 64-byte seed. Copy before Clean(); the
+	// exported temporary is wiped on return, the copy belongs to the key pair.
 	exportedKey := kem.ExportSecretKey()
 	if exportedKey == nil {
 		kem.Clean()
 		return nil, NewPKCS11ErrorWithMessage(CKR_FUNCTION_FAILED,
 			"failed to export ML-KEM-512 seed")
 	}
+	defer secure.Wipe(exportedKey)
 
 	secretKey := make([]byte, len(exportedKey))
 	copy(secretKey, exportedKey)
@@ -499,13 +501,15 @@ func (qcm *QuantumCryptoManager) generateMLKEM768KeyPair() (*QuantumKeyPair, err
 			"failed to generate ML-KEM-768 key pair", err)
 	}
 
-	// ExportSecretKey returns the 64-byte seed. Copy before Clean().
+	// ExportSecretKey returns the 64-byte seed. Copy before Clean(); the
+	// exported temporary is wiped on return, the copy belongs to the key pair.
 	exportedKey := kem.ExportSecretKey()
 	if exportedKey == nil {
 		kem.Clean()
 		return nil, NewPKCS11ErrorWithMessage(CKR_FUNCTION_FAILED,
 			"failed to export ML-KEM-768 seed")
 	}
+	defer secure.Wipe(exportedKey)
 
 	secretKey := make([]byte, len(exportedKey))
 	copy(secretKey, exportedKey)
@@ -547,6 +551,7 @@ func (qcm *QuantumCryptoManager) generateMLKEM1024KeyPair() (*QuantumKeyPair, er
 		return nil, NewPKCS11ErrorWithMessage(CKR_FUNCTION_FAILED,
 			"failed to export ML-KEM-1024 seed")
 	}
+	defer secure.Wipe(exportedKey)
 
 	secretKey := make([]byte, len(exportedKey))
 	copy(secretKey, exportedKey)

@@ -7962,7 +7962,10 @@ type SealRequest struct {
 	Aad     []byte                 `protobuf:"bytes,4,opt,name=aad,proto3" json:"aad,omitempty"` // Additional authenticated data (optional)
 	// The TPM2 sealed object's authorization value. With a TPM policy it counts
 	// only inside the policy; without one it is the object's only protection.
-	Password string `protobuf:"bytes,5,opt,name=password,proto3" json:"password,omitempty"`
+	// It is bytes, not string, so a server can hold it as a slice it wipes. The
+	// wire type is unchanged (both are length-delimited), so peers built against
+	// the string field still interoperate for any UTF-8 password.
+	Password []byte `protobuf:"bytes,5,opt,name=password,proto3" json:"password,omitempty"`
 	// The TPM policy a TPM2 sealed object is bound to: "platform", a named
 	// policy of the tenant's scope, or empty for none. A TPM2 seal needs a
 	// policy, a password or both.
@@ -8029,11 +8032,11 @@ func (x *SealRequest) GetAad() []byte {
 	return nil
 }
 
-func (x *SealRequest) GetPassword() string {
+func (x *SealRequest) GetPassword() []byte {
 	if x != nil {
 		return x.Password
 	}
-	return ""
+	return nil
 }
 
 func (x *SealRequest) GetTpmPolicy() string {
@@ -8180,8 +8183,9 @@ type UnsealRequest struct {
 	TpmPrivate []byte                 `protobuf:"bytes,8,opt,name=tpm_private,json=tpmPrivate,proto3" json:"tpm_private,omitempty"`
 	WrappedDek []byte                 `protobuf:"bytes,9,opt,name=wrapped_dek,json=wrappedDek,proto3" json:"wrapped_dek,omitempty"`
 	Metadata   map[string]string      `protobuf:"bytes,10,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// The sealed object's authorization value (TPM2).
-	Password string `protobuf:"bytes,11,opt,name=password,proto3" json:"password,omitempty"`
+	// The sealed object's authorization value (TPM2). bytes for the reason
+	// SealRequest.password is.
+	Password []byte `protobuf:"bytes,11,opt,name=password,proto3" json:"password,omitempty"`
 	// key_version is the sealing key version SealResponse.key_version
 	// reported. 0 tries every enabled version, newest first.
 	KeyVersion    uint32 `protobuf:"varint,12,opt,name=key_version,json=keyVersion,proto3" json:"key_version,omitempty"`
@@ -8289,11 +8293,11 @@ func (x *UnsealRequest) GetMetadata() map[string]string {
 	return nil
 }
 
-func (x *UnsealRequest) GetPassword() string {
+func (x *UnsealRequest) GetPassword() []byte {
 	if x != nil {
 		return x.Password
 	}
-	return ""
+	return nil
 }
 
 func (x *UnsealRequest) GetKeyVersion() uint32 {
@@ -25808,7 +25812,7 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x06key_id\x18\x02 \x01(\tR\x05keyId\x12\x12\n" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x12\x10\n" +
 	"\x03aad\x18\x04 \x01(\fR\x03aad\x12\x1a\n" +
-	"\bpassword\x18\x05 \x01(\tR\bpassword\x12\x1d\n" +
+	"\bpassword\x18\x05 \x01(\fR\bpassword\x12\x1d\n" +
 	"\n" +
 	"tpm_policy\x18\x06 \x01(\tR\ttpmPolicy\"\x87\x03\n" +
 	"\fSealResponse\x12\x18\n" +
@@ -25849,7 +25853,7 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"wrappedDek\x12@\n" +
 	"\bmetadata\x18\n" +
 	" \x03(\v2$.xkms.v1.UnsealRequest.MetadataEntryR\bmetadata\x12\x1a\n" +
-	"\bpassword\x18\v \x01(\tR\bpassword\x12\x1f\n" +
+	"\bpassword\x18\v \x01(\fR\bpassword\x12\x1f\n" +
 	"\vkey_version\x18\f \x01(\rR\n" +
 	"keyVersion\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +

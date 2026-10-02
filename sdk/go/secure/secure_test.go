@@ -147,3 +147,37 @@ func TestWipe(t *testing.T) {
 		}
 	}
 }
+
+// TestCopyOut copies a Buffer's bytes into a caller-owned slice that is
+// independent of the enclave.
+func TestCopyOut(t *testing.T) {
+	buf, err := xkmssecure.NewBufferFromBytes([]byte("copy-me"))
+	if err != nil {
+		t.Fatalf("NewBufferFromBytes: %v", err)
+	}
+	defer buf.Destroy()
+
+	out, err := xkmssecure.CopyOut(buf)
+	if err != nil {
+		t.Fatalf("CopyOut: %v", err)
+	}
+	defer xkmssecure.Wipe(out)
+	if !bytes.Equal(out, []byte("copy-me")) {
+		t.Errorf("CopyOut = %q, want %q", out, "copy-me")
+	}
+}
+
+// TestCopyOut_DestroyedBuffer refuses a destroyed Buffer with the typed
+// error instead of returning zeros.
+func TestCopyOut_DestroyedBuffer(t *testing.T) {
+	buf, err := xkmssecure.NewBufferFromBytes([]byte("gone"))
+	if err != nil {
+		t.Fatalf("NewBufferFromBytes: %v", err)
+	}
+	buf.Destroy()
+
+	var nilBuf *xkmssecure.NilBufferError
+	if _, err := xkmssecure.CopyOut(buf); !errors.As(err, &nilBuf) {
+		t.Fatalf("CopyOut on destroyed buffer: err = %v, want *NilBufferError", err)
+	}
+}

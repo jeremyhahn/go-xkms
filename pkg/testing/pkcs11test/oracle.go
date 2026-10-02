@@ -50,10 +50,21 @@ func attributeValue(t *testing.T, m *module.Module, sh module.SessionHandle,
 	if attrs[0].Unavailable {
 		t.Fatalf("the token would not reveal attribute %#x", uint64(attrType))
 	}
-	if len(attrs[0].Value) == 0 {
+	defer module.ReleaseAttributes(attrs)
+
+	// A backend-held secret stays sealed in the attribute until read, so take
+	// the test's own copy through the borrow.
+	var value []byte
+	if err := attrs[0].WithValue(func(v []byte) error {
+		value = append([]byte(nil), v...)
+		return nil
+	}); err != nil {
+		t.Fatalf("reading attribute %#x: %v", uint64(attrType), err)
+	}
+	if len(value) == 0 {
 		t.Fatalf("attribute %#x came back empty", uint64(attrType))
 	}
-	return attrs[0].Value
+	return value
 }
 
 // rsaPublicKeyFor rebuilds an rsa.PublicKey from a public key object's

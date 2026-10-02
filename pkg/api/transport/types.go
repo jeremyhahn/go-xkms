@@ -425,7 +425,10 @@ type SealRequest struct {
 	// Password is the TPM2 sealed object's authorization value. With a TPM
 	// policy it counts only inside the policy; without one it is the
 	// object's only protection.
-	Password string `json:"password,omitempty"`
+	//
+	// It is a types.SecretBytes so it never becomes an unwipeable string; the
+	// producer and the consumer each wipe it. The JSON form is unchanged.
+	Password types.SecretBytes `json:"password,omitempty"`
 }
 
 // SealResponse contains the sealed data.
@@ -489,7 +492,8 @@ type UnsealRequest struct {
 
 	// Password provides authentication for the sealed object (TPM-specific).
 	// This is the UserAuth value required to unseal.
-	Password string `json:"password,omitempty"`
+	// It is a types.SecretBytes; see SealRequest.Password.
+	Password types.SecretBytes `json:"password,omitempty"`
 
 	// KeyVersion is the sealing key version SealResponse.KeyVersion
 	// reported. Zero tries every enabled version, newest first.

@@ -30,7 +30,7 @@ import (
 
 	"golang.org/x/crypto/ssh" // rule 2: paired with the banned call below
 
-	"github.com/jeremyhahn/go-xkms/sdk/go/secure" // rule 4 and securecopy
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure" // rules 4-7, through the SDK like every consumer
 )
 
 // holder is a rule-3 finding with no scope-clause cover: not generated, not
@@ -52,19 +52,32 @@ func useParsePrivateKey(pemBytes []byte) (ssh.Signer, error) {
 	return ssh.ParsePrivateKey(pemBytes)
 }
 
-// unborrowedRead exercises rule 4: secure.Buffer.Bytes read with no borrow
-// held across the read and no //secure:unborrowed directive.
-func unborrowedRead(buf *secure.Buffer) int {
-	return len(buf.Bytes())
+// readUnborrowed exercises rule 4: Bytes read with no borrow held.
+func readUnborrowed(b *secure.Buffer) byte {
+	return b.Bytes()[0]
 }
 
-// leakedString exercises securecopy: string(view) copies protected bytes
-// into a string, which can never be wiped.
-func leakedString(buf *secure.Buffer) string {
-	var s string
-	_ = buf.WithBytes(func(view []byte) error {
-		s = string(view)
+// readMalformed exercises rule 5: an unborrowed directive with no kind.
+func readMalformed(b *secure.Buffer) byte {
+	//secure:unborrowed
+	return b.Bytes()[0]
+}
+
+// toString exercises rule 6: protected bytes converted to a string.
+func toString(b *secure.Buffer) (string, error) {
+	var out string
+	err := b.WithBytes(func(p []byte) error {
+		out = string(p)
 		return nil
 	})
-	return s
+	return out, err
+}
+
+// copyUnwiped exercises rule 7: a copy of protected bytes nobody wipes.
+func copyUnwiped(b *secure.Buffer) error {
+	return b.WithBytes(func(p []byte) error {
+		cp := append([]byte(nil), p...)
+		_ = len(cp)
+		return nil
+	})
 }

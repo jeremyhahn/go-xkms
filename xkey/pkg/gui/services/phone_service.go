@@ -1202,12 +1202,7 @@ func (s *PhoneService) Connect(name string) error {
 	// Reconstruct the local Noise DH key pair. Ownership stays local until it
 	// is published onto the service below; every failure path in between has
 	// to release the protected pages.
-	var localKey *pairing.StaticKey
-	err = localPrivateKey.WithBytes(func(scalar []byte) error {
-		var lerr error
-		localKey, lerr = pairing.LoadStaticKey(scalar)
-		return lerr
-	})
+	localKey, err := pairing.LoadStaticKeyFromBuffer(localPrivateKey)
 	if err != nil {
 		s.log.Error("failed to load local static key", "device", name, "error", err)
 		return ErrPhoneMissingKeys

@@ -2454,6 +2454,28 @@ func (m *Module) secretKeyValue(obj *Object) ([]byte, CK_RV) {
 		return value, CKR_OK
 	}
 
+	material, rv := m.exportBackendKeyMaterial(obj)
+	if rv != CKR_OK || material == nil {
+		return nil, rv
+	}
+	defer material.Destroy()
+
+	value, err := secure.CopyOut(material)
+	if err != nil {
+		return nil, CKR_ATTRIBUTE_SENSITIVE
+	}
+	return value, CKR_OK
+}
+
+// exportBackendKeyMaterial fetches a revealable secret key's value from its
+// backend, still sealed in the *secure.Buffer the export returned. The caller
+// owns the buffer and must Destroy it. A nil buffer with CKR_OK means the
+// object has no backend material to fetch; CKR_ATTRIBUTE_SENSITIVE means the
+// object or the backend refused.
+func (m *Module) exportBackendKeyMaterial(obj *Object) (*secure.Buffer, CK_RV) {
+	if obj.protectsSensitiveAttributes() {
+		return nil, CKR_OK
+	}
 	if obj.Class != CKO_SECRET_KEY || obj.KeyID == "" {
 		return nil, CKR_OK
 	}
@@ -2465,21 +2487,10 @@ func (m *Module) secretKeyValue(obj *Object) ([]byte, CK_RV) {
 		KeyID:   obj.KeyID,
 		Backend: obj.BackendName,
 	})
-	if err != nil {
+	if err != nil || resp == nil || resp.KeyMaterial == nil {
 		return nil, CKR_ATTRIBUTE_SENSITIVE
 	}
-	defer resp.KeyMaterial.Destroy()
-
-	var value []byte
-	if err := resp.KeyMaterial.WithBytes(func(b []byte) error {
-		value = make([]byte, len(b))
-		copy(value, b)
-		return nil
-	}); err != nil {
-		return nil, CKR_ATTRIBUTE_SENSITIVE
-	}
-
-	return value, CKR_OK
+	return resp.KeyMaterial, CKR_OK
 }
 
 // fillBackendKeyValue populates a revealable secret key's CKA_VALUE from its
@@ -2507,8 +2518,7 @@ func (m *Module) fillBackendKeyValue(ctx AccessContext, objectHandle ObjectHandl
 		return false, CKR_OK // the object manager already reported the real problem
 	}
 
-	//secure:unwiped C_GetAttributeValue's contract hands CKA_VALUE to the application in its template; the copy is the caller's from here
-	value, valueRV := m.secretKeyValue(obj)
+	material, valueRV := m.exportBackendKeyMaterial(obj)
 	if valueRV != CKR_OK {
 		// The object says the value may be revealed but the backend will not
 		// release it. Reporting it as sensitive is the honest answer and keeps
@@ -2516,11 +2526,13 @@ func (m *Module) fillBackendKeyValue(ctx AccessContext, objectHandle ObjectHandl
 		attrs[index].Unavailable = true
 		return false, valueRV
 	}
-	if len(value) == 0 {
+	if material == nil {
 		return false, CKR_OK
 	}
 
-	attrs[index].Value = value
+	// The material stays sealed in its buffer: the attribute takes ownership
+	// of it, and the C boundary copies it out and Releases the attribute.
+	attrs[index].Secret = material
 	attrs[index].Unavailable = false
 	return true, CKR_OK
 }
@@ -6573,12 +6585,10 @@ func (m *Module) DigestKey(sessionHandle SessionHandle, keyHandle ObjectHandle) 
 	// A key the token may not reveal genuinely cannot be digested, and
 	// CKR_KEY_INDIGESTIBLE is the code the spec lists for that.
 	keyValue, valueRV := m.secretKeyValue(keyObj)
-	// secretKeyValue hands back a fresh copy; the digest absorbs it, so it is
-	// wiped on the way out rather than left for the garbage collector.
-	defer secure.Wipe(keyValue)
 	if valueRV != CKR_OK || len(keyValue) == 0 {
 		return CKR_KEY_INDIGESTIBLE
 	}
+	defer secure.Wipe(keyValue)
 
 	// Digest the key value
 	if digestErr := m.cryptoManager.DigestUpdate(digestOp, keyValue); digestErr != nil {

@@ -35,6 +35,23 @@ type (
 	// directly.
 	ClearPassword = types.ClearPassword
 
+	// SecretBytes carries a PIN or password on the wire as the JSON string it
+	// has always been, without becoming a Go string. The owner must Wipe it.
+	SecretBytes = types.SecretBytes
+
+	// SecretBytesError reports a malformed JSON string decoded into a
+	// SecretBytes.
+	SecretBytesError = types.SecretBytesError
+
+	// SecretText is secret text held in protected memory that encodes to and
+	// from the same JSON string a string field would. Copies share one
+	// buffer; exactly one owner calls Destroy.
+	SecretText = types.SecretText
+
+	// SecretTextError reports a failure to hold or read a SecretText in
+	// protected memory.
+	SecretTextError = types.SecretTextError
+
 	// KeyAttributes describes a cryptographic key's metadata and configuration.
 	KeyAttributes = types.KeyAttributes
 
@@ -544,6 +561,10 @@ type SecretValue = types.SecretValue
 // arrive as literals (a CLI flag, an interactive prompt) rather than from a
 // configuration reference.
 var NewLiteralSecretValue = types.NewLiteralSecretValue
+
+// NewSecretText returns a SecretText holding a copy of text, which stays the
+// caller's to wipe.
+var NewSecretText = types.NewSecretText
 
 // SecretValueBytes resolves sv to its plaintext bytes, or (nil, nil) for a
 // nil sv (an optional secret that was never configured). The plaintext

@@ -107,7 +107,7 @@ func TestPhoneBackendWithBridge_Close_ClosesCollaborators(t *testing.T) {
 		Credential: pairing.OATHCredentialInfo{
 			Name:   "GitHub",
 			Issuer: "GitHub",
-			Secret: "JBSWY3DPEHPK3PXP",
+			Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
 			Type:   "totp",
 		},
 	})
@@ -140,7 +140,7 @@ func TestPhoneBackendWithBridge_Close_ClosesCollaborators(t *testing.T) {
 	cred, err := reopened.Get(result.CredentialID)
 	require.NoError(t, err)
 	assert.Equal(t, "GitHub", cred.Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", cred.SecretString())
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(cred))
 }
 
 // TestPhoneBackendWithBridge_Close_NilCollaborators proves Close() does not

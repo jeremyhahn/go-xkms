@@ -19,6 +19,8 @@ import (
 	flynnNoise "github.com/flynn/noise"
 
 	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Noise protocol configuration.
@@ -216,6 +218,25 @@ func LoadStaticKey(privateKey []byte) (*StaticKey, error) {
 	key, err := noiseproto.LoadStaticKey(privateKey)
 	if err != nil {
 		return nil, ErrInvalidNoiseMessage
+	}
+	return key, nil
+}
+
+// LoadStaticKeyFromBuffer creates a static key pair from a private scalar
+// held in protected memory. The scalar is read inside the source buffer's
+// borrow and copied straight into the key's own protected pages, so it never
+// reaches the Go heap. The source stays the caller's to destroy.
+//
+// Returns ErrInvalidNoiseMessage when the scalar is not a valid key, and the
+// secure package's error when src is nil or already destroyed.
+func LoadStaticKeyFromBuffer(src *secure.Buffer) (*StaticKey, error) {
+	var key *StaticKey
+	if err := src.WithBytes(func(privateKey []byte) error {
+		var loadErr error
+		key, loadErr = LoadStaticKey(privateKey)
+		return loadErr
+	}); err != nil {
+		return nil, err
 	}
 	return key, nil
 }

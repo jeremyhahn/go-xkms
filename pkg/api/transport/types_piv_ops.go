@@ -13,6 +13,8 @@
 
 package transport
 
+import "github.com/jeremyhahn/go-xkms/pkg/types"
+
 // This file defines request and response types for the three extended PIV
 // operations that complement the existing key/cert management surface:
 // slot-key signing, slot attestation, and device factory reset.
@@ -38,7 +40,9 @@ type PIVSignRequest struct {
 	HashAlgorithm string `json:"hash_algorithm,omitempty"`
 	// PIN optionally carries a user PIN for backends that require one
 	// (pkcs11, hardware tokens). Ignored by software backends.
-	PIN string `json:"pin,omitempty"`
+	// It is a types.SecretBytes so it never becomes an unwipeable string; the
+	// producer and the consumer each wipe it. The JSON form is unchanged.
+	PIN types.SecretBytes `json:"pin,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
@@ -125,7 +129,9 @@ type ImportPIVKeyRequest struct {
 	Algorithm string `json:"algorithm,omitempty"`
 	// PIN optionally carries a user PIN for backends that require one
 	// (pkcs11, hardware tokens). Ignored by software backends.
-	PIN string `json:"pin,omitempty"`
+	// It is a types.SecretBytes so it never becomes an unwipeable string; the
+	// producer and the consumer each wipe it. The JSON form is unchanged.
+	PIN types.SecretBytes `json:"pin,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }

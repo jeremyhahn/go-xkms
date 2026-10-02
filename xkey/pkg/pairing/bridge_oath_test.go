@@ -65,7 +65,7 @@ func TestBridge_HandleOATHAdd_NotConfigured(t *testing.T) {
 		Credential: OATHCredentialInfo{
 			Name:      "GitHub",
 			Issuer:    "GitHub",
-			Secret:    "JBSWY3DPEHPK3PXP",
+			Secret:    mustSecretText("JBSWY3DPEHPK3PXP"),
 			Type:      "totp",
 			Algorithm: "SHA1",
 			Digits:    6,
@@ -90,7 +90,7 @@ func TestBridge_HandleOATHAdd_Success(t *testing.T) {
 			Name:        "GitHub",
 			Issuer:      "GitHub",
 			AccountName: "alice@example.com",
-			Secret:      "JBSWY3DPEHPK3PXP",
+			Secret:      mustSecretText("JBSWY3DPEHPK3PXP"),
 			Type:        "totp",
 			Algorithm:   "SHA1",
 			Digits:      6,
@@ -107,7 +107,7 @@ func TestBridge_HandleOATHAdd_Success(t *testing.T) {
 	stored, err := store.Get(result.CredentialID)
 	require.NoError(t, err)
 	assert.Equal(t, "GitHub", stored.Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", stored.SecretString())
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", secretText(stored))
 }
 
 // TestBridge_HandleOATHAdd_Duplicate verifies that adding the same credential
@@ -123,7 +123,7 @@ func TestBridge_HandleOATHAdd_Duplicate(t *testing.T) {
 		Credential: OATHCredentialInfo{
 			Name:   "GitHub",
 			Issuer: "GitHub",
-			Secret: "JBSWY3DPEHPK3PXP",
+			Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
 			Type:   "totp",
 		},
 	}
@@ -154,7 +154,7 @@ func TestBridge_HandleOATHAdd_EmptyName(t *testing.T) {
 	req := newRemoteRequest(MethodRemoteOATHAdd, RemoteOATHAddParams{
 		Credential: OATHCredentialInfo{
 			Name:   "",
-			Secret: "JBSWY3DPEHPK3PXP",
+			Secret: mustSecretText("JBSWY3DPEHPK3PXP"),
 			Type:   "totp",
 		},
 	})
@@ -170,7 +170,7 @@ func TestBridge_HandleOATHAdd_EmptySecret(t *testing.T) {
 	req := newRemoteRequest(MethodRemoteOATHAdd, RemoteOATHAddParams{
 		Credential: OATHCredentialInfo{
 			Name:   "GitHub",
-			Secret: "",
+			Secret: mustSecretText(""),
 			Type:   "totp",
 		},
 	})

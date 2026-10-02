@@ -104,7 +104,7 @@ func TestNewPlatformPassword(t *testing.T) {
 	}
 }
 
-func TestPlatformPasswordString(t *testing.T) {
+func TestPlatformPasswordWithBytes(t *testing.T) {
 	tests := []struct {
 		name       string
 		unsealData []byte
@@ -150,24 +150,32 @@ func TestPlatformPasswordString(t *testing.T) {
 
 			pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend)
 
-			got, err := pp.String()
+			var got string
+			err := pp.WithBytes(func(b []byte) error {
+				got = string(b)
+				return nil
+			})
 			if tt.wantErr {
 				if err == nil {
-					t.Error("PlatformPassword.String() expected error but got nil")
+					t.Error("PlatformPassword.WithBytes() expected error but got nil")
 				}
 				if !errors.Is(err, ErrPlatformPasswordUnavailable) {
-					t.Errorf("PlatformPassword.String() err = %v, want errors.Is match against ErrPlatformPasswordUnavailable", err)
+					t.Errorf("PlatformPassword.WithBytes() err = %v, want errors.Is match against ErrPlatformPasswordUnavailable", err)
 				}
 				return
 			}
 
 			if err != nil {
-				t.Errorf("PlatformPassword.String() unexpected error: %v", err)
+				t.Errorf("PlatformPassword.WithBytes() unexpected error: %v", err)
 				return
 			}
 
 			if got != tt.want {
-				t.Errorf("PlatformPassword.String() = %v, want %v", got, tt.want)
+				t.Errorf("PlatformPassword.WithBytes() lent %v, want %v", got, tt.want)
+			}
+
+			if s := pp.String(); s != types.PasswordRedacted {
+				t.Errorf("PlatformPassword.String() = %q, want the redaction marker", s)
 			}
 		})
 	}
@@ -347,8 +355,12 @@ func (p *errorPasswordForPasswordTest) Bytes() []byte {
 	return nil
 }
 
-func (p *errorPasswordForPasswordTest) String() (string, error) {
-	return "", p.err
+func (p *errorPasswordForPasswordTest) WithBytes(func([]byte) error) error {
+	return p.err
+}
+
+func (p *errorPasswordForPasswordTest) String() string {
+	return types.PasswordRedacted
 }
 
 func (p *errorPasswordForPasswordTest) Clear() {
@@ -388,15 +400,9 @@ func TestPlatformPasswordIntegration(t *testing.T) {
 		t.Errorf("Inconsistent Bytes() results: %v vs %v", string(bytes1), string(bytes2))
 	}
 
-	// String should match bytes
-	str, err := pp.String()
-	if err != nil {
-		t.Errorf("String() call unexpected error: %v", err)
-		return
-	}
-
-	if str != string(bytes1) {
-		t.Errorf("String() = %v, want %v", str, string(bytes1))
+	// String must not reveal the bytes
+	if str := pp.String(); str != types.PasswordRedacted {
+		t.Errorf("String() = %v, want %v", str, types.PasswordRedacted)
 	}
 }
 

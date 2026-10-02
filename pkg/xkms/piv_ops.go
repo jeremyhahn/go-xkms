@@ -163,6 +163,9 @@ func SignPIVSlot(_ context.Context, req *transport.PIVSignRequest) (*transport.P
 	if req == nil {
 		return nil, ErrPIVPayloadRequired
 	}
+	// The request owns the PIN it carried; nothing below needs it to outlive
+	// the call.
+	defer req.PIN.Wipe()
 	if len(req.Payload) == 0 {
 		return nil, ErrPIVPayloadRequired
 	}
@@ -474,7 +477,13 @@ func parsePIVPrivateKey(material []byte) (crypto.PrivateKey, error) {
 // that reads "attested" as "generated in-slot" is drawing a conclusion the
 // evidence no longer supports. See docs/piv-smartcard/architecture.md.
 func ImportPIVKey(ctx context.Context, req *transport.ImportPIVKeyRequest) (*transport.ImportPIVKeyResponse, error) {
-	if req == nil || len(req.PrivateKey) == 0 {
+	if req == nil {
+		return nil, ErrPIVKeyMaterialRequired
+	}
+	// The request owns the PIN it carried; nothing below needs it to outlive
+	// the call, on success or on any refusal.
+	defer req.PIN.Wipe()
+	if len(req.PrivateKey) == 0 {
 		return nil, ErrPIVKeyMaterialRequired
 	}
 

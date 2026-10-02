@@ -461,7 +461,10 @@ func exchangeTrustStore(ctx context.Context, backend *phone.PhoneKeyBackend, svc
 func exchangeOATH(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkeysync.Service, mode syncMode) (syncResult, error) {
 	var result syncResult
 
+	// params shares the local delta's protected secrets, so destroying params
+	// releases the delta's too.
 	params := &pairing.LocalSyncOATHParams{Credentials: []pairing.SyncOATHCredential{}}
+	defer params.Destroy()
 	if mode.sends() {
 		delta, err := svc.ComputeLocalOATHDelta()
 		if err != nil {
@@ -475,6 +478,8 @@ func exchangeOATH(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkey
 	if err != nil {
 		return result, err
 	}
+	// The delta applied below shares remote's protected secrets.
+	defer remote.Destroy()
 	result.Pushed = syncCounts{Added: remote.Added, Updated: remote.Updated, Skipped: remote.Skipped}
 
 	if !mode.applies() {
@@ -497,7 +502,10 @@ func exchangeOATH(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkey
 func exchangePasswords(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkeysync.Service, mode syncMode) (syncResult, error) {
 	var result syncResult
 
+	// params shares the local delta's protected passwords, so destroying params
+	// releases the delta's too.
 	params := &pairing.LocalSyncPasswordsParams{Passwords: []pairing.SyncPassword{}}
+	defer params.Destroy()
 	if mode.sends() {
 		delta, err := svc.ComputeLocalPasswordDelta()
 		if err != nil {
@@ -511,6 +519,8 @@ func exchangePasswords(ctx context.Context, backend *phone.PhoneKeyBackend, svc 
 	if err != nil {
 		return result, err
 	}
+	// The delta applied below shares remote's protected passwords.
+	defer remote.Destroy()
 	result.Pushed = syncCounts{Added: remote.Added, Updated: remote.Updated, Skipped: remote.Skipped}
 
 	if !mode.applies() {
@@ -746,6 +756,7 @@ func reportSyncDryRun(out io.Writer, deviceName string, mode syncMode, scope syn
 			return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 		}
 		_, _ = fmt.Fprintf(out, "[dry-run] oath: %d credential(s) to send\n", len(wireOATH(delta)))
+		delta.Destroy()
 	}
 	if scope.Passwords {
 		delta, err := svc.ComputeLocalPasswordDelta()
@@ -753,6 +764,7 @@ func reportSyncDryRun(out io.Writer, deviceName string, mode syncMode, scope syn
 			return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 		}
 		_, _ = fmt.Fprintf(out, "[dry-run] passwords: %d entry(s) to send\n", len(wirePasswords(delta)))
+		delta.Destroy()
 	}
 
 	return nil

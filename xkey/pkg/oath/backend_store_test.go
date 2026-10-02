@@ -96,8 +96,8 @@ func TestBackendStore_Add_Success(t *testing.T) {
 	if retrieved.Name != cred.Name {
 		t.Errorf("expected Name %q, got %q", cred.Name, retrieved.Name)
 	}
-	if retrieved.SecretString() != cred.SecretString() {
-		t.Errorf("expected Secret %q, got %q", cred.SecretString(), retrieved.SecretString())
+	if secretText(retrieved) != secretText(cred) {
+		t.Errorf("expected Secret %q, got %q", secretText(cred), secretText(retrieved))
 	}
 }
 
@@ -367,8 +367,8 @@ func TestBackendStore_List_PreservesAllFields(t *testing.T) {
 	if retrieved.Issuer != cred.Issuer {
 		t.Errorf("Issuer mismatch: expected %q, got %q", cred.Issuer, retrieved.Issuer)
 	}
-	if retrieved.SecretString() != cred.SecretString() {
-		t.Errorf("Secret mismatch: expected %q, got %q", cred.SecretString(), retrieved.SecretString())
+	if secretText(retrieved) != secretText(cred) {
+		t.Errorf("Secret mismatch: expected %q, got %q", secretText(cred), secretText(retrieved))
 	}
 	if retrieved.Type != cred.Type {
 		t.Errorf("Type mismatch: expected %q, got %q", cred.Type, retrieved.Type)

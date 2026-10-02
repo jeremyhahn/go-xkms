@@ -17,6 +17,7 @@
 package oath
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
@@ -27,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -124,7 +126,7 @@ type Credential struct {
 	// secret holds the Base32-encoded shared secret in mlocked, guard-paged
 	// protected memory (go-xkms#210). It is unexported so no consumer can
 	// hold the key material as an unwipeable Go string; use SetSecret to
-	// store it and SecretString to export a copy at a serialization
+	// store it and Secret to export a copy at a serialization
 	// boundary. nil means no secret is set. The persisted JSON form keeps
 	// the historical "secret" key via MarshalJSON/UnmarshalJSON.
 	secret *secure.Buffer
@@ -157,26 +159,16 @@ type Credential struct {
 // — exactly what field assignment used to do — so normalization remains the
 // business of the enrolment paths (ParseURI, NewCredentialFromManualEntry)
 // and of the use-time canonicalization in Validate and GenerateCounter.
-// An empty string clears the secret.
+// An empty secret clears it.
 //
-// The input string itself cannot be wiped; callers holding one already sit at
-// a serialization boundary (JSON, wire structs, user input) that this package
-// cannot reach.
+// SetSecret copies secret; it stays the caller's, who wipes it.
 //
 // Returns ErrProtectedMemory (wrapped) when the protected allocation fails.
-func (c *Credential) SetSecret(secret string) error {
-	if secret == "" {
-		c.secret.Destroy()
-		c.secret = nil
-		return nil
+func (c *Credential) SetSecret(secret []byte) error {
+	if len(secret) == 0 {
+		return c.setSecretBytes(nil)
 	}
-	buf, err := secure.NewBufferFromBytes([]byte(secret))
-	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
-	}
-	c.secret.Destroy()
-	c.secret = buf
-	return nil
+	return c.setSecretBytes(bytes.Clone(secret))
 }
 
 // setSecretBytes adopts b — the Base32-encoded secret — into protected
@@ -216,22 +208,15 @@ func (c *Credential) secretCopy() ([]byte, error) {
 	return out, nil
 }
 
-// SecretString returns a copy of the Base32-encoded shared secret as a
-// string, or "" when no secret is set.
-//
-// A Go string cannot be wiped, so calling this re-mints exactly the exposure
-// the protected field exists to remove — it is for serialization boundaries
-// only (persisted entities, backup archives, sync wire formats, otpauth://
-// URIs, explicit operator display), where the surrounding format is a string
-// anyway. Everything else should leave the secret where it is.
-func (c *Credential) SecretString() string {
-	b, err := c.secretCopy()
-	if err != nil {
-		return ""
+// Secret returns a caller-owned copy of the Base32-encoded shared secret, or
+// nil when no secret is set. The caller MUST wipe it (secure.Wipe) as soon as
+// it has been used. Returns ErrInvalidSecret (wrapped) when the protected
+// buffer has been destroyed.
+func (c *Credential) Secret() ([]byte, error) {
+	if !c.HasSecret() {
+		return nil, nil
 	}
-	s := string(b)
-	secure.Wipe(b)
-	return s
+	return c.secretCopy()
 }
 
 // HasSecret reports whether the credential holds a shared secret.
@@ -244,18 +229,18 @@ func (c *Credential) HasSecret() bool {
 // unchanged: the "secret" key carries the Base32 string exactly as it did
 // when Secret was an exported string field.
 type credentialJSON struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Issuer      string    `json:"issuer"`
-	AccountName string    `json:"account_name"`
-	Secret      string    `json:"secret"`
-	Type        string    `json:"type"`
-	Algorithm   string    `json:"algorithm"`
-	Digits      int       `json:"digits"`
-	Period      int       `json:"period"`
-	Counter     uint64    `json:"counter"`
-	CreatedAt   time.Time `json:"created_at"`
-	BackendID   string    `json:"backend_id,omitempty"`
+	ID          string           `json:"id"`
+	Name        string           `json:"name"`
+	Issuer      string           `json:"issuer"`
+	AccountName string           `json:"account_name"`
+	Secret      xkms.SecretBytes `json:"secret"`
+	Type        string           `json:"type"`
+	Algorithm   string           `json:"algorithm"`
+	Digits      int              `json:"digits"`
+	Period      int              `json:"period"`
+	Counter     uint64           `json:"counter"`
+	CreatedAt   time.Time        `json:"created_at"`
+	BackendID   string           `json:"backend_id,omitempty"`
 }
 
 // MarshalJSON implements json.Marshaler, exporting the protected secret into
@@ -263,12 +248,17 @@ type credentialJSON struct {
 // the secret on the heap; that residue belongs to the persistence boundary
 // (the same bytes are about to be written to a store), not to this type.
 func (c *Credential) MarshalJSON() ([]byte, error) {
-	return json.Marshal(credentialJSON{
+	secret, err := c.Secret()
+	if err != nil {
+		return nil, err
+	}
+	defer secure.Wipe(secret)
+	wire := credentialJSON{
 		ID:          c.ID,
 		Name:        c.Name,
 		Issuer:      c.Issuer,
 		AccountName: c.AccountName,
-		Secret:      c.SecretString(),
+		Secret:      secret,
 		Type:        c.Type,
 		Algorithm:   c.Algorithm,
 		Digits:      c.Digits,
@@ -276,13 +266,15 @@ func (c *Credential) MarshalJSON() ([]byte, error) {
 		Counter:     c.Counter,
 		CreatedAt:   c.CreatedAt,
 		BackendID:   c.BackendID,
-	})
+	}
+	return json.Marshal(wire)
 }
 
 // UnmarshalJSON implements json.Unmarshaler, adopting the "secret" JSON key
 // into protected memory.
 func (c *Credential) UnmarshalJSON(data []byte) error {
 	var aux credentialJSON
+	defer aux.Secret.Wipe()
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
@@ -403,6 +395,9 @@ func ParseURI(uri string) (*Credential, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Adoption wipes it too; this covers every refusal below, which return
+	// before the secret reaches the credential.
+	defer secure.Wipe(secretBytes)
 
 	// Issuer from query overrides label
 	if qIssuer := query.Get("issuer"); qIssuer != "" {
@@ -482,8 +477,10 @@ func ParseURI(uri string) (*Credential, error) {
 	return cred, nil
 }
 
-// ToURI returns the otpauth:// URI for this credential.
-func (c *Credential) ToURI() string {
+// ToURI returns the otpauth:// URI for this credential. The URI embeds the
+// shared secret, so it is as sensitive as the secret itself. Returns
+// ErrInvalidSecret (wrapped) when the protected secret cannot be read.
+func (c *Credential) ToURI() (string, error) {
 	var label string
 	if c.Issuer != "" {
 		label = fmt.Sprintf("%s:%s", url.PathEscape(c.Issuer), url.PathEscape(c.AccountName))
@@ -497,8 +494,15 @@ func (c *Credential) ToURI() string {
 		Path:   "/" + label,
 	}
 
+	// An otpauth:// URI is a string by definition (it is rendered as a QR code
+	// and a link), so the secret becomes a string here and only here.
+	secret, err := c.Secret()
+	if err != nil {
+		return "", err
+	}
+	defer secure.Wipe(secret)
 	q := u.Query()
-	q.Set("secret", c.SecretString())
+	q.Set("secret", string(secret))
 	if c.Issuer != "" {
 		q.Set("issuer", c.Issuer)
 	}
@@ -516,7 +520,7 @@ func (c *Credential) ToURI() string {
 	}
 	u.RawQuery = q.Encode()
 
-	return u.String()
+	return u.String(), nil
 }
 
 // Validate checks if the credential is valid.

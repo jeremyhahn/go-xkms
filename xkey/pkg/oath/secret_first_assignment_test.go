@@ -22,12 +22,12 @@ func TestCredential_SetSecret_FreshCredentialIsNilSafe(t *testing.T) {
 	require.False(t, cred.HasSecret(), "a zero Credential carries no secret")
 
 	require.NotPanics(t, func() {
-		require.NoError(t, cred.SetSecret("JBSWY3DPEHPK3PXP"))
+		require.NoError(t, cred.SetSecret([]byte("JBSWY3DPEHPK3PXP")))
 	}, "first assignment on a zero Credential must not panic (nil receiver Destroy)")
 	require.True(t, cred.HasSecret())
 
 	require.NotPanics(t, func() {
-		require.NoError(t, cred.SetSecret("GEZDGNBVGY3TQOJQ"))
+		require.NoError(t, cred.SetSecret([]byte("GEZDGNBVGY3TQOJQ")))
 	}, "replacement must destroy the previous buffer and install the new one")
-	require.Equal(t, "GEZDGNBVGY3TQOJQ", cred.SecretString())
+	require.Equal(t, "GEZDGNBVGY3TQOJQ", secretText(cred))
 }

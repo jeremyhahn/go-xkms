@@ -27,6 +27,8 @@ import (
 	"sync/atomic"
 
 	"github.com/gorilla/websocket"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // EventHandler is invoked for unsolicited CDP events (messages without an id).
@@ -107,14 +109,20 @@ type AuthenticatorOptions struct {
 
 // Credential matches the CDP WebAuthn.Credential type for adding
 // pre-existing credentials to a virtual authenticator.
+//
+// PrivateKey is the standard-base64 PKCS#8 key as SecretBytes, which encodes as
+// the same JSON string the field held before; its owner calls Wipe.
 type Credential struct {
-	CredentialID         string `json:"credentialId"`
-	IsResidentCredential bool   `json:"isResidentCredential"`
-	RpID                 string `json:"rpId"`
-	PrivateKey           string `json:"privateKey"`
-	UserHandle           string `json:"userHandle,omitempty"`
-	SignCount            int    `json:"signCount"`
+	CredentialID         string           `json:"credentialId"`
+	IsResidentCredential bool             `json:"isResidentCredential"`
+	RpID                 string           `json:"rpId"`
+	PrivateKey           xkms.SecretBytes `json:"privateKey"`
+	UserHandle           string           `json:"userHandle,omitempty"`
+	SignCount            int              `json:"signCount"`
 }
+
+// Wipe zeroes the private key the credential carries.
+func (c *Credential) Wipe() { c.PrivateKey.Wipe() }
 
 // addAuthenticatorResult holds the authenticatorId returned by
 // WebAuthn.addVirtualAuthenticator.

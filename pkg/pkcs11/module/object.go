@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-enclave"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // ObjectClass represents a PKCS#11 object class (CK_OBJECT_CLASS).
@@ -1373,6 +1374,48 @@ type Attribute struct {
 	// must set ulValueLen to CK_UNAVAILABLE_INFORMATION and copy no value.
 	// See PKCS#11 v3.2 §5.7.5.
 	Unavailable bool
+
+	// Secret holds a value the module keeps sealed until the C boundary,
+	// instead of Value: a backend-held secret key's CKA_VALUE. At most one of
+	// Value and Secret is set. The holder owns it and must call Release once
+	// the value has been copied out.
+	Secret *secure.Buffer
+}
+
+// ValueLen returns the length of the attribute's value, whichever field
+// holds it.
+func (a *Attribute) ValueLen() int {
+	if a.Secret != nil {
+		return a.Secret.Size()
+	}
+	return len(a.Value)
+}
+
+// WithValue calls fn with the attribute's value, whichever field holds it.
+// A Secret is borrowed for the duration of fn; fn must not retain the slice.
+func (a *Attribute) WithValue(fn func(value []byte) error) error {
+	if a.Secret != nil {
+		return a.Secret.WithBytes(fn)
+	}
+	return fn(a.Value)
+}
+
+// Release wipes the attribute's value and destroys its Secret. It is safe to
+// call more than once.
+func (a *Attribute) Release() {
+	enclave.Wipe(a.Value)
+	a.Value = nil
+	if a.Secret != nil {
+		a.Secret.Destroy()
+		a.Secret = nil
+	}
+}
+
+// ReleaseAttributes releases every attribute in attrs.
+func ReleaseAttributes(attrs []Attribute) {
+	for i := range attrs {
+		attrs[i].Release()
+	}
 }
 
 // NewAttribute creates a new attribute with the given type and value.

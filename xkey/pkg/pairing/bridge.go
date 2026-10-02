@@ -312,6 +312,12 @@ func (b *Bridge) HandleRequest(ctx context.Context, req *Request) *Response {
 		return b.handleError(req.ID, err)
 	}
 
+	// A result that carries secrets (synced OATH secrets and passwords) is
+	// destroyed as soon as it has been encoded; only the response bytes remain.
+	if d, ok := result.(interface{ Destroy() }); ok {
+		defer d.Destroy()
+	}
+
 	// Marshal result to json.RawMessage.
 	resultData, err := json.Marshal(result)
 	if err != nil {

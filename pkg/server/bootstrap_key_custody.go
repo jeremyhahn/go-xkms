@@ -182,28 +182,38 @@ func (s *Server) loadSealedNoiseStaticKey() (*noiseproto.StaticKey, error) {
 	return noiseproto.DecodeStaticKey(hexKey)
 }
 
-// sealNoiseStaticKey hex-encodes key's private scalar into protected memory
-// and persists it in the barrier under noiseStaticKeyBarrierKey. key is the
-// caller's; sealNoiseStaticKey neither mutates nor destroys it.
+// encodeNoiseStaticKeyHex hex-encodes key's private scalar into a []byte the
+// caller owns and must wipe with secure.Wipe on every path. It is the Noise
+// counterpart of bootstrap_suite.go's encodeP256StaticKeyHex: the barrier and
+// the key file both take a []byte, so the hex form is on the heap for exactly
+// as long as the caller holds this slice.
 //
-// noiseproto.EncodeStaticKey takes a plain []byte destination (unlike
-// go-truststrap's P-256 encoder, which forces a *memguard.LockedBuffer --
-// see bootstrap_suite.go), so an sdk/go/secure buffer is sufficient here and
-// this file never needs to import memguard directly.
+// That heap window is the price of holding no //secure:unborrowed directive.
+// Keeping the hex in a secure.Buffer across the barrier's Put needs either a
+// bare Buffer.Bytes (rule 4) or a borrow around Put, and Put encrypts through
+// protected memory of its own, which pkg/secure does not allow inside a
+// borrow. A barrier Put that takes a Borrower would close it; that is a
+// go-qrdb API.
+func encodeNoiseStaticKeyHex(key *noiseproto.StaticKey) ([]byte, error) {
+	hexKey := make([]byte, noiseproto.HexKeySize)
+	if err := noiseproto.EncodeStaticKey(hexKey, key); err != nil {
+		secure.Wipe(hexKey)
+		return nil, err
+	}
+	return hexKey, nil
+}
+
+// sealNoiseStaticKey hex-encodes key's private scalar and persists it in the
+// barrier under noiseStaticKeyBarrierKey. key is the caller's;
+// sealNoiseStaticKey neither mutates nor destroys it.
 func (s *Server) sealNoiseStaticKey(key *noiseproto.StaticKey) error {
-	buf, err := secure.NewBuffer(noiseproto.HexKeySize)
+	hexKey, err := encodeNoiseStaticKeyHex(key)
 	if err != nil {
 		return &ErrBarrierKeySeal{Key: noiseStaticKeyBarrierKey, Err: err}
 	}
-	defer buf.Destroy()
+	defer secure.Wipe(hexKey)
 
-	if err := buf.WithBytes(func(b []byte) error {
-		return noiseproto.EncodeStaticKey(b, key)
-	}); err != nil {
-		return &ErrBarrierKeySeal{Key: noiseStaticKeyBarrierKey, Err: err}
-	}
-	//secure:unborrowed injected-interface s.barrier is the configured storage barrier, which encrypts through its own protected memory
-	if err := s.barrier.Put(context.Background(), noiseStaticKeyBarrierKey, buf.Bytes()); err != nil {
+	if err := s.barrier.Put(context.Background(), noiseStaticKeyBarrierKey, hexKey); err != nil {
 		return &ErrBarrierKeySeal{Key: noiseStaticKeyBarrierKey, Err: err}
 	}
 	return nil
@@ -223,16 +233,15 @@ func (s *Server) loadSealedP256StaticKey() (*bootstrap.P256StaticKey, error) {
 // the encode step to bootstrap_suite.go's encodeP256StaticKeyHex, the one
 // place in this package go-truststrap's P-256 API forces a raw
 // *memguard.LockedBuffer (go-truststrap#60); everything here works with the
-// *secure.Buffer that helper hands back.
+// []byte that helper hands back.
 func (s *Server) sealP256StaticKey(key *bootstrap.P256StaticKey) error {
-	buf, err := encodeP256StaticKeyHex(key)
+	hexKey, err := encodeP256StaticKeyHex(key)
 	if err != nil {
 		return &ErrBarrierKeySeal{Key: p256StaticKeyBarrierKey, Err: err}
 	}
-	defer buf.Destroy()
+	defer secure.Wipe(hexKey)
 
-	//secure:unborrowed injected-interface s.barrier is the configured storage barrier, which encrypts through its own protected memory
-	if err := s.barrier.Put(context.Background(), p256StaticKeyBarrierKey, buf.Bytes()); err != nil {
+	if err := s.barrier.Put(context.Background(), p256StaticKeyBarrierKey, hexKey); err != nil {
 		return &ErrBarrierKeySeal{Key: p256StaticKeyBarrierKey, Err: err}
 	}
 	return nil
@@ -269,23 +278,15 @@ func (s *Server) loadOrPersistNoiseStaticKeyFile() (*noiseproto.StaticKey, error
 		return nil, err
 	}
 
-	buf, err := secure.NewBuffer(noiseproto.HexKeySize)
+	hexKey, err := encodeNoiseStaticKeyHex(key)
 	if err != nil {
 		key.Destroy()
 		return nil, err
 	}
-	defer buf.Destroy()
-	if err := buf.WithBytes(func(b []byte) error {
-		if err := noiseproto.EncodeStaticKey(b, key); err != nil {
-			return err
-		}
-		if err := writeHexKeyFileAtomic(path, b); err != nil {
-			return &ErrFileWrite{Path: path, Err: err}
-		}
-		return nil
-	}); err != nil {
+	defer secure.Wipe(hexKey)
+	if err := writeHexKeyFileAtomic(path, hexKey); err != nil {
 		key.Destroy()
-		return nil, err
+		return nil, &ErrFileWrite{Path: path, Err: err}
 	}
 
 	s.logger.Warn("No barrier configured: the Noise static key is persisted in plaintext at " +
@@ -316,20 +317,15 @@ func (s *Server) loadOrPersistP256StaticKeyFile() (*bootstrap.P256StaticKey, err
 		return nil, err
 	}
 
-	buf, err := encodeP256StaticKeyHex(key)
+	hexKey, err := encodeP256StaticKeyHex(key)
 	if err != nil {
 		key.Destroy()
 		return nil, err
 	}
-	defer buf.Destroy()
-	if err := buf.WithBytes(func(b []byte) error {
-		if err := writeHexKeyFileAtomic(path, b); err != nil {
-			return &ErrFileWrite{Path: path, Err: err}
-		}
-		return nil
-	}); err != nil {
+	defer secure.Wipe(hexKey)
+	if err := writeHexKeyFileAtomic(path, hexKey); err != nil {
 		key.Destroy()
-		return nil, err
+		return nil, &ErrFileWrite{Path: path, Err: err}
 	}
 
 	s.logger.Warn("No barrier configured: the P-256 bootstrap static key is persisted in " +

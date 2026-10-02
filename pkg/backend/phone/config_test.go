@@ -14,9 +14,13 @@
 package phone
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"gopkg.in/yaml.v3"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -43,7 +47,7 @@ func TestConfig_Validate_Valid(t *testing.T) {
 	cfg := &Config{
 		Transport:      TransportBLE,
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "cafebabe05060708",
 		ScanTimeout:    10 * time.Second,
 		ConnectTimeout: 5 * time.Second,
@@ -63,7 +67,7 @@ func TestConfig_Validate_ValidTCP(t *testing.T) {
 	cfg := &Config{
 		Transport:      TransportTCP,
 		DeviceAddress:  "192.168.1.100:9876",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "cafebabe05060708",
 	}
 
@@ -76,7 +80,7 @@ func TestConfig_Validate_InvalidTransport(t *testing.T) {
 	cfg := &Config{
 		Transport:      "wifi",
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "cafebabe05060708",
 	}
 
@@ -90,7 +94,7 @@ func TestConfig_Validate_EmptyTransport(t *testing.T) {
 	cfg := &Config{
 		Transport:      "",
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "cafebabe05060708",
 	}
 
@@ -104,7 +108,7 @@ func TestConfig_Validate_MissingNoiseKey(t *testing.T) {
 	cfg := &Config{
 		Transport:      TransportBLE,
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
-		NoiseStaticKey: "",
+		NoiseStaticKey: nil,
 		PhoneStaticKey: "cafebabe05060708",
 	}
 
@@ -118,7 +122,7 @@ func TestConfig_Validate_MissingPhoneKey(t *testing.T) {
 	cfg := &Config{
 		Transport:      TransportBLE,
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "",
 	}
 
@@ -132,7 +136,7 @@ func TestConfig_Validate_MissingDeviceAddress(t *testing.T) {
 	cfg := &Config{
 		Transport:      TransportBLE,
 		DeviceAddress:  "",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "cafebabe05060708",
 	}
 
@@ -146,7 +150,7 @@ func TestConfig_Validate_DefaultTimeouts(t *testing.T) {
 	cfg := &Config{
 		Transport:      TransportBLE,
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "cafebabe05060708",
 		ScanTimeout:    0,
 		ConnectTimeout: 0,
@@ -172,7 +176,7 @@ func TestConfig_Validate_DefaultLogger(t *testing.T) {
 	cfg := &Config{
 		Transport:      TransportBLE,
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "cafebabe05060708",
 		Logger:         nil,
 	}
@@ -205,7 +209,7 @@ func TestConfig_Validate_CustomTimeoutsPreserved(t *testing.T) {
 	cfg := &Config{
 		Transport:      TransportBLE,
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "cafebabe05060708",
 		ScanTimeout:    5 * time.Second,
 		ConnectTimeout: 3 * time.Second,
@@ -233,7 +237,7 @@ func TestConfig_Validate_ValidationOrder(t *testing.T) {
 	cfg := &Config{
 		Transport:      "invalid",
 		DeviceAddress:  "",
-		NoiseStaticKey: "",
+		NoiseStaticKey: nil,
 		PhoneStaticKey: "",
 	}
 
@@ -256,7 +260,7 @@ func TestConfig_Validate_ValidationOrder(t *testing.T) {
 		t.Errorf("expected ErrMissingNoiseStaticKey third, got %v", err)
 	}
 
-	cfg.NoiseStaticKey = "deadbeef"
+	cfg.NoiseStaticKey = types.SecretBytes("deadbeef")
 
 	err = cfg.Validate()
 	if err != ErrMissingPhoneStaticKey {
@@ -271,7 +275,7 @@ func TestConfig_Validate_MissingPlatformIsError(t *testing.T) {
 	cfg := &Config{
 		Transport:      TransportBLE,
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "cafebabe05060708",
 		Attestation: &AttestationConfig{
 			MinSecurityLevel: "tee",
@@ -288,7 +292,7 @@ func TestConfig_Validate_ExplicitPlatformPreserved(t *testing.T) {
 	cfg := &Config{
 		Transport:      TransportBLE,
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "cafebabe05060708",
 		Attestation: &AttestationConfig{
 			Platform:         "ios",
@@ -309,7 +313,7 @@ func TestConfig_Validate_NilAttestationNoPlatformDefault(t *testing.T) {
 	cfg := &Config{
 		Transport:      TransportBLE,
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
-		NoiseStaticKey: "deadbeef01020304",
+		NoiseStaticKey: types.SecretBytes("deadbeef01020304"),
 		PhoneStaticKey: "cafebabe05060708",
 	}
 
@@ -319,5 +323,49 @@ func TestConfig_Validate_NilAttestationNoPlatformDefault(t *testing.T) {
 
 	if cfg.Attestation != nil {
 		t.Error("expected nil Attestation to remain nil")
+	}
+}
+
+// TestConfig_NoiseStaticKey_WireFormat proves a Config written when
+// NoiseStaticKey was a string still loads, and that what it writes now is
+// byte-identical to what the string field wrote.
+func TestConfig_NoiseStaticKey_WireFormat(t *testing.T) {
+	const legacy = `{"transport":"tcp","device_address":"127.0.0.1:1","noise_static_key":"deadbeef01020304","phone_static_key":"cafebabe05060708","scan_timeout":0,"connect_timeout":0,"request_timeout":0,"attestation":null}`
+
+	var cfg Config
+	if err := json.Unmarshal([]byte(legacy), &cfg); err != nil {
+		t.Fatalf("unmarshal legacy config: %v", err)
+	}
+	defer cfg.NoiseStaticKey.Wipe()
+	if string(cfg.NoiseStaticKey) != "deadbeef01020304" {
+		t.Fatalf("NoiseStaticKey = %q", cfg.NoiseStaticKey)
+	}
+
+	out, err := json.Marshal(&cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if string(out) != legacy {
+		t.Errorf("config re-encoded as\n%s\nwant\n%s", out, legacy)
+	}
+}
+
+// TestConfig_NoiseStaticKey_YAML proves the yaml tag still reads and writes
+// the key as a plain scalar.
+func TestConfig_NoiseStaticKey_YAML(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte("noise_static_key: deadbeef01020304\n"), &cfg); err != nil {
+		t.Fatalf("unmarshal yaml: %v", err)
+	}
+	defer cfg.NoiseStaticKey.Wipe()
+	if string(cfg.NoiseStaticKey) != "deadbeef01020304" {
+		t.Errorf("NoiseStaticKey = %q", cfg.NoiseStaticKey)
+	}
+}
+
+func TestConfig_NoiseStaticKey_RejectsNonString(t *testing.T) {
+	var cfg Config
+	if err := json.Unmarshal([]byte(`{"noise_static_key":42}`), &cfg); err == nil {
+		t.Error("expected an error decoding a number into NoiseStaticKey")
 	}
 }

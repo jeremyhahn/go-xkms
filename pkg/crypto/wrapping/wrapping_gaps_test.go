@@ -89,6 +89,46 @@ func TestUnwrapRSAAES_EmptyAESKey(t *testing.T) {
 	assert.Equal(t, "empty aes key after unwrap", mErr.Reason)
 }
 
+// TestUnwrapRSAAES_UnusableAESKeyLength proves an AES key that decrypts to a
+// length AES does not take is refused with the typed key-size error, from the
+// key held in protected memory, rather than reaching the KWP rounds.
+func TestUnwrapRSAAES_UnusableAESKeyLength(t *testing.T) {
+	priv, err := generateTestKeyPair(2048)
+	require.NoError(t, err)
+
+	badKey, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &priv.PublicKey, make([]byte, 20), nil)
+	require.NoError(t, err)
+	material := make([]byte, 16)
+	wrapped := make([]byte, 4+len(badKey)+len(material))
+	binary.BigEndian.PutUint32(wrapped[0:4], uint32(len(badKey)))
+	copy(wrapped[4:4+len(badKey)], badKey)
+	copy(wrapped[4+len(badKey):], material)
+
+	_, err = UnwrapRSAAES(wrapped, priv, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+	var sizeErr *InvalidKeySizeError
+	require.True(t, errors.As(err, &sizeErr), "expected InvalidKeySizeError, got %v", err)
+	assert.Equal(t, 20, sizeErr.Size)
+}
+
+// TestUnwrapRSAAES_MalformedMaterialLength proves wrapped material that is not
+// a whole number of 8-byte blocks is refused before any register is allocated.
+func TestUnwrapRSAAES_MalformedMaterialLength(t *testing.T) {
+	priv, err := generateTestKeyPair(2048)
+	require.NoError(t, err)
+
+	goodKey, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &priv.PublicKey, make([]byte, 32), nil)
+	require.NoError(t, err)
+	material := make([]byte, 17)
+	wrapped := make([]byte, 4+len(goodKey)+len(material))
+	binary.BigEndian.PutUint32(wrapped[0:4], uint32(len(goodKey)))
+	copy(wrapped[4:4+len(goodKey)], goodKey)
+	copy(wrapped[4+len(goodKey):], material)
+
+	_, err = UnwrapRSAAES(wrapped, priv, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+	var mErr *MalformedWrappedKeyError
+	require.True(t, errors.As(err, &mErr), "expected MalformedWrappedKeyError, got %v", err)
+}
+
 // TestUnwrapRSAAES_CorruptedMaterial corrupts the material portion (not the AES
 // key), so RSA-OAEP succeeds but the AES-KWP unwrap fails.
 func TestUnwrapRSAAES_CorruptedMaterial(t *testing.T) {

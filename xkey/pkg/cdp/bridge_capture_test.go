@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -158,7 +159,7 @@ func TestBridge_CredentialAddedEventPersists(t *testing.T) {
 			CredentialID:         stdCredID,
 			IsResidentCredential: true,
 			RpID:                 "example.com",
-			PrivateKey:           "cGtjczgta2V5",
+			PrivateKey:           xkms.SecretBytes("cGtjczgta2V5"),
 			UserHandle:           "dXNlci0x",
 			SignCount:            0,
 		},
@@ -168,7 +169,7 @@ func TestBridge_CredentialAddedEventPersists(t *testing.T) {
 	case got := <-captured:
 		assert.Equal(t, stdCredID, got.CredentialID)
 		assert.Equal(t, "example.com", got.RpID)
-		assert.Equal(t, "cGtjczgta2V5", got.PrivateKeyString())
+		assert.Equal(t, "cGtjczgta2V5", privateKeyText(&got))
 		assert.True(t, got.IsResidentCredential)
 	case <-bridgeTestTimeout():
 		t.Fatal("sink was not invoked for credentialAdded event")
@@ -190,7 +191,7 @@ func TestBridge_CredentialAddedEvent_NoSinkNoSubscription(t *testing.T) {
 	// Pushing an event must not panic even though no sink is registered.
 	ps.pushEvent(t, "WebAuthn.credentialAdded", credentialAddedEvent{
 		AuthenticatorID: "test-auth-001",
-		Credential:      Credential{CredentialID: "x", RpID: "y", PrivateKey: "z"},
+		Credential:      Credential{CredentialID: "x", RpID: "y", PrivateKey: xkms.SecretBytes("z")},
 	})
 
 	assert.Nil(t, client.eventHandler)
@@ -268,7 +269,7 @@ func TestBridge_PersistCaptured_SinkErrorIsLoggedNotPanicked(t *testing.T) {
 	})
 
 	assert.NotPanics(t, func() {
-		bridge.persistCaptured(Credential{CredentialID: "id-1", PrivateKey: "key-1", RpID: "example.com"})
+		bridge.persistCaptured(Credential{CredentialID: "id-1", PrivateKey: xkms.SecretBytes("key-1"), RpID: "example.com"})
 	})
 	assert.True(t, called, "the sink must still be invoked before its error is swallowed")
 }

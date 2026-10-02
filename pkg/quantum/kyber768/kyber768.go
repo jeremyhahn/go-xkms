@@ -20,7 +20,6 @@ import (
 	"crypto/mlkem"
 	"errors"
 
-	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -154,7 +153,7 @@ func (k *Kyber768) ExportSecretKey() []byte {
 		return nil
 	}
 	defer buf.Destroy()
-	result, err := qrdbsecure.CopyOut(buf)
+	result, err := secure.CopyOut(buf)
 	if err != nil {
 		return nil
 	}

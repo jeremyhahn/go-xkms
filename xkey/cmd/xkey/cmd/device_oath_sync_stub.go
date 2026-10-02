@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/spf13/cobra"
@@ -122,19 +124,30 @@ func runOATHPullStub(cmd *cobra.Command, args []string) error {
 }
 
 // credentialToPhoneInfo converts a local OATH credential to the phone
-// protocol representation.
-func credentialToPhoneInfo(cred *oath.Credential) pairing.OATHCredentialInfo {
+// protocol representation. The result carries a copy of the shared secret in
+// protected memory, which the caller releases with OATHCredentialInfo.Destroy
+// once it has been sent.
+func credentialToPhoneInfo(cred *oath.Credential) (pairing.OATHCredentialInfo, error) {
+	plain, err := cred.Secret()
+	if err != nil {
+		return pairing.OATHCredentialInfo{}, err
+	}
+	defer secure.Wipe(plain)
+	secret, err := xkms.NewSecretText(plain)
+	if err != nil {
+		return pairing.OATHCredentialInfo{}, err
+	}
 	return pairing.OATHCredentialInfo{
 		Name:        cred.Name,
 		Issuer:      cred.Issuer,
 		AccountName: cred.AccountName,
-		Secret:      cred.SecretString(),
+		Secret:      secret,
 		Type:        cred.Type,
 		Algorithm:   cred.Algorithm,
 		Digits:      cred.Digits,
 		Period:      cred.Period,
 		Counter:     cred.Counter,
-	}
+	}, nil
 }
 
 // deviceInfoToCredential converts a phone OATH credential to a local
@@ -180,7 +193,12 @@ func deviceInfoToCredential(info pairing.OATHCredentialInfo) (*oath.Credential, 
 		Counter:     info.Counter,
 		CreatedAt:   time.Now(),
 	}
-	if err := cred.SetSecret(info.Secret); err != nil {
+	plain, err := info.Secret.Copy()
+	if err != nil {
+		return nil, err
+	}
+	defer secure.Wipe(plain)
+	if err := cred.SetSecret(plain); err != nil {
 		return nil, err
 	}
 	return cred, nil

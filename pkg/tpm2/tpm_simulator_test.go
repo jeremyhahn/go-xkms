@@ -1101,8 +1101,12 @@ func createMockKeyAttributesForCSR(t *testing.T) *types.KeyAttributes {
 // errorPassword implements types.Password and always returns an error
 type errorPassword struct{}
 
-func (e *errorPassword) String() (string, error) {
-	return "", errors.New("password string error")
+func (e *errorPassword) WithBytes(func([]byte) error) error {
+	return errors.New("password read error")
+}
+
+func (e *errorPassword) String() string {
+	return types.PasswordRedacted
 }
 
 func (e *errorPassword) Bytes() []byte {

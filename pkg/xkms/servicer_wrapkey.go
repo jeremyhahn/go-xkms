@@ -407,6 +407,28 @@ func unwrapKeyMaterial(ctx context.Context, b Backend, unwrappingAttrs *types.Ke
 	return plaintext, nil
 }
 
+// unwrapFirstSuccess unwraps wrapped under each version of the unwrapping key
+// in order and returns the first recovered plaintext. When every version fails
+// it returns the first version's error, as firstSuccess does.
+//
+// It is firstSuccess spelled out for this one call, rather than an op closure
+// handed to it: the recovered plaintext is returned from this function's own
+// body, so it is plain to the reader -- and to the securecopy analyzer -- that
+// the caller now owns it and must wipe it.
+func unwrapFirstSuccess(ctx context.Context, b Backend, versions []keyVersion, algorithm string, params wrapParams, wrapped []byte) ([]byte, error) {
+	var firstErr error
+	for _, v := range versions {
+		plaintext, err := unwrapKeyMaterial(ctx, b, v.attrs, algorithm, params, wrapped)
+		if err == nil {
+			return plaintext, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return nil, firstErr
+}
+
 // rawSymmetricWrappingKey returns the raw bytes of the symmetric key
 // described by attrs, for wrap algorithms that are not an AEAD construction
 // (CKM_AES_KEY_WRAP) and so have no types.SymmetricEncrypter operation to

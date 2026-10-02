@@ -357,7 +357,7 @@ func TestStoredCredential_Marshal(t *testing.T) {
 	assert.Equal(t, sc.RpID, decoded.RpID)
 	assert.Equal(t, sc.UserHandle, decoded.UserHandle)
 	assert.Equal(t, sc.SignCount, decoded.SignCount)
-	assert.Equal(t, sc.PrivateKeyString(), decoded.PrivateKeyString())
+	assert.Equal(t, privateKeyText(&sc), privateKeyText(&decoded))
 }
 
 func TestStoredCredential_ZeroValue(t *testing.T) {

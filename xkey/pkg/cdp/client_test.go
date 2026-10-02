@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/websocket"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -227,7 +228,7 @@ func TestCredential_MarshalFull(t *testing.T) {
 		CredentialID:         "Y3JlZC0x",
 		IsResidentCredential: true,
 		RpID:                 "example.com",
-		PrivateKey:           "cHJpdmF0ZS1rZXk",
+		PrivateKey:           xkms.SecretBytes("cHJpdmF0ZS1rZXk"),
 		UserHandle:           "dXNlci0x",
 		SignCount:            42,
 	}
@@ -246,7 +247,7 @@ func TestCredential_OmitEmptyUserHandle(t *testing.T) {
 		CredentialID:         "Y3JlZC0x",
 		IsResidentCredential: false,
 		RpID:                 "example.com",
-		PrivateKey:           "cHJpdmF0ZS1rZXk",
+		PrivateKey:           xkms.SecretBytes("cHJpdmF0ZS1rZXk"),
 		SignCount:            0,
 	}
 
@@ -373,7 +374,7 @@ func TestClient_AddCredential(t *testing.T) {
 		CredentialID:         "Y3JlZC0x",
 		IsResidentCredential: true,
 		RpID:                 "example.com",
-		PrivateKey:           "cHJpdmF0ZS1rZXk",
+		PrivateKey:           xkms.SecretBytes("cHJpdmF0ZS1rZXk"),
 		UserHandle:           "dXNlci0x",
 		SignCount:            0,
 	}
@@ -629,7 +630,7 @@ func TestRequestSerialization_AddCredentialParams(t *testing.T) {
 			CredentialID:         "Y3JlZC0x",
 			IsResidentCredential: true,
 			RpID:                 "example.com",
-			PrivateKey:           "cHJpdmF0ZS1rZXk",
+			PrivateKey:           xkms.SecretBytes("cHJpdmF0ZS1rZXk"),
 			UserHandle:           "dXNlci0x",
 			SignCount:            10,
 		},

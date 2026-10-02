@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // The system-barrier and PIN handlers delegate to the XKMSService and never
@@ -574,9 +575,10 @@ func handlePINError(w http.ResponseWriter, err error) {
 // buffer. Returns ok=false when the buffer is absent or empty — callers
 // respond with ErrMissingSecret in that case.
 //
-// The secret is copied into protected memory with seal.CredentialsFor:
-// pw.Buffer().Bytes() is borrowed from the decoded request, which the caller
-// (req.Password.Destroy()) remains responsible for. The returned Credentials
+// The secret is copied out of the decoded request under one borrow
+// (secure.CopyOut) and moved into protected memory with seal.NewCredentials,
+// which wipes the copy on every path. The request's own buffer stays with the
+// caller (req.Password.Destroy()), which remains responsible for it. The returned Credentials
 // is owned by the caller of this function, which must destroy it once the
 // barrier call it was built for returns.
 func barrierCredentialsFromRequest(pw secureio.PasswordField) (seal.Credentials, bool, error) {
@@ -584,8 +586,12 @@ func barrierCredentialsFromRequest(pw secureio.PasswordField) (seal.Credentials,
 	if buf == nil || buf.Size() == 0 {
 		return seal.Credentials{}, false, nil
 	}
-	//secure:unborrowed allocates-protected seal.CredentialsFor copies the secret into its own protected Credentials enclave
-	creds, err := seal.CredentialsFor(buf.Bytes())
+	plain, err := secure.CopyOut(buf)
+	if err != nil {
+		return seal.Credentials{}, false, err
+	}
+	// NewCredentials wipes plain on every path, success or failure.
+	creds, err := seal.NewCredentials(plain)
 	if err != nil {
 		return seal.Credentials{}, false, err
 	}
