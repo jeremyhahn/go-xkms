@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -749,6 +751,20 @@ type DatastoreConfig struct {
 	// Remote configures the connection to an external qrdb cluster. Only
 	// used when Mode is "remote".
 	Remote DatastoreRemoteConfig `yaml:"remote"`
+
+	// Databases names a Backend override for a go-qrdb database a feature's
+	// DAO declares itself into by name in code (e.g. pkg/oidc.DatabaseName),
+	// alongside the datastore's own "default" database. A name with no entry
+	// here uses Engine. This is not a new storage knob outside go-qrdb: the
+	// one go-qrdb node (one barrier, one RBAC plane, one Raft cluster) still
+	// hosts every database, and Name/Backend mirror go-qrdb's own
+	// per-database config fields exactly (pkg/datastore.DatabaseKVStore
+	// passes Backend straight through to go-qrdb's Database client via
+	// CreateDatabase) -- there is no xkms-invented database configuration
+	// language, only a per-name override of the one thing go-qrdb itself
+	// lets a database choose independently of the datastore's default
+	// engine. See docs/datastore/architecture.md.
+	Databases []qrdbsdk.DaemonDatabaseConfig `yaml:"databases"`
 }
 
 // DatastoreRemoteConfig configures a connection to an already-running,
@@ -1591,6 +1607,26 @@ func (c *Config) Validate() error {
 		}
 	default:
 		return &errs.Message{Msg: fmt.Sprintf("invalid datastore.mode: %s (must be standalone or remote)", c.Datastore.Mode)}
+	}
+
+	seenDatabaseNames := make(map[string]struct{}, len(c.Datastore.Databases))
+	for _, db := range c.Datastore.Databases {
+		name := strings.TrimSpace(db.Name)
+		if name == "" {
+			return &errs.Message{Msg: "datastore.databases entries require a name"}
+		}
+		if _, dup := seenDatabaseNames[name]; dup {
+			return &errs.Message{Msg: fmt.Sprintf("duplicate datastore.databases entry: %s", name)}
+		}
+		seenDatabaseNames[name] = struct{}{}
+		if db.Backend == "" {
+			continue
+		}
+		switch strings.ToLower(db.Backend) {
+		case "memory", "file", "pebble", "raft", "objstore":
+		default:
+			return &errs.Message{Msg: fmt.Sprintf("invalid datastore.databases[%s].backend: %s (must be memory, file, pebble, raft, or objstore)", name, db.Backend)}
+		}
 	}
 
 	// Validate server ports

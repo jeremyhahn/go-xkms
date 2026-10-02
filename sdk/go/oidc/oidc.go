@@ -134,11 +134,17 @@ var (
 // TokenStore persists tokens by key.
 type TokenStore = pkg.TokenStore
 
+// DAOStore is a TokenStore backed by a go-qrdb DAO/entity over a KVStore.
+type DAOStore = pkg.DAOStore
+
+// DatabaseName is the go-qrdb database DAOStore's entities live in.
+const DatabaseName = pkg.DatabaseName
+
 var (
 	// NewMemoryTokenStore returns an in-memory TokenStore.
 	NewMemoryTokenStore = pkg.NewMemoryTokenStore
-	// NewBackendTokenStore returns a TokenStore over a storage backend.
-	NewBackendTokenStore = pkg.NewBackendTokenStore
+	// NewDAOStore returns a TokenStore backed by a go-qrdb DAO over kv.
+	NewDAOStore = pkg.NewDAOStore
 )
 
 // Sentinel errors.

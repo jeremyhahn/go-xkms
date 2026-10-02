@@ -105,9 +105,9 @@ several stored sessions to update. `openOIDCTokenStore` keeps this
 single-active-session behavior deliberately — extending the CLI to concurrent
 multi-provider sessions is a product decision independent of go-xkms#4 and
 is not made here. `oidcCLITokenStore` is therefore a single Put/Get/Delete
-key, not the issuer-keyed `pkg/oidc.BackendTokenStore`/`MemoryTokenStore` the
-GUI uses; reusing those would have required inventing a synthetic per-CLI
-issuer key with no real meaning.
+key, not the issuer-keyed `pkg/oidc.DAOStore`/`MemoryTokenStore` the GUI
+uses; reusing those would have required inventing a synthetic per-CLI issuer
+key with no real meaning.
 
 ## No migration, by design
 
@@ -202,10 +202,10 @@ argument.
   stack's no-backward-compatibility policy during the pre-release alpha: an
   automatic migration path is itself a legacy read path this stack does not
   carry.
-- **Per-issuer token storage** (reusing `pkg/oidc.BackendTokenStore`
-  directly). Rejected because the CLI's UX has never supported concurrent
-  provider sessions; adopting it here would be a silent, unrequested product
-  change bundled into a storage-hardening fix.
+- **Per-issuer token storage** (reusing `pkg/oidc.DAOStore` directly).
+  Rejected because the CLI's UX has never supported concurrent provider
+  sessions; adopting it here would be a silent, unrequested product change
+  bundled into a storage-hardening fix.
 
 ## See also
 

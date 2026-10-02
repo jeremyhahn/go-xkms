@@ -22,6 +22,18 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
+// DatabaseName is the go-qrdb database this package's DAOs live in. A
+// composition root resolves the qrdbsdk.KVStore for it before calling
+// NewDAOStore: xkmsd's (pkg/compose, when it wires this package) via
+// pkg/datastore.DatabaseKVStore(ctx, backend, cfg, oidc.DatabaseName), which
+// confines the store to this named go-qrdb database via
+// Client.DatabaseScoped; xkey, which hosts no go-qrdb node of its own, via
+// its barrier-backed storage.Backend adapted through
+// sdk/go.NewKVStoreAdapter instead (see xkey/pkg/gui/services/oidc_service.go).
+// Either way, pkg/oidc itself never resolves a KVStore -- it only names the
+// database and accepts one.
+const DatabaseName = "oidc"
+
 // ErrDAOCreation is returned when the DAO layer fails to initialize.
 type ErrDAOCreation struct {
 	Cause error

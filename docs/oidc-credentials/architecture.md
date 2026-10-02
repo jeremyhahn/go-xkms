@@ -1,6 +1,6 @@
 # OIDC Credentials — Architecture
 
-> **Status: NORMATIVE** · Feature: `oidc-credentials` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `oidc-credentials` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## What it is
 
@@ -12,8 +12,19 @@ each credential before its access token expires and records when a provider
 rejects a refresh, so the consumer sees "re-login needed" instead of a token
 that silently stopped working.
 
-The feature is **added alongside** xkey's local OIDC, which is unchanged
-(see [xkey/docs/oidc](../../xkey/docs/oidc/)). Both run on one OIDC core.
+The feature is **added alongside** xkey's local OIDC. This feature's own
+records, locking, and scheduler below are unchanged. What did change is
+`pkg/oidc`'s own token *cache* (xkey's local login, and xkmsctl/xkey's own
+process, not this feature's tenant-shared credentials): its persistence
+moved off a raw `storage.Backend` `Put`/`Get` pair onto go-qrdb's DAO/entity
+pattern (`pkg/oidc.DAOStore`, over a `qrdbsdk.KVStore`) — see
+[xkey/docs/oidc](../../xkey/docs/oidc/) and
+[`../datastore/architecture.md`](../datastore/architecture.md)'s
+"Feature-owned databases". `pkg/oidc/credential` (this feature) was not
+touched: it stays on the tenant-barrier `Backend` it already uses for
+compare-and-swap refresh locking (see "Ownership and storage" below), a
+different and still-correct pattern for a different problem (per-tenant
+sealing, not a DAO's typed entity shape).
 
 ## Components
 

@@ -26,7 +26,9 @@ import (
 // BackendRPPolicyStore implements RPPolicyStore using a xkms.StorageBackend.
 // This is the production implementation, designed to work with barrier-encrypted
 // storage backends. It follows the same pattern as BackendStorage for credential
-// persistence and BackendTokenStore/BackendStore for OIDC/OATH token storage.
+// persistence and BackendStore for OATH token storage (OIDC's own token store,
+// oidc.DAOStore, moved onto go-qrdb's DAO/entity pattern over a KVStore
+// adapted from the same kind of backend -- see oidc_service.go's SetBackend).
 //
 // Thread-safe using a read-write mutex.
 type BackendRPPolicyStore struct {

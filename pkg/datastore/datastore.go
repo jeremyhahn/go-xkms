@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -100,4 +101,11 @@ type standaloneBackend struct {
 // Close closes the embedded qrdb node this backend's KV client belongs to.
 func (b *standaloneBackend) Close() error {
 	return b.node.Close()
+}
+
+// Client returns the go-qrdb SDK client connected to this standalone node,
+// implementing ClientBackend so DatabaseKVStore can reach capabilities
+// (per-database scoping, database management) beyond storage.Backend.
+func (b *standaloneBackend) Client() *qrdbsdk.Client {
+	return b.node.Client()
 }

@@ -30,7 +30,28 @@ var (
 	_ *pkg.Client           = (*oidc.Client)(nil)
 	_ pkg.TokenStore        = (oidc.TokenStore)(nil)
 	_ pkg.Flow              = oidc.FlowDevice
+	_ *pkg.DAOStore         = (*oidc.DAOStore)(nil)
 )
+
+// TestDatabaseName_MatchesPkg proves the re-exported database name constant
+// is pkg/oidc's own, not a drifted copy.
+func TestDatabaseName_MatchesPkg(t *testing.T) {
+	if oidc.DatabaseName != pkg.DatabaseName {
+		t.Fatalf("oidc.DatabaseName = %q, want %q", oidc.DatabaseName, pkg.DatabaseName)
+	}
+}
+
+// TestNewDAOStore_NilKVStore proves the re-exported constructor's error
+// path is reachable through the alias with the pkg/oidc sentinel intact.
+func TestNewDAOStore_NilKVStore(t *testing.T) {
+	store, err := oidc.NewDAOStore(nil)
+	if !errors.Is(err, pkg.ErrNilBackend) {
+		t.Fatalf("NewDAOStore(nil) error = %v, want ErrNilBackend", err)
+	}
+	if store != nil {
+		t.Fatalf("NewDAOStore(nil) store = %v, want nil", store)
+	}
+}
 
 // TestTemplates_EveryListedTemplateResolves proves the catalog the SDK lists
 // is the catalog GetTemplate serves, with each template's flows readable.

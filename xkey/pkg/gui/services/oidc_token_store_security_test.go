@@ -101,7 +101,12 @@ func TestOIDCService_SetDataDir_NoBarrier_UsesMemoryTokenStore(t *testing.T) {
 
 // TestOIDCService_SetBackend_TokenRoundTrip proves the barrier-backed path
 // still persists and round-trips OIDC tokens through the storage backend
-// (unchanged behavior when a barrier is available).
+// (unchanged behavior when a barrier is available), now via go-qrdb's
+// DAO/entity pattern (oidc.DAOStore) rather than a raw Put/Get pair keyed by
+// SetBackend's prefix argument. The DAO owns its own key layout -- a
+// "oidc_tokens/<entity id>" namespace, go-qrdb's GenericDAO convention, not
+// SetBackend's prefix -- so this test checks that namespace instead of the
+// old "oidc/tokens/" prefix literal.
 func TestOIDCService_SetBackend_TokenRoundTrip(t *testing.T) {
 	backend := newMockStorageBackend()
 
@@ -120,13 +125,15 @@ func TestOIDCService_SetBackend_TokenRoundTrip(t *testing.T) {
 	assert.Equal(t, "barrier-access-token", loaded.AccessToken)
 	assert.Equal(t, "barrier-refresh-token", loaded.RefreshToken)
 
-	// The backend actually received something under the configured prefix.
+	// The backend actually received something under the DAO's entity
+	// namespace.
 	assert.NotEmpty(t, backend.data)
+	const entityNamespace = "oidc_tokens/"
 	found := false
 	for key := range backend.data {
-		if len(key) > len("oidc/tokens/") && key[:len("oidc/tokens/")] == "oidc/tokens/" {
+		if len(key) > len(entityNamespace) && key[:len(entityNamespace)] == entityNamespace {
 			found = true
 		}
 	}
-	assert.True(t, found, "expected a key under the oidc/tokens/ prefix, got %v", backend.data)
+	assert.True(t, found, "expected a key under the %q namespace, got %v", entityNamespace, backend.data)
 }

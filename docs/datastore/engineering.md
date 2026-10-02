@@ -1,6 +1,6 @@
 # Datastore — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## Exported surface
 
@@ -113,6 +113,42 @@ was split out of `pkg/server` in go-xkms#1345 batch 2 specifically so
 `pkg/datastore` (which `pkg/server` also imports, for `DialRemote`) could
 reach it without an import cycle back through `pkg/server`.
 
+### `pkg/datastore` — a feature's own named go-qrdb database
+
+```go
+type ClientBackend interface {
+	storage.Backend
+	Client() *qrdbsdk.Client
+}
+func DatabaseKVStore(ctx context.Context, backend storage.Backend, cfg *config.Config, name string) (qrdbsdk.KVStore, error)
+```
+
+(`pkg/datastore/database.go`.) Both `standaloneBackend` and `remoteBackend`
+— the only two concrete types `Open` returns — implement `ClientBackend`,
+so `DatabaseKVStore` works identically in standalone and remote mode.
+`DatabaseKVStore`:
+
+1. Type-asserts `backend` to `ClientBackend`, failing closed with
+   `*ErrClientUnavailable` for a `storage.Backend` that bypassed `Open`
+   (e.g. a bare `storage.NewMemory()` in a test).
+2. Ensures `name` exists: `client.Database().GetDatabase(ctx, name)`; on any
+   error, creates it with `client.Database().CreateDatabase` using
+   `EngineKV` and `resolveDatabaseBackend`'s resolved backend. A
+   `*qrdbsdk.DBAlreadyExistsError` from `CreateDatabase` (a concurrent
+   composition root ensuring the same database) is treated as success, not
+   an error — the postcondition is "the database exists", not "this call
+   created it".
+3. Scopes: `client.DatabaseScoped(name)` then `.KVStore()`.
+
+`resolveDatabaseBackend(cfg, name)` returns `cfg.Datastore.Databases`'
+matching entry's `Backend` when one is configured non-empty, and
+`cfg.Datastore.Engine` (already defaulted by `config.Validate`) otherwise.
+
+Only a composition root calls `DatabaseKVStore` — never a feature package,
+which declares its database name as a constant (e.g. `oidc.DatabaseName`)
+and accepts a `qrdbsdk.KVStore` in its DAO's constructor. See
+"Feature-owned databases" in architecture.md.
+
 ### `pkg/storage/qrdb` — the shared datastore's `storage.Backend` wrapper
 
 ```go
@@ -202,6 +238,9 @@ read/write linearizability.
 | `*datastore.ErrUnsupportedStorageBackend{Backend: "qrdb:" + transport}` | `pkg/datastore/remote.go`, used by both `pkg/server/qrdb_storage.go` and `pkg/datastore.Open` | `datastore.remote.transport` names a transport `DialRemote` does not implement (only reachable by bypassing `config.Validate`) |
 | `*datastore.ErrUnsupportedDatastoreMode{Mode}` | `pkg/datastore/errors.go` | `datastore.mode` is neither `standalone` nor `remote` (only reachable by bypassing `config.Validate`) |
 | `*datastore.ErrOpenDatastore{Mode, Err}` | `pkg/datastore/datastore.go` | `Open` (the SDK/library path) failed to build the datastore in the named mode; `Err` is the underlying cause |
+| `*datastore.ErrClientUnavailable{Backend}` | `pkg/datastore/database.go` | `DatabaseKVStore` was given a `storage.Backend` that does not implement `ClientBackend` (one built without going through `Open`) |
+| `*datastore.ErrEnsureDatabase{Name, Err}` | `pkg/datastore/database.go` | `DatabaseKVStore` could not confirm or create the named database; `Err` is go-qrdb's underlying cause (not `*qrdbsdk.DBAlreadyExistsError`, which is treated as success) |
+| `*datastore.ErrDatabaseScope{Name, Err}` | `pkg/datastore/database.go` | the database exists but `Client.DatabaseScoped(name)` failed |
 | `*embeddednode.NodeSealError{Reason, Err}` | `pkg/embeddednode/errors.go` | the node barrier is configured to encrypt the data plane but the required auto-unseal material cannot be resolved |
 | `*embeddednode.ErrDatastorePathRequired{Reason}` | `pkg/embeddednode/errors.go` | `Datastore.Path` is unset for a standalone datastore -- either generally (`Open`'s own check, `Reason: "the standalone datastore"`) or specifically to derive the TPM2 node-barrier seal strategy's key directory (`Reason: "the TPM2 seal key directory"`) |
 | go-qrdb's `lifecycle.EmptyVectorDataDirError` | go-qrdb `pkg/server/lifecycle` (not an xkms type; this repository never constructs or catches it directly) | the underlying go-qrdb failure `datastore.path` being required prevents: go-qrdb's node builder unconditionally roots its vector-storage subsystem under the node's data directory regardless of the primary KV engine, so an empty directory fails the node build outright. `config.Validate` and `pkg/datastore.Open` both refuse an empty `Datastore.Path` for `mode: standalone` before this can be reached, adopting the constraint rather than working around it -- see "Configuration" below |
@@ -214,10 +253,11 @@ read/write linearizability.
 
 ```go
 type DatastoreConfig struct {
-	Engine string                `yaml:"engine"` // "memory" | "file" | "pebble" (default)
-	Path   string                `yaml:"path"`
-	Mode   string                `yaml:"mode"`   // "standalone" (default) | "remote"
-	Remote DatastoreRemoteConfig `yaml:"remote"`
+	Engine    string                     `yaml:"engine"` // "memory" | "file" | "pebble" (default)
+	Path      string                     `yaml:"path"`
+	Mode      string                     `yaml:"mode"`   // "standalone" (default) | "remote"
+	Remote    DatastoreRemoteConfig      `yaml:"remote"`
+	Databases []qrdbsdk.DaemonDatabaseConfig `yaml:"databases"` // go-qrdb's own per-database config; per-feature backend overrides
 }
 type DatastoreRemoteConfig struct {
 	Address   string    `yaml:"address"`   // remote cluster endpoint, e.g. "https://localhost:63002"
@@ -246,6 +286,9 @@ check reads an already-defaulted `Datastore`):
   must be `"rest"` or `"grpc"`.
 - Any other `Engine` or `Mode` value is a hard error naming the field and
   the accepted values.
+- `Databases`: each entry needs a non-empty `Name`, names must not repeat,
+  and a non-empty `Backend` must be `memory`, `file`, `pebble`, or `raft`.
+  An empty `Backend` is valid — it defers to `Engine`.
 
 Two other `Validate` rules key off `Datastore.Mode` and matter for this
 feature's neighbors:
@@ -461,7 +504,11 @@ in-memory `storage.Backend` for the non-barrier cases, independent of
   `TestDatastoreConfig_Remote`), `pkg/server/storage_factory_qrdb_test.go`,
   `pkg/server/server_coverage_test.go`
   (`TestServer_CreateStorage_DistinctPrefixesOverOneStore`);
-  `pkg/embeddednode/embedded_node_test.go`; `pkg/datastore/datastore_test.go`; `pkg/storage/file/crosslock_test.go` (re-exec'd processes race
+  `pkg/embeddednode/embedded_node_test.go`; `pkg/datastore/datastore_test.go`;
+  `pkg/datastore/database_test.go` (`TestDatabaseKVStore_CreatesAndScopesDatabase`,
+  `TestDatabaseKVStore_Idempotent`, `TestDatabaseKVStore_BackendOverrideHonoured`,
+  `TestDatabaseKVStore_DefaultEngineWhenNoOverride`,
+  `TestDatabaseKVStore_ClientUnavailable`); `pkg/storage/file/crosslock_test.go` (re-exec'd processes race
   CompareAndSwap on one directory, #1157)
   (`TestOpen_StandaloneMemoryEngine`, remote-dial and unsupported-mode
   cases); `pkg/xkms/auto_test.go` (`TestAutoInitialize_WithDatastore`,

@@ -296,8 +296,15 @@ func (s *OIDCService) SetDataDir(dir string) {
 // SetBackend configures the OIDC service to persist providers and tokens
 // through the given storage.Backend (typically a barrier backend for
 // transparent AES-256-GCM encryption). The prefix is prepended to all
-// storage keys (e.g., "oidc/"). When a backend is set, SetDataDir is
-// not required -- all data flows through the backend.
+// provider-config storage keys (e.g., "oidc/"). When a backend is set,
+// SetDataDir is not required -- all data flows through the backend.
+//
+// Tokens go through go-qrdb's own DAO/entity pattern rather than a raw
+// Put/Get: xkey hosts no go-qrdb node of its own (it is a local desktop
+// client, not a server), so sdk.NewKVStoreAdapter bridges the SAME
+// barrier-backed backend to the qrdbsdk.KVStore oidc.NewDAOStore needs --
+// one storage.Backend, two complementary views, rather than a second,
+// private persistence scheme for tokens alongside the provider-config store.
 func (s *OIDCService) SetBackend(backend xkms.StorageBackend, prefix string) error {
 	if backend == nil {
 		return ErrOIDCTokenStoreUnavailable
@@ -306,8 +313,12 @@ func (s *OIDCService) SetBackend(backend xkms.StorageBackend, prefix string) err
 	s.backend = backend
 	s.backendPrefix = prefix
 
-	// Create token store backed by the barrier.
-	tokenStore, err := oidc.NewBackendTokenStore(backend, prefix+"tokens/")
+	// Create token store backed by the barrier via go-qrdb's DAO layer.
+	kv, err := xkms.NewKVStoreAdapter(backend)
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreUnavailable, Cause: err}
+	}
+	tokenStore, err := oidc.NewDAOStore(kv)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreUnavailable, Cause: err}
 	}

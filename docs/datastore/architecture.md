@@ -1,6 +1,6 @@
 # Datastore — Architecture
 
-> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## The problem
 
@@ -70,13 +70,67 @@ datastore.mode: "remote"
   → no local engine: this process hosts no node, the remote cluster does
 ```
 
+## Feature-owned databases: one node, more than one named database
+
+"One datastore" above is a statement about **engines and nodes**, not about
+go-qrdb's own database count: there is exactly one go-qrdb node (one
+barrier, one RBAC plane, one Raft cluster membership), and a feature that
+wants isolation from the shared `"default"` database gets it by asking that
+ONE node for another go-qrdb-native database, by name — never by building a
+second engine, node, or client outside go-qrdb. This is narrower than, and
+does not reopen, the invariant in "What this feature deliberately does not
+do" below: it is still true that no subsystem builds `storage.NewPebble`,
+`storage.NewMemoryBackend`, or `file.New` directly, and still true that
+`pkg/server` has no per-subsystem engine switch.
+
+```go
+func DatabaseKVStore(ctx context.Context, backend storage.Backend, cfg *config.Config, name string) (qrdbsdk.KVStore, error)
+```
+
+(`pkg/datastore/database.go`.) A feature package (e.g. `pkg/oidc`) declares
+its database's name as a code constant (`oidc.DatabaseName == "oidc"`) and
+accepts a `qrdbsdk.KVStore` in its DAO's constructor
+(`qrdbsdk.NewDAO[E](store, entityType, ...)`) — it never resolves a
+`KVStore` itself. Only a composition root calls `DatabaseKVStore`:
+`pkg/compose` for `xkmsd`, resolving the `storage.Backend`
+`initializeQRDBStorage` already built down to the underlying go-qrdb client
+(`ClientBackend`), ensuring the named database exists (creating it via
+go-qrdb's own `Client.Database().CreateDatabase` when it does not, with the
+backend `Datastore.Databases` names for it or `Datastore.Engine` otherwise),
+and scoping to it (`Client.DatabaseScoped(name).KVStore()`).
+
+`Client.DatabaseScoped` is a capability of the go-qrdb SDK client itself —
+`sdk/go/transport/embedded/database_scope.go` for the embedded (standalone)
+transport, backed by `node.go`'s `DatabaseServiceRegistry`, and every
+network transport (REST, gRPC, ...) implements it identically over the
+wire. A feature downstream of `DatabaseKVStore` never branches on
+standalone vs. remote: the same DAO code runs either way.
+
+**Not every subsystem needs this.** Most of xkms's state (keys, users, RBAC,
+CA serials, audit) has no reason to leave the shared `"default"` database
+and stays exactly where "Component boundaries" below describes. A named
+database is for a feature whose DAO/entity shape benefits from living apart
+from that shared keyspace (its own entity namespace, its own backend
+override for operational reasons) — today, `pkg/oidc`'s token cache; see
+[`../oidc-credentials/architecture.md`](../oidc-credentials/architecture.md).
+
+xkey, which hosts no go-qrdb node (see "What this feature deliberately does
+not do" below), cannot use `DatabaseKVStore` — there is no `ClientBackend`
+to resolve one from. It reaches go-qrdb's DAO layer a different way: adapting
+its own barrier-backed `storage.Backend` directly to a `qrdbsdk.KVStore`
+(`sdk/go.NewKVStoreAdapter`, wrapping `pkg/storage/kvadapter`) and handing
+that to the feature's DAO constructor. Same DAO code, same `KVStore`
+interface, no go-qrdb node required — see `xkey/pkg/gui/services/oidc_service.go`'s
+`SetBackend`.
+
 ## Component boundaries
 
 | Piece | Where | Owner |
 |---|---|---|
 | `storage.Backend` interface, guarded-write capability interfaces | `pkg/storage/interface.go`, `guardedwrites.go` | go-xkms |
-| `config.DatastoreConfig` / `DatastoreRemoteConfig` (the `datastore:` section) | `pkg/config/config.go` | go-xkms |
+| `config.DatastoreConfig` / `DatastoreRemoteConfig` (the `datastore:` section; `databases:` entries are go-qrdb's own `qrdbsdk.DaemonDatabaseConfig`) | `pkg/config/config.go` | go-xkms |
 | `Server.createStorage` / `createStorageAt` — ALWAYS a prefixed view over the one shared datastore, never a private engine | `pkg/server/storage_factory.go` | go-xkms |
+| `datastore.DatabaseKVStore` / `ClientBackend` — a feature's one way to reach its own named go-qrdb database, within the SAME node/barrier/cluster | `pkg/datastore/database.go` | go-xkms (composition root) / go-qrdb (the database and `DatabaseScoped` client) |
 | `Server.initializeQRDBStorage` — builds the one shared datastore (standalone or remote) for an xkmsd-hosted deployment | `pkg/server/qrdb_storage.go` | go-xkms |
 | `datastore.Open` / `datastore.DialRemote` — the Server-independent counterpart for callers without a `*Server` (the SDK/library composition path); `Server.initializeQRDBStorage`'s own remote branch calls `DialRemote` too, so there is exactly one remote-dial implementation | `pkg/datastore/` | go-xkms |
 | `embeddednode.OpenEmbeddedNode` / `EmbeddedNodeStorageConfig` — maps `Datastore.Engine`/`Path` onto the qrdb node's own daemon config; the shared embedded-node builder `pkg/server` and `pkg/datastore` both build on | `pkg/embeddednode/` | go-xkms |
@@ -139,9 +193,15 @@ backend name anymore — there is nothing left to switch on. An invalid
 - **It does not implement a consensus engine, a state machine, or a KV
   store.** Every engine byte is go-qrdb's; xkms selects and opens one.
 - **It does not let a subsystem opt out of the shared datastore.** There is
-  no per-subsystem storage configuration left in `pkg/server`; a feature
-  that needs its own storage knob is a design smell this feature closed the
-  door on (go-xkms#1345).
+  no per-subsystem storage configuration left in `pkg/server` that builds a
+  private engine, node, or client outside go-qrdb — a feature that needs
+  one is a design smell this feature closed the door on (go-xkms#1345). A
+  feature's own NAMED go-qrdb DATABASE within the one shared node
+  ("Feature-owned databases" above) is not that: it is still the one node,
+  one barrier, one RBAC plane, one cluster, reached through go-qrdb's own
+  multi-database primitive, with an operator override confined to the one
+  thing go-qrdb itself lets a database choose independently (its backend) —
+  never a second storage engine, config language, or construction path.
 - **It does not migrate data between engines or modes.** Switching
   `datastore.engine` or `datastore.mode` on an existing deployment starts a
   new, empty store; nothing in this repository reads one engine's on-disk

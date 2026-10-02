@@ -548,9 +548,13 @@ jobs:
       # on a development host (the largest package, client/ssh, takes ~17 s),
       # so it is cheaper than the xkey steps below. Nothing is excluded; if a
       # package must be, name it here with the reason.
+      # -tags codec_json: go-qrdb's DAO serializes entities through a codec
+      # compiled in only by its build tag, so the SDK's DAO-backed stores
+      # (e.g. sdk/go/oidc) cannot round-trip without it. Root and xkey tests
+      # already run with a codec tag.
       - name: sdk/go tests
         working-directory: sdk/go
-        run: go test -race -v ./...
+        run: go test -race -v -tags codec_json ./...
 
       # web/desktop is its own module, so neither the root coverage job nor
       # the steps above reach it. Without this step its tests could fail, or
@@ -606,9 +610,9 @@ jobs:
       # packages themselves were deleted upstream (xkey-side CA/PCR-policy
       # dead code cleanup); a stale entry here fails the job with
       # "[setup failed]" the moment `go test` cannot even resolve the import
-      # path, before a single test runs. pkg/shellquote and pkg/urlsafety are
-      # added here: both had _test.go files but were in neither list below --
-      # exactly the gap the last paragraph warns about.
+      # path, before a single test runs. pkg/urlsafety later moved to sdk/go,
+      # and pkg/oidc holds no Go files of its own (only its aws and handlers
+      # subpackages), so neither is listed.
       #
       # -tags codec_json for the same reason as the step above: the DAO-backed
       # packages (tokenstore 49 tests, truststore 20, oath 30) fail without it
@@ -706,10 +710,10 @@ jobs:
             ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
             ./pkg/gui ./pkg/gui/events ./pkg/ipc ./pkg/keyboard ./pkg/luks \
             ./pkg/nativemsg ./pkg/notify ./pkg/nssdb \
-            ./pkg/oidc ./pkg/oidc/aws ./pkg/oidc/handlers \
+            ./pkg/oidc/aws ./pkg/oidc/handlers \
             ./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
             ./pkg/serverregistry ./pkg/shellquote ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
-            ./pkg/tokenstore ./pkg/truststore ./pkg/uhid ./pkg/urlsafety ./pkg/usb \
+            ./pkg/tokenstore ./pkg/truststore ./pkg/uhid ./pkg/usb \
             ./pkg/virtualdevice ./pkg/xhome
           # -tags ble: createFIDO2PhoneKeyBackend and the CLI's fail-closed
           # fingerprint tests are ble-only, and the four *HarnessArgv* tests

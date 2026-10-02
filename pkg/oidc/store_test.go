@@ -195,7 +195,7 @@ func TestNormalizeIssuer(t *testing.T) {
 
 func TestTokenStoreInterface(t *testing.T) {
 	// Verify the in-memory implementation satisfies the interface.
-	// BackendTokenStore's own compile-time assertion lives in
-	// backend_store.go alongside its implementation.
+	// DAOStore's own compile-time assertion lives in dao_store.go alongside
+	// its implementation.
 	var _ TokenStore = (*MemoryTokenStore)(nil)
 }

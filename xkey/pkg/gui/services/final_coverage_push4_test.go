@@ -347,7 +347,7 @@ func TestFCP6_OIDCService_Close_NilTokenStore(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // OIDCService: SetBackend
-// Covers line 245-247 (NewBackendTokenStore error)
+// Covers the NewDAOStore error path
 // ---------------------------------------------------------------------------
 
 func TestFCP6_OIDCService_SetBackend_NilBackend(t *testing.T) {

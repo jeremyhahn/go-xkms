@@ -21,13 +21,14 @@ import (
 
 // TokenStore defines the interface for persistent token storage.
 //
-// The GUI's production implementations are BackendTokenStore
-// (backend_store.go, barrier-encrypted) and MemoryTokenStore below
-// (no-barrier fallback, go-xkms#1203): there is no file-backed
-// implementation in this package. A key compiled into the binary gives a
-// file on disk no real confidentiality, so no in-between "encrypted with a
-// fixed key" option exists here for a caller to reach for -- with a
-// barrier, use BackendTokenStore; without one, tokens stay in memory only.
+// The GUI's production implementations are DAOStore (dao_store.go, a
+// go-qrdb DAO/entity-backed store -- barrier-encrypted when its KVStore is
+// adapted from a barrier backend) and MemoryTokenStore below (no-barrier
+// fallback, go-xkms#1203): there is no file-backed implementation in this
+// package. A key compiled into the binary gives a file on disk no real
+// confidentiality, so no in-between "encrypted with a fixed key" option
+// exists here for a caller to reach for -- with a barrier, use DAOStore;
+// without one, tokens stay in memory only.
 type TokenStore interface {
 	// Save stores tokens for the given issuer.
 	Save(issuer string, tokens *TokenResponse) error

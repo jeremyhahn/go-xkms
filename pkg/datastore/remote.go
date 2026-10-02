@@ -108,3 +108,10 @@ type remoteBackend struct {
 func (b *remoteBackend) Close() error {
 	return b.client.Close()
 }
+
+// Client returns the go-qrdb SDK client dialed to the remote cluster,
+// implementing ClientBackend so DatabaseKVStore can reach capabilities
+// (per-database scoping, database management) beyond storage.Backend.
+func (b *remoteBackend) Client() *qrdbsdk.Client {
+	return b.client
+}

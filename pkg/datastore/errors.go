@@ -56,3 +56,52 @@ func (e *ErrOpenDatastore) Error() string {
 func (e *ErrOpenDatastore) Unwrap() error {
 	return e.Err
 }
+
+// ErrClientUnavailable is returned by DatabaseKVStore when the given
+// storage.Backend does not implement ClientBackend, so there is no go-qrdb
+// client to scope a named database against. Every storage.Backend Open
+// returns implements ClientBackend; this guards a caller-constructed
+// storage.Backend that bypassed Open (e.g. a bare in-memory or file backend
+// with no go-qrdb client behind it).
+type ErrClientUnavailable struct {
+	Backend string
+}
+
+// Error returns the error message.
+func (e *ErrClientUnavailable) Error() string {
+	return fmt.Sprintf("datastore: %s does not expose a go-qrdb client (ClientBackend); open it via datastore.Open", e.Backend)
+}
+
+// ErrEnsureDatabase wraps a failure to confirm or create the named go-qrdb
+// database.
+type ErrEnsureDatabase struct {
+	Name string
+	Err  error
+}
+
+// Error returns the error message.
+func (e *ErrEnsureDatabase) Error() string {
+	return fmt.Sprintf("datastore: failed to ensure database %q: %v", e.Name, e.Err)
+}
+
+// Unwrap exposes Err so errors.Is/errors.As can reach it.
+func (e *ErrEnsureDatabase) Unwrap() error {
+	return e.Err
+}
+
+// ErrDatabaseScope wraps a failure to scope the go-qrdb client to the named
+// database once it is confirmed to exist.
+type ErrDatabaseScope struct {
+	Name string
+	Err  error
+}
+
+// Error returns the error message.
+func (e *ErrDatabaseScope) Error() string {
+	return fmt.Sprintf("datastore: failed to scope client to database %q: %v", e.Name, e.Err)
+}
+
+// Unwrap exposes Err so errors.Is/errors.As can reach it.
+func (e *ErrDatabaseScope) Unwrap() error {
+	return e.Err
+}

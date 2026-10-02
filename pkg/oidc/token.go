@@ -45,7 +45,8 @@ type TokenResponse struct {
 
 	// DPoPKeyPEM is the PEM-encoded EC private key for DPoP token binding.
 	// RFC 9449 requires the same key for refresh to maintain binding.
-	// Encrypted at rest via BackendTokenStore (barrier).
+	// Encrypted at rest via DAOStore when its KVStore is adapted from a
+	// barrier backend.
 	DPoPKeyPEM string `json:"dpop_key_pem,omitempty"`
 }
 
