@@ -582,3 +582,53 @@ func TestEveryClearedEvidenceOIDHasADecoder(t *testing.T) {
 		assert.True(t, known, "%s is cleared as handled but has no decoder", oid)
 	}
 }
+
+func TestDeviceUeid(t *testing.T) {
+	claimUeid := append([]byte{0x01}, testUeid...)
+
+	t.Run("reads the extension", func(t *testing.T) {
+		ueid, err := DeviceUeid(newTestChain(t).leaf)
+		require.NoError(t, err)
+		assert.Equal(t, testUeid, ueid)
+	})
+
+	t.Run("reads the claim when there is no extension", func(t *testing.T) {
+		chain := newTestChain(t, withoutUeid(), withClaim(ClaimUeid, ueidClaim(claimUeid)))
+		ueid, err := DeviceUeid(chain.leaf)
+		require.NoError(t, err)
+		assert.Equal(t, claimUeid, ueid, "the type byte is part of the ueid")
+	})
+
+	t.Run("accepts both when they agree", func(t *testing.T) {
+		chain := newTestChain(t, withUeid(claimUeid), withClaim(ClaimUeid, ueidClaim(claimUeid)))
+		ueid, err := DeviceUeid(chain.leaf)
+		require.NoError(t, err)
+		assert.Equal(t, claimUeid, ueid)
+	})
+}
+
+func TestDeviceUeidRejectsBadInput(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []chainOption
+		want error
+	}{
+		{"nothing states it", []chainOption{withoutUeid()}, ErrUeidNotFound},
+		{"no claims and no extension", []chainOption{withoutUeid(), withoutUccs()}, ErrUeidNotFound},
+		{"extension and claim disagree", []chainOption{withClaim(ClaimUeid, ueidClaim([]byte{1, 2, 3}))}, ErrUeidConflict},
+		{"claim is not a byte string", []chainOption{withoutUeid(), withClaim(ClaimUeid, []byte{0x01})}, ErrMalformedUeid},
+		{"claim is empty", []chainOption{withoutUeid(), withClaim(ClaimUeid, []byte{0x40})}, ErrEmptyUeid},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ueid, err := DeviceUeid(newTestChain(t, tt.opts...).leaf)
+			require.ErrorIs(t, err, tt.want)
+			assert.Nil(t, ueid)
+		})
+	}
+
+	t.Run("nil certificate", func(t *testing.T) {
+		_, err := DeviceUeid(nil)
+		assert.ErrorIs(t, err, ErrNilCertificate)
+	})
+}

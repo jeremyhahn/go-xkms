@@ -598,8 +598,11 @@ device X satisfy an order for a different identifier Y.
 `VerifiedAttestation.DeviceIdentity` (`identity.go:78`) closes that: it reads
 the RFC 4043 `permanentIdentifier` otherName from the evidence's leaf
 certificate — `x5c[0]` for `tpm`, the alias certificate for `dice` (read as
-the hex-encoded `tcg-dice-Ueid` extension instead, since a DICE leaf carries
-no otherName) — the same convention
+the hex-encoded UEID instead, since a DICE leaf carries no otherName; read by
+`dice.DeviceUeid` from the `tcg-dice-Ueid` extension or, as the
+arduino-generic AVR profile states it, from CWT claim 256 of the
+`tcg-dice-UCCS-evidence` extension, type byte included, and refused as
+`ErrUeidConflict` if a leaf states both and they differ) — the same convention
 `pkg/acme/server/handlers.matchesPermanentIdentifierOrder` already reads from
 a CSR. go-xkms's own `enroll-01` issuance (`pkg/ca/tcg.go`) puts the same
 `permanentIdentifier` otherName on the IAK certificate it issues alongside the

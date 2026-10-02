@@ -54,15 +54,20 @@ import (
 //     Credential Profile section 3.2.9 manufacturer/model/version
 //     directoryName, which is not unique per device, so it is not read as an
 //     identity here.
-//   - "dice": the alias leaf's tcg-dice-Ueid extension (TCG DICE Attestation
-//     Architecture), the device identifier docs/dice-device-identity names as
-//     such. Rendered lowercase hex: the certificate carries it as bytes and
+//   - "dice": the alias leaf's UEID (TCG DICE Attestation Architecture), the
+//     device identifier docs/dice-device-identity names as such, read by
+//     dice.DeviceUeid from the tcg-dice-Ueid extension or from the ueid claim
+//     (CWT key 256) of the tcg-dice-UCCS-evidence extension. The second is
+//     where the arduino-generic firmware states it, because its alias
+//     certificate has room for one extension; a gate that read only the first
+//     would refuse every real device. The type byte is part of the UEID and is
+//     kept. Rendered lowercase hex: the certificate carries it as bytes and
 //     an ACME identifier value is a string, and no canonical string form is
 //     defined for a Ueid elsewhere in this codebase.
 var (
 	// ErrDeviceIdentityUnavailable is returned when the attestation evidence
 	// carries no device identity this gate can read: no permanentIdentifier
-	// otherName on a "tpm" leaf, no tcg-dice-Ueid extension on a "dice"
+	// otherName on a "tpm" leaf, no UEID on a "dice"
 	// leaf, or a format this gate has no rule for. It is not a refusal of
 	// the device's identity, it is the gate saying the check could not run
 	// -- which must never be treated as the check passing.
@@ -85,8 +90,8 @@ func (v *VerifiedAttestation) DeviceIdentity() (string, error) {
 
 // DeviceIdentityFromCertificate reads the device identity a leaf certificate
 // of the given attestation format carries: the RFC 4043 permanentIdentifier of
-// a "tpm" AIK certificate, the lowercase-hex tcg-dice-Ueid of a "dice" alias
-// certificate. It is the one rule both sides share -- the server reads it from
+// a "tpm" AIK certificate, the lowercase-hex UEID of a "dice" alias
+// certificate (see dice.DeviceUeid for where it is read from). It is the one rule both sides share -- the server reads it from
 // the evidence (DeviceIdentity) and a client reads it from its own
 // certificate to name the order's identifier -- so the two cannot disagree
 // about what the device's identity is.
@@ -152,19 +157,16 @@ func permanentIdentifierFromCertificate(cert *x509.Certificate) (string, error) 
 	return identity, nil
 }
 
-// diceDeviceIdentity reads the TCG DICE Ueid extension from a DICE leaf
-// certificate, rendered as lowercase hex.
+// diceDeviceIdentity reads the UEID from a DICE leaf certificate, rendered as
+// lowercase hex.
 func diceDeviceIdentity(cert *x509.Certificate) (string, error) {
-	ueid, err := dice.UeidFromCertificate(cert)
+	ueid, err := dice.DeviceUeid(cert)
 	if err != nil {
 		return "", &errs.Joined{
 			Lead:   ErrDeviceIdentityUnavailable,
-			Detail: "the dice leaf certificate carries no tcg-dice-Ueid extension",
+			Detail: "the dice leaf certificate states no readable ueid, as a tcg-dice-Ueid extension or as a ueid claim",
 			Cause:  err,
 		}
 	}
-	if len(ueid.Value) == 0 {
-		return "", &errs.Detail{Err: ErrDeviceIdentityUnavailable, Detail: "the dice leaf certificate's tcg-dice-Ueid extension is empty"}
-	}
-	return hex.EncodeToString(ueid.Value), nil
+	return hex.EncodeToString(ueid), nil
 }

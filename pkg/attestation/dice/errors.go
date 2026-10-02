@@ -36,6 +36,11 @@ var (
 	// extension.
 	ErrUeidNotFound = errors.New("dice: tcg-dice-Ueid extension not found")
 
+	// ErrUeidConflict indicates the certificate states its device identifier
+	// twice, in the tcg-dice-Ueid extension and in the UCCS ueid claim, and the
+	// two differ.
+	ErrUeidConflict = errors.New("dice: the ueid extension and the ueid claim disagree")
+
 	// ErrMalformedTcbInfo indicates the DiceTcbInfo could not be decoded.
 	ErrMalformedTcbInfo = errors.New("dice: malformed DiceTcbInfo")
 

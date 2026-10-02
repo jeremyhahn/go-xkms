@@ -44,8 +44,8 @@ type VerifyOptions struct {
 	// "this is a device from this manufacturer".
 	ExpectedUeid []byte
 
-	// RequireUeid demands a tcg-dice-Ueid extension on the leaf even when
-	// ExpectedUeid is not set, for a caller that intends to record the
+	// RequireUeid demands a device identifier (see DeviceUeid) on the leaf even
+	// when ExpectedUeid is not set, for a caller that intends to record the
 	// identifier rather than match it.
 	RequireUeid bool
 
@@ -124,8 +124,8 @@ type Evidence struct {
 	// not model, so a caller can read what else the device said.
 	Claims *ClaimsSet
 
-	// Ueid is the device's unique identifier, or nil when the leaf carried no
-	// tcg-dice-Ueid extension and the options did not require one.
+	// Ueid is the device's unique identifier, read by DeviceUeid, or nil when
+	// the leaf stated none and the options did not require one.
 	Ueid []byte
 
 	// Flags are the operational states the leaf declared. An absent flags
@@ -471,34 +471,24 @@ func verifyOperationalFlags(reported, permitted OperationalFlags) error {
 // verifyUeid reads the device identifier and checks it against the caller's
 // expectation.
 func verifyUeid(leaf *x509.Certificate, opts *VerifyOptions) ([]byte, error) {
-	if !opts.RequireUeid && len(opts.ExpectedUeid) == 0 {
-		ueid, err := UeidFromCertificate(leaf)
-		if err != nil {
-			// The caller did not ask for a UEID. A leaf without one is
-			// reported as having none; a leaf with a malformed one is still an
-			// error, because that is evidence this verifier cannot read.
-			if errors.Is(err, ErrUeidNotFound) {
-				return nil, nil
-			}
-			return nil, err
-		}
-		return ueid.Value, nil
-	}
-
-	ueid, err := UeidFromCertificate(leaf)
+	ueid, err := DeviceUeid(leaf)
 	if err != nil {
+		// The caller did not ask for a UEID. A leaf without one is reported as
+		// having none; a leaf with a malformed or contradictory one is still an
+		// error, because that is evidence this verifier cannot read.
+		if errors.Is(err, ErrUeidNotFound) && !opts.RequireUeid && len(opts.ExpectedUeid) == 0 {
+			return nil, nil
+		}
 		return nil, err
 	}
-	if len(opts.ExpectedUeid) > 0 {
-		if len(ueid.Value) != len(opts.ExpectedUeid) ||
-			subtle.ConstantTimeCompare(ueid.Value, opts.ExpectedUeid) != 1 {
-			return nil, &errs.Detail{
-				Err:    ErrUeidMismatch,
-				Detail: "device reports ueid " + hex.EncodeToString(ueid.Value),
-			}
+	if len(opts.ExpectedUeid) > 0 &&
+		subtle.ConstantTimeCompare(ueid, opts.ExpectedUeid) != 1 {
+		return nil, &errs.Detail{
+			Err:    ErrUeidMismatch,
+			Detail: "device reports ueid " + hex.EncodeToString(ueid),
 		}
 	}
-	return ueid.Value, nil
+	return ueid, nil
 }
 
 // describeSubject names a certificate for an operator reading a refusal.

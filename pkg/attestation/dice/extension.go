@@ -43,6 +43,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/hex"
+	"errors"
 	"strconv"
 	"unicode/utf8"
 
@@ -674,6 +676,51 @@ func UeidFromCertificate(cert *x509.Certificate) (*Ueid, error) {
 		return nil, err
 	}
 	return ParseUeid(value)
+}
+
+// DeviceUeid returns the device's identifier from wherever the certificate
+// states it: the tcg-dice-Ueid extension, or the ueid claim (ClaimUeid) of the
+// tcg-dice-UCCS-evidence extension. Both are DICE Attestation Architecture
+// placements of the same datum, and a device carries the one it can afford.
+//
+// A certificate that states it in both places must state the same value. Two
+// answers would make the identity depend on which a reader happened to
+// consult, so a disagreement is ErrUeidConflict and not a choice. A certificate
+// that states it in neither returns ErrUeidNotFound.
+func DeviceUeid(cert *x509.Certificate) ([]byte, error) {
+	fromExtension, err := UeidFromCertificate(cert)
+	if err != nil && !errors.Is(err, ErrUeidNotFound) {
+		return nil, err
+	}
+
+	claims, err := UccsFromCertificate(cert)
+	if err != nil && !errors.Is(err, ErrUccsEvidenceNotFound) {
+		return nil, err
+	}
+	var fromClaim []byte
+	if claims != nil {
+		fromClaim, err = claims.Ueid()
+		if err != nil && !errors.Is(err, ErrUeidNotFound) {
+			return nil, err
+		}
+	}
+
+	switch {
+	case fromExtension != nil && fromClaim != nil:
+		if !bytes.Equal(fromExtension.Value, fromClaim) {
+			return nil, &errs.Detail{
+				Err:    ErrUeidConflict,
+				Detail: "extension " + hex.EncodeToString(fromExtension.Value) + ", claim " + hex.EncodeToString(fromClaim),
+			}
+		}
+		return fromClaim, nil
+	case fromExtension != nil:
+		return fromExtension.Value, nil
+	case fromClaim != nil:
+		return fromClaim, nil
+	default:
+		return nil, ErrUeidNotFound
+	}
 }
 
 // diceEvidenceOIDs are the extensions whose presence marks a certificate as

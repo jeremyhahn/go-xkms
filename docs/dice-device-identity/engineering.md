@@ -171,3 +171,38 @@ truncation.
 
 Nothing in the suite touches the host: certificate chains are generated in
 memory.
+
+### End to end against the real firmware
+
+`pkg/acme/client/device_attest_dice_e2e_test.go` enrolls arduino-generic's
+element-tier simulator (`agsim.StartElement`: the real firmware compiled for the
+host, with a model of the ATECC608A that does real P-256) through
+`Client.DeviceAttest`, the real ACME handlers and the production
+`deviceattest01.TrustAnchorVerifier`. `dice_roots` holds a certificate for the
+simulator's DeviceID public key, as a provisioning record would; the alias
+certificate's issuer is that key.
+
+```
+make agsim                                 # build the simulators into $AGSIM_DIR
+go test -tags "codec_json" -run TestDeviceAttestDICE ./pkg/acme/client/
+```
+
+`make agsim` builds from the arduino-generic module at the version `go.mod`
+pins (`scripts/build-agsim.sh`), after checking the module hash against
+`scripts/agsim.sum` (the root arduino-generic module is not in `go.mod`, so
+`go.sum` does not cover it; bumping the dependency adds a line there); `make test`, `make race` and
+`make coverage-full` run it first. A missing binary fails the test and prints the
+command; it never skips.
+
+| Case | Outcome |
+|---|---|
+| order for the device's ueid, evidence over `DICENonce(keyAuthorization)`, CSR for the alias key | certificate issued, `permanentIdentifier` = hex ueid |
+| order for another ueid | `unauthorized` |
+| evidence over another challenge's nonce | `incorrectResponse` (`dice.ErrNonceMismatch`) |
+| `dice_roots` that do not anchor the device | `incorrectResponse` (`ErrCertificateChainInvalid`) |
+| CSR for a key other than the alias key | `badCSR` |
+
+The firmware has no command that signs a CSR, and the alias key is the DeviceID
+key, so the test signs the CSR with the simulator's published test private key.
+The simulator identity is a test identity: its private key is the SHA-256 of a
+published string, and no deployment may anchor on it.

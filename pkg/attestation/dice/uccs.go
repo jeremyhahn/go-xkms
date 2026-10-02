@@ -57,6 +57,14 @@ import (
 // verifier reading this certificate finds the nonce where it expects it.
 const ClaimEatNonce = 10
 
+// ClaimUeid is the CWT claim key of the EAT ueid, 256.
+//
+// It is how a device that cannot afford a tcg-dice-Ueid extension states its
+// identifier: the arduino-generic alias certificate is assembled on an 8-bit
+// part from a fixed template and carries the ueid here instead. The value is
+// an RFC 9711 UEID, a byte string whose first byte is the type.
+const ClaimUeid = 256
+
 // nonceMinLen is the shortest nonce this verifier will read, 8 bytes, which is
 // the lower bound EAT places on eat_nonce.
 //
@@ -184,6 +192,28 @@ type ClaimsSet struct {
 	// the value as the raw CBOR item it was encoded as. Nil when the claims
 	// set carried nothing else.
 	Other map[int64][]byte
+}
+
+// Ueid returns the device identifier the claims set carries at ClaimUeid, type
+// byte included. It returns ErrUeidNotFound when there is no such claim,
+// ErrMalformedUeid when the claim is not a byte string, and ErrEmptyUeid when
+// that byte string is empty.
+func (c *ClaimsSet) Ueid() ([]byte, error) {
+	raw, present := c.Other[ClaimUeid]
+	if !present {
+		return nil, ErrUeidNotFound
+	}
+	if len(raw) == 0 || raw[0]>>cborMajorTypeShift != cborMajorTypeByteString {
+		return nil, &errs.Detail{Err: ErrMalformedUeid, Detail: "the ueid claim is not a byte string"}
+	}
+	var ueid []byte
+	if err := uccsDecMode.Unmarshal(raw, &ueid); err != nil {
+		return nil, &errs.Joined{Lead: ErrMalformedUeid, Detail: "the ueid claim could not be decoded", Cause: err}
+	}
+	if len(ueid) == 0 {
+		return nil, ErrEmptyUeid
+	}
+	return ueid, nil
 }
 
 // ParseUccsEvidence decodes a tcg-dice-UCCS-evidence extension value.

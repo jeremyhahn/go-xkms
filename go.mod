@@ -33,7 +33,7 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/hashicorp/vault/api v1.23.0
-	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha
+	github.com/jeremyhahn/arduino-generic/sdk/go v0.7.0-alpha
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-enclave v0.6.1-alpha
 	github.com/jeremyhahn/go-frost v0.3.0-alpha

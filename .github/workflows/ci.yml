@@ -899,6 +899,15 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
+      # pkg/acme/client's device-attest-01 DICE test enrolls the REAL
+      # arduino-generic firmware, compiled for the host (go-xkms#737). The
+      # simulators come from the arduino-generic module at the version go.mod
+      # pins; a missing binary FAILS that test, so this job builds them.
+      - name: Build the arduino-generic simulators
+        env:
+          AGSIM_DIR: ${{ github.workspace }}/build/agsim
+        run: make agsim
+
       - name: Determine changed packages
         id: pkgs
         env:
@@ -917,6 +926,7 @@ jobs:
         if: steps.pkgs.outputs.packages != ''
         env:
           CGO_ENABLED: 1
+          AGSIM_DIR: ${{ github.workspace }}/build/agsim
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
           PACKAGES: ${{ steps.pkgs.outputs.packages }}
         # -p 2: go test runs up to GOMAXPROCS test binaries at once, and under
@@ -1673,6 +1683,15 @@ jobs:
         env:
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
 
+      # pkg/acme/client's device-attest-01 DICE test enrolls the REAL
+      # arduino-generic firmware, compiled for the host (go-xkms#737). The
+      # simulators come from the arduino-generic module at the version go.mod
+      # pins; a missing binary FAILS that test, so this job builds them.
+      - name: Build the arduino-generic simulators
+        env:
+          AGSIM_DIR: ${{ github.workspace }}/build/agsim
+        run: make agsim
+
       # -timeout 30m, not the 10m default. The default is a PER-PACKAGE limit,
       # and pkg/pkcs11/module exceeds it on a busy runner: the `pkcs11` tag
       # here (and nowhere else in this file) enables the soft-token suite —
@@ -1690,6 +1709,7 @@ jobs:
       - name: Run tests with race detector (all backends including FROST)
         env:
           CGO_ENABLED: 1
+          AGSIM_DIR: ${{ github.workspace }}/build/agsim
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
         # -p 2: go test runs up to GOMAXPROCS test binaries at once, and under
         # -race the password-vault packages (pkg/api/mcp, pkg/api/rest) each

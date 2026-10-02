@@ -14,6 +14,7 @@
 package deviceattest01
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -134,6 +135,19 @@ func TestDeviceIdentityFromCertificate(t *testing.T) {
 	ueid, err := dice.CreateUeidExtension([]byte{0x01, 0xAB})
 	require.NoError(t, err)
 
+	// The arduino-generic profile: no tcg-dice-Ueid extension, the ueid is
+	// CWT claim 256 (a byte string, type byte first) in the UCCS evidence.
+	claimOnly, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{
+		Nonce: bytes.Repeat([]byte{0x11}, 32),
+		Other: map[int64][]byte{dice.ClaimUeid: {0x42, 0x01, 0xAB}},
+	})
+	require.NoError(t, err)
+	conflicting, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{
+		Nonce: bytes.Repeat([]byte{0x11}, 32),
+		Other: map[int64][]byte{dice.ClaimUeid: {0x42, 0x01, 0xCD}},
+	})
+	require.NoError(t, err)
+
 	tests := []struct {
 		name    string
 		format  AttestationFormat
@@ -141,6 +155,8 @@ func TestDeviceIdentityFromCertificate(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
+		{name: "dice reads the ueid claim when there is no extension", format: FormatDICE, leaf: selfSignedTestCert(t, []pkix.Extension{claimOnly}), want: "01ab"},
+		{name: "dice refuses an extension and a claim that disagree", format: FormatDICE, leaf: selfSignedTestCert(t, []pkix.Extension{ueid, conflicting}), wantErr: true},
 		{name: "tpm reads the permanentIdentifier", format: FormatTPM, leaf: selfSignedTestCert(t, []pkix.Extension{permanentIdentifierExtension(t, "aik-7")}), want: "aik-7"},
 		{name: "dice reads the Ueid as hex", format: FormatDICE, leaf: selfSignedTestCert(t, []pkix.Extension{ueid}), want: "01ab"},
 		{name: "tpm without a permanentIdentifier", format: FormatTPM, leaf: selfSignedTestCert(t, nil), wantErr: true},

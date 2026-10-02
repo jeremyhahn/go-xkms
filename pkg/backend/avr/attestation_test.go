@@ -27,12 +27,14 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
 
 	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -42,6 +44,63 @@ import (
 )
 
 // ------------------------------------------------- the bytes a real device emits
+
+// The attested key and the identity of a real device's certificate, judged by
+// the same gate the device-attest-01 carrier applies at finalization
+// (attestation.VerifyInvariants over the alias leaf) and the same identity
+// reader its handler uses. Transport-independent on purpose: it holds whether
+// the evidence arrives by a challenge dial or in a challenge response.
+//
+// The vector's private key is not published and the element never releases
+// one, so there is no CSR a test could sign with it. The gate compares the
+// CSR's SubjectPublicKeyInfo, so the SPKI is what is exercised; the CSR
+// self-signature check in BindCSRKey is covered by binding_test.go.
+func TestRealDeviceCertificateBindsOnlyItsOwnKeyAndNamesItsDevice(t *testing.T) {
+	der, err := hex.DecodeString(vecAliasCertHex)
+	require.NoError(t, err)
+	nonce, err := hex.DecodeString(vecAliasCertNonceHex)
+	require.NoError(t, err)
+	leaf, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+
+	evidence := func(spki []byte, challenge []byte) *attestation.Evidence {
+		return &attestation.Evidence{
+			Format:            attestation.FormatDICE,
+			Leaf:              leaf,
+			SubjectSPKI:       spki,
+			ExpectedChallenge: challenge,
+		}
+	}
+
+	t.Run("binds the attested key", func(t *testing.T) {
+		require.NoError(t, attestation.VerifyInvariants(evidence(leaf.RawSubjectPublicKeyInfo, nonce)))
+	})
+
+	t.Run("refuses a different key", func(t *testing.T) {
+		other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		spki, err := x509.MarshalPKIXPublicKey(&other.PublicKey)
+		require.NoError(t, err)
+
+		err = attestation.VerifyInvariants(evidence(spki, nonce))
+		assert.ErrorIs(t, err, attestation.ErrKeyNotBound)
+	})
+
+	t.Run("refuses another challenge", func(t *testing.T) {
+		stale := bytes.Clone(nonce)
+		stale[0] ^= 0xFF
+		err := attestation.VerifyInvariants(evidence(leaf.RawSubjectPublicKeyInfo, stale))
+		assert.ErrorIs(t, err, attestation.ErrStaleEvidence)
+	})
+
+	t.Run("names the device by its ueid", func(t *testing.T) {
+		identity, err := deviceattest01.DeviceIdentityFromCertificate(deviceattest01.FormatDICE, leaf)
+		require.NoError(t, err)
+		assert.Equal(t, vecAliasCertUeidHex, identity)
+		assert.NotEqual(t, "01"+strings.Repeat("00", 16), identity,
+			"an order for another device's identifier must not match")
+	})
+}
 
 // The one test that proves this package verifies the firmware rather than its
 // own idea of the firmware: the certificate is the frozen vector
@@ -76,6 +135,14 @@ func TestAttestKeyVerifiesTheCertificateARealDeviceEmits(t *testing.T) {
 	require.True(t, ok, "the claims set carries a ueid at CWT key 256")
 	assert.Contains(t, hex.EncodeToString(ueid), vecAliasCertUeidHex)
 	assert.Contains(t, att.Claims.Other, int64(273), "and a measurement at key 273")
+
+	// The identity is that same claim, read by dice.DeviceUeid, because this
+	// certificate has no tcg-dice-Ueid extension to read it from. Before that
+	// reader existed the device-attest-01 identity gate refused this device.
+	assert.Equal(t, vecAliasCertUeidHex, hex.EncodeToString(att.Ueid))
+	identity, err := deviceattest01.DeviceIdentityFromCertificate(deviceattest01.FormatDICE, att.Certificate)
+	require.NoError(t, err)
+	assert.Equal(t, vecAliasCertUeidHex, identity)
 }
 
 // TestCheckAliasCertificate_UnknownCryptoTierFailsSafeAndLogs proves that

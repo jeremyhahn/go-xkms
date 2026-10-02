@@ -87,6 +87,16 @@ var DICETcbInfoFromCertificate = dice.TcbInfoFromCertificate
 // DICEUeidFromCertificate decodes a leaf's device identifier.
 var DICEUeidFromCertificate = dice.UeidFromCertificate
 
+// DICEDeviceUeid returns a leaf's device identifier from either place a DICE
+// device states it: the tcg-dice-Ueid extension or the ueid claim of the
+// UCCS evidence. Prefer it to DICEUeidFromCertificate, which reads only the
+// extension and so finds nothing on a device, like the arduino-generic AVR
+// profile, that uses the claim.
+var DICEDeviceUeid = dice.DeviceUeid
+
+// DICEClaimUeid is the CWT claim key (256) of the ueid in a claims set.
+const DICEClaimUeid = dice.ClaimUeid
+
 // DICEHasExtensions reports whether a certificate carries any DICE evidence
 // extension at all, for a caller deciding which verifier to route to.
 var DICEHasExtensions = dice.HasExtensions
@@ -212,6 +222,11 @@ var (
 
 	// ErrDICEUeidMismatch reports a device other than the one expected.
 	ErrDICEUeidMismatch = dice.ErrUeidMismatch
+
+	// ErrDICEUeidConflict reports a leaf that states its device identifier in
+	// both the tcg-dice-Ueid extension and the UCCS ueid claim, with two
+	// different values.
+	ErrDICEUeidConflict = dice.ErrUeidConflict
 
 	// ErrDICEOperationalStateNotPermitted reports a device declaring
 	// notConfigured, notSecure, recovery or debug where policy allows none.

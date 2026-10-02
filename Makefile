@@ -405,6 +405,10 @@ TEST_FLAGS_FIPS := -v -race -timeout 30m -tags="$(TEST_TAGS) fips"
 TEST_TAGS_NOFROST := $(filter-out frost,$(TEST_TAGS))
 TEST_FLAGS_NOFROST := -v -race -timeout 30m -tags="$(TEST_TAGS_NOFROST)"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
+# Where `make agsim` puts the arduino-generic host simulators. Exported so every
+# go test the Makefile runs finds them (sdk/go/agsim reads AGSIM_DIR).
+AGSIM_DIR ?= $(CURDIR)/build/agsim
+export AGSIM_DIR
 COVERAGE_HTML := $(COVERAGE_DIR)/coverage.html
 COVERAGE_THRESHOLD := 80
 # Integration test tags include both backend tags and integration tag
@@ -1006,7 +1010,7 @@ test-scripts:
 #   pkcs11test, /proto        production code; excluded from the per-package
 #                              threshold report in scripts/check-coverage.sh
 #   yubikey, smartcardhsm   - tests that need physical hardware to exercise
-test-go: check-insecure-tls
+test-go: check-insecure-tls agsim
 	@echo "$(CYAN)$(BOLD)→ Running unit tests...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
 	@bash -c 'set -o pipefail; \
@@ -1050,7 +1054,7 @@ test-all: test test-importexport
 
 .PHONY: race
 ## race: Run tests with race detector on all backends (matches GitHub Actions)
-race:
+race: agsim
 	@echo "$(CYAN)$(BOLD)→ Running race detector tests with all backends...$(RESET)"
 	@CGO_ENABLED=1 $(GO) test -race -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./... || \
 		(echo "$(RED)$(BOLD)✗ Race detector found issues$(RESET)" && exit 1)
@@ -1062,7 +1066,7 @@ coverage: test
 
 .PHONY: coverage-full
 ## coverage-full: Generate comprehensive coverage report (unit + integration tests)
-coverage-full:
+coverage-full: agsim
 	@echo "$(CYAN)$(BOLD)→ Running comprehensive coverage tests (unit + integration)...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "$(CYAN)→ Step 1: Running unit tests with coverage...$(RESET)"
@@ -3748,6 +3752,15 @@ fmt-check:
 		exit 1; \
 	fi
 	@echo "$(GREEN)✓ Code is properly formatted$(RESET)"
+
+.PHONY: agsim
+## agsim: Build the arduino-generic host simulators the DICE end-to-end test enrolls (go-xkms#737)
+## The pkg/acme/client device-attest-01 test runs the real firmware, compiled for
+## the host, through the ACME server. The source is the arduino-generic module at
+## the version go.mod pins; the binaries land in AGSIM_DIR, which the test's
+## launcher (sdk/go/agsim) reads. A missing binary FAILS that test, never skips.
+agsim:
+	@bash scripts/build-agsim.sh "$(AGSIM_DIR)"
 
 .PHONY: check-insecure-tls
 ## check-insecure-tls: Enforce insecure-TLS/transport allowlist (fails on unapproved use)

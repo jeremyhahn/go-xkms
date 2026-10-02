@@ -48,6 +48,24 @@ func TestDICEAliasesReachTheCanonicalImplementation(t *testing.T) {
 	assert.Equal(t, nonce, claims.Nonce)
 }
 
+// A caller outside this repository must be able to read the identity of a
+// device whose ueid is a claim, which is how the AVR profile states it.
+func TestDICEDeviceUeidIsReachableFromTheSDK(t *testing.T) {
+	claim := []byte{0x42, 0x01, 0xAB}
+	require.EqualValues(t, dice.ClaimUeid, xkms.DICEClaimUeid)
+
+	claims := &xkms.DICEClaimsSet{
+		Nonce: make([]byte, 32),
+		Other: map[int64][]byte{xkms.DICEClaimUeid: claim},
+	}
+	ueid, err := claims.Ueid()
+	require.NoError(t, err)
+	assert.Equal(t, []byte{0x01, 0xAB}, ueid)
+
+	_, err = xkms.DICEDeviceUeid(nil)
+	assert.ErrorIs(t, err, dice.ErrNilCertificate)
+}
+
 // A caller reaching the SDK must be able to answer "did this device echo my
 // challenge" without importing pkg/. That is the whole reason this file exists:
 // go-trusted-platform's layer guard refuses a direct go-xkms/pkg import, so an
@@ -86,6 +104,7 @@ func TestDICEErrorsAreTheCanonicalSentinels(t *testing.T) {
 		{"tcb info not found", xkms.ErrDICETcbInfoNotFound, dice.ErrTcbInfoNotFound},
 		{"empty chain", xkms.ErrDICEEmptyChain, dice.ErrEmptyChain},
 		{"nil verify options", xkms.ErrDICENilVerifyOptions, dice.ErrNilVerifyOptions},
+		{"ueid conflict", xkms.ErrDICEUeidConflict, dice.ErrUeidConflict},
 	}
 
 	for _, pair := range pairs {

@@ -77,11 +77,10 @@ type Attestation struct {
 	// CBOR the device encoded, so a caller reads exactly what the device said.
 	Claims *dice.ClaimsSet
 
-	// Ueid is the device's unique identifier when the leaf carried a
-	// tcg-dice-Ueid extension, and nil otherwise. The AVR profile carries its
-	// identifier as CWT claim 256 inside the claims set instead, so this is
-	// nil for that device and Claims.Other[256] is where to look -- stated
-	// here because a nil Ueid is a profile fact, not a missing identity.
+	// Ueid is the device's unique identifier, type byte included, read by
+	// dice.DeviceUeid. The AVR profile states it as CWT claim 256 inside the
+	// evidence extension rather than as a tcg-dice-Ueid extension; Claims.Other
+	// carries the same claim as the raw CBOR the device encoded.
 	Ueid []byte
 
 	// Nonce is the challenge this host issued, echoed and verified.

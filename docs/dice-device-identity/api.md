@@ -111,7 +111,7 @@ through `VerifiedAttestation.BindCSRKey`.
 | Default validity | 3650 days | A manufacturing identity outlives every credential derived from it |
 | `tcg-dice-TcbInfo` | required, re-encoded | Refuses `ErrDICEEvidenceMissing` without it |
 | `fwids` inside it | at least one | Refuses `ErrDICEEvidenceInvalid` wrapping `dice.ErrNoMeasurement`. Every field of `DiceTcbInfo` is optional, so `30 00` parses: requiring the extension is not requiring the measurement |
-| `tcg-dice-Ueid` | optional, re-encoded | The profile does not require one |
+| `tcg-dice-Ueid` | optional, re-encoded | The profile does not require one. A device may state its UEID as UCCS claim 256 instead; `dice.DeviceUeid` reads either, and refuses a leaf whose two statements differ |
 
 Evidence is decoded and re-encoded rather than copied, so the issued
 certificate carries canonical DER whatever the device sent, and evidence the CA

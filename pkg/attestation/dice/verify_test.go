@@ -65,6 +65,7 @@ type chainConfig struct {
 	nonce       []byte
 	rawUccs     []byte
 	omitUccs    bool
+	claimsOther map[int64][]byte
 	ueid        []byte
 	omitUeid    bool
 	leafKey     crypto.Signer
@@ -108,6 +109,22 @@ func withRawUccs(value []byte) chainOption {
 // is a device that answered without the challenge.
 func withoutUccs() chainOption {
 	return func(c *chainConfig) { c.omitUccs = true }
+}
+
+// withClaim adds a claim, given as the raw CBOR item, beside the nonce in the
+// leaf's claims set.
+func withClaim(key int64, cborItem []byte) chainOption {
+	return func(c *chainConfig) {
+		if c.claimsOther == nil {
+			c.claimsOther = map[int64][]byte{}
+		}
+		c.claimsOther[key] = cborItem
+	}
+}
+
+// ueidClaim is value as the CBOR byte string a ueid claim carries.
+func ueidClaim(value []byte) []byte {
+	return append([]byte{0x40 | byte(len(value))}, value...)
 }
 
 // withoutUeid leaves the leaf with no tcg-dice-Ueid extension.
@@ -274,7 +291,7 @@ func newTestChain(t *testing.T, options ...chainOption) *testChain {
 			Id: OIDUccsEvidence, Critical: true, Value: config.rawUccs,
 		})
 	case !config.omitUccs:
-		extension, err := CreateUccsEvidenceExtension(&ClaimsSet{Nonce: config.nonce})
+		extension, err := CreateUccsEvidenceExtension(&ClaimsSet{Nonce: config.nonce, Other: config.claimsOther})
 		require.NoError(t, err)
 		leafTemplate.ExtraExtensions = append(leafTemplate.ExtraExtensions, extension)
 	}
@@ -761,6 +778,26 @@ func TestVerifyUeidHandling(t *testing.T) {
 		evidence, err := Verify(chain.certs(), defaultOptions(chain))
 		require.NoError(t, err)
 		assert.Nil(t, evidence.Ueid)
+	})
+
+	t.Run("reports the ueid a leaf states as a claim", func(t *testing.T) {
+		claimUeid := append([]byte{0x01}, testUeid...)
+		chain := newTestChain(t, withoutUeid(), withClaim(ClaimUeid, ueidClaim(claimUeid)))
+
+		options := defaultOptions(chain)
+		options.ExpectedUeid = claimUeid
+
+		evidence, err := Verify(chain.certs(), options)
+		require.NoError(t, err)
+		assert.Equal(t, claimUeid, evidence.Ueid)
+	})
+
+	t.Run("refuses a leaf whose extension and claim disagree", func(t *testing.T) {
+		chain := newTestChain(t, withClaim(ClaimUeid, ueidClaim([]byte{1, 2, 3})))
+
+		evidence, err := Verify(chain.certs(), defaultOptions(chain))
+		require.ErrorIs(t, err, ErrUeidConflict)
+		assert.Nil(t, evidence)
 	})
 
 	t.Run("refuses a missing ueid when one is required", func(t *testing.T) {
