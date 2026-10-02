@@ -355,7 +355,7 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 	// unobservable login method, so the account's permitted-method policy
 	// is enforced here, by the issuer, for the method that authenticated:
 	// the client certificate (mTLS).
-	if err := auth.CheckAuthMethod(user.Username, user.TenantID, user.AuthMethods, qrdbsdk.MethodMTLS); err != nil {
+	if err := qrdbsdk.CheckAuthMethod(&qrdbsdk.User{Username: user.Username, TenantID: user.TenantID, AuthMethods: user.AuthMethods}, qrdbsdk.MethodMTLS); err != nil {
 		if s.auditAuthDenyOrFail(w, r, user.Username, "auth.login.piv", "method not permitted") {
 			return
 		}

@@ -1,6 +1,6 @@
 # Attested Peer — Using it
 
-> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-16
+> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 Two parties: the **quoter** (the peer that must prove its state) and the
 **verifier** (the side that decides). Both import `pkg/attestation/peer`
@@ -68,7 +68,43 @@ if !verdict.Passed {
 admit()
 ```
 
+## Gating a go-qrdb node on attested peers
+
+A host that embeds a go-qrdb node composes the whole gate from the SDK
+(`api.md` has the full listing):
+
+1. Build a `PeerMemoryEvidenceStore`, a `PeerEvidenceCollector` and a
+   `PeerGateVerifier` over the same store. Give the verifier the attestation
+   key anchors and the PCR baseline you enrolled, and, if your peers' TLS
+   certificates are IDevIDs, a `DeviceIdentity` policy so a quote from another
+   TPM is refused.
+2. Wrap the verifier in `qrdbsdk.NewPeerAttestationGate` naming the
+   permissions that need an attested caller and the maximum evidence age, and
+   pass it to the node with `node.WithPeerAttestationGate`.
+3. Mount two routes on an mTLS listener your peers reach, passing the
+   request's `*tls.ConnectionState`: one calls `collector.Challenge`, the
+   other decodes a `PeerEvidence` and calls `collector.Submit`.
+4. On each peer, on a schedule shorter than the maximum evidence age: request
+   a challenge, call `PeerQuoteEvidence` with the client side of **that same
+   connection**, and submit the result on it. An HTTP client pinned to one
+   connection (`MaxConnsPerHost: 1`) does this; the response's `TLS` field is
+   the state to quote with.
+
+What the peer then sees on a gated call:
+
+| Situation | Result |
+|---|---|
+| Never submitted, or evidence withdrawn (`store.Delete`) | refused |
+| Latest submission valid and younger than the maximum age | admitted |
+| Latest submission older than the maximum age | refused until the peer submits again |
+| Latest submission forged, bound to another session, off the baseline, or from another TPM | refused, audited as a security event |
+
 ## Consulting cached evidence on a request path
+
+`pkg/attestation/peergate` does all of this for a go-qrdb node, and keeps the
+channel binding of the session the evidence arrived on so the cached quote is
+still verified as bound. Use the primitive directly only when you build a gate
+of your own.
 
 A request path must never trigger a quote. Verify the cached evidence with the
 age bound the cache policy allows, and without a channel binding (the cached

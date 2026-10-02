@@ -81,12 +81,11 @@ xkmsctl audit query --outcome deny \
 
 ### Whose events you see
 
-A tenant admin or auditor sees only their own tenant's events. `--tenant` with
-another tenant's ID, or no `--tenant` at all, still returns only your own
-tenant's events, and you get no error. Only a platform (system-tenant) identity
-holding `audit:read:cross` sees every tenant, or picks one with `--tenant`. The
-built-in Admin role has that permission and Auditor does not. A system-tenant
-Auditor therefore sees only the `system` tenant's events.
+Everyone sees only their own tenant's events, a system-tenant admin or auditor
+included. `--tenant` with another tenant's ID, or no `--tenant` at all, still
+returns only your own tenant's events, and you get no error. A system-tenant
+caller also sees the platform events that carry no tenant. There is no
+permission that reads another tenant's audit trail.
 
 ## Paging
 

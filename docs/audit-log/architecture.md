@@ -102,9 +102,11 @@ unbounded.
   `map[string]string` that ends up in durable, queryable, exportable storage.
   Never put key material, PINs, passphrases, share bytes or tokens in it.
 - **Query is permission-gated** (`audit:read`) and **tenant-confined in the
-  service layer**. A tenant caller always reads its own tenant, whatever filter
-  it sends. Only a system-tenant caller holding `audit:read:cross` reads across
-  tenants (`pkg/xkms/servicer_audit.go:119`). The transports stay thin: the
+  service layer**. Every caller reads only its own tenant, whatever filter it
+  sends -- the system tenant included. This is go-qrdb's audit contract: there
+  is no cross-tenant audit read (go-qrdb removed `audit:read:cross`), and the
+  embedded node confines the query again against the identity it carries
+  (`pkg/xkms/servicer_audit.go`, `auditTenantFilter`). The transports stay thin: the
   route gate cannot bound the tenant because `audit:read` is self-scope, so the
   service makes that decision once, for REST, gRPC/Unix, QUIC and MCP alike. An
   audit log readable by everyone, or by every tenant admin, is an

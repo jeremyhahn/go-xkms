@@ -1,6 +1,6 @@
 # Init Ceremony — API
 
-> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1226)
+> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-10-02 (#1226)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -107,8 +107,11 @@ types (aliased in `pkg/init/ceremony.go`): `ClaimCertBeginRequest`/`Response`,
 never retrievable again.** There is no endpoint that returns an already-claimed
 share, and there must not be.
 
-The SO/bootstrap certificate carries `tenant=system` and, when a SPIFFE trust
-domain is configured, a `spiffe://<td>/tenant/system/user/<CN>` SAN.
+The SO/bootstrap certificate the CA issues carries `tenant=system` and, when a
+SPIFFE trust domain is configured, a `spiffe://<td>/tenant/system/user/<CN>`
+SAN. A certificate signed from a CSR (officer claim, `SignCSRInit`) is
+`CN=<username>, OU=system, OU=<role>` with no SAN: the CSR's subject and names
+are never copied, only its key.
 
 ## Status and error mapping
 

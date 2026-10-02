@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
+	"github.com/jeremyhahn/go-xkms/pkg/correlation"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
@@ -606,7 +607,7 @@ func (s *Server) setupRouter() *chi.Mux {
 
 	// Apply global middleware
 	r.Use(s.RecoveryMiddleware())
-	r.Use(s.CorrelationMiddleware()) // Add correlation ID before logging
+	r.Use(correlation.Middleware()) // Add correlation ID before logging
 	r.Use(s.LoggingMiddleware())
 	r.Use(metrics.HTTPMiddleware) // Metrics middleware
 	r.Use(NewCORSMiddleware(s.cors))

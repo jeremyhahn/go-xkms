@@ -73,6 +73,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -1796,6 +1797,16 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 		notAfter = notBefore.Add(lifetime)
 	}
 
+	if opts != nil && opts.RawSubject != nil {
+		return ca.signRawSubjectCSR(ctx, csr, opts, request, profile, &signContext{
+			signer:       signer,
+			issuingCert:  issuingCert,
+			validityDays: validityDays,
+			keyUsage:     keyUsage,
+			extKeyUsage:  extKeyUsage,
+		}, serial, notBefore, notAfter)
+	}
+
 	if isCallerSANProfile(profile) {
 		return ca.signCallerNamedCSR(ctx, csr, opts, request, &signContext{
 			signer:       signer,
@@ -1870,6 +1881,44 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 		keyUsage:     keyUsage,
 		extKeyUsage:  extKeyUsage,
 	})
+}
+
+// signRawSubjectCSR signs a CSR under a caller-chosen raw subject: the
+// certificate carries exactly opts.RawSubject and no subject alternative
+// name, and the CSR contributes only its public key.
+func (ca *CA) signRawSubjectCSR(
+	ctx context.Context,
+	csr *x509.CertificateRequest,
+	opts *SignOptions,
+	request *CertificateRequest,
+	profile ProfileProvider,
+	sc *signContext,
+	serial *big.Int,
+	notBefore, notAfter time.Time,
+) (*x509.Certificate, error) {
+	if opts.Subject != nil || opts.SANS != nil || len(opts.OtherNames) > 0 || opts.SPIFFETrustDomain != "" ||
+		opts.SPIFFEKind != "" || opts.SPIFFEName != "" || isCallerSANProfile(profile) {
+		return nil, ErrRawSubjectWithNames
+	}
+	var rdns pkix.RDNSequence
+	rest, err := asn1.Unmarshal(opts.RawSubject, &rdns)
+	if err != nil || len(rest) != 0 || len(rdns) == 0 {
+		return nil, ErrInvalidRawSubject
+	}
+	var subject pkix.Name
+	subject.FillFromRDNSequence(&rdns)
+
+	spec := &CertificateSpec{
+		Serial:             serial,
+		Subject:            subject,
+		RawSubject:         bytes.Clone(opts.RawSubject),
+		NotBefore:          notBefore,
+		NotAfter:           notAfter,
+		PublicKey:          csr.PublicKey,
+		SignatureAlgorithm: determineSignatureAlgorithm(sc.signer.Public()),
+		Profile:            profile,
+	}
+	return ca.issueSignedSpec(ctx, spec, csr, opts, request, sc)
 }
 
 // issueSignedSpec finishes a CSR-signed issuance: it attaches the issuance

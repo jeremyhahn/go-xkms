@@ -219,6 +219,10 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 			},
 		},
 		IAK: &tpm2lib.IAKConfig{
+			// Provisioning names the IAK certificate's subject from CN (or a
+			// device model and serial); without one it refuses to create the
+			// IAK, and every attestation test here fails before it starts.
+			CN:           "integration-test-iak",
 			Handle:       0x81010002,
 			Hash:         "SHA-256",
 			KeyAlgorithm: x509.RSA.String(),

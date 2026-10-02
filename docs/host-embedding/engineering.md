@@ -1,6 +1,6 @@
 # Host Embedding — Engineering
 
-> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## Exported surface
 
@@ -32,6 +32,24 @@
 `(*Module).HostStores() *compose.Stores` (SDK: `ServiceModuleHostStores`)
 returns the composition after first use; `Disabled` holds the typed reasons
 (`ServiceModuleFeatureDisabledError`, `ServiceModuleFeatureBuildError`).
+
+### Host request chain (`sdk/go`)
+
+A host that embeds a go-qrdb node and mounts xkms surfaces on it inherits
+qrdb's authentication and tenant chain, and adds these xkms pieces around it
+instead of writing its own:
+
+| SDK name | Canonical symbol | Role |
+|---|---|---|
+| `NewQRDBBearerAuthenticator(AuthenticatorSource)`, `QRDBBearerAuthenticator`, `AuthenticatorSource`, `ErrBearerNotAccepted` | `pkg/auth` (`qrdb_bearer.go`) | Register with the node's `WithAuthenticators` so the node's transports accept the host's session tokens. Declines a request with no bearer token (`qrdbsdk.ErrUnauthenticated`, the next authenticator decides); refuses one when its source holds no authenticator or the no-op one; reports its login method as unobservable, because the token's issuer enforced the account's permitted-method policy at login. xkmsd registers it over its `LiveAuthenticator` (`pkg/server/qrdb_node.go`). |
+| `Authenticator`, `LiveAuthenticator`, `NewLiveAuthenticator` | `pkg/auth` | The source a bearer bridge reads, once per request; a reload applies to the next request. A host with a fixed authenticator wraps it in `NewLiveAuthenticator`. |
+| `NewIPRateLimiter`, `IPRateLimiter`, `IPRateLimitConfig`, `IPRateLimitCapacityError`, `IPRateLimitDefaultMaxClients`, `IPRateLimitMiddleware`, `IPRateLimitUnaryServerInterceptor`, `IPRateLimitStreamServerInterceptor`, `IPRateLimitKey` | `pkg/ratelimit` | The pre-authentication per-client limiter: HTTP 429 / gRPC `ResourceExhausted`, a bounded client table that fails closed when full, IPv6 clients bucketed on their /64 on every transport. |
+| `ParseTrustedProxies`, `TrustedProxies`, `InvalidTrustedProxyError` | `pkg/ratelimit` (`clientip.go`) | The client IP: `X-Forwarded-For` is believed only from a configured proxy network. |
+| `CorrelationMiddleware`, `CorrelationUnaryServerInterceptor`, `CorrelationStreamServerInterceptor`, `WithCorrelationID`, `CorrelationIDFromContext`, `NewCorrelationID`, `CorrelationIDOrNew`, `Correlation*Header`/`Key` constants | `pkg/correlation` | One correlation ID per request, read from `X-Correlation-ID`/`X-Request-ID` (or the gRPC metadata keys), generated when absent, echoed to the client. The same middleware xkmsd's REST router and gRPC server install. |
+| `ScopePrincipal`, `ScopeTarget`, `ScopePrincipalOf`, … | `pkg/scope` | The object ownership rule; see [multi-tenancy/engineering.md](../multi-tenancy/engineering.md#ownership-scopes--pkgscope). An absent identity fails closed. |
+
+The per-identity tenant-barrier gate (`pkg/api/tenantgate`) is not exported:
+tenant barriers are go-qrdb's, and that gate belongs in qrdb's middleware.
 
 ### Feature → dependency
 
@@ -87,6 +105,9 @@ returns the composition after first use; `Disabled` holds the typed reasons
 | `pkg/compose/compose_tpm_sim_test.go` | The TPM policy service composes over a simulator TPM2 backend and answers through the service |
 | `pkg/api/rest/host_stores_test.go` | `NewHostServer` mounts store surfaces exactly from `HostConfig` |
 | `sdk/go/apimodule_host_test.go` | The SDK re-exports configure the same composition |
+| `pkg/auth/qrdb_bearer_test.go` | The bearer bridge admits a token its source verifies, follows a reload, declines a request with no bearer token, and admits nothing through the no-op authenticator, no authenticator or no source |
+| `pkg/correlation/middleware_test.go`, `pkg/ratelimit/*_test.go` (`TestInterceptors_IPv6PeersShareTheirSlash64`) | The correlation middleware and interceptors; the limiter's /64 bucketing on gRPC and raw connections |
+| `sdk/go/{qrdb_bearer,ratelimit,correlation,scope}_test.go` | The SDK names are the canonical symbols and keep their behavior |
 
 Run them with the per-package targets: `make test-compose`,
 `make test-apimodule`, `make coverage-compose`.

@@ -409,6 +409,9 @@ func TestCAAdapter_CABundle(t *testing.T) {
 	assert.Contains(t, string(bundle), "CERTIFICATE")
 }
 
+// TestCAAdapter_SignCSR_Success issues a holder certificate through the real
+// CA: it names the registered holder and tenant (go-qrdb's RawSubject), not
+// the CSR's subject, and carries no subject alternative name.
 func TestCAAdapter_SignCSR_Success(t *testing.T) {
 	testCA, _, cleanup := createTestInfrastructure(t)
 	defer cleanup()
@@ -416,10 +419,30 @@ func TestCAAdapter_SignCSR_Success(t *testing.T) {
 	adapter := newCAAdapter(testCA)
 	csrPEM := makeTestCSRPEM(t)
 	cert, err := adapter.SignCSR(context.Background(), csrPEM, &qrdbsdk.SignCSROptions{
+		TenantID:     "system",
+		Username:     "officer-1",
+		Profile:      "security-officer",
 		ValidityDays: 30,
 	})
 	require.NoError(t, err)
-	assert.NotNil(t, cert)
+	assert.Equal(t, "officer-1", cert.Subject.CommonName)
+	assert.Equal(t, []string{"system", "security-officer"}, cert.Subject.OrganizationalUnit)
+	assert.Empty(t, cert.DNSNames)
+	assert.Empty(t, cert.URIs)
+}
+
+// TestCAAdapter_SignCSR_RefusesAnUnnamedHolder: no options, or options naming
+// no tenant, sign nothing.
+func TestCAAdapter_SignCSR_RefusesAnUnnamedHolder(t *testing.T) {
+	testCA, _, cleanup := createTestInfrastructure(t)
+	defer cleanup()
+
+	adapter := newCAAdapter(testCA)
+	csrPEM := makeTestCSRPEM(t)
+	_, err := adapter.SignCSR(context.Background(), csrPEM, nil)
+	require.ErrorIs(t, err, ErrNilSignOptions)
+	_, err = adapter.SignCSR(context.Background(), csrPEM, &qrdbsdk.SignCSROptions{Username: "officer-1", ValidityDays: 30})
+	require.Error(t, err)
 }
 
 func TestCAAdapter_IssueCertificate_Success(t *testing.T) {

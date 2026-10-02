@@ -94,7 +94,9 @@ func TestQRDBLogger_EmitQueryRoundTrip(t *testing.T) {
 	}
 	require.NoError(t, logger.Log(emitCtx, ev))
 
-	page, err := client.Audit().QueryAudit(ctx, qrdbtransport.AuditFilter{})
+	// go-qrdb confines an audit query to the caller's own tenant, so the
+	// event is read back as its tenant reads it.
+	page, err := client.Audit().QueryAudit(emitCtx, qrdbtransport.AuditFilter{})
 	require.NoError(t, err)
 	require.Len(t, page.Events, 1)
 
@@ -114,9 +116,9 @@ func TestQRDBLogger_EmitQueryRoundTrip(t *testing.T) {
 // TestQRDBLogger_NoIdentityNormalizesToSystemTenant proves #1134: an event
 // logged without an identity on the context (a background job, an internal
 // operation) lands in the chain tagged qrdbsdk.SystemTenantID, not "" — the
-// audit chain's match-everything filter — so a system-scoped auditor without
-// audit:read:cross (clamped to SystemTenantID, never querying with an empty
-// filter) can find it.
+// audit chain's match-everything filter — so a system-tenant auditor, whose
+// query is confined to SystemTenantID and never runs with an empty filter,
+// can find it.
 func TestQRDBLogger_NoIdentityNormalizesToSystemTenant(t *testing.T) {
 	stub := &stubAuditClient{emitted: &qrdbtransport.AuditEvent{}}
 	logger := audit.NewQRDBLogger(stub)

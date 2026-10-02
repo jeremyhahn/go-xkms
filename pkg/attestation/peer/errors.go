@@ -125,3 +125,17 @@ type FailureClassError struct {
 func (e *FailureClassError) Error() string {
 	return "peer: unknown failure class " + strconv.Quote(e.Text)
 }
+
+// DeviceMismatchError reports a device identity credential and an attestation
+// key credential that name different TPMs (VerifySameDevice). Unlike a
+// *DevIDError, nothing is missing: both credentials are well formed and they
+// disagree, which is what a relayed quote looks like.
+type DeviceMismatchError struct {
+	// Field is the TCG DevID §8.1 name that differs: "hardwareModuleName" or
+	// "permanentIdentifier".
+	Field string
+}
+
+func (e *DeviceMismatchError) Error() string {
+	return "peer: identity and attestation credentials name different TPMs: " + e.Field + " differs"
+}

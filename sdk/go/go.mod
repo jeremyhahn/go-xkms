@@ -7,8 +7,8 @@ require (
 	github.com/google/go-tpm v0.9.8
 	github.com/jeremyhahn/go-enclave v0.6.1-alpha
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
-	github.com/jeremyhahn/go-qrdb v0.25.1-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.25.1-alpha
+	github.com/jeremyhahn/go-qrdb v0.28.1-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.28.1-alpha
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
 	github.com/jeremyhahn/go-xkms v0.49.0-alpha
 	github.com/mark3labs/mcp-go v0.45.0

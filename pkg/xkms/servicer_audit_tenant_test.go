@@ -15,7 +15,6 @@ package xkms
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -30,137 +29,71 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
-// errGrantMissing is the fake RBAC client's denial.
-var errGrantMissing = errors.New("fake rbac: permission denied")
+// countingRBAC admits everything and counts how often it is asked. QueryAudit
+// must never ask: its confinement is fixed by the caller's tenant, not by a
+// grant, so no grant can widen it.
+type countingRBAC struct{ calls int }
 
-// grantTableRBAC decides from qrdb's own built-in role grant table, reached
-// through the SDK, and applies qrdb's ScopeCross rule for audit:read:cross (a
-// tenant identity never holds it). The test therefore exercises the real
-// grants — system Admin holds it, Auditor does not — rather than a fixture's.
-type grantTableRBAC struct {
-	err   error
-	calls int
+func (c *countingRBAC) Authorize(context.Context, *qrdbtransport.Identity, string, string) error {
+	c.calls++
+	return nil
 }
 
-func (g *grantTableRBAC) Authorize(_ context.Context, id *qrdbtransport.Identity, resource, action string) error {
-	g.calls++
-	if g.err != nil {
-		return g.err
-	}
-	perm := qrdbsdk.Permission(resource + ":" + action)
-	if action == auth.ActionReadCross && !qrdbsdk.IsSystemTenant(id.TenantID) {
-		return errGrantMissing
-	}
-	for _, role := range id.Roles {
-		if qrdbsdk.HasPermissionRoleGrant(role, perm) {
-			return nil
-		}
-	}
-	return errGrantMissing
-}
-
-func (g *grantTableRBAC) ListPermissions(_ context.Context, _ *qrdbtransport.Identity) ([]qrdbtransport.PermissionInfo, error) {
-	return nil, errGrantMissing
-}
-
-func auditServiceWithRBAC(t *testing.T, rbac qrdbtransport.RBACClient) (*XKMSService, *stubAuditClient) {
-	t.Helper()
-	stub := &stubAuditClient{page: &qrdbtransport.AuditPage{}}
-	svc := auditService(t, stub)
-	svc.SetAuthorizer(auth.NewAuthorizer(rbac))
-	return svc, stub
+func (c *countingRBAC) ListPermissions(context.Context, *qrdbtransport.Identity) ([]qrdbtransport.PermissionInfo, error) {
+	return nil, nil
 }
 
 func identityCtx(tenantID string, roles ...string) context.Context {
 	return auth.WithIdentity(context.Background(), &auth.Identity{Subject: "caller", TenantID: tenantID, Roles: roles})
 }
 
-// TestQueryAudit_TenantCallerIsClampedToItsOwnTenant is the #1115 exploit: a
-// tenant Admin asking for every tenant (empty filter) or another tenant gets
-// only its own tenant's events.
-func TestQueryAudit_TenantCallerIsClampedToItsOwnTenant(t *testing.T) {
-	for _, requested := range []string{"", "tenant-b", qrdbsdk.SystemTenantID, "tenant-a"} {
-		t.Run("requested="+requested, func(t *testing.T) {
-			rbac := &grantTableRBAC{}
-			svc, stub := auditServiceWithRBAC(t, rbac)
+// TestQueryAudit_EveryCallerIsConfinedToItsOwnTenant is go-qrdb's audit
+// contract: every caller reads only its own tenant's events, the system
+// tenant included -- the #1115 exploit (a tenant Admin asking for every
+// tenant with an empty filter) and the old system-tenant lift alike. A
+// foreign or empty request is narrowed to the caller's tenant, never "" (the
+// chain's match-everything filter), and no authorizer decision is consulted,
+// so an admitting RBAC cannot widen it either.
+func TestQueryAudit_EveryCallerIsConfinedToItsOwnTenant(t *testing.T) {
+	callers := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{"tenant admin", identityCtx("tenant-a", qrdbsdk.PermissionRoleAdmin), "tenant-a"},
+		{"system admin", identityCtx(qrdbsdk.SystemTenantID, qrdbsdk.PermissionRoleAdmin), qrdbsdk.SystemTenantID},
+		{"system auditor", identityCtx(qrdbsdk.SystemTenantID, qrdbsdk.PermissionRoleAuditor), qrdbsdk.SystemTenantID},
+		{"identity with no tenant", identityCtx(""), qrdbsdk.SystemTenantID},
+		{"no identity", context.Background(), qrdbsdk.SystemTenantID},
+	}
+	for _, caller := range callers {
+		for _, requested := range []string{"", "tenant-a", "tenant-b", qrdbsdk.SystemTenantID} {
+			t.Run(caller.name+"/requested="+requested, func(t *testing.T) {
+				stub := &stubAuditClient{page: &qrdbtransport.AuditPage{}}
+				svc := auditService(t, stub)
+				rbac := &countingRBAC{}
+				svc.SetAuthorizer(auth.NewAuthorizer(rbac))
 
-			_, err := svc.QueryAudit(identityCtx("tenant-a", qrdbsdk.PermissionRoleAdmin), &transport.AuditFilter{TenantID: requested})
+				_, err := svc.QueryAudit(caller.ctx, &transport.AuditFilter{TenantID: requested})
 
-			require.NoError(t, err)
-			assert.Equal(t, "tenant-a", stub.gotFilter.TenantID)
-			assert.Zero(t, rbac.calls, "a tenant caller's scope is fixed; the cross grant is never consulted")
-		})
+				require.NoError(t, err)
+				assert.Equal(t, caller.want, stub.gotFilter.TenantID)
+				assert.Zero(t, rbac.calls, "no grant decides an audit query's tenant")
+			})
+		}
 	}
 }
 
-// TestQueryAudit_SystemCallerWithReadCrossSeesEveryTenant proves the platform
-// Admin, which qrdb grants audit:read:cross, reads the filter as given.
-func TestQueryAudit_SystemCallerWithReadCrossSeesEveryTenant(t *testing.T) {
-	for _, requested := range []string{"", "tenant-b"} {
-		t.Run("requested="+requested, func(t *testing.T) {
-			svc, stub := auditServiceWithRBAC(t, &grantTableRBAC{})
+// TestQueryAudit_RBACDisabledStillConfines proves the confinement does not
+// depend on RBAC being on.
+func TestQueryAudit_RBACDisabledStillConfines(t *testing.T) {
+	stub := &stubAuditClient{page: &qrdbtransport.AuditPage{}}
+	svc := auditService(t, stub)
+	svc.SetAuthorizer(auth.NewAuthorizer(nil))
 
-			_, err := svc.QueryAudit(identityCtx(qrdbsdk.SystemTenantID, qrdbsdk.PermissionRoleAdmin), &transport.AuditFilter{TenantID: requested})
-
-			require.NoError(t, err)
-			assert.Equal(t, requested, stub.gotFilter.TenantID)
-		})
-	}
-}
-
-// TestQueryAudit_SystemCallerWithoutReadCrossIsClampedToSystem proves qrdb's
-// grant semantics: the built-in Auditor holds audit:read but not
-// audit:read:cross, so even in the system tenant it reads the system tenant's
-// events only — never "" (the match-everything filter).
-func TestQueryAudit_SystemCallerWithoutReadCrossIsClampedToSystem(t *testing.T) {
-	for _, requested := range []string{"", "tenant-b"} {
-		t.Run("requested="+requested, func(t *testing.T) {
-			svc, stub := auditServiceWithRBAC(t, &grantTableRBAC{})
-
-			_, err := svc.QueryAudit(identityCtx(qrdbsdk.SystemTenantID, qrdbsdk.PermissionRoleAuditor), &transport.AuditFilter{TenantID: requested})
-
-			require.NoError(t, err)
-			assert.Equal(t, qrdbsdk.SystemTenantID, stub.gotFilter.TenantID)
-		})
-	}
-}
-
-// TestQueryAudit_AuthorizerFailureNarrowsTheView proves an Authorizer error is
-// resolved to the smaller view, never the larger.
-func TestQueryAudit_AuthorizerFailureNarrowsTheView(t *testing.T) {
-	svc, stub := auditServiceWithRBAC(t, &grantTableRBAC{err: errors.New("rbac unavailable")})
-
-	_, err := svc.QueryAudit(identityCtx(qrdbsdk.SystemTenantID, qrdbsdk.PermissionRoleAdmin), &transport.AuditFilter{})
-
+	_, err := svc.QueryAudit(identityCtx(qrdbsdk.SystemTenantID), &transport.AuditFilter{TenantID: "tenant-b"})
 	require.NoError(t, err)
 	assert.Equal(t, qrdbsdk.SystemTenantID, stub.gotFilter.TenantID)
-}
-
-// TestQueryAudit_NoIdentityWithRBACEnabledIsClampedToSystem proves a query
-// that reaches the service without an identity cannot read across tenants
-// when RBAC is on.
-func TestQueryAudit_NoIdentityWithRBACEnabledIsClampedToSystem(t *testing.T) {
-	svc, stub := auditServiceWithRBAC(t, &grantTableRBAC{})
-
-	_, err := svc.QueryAudit(context.Background(), &transport.AuditFilter{TenantID: "tenant-b"})
-
-	require.NoError(t, err)
-	assert.Equal(t, qrdbsdk.SystemTenantID, stub.gotFilter.TenantID)
-}
-
-// TestQueryAudit_RBACDisabledStillClampsTenantCallers proves the clamp does not
-// depend on RBAC: with authorization off the platform scope reads as asked, as
-// every transport does, but a tenant identity is still confined.
-func TestQueryAudit_RBACDisabledStillClampsTenantCallers(t *testing.T) {
-	svc, stub := auditServiceWithRBAC(t, nil)
-
-	_, err := svc.QueryAudit(identityCtx("tenant-a"), &transport.AuditFilter{})
-	require.NoError(t, err)
-	assert.Equal(t, "tenant-a", stub.gotFilter.TenantID)
-
-	_, err = svc.QueryAudit(identityCtx(qrdbsdk.SystemTenantID), &transport.AuditFilter{TenantID: "tenant-b"})
-	require.NoError(t, err)
-	assert.Equal(t, "tenant-b", stub.gotFilter.TenantID)
 }
 
 // memoryNodeConfigForAudit returns an in-memory qrdb node config with all
@@ -185,10 +118,9 @@ func memoryNodeConfigForAudit(t *testing.T) *qrdbsdk.DaemonConfig {
 // proof: an event emitted with no identity on the context (a background job,
 // an internal operation) is stored under qrdbsdk.SystemTenantID by
 // audit.QRDBLogger, not "" (the audit chain's match-everything filter), so a
-// system-scoped caller without audit:read:cross -- which auditTenantFilter
-// clamps to SystemTenantID -- can read it back through QueryAudit. Before the
-// fix the event was stored under "" and only a caller holding
-// audit:read:cross (which queries with an empty filter) could ever see it.
+// system-tenant caller -- which auditTenantFilter confines to SystemTenantID
+// -- can read it back through QueryAudit. Before the fix the event was stored
+// under "" and no confined query could ever see it.
 func TestQueryAudit_SystemAuditorSeesIdentityLessEvent(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
@@ -213,7 +145,17 @@ func TestQueryAudit_SystemAuditorSeesIdentityLessEvent(t *testing.T) {
 		Outcome:   xkmsaudit.OutcomeAllow,
 	}))
 
-	svc, _ := auditServiceWithRBAC(t, &grantTableRBAC{})
+	// An event of tenant-a, which no system-tenant query may return.
+	tenantCtx := auth.WithIdentity(ctx, &auth.Identity{Subject: "alice", TenantID: "tenant-a"})
+	require.NoError(t, logger.Log(tenantCtx, &xkmsaudit.Event{
+		Timestamp: time.Now().UTC(),
+		Subject:   "alice",
+		Action:    "key_create",
+		Resource:  "key",
+		Outcome:   xkmsaudit.OutcomeAllow,
+	}))
+
+	svc := auditService(t, &stubAuditClient{page: &qrdbtransport.AuditPage{}})
 	svc.SetAuditClient(client.Audit())
 
 	page, err := svc.QueryAudit(
@@ -222,7 +164,14 @@ func TestQueryAudit_SystemAuditorSeesIdentityLessEvent(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Len(t, page.Events, 1)
+	require.Len(t, page.Events, 1, "the system tenant reads its own event and none of tenant-a's")
 	assert.Equal(t, qrdbsdk.SystemTenantID, page.Events[0].TenantID)
 	assert.Equal(t, "seal_auto_unseal", page.Events[0].Action)
+
+	// tenant-a reads its own event, and asking for the system tenant's is
+	// narrowed to its own.
+	page, err = svc.QueryAudit(tenantCtx, &transport.AuditFilter{TenantID: qrdbsdk.SystemTenantID})
+	require.NoError(t, err)
+	require.Len(t, page.Events, 1)
+	assert.Equal(t, "key_create", page.Events[0].Action)
 }

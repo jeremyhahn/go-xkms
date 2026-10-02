@@ -150,8 +150,8 @@ type XKMSService struct {
 
 	// authorizer is the process's single qrdb-backed Authorizer, the same one
 	// every transport gates on. The service consults it only where a decision
-	// depends on more than the transport's route permission: QueryAudit asks it
-	// whether a system-tenant caller holds audit:read:cross. Nil (or disabled)
+	// depends on more than the transport's route permission (AuthorizeCaller,
+	// for a feature's explicit permission below the gate). Nil (or disabled)
 	// means RBAC is off, and the service then honours the configured
 	// allow-all intent exactly as the transports do.
 	authorizer *auth.Authorizer

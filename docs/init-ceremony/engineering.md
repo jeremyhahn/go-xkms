@@ -1,6 +1,6 @@
 # Init Ceremony — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## Exported surface — `pkg/init`
 
@@ -31,7 +31,19 @@ about what it actually calls."* Widening it is a design change, not a
 convenience.
 
 `spiffeTrustDomain`, when non-empty, stamps
-`spiffe://<td>/tenant/system/user/<CN>` onto SO/bootstrap certificates.
+`spiffe://<td>/tenant/system/user/<CN>` onto the SO/bootstrap certificate the
+CA issues (`IssueCertificate`). It is never stamped on a CSR-signed holder
+certificate.
+
+`CAAdapter.SignCSR` implements go-qrdb's holder contract: it signs with
+`ca.SignOptions{RawSubject: opts.RawSubject(), ValidityDays, KeyUsage,
+ExtKeyUsage}` -- `CN=<holder>, OU=<scope tenant>, OU=<profile>`, no SAN, the
+CSR's key only -- and refuses nil options with `ErrNilSignOptions` (a missing
+tenant or username is go-qrdb's `CertSubjectError`). `ca.SignOptions.RawSubject`
+cannot be combined with `Subject`, `SANS`, the SPIFFE options or a
+caller-SAN profile (`ca.ErrRawSubjectWithNames`), and must be a DER
+distinguished name (`ca.ErrInvalidRawSubject`). The ACME admin plane's
+ceremony CA adapter (`pkg/acme/admin`) follows the same contract.
 
 ### The transport bridge (`adapter.go`)
 
@@ -179,7 +191,8 @@ supplied by `xkmsd init`. The go-xkms-side inputs:
 
 - **The CA** — a `CeremonyCA`, i.e. a configured `ca.TrustedCA`.
 - **`spiffeTrustDomain`** — empty disables SPIFFE SAN stamping; non-empty stamps
-  `spiffe://<td>/tenant/system/user/<CN>` on SO certificates.
+  `spiffe://<td>/tenant/system/user/<CN>` on the SO certificate the CA issues,
+  never on a CSR-signed holder certificate.
 - **`AdminEnrollmentConfig`** — which factors to enroll, relying-party identity,
   passkey device and PIN, FIDO2 handler, PIV generator, and the explicit
   `AllowSoftwarePIV` opt-in.

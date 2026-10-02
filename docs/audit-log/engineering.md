@@ -58,13 +58,14 @@ type AuditService interface {
 - **`Timestamp` is the event time**, set at the operation, not at write time.
 - **A query's tenant comes from the identity.** `QueryAudit` replaces
   `AuditFilter.TenantID` with `auditTenantFilter`'s answer
-  (`pkg/xkms/servicer_audit.go:53,119`): the caller's own tenant for a tenant
-  identity; the requested filter for a system-tenant identity the Authorizer
-  admits for `audit:read:cross`; `system` otherwise. The service reaches the
-  Authorizer through `XKMSService.SetAuthorizer` (`pkg/xkms/service.go:324`),
-  which the server wires with the transports' Authorizer
-  (`pkg/server/server.go:835`). Never let a transport pass a caller-chosen
-  tenant to the audit client directly.
+  (`pkg/xkms/servicer_audit.go`): the caller's own tenant, normalized through
+  `qrdbsdk.NormalizeTenantID`, for every caller -- the system tenant included,
+  and `system` for an absent identity or one with no tenant. No grant is
+  consulted, so no grant can widen it; go-qrdb has no cross-tenant audit
+  read. The embedded node confines the filter again
+  (`tenant.ConfineAuditFilter`) and adds the untenanted platform events for a
+  system-tenant caller. Never let a transport pass a caller-chosen tenant to
+  the audit client directly.
 - **An emitted event's tenant is normalized, never left empty.**
   `toTransportEvent` (`pkg/audit/qrdb.go:84-98`) resolves the tenant from the
   identity on the context, same as the query side, and folds it through
@@ -73,9 +74,8 @@ type AuditService interface {
   `ChainedFileLogger`) call this one function, so there is a single place the
   fold has to hold. Without it, an event emitted off a background job or any
   other identity-less path stored `""` — the query side's
-  match-everything filter — and was visible only to a caller holding
-  `audit:read:cross`; a system-scoped auditor without it, clamped to
-  `system`, never saw it (#1134). Events stored before the fix keep their
+  match-everything filter — and no confined query, a system-tenant auditor's
+  included, ever saw it (#1134). Events stored before the fix keep their
   stored tenant; there is no rewrite of the existing chain.
 - **Concurrency.** Loggers are safe for concurrent use; both backends serialise
   their writes internally.
@@ -224,14 +224,16 @@ records after N days would be worse than one that grows.
   chain integrity), `qrdb_test.go`, `severity_test.go` (write-failure policy:
   a failing sink fails a `SeveritySecurity` write and does not fail a
   `SeverityInformational` one, which instead increments the metric).
-- **Tenant confinement** — `pkg/xkms/servicer_audit_tenant_test.go` covers
-  tenant callers with empty, foreign and system filters; a system Admin with
-  `audit:read:cross`; a system Auditor without it; an Authorizer failure; no
-  identity; and RBAC disabled. It decides from qrdb's real built-in grant table
-  through the SDK. `TestQueryAudit_SystemAuditorSeesIdentityLessEvent` in the
-  same file is the #1134 round trip: it emits an event with no identity
-  through a real embedded node's `QRDBLogger` and proves a system Auditor
-  without `audit:read:cross` reads it back. `pkg/audit/qrdb_test.go`'s
+- **Tenant confinement** — `pkg/xkms/servicer_audit_tenant_test.go` covers a
+  tenant Admin, a system Admin, a system Auditor, an identity with no tenant
+  and no identity, each sending empty, own, foreign and system filters, under
+  an admitting Authorizer that is never consulted; and RBAC disabled.
+  `TestQueryAudit_SystemAuditorSeesIdentityLessEvent` in the same file is the
+  #1134 round trip through a real embedded node's `QRDBLogger`: a system
+  Auditor reads back an identity-less event and none of tenant-a's, and
+  tenant-a asking for the system tenant reads only its own.
+  `TestAudit_NoCrossTenantRead` (`pkg/auth/permissions_test.go`) pins that
+  go-qrdb registers no `audit:read:cross`. `pkg/audit/qrdb_test.go`'s
   `TestQRDBLogger_NoIdentityNormalizesToSystemTenant` and
   `TestQRDBLogger_EmptyIdentityTenantNormalizesToSystemTenant` cover the
   normalization itself. There is one transport test per surface:

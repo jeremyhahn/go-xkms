@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## Exported surface — `pkg/webauthn`
 
@@ -44,8 +44,9 @@ from the qrdb record, and `DefaultUser` starts `active` with no restriction
 (`SetLifecycle`, `SetAuthMethods`). `CheckAccountStanding(user)`
 (`account_standing.go`) returns `*AccountNotActiveError` unless
 `Lifecycle().CanAuthenticate()`, and otherwise applies
-`auth.CheckAuthMethod(…, auth.MethodWebAuthn)` — the one permitted-method
-check the mTLS authenticator also uses. The service applies it at every login
+go-qrdb's `qrdbsdk.CheckAuthMethod(…, qrdbsdk.MethodWebAuthn)` — the one
+permitted-method check the mTLS authenticator and qrdb's own middleware also
+use; a refusal is `*qrdbsdk.AuthMethodNotPermittedError`. The service applies it at every login
 begin (a refused account gets the decoy, or `ErrUserNotFound` from
 `BeginLogin`) and at `finishLoginUser` after the assertion validates (a bare
 `ErrVerificationFailed`); registration begin, add-passkey and registration

@@ -26,8 +26,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // refusedStates are the lifecycle states go-xkms#1298 names, plus the others
@@ -83,7 +81,7 @@ func TestCheckAccountStanding_Permits(t *testing.T) {
 		methods []string
 	}{
 		{name: "no policy states no restriction", methods: nil},
-		{name: "policy naming webauthn", methods: []string{"mtls", auth.MethodWebAuthn}},
+		{name: "policy naming webauthn", methods: []string{"mtls", qrdbsdk.MethodWebAuthn}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -112,9 +110,9 @@ func TestCheckAccountStanding_RefusesWithdrawnMethod(t *testing.T) {
 	user := NewDefaultUser([]byte{1}, "a@example.com", "A")
 	user.SetAuthMethods([]string{"mtls", "piv"})
 
-	var refused *auth.AuthMethodNotPermittedError
+	var refused *qrdbsdk.AuthMethodNotPermittedError
 	require.True(t, errors.As(CheckAccountStanding(user), &refused))
-	assert.Equal(t, auth.MethodWebAuthn, refused.Method)
+	assert.Equal(t, qrdbsdk.MethodWebAuthn, refused.Method)
 	assert.Equal(t, "a@example.com", refused.Username)
 }
 
@@ -198,7 +196,7 @@ func TestFinishLogin_RefusesAccountNotInGoodStanding(t *testing.T) {
 // TestFinishLogin_ActiveAccountWithWebAuthnPermitted is the control: the same
 // ceremony succeeds for an active account whose policy allows WebAuthn.
 func TestFinishLogin_ActiveAccountWithWebAuthnPermitted(t *testing.T) {
-	for _, methods := range [][]string{nil, {auth.MethodWebAuthn}} {
+	for _, methods := range [][]string{nil, {qrdbsdk.MethodWebAuthn}} {
 		f := newEnrollFixture(t, true)
 		const email = "member@example.com"
 		_, credential := f.enroll(t, email)

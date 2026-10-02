@@ -51,7 +51,7 @@ Available methods:
 
 ### REST API (HTTP/HTTPS)
 
-**Middleware**: `pkg/api/rest/middleware_correlation.go`
+**Middleware**: `correlation.Middleware` (`pkg/correlation/middleware.go`), installed by the REST router; exported to hosts as `xkms.CorrelationMiddleware`
 
 **Header Handling**:
 - Extracts correlation ID from `X-Correlation-ID` or `X-Request-ID` headers
@@ -73,7 +73,7 @@ X-Correlation-ID: my-request-123
 
 ### gRPC
 
-**Interceptor**: `pkg/api/grpc/interceptor_correlation.go`
+**Interceptors**: `correlation.UnaryServerInterceptor` and `correlation.StreamServerInterceptor` (`pkg/correlation/middleware.go`), installed by the gRPC server; exported to hosts as `xkms.CorrelationUnaryServerInterceptor` and `xkms.CorrelationStreamServerInterceptor`. A metadata key present with an empty value is treated as absent. A failure to send the response header is logged and does not fail the call
 
 **Metadata Handling**:
 - Extracts from `x-correlation-id` or `x-request-id` metadata keys

@@ -41,7 +41,7 @@ type AuditServicer interface {
 }
 
 // QueryAudit returns one page of audit events from the embedded qrdb node's
-// tamper-evident chain, confined to the tenants the caller may read (see
+// tamper-evident chain, confined to the caller's own tenant (see
 // auditTenantFilter).
 func (s *XKMSService) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
 	if s.audit == nil {
@@ -50,7 +50,7 @@ func (s *XKMSService) QueryAudit(ctx context.Context, filter *transport.AuditFil
 	if filter == nil {
 		return nil, ErrNilRequest
 	}
-	tenantID := s.auditTenantFilter(ctx, filter.TenantID)
+	tenantID := auditTenantFilter(ctx)
 
 	limit := filter.Limit
 	if limit <= 0 {
@@ -99,30 +99,22 @@ func (s *XKMSService) QueryAudit(ctx context.Context, filter *transport.AuditFil
 }
 
 // auditTenantFilter returns the tenant filter a caller's audit query runs
-// under. The transports gate the query on audit:read, which is self-scope, so
-// the requested tenant cannot be trusted as the target:
+// under: the caller's own tenant, always, whatever the request named. This is
+// go-qrdb's audit contract (tenant.ConfineAuditFilter): every caller reads
+// only its own tenant's events, the system tenant included, and there is no
+// cross-tenant read at all -- go-qrdb removed audit:read:cross.
 //
-//   - A tenant-scoped caller always reads its own tenant. A foreign tenant is
-//     replaced, and an empty one — which the audit chain reads as "every
-//     tenant" — is narrowed, to the caller's tenant.
-//   - A platform-scoped caller (auth.IsCrossTenant) reads the requested filter
-//     as given, empty meaning every tenant, only when the Authorizer admits
-//     audit:read:cross. qrdb declares that permission ScopeCross, so no
-//     tenant identity could hold it anyway.
-//   - A platform-scoped caller without it reads the system tenant only.
-//
-// Any Authorizer error is a refusal of the cross-tenant grant, as it is at
-// every transport gate; the query then runs narrowed rather than failing, so
-// the error is resolved to the smaller view, never to the larger one. The
-// clamp targets qrdbsdk.SystemTenantID, not "", because "" is the audit
-// chain's match-everything filter.
-func (s *XKMSService) auditTenantFilter(ctx context.Context, requested string) string {
+// A foreign or empty requested tenant is narrowed to the caller's, never
+// widened: "" is the audit chain's match-everything filter, so the caller's
+// tenant is normalized through qrdbsdk.NormalizeTenantID and an absent
+// identity, or one with an empty tenant, reads the system tenant. The embedded
+// node then confines the same filter again against the identity on ctx, so a
+// system-tenant caller also sees the untenanted platform events and nothing
+// of any other tenant's.
+func auditTenantFilter(ctx context.Context) string {
 	identity := auth.GetIdentity(ctx)
-	if !auth.IsCrossTenant(identity) {
-		return identity.TenantID
-	}
-	if err := s.authorizer.Authorize(ctx, identity, auth.ResourceAudit, auth.ActionReadCross); err != nil {
+	if identity == nil {
 		return qrdbsdk.SystemTenantID
 	}
-	return requested
+	return qrdbsdk.NormalizeTenantID(identity.TenantID)
 }

@@ -1,6 +1,6 @@
 # Attested Peer — Architecture
 
-> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-16
+> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## The question this answers
 
@@ -22,8 +22,10 @@ every consumer reaches the same code (go-xkms#273).
 | Verification primitive: quote → verdict | **go-xkms** (this feature) | `pkg/attestation/peer`, aliased in `sdk/go/attestation_peer.go` |
 | Device credential validation: is this certificate an IDevID/IAK? | **go-xkms** (this feature) | `VerifyIDevID`, `VerifyIAK`, `IsIDevID`, `IsIAK` |
 | Turning a TLS connection into bound evidence | **go-xkms** (this feature) | `EvidenceFromTLS`, `QualifyingDataFromTLS` |
-| Transport middleware that calls it and fails closed on every transport | go-qrdb | go-qrdb#278 |
-| Collector, cache, TTL, policy provisioning, quarantine action | go-trusted-platform | go-trusted-platform#226 |
+| The attested-caller gate: middleware that calls a verifier and fails closed on every transport | go-qrdb | `PeerAttestationGate`, `node.WithPeerAttestationGate` |
+| The verifier that gate calls, the evidence cache it reads and the collector that fills it | **go-xkms** (this feature) | `pkg/attestation/peergate`, aliased in `sdk/go/attestation_peergate.go` |
+| Pairing a device identity credential with its TPM's attestation key | **go-xkms** (this feature) | `VerifySameDevice` |
+| Mounting the collector on a transport, provisioning anchors and baselines, quarantine action | the host (go-quicbaas, go-trusted-platform) | the host composes the pieces above |
 | Producing the quote | go-xkms `pkg/tpm2` | `TPM2.Quote(pcrs, qualifyingData)` |
 
 xkms owns all TPM 2.0 attestation (`docs/00-ownership-and-sdk-boundary.md`).
@@ -207,13 +209,98 @@ about the evidence either — missing or wrong quote fields stay the verdict's
 business — so a middleware gets an error from them only when its own
 connection is unusable.
 
+## The go-qrdb gate verifier (`pkg/attestation/peergate`)
+
+go-qrdb's attested-caller gate runs after authentication and RBAC: for a gated
+permission it asks a `PeerAttestationVerifier` whether the peer on the
+connection is currently attested, and refuses on anything but a fresh, passing
+verdict about that same peer. go-qrdb owns that seam and nothing behind it.
+`pkg/attestation/peergate` is what stands behind it, so a host composes the
+gate from go-qrdb and go-xkms alone and writes no verification code.
+
+```
+peer                         host (collector mounted on its transport)        go-qrdb node
+ |  Challenge  ------------>  Collector.Challenge(state) -> nonce
+ |  quote(H(nonce||exporter(conn)))  (QuoteEvidence)
+ |  Submit(evidence) ------>  Collector.Submit(state, evidence)
+ |                              -> Record{thumbprint, evidence, exporter(conn), receipt time}
+ |                                                     EvidenceStore
+ |  gated request ---------------------------------------------------------->  authn, RBAC, gate
+ |                                                Verifier.VerifyPeer  <------  AttestedPeer{cert, thumbprint}
+ |                                                re-verify the record under the provisioned
+ |                                                policy bound to its own connection
+```
+
+**Identity is the connection, never the request.** The collector and the
+verifier both key on the canonical SPKI thumbprint of the certificate the TLS
+handshake verified (go-qrdb's `ComputeSPKIThumbprint`, the same identifier a
+certificate binding holds). A record exists only for a peer that answered a
+nonce issued to that thumbprint, over a connection authenticated as it.
+
+**Challenges are single-use and short-lived.** `Challenge` issues a 32-byte
+random nonce per peer (a new one replaces the last); `Submit` consumes it
+whether the submission is accepted or not, so a nonce is answered at most once
+and a wrong guess costs the challenge. Outstanding challenges and stored
+records are both bounded, and a full store evicts only evidence older than its
+retention window, never a current peer's.
+
+**The binding is carried, not dropped.** The quote is bound to the TLS session
+it was submitted on, and the record keeps that session's exporter value. On a
+gated request the verifier re-verifies the record under the policy *bound to
+that stored value*. This proves the TPM that signed the quote was on the far
+end of a session authenticated by this certificate, without requiring the
+gated request to arrive on the same session. A record with no binding is
+refused, so a foreign store cannot downgrade verification to an unbound one.
+
+**Verdicts are rendered from the cache, on every call.** `VerifyPeer` never
+collects. It does verify again, under the current policy and clock, so a
+baseline change, an attestation key certificate that expired, or evidence
+past the policy's own age bound takes effect on the next request. The
+verdict's `CollectedAt` is the collector's receipt time, which the gate holds
+to its own maximum age independently of the verifier. The verdict names the
+record's own thumbprint, so a store that answers with another peer's record is
+refused by the gate as a peer mismatch.
+
+**The latest evidence wins.** A submission replaces the peer's record whether
+its quote passes or not. The collector does not judge it: a peer whose state
+turned bad cannot keep presenting an older passing quote once it has submitted
+a new one, and a wrong quote is refused on the next gated request as a
+cryptographic failure, which go-qrdb audits as a security event.
+
+**Device binding closes the relay channel binding leaves open.** Channel
+binding proves the TPM-holder was on the authenticated session. It does not
+stop a host holding a valid client certificate from asking a *different*,
+healthy machine to quote over its session. When `VerifierConfig.DeviceIdentity`
+is set, the connection certificate must verify as an IDevID under that policy
+and `VerifySameDevice` must find the same TCG DevID §8.1 hardware module name
+and permanent identifier on it and on the attestation key certificate. Two
+well-formed credentials that name different TPMs are a cryptographic failure;
+a connection certificate that is not a device credential is an absence.
+
+**Failure classes carry through.** The gate's verdict uses the primitive's
+classes unchanged, with the same rule: one cryptographic failure beside any
+number of absences is cryptographic. No evidence, stale evidence and an
+unreadable credential are absences; a forged signature, a quote bound to
+another session, a measurement off the baseline and a device mismatch are
+cryptographic. The verifier returns an error, which the gate also refuses,
+only when it cannot decide at all: a peer description whose thumbprint is not
+its certificate's, a store failure, a done context.
+
+**The cache is per process by default.** `MemoryStore` serves one node. A host
+that spreads peers across nodes either routes submissions to every node or
+supplies its own `EvidenceStore`; the interface is three methods (`Put`,
+`Get`, `Delete`), and `Delete` is how a host withdraws a peer's evidence.
+
 ## What is deliberately not here
 
 - **Revocation.** The consumer's recommendation is attestation-gated
   short-lived credentials, which fail closed by expiry; a pushed denylist
   fails open. Neither changes this primitive.
-- **The collector loop, cache and TTL** (go-trusted-platform#226) and **the
-  transport middleware** (go-qrdb#278).
+- **The transport middleware.** go-qrdb's gate is the middleware on every
+  transport; this feature supplies the verifier it calls.
+- **The collector's transport.** `Collector.Challenge` and `Collector.Submit`
+  take the request's `*tls.ConnectionState`; the host mounts them on whatever
+  transport its peers reach, the same way it mounts any other route.
 - **Event-log replay.** The verdict is over PCR values; reconstructing them
   from a TCG event log is a separate capability.
 

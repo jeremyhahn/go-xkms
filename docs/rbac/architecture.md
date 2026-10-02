@@ -132,12 +132,11 @@ for every transport:
   caller's own tenant, because the module states its configured tenant
   (`pkcs11StateScope`, `pkg/xkms/servicer_pkcs11state.go:79`). See
   [`../pkcs11-provider-module/architecture.md`](../pkcs11-provider-module/architecture.md).
-- **Audit queries** clamp the filter to the caller's tenant. Only a
-  system-tenant identity the Authorizer admits for `audit:read:cross` reads
-  across tenants (`auditTenantFilter`, `pkg/xkms/servicer_audit.go:119`). That
-  is the one place the service consults the Authorizer itself: a `ScopeCross`
-  permission is the question "may this identity reach other tenants?", and the
-  answer changes what the service does rather than whether the call proceeds.
+- **Audit queries** clamp the filter to the caller's own tenant, for every
+  caller, the system tenant included (`auditTenantFilter`,
+  `pkg/xkms/servicer_audit.go`). This follows go-qrdb, which removed
+  `audit:read:cross`: no permission reads another tenant's audit trail, so the
+  service consults no grant to decide it.
   See [`../audit-log/api.md`](../audit-log/api.md) §"Tenant scoping".
 - **SSH keys, host pins and authorized_keys entries** are addressed by
   `(scope, owner, name)`, where the owner is a tenant ID or a subject. The SSH
@@ -169,7 +168,7 @@ declares the scope of every name it knows; xkms declares only the names it owns
 |---|---|---|
 | `ScopeSelf` | exercised in the identity's own tenant; a system-tenant identity reaches any tenant | `admin` (peers, status) · `audit` (read) · `backends` (list, read) · `barrier` (unseal-share) · `bootstrap`† (read) · `ceremony` (claim_cert, claim_share_begin, claim_share_complete, enroll_custodian, revoke_custodian, sign_csr, status) · `certs` (generate, list, read, revoke) · `keys` (create, decrypt, delete, derive, encrypt, export, get, import, list, rotate, sign, unwrap, update†, verify, wrap) · `passwords` (delete, generate, lock, read, unlock, write) · `pin` (read, write) · `piv` (delete, read, use, write) · `seal` (bootstrap, enable_encryption, generate_recovery, initialize_shamir, recover_with_keys, rekey, rotate_root_key, seal, status, unseal) · `ssh` (delete, read, write, service†) · `tenants` (create, delete, list, read, set_entitlements, set_quotas) · `tpm_policy`† (create, delete, get, list, revoke, rotate, update, verify) · `users` (create, delete, disable, enable, list, read, update) |
 | `ScopeTenantOnly` | exercised only in the identity's own tenant, never lifted across tenants | `tenant_barrier` (init, status, unseal) |
-| `ScopeCross` | exercised only by a system-tenant identity | `credentials` (strategy, submit) · `tenants` (set_tpm_mode†) · `audit` (read:cross, checked below the gate) |
+| `ScopeCross` | exercised only by a system-tenant identity | `credentials` (strategy, submit) · `tenants` (set_tpm_mode†) |
 
 † declared by xkms; every other entry is go-qrdb's declaration.
 

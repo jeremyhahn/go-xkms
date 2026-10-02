@@ -529,3 +529,47 @@ func TestStreamServerInterceptor(t *testing.T) {
 		t.Errorf("Expected ResourceExhausted, got %v", st.Code())
 	}
 }
+
+// TestInterceptors_IPv6PeersShareTheirSlash64 proves the gRPC interceptors and
+// AllowConn bucket an IPv6 peer on its /64, as the HTTP middleware does: a
+// client rotating through addresses in its own delegation does not get a
+// fresh bucket per address.
+func TestInterceptors_IPv6PeersShareTheirSlash64(t *testing.T) {
+	peerCtx := func(addr string) context.Context {
+		tcp, err := net.ResolveTCPAddr("tcp", addr)
+		if err != nil {
+			t.Fatalf("resolve %s: %v", addr, err)
+		}
+		return peer.NewContext(context.Background(), &peer.Peer{Addr: tcp})
+	}
+	first, rotated, other := "[2001:db8:1:2::1]:1234", "[2001:db8:1:2::ffff]:5678", "[2001:db8:1:3::1]:1234"
+
+	t.Run("unary", func(t *testing.T) {
+		limiter := New(&Config{Enabled: true, RequestsPerMinute: 60, Burst: 1})
+		defer limiter.Stop()
+		interceptor := UnaryServerInterceptor(limiter)
+		handler := func(context.Context, interface{}) (interface{}, error) { return nil, nil }
+		if _, err := interceptor(peerCtx(first), nil, nil, handler); err != nil {
+			t.Fatalf("first request refused: %v", err)
+		}
+		if _, err := interceptor(peerCtx(rotated), nil, nil, handler); status.Code(err) != codes.ResourceExhausted {
+			t.Fatalf("a rotated address in the same /64 got a fresh bucket: %v", err)
+		}
+		if _, err := interceptor(peerCtx(other), nil, nil, handler); err != nil {
+			t.Fatalf("a different /64 was limited: %v", err)
+		}
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		limiter := New(&Config{Enabled: true, RequestsPerMinute: 60, Burst: 1})
+		defer limiter.Stop()
+		interceptor := StreamServerInterceptor(limiter)
+		handler := func(interface{}, grpc.ServerStream) error { return nil }
+		if err := interceptor(nil, &mockServerStream{ctx: peerCtx(first)}, nil, handler); err != nil {
+			t.Fatalf("first stream refused: %v", err)
+		}
+		if err := interceptor(nil, &mockServerStream{ctx: peerCtx(rotated)}, nil, handler); status.Code(err) != codes.ResourceExhausted {
+			t.Fatalf("a rotated address in the same /64 got a fresh bucket: %v", err)
+		}
+	})
+}

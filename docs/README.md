@@ -18,7 +18,7 @@ the folder in the same commit that changes the behavior.
 | [acme-issuance](acme-issuance/) | ACME RFC 8555 server and client, ARI, DNS-01/HTTP-01, TPM enrollment |
 | [attestation-evidence](attestation-evidence/) | RFC 9334 evidence-level primitives: TPM2_Quote, AK and EK certificate chains, strict TCG crypto-agile event-log parsing and replay, TPM2_Certify and IAK/IDevID re-exports, and signed reference values (CoRIM), all in `sdk/go/evidence` |
 | [attestation-verifier](attestation-verifier/) | The generic, backend-agnostic `pkg/attestation` API — chain/signature verification (`Verifier`) and per-format key-binding invariants (`VerifyInvariants`) — that gates CSR issuance on hardware provenance for any format, TPM2/PIV/Android included |
-| [attested-peer](attested-peer/) | Is the other end of a connection a currently attested system? The quote→verdict primitive, IDevID/IAK credential validation, and TLS channel binding |
+| [attested-peer](attested-peer/) | Is the other end of a connection a currently attested system? The quote→verdict primitive, IDevID/IAK credential validation, TLS channel binding, and the verifier, evidence cache and collector behind go-qrdb's attested-caller gate |
 | [audit-log](audit-log/) | Tamper-evident audit records and their signing chain |
 | [auth-factors](auth-factors/) | Factor composition, adapters, and the identity/key-domain split |
 | [avr-device-backend](avr-device-backend/) | An AVR device with a secure-element identity as an xkms key provider and DICE attester, over the arduino-generic wire protocol |

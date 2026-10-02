@@ -153,9 +153,9 @@ func TestLockerRetriesHeldLease(t *testing.T) {
 	unlock()
 }
 
-// TestLockerStandaloneNode proves a standalone node -- whose qrdb refuses
-// the raft-only lease family with a typed capability error -- serializes
-// in-process, and asks qrdb only once.
+// TestLockerStandaloneNode proves a node that refuses the lease family with
+// a typed capability error (a lease-less backend) serializes in-process, and
+// asks qrdb only once.
 func TestLockerStandaloneNode(t *testing.T) {
 	leases := &scriptedLeases{errs: []error{&qrdbtransport.CapabilityUnsupportedError{Message: "lease: requires mode: raft"}}}
 	l := newLocker(leases, discardLogger())

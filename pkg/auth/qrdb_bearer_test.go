@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package server
+package auth
 
 import (
 	"context"
@@ -26,8 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // signedSessionToken returns a JWT for subject signed by key, as the token
@@ -54,14 +52,14 @@ func testAuthorization(ctx context.Context) string {
 
 // bearerFixture returns a bearer authenticator whose live delegate verifies
 // tokens signed by the returned key.
-func bearerFixture(t *testing.T) (*bearerAuthenticator, *ecdsa.PrivateKey, *auth.LiveAuthenticator) {
+func bearerFixture(t *testing.T) (*QRDBBearerAuthenticator, *ecdsa.PrivateKey, *LiveAuthenticator) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	jwtAuth, err := auth.NewJWTAuthenticator(&auth.JWTConfig{PublicKey: &key.PublicKey, Issuer: "xkms"})
+	jwtAuth, err := NewJWTAuthenticator(&JWTConfig{PublicKey: &key.PublicKey, Issuer: "xkms"})
 	require.NoError(t, err)
-	live := auth.NewLiveAuthenticator(jwtAuth)
-	b := newBearerAuthenticator(live)
+	live := NewLiveAuthenticator(jwtAuth)
+	b := NewQRDBBearerAuthenticator(live)
 	b.authorization = testAuthorization
 	return b, key, live
 }
@@ -72,7 +70,7 @@ func grpcBearer(value string) context.Context {
 	return context.WithValue(context.Background(), authorizationKey{}, value)
 }
 
-func TestBearerAuthenticator_AcceptsAValidSessionToken(t *testing.T) {
+func TestQRDBBearerAuthenticator_AcceptsAValidSessionToken(t *testing.T) {
 	b, key, _ := bearerFixture(t)
 	id, err := b.Authenticate(grpcBearer("Bearer " + signedSessionToken(t, key, "alice")))
 	require.NoError(t, err)
@@ -80,15 +78,15 @@ func TestBearerAuthenticator_AcceptsAValidSessionToken(t *testing.T) {
 	assert.True(t, b.MethodUnobservable(), "a session token says who, not how: its issuer enforced the method policy")
 }
 
-func TestNewBearerAuthenticator_ReadsQRDBsAccessor(t *testing.T) {
-	b := newBearerAuthenticator(auth.NewLiveAuthenticator(nil))
+func TestNewQRDBBearerAuthenticator_ReadsQRDBsAccessor(t *testing.T) {
+	b := NewQRDBBearerAuthenticator(NewLiveAuthenticator(nil))
 	require.NotNil(t, b.authorization)
 	assert.Empty(t, b.authorization(context.Background()), "qrdb's accessor reads nothing from a context qrdb did not fill")
 	_, err := b.Authenticate(context.Background())
 	assert.ErrorIs(t, err, qrdbsdk.ErrUnauthenticated)
 }
 
-func TestBearerAuthenticator_NoBearerFallsThrough(t *testing.T) {
+func TestQRDBBearerAuthenticator_NoBearerFallsThrough(t *testing.T) {
 	b, _, _ := bearerFixture(t)
 	for _, ctx := range []context.Context{context.Background(), grpcBearer(""), grpcBearer("Basic dXNlcjpwdw==")} {
 		_, err := b.Authenticate(ctx)
@@ -96,7 +94,7 @@ func TestBearerAuthenticator_NoBearerFallsThrough(t *testing.T) {
 	}
 }
 
-func TestBearerAuthenticator_RejectsAForeignToken(t *testing.T) {
+func TestQRDBBearerAuthenticator_RejectsAForeignToken(t *testing.T) {
 	b, _, _ := bearerFixture(t)
 	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -104,20 +102,25 @@ func TestBearerAuthenticator_RejectsAForeignToken(t *testing.T) {
 	assert.Error(t, err, "a token the issuer did not sign is refused")
 }
 
-func TestBearerAuthenticator_NeverAdmitsThroughNoOpOrNoAuthenticator(t *testing.T) {
+func TestQRDBBearerAuthenticator_NeverAdmitsThroughNoOpOrNoAuthenticator(t *testing.T) {
 	b, key, live := bearerFixture(t)
 	token := grpcBearer("Bearer " + signedSessionToken(t, key, "alice"))
 
-	live.Store(auth.NewNoOpAuthenticator())
+	live.Store(NewNoOpAuthenticator())
 	_, err := b.Authenticate(token)
 	assert.ErrorIs(t, err, ErrBearerNotAccepted, "disabled xkms auth must not turn a bearer into a qrdb identity")
 
 	live.Store(nil)
 	_, err = b.Authenticate(token)
 	assert.ErrorIs(t, err, ErrBearerNotAccepted)
+
+	unsourced := NewQRDBBearerAuthenticator(nil)
+	unsourced.authorization = testAuthorization
+	_, err = unsourced.Authenticate(token)
+	assert.ErrorIs(t, err, ErrBearerNotAccepted, "a bridge with no source admits nothing")
 }
 
-func TestBearerAuthenticator_FollowsAReload(t *testing.T) {
+func TestQRDBBearerAuthenticator_FollowsAReload(t *testing.T) {
 	b, key, live := bearerFixture(t)
 	token := grpcBearer("Bearer " + signedSessionToken(t, key, "alice"))
 	_, err := b.Authenticate(token)
@@ -125,7 +128,7 @@ func TestBearerAuthenticator_FollowsAReload(t *testing.T) {
 
 	rotated, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	jwtAuth, err := auth.NewJWTAuthenticator(&auth.JWTConfig{PublicKey: &rotated.PublicKey, Issuer: "xkms"})
+	jwtAuth, err := NewJWTAuthenticator(&JWTConfig{PublicKey: &rotated.PublicKey, Issuer: "xkms"})
 	require.NoError(t, err)
 	live.Store(jwtAuth)
 	_, err = b.Authenticate(token)

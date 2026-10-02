@@ -15,6 +15,7 @@ package xkms
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -23,6 +24,17 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
+
+// errGrantMissing is the fake RBAC client's denial.
+var errGrantMissing = errors.New("fake rbac: permission denied")
+
+// serviceWithRBAC is a service whose Authorizer is backed by rbac.
+func serviceWithRBAC(t *testing.T, rbac qrdbtransport.RBACClient) *XKMSService {
+	t.Helper()
+	svc := auditService(t, &stubAuditClient{page: &qrdbtransport.AuditPage{}})
+	svc.SetAuthorizer(auth.NewAuthorizer(rbac))
+	return svc
+}
 
 // recordingRBAC grants exactly one permission and records what it was asked.
 type recordingRBAC struct {
@@ -49,7 +61,7 @@ func (r *recordingRBAC) ListPermissions(_ context.Context, _ *qrdbtransport.Iden
 // what the authorizer refuses.
 func TestAuthorizeCaller_AsksTheAuthorizerForTheCaller(t *testing.T) {
 	rbac := &recordingRBAC{grant: "ssh:service"}
-	svc, _ := auditServiceWithRBAC(t, rbac)
+	svc := serviceWithRBAC(t, rbac)
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "alice", TenantID: "acme"})
 
 	require.NoError(t, svc.AuthorizeCaller(ctx, auth.ResourceSSH, auth.ActionService))
@@ -65,7 +77,7 @@ func TestAuthorizeCaller_AsksTheAuthorizerForTheCaller(t *testing.T) {
 // request with no identity, and a service with RBAC disabled allows it, as
 // the transport gate does.
 func TestAuthorizeCaller_Unauthenticated(t *testing.T) {
-	svc, _ := auditServiceWithRBAC(t, &recordingRBAC{grant: "ssh:service"})
+	svc := serviceWithRBAC(t, &recordingRBAC{grant: "ssh:service"})
 	require.ErrorIs(t, svc.AuthorizeCaller(context.Background(), auth.ResourceSSH, auth.ActionService), auth.ErrUnauthenticated)
 
 	disabled := auditService(t, &stubAuditClient{page: &qrdbtransport.AuditPage{}})

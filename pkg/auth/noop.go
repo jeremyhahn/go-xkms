@@ -50,7 +50,11 @@ func (a *NoOpAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD
 	return anonymousIdentity(), nil
 }
 
+// noOpAuthenticatorName is the NoOpAuthenticator's name, by which the
+// bearer bridge recognises disabled authentication.
+const noOpAuthenticatorName = "noop"
+
 // Name returns the authenticator name.
 func (a *NoOpAuthenticator) Name() string {
-	return "noop"
+	return noOpAuthenticatorName
 }

@@ -2303,6 +2303,21 @@ integration-test-tpm2:
 		$(call compose,tpm2) run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test
 	@echo "$(GREEN)✓ TPM2 integration tests complete$(RESET)"
 
+.PHONY: integration-test-peergate
+## integration-test-peergate: Run the attested-caller gate suite: a go-qrdb node composed with pkg/attestation/peergate, quotes from swtpm
+# The same swtpm compose as integration-test-tpm2, narrowed to the peer gate
+# tests. compose run waits for the simulator's healthcheck (depends_on:
+# service_healthy), so no fixed delay is needed.
+integration-test-peergate:
+	@echo "$(CYAN)$(BOLD)→ Running attested-caller gate integration tests (swtpm)...$(RESET)"
+	@$(MAKE) --no-print-directory stage-gomodauth
+	@cd test/integration/tpm2 && $(call compose,peergate) down -v >/dev/null 2>&1 || true
+	@cd test/integration/tpm2 && trap '$(call compose,peergate) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,peergate) run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test \
+		go test -v -count=1 -tags='integration tpm2 codec_cbor codec_json codec_msgpack gms_pure_go' -timeout 15m \
+		-run 'TestIntegration_PeerGate' ./test/integration/tpm2/...
+	@echo "$(GREEN)✓ Attested-caller gate integration tests complete$(RESET)"
+
 .PHONY: integration-test-acme-tpm
 # Not in the integration-test aggregate yet: its device-attest-01 tests need
 # the challenge wired (go-xkms#737, pending an owner ruling on #828). Run it

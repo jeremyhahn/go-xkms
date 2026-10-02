@@ -1,6 +1,6 @@
 # Attested Peer — API
 
-> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-16
+> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## No transport surface of its own, deliberately
 
@@ -18,7 +18,53 @@ a request next.
 
 | Transport | Status |
 |---|---|
-| REST / gRPC / QUIC / MCP / Unix / embedded | Not applicable here. The transport-facing half is the attested-caller middleware in go-qrdb (go-qrdb#278), which calls this primitive on every transport it covers and fails closed. |
+| REST / gRPC / QUIC / MCP / Unix / embedded | Not applicable here. The transport-facing half is go-qrdb's attested-caller gate, which calls the `pkg/attestation/peergate` verifier on every network transport and fails closed. |
+
+## The gate verifier: a composition-plane (Tier 2) capability
+
+`pkg/attestation/peergate` is placed in Tier 2: a host injects the `Verifier`
+into go-qrdb's node through `qrdbsdk.NewPeerAttestationGate` and
+`node.WithPeerAttestationGate`, and mounts the `Collector`'s two calls on its
+own transports. Neither half has a transport of its own here, for the reasons
+above, and because both are defined over the `*tls.ConnectionState` of the
+request — a value that exists only inside the transport that terminated TLS.
+
+```go
+import (
+    qrdbsdk  "github.com/jeremyhahn/go-qrdb/sdk/go"
+    qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+    xkms     "github.com/jeremyhahn/go-xkms/sdk/go"
+)
+
+store, err := xkms.NewPeerMemoryEvidenceStore(xkms.PeerMemoryEvidenceStoreConfig{})
+collector, err := xkms.NewPeerEvidenceCollector(xkms.PeerEvidenceCollectorConfig{Store: store})
+verifier, err := xkms.NewPeerGateVerifier(xkms.PeerGateVerifierConfig{
+    Store:  store,
+    Policy: xkms.PeerPolicy{Anchors: akRoots, Baseline: baseline, RequiredPCRs: []int{10}},
+    DeviceIdentity: &xkms.PeerDevIDPolicy{Anchors: deviceRoots}, // optional
+})
+gate, err := qrdbsdk.NewPeerAttestationGate(verifier, qrdbsdk.PeerAttestationPolicy{
+    Permissions:    []qrdbsdk.Permission{...},
+    MaxEvidenceAge: 15 * time.Minute,
+})
+node, err := qrdbnode.NewStandaloneNode(ctx, cfg, serverOpts, qrdbnode.WithPeerAttestationGate(gate))
+```
+
+The two collector calls a host mounts, and what they mean on the wire:
+
+| Call | Input | Output | Refusals |
+|---|---|---|---|
+| `Challenge(ctx, r.TLS)` | the request's TLS state (the peer is its verified client certificate) | `PeerChallenge{Nonce, ExpiresAt}` | `*PeerCertificateError` (403), `*PeerGateCapacityError` (503) |
+| `Submit(ctx, r.TLS, evidence)` | the request's TLS state and a `PeerEvidence` (the wire shape below) | — | `*PeerCertificateError` (403), `*PeerChallengeError` (403), `*PeerChannelBindingError` (403), `*PeerEvidenceStoreError` (503) |
+
+A submission whose quote is wrong is accepted and stored: the verifier refuses
+it on the next gated request, as a cryptographic failure, where go-qrdb's gate
+audits it. The status codes are a suggestion for an HTTP host.
+
+The verifier's outcome reaches the caller through go-qrdb's gate, which maps
+it: a refused verdict is `*PeerAttestationRefusedError` (REST 403, gRPC
+`PERMISSION_DENIED`), a verifier error is the same error with reason
+`verifier-error` (REST 503, gRPC `UNAVAILABLE`).
 
 ## The SDK surface
 
@@ -92,6 +138,17 @@ returns the value to hand to `TPM2.Quote`.
 Neither function inspects the evidence: a missing quote or a wrong nonce is
 still answered in the verdict, so these return an error only when the
 connection itself cannot yield a binding.
+
+## The quoting side of the gate
+
+```go
+evidence, err := xkms.PeerQuoteEvidence(state, challenge.Nonce, tpm, []uint{0, 7, 10}, akCertPEM)
+```
+
+`state` is the client side of the TLS connection the evidence will be
+submitted on; `tpm` is any `PeerQuoter` (the TPM2 keystore is one). Errors:
+`*PeerChannelBindingError` when the connection cannot export, `*PeerQuoteError`
+when the TPM cannot quote or a PCR kept changing under the quote.
 
 ## The wire shape a consumer carries
 

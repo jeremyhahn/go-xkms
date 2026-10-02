@@ -90,13 +90,10 @@ func TestStartClusterAdvertiser_NoAdvertisableHost(t *testing.T) {
 	require.Nil(t, s.clusterAdvertiser)
 }
 
-// TestStartClusterAdvertiser_StartFailureWraps proves a real advertisable
-// endpoint that still cannot register (this fixture's standalone node has no
-// lease servicer wired, so NewNodeAdvertiser's Start fails) surfaces as a
-// *ClusterAdvertiseError naming the "start node advertiser" stage, rather
-// than a bare or swallowed error, and leaves clusterAdvertiser unset.
-func TestStartClusterAdvertiser_StartFailureWraps(t *testing.T) {
-	cfg := &config.Config{
+// advertisableConfig is a clustered config with a real advertisable REST
+// endpoint.
+func advertisableConfig() *config.Config {
+	return &config.Config{
 		Cluster: config.ClusterConfig{
 			Enabled:       true,
 			NodeID:        1,
@@ -106,8 +103,32 @@ func TestStartClusterAdvertiser_StartFailureWraps(t *testing.T) {
 		Server:    config.ServerConfig{RESTPort: 18080},
 		Protocols: config.ProtocolsConfig{REST: true},
 	}
-	s, cleanup := newClusterAdvertiseTestServer(t, cfg)
+}
+
+// TestStartClusterAdvertiser_RegistersOnALeaseServingNode proves a node with
+// an advertisable endpoint registers it and keeps the advertiser, and that
+// stopping removes it. Since go-qrdb v0.27 a standalone node serves leases,
+// so this fixture's node can hold the advertisement lease.
+func TestStartClusterAdvertiser_RegistersOnALeaseServingNode(t *testing.T) {
+	s, cleanup := newClusterAdvertiseTestServer(t, advertisableConfig())
 	defer cleanup()
+
+	require.NoError(t, s.startClusterAdvertiser())
+	require.NotNil(t, s.clusterAdvertiser)
+
+	require.NoError(t, s.stopClusterAdvertiser())
+	require.Nil(t, s.clusterAdvertiser)
+	require.NoError(t, s.stopClusterAdvertiser(), "stopping twice is a no-op")
+}
+
+// TestStartClusterAdvertiser_StartFailureWraps proves an advertiser that
+// cannot register -- here because the node behind its client is closed --
+// surfaces as a *ClusterAdvertiseError naming the "start node advertiser"
+// stage, rather than a bare or swallowed error, and leaves clusterAdvertiser
+// unset.
+func TestStartClusterAdvertiser_StartFailureWraps(t *testing.T) {
+	s, cleanup := newClusterAdvertiseTestServer(t, advertisableConfig())
+	cleanup()
 
 	err := s.startClusterAdvertiser()
 	require.Error(t, err)

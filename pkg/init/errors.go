@@ -240,3 +240,8 @@ func (e *AdminKeyGenerationError) Unwrap() error { return e.Err }
 
 // Is reports AdminKeyGenerationError as ErrAdminKeyGeneration for errors.Is.
 func (e *AdminKeyGenerationError) Is(target error) bool { return target == ErrAdminKeyGeneration }
+
+// ErrNilSignOptions is returned by CAAdapter.SignCSR when go-qrdb passes no
+// SignCSROptions: without them there is no registered holder and no tenant
+// to name, and signing would fall back to whatever the CSR asked for.
+var ErrNilSignOptions = errors.New("init: holder certificate signing requires the ceremony's sign options")

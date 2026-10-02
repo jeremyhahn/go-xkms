@@ -256,7 +256,9 @@ func Middleware(limiter *Limiter, proxies *TrustedProxies) func(http.Handler) ht
 	}
 }
 
-// UnaryServerInterceptor returns a gRPC unary server interceptor that enforces rate limiting.
+// UnaryServerInterceptor returns a gRPC unary server interceptor that enforces
+// rate limiting, keyed by the transport peer's address folded through
+// RateLimitKey (an IPv6 peer buckets on its /64).
 func UnaryServerInterceptor(limiter *Limiter) grpc.UnaryServerInterceptor {
 	return func(
 		ctx context.Context,
@@ -264,11 +266,9 @@ func UnaryServerInterceptor(limiter *Limiter) grpc.UnaryServerInterceptor {
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (interface{}, error) {
-		// Extract client IP from peer info
-		clientIP := getClientIPFromContext(ctx)
-
-		// Check rate limit
-		if !limiter.Allow(clientIP) {
+		// Bucket on the peer's address folded through RateLimitKey, so an
+		// IPv6 client cannot escape the limit by rotating within its /64.
+		if !limiter.Allow(RateLimitKey(getClientIPFromContext(ctx))) {
 			return nil, status.Errorf(codes.ResourceExhausted, "rate limit exceeded")
 		}
 
@@ -276,7 +276,7 @@ func UnaryServerInterceptor(limiter *Limiter) grpc.UnaryServerInterceptor {
 	}
 }
 
-// StreamServerInterceptor returns a gRPC stream server interceptor that enforces rate limiting.
+// StreamServerInterceptor is UnaryServerInterceptor for streams.
 func StreamServerInterceptor(limiter *Limiter) grpc.StreamServerInterceptor {
 	return func(
 		srv interface{},
@@ -284,11 +284,9 @@ func StreamServerInterceptor(limiter *Limiter) grpc.StreamServerInterceptor {
 		info *grpc.StreamServerInfo,
 		handler grpc.StreamHandler,
 	) error {
-		// Extract client IP from peer info
-		clientIP := getClientIPFromContext(ss.Context())
-
-		// Check rate limit
-		if !limiter.Allow(clientIP) {
+		// Bucket on the peer's address folded through RateLimitKey, as the
+		// unary interceptor does.
+		if !limiter.Allow(RateLimitKey(getClientIPFromContext(ss.Context()))) {
 			return status.Errorf(codes.ResourceExhausted, "rate limit exceeded")
 		}
 
@@ -310,15 +308,15 @@ func getClientIPFromContext(ctx context.Context) string {
 	return remoteHost(p.Addr.String())
 }
 
-// AllowConn checks if a request from the given network connection should be allowed.
-// This is useful for TCP-based protocols like MCP.
+// AllowConn checks if a request from the given network connection should be
+// allowed, keyed by the remote address folded through RateLimitKey. This is
+// useful for TCP-based protocols like MCP.
 func (l *Limiter) AllowConn(conn net.Conn) bool {
 	if !l.enabled {
 		return true
 	}
 
-	clientIP := getClientIPFromConn(conn)
-	return l.Allow(clientIP)
+	return l.Allow(RateLimitKey(getClientIPFromConn(conn)))
 }
 
 // getClientIPFromConn extracts the client IP from a net.Conn.

@@ -130,8 +130,7 @@ go-xkms/
 │   │   │
 │   │   ├── grpc/                  # gRPC implementation
 │   │   │   ├── server.go         # gRPC server setup
-│   │   │   ├── service.go        # gRPC service implementation
-│   │   │   └── interceptor_correlation.go  # Correlation interceptor
+│   │   │   └── service.go        # gRPC service implementation
 │   │   │
 │   │   ├── mcp/                   # Model Context Protocol
 │   │   │   ├── server.go         # MCP server setup (JSON-RPC 2.0)

@@ -14,6 +14,7 @@
 package peer
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/asn1"
@@ -180,6 +181,45 @@ func IsIDevID(cert *x509.Certificate) bool {
 // be used as an authorization decision; VerifyIAK is.
 func IsIAK(cert *x509.Certificate) bool {
 	return devIDShape(cert, classAttestation) == nil
+}
+
+// VerifySameDevice reports whether a device identity credential (an IDevID or
+// LDevID) and an attestation key credential (an IAK or LAK) name the same TPM.
+//
+// TCG DevID v1 r12 §8.1 stamps both credentials of one TPM with the same RFC
+// 4108 hardware module name and the same RFC 4043 permanent identifier (an
+// identifier derived from the endorsement key). Comparing them is what ties a
+// quote signed by the attestation key to the device that authenticated the TLS
+// connection: without it, a host holding a valid identity credential could
+// relay a quote from a different, healthy machine.
+//
+// It decodes the names and compares them; it builds no chain and consults no
+// clock. Trust in either credential is VerifyIDevID and VerifyIAK (or Verify,
+// for the attestation key a quote carries). It returns *DevIDError when either
+// certificate does not carry both names, and *DeviceMismatchError when they
+// differ.
+func VerifySameDevice(identity, attestation *x509.Certificate) error {
+	if identity == nil {
+		return &DevIDError{Credential: classIdentity.name, Reason: "no certificate"}
+	}
+	if attestation == nil {
+		return &DevIDError{Credential: classAttestation.name, Reason: "no certificate"}
+	}
+	idHardware, idPermanent, err := devIDOtherNames(identity, classIdentity)
+	if err != nil {
+		return err
+	}
+	akHardware, akPermanent, err := devIDOtherNames(attestation, classAttestation)
+	if err != nil {
+		return err
+	}
+	if !idHardware.HWType.Equal(akHardware.HWType) || !bytes.Equal(idHardware.HWSerial, akHardware.HWSerial) {
+		return &DeviceMismatchError{Field: "hardwareModuleName"}
+	}
+	if idPermanent.IdentifierValue != akPermanent.IdentifierValue || !idPermanent.Assigner.Equal(akPermanent.Assigner) {
+		return &DeviceMismatchError{Field: "permanentIdentifier"}
+	}
+	return nil
 }
 
 // verifyDevID runs the full credential check for one class.

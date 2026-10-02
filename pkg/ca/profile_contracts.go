@@ -73,6 +73,16 @@ var (
 	// names come from the caller alone.
 	ErrTenantSPIFFEWithCallerSANs = errors.New("ca: tenant SPIFFE synthesis cannot be combined with a caller-supplied-SAN profile")
 
+	// ErrRawSubjectWithNames reports a SignOptions.RawSubject combined with
+	// anything else that names the certificate: Subject, SANS, the tenant
+	// SPIFFE options or a caller-supplied-SAN profile. A raw subject is the
+	// whole name, so any other source of names would contradict it.
+	ErrRawSubjectWithNames = errors.New("ca: a raw subject cannot be combined with another source of certificate names")
+
+	// ErrInvalidRawSubject reports a SignOptions.RawSubject that is not a
+	// DER-encoded RDNSequence.
+	ErrInvalidRawSubject = errors.New("ca: raw subject is not a DER-encoded distinguished name")
+
 	// ErrInvalidSAN reports a caller-supplied subject alternative name that
 	// does not parse, or a name of a type the profile does not permit.
 	ErrInvalidSAN = errors.New("ca: invalid subject alternative name")

@@ -81,6 +81,13 @@ type CertificateSpec struct {
 	// Subject is the distinguished name of the certified entity. Required.
 	Subject pkix.Name
 
+	// RawSubject, when set, is Subject's exact DER encoding and is written to
+	// the certificate in place of crypto/x509's encoding of Subject, which
+	// groups several attributes of one type into a single RDN and so does not
+	// preserve their order. Subject must describe the same name: profiles
+	// and the issuance record read it.
+	RawSubject []byte
+
 	// NotBefore and NotAfter bound the validity period. Required.
 	NotBefore time.Time
 	NotAfter  time.Time
@@ -175,6 +182,7 @@ func (iss *Issuer) Template(spec *CertificateSpec) (*x509.Certificate, error) {
 	template := &x509.Certificate{
 		SerialNumber:       spec.Serial,
 		Subject:            spec.Subject,
+		RawSubject:         spec.RawSubject,
 		NotBefore:          spec.NotBefore,
 		NotAfter:           spec.NotAfter,
 		SignatureAlgorithm: spec.SignatureAlgorithm,

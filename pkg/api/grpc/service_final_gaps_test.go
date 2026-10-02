@@ -1307,42 +1307,6 @@ func TestAuthenticationStreamInterceptorWithMissingMetadata(t *testing.T) {
 	}
 }
 
-// TestCorrelationStreamInterceptorWithRequestID tests correlation with x-request-id
-func TestCorrelationStreamInterceptorWithRequestID(t *testing.T) {
-	setupFinalGapsTest(t)
-	defer xkms.Reset()
-
-	cfg := &ServerConfig{
-		Port:          0,
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-
-	server, err := NewServer(cfg)
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
-
-	// Context with x-request-id but not x-correlation-id
-	ctx := context.Background()
-	md := metadata.Pairs("x-request-id", "test-request-id-123")
-	ctx = metadata.NewIncomingContext(ctx, md)
-
-	stream := &mockStreamServerStream{ctx: ctx}
-	info := &grpc.StreamServerInfo{
-		FullMethod: "/test.Service/Method",
-	}
-
-	handler := func(srv interface{}, ss grpc.ServerStream) error {
-		return nil
-	}
-
-	err = server.correlationStreamInterceptor(nil, stream, info, handler)
-	if err != nil {
-		t.Errorf("Expected no error, got: %v", err)
-	}
-}
-
 // mockStreamServerStream is a minimal mock for grpc.ServerStream
 type mockStreamServerStream struct {
 	grpc.ServerStream

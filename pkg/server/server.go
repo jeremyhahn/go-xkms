@@ -896,7 +896,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		s.xkmsService = svc
 		s.mu.Unlock()
 		// The service shares the transports' Authorizer for the decisions
-		// made below the route gate (QueryAudit's audit:read:cross check).
+		// made below the route gate (XKMSService.AuthorizeCaller).
 		// A nil Authorizer means RBAC is disabled, as it does there.
 		svc.SetAuthorizer(s.rbacAuthorizer)
 		stores.Wire(svc)

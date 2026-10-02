@@ -132,7 +132,10 @@ func (m *mockCA) CreateCSR(_ context.Context, _ *ca.CertificateRequest) ([]byte,
 	return nil, nil
 }
 
-func (m *mockCA) SignCSR(_ context.Context, csrPEM []byte, _ *ca.SignOptions) (*x509.Certificate, error) {
+// SignCSR signs as the real CA does under go-qrdb's holder contract: a raw
+// subject in the options is the whole Subject and the CSR contributes only
+// its key; without one the CSR's subject is copied.
+func (m *mockCA) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
 	block, _ := pem.Decode(csrPEM)
 	if block == nil {
 		return nil, errors.New("mockCA: invalid PEM")
@@ -149,6 +152,9 @@ func (m *mockCA) SignCSR(_ context.Context, csrPEM []byte, _ *ca.SignOptions) (*
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	if opts != nil && opts.RawSubject != nil {
+		template.RawSubject = opts.RawSubject
 	}
 	certDER, err := x509.CreateCertificate(rand.Reader, template, m.cert, csr.PublicKey, m.privateKey)
 	if err != nil {
@@ -1360,7 +1366,14 @@ func TestSignCSRInit_Success_SingleAdmin(t *testing.T) {
 	require.NotNil(t, block, "result CertPEM should contain valid PEM")
 	cert, err := x509.ParseCertificate(block.Bytes)
 	require.NoError(t, err)
-	assert.Equal(t, "new-operator", cert.Subject.CommonName)
+	// go-qrdb v0.28 holder contract: the certificate names the registered
+	// holder and the scope's tenant, never the CSR's own subject, so a CSR
+	// for another account cannot mint a login as it.
+	assert.Equal(t, "admin-user", cert.Subject.CommonName, "the CSR's CN is not copied")
+	require.NotEmpty(t, cert.Subject.OrganizationalUnit)
+	assert.Equal(t, systemTenantID, cert.Subject.OrganizationalUnit[0])
+	assert.Empty(t, cert.DNSNames)
+	assert.Empty(t, cert.URIs)
 }
 
 func TestSignCSRInit_Success_MofN_Enrolling(t *testing.T) {
@@ -1379,7 +1392,7 @@ func TestSignCSRInit_Success_MofN_Enrolling(t *testing.T) {
 	require.NotNil(t, block)
 	cert, err := x509.ParseCertificate(block.Bytes)
 	require.NoError(t, err)
-	assert.Equal(t, "extra-officer", cert.Subject.CommonName)
+	assert.Equal(t, "admin-user", cert.Subject.CommonName, "the registered holder, not the CSR's CN")
 }
 
 func TestSignCSRInit_AllRoles(t *testing.T) {

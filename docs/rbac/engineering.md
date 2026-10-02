@@ -1,6 +1,6 @@
 # RBAC — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1114, #1115, #1226, #1227, #1230, #1232, #1249)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-10-02 (#1114, #1115, #1226, #1227, #1230, #1232, #1249)
 
 ## Exported surface
 
@@ -158,7 +158,7 @@ The full resource and action list, verbatim from the constants (this file is
 
 **Actions:** `sign`, `verify`, `encrypt`, `decrypt`, `create`, `rotate`,
 `delete`, `list`, `get`, `import`, `export`, `wrap`, `unwrap`, `derive`,
-`generate`, `revoke`, `read`, `read:cross`, `update`, `set_entitlements`, `set_quotas`,
+`generate`, `revoke`, `read`, `update`, `set_entitlements`, `set_quotas`,
 `write`, `use`, `disable`, `status`,
 `capabilities`, `bootstrap`, `seal`, `unseal`, `rekey`, `rotate_root_key`,
 `generate_recovery`, `recover_with_keys`, `initialize_shamir`,
@@ -167,12 +167,9 @@ The full resource and action list, verbatim from the constants (this file is
 `enroll_custodian`, `revoke_custodian`, `submit`, `strategy`, `lock`,
 `unlock`.
 
-`read:cross` (`auth.ActionReadCross`, `pkg/auth/permissions.go:148`) is used
-only as `audit:read:cross`, qrdb's `AuditReadCross`. The qrdb SDK does not
-re-export that constant, so xkms restates the string.
-`TestActionReadCross_MatchesQRDBAuditReadCross` (`pkg/auth/permissions_test.go`)
-fails the build if qrdb's registry stops knowing it. qrdb declares it
-`ScopeCross`. Admin holds it and Auditor does not.
+There is no cross-tenant audit action: go-qrdb v0.28 removed
+`audit:read:cross`, and `TestAudit_NoCrossTenantRead`
+(`pkg/auth/permissions_test.go`) fails if qrdb's registry knows it again.
 
 ### `pkg/xkms` — the service's Authorizer
 
@@ -180,11 +177,11 @@ fails the build if qrdb's registry stops knowing it. qrdb declares it
 func (s *XKMSService) SetAuthorizer(a *auth.Authorizer)
 ```
 
-(`pkg/xkms/service.go:324`.) The server passes it the transports' own
-Authorizer (`pkg/server/server.go:835`). The service uses it for one decision
-the route gate cannot make: whether a system-tenant caller of `QueryAudit`
-holds `audit:read:cross`. A nil Authorizer is RBAC-disabled, as everywhere
-else. The service clamps tenant identities whatever the Authorizer says.
+The server passes it the transports' own Authorizer. The service uses it for
+decisions the route gate cannot make, through `AuthorizeCaller` (a feature's
+explicit permission below the gate, such as `ssh:service`). A nil Authorizer
+is RBAC-disabled, as everywhere else. `QueryAudit` does not consult it: an
+audit query's tenant is always the caller's own.
 
 A permission is a `resource:action` pair. A transport must never declare its
 own resource or action string literal — `internal/authzscan` enforces this by
@@ -349,18 +346,20 @@ specific permission before assuming a non-Admin role holds it.
   name `mtls` (`qrdbsdk.MethodMTLS`). `QRDBUserStore` projects the policy onto
   `MTLSUser.AuthMethods` (`pkg/auth/qrdb_userstore.go:69`);
   `MTLSAuthenticator.userIdentity` checks it after the enabled check
-  (`pkg/auth/mtls.go:247`) via `CheckAuthMethod`
-  (`pkg/auth/authmethod.go:42`), which applies go-qrdb's
-  `auth/middleware` `checkAuthMethod` contract unchanged: an **empty policy
-  states no restriction**, the method name is normalized with
-  `qrdbsdk.NormalizeAuthMethods` and compared against the stored entries,
-  and a name that does not survive normalization is refused. A refused
+  (`pkg/auth/mtls.go`) with go-qrdb's own `qrdbsdk.CheckAuthMethod` -- the
+  function qrdb's authentication middleware runs, so xkms carries no copy of
+  the rule: an **empty policy states no restriction**, the method and every
+  stored entry are compared in `qrdbsdk.CanonicalAuthMethod` form (trimmed,
+  lowercased; a stored entry is not checked against the vocabulary, so a
+  legacy entry still matches), and a blank method matches nothing and is
+  refused. A refused
   account is never admitted through the certificate-field fallback that
   serves certificates when no `UserStore` is configured — a `UserStore`
   configuration never falls back to certificate fields at all, whether the
   refusal is disablement, policy exclusion, or an unbound certificate.
-  The WebAuthn relying party applies the same `CheckAuthMethod` with
-  `auth.MethodWebAuthn`, alongside the lifecycle check, through
+  The WebAuthn relying party applies the same `qrdbsdk.CheckAuthMethod` with
+  `qrdbsdk.MethodWebAuthn`, and the PIV login (`POST /api/v1/auth/piv`) with
+  `qrdbsdk.MethodMTLS`, alongside the lifecycle check, through
   `webauthn.CheckAccountStanding` (go-xkms#1298; see
   [webauthn/engineering.md](../webauthn/engineering.md)).
 - **A tenant ID taken from a request is bound in `XKMSService`, never in a
@@ -431,7 +430,7 @@ specific permission before assuming a non-Admin role holds it.
 | Error | Where | Meaning |
 |---|---|---|
 | `ErrUnauthenticated` | `pkg/auth/errors.go` | `Authorize` called with a nil identity while enabled |
-| `*AuthMethodNotPermittedError{Username, TenantID, Method, Permitted}` | `pkg/auth/errors.go:58` | the certificate resolved to an active account whose permitted-method policy excludes `mtls`; mirrors qrdb's `auth/middleware` error of the same name |
+| `*qrdbsdk.AuthMethodNotPermittedError{Username, TenantID, Method, Permitted}` | go-qrdb `sdk/go` | the certificate resolved to an active account whose permitted-method policy excludes `mtls`; it is qrdb's own error type, the one its middleware returns, so a refusal reads the same on every plane |
 | `ErrCertNotBound` | `pkg/auth/errors.go:48` | mTLS authenticator with a `UserStore`: the client certificate's SPKI thumbprint is bound to no user. The request is unauthenticated (REST 401), and the gate never runs |
 | `*UserLookupError{Err}` | `pkg/auth/errors.go:85` | mTLS authenticator with a `UserStore`: the store failed for any reason other than a definite not-found. It fails closed, and `Err` carries the store's error |
 | `*xkms.TenantBindingError` | `pkg/xkms/tenant_binding.go:34` | a tenant-scoped caller named another tenant (or the system scope), or asked for a plan change; unwraps to `qrdbsdk.ErrTenantMissing` and renders as not-found on every transport |
@@ -568,9 +567,9 @@ re-exported verbatim so a downstream consumer needs a single import.
   capability that drifts on only one transport fails even though that
   transport's own golden test still passes.
 - **Request-tenant confinement** — `pkg/xkms/servicer_pkcs11state_tenant_test.go`
-  and `pkg/xkms/servicer_audit_tenant_test.go`. The audit tests decide
-  `audit:read:cross` from qrdb's real built-in grant table
-  (`qrdbsdk.HasPermissionRoleGrant`) and apply its `ScopeCross` rule.
+  and `pkg/xkms/servicer_audit_tenant_test.go`. The audit tests prove every
+  caller, the system tenant included, is confined to its own tenant under an
+  admitting Authorizer that is never consulted.
 - **Tenant binding** — `pkg/xkms/tenant_binding_test.go` drives the service
   layer against go-qrdb's real TenantService over an in-memory barrier:
   tenant A → B refused as not-found for get, delete, barrier init / unseal /

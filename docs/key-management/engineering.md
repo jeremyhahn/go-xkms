@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -680,7 +680,8 @@ breaking change and requires a coordinated release
 
 ## Observability
 
-Requests carry a correlation ID injected by `pkg/api/rest/middleware_correlation.go`
-and `pkg/api/grpc/interceptor_correlation.go`, built on `pkg/correlation`.
+Requests carry a correlation ID injected by `pkg/correlation`'s HTTP middleware
+and gRPC interceptors (`pkg/correlation/middleware.go`), which the REST router
+and gRPC server install.
 Metrics are `pkg/metrics`. Audit records for key operations are written through
 `pkg/audit` — see [`../audit-log/engineering.md`](../audit-log/engineering.md).

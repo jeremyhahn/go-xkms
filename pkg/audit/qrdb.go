@@ -69,9 +69,9 @@ func (l *QRDBLogger) Log(ctx context.Context, event *Event) error {
 // onto qrdbsdk.SystemTenantID rather than "". "" is the audit chain's
 // match-everything filter (see pkg/xkms.auditTenantFilter), so an
 // unnormalized event emitted without an identity — a background job, an
-// internal operation — would be invisible to a system-scoped auditor without
-// audit:read:cross, which is clamped to SystemTenantID and never queries
-// with an empty filter (#1134).
+// internal operation — would be invisible to a system-tenant auditor, whose
+// query is confined to SystemTenantID and never runs with an empty filter
+// (#1134).
 func toTransportEvent(ctx context.Context, event *Event) qrdbtransport.AuditEvent {
 	attributes := make(map[string]any, len(event.Details)+1)
 	for k, v := range event.Details {

@@ -116,7 +116,7 @@ type MTLSConfig struct {
 	// thumbprint (qrdbsdk.ComputeSPKIThumbprint) of the client certificate. If found and enabled, the
 	// identity subject is set to the username and the role claim is added.
 	// If found but disabled, ErrUserDisabled is returned. If found but the
-	// account's permitted-method policy excludes mTLS, *AuthMethodNotPermittedError
+	// account's permitted-method policy excludes mTLS, *qrdbsdk.AuthMethodNotPermittedError
 	// is returned. If the certificate is bound to no user, ErrCertNotBound is
 	// returned; any other store error is returned as a *UserLookupError. Both
 	// fail closed: with a store configured, no identity is ever derived from
@@ -215,7 +215,7 @@ func (a *MTLSAuthenticator) buildIdentity(ctx context.Context, cert *x509.Certif
 // userIdentity resolves the client certificate to its bound user through the
 // UserStore and builds the identity from the user record. Every outcome other
 // than a bound, enabled user whose permitted-method policy allows mTLS is a
-// refusal: ErrUserDisabled for a disabled account, *AuthMethodNotPermittedError
+// refusal: ErrUserDisabled for a disabled account, *qrdbsdk.AuthMethodNotPermittedError
 // when the account's policy excludes mTLS, ErrCertNotBound when no user is
 // bound, and *UserLookupError when the store cannot answer. It never falls
 // back to the certificate's fields. That identity carries a caller-chosen
@@ -244,7 +244,7 @@ func (a *MTLSAuthenticator) userIdentity(ctx context.Context, cert *x509.Certifi
 	// but the account may still withdraw mTLS as a way in (a FIDO2-only
 	// user, say). qrdb enforces this in its own middleware; the xkms planes
 	// must too, or withdrawal fails open.
-	if err := CheckAuthMethod(user.Username, user.TenantID, user.AuthMethods, a.Name()); err != nil {
+	if err := qrdbsdk.CheckAuthMethod(&qrdbsdk.User{Username: user.Username, TenantID: user.TenantID, AuthMethods: user.AuthMethods}, a.Name()); err != nil {
 		return nil, err
 	}
 

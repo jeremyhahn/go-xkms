@@ -58,7 +58,7 @@ type User interface {
 
 	// AuthMethods returns the account's permitted-authentication-method
 	// policy, as qrdb stores it. Empty states no restriction; otherwise a
-	// WebAuthn login requires the list to name auth.MethodWebAuthn.
+	// WebAuthn login requires the list to name qrdbsdk.MethodWebAuthn.
 	AuthMethods() []string
 }
 

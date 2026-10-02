@@ -117,9 +117,8 @@ same holds for FROST threshold keys and their signing rounds, and for stored
 certificates and sealing: another tenant's certificate reads as not found,
 and data sealed by another tenant does not unseal for you. PKCS#11 token-state calls that
 name another tenant are refused. An audit query that names another tenant, or
-none, returns only your own tenant's events. Reading every tenant's audit
-events takes a platform (system-tenant) identity whose role holds
-`audit:read:cross`. The built-in Admin role has it and Auditor does not.
+none, returns only your own tenant's events, for a system-tenant identity too:
+no role reads another tenant's audit trail.
 
 SSH keys, known-hosts pins and authorized_keys entries follow the same rule,
 per owner: in a tenant you reach `--scope tenant` assets of your own tenant

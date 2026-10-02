@@ -36,15 +36,30 @@ func newCAAdapter(ca xkmssdk.TrustedCA) *caAdapter {
 	return &caAdapter{ca: ca}
 }
 
-// SignCSR signs a PEM-encoded CSR using the go-xkms CA with the given options.
+// SignCSR signs a PEM-encoded CSR for a ceremony holder under go-qrdb's
+// SignCSROptions contract: the Subject is exactly opts.RawSubject()
+// (CN=<registered holder>, OU=<scope tenant>, OU=<profile>), there is no
+// Subject Alternative Name, and the CSR contributes only its key. Copying the
+// CSR's names would let whoever registers an officer mint a login as any
+// account the CA's trust reaches.
 func (a *caAdapter) SignCSR(ctx context.Context, csrPEM []byte, opts *qrdbsdk.SignCSROptions) (*x509.Certificate, error) {
-	xkmsOpts := &xkmssdk.TrustedCASignOptions{
-		Profile:      opts.Profile,
+	if opts == nil {
+		return nil, ErrNilSignOptions
+	}
+	raw, err := opts.RawSubject()
+	if err != nil {
+		return nil, err
+	}
+	return a.ca.SignCSR(ctx, csrPEM, &xkmssdk.TrustedCASignOptions{
+		// opts.Profile is go-qrdb's holder label, carried as the second OU
+		// in raw; it is not one of this CA's certificate profiles, whose
+		// key usage, extended key usage and validity the options state
+		// directly.
 		ValidityDays: opts.ValidityDays,
 		KeyUsage:     opts.KeyUsage,
 		ExtKeyUsage:  opts.ExtKeyUsage,
-	}
-	return a.ca.SignCSR(ctx, csrPEM, xkmsOpts)
+		RawSubject:   raw,
+	})
 }
 
 // CACertificate returns the CA's own certificate.

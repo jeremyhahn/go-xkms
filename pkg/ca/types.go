@@ -534,6 +534,16 @@ type SignOptions struct {
 	// permanentIdentifier of an attested device -- passes it here.
 	OtherNames []OtherName
 
+	// RawSubject, when set, is the certificate's entire Subject as a
+	// DER-encoded RDNSequence, written verbatim, and the CSR contributes only
+	// its public key: none of the CSR's subject and none of its subject
+	// alternative names are copied. It is how a holder certificate is issued
+	// for a name the caller chose rather than one the requester asked for
+	// (go-qrdb's ceremony SignCSROptions.RawSubject, which also fixes the RDN
+	// order). It cannot be combined with Subject, SANS, the tenant SPIFFE
+	// options, OtherNames or a caller-supplied-SAN profile: ErrRawSubjectWithNames.
+	RawSubject []byte
+
 	// SANS provides additional SANs to include beyond those in the CSR.
 	// Under a CallerSANProfile it is the only source of names: the CSR's own
 	// names are ignored, and every entry must parse (ErrInvalidSAN).

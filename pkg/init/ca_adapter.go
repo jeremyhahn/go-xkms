@@ -19,7 +19,6 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
-	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 )
 
 // Compile-time interface check.
@@ -66,20 +65,35 @@ func NewCAAdapter(xkmsCA CeremonyCA, trustDomain string) *CAAdapter {
 	return &CAAdapter{ca: xkmsCA, spiffeTrustDomain: trustDomain}
 }
 
-// SignCSR signs a PEM-encoded CSR using the go-xkms CA with the given options.
+// SignCSR signs a PEM-encoded CSR for a ceremony holder (an officer, a
+// custodian, the initial M-of-N Security Officers).
+//
+// It honours go-qrdb's SignCSROptions contract: the certificate's Subject is
+// exactly opts.RawSubject() -- CN=<registered holder>, OU=<scope tenant>,
+// OU=<profile>, one RDN each -- with no Subject Alternative Name, and the CSR
+// contributes only its key. Copying the CSR's subject or names would let
+// whoever registers an officer mint a login as any account the CA's trust
+// reaches (go-qrdb's ceremony re-checks the result and refuses one that
+// differs). No SPIFFE SAN is stamped here either: the holder's tenant is the
+// first OU, which is what the authenticator reads for a holder certificate.
 func (a *CAAdapter) SignCSR(ctx context.Context, csrPEM []byte, opts *qrdbsdk.SignCSROptions) (*x509.Certificate, error) {
-	xkmsOpts := &ca.SignOptions{
-		Profile:      opts.Profile,
+	if opts == nil {
+		return nil, ErrNilSignOptions
+	}
+	raw, err := opts.RawSubject()
+	if err != nil {
+		return nil, err
+	}
+	return a.ca.SignCSR(ctx, csrPEM, &ca.SignOptions{
+		// opts.Profile is go-qrdb's holder label, carried as the second OU
+		// in raw; it is not one of this CA's certificate profiles, whose
+		// key usage, extended key usage and validity the options state
+		// directly.
 		ValidityDays: opts.ValidityDays,
 		KeyUsage:     opts.KeyUsage,
 		ExtKeyUsage:  opts.ExtKeyUsage,
-	}
-	if a.spiffeTrustDomain != "" {
-		xkmsOpts.SPIFFETrustDomain = a.spiffeTrustDomain
-		xkmsOpts.TenantID = systemTenantID
-		xkmsOpts.SPIFFEKind = spiffe.KindUser
-	}
-	return a.ca.SignCSR(ctx, csrPEM, xkmsOpts)
+		RawSubject:   raw,
+	})
 }
 
 // CACertificate returns the CA's own certificate.

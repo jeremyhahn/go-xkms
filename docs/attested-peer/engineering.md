@@ -1,6 +1,6 @@
 # Attested Peer — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-16
+> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## Exported surface — `pkg/attestation/peer`
 
@@ -24,7 +24,38 @@
 | `EvidenceFromTLS(*tls.ConnectionState, Evidence) (TLSEvidence, error)` | Copies the reported evidence and pairs it with the connection's channel binding. Fails closed with `*ChannelBindingError`. |
 | `TLSEvidence` | `Evidence`, `ChannelBinding`, and `BindPolicy(Policy) Policy`, which returns a copy of the policy carrying this connection's binding. |
 | `QualifyingDataFromTLS(*tls.ConnectionState, nonce []byte) ([]byte, error)` | The quoting side: binding plus `QualifyingData` in one call, so binding cannot be half-performed. |
-| `*PolicyError`, `*ContextError`, `*ChannelBindingError`, `*FailureClassError`, `*DevIDError`, `*DevIDPolicyError` | The typed errors. |
+| `VerifySameDevice(identity, attestation *x509.Certificate) error` | Do an IDevID/LDevID and an IAK/LAK name the same TPM? Compares the two TCG DevID §8.1 otherNames; builds no chain. `*DevIDError` when either names no TPM, `*DeviceMismatchError` when they differ. |
+| `*PolicyError`, `*ContextError`, `*ChannelBindingError`, `*FailureClassError`, `*DevIDError`, `*DevIDPolicyError`, `*DeviceMismatchError` | The typed errors. |
+
+## Exported surface — `pkg/attestation/peergate`
+
+| Identifier | Role |
+|---|---|
+| `Verifier`, `NewVerifier(VerifierConfig, ...Option) (*Verifier, error)` | go-qrdb's `PeerAttestationVerifier` (compile-time checked). `VerifyPeer(ctx, qrdbsdk.AttestedPeer) (*qrdbsdk.PeerAttestation, error)`. |
+| `VerifierConfig` | `Store` (required), `Policy peer.Policy` (`Anchors` and a non-empty `Baseline` required, `ChannelBinding` must be empty, must evaluate), `DeviceIdentity *peer.DevIDPolicy` (optional; `Anchors` required when set). |
+| `Collector`, `NewCollector(CollectorConfig, ...Option) (*Collector, error)` | `Challenge(ctx, *tls.ConnectionState) (Challenge, error)`, `Submit(ctx, *tls.ConnectionState, peer.Evidence) error`. |
+| `CollectorConfig` | `Store` (required), `ChallengeTTL` (zero: `DefaultChallengeTTL`, one minute), `MaxPendingChallenges` (zero: `DefaultMaxPeers`). |
+| `Challenge` | `Nonce` (`NonceLength` = 32 bytes), `ExpiresAt`. |
+| `EvidenceStore` (interface) | `Put(ctx, Record)`, `Get(ctx, thumbprint) (Record, bool, error)`, `Delete(ctx, thumbprint)`. |
+| `Record` | `Thumbprint`, `Evidence peer.Evidence`, `ChannelBinding`. |
+| `MemoryStore`, `NewMemoryStore(MemoryStoreConfig, ...Option) (*MemoryStore, error)`, `Len()` | The in-process store. |
+| `MemoryStoreConfig` | `MaxPeers` (zero: `DefaultMaxPeers`, 100 000), `Retention` (zero: `DefaultRetention`, 24 h). |
+| `Option`, `WithClock(func() time.Time)` | Pins the clock of a collector, verifier or memory store. |
+| `Quoter` (interface), `QuoteEvidence(state, nonce, Quoter, pcrs, akCertificatePEM) (peer.Evidence, error)` | The quoting side. `*tpm2.TPM2` is a `Quoter`. |
+| `*ConfigError`, `*PeerCertificateError`, `*ChallengeError`, `*AttestedPeerError`, `*CapacityError`, `*StoreError`, `*QuoteError`, `*NonceError` | The typed errors. |
+
+SDK aliases in `sdk/go/attestation_peergate.go`: `PeerGateVerifier`,
+`PeerGateVerifierConfig`, `NewPeerGateVerifier`, `PeerEvidenceCollector`,
+`PeerEvidenceCollectorConfig`, `NewPeerEvidenceCollector`, `PeerChallenge`,
+`PeerEvidenceStore`, `PeerEvidenceRecord`, `PeerMemoryEvidenceStore`,
+`PeerMemoryEvidenceStoreConfig`, `NewPeerMemoryEvidenceStore`,
+`PeerGateOption`, `WithPeerGateClock`, `PeerQuoter`, `PeerQuoteEvidence`,
+`PeerVerifySameDevice`, `PeerDeviceMismatchError`, `PeerGateConfigError`,
+`PeerCertificateError`, `PeerChallengeError`, `PeerGateAttestedPeerError`,
+`PeerGateCapacityError`, `PeerEvidenceStoreError`, `PeerQuoteError`,
+`PeerNonceError`, and the constants `PeerChallengeNonceLength`,
+`DefaultPeerChallengeTTL`, `DefaultPeerGateMaxPeers`,
+`DefaultPeerEvidenceRetention`.
 
 SDK aliases in `sdk/go/attestation_peer.go` carry a `Peer` prefix
 (`PeerAttestationVerifier`, `PeerEvidence`, `PeerPolicy`, `PeerVerdict`,
@@ -77,6 +108,34 @@ key-attestation surface in the flat `xkms` namespace.
     `QualifyingDataFromTLS` return an error and no data when the connection
     cannot export keying material. Neither inspects the evidence, so a caller
     never receives an error about the peer from them.
+
+### Gate verifier invariants (`pkg/attestation/peergate`)
+
+13. **The peer is the verified certificate.** Collector and verifier key on
+    `qrdbsdk.ComputeSPKIThumbprint` of `VerifiedChains[0][0]`, go-qrdb's own
+    rule; a merely presented, unverified certificate is no peer.
+    `VerifyPeer` refuses (`*AttestedPeerError`) an `AttestedPeer` whose
+    thumbprint is not its certificate's.
+14. **A nonce is answered once.** `Submit` removes the challenge before
+    checking anything, so a failed submission consumes it too. The nonce is
+    compared in constant time.
+15. **Nothing unbound is stored or verified.** `Submit` stores only evidence
+    `EvidenceFromTLS` bound to the submitting connection; `VerifyPeer` refuses,
+    as an absence, a record whose binding is not `ChannelBindingLength` bytes.
+16. **The collector stamps time.** `CollectedAt` is the receipt time; a peer's
+    own claim is overwritten.
+17. **The request path never collects,** and always re-verifies: each
+    `VerifyPeer` runs `peer.Verify` over the stored record under the current
+    policy and clock.
+18. **The verdict names the record's thumbprint,** not the lookup key, so the
+    gate can catch a store that returned another peer's record.
+19. **Construction refuses a gate that could never pass** (no store, no
+    anchors, no baseline, a fixed channel binding, a policy `peer.Verify`
+    rejects, a device policy with no anchors) with `*ConfigError`.
+20. **Bounded memory.** Outstanding challenges and stored records are capped;
+    at the cap only expired challenges and evidence past `Retention` are
+    evicted, and a new peer is otherwise refused with `*CapacityError`.
+21. **Records never alias.** `MemoryStore` deep-copies on `Put` and `Get`.
 
 ## Fail-closed paths, by condition
 
@@ -144,6 +203,29 @@ first failure is returned.
 `IsIDevID` / `IsIAK` run the class-assertion and device-name rows only and
 return `false` for any of them, including a nil certificate.
 
+## Fail-closed paths: the gate verifier
+
+| Condition | Result of `VerifyPeer` |
+|---|---|
+| Context done | `*peer.ContextError` |
+| `AttestedPeer.Certificate` nil, or `Thumbprint` is not the certificate's | `*AttestedPeerError` |
+| Store `Get` fails | `*StoreError` (`Op` "get") |
+| No record | verdict: not passed, absence, zero `CollectedAt` (the gate refuses it as `no-evidence`) |
+| Record's channel binding missing or the wrong length | verdict: absence |
+| `peer.Verify` refuses the evidence | verdict with the primitive's class and reason (see the table above) |
+| `DeviceIdentity` set, connection certificate not a usable IDevID | verdict: absence |
+| `DeviceIdentity` set, no attestation key certificate, or one that does not parse | verdict: "device binding not evaluated" added as an absence |
+| `DeviceIdentity` set, the two credentials name different TPMs | verdict: cryptographic |
+
+| `Collector` condition | Error |
+|---|---|
+| Context done | `*peer.ContextError` |
+| No TLS state, or no verified client certificate | `*PeerCertificateError` |
+| `MaxPendingChallenges` unexpired challenges for other peers | `*CapacityError` (`What` "challenges") |
+| No outstanding challenge, expired, or a different nonce | `*ChallengeError`; the challenge is consumed |
+| Connection cannot export keying material | `*peer.ChannelBindingError` |
+| Store `Put` fails | `*StoreError` (`Op` "put"); with a `MemoryStore` at capacity it wraps `*CapacityError` |
+
 ## Tests
 
 `pkg/attestation/peer/*_test.go` — no simulator, no network beyond an
@@ -200,8 +282,50 @@ so it cannot be provoked in-process), the ASN.1 decoding failures inside the
 subjectAltName walk that `x509.ParseCertificate` rejects before this code sees
 them, and defensive branches the preceding checks make unreachable.
 
+`VerifySameDevice` has an acceptance test for a pair from one TPM, a
+mismatch test for each of the four device-name fields, and a refusal test for
+each missing credential or name, asserting `*DeviceMismatchError` versus
+`*DevIDError`.
+
+`pkg/attestation/peergate/*_test.go` (97% of statements) — real TLS 1.3
+handshakes over `net.Pipe`, real `TPMS_ATTEST` structures signed by a software
+attestation key, a test CA issuing IDevID and IAK certificates through `pkg/ca`'s
+own subjectAltName encoder:
+
+- An honest round (challenge, quote bound to the connection, submit) passes;
+  the record is keyed by the connection certificate's thumbprint, carries the
+  server side's exporter value and the collector's clock.
+- Refused as **cryptographic**: a quote bound to another connection, a quote
+  over the bare nonce, a forged signature under the genuine certificate, an
+  attestation key from an untrusted CA, a PCR 10 value off the baseline,
+  reported values that are not the quoted ones, a device mismatch.
+- Refused as **absence**: no evidence, evidence past the policy's age bound, a
+  withdrawn record, an unbound record from a foreign store, a connection
+  certificate that is not an IDevID, an attestation key certificate naming no
+  TPM.
+- The latest evidence wins: a bad quote after a good one is refused.
+- Collector: never-challenged, wrong-nonce (and the nonce is then dead),
+  expired, answered-twice, unbindable connection, no verified peer, the
+  challenge bound and its expiry, a store failure.
+- `MemoryStore`: no aliasing in or out, capacity with eviction of only expired
+  evidence, context and configuration errors.
+- `QuoteEvidence`: the evidence it assembles passes the verifier; a PCR
+  extended between quote and read is re-quoted, one that never settles is
+  refused; no quoter, nonce, PCRs, bank or value; no binding means no quote.
+- The verifier builds a go-qrdb `PeerAttestationGate`.
+
+`test/integration/tpm2/peergate_qrdb_node_test.go` composes a go-qrdb
+standalone node with `WithPeerAttestationGate` over this verifier, gating
+`admin:status`, and drives a peer whose quotes come from a real TPM (swtpm)
+through a collector mounted on a separate mTLS HTTP listener. The gated route
+refuses the peer with no evidence, admits it after an honest round, and
+refuses it after a forged quote, a quote bound to another TLS session, and
+valid evidence older than the gate's maximum age; a replayed nonce is refused
+at collection. Run it with `make integration-test-peergate` (it also runs in
+`make integration-test-tpm2`).
+
 Run with the repo's unit tag set:
 
 ```
-go test -race -tags="codec_cbor codec_json codec_msgpack tpm_simulator" ./pkg/attestation/peer/
+go test -race -tags="codec_cbor codec_json codec_msgpack tpm_simulator" ./pkg/attestation/peer/ ./pkg/attestation/peergate/
 ```

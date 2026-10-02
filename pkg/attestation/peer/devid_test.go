@@ -602,3 +602,81 @@ func TestVerifyIDevID_UsesTheCurrentTimeByDefault(t *testing.T) {
 		t.Fatalf("VerifyIDevID with a default clock: %v", err)
 	}
 }
+
+// TestVerifySameDevice_AcceptsAPairFromOneTPM: an IDevID and an IAK issued for
+// one TPM carry the same hardware module name and permanent identifier.
+func TestVerifySameDevice_AcceptsAPairFromOneTPM(t *testing.T) {
+	testCA := newTestCA(t)
+	identity := testCA.issueDevID(t, &newECKey(t, elliptic.P256()).PublicKey, devIDOptions{})
+	attestation := testCA.issueDevID(t, &newECKey(t, elliptic.P256()).PublicKey, devIDOptions{attestation: true})
+
+	if err := VerifySameDevice(identity, attestation); err != nil {
+		t.Fatalf("VerifySameDevice: %v", err)
+	}
+}
+
+// TestVerifySameDevice_RefusesCredentialsFromDifferentTPMs: a relayed quote is
+// signed by another TPM's attestation key, whose names differ from the
+// connection's identity credential. Each name is checked on its own.
+func TestVerifySameDevice_RefusesCredentialsFromDifferentTPMs(t *testing.T) {
+	otherSerial := "IFX:ffff:eeee"
+	otherID := "0123456789"
+	cases := map[string]struct {
+		opts  devIDOptions
+		field string
+	}{
+		"different hardware serial":       {opts: devIDOptions{attestation: true, hwSerial: &otherSerial}, field: "hardwareModuleName"},
+		"different permanent identifier":  {opts: devIDOptions{attestation: true, permID: &otherID}, field: "permanentIdentifier"},
+		"different hardware module type":  {opts: devIDOptions{attestation: true, hwType: asn1.ObjectIdentifier{2, 23, 133, 1, 1}}, field: "hardwareModuleName"},
+		"different permanent id assigner": {opts: devIDOptions{attestation: true, assigner: asn1.ObjectIdentifier{1, 2, 3}}, field: "permanentIdentifier"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			testCA := newTestCA(t)
+			identity := testCA.issueDevID(t, &newECKey(t, elliptic.P256()).PublicKey, devIDOptions{})
+			attestation := testCA.issueDevID(t, &newECKey(t, elliptic.P256()).PublicKey, tc.opts)
+
+			err := VerifySameDevice(identity, attestation)
+			var mismatch *DeviceMismatchError
+			if !errors.As(err, &mismatch) {
+				t.Fatalf("VerifySameDevice = %v, want *DeviceMismatchError", err)
+			}
+			if mismatch.Field != tc.field {
+				t.Fatalf("mismatch field = %q, want %q", mismatch.Field, tc.field)
+			}
+		})
+	}
+}
+
+// TestVerifySameDevice_RefusesCredentialsWithoutDeviceNames: a certificate
+// that does not name its TPM cannot be paired with anything; that is a
+// *DevIDError naming the credential, never a pass.
+func TestVerifySameDevice_RefusesCredentialsWithoutDeviceNames(t *testing.T) {
+	testCA := newTestCA(t)
+	identity := testCA.issueDevID(t, &newECKey(t, elliptic.P256()).PublicKey, devIDOptions{})
+	attestation := testCA.issueDevID(t, &newECKey(t, elliptic.P256()).PublicKey, devIDOptions{attestation: true})
+	bareIdentity := testCA.issueDevID(t, &newECKey(t, elliptic.P256()).PublicKey, devIDOptions{omitSAN: true})
+	bareAttestation := testCA.issueDevID(t, &newECKey(t, elliptic.P256()).PublicKey, devIDOptions{attestation: true, omitPermanentID: true})
+
+	cases := map[string]struct {
+		identity, attestation *x509.Certificate
+		credential            string
+	}{
+		"no identity certificate":          {nil, attestation, "IDevID"},
+		"no attestation certificate":       {identity, nil, "IAK"},
+		"identity without device names":    {bareIdentity, attestation, "IDevID"},
+		"attestation without permanent id": {identity, bareAttestation, "IAK"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := VerifySameDevice(tc.identity, tc.attestation)
+			var devErr *DevIDError
+			if !errors.As(err, &devErr) {
+				t.Fatalf("VerifySameDevice = %v, want *DevIDError", err)
+			}
+			if devErr.Credential != tc.credential {
+				t.Fatalf("credential = %q, want %q", devErr.Credential, tc.credential)
+			}
+		})
+	}
+}

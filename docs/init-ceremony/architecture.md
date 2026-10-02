@@ -1,6 +1,6 @@
 # Init Ceremony — Architecture
 
-> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## The problem
 
@@ -67,9 +67,32 @@ const systemTenantID = "system"
 
 The SO / bootstrap certificate is **always** scoped to the `system` tenant, and
 when a SPIFFE trust domain is configured the adapter stamps
-`spiffe://<td>/tenant/system/user/<CN>` onto it. The comment states why: *"the
+`spiffe://<td>/tenant/system/user/<CN>` onto the certificate it *issues*
+(`IssueCertificate`, the CA generating the key). The comment states why: *"the
 SO cert explicitly carries tenant/system so the control plane works before any
 tenant barrier unseals."*
+
+### Holder certificates name the registered holder, never the CSR
+
+A certificate signed from a CSR during the ceremony (an M-of-N officer, a
+custodian, `init sign-csr`) follows go-qrdb's `SignCSROptions` contract
+(go-qrdb v0.28): its Subject is exactly `CN=<registered username>`,
+`OU=<scope tenant>`, `OU=<profile>`, one RDN each in that order
+(`SignCSROptions.RawSubject`), it carries **no** Subject Alternative Name, and
+the CSR contributes only its public key. `CAAdapter.SignCSR` passes that raw
+subject to the CA (`ca.SignOptions.RawSubject`), which writes it verbatim and
+copies none of the CSR's names. go-qrdb re-checks every returned certificate
+and refuses one that differs.
+
+The reason is the ceremony CA's position: it is the CA the mTLS listener trusts
+for logins. Copying a CSR's subject let whoever registered an officer obtain a
+certificate for `CN=admin, OU=system` -- a login as the system tenant's admin.
+No SPIFFE SAN is stamped on a holder certificate: go-qrdb refuses any SAN
+there, and the holder's tenant is the first OU, which the authenticator reads.
+The profile name (`security-officer`, `custodian`, the `init sign-csr` role) is
+go-qrdb's holder label carried in the second OU; it is not one of the xkms CA's
+certificate profiles, whose key usage, extended key usage and validity the
+options state directly.
 
 This is the control-plane exception in the login tenant-derivation order. Every
 other identity derives its tenant normally; the SO certificate cannot, because
@@ -103,7 +126,7 @@ operator:  xkmsd init
   → CA: Init (self-signed root, or CSR + intermediate)
   → barrier: initialize with the chosen strategy
   → officers: each submits a CSR
-      → CAAdapter.SignCSR → SO/officer certificate, tenant=system, SPIFFE SAN
+      → CAAdapter.SignCSR → holder certificate CN=<officer>, OU=system, OU=<profile>, no SAN
   → shares: split M-of-N, one per officer
 
 single-admin mode only (ceremony reaches StateOperational):

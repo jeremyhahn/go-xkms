@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // stubAuditClient records the filter it received and returns a canned page.
@@ -77,7 +78,10 @@ func TestQueryAudit_PassesEveryFilterFieldThrough(t *testing.T) {
 	stub := &stubAuditClient{page: &qrdbtransport.AuditPage{}}
 	svc := auditService(t, stub)
 
-	_, err := svc.QueryAudit(context.Background(), &transport.AuditFilter{
+	// The tenant is the caller's own: the one field that is not passed
+	// through as sent (see TestQueryAudit_EveryCallerIsConfinedToItsOwnTenant).
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "alice", TenantID: "t1"})
+	_, err := svc.QueryAudit(ctx, &transport.AuditFilter{
 		From:     from,
 		To:       to,
 		Actor:    "alice",

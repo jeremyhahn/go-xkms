@@ -318,19 +318,40 @@ func TestCAAdapter_SignCSR_Error(t *testing.T) {
 // non-empty spiffeTrustDomain makes SignCSR stamp the system-tenant SPIFFE
 // SAN fields onto the underlying SignOptions, not just pass validity/profile
 // through unchanged.
-func TestCAAdapter_SignCSR_StampsSPIFFEWhenTrustDomainConfigured(t *testing.T) {
+// TestCAAdapter_SignCSR_IssuesTheHolderSubject: a holder certificate carries
+// exactly go-qrdb's RawSubject (CN=<holder>, OU=<tenant>, OU=<profile>) and
+// no SPIFFE SAN, even with a trust domain configured: go-qrdb refuses a
+// holder certificate with any subject alternative name.
+func TestCAAdapter_SignCSR_IssuesTheHolderSubject(t *testing.T) {
 	rec := newRecordingCA(t)
 	adapter := NewCAAdapter(rec, "xkms.example.com")
 
-	csrPEM, _ := generateTestCSR(t, "test-cn")
-	_, err := adapter.SignCSR(context.Background(), csrPEM, &qrdbsdk.SignCSROptions{
-		ValidityDays: 365,
-	})
+	csrPEM, _ := generateTestCSR(t, "requested-cn")
+	opts := &qrdbsdk.SignCSROptions{TenantID: "acme", Username: "officer-1", Profile: "security-officer", ValidityDays: 365}
+	_, err := adapter.SignCSR(context.Background(), csrPEM, opts)
 	require.NoError(t, err)
 	require.NotNil(t, rec.lastSignOpts)
-	assert.Equal(t, "xkms.example.com", rec.lastSignOpts.SPIFFETrustDomain)
-	assert.Equal(t, systemTenantID, rec.lastSignOpts.TenantID)
-	assert.Equal(t, spiffe.KindUser, rec.lastSignOpts.SPIFFEKind)
+	want, err := opts.RawSubject()
+	require.NoError(t, err)
+	assert.Equal(t, want, rec.lastSignOpts.RawSubject)
+	assert.Empty(t, rec.lastSignOpts.SPIFFETrustDomain)
+	assert.Empty(t, rec.lastSignOpts.TenantID)
+	assert.Nil(t, rec.lastSignOpts.SANS)
+	assert.Empty(t, rec.lastSignOpts.Profile, "go-qrdb's holder label is an OU, not a CA profile")
+}
+
+// TestCAAdapter_SignCSR_RefusesAnUnnamedHolder: without a registered holder
+// and tenant there is nothing to name, and nothing is signed.
+func TestCAAdapter_SignCSR_RefusesAnUnnamedHolder(t *testing.T) {
+	rec := newRecordingCA(t)
+	adapter := NewCAAdapter(rec, "")
+	csrPEM, _ := generateTestCSR(t, "requested-cn")
+
+	_, err := adapter.SignCSR(context.Background(), csrPEM, nil)
+	require.ErrorIs(t, err, ErrNilSignOptions)
+	_, err = adapter.SignCSR(context.Background(), csrPEM, &qrdbsdk.SignCSROptions{Username: "officer-1"})
+	require.Error(t, err, "no tenant")
+	assert.Nil(t, rec.lastSignOpts, "nothing reached the CA")
 }
 
 func TestCAAdapter_CACertificate_Error(t *testing.T) {

@@ -759,8 +759,9 @@ func TestRESTRouter_ClientEndpointsResolve(t *testing.T) {
 	}
 }
 
-// TestRESTInitCeremony_SignCSR verifies the newly mounted sign-csr route
-// signs a CSR under SO PIN authorization for an authenticated caller.
+// TestRESTInitCeremony_SignCSR verifies the sign-csr route signs a CSR under
+// SO PIN authorization for an authenticated caller, naming the registered
+// holder rather than the CSR's subject.
 func TestRESTInitCeremony_SignCSR(t *testing.T) {
 	handlers, _, mockCA := initTestMofNService(t, 2, 3)
 	csrPEM, _ := initTestGenerateCSR(t, "service-account")
@@ -787,7 +788,13 @@ func TestRESTInitCeremony_SignCSR(t *testing.T) {
 	require.NotNil(t, block)
 	cert, err := x509.ParseCertificate(block.Bytes)
 	require.NoError(t, err)
-	assert.Equal(t, "service-account", cert.Subject.CommonName)
+	// go-qrdb v0.28: the certificate names the registered holder (the
+	// request's username) in the system tenant, never the CSR's own subject.
+	assert.Equal(t, "officer-A", cert.Subject.CommonName, "the CSR's CN is not copied")
+	require.NotEmpty(t, cert.Subject.OrganizationalUnit)
+	assert.Equal(t, "system", cert.Subject.OrganizationalUnit[0])
+	assert.Empty(t, cert.DNSNames)
+	assert.Empty(t, cert.URIs)
 
 	caCert, err := mockCA.CACertificate()
 	require.NoError(t, err)

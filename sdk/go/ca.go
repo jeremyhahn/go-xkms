@@ -729,6 +729,12 @@ var (
 var (
 	ErrCACallerSANsRequired         = pkgca.ErrCallerSANsRequired
 	ErrCATenantSPIFFEWithCallerSANs = pkgca.ErrTenantSPIFFEWithCallerSANs
+	// ErrCARawSubjectWithNames reports TrustedCASignOptions.RawSubject
+	// combined with another source of certificate names.
+	ErrCARawSubjectWithNames = pkgca.ErrRawSubjectWithNames
+	// ErrCAInvalidRawSubject reports a TrustedCASignOptions.RawSubject that is
+	// not a DER-encoded distinguished name.
+	ErrCAInvalidRawSubject          = pkgca.ErrInvalidRawSubject
 	ErrCAInvalidSAN                 = pkgca.ErrInvalidSAN
 	ErrCAInvalidValidity            = pkgca.ErrInvalidValidity
 	ErrCAValidityExceedsProfile     = pkgca.ErrValidityExceedsProfile

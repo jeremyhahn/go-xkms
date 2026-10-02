@@ -162,7 +162,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	}
 	nodeOpts := []qrdbnode.NodeOption{
 		qrdbnode.WithLogger(s.logger),
-		qrdbnode.WithAuthenticators(newBearerAuthenticator(s.liveAuthenticator)),
+		qrdbnode.WithAuthenticators(auth.NewQRDBBearerAuthenticator(s.liveAuthenticator)),
 	}
 
 	// The audit sink and the hardware auth-factor registry are wired into the

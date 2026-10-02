@@ -13,7 +13,7 @@ flags: [`../key-management/cli.md`](../key-management/cli.md).
 | `--resource` | string | `""` | filter by resource type — `keys`, `certs`, `users`, … |
 | `--action` | string | `""` | filter by action |
 | `--outcome` | string | `""` | `allow` or `deny` |
-| `--tenant` | string | `""` | filter by tenant ID; honoured only for a system-tenant caller holding `audit:read:cross`, otherwise the server uses your own tenant (see [api.md](api.md) §"Tenant scoping") |
+| `--tenant` | string | `""` | accepted for compatibility; the server always uses your own tenant, the system tenant included (see [api.md](api.md) §"Tenant scoping") |
 | `--from` | string | `""` | events at or after this RFC 3339 timestamp |
 | `--to` | string | `""` | events at or before this RFC 3339 timestamp |
 | `--limit` | int | `0` | events per page; `0` uses the server default |

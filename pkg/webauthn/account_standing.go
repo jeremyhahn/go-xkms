@@ -14,14 +14,15 @@
 package webauthn
 
 import (
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // CheckAccountStanding reports whether user's account may authenticate with
 // a passkey: its lifecycle must be one that can authenticate (only
 // qrdbsdk.LifecycleActive can) and its permitted-auth-method policy must
-// allow auth.MethodWebAuthn. It returns *AccountNotActiveError or
-// *auth.AuthMethodNotPermittedError when it may not.
+// allow qrdbsdk.MethodWebAuthn, judged by go-qrdb's own qrdbsdk.CheckAuthMethod.
+// It returns *AccountNotActiveError or *qrdbsdk.AuthMethodNotPermittedError
+// when it may not.
 //
 // The Service applies it at every login begin and finish, and callers that
 // scope a ceremony to an account themselves (the qrdb factor adapter) apply
@@ -32,7 +33,7 @@ func CheckAccountStanding(user User) error {
 	if err := checkLifecycle(user); err != nil {
 		return err
 	}
-	return auth.CheckAuthMethod(user.WebAuthnName(), "", user.AuthMethods(), auth.MethodWebAuthn)
+	return qrdbsdk.CheckAuthMethod(&qrdbsdk.User{Username: user.WebAuthnName(), AuthMethods: user.AuthMethods()}, qrdbsdk.MethodWebAuthn)
 }
 
 // checkLifecycle refuses an account whose lifecycle state cannot

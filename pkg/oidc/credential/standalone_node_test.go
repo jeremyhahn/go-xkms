@@ -24,16 +24,30 @@ import (
 )
 
 // TestLockerOnRealStandaloneNode boots a real in-memory standalone qrdb node
-// and proves what the locker relies on: its coordination client refuses
-// the raft-only lease family with the typed capability error, so the
-// locker recognises a single-process node from qrdb itself rather than
-// from configuration it could be handed wrong.
+// and proves the locker takes a real lease there. Since go-qrdb v0.27 a
+// standalone node serves leases with raft mode's semantics, so the locker
+// serializes refreshes through qrdb exactly as on a cluster; its
+// single-process fallback remains for a backend that refuses leases with the
+// typed capability error (covered by the locker's unit tests).
 func TestLockerOnRealStandaloneNode(t *testing.T) {
 	coord := barriertest.NewStandaloneCoordinator(t)
 
 	l := newLocker(coord, discardLogger())
 	unlock, err := l.lock(context.Background(), "tenant/oidc/shared/x.json")
 	require.NoError(t, err)
+	assert.False(t, l.standalone.Load(), "a standalone node that serves leases is not treated as lease-less")
+
+	// The lease is held: a second locker, standing in for another process,
+	// cannot take it until the first releases.
+	other := newLocker(coord, discardLogger())
+	_, held, err := other.tryAcquire(context.Background(), lockPrefix+hashKey("tenant/oidc/shared/x.json"), lockTTL)
+	require.NoError(t, err)
+	assert.True(t, held, "the lease excludes a second holder")
+
 	unlock()
-	assert.True(t, l.standalone.Load(), "a standalone node's lease refusal is recognised")
+	lease, held, err := other.tryAcquire(context.Background(), lockPrefix+hashKey("tenant/oidc/shared/x.json"), lockTTL)
+	require.NoError(t, err)
+	require.False(t, held, "released, the lease is free")
+	require.NotNil(t, lease)
+	require.NoError(t, lease.Release(context.Background()))
 }

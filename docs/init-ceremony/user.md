@@ -1,6 +1,6 @@
 # Init Ceremony — User Guide
 
-> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## What a ceremony is, and why it is one
 

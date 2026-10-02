@@ -28,6 +28,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/correlation"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -108,8 +109,8 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 	var streamInterceptors []grpc.StreamServerInterceptor
 
 	// Correlation interceptor (first to establish correlation ID for tracing)
-	unaryInterceptors = append(unaryInterceptors, server.correlationUnaryInterceptor)
-	streamInterceptors = append(streamInterceptors, server.correlationStreamInterceptor)
+	unaryInterceptors = append(unaryInterceptors, correlation.UnaryServerInterceptor(server.logger))
+	streamInterceptors = append(streamInterceptors, correlation.StreamServerInterceptor(server.logger))
 
 	// Rate limiting interceptor (early to prevent abuse before other processing)
 	if cfg.RateLimiter != nil && cfg.RateLimiter.IsEnabled() {

@@ -1,6 +1,6 @@
 # Multi-Tenancy — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## Exported surface — `sdk/go/transport`
 
@@ -51,10 +51,22 @@ owner that is not exactly one key segment), and the refusals
 `ErrRefused`. `ServiceAccess` is set by the feature after checking its own
 service permission; `pkg/scope` carries no permission model.
 
+The whole package is exported through `sdk/go` for hosts that store objects
+in the same layout: `ObjectScope` (`ObjectScopeTenant`, `ObjectScopeUser`,
+`ObjectScopeService`), `ParseObjectScope`, `ScopePrincipal`, `ScopeTarget`,
+`ScopePrincipalOf`, `ScopePrincipalFromContext`, `ScopeSystemTenant`,
+`ScopeTenantName`, `ScopeIsSystem`, the keyspace helpers `ScopeTenantRoot`,
+`ScopeFeatureRoot`, `ScopePrefix`, `ScopeFeaturePrefix`, `ScopeOwnersRoot`,
+`ScopeSharedPrefix`, `ScopePersonalPrefix`, `ScopeSharedSuffix`, and the errors
+`ErrScopeRefused`, `ScopeCrossTenantError`,
+`ScopeCrossUserError`, `ScopeServiceError`, `ScopeInvalidScopeError`,
+`ScopeInvalidSegmentError` (`sdk/go/scope.go`).
+
 Adopters: `pkg/staticpw` (store prefixes), `pkg/tpmpolicy` (registry keys and
 scope names; the SDK's `TPMPolicyScopeName` is `scope.TenantName`),
 `pkg/ssh/scope` (its `Scope` is this one) and `pkg/ssh/tenancy` (every SSH
-request is bound with `Authorize`). Tests: `pkg/scope/scope_test.go`.
+request is bound with `Authorize`). Tests: `pkg/scope/scope_test.go`
+and `sdk/go/scope_test.go`.
 
 ## Isolation modes
 

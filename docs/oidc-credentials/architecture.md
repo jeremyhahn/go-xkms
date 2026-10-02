@@ -96,12 +96,15 @@ each credential that is due in every unsealed tenant, and renews its lease.
 The others campaign each interval and take over when the leader's lease
 lapses.
 
-qrdb's leases are **raft-only**: a standalone node refuses the lease family
-with a typed error (`transport.CapabilityUnsupportedError` over a network
-transport; `embedded.NilServiceError{Service: "LeaseServicer"}` from an
-in-process `node.Client()`). The service recognises that refusal and, on
-that single-process node, relies on its in-process mutex and is its own
-leader — the qrdb run mode decides, not configuration that could be wrong.
+Since go-qrdb v0.27 a standalone node serves leases with raft mode's
+semantics, so the service takes the same leases on either run mode. A node
+whose storage backend cannot serve leases (go-qrdb's file and objstore
+backends) refuses the lease family with a typed error
+(`transport.CapabilityUnsupportedError` over a network transport;
+`embedded.NilServiceError{Service: "LeaseServicer"}` from an in-process
+`node.Client()`). The service recognises that refusal and, on that
+single-process node, relies on its in-process mutex and is its own leader —
+qrdb decides, not configuration that could be wrong.
 
 ## Logins
 

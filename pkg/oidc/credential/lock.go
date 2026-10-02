@@ -53,9 +53,10 @@ type Leases interface {
 // record key, and, on a raft cluster, a qrdb lease per record key so two
 // nodes never redeem the same rotating refresh token.
 //
-// A standalone qrdb node refuses the lease family with a typed
-// capability error (qrdb's run-mode split: leases are raft-only, and a
-// standalone node is one process). The locker records that once and from
+// A qrdb node whose storage backend cannot serve leases (go-qrdb's file and
+// objstore backends; a standalone node on a memory or Pebble backend serves
+// them as a cluster does) refuses the lease family with a typed capability
+// error, and is one process. The locker records that once and from
 // then on relies on the in-process mutex, which on a single-process node is
 // the whole of the exclusion there is to have.
 type locker struct {
@@ -151,11 +152,10 @@ func (l *locker) tryAcquire(ctx context.Context, key string, ttl time.Duration) 
 	return nil, false, err
 }
 
-// leaseFamilyRefused reports whether err is a standalone qrdb node refusing
-// the raft-only lease family. Over a network transport the node answers
-// with the typed capability error; an in-process node.Client() built for a
-// standalone node has no lease servicer at all and says so with its own
-// typed error.
+// leaseFamilyRefused reports whether err is a qrdb node refusing the lease
+// family because its backend cannot serve leases. Over a network transport
+// the node answers with the typed capability error; an in-process
+// node.Client() with no lease servicer says so with its own typed error.
 func leaseFamilyRefused(err error) bool {
 	var unsupported *qrdbtransport.CapabilityUnsupportedError
 	if errors.As(err, &unsupported) {

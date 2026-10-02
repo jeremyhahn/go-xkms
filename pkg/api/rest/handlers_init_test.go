@@ -137,7 +137,10 @@ func (m *initTestMockCA) ClientTLSConfig(_ context.Context, _ *types.KeyAttribut
 	return nil, nil
 }
 
-func (m *initTestMockCA) SignCSR(_ context.Context, csrPEM []byte, _ *ca.SignOptions) (*x509.Certificate, error) {
+// SignCSR signs as the real CA does under go-qrdb's holder contract: a raw
+// subject in the options is the whole Subject and the CSR contributes only
+// its key.
+func (m *initTestMockCA) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
 	block, _ := pem.Decode(csrPEM)
 	if block == nil {
 		return nil, errors.New("mockCA: invalid PEM")
@@ -154,6 +157,9 @@ func (m *initTestMockCA) SignCSR(_ context.Context, csrPEM []byte, _ *ca.SignOpt
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	if opts != nil && opts.RawSubject != nil {
+		template.RawSubject = opts.RawSubject
 	}
 	certDER, err := x509.CreateCertificate(rand.Reader, template, m.cert, csr.PublicKey, m.privateKey)
 	if err != nil {

@@ -1,6 +1,6 @@
 # Init Ceremony — CLI
 
-> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 Two binaries. **`xkmsd init`** runs the ceremony on the server;
 **`xkmsctl init`** is what a remote officer uses to claim what the ceremony
@@ -88,6 +88,11 @@ Signs an officer CSR during the ceremony.
 ```
 xkmsctl init sign-csr --username alice --csr alice.csr --role custodian --output alice.crt
 ```
+
+The certificate names `--username`, not the CSR: its subject is
+`CN=<username>, OU=system, OU=<role>`, it carries no subject alternative name,
+and the CSR contributes only its key. A CSR asking for another name does not
+get it.
 
 `--role` sets the certificate's authority. `so` is the security officer — the
 control-plane credential, scoped to the `system` tenant so it works before any

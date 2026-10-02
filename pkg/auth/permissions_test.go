@@ -20,24 +20,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestActionReadCross_MatchesQRDBAuditReadCross pins the restated
-// audit:read:cross string to go-qrdb's registry. The SDK does not re-export
-// permission.AuditReadCross, so a rename upstream would otherwise leave
-// QueryAudit asking about a permission nobody holds, silently clamping every
-// platform auditor to the system tenant.
-func TestActionReadCross_MatchesQRDBAuditReadCross(t *testing.T) {
-	perm := qrdbsdk.Permission(ResourceAudit + ":" + ActionReadCross)
-
-	assert.True(t, qrdbsdk.IsPermissionRegistered(perm), "%s must be registered by qrdb", perm)
-	assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perm), "qrdb's Admin role grants %s", perm)
-}
-
-// TestActionReadCross_NotHeldByAuditor records qrdb's grant table: the
-// built-in Auditor role reads audit self-scope only, so a system-tenant
-// Auditor is confined to the system tenant's events.
-func TestActionReadCross_NotHeldByAuditor(t *testing.T) {
-	perm := qrdbsdk.Permission(ResourceAudit + ":" + ActionReadCross)
-
-	assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAuditor, perm))
+// TestAudit_NoCrossTenantRead pins go-qrdb's audit contract that QueryAudit
+// relies on: there is no cross-tenant audit permission (go-qrdb v0.28 removed
+// audit:read:cross), so every caller, the system tenant included, reads only
+// its own tenant's events. Should a cross-tenant read reappear upstream this
+// fails, and the service's own-tenant confinement must be revisited.
+func TestAudit_NoCrossTenantRead(t *testing.T) {
+	assert.False(t, qrdbsdk.IsPermissionRegistered(qrdbsdk.Permission(ResourceAudit+":read:cross")))
+	assert.True(t, qrdbsdk.IsPermissionRegistered(qrdbsdk.Permission(ResourceAudit+":"+ActionRead)))
 	assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAuditor, qrdbsdk.Permission(ResourceAudit+":"+ActionRead)))
 }
