@@ -1,1 +1,0 @@
-- **The gRPC rate-limit interceptors and `Limiter.AllowConn` bucket IPv6 peers on their /64.** The HTTP middleware already folded a client address through `RateLimitKey`; the gRPC interceptors and the raw-connection check keyed on the full address, so an IPv6 client could escape the limit on those transports by rotating through addresses in its own delegation.
