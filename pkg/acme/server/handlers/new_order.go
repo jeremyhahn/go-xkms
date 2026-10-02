@@ -15,6 +15,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -147,6 +148,11 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Create challenge (pass isWildcard to restrict HTTP-01 for wildcard domains per RFC 8555)
 		challenges, err := s.createChallenges(account.ID, authzID, id, isWildcard)
+		var ipErr *ErrIPIdentifierNotValidatable
+		if errors.As(err, &ipErr) {
+			writeError(w, ipErr.Problem())
+			return
+		}
 		if err != nil {
 			writeError(w, common.ServerInternal("Failed to create authorization challenge"))
 			return
@@ -242,11 +248,26 @@ func (s *RestService) createChallenges(accountID, authzID uint64, id entities.AC
 	// type the policy allows but no verifier is registered for cannot be
 	// offered).
 	candidates := s.challengePolicy.AllowedChallenges(id.Type, value)
+
+	// Attestation never authorizes an "ip" identifier (go-xkms#828), so none
+	// is offered for one however the policy lists it.
 	var challengeTypes []string
 	for _, challengeType := range candidates {
-		if _, registered := s.challengeMap[challengeType]; registered {
-			challengeTypes = append(challengeTypes, challengeType)
+		if !s.verifierRegistered(challengeType) {
+			continue
 		}
+		if id.Type == common.AuthzTypeIP && isEnrollXChallenge(challengeType) {
+			continue
+		}
+		challengeTypes = append(challengeTypes, challengeType)
+	}
+
+	// An "ip" identifier with nothing left to offer can never validate. That
+	// is the server declining the identifier, not a server fault, whether the
+	// policy listed only attestation challenges or listed others that have no
+	// verifier registered here.
+	if id.Type == common.AuthzTypeIP && len(challengeTypes) == 0 {
+		return []entities.ACMEChallenge{}, &ErrIPIdentifierNotValidatable{Value: id.Value}
 	}
 
 	s.logger.Info("Challenge types selected",
@@ -289,4 +310,16 @@ func (s *RestService) createChallenges(accountID, authzID uint64, id entities.AC
 	}
 
 	return challenges, nil
+}
+
+// verifierRegistered reports whether a verifier that ChallengeHandler would
+// accept is registered for challengeType: an attesting verifier for an
+// attestation challenge (a plain verifier function would be refused, so the
+// challenge is not offered), a verifier function for any other type.
+func (s *RestService) verifierRegistered(challengeType string) bool {
+	if isEnrollXChallenge(challengeType) {
+		return s.attestingVerifiers[challengeType] != nil
+	}
+	_, registered := s.challengeMap[challengeType]
+	return registered
 }

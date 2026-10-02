@@ -526,6 +526,14 @@ type SignOptions struct {
 	// Individual fields that are empty use the CSR values.
 	Subject *Subject
 
+	// OtherNames are subjectAltName otherName entries the issuer asserts, kept
+	// beside the names the CSR carries. The CA copies no otherName a CSR
+	// requests (a requester that named its own would be issuing to itself), so
+	// this is the only way one reaches the certificate: a caller that has
+	// established an identity from evidence it verified -- the RFC 4043
+	// permanentIdentifier of an attested device -- passes it here.
+	OtherNames []OtherName
+
 	// SANS provides additional SANs to include beyond those in the CSR.
 	// Under a CallerSANProfile it is the only source of names: the CSR's own
 	// names are ignored, and every entry must parse (ErrInvalidSAN).

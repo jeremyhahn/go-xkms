@@ -221,9 +221,9 @@ func TestCreateChallenges_PolicyOverride(t *testing.T) {
 	service.challengeMap["tls-alpn-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 		return nil
 	}
-	service.challengeMap["enroll-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
+	registerLegacyAttesting(service, "enroll-01", func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 		return nil
-	}
+	})
 
 	// The override applies to IP: http-01 and tls-alpn-01, not the default
 	// enrollment challenges.
@@ -258,10 +258,15 @@ func TestCreateChallenges_DefaultIdentifierChallengeTypes(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	for _, ct := range []string{"http-01", "dns-01", "enroll-01", "endorse-01", "device-attest-01"} {
+	for _, ct := range []string{"http-01", "dns-01"} {
 		service.challengeMap[ct] = func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 			return nil
 		}
+	}
+	for _, ct := range []string{"enroll-01", "endorse-01", "device-attest-01"} {
+		registerLegacyAttesting(service, ct, func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
+			return nil
+		})
 	}
 
 	tests := []struct {
@@ -269,6 +274,7 @@ func TestCreateChallenges_DefaultIdentifierChallengeTypes(t *testing.T) {
 		identifier entities.ACMEIdentifier
 		isWildcard bool
 		want       []string
+		wantNone   bool
 	}{
 		{
 			name:       "dns non-wildcard",
@@ -282,9 +288,11 @@ func TestCreateChallenges_DefaultIdentifierChallengeTypes(t *testing.T) {
 			want:       []string{"dns-01"},
 		},
 		{
+			// go-xkms#828: an attestation challenge never authorizes an ip
+			// identifier, so none is offered for one.
 			name:       "ip",
 			identifier: entities.ACMEIdentifier{Type: common.AuthzTypeIP, Value: "198.51.100.7"},
-			want:       []string{"enroll-01", "endorse-01", "device-attest-01"},
+			wantNone:   true,
 		},
 		{
 			name:       "permanent-identifier",
@@ -296,6 +304,11 @@ func TestCreateChallenges_DefaultIdentifierChallengeTypes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			challenges, err := service.createChallenges(1, 2, tt.identifier, tt.isWildcard)
+			if tt.wantNone {
+				require.ErrorAs(t, err, new(*ErrIPIdentifierNotValidatable))
+				require.Empty(t, challenges)
+				return
+			}
 			require.NoError(t, err)
 			got := make([]string, 0, len(challenges))
 			for _, c := range challenges {
@@ -304,4 +317,33 @@ func TestCreateChallenges_DefaultIdentifierChallengeTypes(t *testing.T) {
 			assert.ElementsMatch(t, tt.want, got)
 		})
 	}
+}
+
+// An "ip" override that names a challenge no verifier is registered for must
+// not fall back to offering an attestation challenge, which ChallengeHandler
+// refuses for every ip identifier: the identifier is declined instead.
+func TestCreateChallenges_IPOverrideWithoutARegisteredVerifierIsDeclined(t *testing.T) {
+	cfg := strictPolicyConfig()
+	cfg.IdentifierChallengeTypes = map[string][]string{
+		policy.IdentifierTypeIP: {policy.ChallengeTypeHTTP01, policy.ChallengeTypeDeviceAttest01},
+	}
+	service, _, cleanup := setupTestServiceWithPolicy(t, cfg)
+	defer cleanup()
+	registerLegacyAttesting(service, "device-attest-01", func(*net.Resolver, common.CertificateAuthority, string, string, string, string) error {
+		return nil
+	})
+	ip := entities.ACMEIdentifier{Type: common.AuthzTypeIP, Value: "198.51.100.7"}
+
+	challenges, err := service.createChallenges(1, 2, ip, false)
+	require.ErrorAs(t, err, new(*ErrIPIdentifierNotValidatable))
+	require.Empty(t, challenges)
+
+	// With http-01 registered, it alone is offered.
+	service.challengeMap["http-01"] = func(*net.Resolver, common.CertificateAuthority, string, string, string, string) error {
+		return nil
+	}
+	challenges, err = service.createChallenges(1, 2, ip, false)
+	require.NoError(t, err)
+	require.Len(t, challenges, 1)
+	assert.Equal(t, policy.ChallengeTypeHTTP01, challenges[0].Type)
 }

@@ -17,6 +17,7 @@ package trustedca
 // that embed or configure the ACME server (e.g., go-trusted-platform).
 
 import (
+	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	dns01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01"
 	endorse01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/endorse-01"
 	enroll01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/enroll-01"
@@ -39,6 +40,25 @@ type ACMECertificateAuthority = acmecommon.CertificateAuthority
 
 // ACMEChallengeVerifierFunc defines the function signature for challenge verification.
 type ACMEChallengeVerifierFunc = acmecommon.ChallengeVerifierFunc
+
+// ACMEAttestingVerifier verifies an attestation challenge (enroll-01,
+// endorse-01, device-attest-01) and reports the identity the device attested.
+// It sits beside ACMEChallengeVerifierFunc, which is unchanged: the ACME server
+// requires an ACMEAttestingVerifier for every attestation challenge type and
+// refuses the challenge when only a plain verifier function is registered.
+type ACMEAttestingVerifier = acmecommon.AttestingVerifier
+
+// ACMEAttestingVerifierFunc adapts a function to an ACMEAttestingVerifier.
+type ACMEAttestingVerifierFunc = acmecommon.AttestingVerifierFunc
+
+// ACMEAttestationChallenge is what the ACME server hands an
+// ACMEAttestingVerifier: the authorization and the challenge exchange to run.
+type ACMEAttestationChallenge = acmecommon.AttestationChallenge
+
+// ACMEAttestedIdentity is what an ACMEAttestingVerifier reports on success:
+// the device identity it attested, and the verified evidence finalization
+// binds the certificate request's key to.
+type ACMEAttestedIdentity = acmecommon.AttestedIdentity
 
 // ACMEDirectory provides the ACME server directory endpoints per RFC 8555.
 type ACMEDirectory = acmecommon.Directory
@@ -190,6 +210,10 @@ type ACMERenewalInfo = acmeclient.RenewalInfo
 // ACMETPMModule defines the TPM interface used by the ACME client for enrollment.
 type ACMETPMModule = acmeclient.TPMModule
 
+// ACMEAttestedKey is a device-attest-01 certificate key and the challenge
+// response that attests it, what ACMETPMModule.CreateAttestedKey returns.
+type ACMEAttestedKey = acmeclient.AttestedKey
+
 // ACMEXKMSTPMAdapter adapts a go-xkms TPM module for use with the ACME client.
 type ACMEXKMSTPMAdapter = acmeclient.XKMSTPMAdapter
 
@@ -258,6 +282,22 @@ var (
 var (
 	// ACMEErrInvalidConfiguration is returned when the ACME client configuration is invalid.
 	ACMEErrInvalidConfiguration = acmeclient.ErrInvalidConfiguration
+
+	// ACMEErrDeviceIdentityFailed is returned by ACMETPMModule.DeviceIdentity
+	// when the device's IAK certificate cannot be read.
+	ACMEErrDeviceIdentityFailed = acmeclient.ErrDeviceIdentityFailed
+
+	// ACMEErrAttestedKeyNameRequired is returned by
+	// ACMETPMModule.CreateAttestedKey for an empty key name.
+	ACMEErrAttestedKeyNameRequired = acmeclient.ErrAttestedKeyNameRequired
+
+	// ACMEErrKeyBackendNotConfigured is returned by
+	// ACMETPMModule.CreateAttestedKey when no TPM key store is configured.
+	ACMEErrKeyBackendNotConfigured = acmeclient.ErrKeyBackendNotConfigured
+
+	// ACMEErrAttestedKeyFailed is returned by ACMETPMModule.CreateAttestedKey
+	// when the certificate key cannot be created or certified.
+	ACMEErrAttestedKeyFailed = acmeclient.ErrAttestedKeyFailed
 )
 
 // ACME handler errors.
@@ -347,9 +387,179 @@ var ACMEComputeDNS01ChallengeValue = dns01.ComputeChallengeValue
 // ACMEVerifyEnroll01 verifies an enroll-01 ACME challenge.
 var ACMEVerifyEnroll01 = enroll01.Verify
 
-// ACMEVerifyEndorse01 verifies an endorse-01 ACME challenge.
-var ACMEVerifyEndorse01 = endorse01.Verify
+// ACMEVerifyEndorse01 is endorse01.Verify, which verifies nothing.
+//
+// Deprecated: it returns nil for every request. endorse-01 is authorized by the
+// account's External Account Binding; register ACMEAttestingVerifiers.
+var ACMEVerifyEndorse01 = endorse01.Verify //nolint:staticcheck // SA1019: re-exported unchanged for source compatibility
+
+// ACMEVerifyEnroll01Activation verifies an enroll-01 ACME challenge and returns
+// the endorsement key and activation key the credential was activated for.
+var ACMEVerifyEnroll01Activation = enroll01.VerifyActivation
+
+// ACMEEnroll01Activation is what a completed enroll-01 credential activation
+// established: the endorsement key certificate and the activation key a
+// TCG-CSR-IDEVID must be built around to finalize the order.
+type ACMEEnroll01Activation = enroll01.Activation
+
+// ACMEErrEnroll01ActivationUnreadable is returned when a credential activated
+// but the keys it was made for cannot be read from the TCG-CSR-IDEVID.
+var ACMEErrEnroll01ActivationUnreadable = enroll01.ErrActivationUnreadable
+
+// ACMEEnroll01Format is the format tag of an enroll-01 activation record
+// (ACMEDeviceAttestationEntity.Format).
+const ACMEEnroll01Format = enroll01.Format
+
+// ACMEErrEnrollActivationNotFound is returned at finalization when a
+// TCG-CSR-IDEVID arrives for an order no enroll-01 credential activation was
+// recorded on.
+type ACMEErrEnrollActivationNotFound = acmehandler.ErrEnrollActivationNotFound
+
+// ACMEErrEnrollActivationMismatch is returned at finalization when a
+// TCG-CSR-IDEVID is built around an endorsement key or attestation key other
+// than the one an enroll-01 credential was activated for.
+type ACMEErrEnrollActivationMismatch = acmehandler.ErrEnrollActivationMismatch
+
+// ACMEErrFinalizeRequestNotPermitted is returned at finalization when the
+// request is not one the order's validated attestation challenge permits: an
+// endorse-01 order finalizes only as an EK certificate.
+type ACMEErrFinalizeRequestNotPermitted = acmehandler.ErrFinalizeRequestNotPermitted
 
 // ACMEEnroll01TCGCSRVerifier is the TCG-CSR-IDEVID verification interface
 // required by enroll-01 challenges.
 type ACMEEnroll01TCGCSRVerifier = enroll01.TCGCSRVerifier
+
+// ACMEDeviceAttest01Verifier is the AK/UEID chain-anchoring and attestation
+// object verification interface required by device-attest-01 challenges. It is
+// the server's trust policy over a device's evidence, passed to
+// ACMEAttestingVerifiers to enable the challenge. ACMETrustAnchorVerifier
+// implements it from configured trust anchors.
+type ACMEDeviceAttest01Verifier = deviceattest01.AttestationVerifier
+
+// ACMEDeviceAttestFormat names a device-attest-01 attestation format.
+type ACMEDeviceAttestFormat = deviceattest01.AttestationFormat
+
+// The device-attest-01 attestation formats that define a device identity.
+const (
+	// ACMEDeviceAttestFormatTPM is a WebAuthn "tpm" statement; its identity
+	// is the AIK certificate's RFC 4043 permanentIdentifier.
+	ACMEDeviceAttestFormatTPM = deviceattest01.FormatTPM
+
+	// ACMEDeviceAttestFormatDICE is a TCG DICE statement (UCCS evidence); its
+	// identity is the alias certificate's tcg-dice-Ueid, as lowercase hex.
+	ACMEDeviceAttestFormatDICE = deviceattest01.FormatDICE
+)
+
+// ACMEDeviceIdentityFromCertificate reads the device identity an attestation
+// leaf certificate of the given format carries -- the identity the server
+// compares with the order's permanent-identifier, and so the value a
+// device-attest-01 client must name.
+var ACMEDeviceIdentityFromCertificate = deviceattest01.DeviceIdentityFromCertificate
+
+// ACMEErrDeviceIdentityUnavailable is returned when attestation evidence
+// carries no device identity ACMEDeviceIdentityFromCertificate can read.
+var ACMEErrDeviceIdentityUnavailable = deviceattest01.ErrDeviceIdentityUnavailable
+
+// ACMETrustAnchors configures an ACMETrustAnchorVerifier: the roots a "tpm"
+// attestation's AIK chain and a "dice" attestation's chain must reach.
+type ACMETrustAnchors = deviceattest01.TrustAnchors
+
+// ACMEDICEPolicy is the policy a DICE alias certificate must meet beyond
+// anchoring: device-signed leaf, firmware measurement, DiceTcbInfo and
+// tolerated operational flags.
+type ACMEDICEPolicy = deviceattest01.DICEPolicy
+
+// ACMETrustAnchorVerifier is the production ACMEDeviceAttest01Verifier: it
+// anchors a device's evidence to configured trust anchors using the TPM and
+// DICE verification primitives go-xkms owns.
+type ACMETrustAnchorVerifier = deviceattest01.TrustAnchorVerifier
+
+// ACMENewTrustAnchorVerifier builds an ACMETrustAnchorVerifier. It returns
+// ACMEErrNoTrustAnchors when no root is configured.
+var ACMENewTrustAnchorVerifier = deviceattest01.NewTrustAnchorVerifier
+
+// ACMEErrNoTrustAnchors is returned when device-attest-01 verification is
+// asked for with no trust anchors, or none for the attestation's format.
+var ACMEErrNoTrustAnchors = deviceattest01.ErrNoTrustAnchors
+
+// ACMEErrNoAttestationVerifier is returned when an attestation is verified
+// with no ACMEDeviceAttest01Verifier.
+var ACMEErrNoAttestationVerifier = deviceattest01.ErrNoAttestationVerifier
+
+// ACMEDeviceAttestRequest is the payload a device-attest-01 client POSTs to
+// the challenge URL (draft-ietf-acme-device-attest): {"attObj": base64url}.
+type ACMEDeviceAttestRequest = deviceattest01.AttestationRequest
+
+// ACMEParseDeviceAttestRequest decodes a device-attest-01 challenge payload
+// into its attestation object.
+var ACMEParseDeviceAttestRequest = deviceattest01.ParseAttestationRequest
+
+// ACMEEncodeDeviceAttestRequest encodes an attestation object as the
+// device-attest-01 challenge payload.
+var ACMEEncodeDeviceAttestRequest = deviceattest01.EncodeAttestationRequest
+
+// ACMEErrAttestationPayloadInvalid is returned when a device-attest-01
+// challenge payload is not a decodable attestation object.
+var ACMEErrAttestationPayloadInvalid = deviceattest01.ErrAttestationPayloadInvalid
+
+// ACMEDeviceAttestStatement is the attStmt of an ACMEDeviceAttestObject: the
+// "tpm" format's x5c/sig/certInfo/pubArea, or the "dice" format's x5c.
+type ACMEDeviceAttestStatement = deviceattest01.AttestationStatement
+
+// ACMEDICENonce is the value a DICE device places in its eat_nonce claim to
+// answer a device-attest-01 challenge for a key authorization: SHA-256 of it.
+var ACMEDICENonce = deviceattest01.DICENonce
+
+// ACMETPMExtraData is the extraData a TPM2_Certify must carry to answer a
+// device-attest-01 challenge with a "tpm" statement.
+var ACMETPMExtraData = deviceattest01.TPMExtraData
+
+// ACMEDeviceAttestObject is the WebAuthn-style attestation object a
+// device-attest-01 statement carries, the argument an
+// ACMEDeviceAttest01Verifier receives.
+type ACMEDeviceAttestObject = deviceattest01.AttestationObject
+
+// ACMEErrAttestationIdentifierType is returned when an attestation challenge
+// is asked to authorize an identifier type it cannot: attestation never
+// authorizes an "ip" identifier.
+type ACMEErrAttestationIdentifierType = acmehandler.ErrAttestationIdentifierType
+
+// ACMEErrAttestingVerifierRequired is returned (to the log and audit record)
+// when an attestation challenge has no ACMEAttestingVerifier registered.
+type ACMEErrAttestingVerifierRequired = acmehandler.ErrAttestingVerifierRequired
+
+// ACMEErrAttestationNoIdentity is returned when an ACMEAttestingVerifier
+// reports success without an attested identity.
+type ACMEErrAttestationNoIdentity = acmehandler.ErrAttestationNoIdentity
+
+// ACMEErrIdentityMismatch is returned when the identity an attestation
+// challenge established is not the identifier the order authorizes.
+type ACMEErrIdentityMismatch = acmehandler.ErrIdentityMismatch
+
+// ACMENewEndorseVerifier returns the endorse-01 ACMEAttestingVerifier: it
+// reports the identity the account's External Account Binding authorized
+// (ACMEAttestationChallenge.AuthorizedIdentity) and refuses without one.
+// ACMEAttestingVerifiers registers it for endorse-01.
+var ACMENewEndorseVerifier = acmehandler.NewEndorseVerifier
+
+// ACMEErrEndorseEABKeyNotBound is returned when an endorse-01 External Account
+// Binding names no EK: it would authorize its account for any public key.
+var ACMEErrEndorseEABKeyNotBound = acmehandler.ErrEndorseEABKeyNotBound
+
+// ACMEErrEndorseEABKeyMismatch is returned when the EK an endorse-01 order asks
+// to certify is not the one the account's External Account Binding names.
+var ACMEErrEndorseEABKeyMismatch = acmehandler.ErrEndorseEABKeyMismatch
+
+// ACMEErrEndorseNoAuthorizedIdentity is returned by the endorse-01 verifier run
+// without an EAB-authorized identity to attest.
+var ACMEErrEndorseNoAuthorizedIdentity = acmehandler.ErrEndorseNoAuthorizedIdentity
+
+// ACMEErrOrderAuthorizationMissing is returned when an order references an
+// authorization storage does not hold. Finalization is refused rather than
+// decided from the authorizations that remain.
+type ACMEErrOrderAuthorizationMissing = acmehandler.ErrOrderAuthorizationMissing
+
+// ACMEErrDeviceAttestationNotFound is returned at finalization when a
+// permanent-identifier order has no validated device-attest-01 attestation to
+// bind the certificate request to.
+type ACMEErrDeviceAttestationNotFound = acmehandler.ErrDeviceAttestationNotFound

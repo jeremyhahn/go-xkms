@@ -1908,6 +1908,7 @@ func (ca *CA) issueSignedSpec(
 
 	if opts != nil {
 		spec.ExtraExtensions = opts.ExtraExtensions
+		spec.OtherNames = opts.OtherNames
 	}
 
 	// Certificates signed with a caller-supplied Signer belong to a different

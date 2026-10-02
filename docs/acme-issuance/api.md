@@ -79,14 +79,14 @@ account-scoped objects.
 |---|---|---|
 | `http-01` | fetches `http://<identifier>/.well-known/acme-challenge/<token>` | `pkg/acme/challenges/http-01` |
 | `dns-01` | resolves `_acme-challenge.<identifier>` TXT | `pkg/acme/challenges/dns-01` |
-| `device-attest-01` | verifies an attestation object over the key | `pkg/acme/challenges/device-attest-01` |
+| `device-attest-01` | verifies the attestation object the client POSTs to the challenge URL (`{"attObj": base64url(CBOR)}`); contacts nothing | `pkg/acme/challenges/device-attest-01` |
 | `enroll-01` | `TPM2_MakeCredential` / `ActivateCredential` against a verified EK, from a TCG-CSR-IDEVID | `pkg/acme/challenges/enroll-01` |
 | `endorse-01` | endorsement by an existing trusted party, with EAB | `pkg/acme/challenges/endorse-01`, `handlers/endorse_eab.go` |
 
 `enroll-01` and `endorse-01` are go-xkms extensions. A standard client never
 selects them and is unaffected by their presence.
 
-The server contacts `http-01`, `enroll-01` and `device-attest-01` targets
+The server contacts `http-01` and `enroll-01` targets (and `endorse-01`'s)
 only at a bare hostname or IP that does not resolve to a reserved address
 (loopback, private, link-local, metadata), unless the operator set
 `acme.challenges.allow_private_targets`. A failed challenge's `error` is a
@@ -123,6 +123,21 @@ public key the order asserts. An operator who registers the device through an
 EAB with `deviceInfo.tpmManufacturer` bounds it: the device may assert only
 that code, whether or not EAB is required for endorse-01.
 
+endorse-01 itself proves nothing about the key, so the External Account Binding
+is its only control:
+
+| Condition | Problem |
+|---|---|
+| the account has no EAB of purpose `endorse-01` (EAB is required unless `acme.endorse_eab_required: false`) | `unauthorized` (401) at the challenge |
+| the EAB names no EK (`deviceInfo.ekPublicKeyHash`, or the `endorse_device_id_meta_key` metadata) | `unauthorized` (401) at the challenge |
+| the order's EK is not the one the EAB names | `unauthorized` (401) at the challenge |
+| the order was validated by any attestation challenge but endorse-01 | `badCSR` (400) at finalize |
+
+An endorse-01 authorization finalizes only as an EK certificate: a TCG-CSR-IDEVID
+for such an order is `badCSR` (400). A TCG-CSR-IDEVID is likewise refused unless
+enroll-01 validated the order and the CSR's endorsement key and IAK are the ones
+that passed credential activation.
+
 ### device-attest-01 / permanent-identifier finalize
 
 A `permanent-identifier` order finalized with a standard x509 CSR (rather
@@ -138,17 +153,34 @@ this identifier.
 | the CSR carries more than one `permanentIdentifier` otherName, or an otherName of any other type | `badCSR` (400) |
 | the otherName's value does not equal an identifier the order authorizes | `rejectedIdentifier` (401) |
 | the CSR carries a DNS or IP SAN, or an email/URI SAN | `rejectedIdentifier` (401) / `malformed` (400) unless that exact name is one of the order's authorized `dns`/`ip` identifiers |
+| (device-attest-01 only) no validated `device-attest-01` challenge left an attestation record to bind against | `badCSR` (400) |
+| (device-attest-01 only) the CSR's key is not the attested key | `badCSR` (400) |
+| an authorization the order references is missing from storage | `serverInternal` (500) |
 
 As with endorse-01, each is refused before the order moves to `processing`.
 
-A `device-attest-01` finalize is also refused unless the CSR's key is the key
-the challenge attested: for the `tpm` format, the key in the statement's
+A `device-attest-01` finalize is refused unless the CSR's key is the key the
+challenge attested: for the `tpm` format, the key in the statement's
 `pubArea`, which the AIK in `x5c[0]` certified with TPM2_Certify over the key
-authorization (WebAuthn Level 2 §8.3). The attestation object is unchanged on
-the wire — `fmt: "tpm"`, `attStmt: {ver, alg, x5c, sig, certInfo, pubArea}` —
-but `certInfo` must be a TPM2_Certify, not a TPM2_Quote, and `extraData` must
-be `TPMExtraData(alg, keyAuthorization)`. See
+authorization (WebAuthn Level 2 §8.3); for `dice`, the alias leaf's own
+`SubjectPublicKeyInfo`. The attestation object is unchanged on the wire —
+`fmt: "tpm"`, `attStmt: {ver, alg, x5c, sig, certInfo, pubArea}` — but
+`certInfo` must be a TPM2_Certify, not a TPM2_Quote, and `extraData` must be
+`TPMExtraData(alg, keyAuthorization)`. The check runs against the attestation
+record `ChallengeHandler` persisted on the authorization's `device-attest-01`
+challenge when it validated; a
+permanent-identifier order with no such record is refused outright rather
+than signed as an ordinary CSR. See
 [engineering.md](engineering.md#device-attest-01-key-binding).
+
+The challenge itself also refuses to validate unless the device identity the
+evidence carries — the RFC 4043 `permanentIdentifier` otherName on the AIK
+certificate for `tpm`, the hex-encoded TCG DICE `tcg-dice-Ueid` extension for
+`dice` — equals the authorization's `permanent-identifier` value;
+a mismatch is `unauthorized` (401) at the challenge, before
+finalize is ever reached. See
+[engineering.md](engineering.md#device-attest-01-key-binding).
+
 `endorse-01` is the one exception: its permanent identifier is the EK public
 key being certified, authorized when the endorse-01 challenge itself was
 validated, so its finalize CSR is never checked against the order's

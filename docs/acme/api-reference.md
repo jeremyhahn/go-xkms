@@ -833,10 +833,13 @@ _acme-challenge.{domain}  TXT  {base64url(SHA256(keyAuth))}
 ### device-attest-01 Challenge Response
 
 ```json
-{}
+{"attObj": "<base64url, unpadded, of the CBOR attestation object>"}
 ```
 
-Empty payload. Client should have HTTP server ready with attestation object.
+The payload is the attestation (draft-ietf-acme-device-attest). The server
+verifies it and never contacts the device, so the client needs no HTTP server.
+A challenge answered with `{}` becomes `invalid`. The attestation object is
+`{fmt, attStmt}`; see [challenges.md](challenges.md#device-attest-01-challenge).
 
 ### enroll-01 Challenge Response
 

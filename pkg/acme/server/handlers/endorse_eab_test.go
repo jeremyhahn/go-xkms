@@ -213,13 +213,15 @@ func TestEndorseEABValidator_EABRequired_NoEAB_Fails(t *testing.T) {
 
 func TestEndorseEABValidator_EABRequired_ValidEAB_Succeeds(t *testing.T) {
 	dao := NewMockEABDAO()
+	identifier, hash := newEndorseEK(t)
 	binding := createTestEABBinding("test-kid-001", 12345, entities.EABStatusUsed)
+	binding.DeviceInfo = &entities.EABDeviceInfo{EKPublicKeyHash: hash}
 	require.NoError(t, dao.Save(context.Background(), binding))
 
 	validator := NewEndorseEABValidator(dao, true, "")
 	account := createTestAccountWithEAB(12345, "test-kid-001")
 
-	result, err := validator.ValidateEndorseAuthorization(context.Background(), account, "device-123")
+	result, err := validator.ValidateEndorseAuthorization(context.Background(), account, identifier)
 
 	require.NoError(t, err)
 	assert.True(t, result.Authorized)
@@ -895,8 +897,10 @@ func TestEndorseEABValidator_FullWorkflow_EnterpriseDeviceProvisioning(t *testin
 }
 
 func TestEndorseEABValidator_FullWorkflow_BatchDeviceProvisioning(t *testing.T) {
-	// Simulate batch device provisioning where multiple devices share
-	// the same EAB but device ID validation is not required
+	// A binding shared by a batch of devices names no EK, so its account could
+	// have any public key certified. endorse-01 proves no possession of the
+	// key, so such a binding is refused (go-xkms#1392): batch provisioning
+	// registers each device's EK with the batch (deviceInfo.ekPublicKeyHash).
 
 	dao := NewMockEABDAO()
 
@@ -919,20 +923,22 @@ func TestEndorseEABValidator_FullWorkflow_BatchDeviceProvisioning(t *testing.T) 
 
 	account := createTestAccountWithEAB(11111, "batch-binding-001")
 
-	// Device ID validation NOT configured - any device with this account can enroll
 	validator := NewEndorseEABValidator(dao, true, "") // Empty deviceIDMetaKey
 
-	// Any device in the batch can use this
-	result, err := validator.ValidateEndorseAuthorization(
-		context.Background(),
-		account,
-		"any-device-identifier", // Not validated
-	)
+	result, err := validator.ValidateEndorseAuthorization(context.Background(), account, "any-device-identifier")
+	require.ErrorIs(t, err, ErrEndorseEABKeyNotBound, "a binding that names no EK authorizes every key")
+	assert.Nil(t, result)
 
+	// Registering the device's EK with the batch authorizes that device.
+	identifier, hash := newEndorseEK(t)
+	binding.DeviceInfo = &entities.EABDeviceInfo{EKPublicKeyHash: hash}
+	require.NoError(t, dao.Save(context.Background(), binding))
+
+	result, err = validator.ValidateEndorseAuthorization(context.Background(), account, identifier)
 	require.NoError(t, err)
 	assert.True(t, result.Authorized)
 	assert.Equal(t, "manufacturing-batch-2024-Q4", result.ExternalAccountID)
-	assert.Empty(t, result.AuthorizedDeviceID) // Not set when not validating
+	assert.Equal(t, identifier, result.AuthorizedIdentity)
 }
 
 // --- Tests for EndorseEABValidator.BoundTPMManufacturer ---

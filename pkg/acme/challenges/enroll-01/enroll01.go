@@ -32,7 +32,11 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
+	pkgca "github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -83,6 +87,12 @@ const (
 var (
 	serverShutdownTimeout = 5 * time.Second
 )
+
+// ErrActivationUnreadable is returned when a credential activated, but the
+// endorsement key and activation key it was made for cannot be read back out of
+// the TCG-CSR-IDEVID. The challenge is refused rather than validated without
+// the evidence finalization binds to.
+var ErrActivationUnreadable = errors.New("enroll-01: the activated endorsement key cannot be read from the TCG-CSR-IDEVID")
 
 // activateCredentialRequest represents the JSON payload sent to the client
 // for TPM credential activation
@@ -135,7 +145,39 @@ type TrustedPlatformModule interface {
 // xkmssdk.MaxIDevIDCSRSize bytes.
 var maxCSRResponseBytes = int64(base64.RawURLEncoding.EncodedLen(xkmssdk.MaxIDevIDCSRSize))
 
-// Verify performs enroll-01 challenge verification.
+// Activation is what a completed enroll-01 credential activation established
+// about the TPM that answered (go-xkms#1391).
+//
+// The credential was made for the endorsement key in EKCertificate and bound
+// to the activation key whose TPMT_PUBLIC is AttestPub, and only the TPM
+// holding both could activate it. An order's finalize request must therefore
+// be built around THIS endorsement key and THIS activation key: any other is
+// a TCG-CSR the activation never covered. Activation is the evidence that
+// comparison is made against, kept on the challenge between the two requests.
+type Activation struct {
+	// EKCertificate is the endorsement key certificate whose key the
+	// credential was made for. Its chain was verified against the CA's
+	// configured TPM-manufacturer roots before the credential was generated.
+	EKCertificate *x509.Certificate
+
+	// AttestPub is the TPMT_PUBLIC of the key the credential was bound to: the
+	// IAK the TCG-CSR-IDEVID carries.
+	AttestPub []byte
+}
+
+// Verify performs enroll-01 challenge verification. It is VerifyActivation for
+// a caller that has no use for what the activation established.
+func Verify(
+	client *validation.Client,
+	ca TCGCSRVerifier,
+	domain, port, token, keyAuth string) error {
+
+	_, err := VerifyActivation(client, ca, domain, port, token, keyAuth)
+	return err
+}
+
+// VerifyActivation performs enroll-01 challenge verification and returns the
+// endorsement key and activation key it activated.
 //
 // This function implements the server-side verification flow:
 // 1. Retrieves TCG-CSR-IDEVID from client's challenge endpoint
@@ -159,12 +201,12 @@ var maxCSRResponseBytes = int64(base64.RawURLEncoding.EncodedLen(xkmssdk.MaxIDev
 //   - keyAuth: Key authorization (used as qualifying data)
 //
 // Returns:
-//   - nil if credential activation succeeds and secret matches
+//   - the Activation if credential activation succeeds and the secret matches
 //   - error if verification fails at any step
-func Verify(
+func VerifyActivation(
 	client *validation.Client,
 	ca TCGCSRVerifier,
-	domain, port, token, keyAuth string) error {
+	domain, port, token, keyAuth string) (*Activation, error) {
 
 	ctx := context.Background()
 
@@ -176,13 +218,13 @@ func Verify(
 		MaxResponseBytes: maxCSRResponseBytes,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Decode the packed TCG-CSR-IDevID
 	packedCSR, err := base64.RawURLEncoding.DecodeString(string(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Verify the TCG-CSR-IDevID and get back the credential blob, encrypted secret,
@@ -191,7 +233,7 @@ func Verify(
 	credentialBlob, encryptedSecret, secret, err := ca.VerifyTCG_CSR_IDevIDBytes(
 		packedCSR, ca.DefaultSignatureAlgorithm())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	activationRequest := &activateCredentialRequest{
@@ -201,7 +243,7 @@ func Verify(
 
 	jsonData, err := json.Marshal(activationRequest)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Send the encrypted credential to the client for activation
@@ -211,7 +253,7 @@ func Verify(
 		Path: secretPath + token,
 	}, "application/json", jsonData)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// subtle.ConstantTimeCompare rather than bytes.Equal: this is the
@@ -221,10 +263,57 @@ func Verify(
 	// which is acceptable here because the secret's length is not itself
 	// secret.
 	if subtle.ConstantTimeCompare(activated, secret) != 1 {
-		return caerrors.VerificationFailureError("enroll-01: invalid credential activation")
+		return nil, caerrors.VerificationFailureError("enroll-01: invalid credential activation")
 	}
 
-	return nil
+	// The credential was made from this very CSR, so what it activated is
+	// what this CSR names. Read it only now, once activation has succeeded.
+	return activationOf(packedCSR)
+}
+
+// activationOf reads the endorsement key certificate and activation key out of
+// the packed TCG-CSR-IDEVID a credential was just activated for.
+func activationOf(packedCSR []byte) (*Activation, error) {
+	tcgCSR, err := xkmssdk.UnmarshalIDevIDCSR(packedCSR)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrActivationUnreadable, Detail: "the TCG-CSR-IDEVID does not unpack", Cause: err}
+	}
+	ekCertificate, _, err := evidence.ParseEKCertificateChain(tcgCSR.CsrContents.EkCert)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrActivationUnreadable, Detail: "the endorsement key certificate does not parse", Cause: err}
+	}
+	if len(tcgCSR.CsrContents.AttestPub) == 0 {
+		return nil, &errs.Detail{Err: ErrActivationUnreadable, Detail: "the TCG-CSR-IDEVID carries no activation key"}
+	}
+	return &Activation{EKCertificate: ekCertificate, AttestPub: tcgCSR.CsrContents.AttestPub}, nil
+}
+
+// Format is the entities.DeviceAttestation format of an enroll-01 activation
+// record.
+const Format = "enroll-01"
+
+// Record converts the activation into the form the ACME server persists on the
+// challenge that validated it: the evidence finalization compares a
+// TCG-CSR-IDEVID against.
+//
+// identifierType is the authorization's identifier type. DeviceIdentityValue is
+// the TCG permanentIdentifier of the activated endorsement key certificate --
+// the identity of the TPM, and not the order's identifier, which for enroll-01
+// is the address the server dialed. LeafDER is the activated endorsement key
+// certificate and PubArea the activation key's TPMT_PUBLIC.
+func (a *Activation) Record(identifierType, keyAuthorization string) (*entities.DeviceAttestation, error) {
+	permanentIdentifier, err := pkgca.EKCertificatePermanentIdentifier(a.EKCertificate)
+	if err != nil {
+		return nil, err
+	}
+	return &entities.DeviceAttestation{
+		Format:              Format,
+		DeviceIdentityType:  identifierType,
+		DeviceIdentityValue: permanentIdentifier,
+		KeyAuthorization:    keyAuthorization,
+		LeafDER:             a.EKCertificate.Raw,
+		PubArea:             a.AttestPub,
+	}, nil
 }
 
 // Setup initializes the enroll-01 challenge on the client side.

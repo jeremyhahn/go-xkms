@@ -113,9 +113,10 @@ trusted-acme-client cert deploy web-prod
 The hardware-identity path. This is what `enroll-01` and `device-attest-01`
 exist for. Like certificates, devices are named specs in the config file
 (`devices.<name>`) — the account, the TPM to open, the ACME permanent
-identifier, the common name and the local challenge
+identifier, the common name and, for `enroll-01`, the local challenge
 server's bind address/port are configured once, and the verbs act on the
-name. There is no flag-based, config-free form.
+name. `device attest` opens no challenge server: the attestation is POSTed to
+the ACME server (draft-ietf-acme-device-attest). There is no flag-based, config-free form.
 
 | Verb | Args | Purpose |
 |---|---|---|

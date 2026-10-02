@@ -290,6 +290,13 @@ func TestCov92_OrderFinalizeHandler_CAAValidationSkipsNonDNS(t *testing.T) {
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
+	// The order's key-binding gate (go-xkms#789) requires a validated
+	// device-attest-01 attestation for a permanent-identifier order before it
+	// will sign anything; this test is about CAA being skipped, not about
+	// that gate, so a matching one is attached.
+	attachDeviceAttestation(t, service, order, account.ID, "test-device-id", csrKey)
+	require.NoError(t, orderDAO.Save(ctx, order))
+
 	template := &x509.CertificateRequest{
 		Subject: pkix.Name{
 			CommonName: "test-device-id",
@@ -558,6 +565,13 @@ func TestCov92_OrderFinalizeHandler_PermanentIDNotBase64(t *testing.T) {
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
+	// The order's key-binding gate (go-xkms#789) requires a validated
+	// device-attest-01 attestation for a permanent-identifier order before it
+	// will sign anything; this test is about endorse-01/device-attest-01
+	// classification, not that gate, so a matching one is attached.
+	attachDeviceAttestation(t, service, order, account.ID, "device-hostname-123", csrKey)
+	require.NoError(t, orderDAO.Save(ctx, order))
+
 	template := &x509.CertificateRequest{
 		Subject: pkix.Name{
 			CommonName: "device-hostname-123",
@@ -609,6 +623,7 @@ func TestCov92_OrderFinalizeHandler_EKCertLargeSerialNumber(t *testing.T) {
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	authorizeOrder(t, service, account, order, order.Identifiers[0], "endorse-01")
 
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -1138,6 +1153,7 @@ func TestCov92_OrderFinalizeHandler_EKCertWithOrgFields(t *testing.T) {
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	authorizeOrder(t, service, account, order, order.Identifiers[0], "endorse-01")
 
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)

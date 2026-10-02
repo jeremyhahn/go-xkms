@@ -17,9 +17,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"time"
@@ -32,7 +34,9 @@ import (
 // ProvisionIAKCertificate installs a throwaway IAK certificate on tpm, in the
 // WebAuthn Level 2 section 8.3.1 shape a "tpm" attestation statement's x5c[0]
 // must have: an empty subject, a subjectAltName naming the TPM's
-// manufacturer, model and version, tcg-kp-AIKCertificate, and not a CA. It is
+// manufacturer, model and version and carrying the RFC 4043
+// permanentIdentifier (the SHA-256 of the IAK's public key) that is the
+// device identity a device-attest-01 order names, tcg-kp-AIKCertificate, and not a CA. It is
 // signed by an unrelated one-off key, as a manufacturer-issued EK certificate
 // is, and stands in for the certificate an attestation CA issues a real
 // device.
@@ -52,7 +56,16 @@ func ProvisionIAKCertificate(tpm pkgtpm2.TrustedPlatformModule) error {
 	if err != nil {
 		return &errs.Wrapped{Msg: "tpm2test: failed to read TPM fixed properties", Err: err}
 	}
-	san, err := ca.BuildSubjectAltName(pkix.Name{}, nil, nil, nil, nil, nil, []pkix.Name{{
+	spki, err := x509.MarshalPKIXPublicKey(iak)
+	if err != nil {
+		return &errs.Wrapped{Msg: "tpm2test: failed to encode IAK public key", Err: err}
+	}
+	digest := sha256.Sum256(spki)
+	permanentID, err := ca.MarshalPermanentIdentifier(hex.EncodeToString(digest[:]), nil)
+	if err != nil {
+		return &errs.Wrapped{Msg: "tpm2test: failed to encode IAK permanent identifier", Err: err}
+	}
+	san, err := ca.BuildSubjectAltName(pkix.Name{}, nil, nil, nil, nil, []ca.OtherName{{TypeID: ca.OIDPermanentIdentifier, Value: permanentID}}, []pkix.Name{{
 		ExtraNames: []pkix.AttributeTypeAndValue{
 			{Type: ca.OIDTCGAttributeTPMManufacturer, Value: props.ManufacturerCode},
 			{Type: ca.OIDTCGAttributeTPMModel, Value: "xkms-simulator"},

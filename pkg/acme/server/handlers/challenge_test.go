@@ -512,13 +512,13 @@ func TestChallengeHandler_EnrollmentChallengeWithPermanentIdentifier(t *testing.
 	// Add mock enrollment challenge verifier. The challenge type is looked
 	// up verbatim (no port-suffix parsing), so the verifier is registered
 	// under the exact type the authorization below is created with.
-	service.challengeMap["enroll-01-9000"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "enroll-01-9000", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		// Verify we get the client IP instead of 127.0.0.1
 		if domain == "127.0.0.1" {
 			return caerrors.VerificationFailureError("expected client IP, got localhost")
 		}
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -564,10 +564,10 @@ func TestChallengeHandler_LoopbackIdentifierRefusedByDefault(t *testing.T) {
 	defer cleanup()
 
 	verifierCalled := false
-	service.challengeMap["enroll-01-9000"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "enroll-01-9000", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		verifierCalled = true
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -631,9 +631,9 @@ func TestChallengeHandler_RemoteAddrWithoutPort(t *testing.T) {
 	service.allowLoopbackIdentifier = true
 
 	// Add mock enrollment challenge verifier
-	service.challengeMap["enroll-01-7777"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "enroll-01-7777", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -672,10 +672,10 @@ func TestChallengeHandler_XForwardedForMultipleIPs(t *testing.T) {
 
 	// Track which domain was used in validation
 	var capturedDomain string
-	service.challengeMap["enroll-01-9000"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "enroll-01-9000", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		capturedDomain = domain
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -709,10 +709,10 @@ func TestChallengeHandler_XForwardedForWithLocalhost(t *testing.T) {
 
 	// Track which domain was used in validation
 	var capturedDomain string
-	service.challengeMap["enroll-01-8443"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "enroll-01-8443", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		capturedDomain = domain
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -745,10 +745,10 @@ func TestChallengeHandler_NonLocalhostPermanentIdentifier(t *testing.T) {
 
 	// Track which domain was used in validation
 	var capturedDomain string
-	service.challengeMap["enroll-01-6666"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "enroll-01-6666", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		capturedDomain = domain
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -945,9 +945,9 @@ func TestChallengeHandler_EABDAOCreationError(t *testing.T) {
 	service.endorseEABRequired = true
 
 	// Add a mock endorse-01 challenge verifier
-	service.challengeMap["endorse-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "endorse-01", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -1168,9 +1168,9 @@ func TestChallengeHandler_EndorseWithoutEAB(t *testing.T) {
 	service.endorseEABRequired = true
 
 	// Add a mock endorse-01 challenge verifier
-	service.challengeMap["endorse-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "endorse-01", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -1387,10 +1387,10 @@ func TestChallengeHandler_DefaultEnrollmentPort(t *testing.T) {
 	defer cleanup()
 
 	var capturedPort string
-	service.challengeMap["enroll-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "enroll-01", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		capturedPort = port
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)

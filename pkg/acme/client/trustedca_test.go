@@ -844,6 +844,20 @@ func TestOptions(t *testing.T) {
 		assert.Contains(t, tca.challengeMap, "http-01")
 	})
 
+	t.Run("WithAttestingVerifiers", func(t *testing.T) {
+		verifiers := map[string]acmecommon.AttestingVerifier{
+			"enroll-01": acmecommon.AttestingVerifierFunc(func(
+				*net.Resolver, acmecommon.CertificateAuthority, acmecommon.AttestationChallenge,
+			) (*acmecommon.AttestedIdentity, error) {
+				return &acmecommon.AttestedIdentity{}, nil
+			}),
+		}
+		tca := &TrustedCA{}
+		require.NoError(t, WithAttestingVerifiers(verifiers)(tca))
+		assert.Contains(t, tca.attesting, "enroll-01")
+		assert.Empty(t, tca.challengeMap, "attesting verifiers must not leak into the plain challenge map")
+	})
+
 	t.Run("WithExternalURL", func(t *testing.T) {
 		tca := &TrustedCA{}
 		opt := WithExternalURL("https://acme.example.com")

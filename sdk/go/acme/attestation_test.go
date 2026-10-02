@@ -15,10 +15,18 @@ package trustedca
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"math/big"
 	"net"
 	"testing"
+	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	pkgca "github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
@@ -101,3 +109,47 @@ func offlineResolver(t *testing.T) *net.Resolver {
 }
 
 var errOfflineResolver = errors.New("acme test: resolver is offline by design")
+
+// TestACMEDeviceIdentityFromCertificate_DICEAndRefusal exercises the SDK
+// alias of the identity rule: a DICE leaf's Ueid is the identity, a leaf with
+// none is ACMEErrDeviceIdentityUnavailable.
+func TestACMEDeviceIdentityFromCertificate_DICEAndRefusal(t *testing.T) {
+	ueid, err := dice.CreateUeidExtension([]byte{0xCA, 0xFE})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf := selfSignedLeaf(t, ueid)
+	got, err := ACMEDeviceIdentityFromCertificate(ACMEDeviceAttestFormatDICE, leaf)
+	if err != nil || got != "cafe" {
+		t.Fatalf("got (%q, %v), want (\"cafe\", nil)", got, err)
+	}
+
+	_, err = ACMEDeviceIdentityFromCertificate(ACMEDeviceAttestFormatDICE, selfSignedLeaf(t))
+	if !errors.Is(err, ACMEErrDeviceIdentityUnavailable) {
+		t.Fatalf("got %v, want ACMEErrDeviceIdentityUnavailable", err)
+	}
+}
+
+func selfSignedLeaf(t *testing.T, extensions ...pkix.Extension) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:    big.NewInt(1),
+		Subject:         pkix.Name{CommonName: "leaf"},
+		NotBefore:       time.Now().Add(-time.Hour),
+		NotAfter:        time.Now().Add(time.Hour),
+		ExtraExtensions: extensions,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
+}

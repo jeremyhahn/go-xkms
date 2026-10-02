@@ -226,8 +226,8 @@ func genuineTPMAttestation(t *testing.T, device *simulatedTPM, issuer *aikIssuer
 
 func verifyServed(t *testing.T, ca AttestationVerifier, object *AttestationObject) (*VerifiedAttestation, error) {
 	t.Helper()
-	host, port := serveAttestation(t, object)
-	return VerifyAttestation(loopbackClient(), ca, host, port, "token", tpmKeyAuth)
+	payload := attestationPayload(t, object)
+	return VerifyAttestation(ca, payload, tpmKeyAuth)
 }
 
 func softwareCSR(t *testing.T) *x509.CertificateRequest {
@@ -294,9 +294,9 @@ func TestTPMAttestationRefusesASoftwareKeyInTheCSR(t *testing.T) {
 func TestVerifyDoesNotAuthorizeTPMOnTheChallengeAlone(t *testing.T) {
 	device := newSimulatedTPM(t)
 	issuer := newAIKIssuer(t, "AIK CA")
-	host, port := serveAttestation(t, genuineTPMAttestation(t, device, issuer))
+	payload := attestationPayload(t, genuineTPMAttestation(t, device, issuer))
 
-	err := Verify(loopbackClient(), anchoredTo(issuer), host, port, "token", tpmKeyAuth)
+	err := Verify(anchoredTo(issuer), payload, tpmKeyAuth)
 	assert.ErrorIs(t, err, ErrKeyBindingRequired)
 }
 

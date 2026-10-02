@@ -15,10 +15,8 @@ package deviceattest01
 
 import (
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 
-	"github.com/fxamacker/cbor/v2"
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -110,8 +108,9 @@ var coseAlgorithms = map[x509.SignatureAlgorithm]webauthncose.COSEAlgorithmIdent
 // which for a go-xkms key is the Platform SRK. The CSR at finalization must be
 // signed by key, or BindCSRKey refuses it.
 //
-// The result is the JSON challenge response a server fetches: an
-// AttestationRequest whose attStmt is the CBOR attestation object.
+// The result is the payload of the client's POST to the challenge URL
+// (draft-ietf-acme-device-attest): an AttestationRequest whose attObj is the
+// base64url CBOR attestation object.
 func Setup(keyAuth string, tpm TrustedPlatformModule, key *types.KeyAttributes, backend store.KeyBackend) ([]byte, error) {
 	if tpm == nil {
 		return nil, &errs.Detail{Err: ErrAttestationKeyUnavailable, Detail: "no TPM"}
@@ -156,9 +155,5 @@ func Setup(keyAuth string, tpm TrustedPlatformModule, key *types.KeyAttributes, 
 			PubArea:  certification.AttestedKeyPublicArea,
 		},
 	}
-	encoded, err := cbor.Marshal(object)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(AttestationRequest{AttStmt: encoded})
+	return EncodeAttestationRequest(object)
 }

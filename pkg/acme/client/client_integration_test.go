@@ -669,6 +669,9 @@ func (m *integrationTPM) ProvisionIAKCert(cert *x509.Certificate) error {
 	return nil
 }
 
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *integrationTPM) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
+
 func (m *integrationTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	attested, err := newTestAttestedKey(keyAuth)
 	if err != nil {
@@ -789,7 +792,7 @@ func TestClient_DeviceAttest_FullFlow(t *testing.T) {
 	attestedSPKI, err := x509.MarshalPKIXPublicKey(tpm.attested.Signer.Public())
 	require.NoError(t, err)
 	assert.Equal(t, attestedSPKI, csr.RawSubjectPublicKeyInfo)
-	assert.Equal(t, "192.168.1.1", permanentIdentifierOf(t, csr), "the CSR must name the order's permanent identifier")
+	assert.Equal(t, testDeviceIdentity, permanentIdentifierOf(t, csr), "the CSR must name the order's permanent identifier")
 	assert.NotEqual(t, client.accountSigner.Public(), tpm.attested.Signer.Public(), "the CSR must not be signed with the account key")
 }
 

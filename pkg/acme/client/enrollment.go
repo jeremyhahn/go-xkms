@@ -75,17 +75,21 @@ type EnrollmentConfig struct {
 	// Challenge specifies the challenge type (enroll-01, endorse-01, device-attest-01)
 	Challenge string `yaml:"challenge" json:"challenge" mapstructure:"challenge"`
 
-	// IPAddress specifies the target IP address (supports ${ENV_VAR} expansion)
+	// IPAddress specifies the target IP address (supports ${ENV_VAR} expansion).
+	// Required for enroll-01 and endorse-01, whose server contacts the device
+	// there. Ignored by device-attest-01: the client POSTs its attestation and
+	// the server never contacts the device.
 	IPAddress string `yaml:"ip" json:"ip" mapstructure:"ip"`
 
 	// TPMModule provides TPM operations interface
 	TPMModule TPMModule `yaml:"-" json:"-" mapstructure:"-"`
 
-	// Port specifies the HTTP port for challenge communication (default: 8080)
+	// Port specifies the HTTP port for challenge communication (default: 8080).
+	// Not used by device-attest-01, which opens no listener.
 	Port string `yaml:"port,omitempty" json:"port,omitempty" mapstructure:"port"`
 
 	// ListenHost is the host every challenge listener this enrollment opens
-	// (enroll-01, endorse-01, device-attest-01) binds, joined with Port
+	// (enroll-01, endorse-01) binds, joined with Port
 	// through net.JoinHostPort. Empty, the defaults-layer value, binds every
 	// interface. xkmsd passes its server.host here so the exchange binds
 	// exactly what every other daemon listener binds (go-xkms#140).
@@ -128,7 +132,7 @@ func (ec *EnrollmentConfig) Validate() error {
 		return ErrMissingTPMModule
 	}
 
-	if ec.IPAddress == "" {
+	if ec.IPAddress == "" && ec.Challenge != string(ChallengeTypeDeviceAttest01) {
 		return ErrInvalidIPAddress
 	}
 
@@ -836,33 +840,44 @@ func (c *Client) startEndorseServer(config *EnrollmentConfig, req ekRequest, tok
 	}
 }
 
-// DeviceAttest performs device attestation using the device-attest-01 challenge.
+// DeviceAttest performs device attestation using the device-attest-01 challenge
+// (draft-ietf-acme-device-attest).
 //
 // The certificate is issued for the TPM key config.TPMModule attests under
 // config.CommonName (TPMModule.CreateAttestedKey): the challenge response is
 // the IAK's TPM2_Certify of that key, and the CSR is signed by it, which is
 // what lets the server bind the one to the other.
+//
+// The client answers each challenge by POSTing it the attestation as
+// {"attObj": base64url(CBOR)}; the server verifies it from that payload and
+// NEVER CONTACTS THE DEVICE. DeviceAttest therefore opens no listener, needs no
+// address for the device (config.IPAddress, Port and ListenHost are unused),
+// and works for a device the server could not reach: one behind NAT, or on a
+// serial port with this process as its gateway.
+//
+// The order's permanent-identifier is the device's own identity
+// (TPMModule.DeviceIdentity): the server refuses a challenge whose attested
+// identity is not the order's identifier, and an IP address is never an
+// attested identity.
 func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x509.Certificate, error) {
 	if err := config.Validate(); err != nil {
 		return nil, caerrors.Wrap(caerrors.Malformed, err, "invalid enrollment config")
 	}
 
-	// Expand environment variables in IP address
-	ipAddress, err := expandEnvVars(config.IPAddress)
+	deviceIdentity, err := config.TPMModule.DeviceIdentity()
 	if err != nil {
-		return nil, caerrors.Wrap(caerrors.Malformed, err, "failed to expand IP address")
+		return nil, caerrors.Wrap(caerrors.InternalServer, err, "attestation failed: the device identity is unavailable")
 	}
 
 	c.logger.Info("starting device attestation",
 		"challenge", config.Challenge,
-		"ip_address", ipAddress,
-		"port", config.Port)
+		"device_identity", deviceIdentity)
 
 	// Create order for attestation
 	order, err := c.authorizeOrder(ctx, []acme.AuthzID{
 		{
 			Type:  string(AuthzTypePermanentIdentifier),
-			Value: ipAddress,
+			Value: deviceIdentity,
 		},
 	})
 	if err != nil {
@@ -876,13 +891,6 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x
 	// Process authorizations. Every one is answered for the same key, the
 	// one the CSR is signed with below.
 	var attested *AttestedKey
-
-	// attestSrv holds the challenge server for the authorization currently
-	// being processed. The deferred shutdown below runs on every return
-	// path -- success or error -- so the configured port is always free
-	// again by the time DeviceAttest returns.
-	var attestSrv *challengeServer
-	defer func() { attestSrv.shutdown() }()
 
 	for _, authzURL := range order.AuthzURLs {
 		authz, err := c.client.GetAuthorization(ctx, authzURL)
@@ -914,34 +922,22 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x
 			return nil, caerrors.InternalServerError("attestation failed: failed to generate key authorization: %v", err)
 		}
 
-		// Setup the device-attest-01 challenge
+		// Attest the certificate key over this challenge. The statement is
+		// the payload the server verifies; nothing is served.
 		attested, err = c.setupAttestChallenge(config, keyAuth)
 		if err != nil {
 			return nil, caerrors.InternalServerError("attestation failed: challenge setup failed: %v", err)
 		}
 
-		// Start HTTP server to serve attestation. The listener binds
-		// synchronously inside startAttestServer, so a port conflict fails
-		// fast here instead of surfacing later as an opaque
-		// WaitAuthorization timeout, and no artificial delay is needed
-		// before the ACME server can reach it. A prior iteration's server
-		// (a second authzURL on the same order) is shut down first: both
-		// bind the same configured address.
-		attestSrv.shutdown()
-		attestSrv, err = c.startAttestServer(config, attested.Statement, attestChallenge.Token)
-		if err != nil {
-			return nil, caerrors.Wrap(caerrors.InternalServer, err, "attestation failed: failed to start challenge server")
-		}
-
-		c.logger.Debug("challenge setup complete", "port", config.Port)
-
-		// Accept the challenge
+		// Respond to the challenge with the attestation as its payload
+		// (golang.org/x/crypto/acme sends Challenge.Payload in place of "{}").
+		attestChallenge.Payload = attested.Statement
 		_, err = c.client.Accept(ctx, attestChallenge)
 		if err != nil {
 			return nil, caerrors.InternalServerError("attestation failed: failed to accept challenge: %v", err)
 		}
 
-		c.logger.Debug("challenge accepted, waiting for authorization")
+		c.logger.Debug("challenge answered, waiting for authorization")
 
 		// Wait for authorization to complete
 		authz, err = c.client.WaitAuthorization(ctx, authz.URI)
@@ -970,7 +966,7 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x
 		return nil, caerrors.InternalServerError("attestation failed: the order carried no authorization to attest")
 	}
 
-	csrDER, err := deviceAttestCSR(config.CommonName, ipAddress, attested.Signer)
+	csrDER, err := deviceAttestCSR(config.CommonName, deviceIdentity, attested.Signer)
 	if err != nil {
 		return nil, caerrors.BadCSRError("attestation failed: failed to create CSR: %v", err)
 	}
@@ -1029,31 +1025,6 @@ func (c *Client) setupAttestChallenge(config *EnrollmentConfig, keyAuth string) 
 		return nil, caerrors.BadAttestationStatementError("failed to attest the certificate key: %v", err)
 	}
 	return attested, nil
-}
-
-// startAttestServer builds the device-attest-01 challenge mux and binds it
-// to config.listenAddr() synchronously, returning a *challengeServer the
-// caller must shut down (see challengeServer.shutdown) to release the port.
-// statement is served as it is: it is already the JSON request the server's
-// verifier decodes.
-func (c *Client) startAttestServer(config *EnrollmentConfig, statement []byte, token string) (*challengeServer, error) {
-	mux := http.NewServeMux()
-
-	// Challenge endpoint - serves attestation statement
-	challengePath := "/.well-known/acme-challenge/"
-	mux.HandleFunc(challengePath, func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, token) {
-			http.NotFound(w, r)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		if _, err := w.Write(statement); err != nil {
-			c.logger.Error("failed to write device-attest-01 challenge response", "error", err)
-		}
-	})
-
-	return newChallengeServer(config.listenAddr(), mux, c.logger, "device-attest-01")
 }
 
 // parseIssuingChain parses the certificates a server appended after the

@@ -457,6 +457,22 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			if order.Identifiers[0].Type == common.AuthzTypeIP ||
 				order.Identifiers[0].Type == common.AuthzTypePermanentIdentifier {
 
+				authzDAO, daoErr := s.storageFactory.AuthorizationDAO(account.ID)
+				if daoErr != nil {
+					writeError(w, common.ServerInternal("Failed to create authorization DAO"))
+					return
+				}
+				// A TCG-CSR-IDEVID is enroll-01's finalize request. It is
+				// honored only for an order enroll-01 validated, and only for
+				// the TPM that passed credential activation there (#1391,
+				// #1392): an endorse-01 or device-attest-01 authorization
+				// cannot be turned into an IDevID, and neither can an order
+				// no attestation challenge validated.
+				if problem := s.bindTCGCSRToActivation(ctx, authzDAO, order, csrDER); problem != nil {
+					writeError(w, problem)
+					return
+				}
+
 				serialNumber, pem, err = s.finalizeTCGCSR(
 					order.Identifiers[0].Value, csrDER, r, account, order)
 				if err != nil {
@@ -491,11 +507,32 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	// challenge was validated (via EAB/server policy), so it is not re-checked
 	// against the CSR here - only the CSR's DNS/IP SANs (and the blanket
 	// email/URI rejection) are still enforced, via matchesEndorse01Identifier.
-	isEndorse01 := len(order.Identifiers) > 0 &&
-		order.Identifiers[0].Type == common.AuthzTypePermanentIdentifier
-	if isEndorse01 {
-		if _, ok := decodeEndorse01PublicKey(order.Identifiers[0].Value); !ok {
-			isEndorse01 = false
+	//
+	// What the order is, is decided by the challenge that validated it, never
+	// by the bytes of its identifier: a device identity can happen to decode
+	// as a public key, and an identifier that decodes as one is not an
+	// endorse-01 order unless endorse-01 validated it (go-xkms#1392). The
+	// decision made here is the one issuance below acts on.
+	var (
+		validated    *validatedAttestations
+		isEndorse01  bool
+		endorse01Key crypto.PublicKey
+	)
+	if orderHasPermanentIdentifier(order) {
+		authzDAO, daoErr := s.storageFactory.AuthorizationDAO(account.ID)
+		if daoErr != nil {
+			writeError(w, common.ServerInternal("Failed to create authorization DAO"))
+			return
+		}
+		var problem *entities.Error
+		validated, problem = s.validatedAttestations(ctx, authzDAO, order)
+		if problem != nil {
+			writeError(w, problem)
+			return
+		}
+		if len(validated.types()) == 1 && len(validated.challenges[common.ChallengeTypeEndorse01]) > 0 &&
+			order.Identifiers[0].Type == common.AuthzTypePermanentIdentifier {
+			endorse01Key, isEndorse01 = decodeEndorse01PublicKey(order.Identifiers[0].Value)
 		}
 	}
 
@@ -529,6 +566,47 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			writeError(w, problem)
 			return
 		}
+	}
+
+	// A permanent-identifier order that is not endorse-01 is a
+	// device-attest-01 order: enroll-01 never reaches this point (its CSR is
+	// a TCG-CSR-IDEVID, which fails x509.ParseCertificateRequest above and is
+	// handled by finalizeTCGCSR instead). Its certificate request's key must
+	// be the key a device-attest-01 challenge attested (go-xkms#789) -- a
+	// requirement checked here, before the order moves to "processing", so a
+	// mismatch is refused as a normal badCSR response rather than leaving the
+	// order stranded in "processing". findDeviceAttestation refuses to sign
+	// when no validated device-attest-01 challenge left a record to bind
+	// against, rather than treat that absence as "not device-attest-01" and
+	// sign anyway.
+	// attestedIdentity is the device identity the verified evidence carries,
+	// for the certificate to assert (device-attest-01 orders only).
+	var attestedIdentity string
+	if !isEndorse01 && orderHasPermanentIdentifier(order) {
+		deviceIdentity, problem := csrPermanentIdentifier(csr)
+		if problem != nil {
+			writeError(w, problem)
+			return
+		}
+		authzDAO, err := s.storageFactory.AuthorizationDAO(account.ID)
+		if err != nil {
+			writeError(w, common.ServerInternal("Failed to create authorization DAO"))
+			return
+		}
+		if problem := validated.requireOnly(order.ID, common.ChallengeTypeDeviceAttest01, "certificate"); problem != nil {
+			writeError(w, problem)
+			return
+		}
+		rec, problem := s.findDeviceAttestation(ctx, authzDAO, order, deviceIdentity)
+		if problem != nil {
+			writeError(w, problem)
+			return
+		}
+		if problem := bindDeviceAttestationKey(rec, order.ID, csr); problem != nil {
+			writeError(w, problem)
+			return
+		}
+		attestedIdentity = rec.DeviceIdentityValue
 	}
 
 	// The CSR and its identifiers are now validated: only from this point can
@@ -657,76 +735,69 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Check if this is an endorse-01 order (x509 CSR + permanent-identifier with base64 public key)
-	// endorse-01 is for issuing EK certificates to TPMs without manufacturer EK certs
-	// device-attest-01 also uses permanent-identifier but with IP/hostname, not base64 public key
+	// An endorse-01 order is issued an EK certificate for the identifier's key.
+	// Whether this is one was decided above from the challenge that validated
+	// the order, so the request that was bound and checked is the request that
+	// is issued; device-attest-01 uses permanent-identifier too, and its
+	// identity may decode as a key without making it an EK.
 	var cert *x509.Certificate
 	isEndorse01Order := false
 
-	if len(order.Identifiers) > 0 &&
-		order.Identifiers[0].Type == common.AuthzTypePermanentIdentifier {
+	if isEndorse01 {
+		ekPubKey := endorse01Key
+		// This is an endorse-01 order - issue EK certificate with TCG/TP extensions
+		isEndorse01Order = true
 
-		// Distinguish endorse-01 (identifier is a base64url-encoded PKIX
-		// public key) from device-attest-01 (identifier is an IP/hostname).
-		if ekPubKey, ok := decodeEndorse01PublicKey(order.Identifiers[0].Value); ok {
-			// This is an endorse-01 order - issue EK certificate with TCG/TP extensions
-			isEndorse01Order = true
+		ekRequest := &ca.CertificateRequest{
+			Subject: ca.Subject{
+				CommonName: csr.Subject.CommonName,
+			},
+			PermanentID: order.Identifiers[0].Value,
+		}
 
-			ekRequest := &ca.CertificateRequest{
-				Subject: ca.Subject{
-					CommonName: csr.Subject.CommonName,
-				},
-				PermanentID: order.Identifiers[0].Value,
-			}
+		// Validated with the CSR, before the order moved to processing.
+		ekRequest.TPMManufacturer = endorse01Manufacturer
 
-			// Validated with the CSR, before the order moved to processing.
-			ekRequest.TPMManufacturer = endorse01Manufacturer
+		// Copy organization info from CSR if available
+		if len(csr.Subject.Organization) > 0 {
+			ekRequest.Subject.Organization = csr.Subject.Organization[0]
+		}
+		if len(csr.Subject.OrganizationalUnit) > 0 {
+			ekRequest.Subject.OrganizationalUnit = csr.Subject.OrganizationalUnit[0]
+		}
+		if len(csr.Subject.Country) > 0 {
+			ekRequest.Subject.Country = csr.Subject.Country[0]
+		}
+		if len(csr.Subject.Locality) > 0 {
+			ekRequest.Subject.Locality = csr.Subject.Locality[0]
+		}
+		if len(csr.Subject.Province) > 0 {
+			ekRequest.Subject.Province = csr.Subject.Province[0]
+		}
 
-			// Copy organization info from CSR if available
-			if len(csr.Subject.Organization) > 0 {
-				ekRequest.Subject.Organization = csr.Subject.Organization[0]
+		// Add SANs from CSR. matchesEndorse01Identifier has already
+		// rejected email/URI SANs and any DNS/IP SAN not present in the
+		// order's authorized identifiers, so every name copied here was
+		// already authorized.
+		if len(csr.DNSNames) > 0 || len(csr.IPAddresses) > 0 {
+			ekRequest.SANS = &ca.SubjectAlternativeNames{
+				DNS: csr.DNSNames,
 			}
-			if len(csr.Subject.OrganizationalUnit) > 0 {
-				ekRequest.Subject.OrganizationalUnit = csr.Subject.OrganizationalUnit[0]
+			for _, ip := range csr.IPAddresses {
+				ekRequest.SANS.IPs = append(ekRequest.SANS.IPs, ip.String())
 			}
-			if len(csr.Subject.Country) > 0 {
-				ekRequest.Subject.Country = csr.Subject.Country[0]
-			}
-			if len(csr.Subject.Locality) > 0 {
-				ekRequest.Subject.Locality = csr.Subject.Locality[0]
-			}
-			if len(csr.Subject.Province) > 0 {
-				ekRequest.Subject.Province = csr.Subject.Province[0]
-			}
+		}
 
-			// Add SANs from CSR. matchesEndorse01Identifier has already
-			// rejected email/URI SANs and any DNS/IP SAN not present in the
-			// order's authorized identifiers, so every name copied here was
-			// already authorized.
-			if len(csr.DNSNames) > 0 || len(csr.IPAddresses) > 0 {
-				ekRequest.SANS = &ca.SubjectAlternativeNames{
-					DNS: csr.DNSNames,
-				}
-				for _, ip := range csr.IPAddresses {
-					ekRequest.SANS.IPs = append(ekRequest.SANS.IPs, ip.String())
-				}
-			}
-
-			// Issue EK certificate using tenant CA if available
-			if tenantSigner != nil && issuerCert != nil {
-				ekRequest.Signer = tenantSigner
-				ekRequest.IssuerCert = issuerCert
-			}
-			cert, err = s.ca.IssueEKCertificate(r.Context(), ekRequest, ekPubKey)
-			if err != nil {
-				s.logger.Error("Failed to issue EK certificate", "error", err)
-				s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to issue EK certificate"))
-				return
-			}
-		} else {
-			// Not endorse-01: treat this as device-attest-01 or a standard cert.
-			s.logger.Debug("Permanent identifier is not base64 public key, treating as device-attest-01",
-				"identifier", order.Identifiers[0].Value)
+		// Issue EK certificate using tenant CA if available
+		if tenantSigner != nil && issuerCert != nil {
+			ekRequest.Signer = tenantSigner
+			ekRequest.IssuerCert = issuerCert
+		}
+		cert, err = s.ca.IssueEKCertificate(r.Context(), ekRequest, ekPubKey)
+		if err != nil {
+			s.logger.Error("Failed to issue EK certificate", "error", err)
+			s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to issue EK certificate"))
+			return
 		}
 	}
 
@@ -764,6 +835,21 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 
 		// Standard certificate or device-attest-01 - sign the CSR
 		signOpts := &ca.SignOptions{}
+
+		// The certificate asserts the identity the attestation established,
+		// as the RFC 4043 permanentIdentifier otherName. It is the issuer's
+		// statement, taken from the verified evidence: the CA copies no
+		// otherName a CSR requests, so without this the certificate would
+		// carry no device identity at all.
+		if attestedIdentity != "" {
+			identifier, err := ca.MarshalPermanentIdentifier(attestedIdentity, nil)
+			if err != nil {
+				s.logger.Error("Failed to encode the attested device identity", "error", err, "order_id", order.ID)
+				s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to encode device identity"))
+				return
+			}
+			signOpts.OtherNames = []ca.OtherName{{TypeID: ca.OIDPermanentIdentifier, Value: identifier}}
+		}
 		// Use tenant CA if available
 		if tenantSigner != nil && issuerCert != nil {
 			signOpts.Signer = tenantSigner
@@ -1008,6 +1094,56 @@ func matchesIdentifier(
 	return true, nil
 }
 
+// orderHasPermanentIdentifier reports whether any of the order's identifiers
+// is a permanent-identifier, wherever it sits in the list: a device-attest-01
+// authorization can accompany dns or ip identifiers in the same order, and
+// the key binding it exists for must not depend on which one is listed first.
+func orderHasPermanentIdentifier(order *entities.ACMEOrder) bool {
+	for _, identifier := range order.Identifiers {
+		if identifier.Type == common.AuthzTypePermanentIdentifier {
+			return true
+		}
+	}
+	return false
+}
+
+// csrPermanentIdentifier reads the permanent identifier a certificate request
+// names from its RFC 4043 permanentIdentifier otherName (OID
+// 1.3.6.1.5.5.7.8.3) inside its subjectAltName. The request must carry
+// exactly that one otherName and no other; anything else is badCSR.
+func csrPermanentIdentifier(csr *x509.CertificateRequest) (string, *entities.Error) {
+	otherNames, err := ca.ParseOtherNames(csr.Extensions)
+	if err != nil {
+		return "", common.BadCSR(fmt.Sprintf("certificate request subjectAltName could not be decoded: %v", err))
+	}
+
+	var value string
+	found := false
+	for _, other := range otherNames {
+		if !other.TypeID.Equal(ca.OIDPermanentIdentifier) {
+			return "", common.BadCSR(fmt.Sprintf(
+				"certificate request subjectAltName carries an otherName (%s) the order does not authorize",
+				other.TypeID))
+		}
+		if found {
+			return "", common.BadCSR(
+				"certificate request subjectAltName carries more than one permanentIdentifier otherName")
+		}
+		parsed, err := ca.ParsePermanentIdentifierExtension(other.Value)
+		if err != nil {
+			return "", common.BadCSR("certificate request permanentIdentifier otherName could not be decoded")
+		}
+		value = parsed.IdentifierValue
+		found = true
+	}
+	if !found {
+		return "", common.BadCSR(
+			"certificate request subjectAltName must carry an RFC 4043 permanentIdentifier otherName " +
+				"(OID 1.3.6.1.5.5.7.8.3)")
+	}
+	return value, nil
+}
+
 // matchesPermanentIdentifierOrder validates a permanent-identifier order's
 // CSR (enroll-01 or device-attest-01, arriving as a standard x509 CSR rather
 // than a TCG-CSR-IDEVID) against every identifier the order authorizes.
@@ -1027,34 +1163,9 @@ func matchesPermanentIdentifierOrder(
 	permanentIDs []string,
 	authorizedNames map[string]bool) (bool, error) {
 
-	otherNames, err := ca.ParseOtherNames(csr.Extensions)
-	if err != nil {
-		return false, common.BadCSR(fmt.Sprintf("certificate request subjectAltName could not be decoded: %v", err))
-	}
-
-	var permanentIdentifierValue string
-	foundPermanentIdentifier := false
-	for _, other := range otherNames {
-		if !other.TypeID.Equal(ca.OIDPermanentIdentifier) {
-			return false, common.BadCSR(fmt.Sprintf(
-				"certificate request subjectAltName carries an otherName (%s) the order does not authorize",
-				other.TypeID))
-		}
-		if foundPermanentIdentifier {
-			return false, common.BadCSR(
-				"certificate request subjectAltName carries more than one permanentIdentifier otherName")
-		}
-		parsed, err := ca.ParsePermanentIdentifierExtension(other.Value)
-		if err != nil {
-			return false, common.BadCSR("certificate request permanentIdentifier otherName could not be decoded")
-		}
-		permanentIdentifierValue = parsed.IdentifierValue
-		foundPermanentIdentifier = true
-	}
-	if !foundPermanentIdentifier {
-		return false, common.BadCSR(
-			"certificate request subjectAltName must carry an RFC 4043 permanentIdentifier otherName " +
-				"(OID 1.3.6.1.5.5.7.8.3)")
+	permanentIdentifierValue, problem := csrPermanentIdentifier(csr)
+	if problem != nil {
+		return false, problem
 	}
 
 	authorizedPermanentIDs := make(map[string]bool, len(permanentIDs))

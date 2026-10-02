@@ -39,8 +39,6 @@ const tpmKeyAuth = "token.thumbprint-of-the-account-key"
 // simulated AIK signs with.
 const coseES256 = int64(-7)
 
-var oidSubjectAltName = asn1.ObjectIdentifier{2, 5, 29, 17}
-
 // aikIssuer is a CA that issues AIK certificates, standing in for a TPM
 // manufacturer or an enterprise attestation CA.
 type aikIssuer struct {
@@ -300,7 +298,7 @@ func TestVerifyTPMEvidenceRefusesMalformedStatements(t *testing.T) {
 // Every x5c entry must be a certificate. Dropping one that is not would anchor
 // a chain other than the one the device sent.
 func TestVerifyAttestationRefusesAnX5cEntryThatIsNotACertificate(t *testing.T) {
-	host, port := serveAttestation(t, &AttestationObject{
+	payload := attestationPayload(t, &AttestationObject{
 		Format: string(FormatTPM),
 		AttStatement: AttestationStatement{
 			Ver: "2.0", Alg: coseES256,
@@ -309,7 +307,7 @@ func TestVerifyAttestationRefusesAnX5cEntryThatIsNotACertificate(t *testing.T) {
 	})
 	ca := &mockCA{}
 
-	_, err := VerifyAttestation(loopbackClient(), ca, host, port, "token", tpmKeyAuth)
+	_, err := VerifyAttestation(ca, payload, tpmKeyAuth)
 	assert.ErrorIs(t, err, ErrCertificateChainInvalid)
 	assert.False(t, ca.verifyAKChainCalled, "a partial chain was handed to the anchor")
 }
@@ -317,12 +315,12 @@ func TestVerifyAttestationRefusesAnX5cEntryThatIsNotACertificate(t *testing.T) {
 // Section 8.3 requires x5c. Without it there is nothing to anchor and no key
 // to verify sig under, so the statement is refused rather than skipped past.
 func TestVerifyAttestationRefusesATPMStatementWithoutX5c(t *testing.T) {
-	host, port := serveAttestation(t, &AttestationObject{
+	payload := attestationPayload(t, &AttestationObject{
 		Format:       string(FormatTPM),
 		AttStatement: AttestationStatement{Ver: "2.0", Alg: coseES256},
 	})
 
-	_, err := VerifyAttestation(loopbackClient(), &mockCA{}, host, port, "token", tpmKeyAuth)
+	_, err := VerifyAttestation(&mockCA{}, payload, tpmKeyAuth)
 	assert.ErrorIs(t, err, ErrTPMAttestationInvalid)
 }
 

@@ -145,6 +145,18 @@ func WithChallengeMap(challengeMap map[string]acmecommon.ChallengeVerifierFunc) 
 	}
 }
 
+// WithAttestingVerifiers sets the verifiers for the attestation challenges
+// (enroll-01, endorse-01, device-attest-01). Each reports the identity the
+// device attested, which the server requires to match the order's identifier
+// (go-xkms#828); an attestation challenge with no entry is refused, so a
+// verifier registered only through WithChallengeMap never authorizes one.
+func WithAttestingVerifiers(verifiers map[string]acmecommon.AttestingVerifier) Option {
+	return func(tca *TrustedCA) error {
+		tca.attesting = verifiers
+		return nil
+	}
+}
+
 // WithExternalURL sets the external URL for the ACME server.
 // This is the URL that clients will use to access the ACME server.
 func WithExternalURL(url string) Option {

@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"math/big"
@@ -38,15 +39,15 @@ var errNotFound = errors.New("not found")
 
 // newTestAttestedKey stands in for a TPM's attested key in tests of the ACME
 // flow around device-attest-01 rather than of the attestation: a software
-// P-256 key, and a challenge response whose attStmt is the key authorization
-// it answers, so a test can see which challenge it was made for. The
+// P-256 key, and a challenge response whose attObj carries the key
+// authorization it answers, so a test can see which challenge it was made for. The
 // statement a real TPM produces is exercised in tpm_simulator_test.go.
 func newTestAttestedKey(keyAuth string) (*AttestedKey, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
 	}
-	statement, err := json.Marshal(deviceattest01.AttestationRequest{AttStmt: []byte(keyAuth)})
+	statement, err := json.Marshal(deviceattest01.AttestationRequest{AttObj: base64.RawURLEncoding.EncodeToString([]byte(keyAuth))})
 	if err != nil {
 		return nil, err
 	}

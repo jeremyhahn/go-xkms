@@ -17,13 +17,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -60,224 +56,104 @@ func TestAttestationFormat_String(t *testing.T) {
 	}
 }
 
-func TestVerify_NetworkError(t *testing.T) {
-	ca := &mockCA{}
-	client := loopbackClient()
+// attestationPayload is the body a client POSTs for obj.
+func attestationPayload(t *testing.T, obj *AttestationObject) []byte {
+	t.Helper()
+	payload, err := EncodeAttestationRequest(obj)
+	require.NoError(t, err)
+	return payload
+}
 
-	// Port 1 on loopback has no listener: the connection is refused.
-	err := Verify(client, ca, "127.0.0.1", "1", "token", "keyauth")
-	if err == nil {
-		t.Fatal("Verify() should fail with network error")
-	}
-
-	// Verify it's a network error, not a CA verification error
-	var verr *validation.Error
-	if !errors.As(err, &verr) || verr.Kind != validation.KindConnection {
-		t.Errorf("Expected a KindConnection *validation.Error, got: %v", err)
+// structurallyValidTPMObject is an attestation object whose layers decode but
+// whose evidence is not real: enough to reach the verifier's policy checks.
+func structurallyValidTPMObject() *AttestationObject {
+	return &AttestationObject{
+		Format: "tpm",
+		AttStatement: AttestationStatement{
+			Ver:      "2.0",
+			Alg:      -257,
+			X5c:      []interface{}{[]byte("cert-bytes")},
+			Sig:      []byte("signature"),
+			CertInfo: []byte("cert-info-with-keyauth"),
+			PubArea:  []byte("pub-area"),
+		},
 	}
 }
 
-func TestVerify_HTTPStatusError(t *testing.T) {
-	// Create mock HTTP server that returns non-200 status
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-
-	serverURL := strings.TrimPrefix(server.URL, "http://")
-	parts := strings.Split(serverURL, ":")
-	host := parts[0]
-	port := parts[1]
-
-	ca := &mockCA{}
-	client := loopbackClient()
-
-	err := Verify(client, ca, host, port, "token", "keyauth")
-	if err == nil {
-		t.Error("Verify() should fail with non-200 status")
-	}
-
-	var status *validation.StatusError
-	if !errors.As(err, &status) || status.StatusCode != http.StatusNotFound {
-		t.Errorf("Expected a 404 *validation.StatusError, got: %v", err)
-	}
+func TestVerify_NoVerifier(t *testing.T) {
+	_, err := VerifyAttestation(nil, attestationPayload(t, structurallyValidTPMObject()), "keyauth")
+	assert.ErrorIs(t, err, ErrNoAttestationVerifier)
 }
 
-func TestVerify_InvalidJSON(t *testing.T) {
-	// Create mock HTTP server that returns invalid JSON
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("not valid json"))
-	}))
-	defer server.Close()
+func TestVerify_PayloadLayers(t *testing.T) {
+	validCBOR, err := cbor.Marshal(structurallyValidTPMObject())
+	require.NoError(t, err)
 
-	serverURL := strings.TrimPrefix(server.URL, "http://")
-	parts := strings.Split(serverURL, ":")
-	host := parts[0]
-	port := parts[1]
-
-	ca := &mockCA{}
-	client := loopbackClient()
-
-	err := Verify(client, ca, host, port, "token", "keyauth")
-	if err == nil {
-		t.Error("Verify() should fail with invalid JSON")
+	tests := []struct {
+		name    string
+		payload []byte
+		detail  string
+	}{
+		{"not JSON", []byte("not valid json"), "not a JSON attestation request"},
+		{"attObj absent", []byte(`{}`), "attObj is absent"},
+		{"attObj padded base64url", []byte(`{"attObj":"` + base64.URLEncoding.EncodeToString(validCBOR) + `"}`), "not unpadded base64url"},
+		{"attObj standard base64", []byte(`{"attObj":"+/+/"}`), "not unpadded base64url"},
+		{"attObj not CBOR", []byte(`{"attObj":"` + base64.RawURLEncoding.EncodeToString([]byte("not valid cbor")) + `"}`), "not a CBOR attestation object"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := VerifyAttestation(&mockCA{}, tt.payload, "keyauth")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "device-attest-01")
+			assert.Contains(t, err.Error(), tt.detail)
 
-	if !strings.Contains(err.Error(), "invalid attestation request") {
-		t.Errorf("Expected JSON error, got: %v", err)
-	}
-}
-
-func TestVerify_InvalidCBOR(t *testing.T) {
-	// Create attestation request with invalid CBOR
-	attestReq := AttestationRequest{AttStmt: []byte("not valid cbor")}
-	jsonData, _ := json.Marshal(attestReq)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(jsonData)
-	}))
-	defer server.Close()
-
-	serverURL := strings.TrimPrefix(server.URL, "http://")
-	parts := strings.Split(serverURL, ":")
-	host := parts[0]
-	port := parts[1]
-
-	ca := &mockCA{}
-	client := loopbackClient()
-
-	err := Verify(client, ca, host, port, "token", "keyauth")
-	if err == nil {
-		t.Error("Verify() should fail with invalid CBOR")
-	}
-
-	if !strings.Contains(err.Error(), "device-attest-01") {
-		t.Errorf("Expected device-attest-01 error, got: %v", err)
+			_, parseErr := ParseAttestationRequest(tt.payload)
+			assert.ErrorIs(t, parseErr, ErrAttestationPayloadInvalid)
+		})
 	}
 }
 
 func TestVerify_InvalidAttestationFormat(t *testing.T) {
-	// Create attestation object with invalid format
-	obj := &AttestationObject{
-		Format: "invalid-format",
-		AttStatement: AttestationStatement{
-			Ver:      "2.0",
-			Alg:      -257,
-			X5c:      []interface{}{[]byte("cert-bytes")},
-			Sig:      []byte("signature"),
-			CertInfo: []byte("cert-info"),
-			PubArea:  []byte("pub-area"),
-		},
-	}
+	obj := structurallyValidTPMObject()
+	obj.Format = "invalid-format"
 
-	cborData, _ := cbor.Marshal(obj)
-	attestReq := AttestationRequest{AttStmt: cborData}
-	jsonData, _ := json.Marshal(attestReq)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(jsonData)
-	}))
-	defer server.Close()
-
-	serverURL := strings.TrimPrefix(server.URL, "http://")
-	parts := strings.Split(serverURL, ":")
-	host := parts[0]
-	port := parts[1]
-
-	ca := &mockCA{}
-	client := loopbackClient()
-
-	err := Verify(client, ca, host, port, "token", "keyauth")
-	if err != ErrInvalidAttestationFormat {
-		t.Errorf("Expected ErrInvalidAttestationFormat, got: %v", err)
-	}
+	_, err := VerifyAttestation(&mockCA{}, attestationPayload(t, obj), "keyauth")
+	assert.ErrorIs(t, err, ErrInvalidAttestationFormat)
 }
 
 func TestVerify_CAVerificationError(t *testing.T) {
-	// Create valid attestation object
-	obj := &AttestationObject{
-		Format: "tpm",
-		AttStatement: AttestationStatement{
-			Ver:      "2.0",
-			Alg:      -257,
-			X5c:      []interface{}{[]byte("cert-bytes")},
-			Sig:      []byte("signature"),
-			CertInfo: []byte("cert-info-with-keyauth"),
-			PubArea:  []byte("pub-area"),
-		},
-	}
+	ca := &mockCA{verifyError: errors.New("CA verification failed")}
 
-	cborData, _ := cbor.Marshal(obj)
-	attestReq := AttestationRequest{AttStmt: cborData}
-	jsonData, _ := json.Marshal(attestReq)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(jsonData)
-	}))
-	defer server.Close()
-
-	serverURL := strings.TrimPrefix(server.URL, "http://")
-	parts := strings.Split(serverURL, ":")
-	host := parts[0]
-	port := parts[1]
-
-	ca := &mockCA{
-		verifyError: errors.New("CA verification failed"),
-	}
-	client := loopbackClient()
-
-	err := Verify(client, ca, host, port, "token", "keyauth")
-	if err == nil {
-		t.Error("Verify() should fail when CA verification fails")
-	}
-
-	if !strings.Contains(err.Error(), "attestation verification failed") {
-		t.Errorf("Expected attestation verification error, got: %v", err)
-	}
+	_, err := VerifyAttestation(ca, attestationPayload(t, structurallyValidTPMObject()), "keyauth")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "attestation verification failed")
+	assert.False(t, ca.verifyAKChainCalled, "the chain is not anchored once the object was refused")
 }
 
 func TestVerify_AKCertificateChainError(t *testing.T) {
-	// Create attestation with certificate chain
-	obj := &AttestationObject{
-		Format: "tpm",
-		AttStatement: AttestationStatement{
-			Ver:      "2.0",
-			Alg:      -257,
-			X5c:      []interface{}{[]byte("cert-bytes")},
-			Sig:      []byte("signature"),
-			CertInfo: []byte("cert-info-with-keyauth"),
-			PubArea:  []byte("pub-area"),
-		},
-	}
+	cause := errors.New("AK chain verification failed")
+	ca := &mockCA{verifyAKChainError: cause}
 
-	cborData, _ := cbor.Marshal(obj)
-	attestReq := AttestationRequest{AttStmt: cborData}
-	jsonData, _ := json.Marshal(attestReq)
+	_, err := VerifyAttestation(ca, attestationPayload(t, structurallyValidTPMObject()), "keyauth")
+	assert.ErrorIs(t, err, ErrCertificateChainInvalid)
+	assert.ErrorIs(t, err, cause, "the verifier's reason is kept")
+}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(jsonData)
-	}))
-	defer server.Close()
+func TestVerify_X5cEntryNotACertificate(t *testing.T) {
+	obj := structurallyValidTPMObject()
+	obj.AttStatement.X5c = []interface{}{"not a byte string"}
 
-	serverURL := strings.TrimPrefix(server.URL, "http://")
-	parts := strings.Split(serverURL, ":")
-	host := parts[0]
-	port := parts[1]
+	_, err := VerifyAttestation(&mockCA{}, attestationPayload(t, obj), "keyauth")
+	assert.ErrorIs(t, err, ErrCertificateChainInvalid)
+}
 
-	ca := &mockCA{
-		verifyAKChainError: errors.New("AK chain verification failed"),
-	}
-	client := loopbackClient()
+func TestAttestationRequest_RoundTrip(t *testing.T) {
+	obj := structurallyValidTPMObject()
 
-	err := Verify(client, ca, host, port, "token", "keyauth")
-	if err != ErrCertificateChainInvalid {
-		t.Errorf("Expected ErrCertificateChainInvalid, got: %v", err)
-	}
+	parsed, err := ParseAttestationRequest(attestationPayload(t, obj))
+	require.NoError(t, err)
+	assert.Equal(t, obj.Format, parsed.Format)
+	assert.Equal(t, obj.AttStatement.Sig, parsed.AttStatement.Sig)
 }
 
 func TestParseAttestationObject_Success(t *testing.T) {
@@ -829,12 +705,12 @@ func TestParseAttestationObject_AllPaths(t *testing.T) {
 	})
 }
 
-func TestAttestationRequest_Fields(t *testing.T) {
-	req := AttestationRequest{
-		AttStmt: []byte("attestation-statement"),
-	}
-
-	assert.Equal(t, []byte("attestation-statement"), req.AttStmt)
+// TestAttestationRequest_WireName pins the draft-ietf-acme-device-attest
+// payload member name: a client and server that disagree on it never interoperate.
+func TestAttestationRequest_WireName(t *testing.T) {
+	payload, err := json.Marshal(AttestationRequest{AttObj: "abc"})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"attObj":"abc"}`, string(payload))
 }
 
 func TestErrorVariables(t *testing.T) {
@@ -892,4 +768,24 @@ func BenchmarkParseAttestationObject(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, _ = ParseAttestationObject(data)
 	}
+}
+
+// draft-ietf-acme-device-attest: authData "SHOULD be omitted", and a server
+// "MUST ignore unrecognized fields in the challenge response". A client that
+// sends either is not refused.
+func TestParseAttestationRequest_IgnoresWhatTheDraftSaysToIgnore(t *testing.T) {
+	object := map[string]interface{}{
+		"fmt":      "tpm",
+		"attStmt":  map[string]interface{}{"ver": "2.0"},
+		"authData": []byte("browser-context-data"),
+	}
+	encoded, err := cbor.Marshal(object)
+	require.NoError(t, err)
+	payload := []byte(`{"attObj":"` + base64.RawURLEncoding.EncodeToString(encoded) + `","extra":{"anything":1}}`)
+
+	parsed, err := ParseAttestationRequest(payload)
+
+	require.NoError(t, err)
+	assert.Equal(t, "tpm", parsed.Format)
+	assert.Equal(t, "2.0", parsed.AttStatement.Ver)
 }

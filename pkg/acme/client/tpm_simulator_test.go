@@ -23,14 +23,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	"io"
 	"log/slog"
 	"math/big"
-	"net"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -40,7 +35,6 @@ import (
 	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
-	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -50,6 +44,11 @@ import (
 // simulated go-xkms device and hand the response to the server's verifier,
 // pkg/acme/challenges/device-attest-01, unchanged -- the verifier a TrustedCA
 // runs.
+
+// simulatedDeviceIdentity is the RFC 4043 permanentIdentifier the test CA
+// puts on the AIK certificate it issues, as go-xkms's own enroll-01 issuance
+// does (pkg/ca/tcg.go): the identity a device-attest-01 order names.
+const simulatedDeviceIdentity = "sim-aik-0001"
 
 // attestationCA issues AIK certificates to the WebAuthn Level 2 section 8.3.1
 // profile and is the root the server anchors x5c to.
@@ -82,7 +81,9 @@ func newAttestationCA(t *testing.T) *attestationCA {
 // naming the TPM, tcg-kp-AIKCertificate, and not a CA.
 func (c *attestationCA) issueAIK(t *testing.T, public crypto.PublicKey) *x509.Certificate {
 	t.Helper()
-	san, err := ca.BuildSubjectAltName(pkix.Name{}, nil, nil, nil, nil, nil, []pkix.Name{{
+	identifier, err := ca.MarshalPermanentIdentifier(simulatedDeviceIdentity, nil)
+	require.NoError(t, err)
+	san, err := ca.BuildSubjectAltName(pkix.Name{}, nil, nil, nil, nil, []ca.OtherName{{TypeID: ca.OIDPermanentIdentifier, Value: identifier}}, []pkix.Name{{
 		ExtraNames: []pkix.AttributeTypeAndValue{
 			{Type: ca.OIDTCGAttributeTPMManufacturer, Value: "id:53494D00"},
 			{Type: ca.OIDTCGAttributeTPMModel, Value: "SIM"},
@@ -106,32 +107,13 @@ func (c *attestationCA) issueAIK(t *testing.T, public crypto.PublicKey) *x509.Ce
 	return cert
 }
 
-// VerifyAttestationObject adds no policy beyond the format's own checks.
-func (c *attestationCA) VerifyAttestationObject(*deviceattest01.AttestationObject, []byte) error {
-	return nil
-}
-
-// VerifyAKCertificateChain anchors x5c to this CA. An AIK certificate's
-// subjectAltName is critical and holds only a directoryName, which
-// crypto/x509 reports as unhandled; the format verifier reads it, so it is
-// marked handled here as any anchoring implementation for "tpm" must.
-func (c *attestationCA) VerifyAKCertificateChain(chain [][]byte) error {
-	leaf, err := x509.ParseCertificate(chain[0])
-	if err != nil {
-		return err
-	}
-	handled := leaf.UnhandledCriticalExtensions[:0]
-	for _, oid := range leaf.UnhandledCriticalExtensions {
-		if !oid.Equal(certstore.OIDSubjectAltName) {
-			handled = append(handled, oid)
-		}
-	}
-	leaf.UnhandledCriticalExtensions = handled
-
-	roots := x509.NewCertPool()
-	roots.AddCert(c.cert)
-	_, err = leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}})
-	return err
+// verifier is the server's trust policy over this CA's AIK certificates: the
+// production verifier, anchored to this CA as its only TPM root.
+func (c *attestationCA) verifier(t *testing.T) *deviceattest01.TrustAnchorVerifier {
+	t.Helper()
+	verifier, err := deviceattest01.NewTrustAnchorVerifier(deviceattest01.TrustAnchors{TPMRoots: []*x509.Certificate{c.cert}})
+	require.NoError(t, err)
+	return verifier
 }
 
 // newSimulatedDeviceAdapter provisions the simulator as a go-xkms device --
@@ -178,17 +160,11 @@ func newSimulatedDeviceAdapter(t *testing.T, issuer *attestationCA) *XKMSTPMAdap
 	return NewXKMSTPMAdapter(tpm, factory.KeyBackend())
 }
 
-// verifyServed serves a challenge response and runs the server's verifier
-// over it for keyAuth.
+// verifyServed runs the server's verifier, anchored to issuer, over the
+// payload a client POSTs for keyAuth.
 func verifyServed(t *testing.T, issuer *attestationCA, statement []byte, keyAuth string) (*deviceattest01.VerifiedAttestation, error) {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(statement)
-	}))
-	t.Cleanup(server.Close)
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
-	require.NoError(t, err)
-	return deviceattest01.VerifyAttestation(validation.NewClient(validation.Config{AllowPrivateTargets: true}), issuer, host, port, "token", keyAuth)
+	return deviceattest01.VerifyAttestation(issuer.verifier(t), statement, keyAuth)
 }
 
 func csrSignedBy(t *testing.T, signer crypto.Signer) *x509.CertificateRequest {

@@ -44,7 +44,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/acme"
 
-	"github.com/jeremyhahn/go-xkms/internal/acmetestutil"
+	testutil "github.com/jeremyhahn/go-xkms/internal/acmetestutil"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 )
 
@@ -9687,6 +9687,9 @@ func (m *MockTPM) ProvisionIAKCert(cert *x509.Certificate) error {
 	return m.provisionIAKCertErr
 }
 
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *MockTPM) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
+
 func (m *MockTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	if m.attestErr != nil {
 		return nil, m.attestErr
@@ -10883,35 +10886,6 @@ func TestStartEnrollServer_Direct(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		decoded, _ := base64.RawURLEncoding.DecodeString(string(body))
 		assert.Equal(t, idevidCSR.CSR, decoded)
-	}
-}
-
-// TestStartAttestServer_Direct tests the startAttestServer function directly
-func TestStartAttestServer_Direct(t *testing.T) {
-	client := createTestClient(t)
-
-	attestStmt := []byte(`{"fmt":"tpm","attStmt":{"ver":"2.0"}}`)
-
-	config := &EnrollmentConfig{
-		Port: "19996", // Use unique port
-	}
-
-	token := "attest-token-unique"
-
-	// Start server in background
-	go client.startAttestServer(config, attestStmt, token)
-
-	time.Sleep(300 * time.Millisecond)
-
-	// Test challenge endpoint
-	resp, err := http.Get(fmt.Sprintf("http://localhost:19996/.well-known/acme-challenge/%s", token))
-	if err == nil {
-		defer func() { _ = resp.Body.Close() }()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-		var response map[string]interface{}
-		_ = json.NewDecoder(resp.Body).Decode(&response)
-		assert.Contains(t, response, "attStmt")
 	}
 }
 

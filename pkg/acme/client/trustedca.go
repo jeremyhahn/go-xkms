@@ -91,6 +91,7 @@ type TrustedCA struct {
 	authorizer     *xkmsauth.Authorizer
 	kmsService     kms.KMSService
 	challengeMap   map[string]acmecommon.ChallengeVerifierFunc
+	attesting      map[string]acmecommon.AttestingVerifier
 	logger         *slog.Logger
 
 	// Rate limiting
@@ -393,6 +394,7 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	// Initialize ACME REST service
 	restService, err := handlers.NewRestService(&handlers.Params{
 		AllowLoopbackIdentifier: tca.config.ACME.AllowLoopbackIdentifier,
+		AttestingVerifiers:      tca.attesting,
 		AuditLogger:             auditLog,
 		BaseRESTURI:             externalURL,
 		CA:                      tca.ca,

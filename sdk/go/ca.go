@@ -357,6 +357,11 @@ type TCGDeviceIdentity = pkgca.TCGDeviceIdentity
 // endorsement key certificate.
 var TCGDeviceIdentityFromEKCertificate = pkgca.TCGDeviceIdentityFromEKCertificate
 
+// EKCertificatePermanentIdentifier returns the TCG DevID §8.1 permanent
+// identifier of the TPM an endorsement key certificate belongs to: the hex
+// SHA-256 of its DER encoding. It needs only the certificate.
+var EKCertificatePermanentIdentifier = pkgca.EKCertificatePermanentIdentifier
+
 // TCGDeviceIdentityFromEKPublicKey derives both TCG DevID §8.1 names for a TPM
 // with no endorsement key certificate.
 var TCGDeviceIdentityFromEKPublicKey = pkgca.TCGDeviceIdentityFromEKPublicKey

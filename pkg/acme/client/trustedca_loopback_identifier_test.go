@@ -74,10 +74,14 @@ func startLoopbackIdentifierTrustedCA(t *testing.T, allowLoopback bool) (tca *Tr
 	cfg.ACME.ExternalURL = externalURL
 	cfg.ACME.AllowLoopbackIdentifier = allowLoopback
 
-	challengeMap := map[string]acmecommon.ChallengeVerifierFunc{
-		"enroll-01": func(_ *net.Resolver, _ acmecommon.CertificateAuthority, _, _, _, _ string) error {
-			return nil
-		},
+	// An attesting verifier that attests the order's own identifier: this
+	// test is about the loopback substitution, not the identity comparison.
+	attesting := map[string]acmecommon.AttestingVerifier{
+		"enroll-01": acmecommon.AttestingVerifierFunc(func(
+			_ *net.Resolver, _ acmecommon.CertificateAuthority, c acmecommon.AttestationChallenge,
+		) (*acmecommon.AttestedIdentity, error) {
+			return &acmecommon.AttestedIdentity{Identifier: c.IdentifierValue}, nil
+		}),
 	}
 
 	var err error
@@ -85,7 +89,7 @@ func startLoopbackIdentifierTrustedCA(t *testing.T, allowLoopback bool) (tca *Tr
 		WithCA(newMockCA()),
 		WithStorageFactory(factory),
 		WithConfig(cfg),
-		WithChallengeMap(challengeMap),
+		WithAttestingVerifiers(attesting),
 	)
 	require.NoError(t, err)
 

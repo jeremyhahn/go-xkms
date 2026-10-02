@@ -18,7 +18,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"testing"
 
@@ -82,9 +81,7 @@ func TestSetupBuildsTheStatementFromTheCertification(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, want, tpm.certifiedAs, "the certification must be over TPMExtraData(alg, keyAuth)")
 
-	var request AttestationRequest
-	require.NoError(t, json.Unmarshal(payload, &request))
-	object, err := ParseAttestationObject(request.AttStmt)
+	object, err := ParseAttestationRequest(payload)
 	require.NoError(t, err)
 
 	assert.Equal(t, string(FormatTPM), object.Format)

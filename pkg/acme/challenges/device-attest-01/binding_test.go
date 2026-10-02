@@ -19,47 +19,12 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
-	"net"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
-	"github.com/fxamacker/cbor/v2"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// serveAttestation stands up the endpoint a device answers on and returns the
-// host and port to verify against, so these tests drive the same path a server
-// does rather than the evidence verifier alone.
-func serveAttestation(t *testing.T, object *AttestationObject) (string, string) {
-	t.Helper()
-
-	encoded, err := cbor.Marshal(object)
-	require.NoError(t, err)
-	payload, err := json.Marshal(AttestationRequest{AttStmt: encoded})
-	require.NoError(t, err)
-	return servePayload(t, payload)
-}
-
-// servePayload answers the challenge endpoint with a device's response as it
-// was sent, and returns the host and port to verify against.
-func servePayload(t *testing.T, payload []byte) (string, string) {
-	t.Helper()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(payload)
-	}))
-	t.Cleanup(server.Close)
-
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
-	require.NoError(t, err)
-	return host, port
-}
 
 // csrFor builds a certificate request for a key, which is what a client sends
 // at finalization.
@@ -86,9 +51,9 @@ func csrFor(t *testing.T, key *ecdsa.PrivateKey) *x509.CertificateRequest {
 // device's -- and attestation chains are public, so anyone who has seen one
 // genuine device's answer could replay it beside a software key.
 func TestVerifyDoesNotAuthorizeDICEOnTheNonceAlone(t *testing.T) {
-	host, port := serveAttestation(t, diceAttestationObject(t, DICENonce(diceKeyAuth)))
+	payload := attestationPayload(t, diceAttestationObject(t, DICENonce(diceKeyAuth)))
 
-	err := Verify(loopbackClient(), &mockCA{}, host, port, "token", diceKeyAuth)
+	err := Verify(&mockCA{}, payload, diceKeyAuth)
 	require.Error(t, err, "a dice challenge authorized issuance with no csr in sight")
 	assert.ErrorIs(t, err, ErrKeyBindingRequired)
 }
@@ -101,9 +66,9 @@ func TestBindCSRKeyRefusesACSRForAnUnrelatedKey(t *testing.T) {
 		Format:       string(FormatDICE),
 		AttStatement: AttestationStatement{X5c: []interface{}{leafDER}},
 	}
-	host, port := serveAttestation(t, object)
+	payload := attestationPayload(t, object)
 
-	verified, err := VerifyAttestation(loopbackClient(), &mockCA{}, host, port, "token", diceKeyAuth)
+	verified, err := VerifyAttestation(&mockCA{}, payload, diceKeyAuth)
 	require.NoError(t, err)
 	require.NotNil(t, verified)
 	assert.Equal(t, FormatDICE, verified.Format)
@@ -194,9 +159,9 @@ func TestBindCSRKeySurvivesStorage(t *testing.T) {
 		Format:       string(FormatDICE),
 		AttStatement: AttestationStatement{X5c: []interface{}{leafDER}},
 	}
-	host, port := serveAttestation(t, object)
+	payload := attestationPayload(t, object)
 
-	verified, err := VerifyAttestation(loopbackClient(), &mockCA{}, host, port, "token", diceKeyAuth)
+	verified, err := VerifyAttestation(&mockCA{}, payload, diceKeyAuth)
 	require.NoError(t, err)
 	require.Equal(t, leafDER, verified.LeafDER, "the device's own bytes are what get written down")
 

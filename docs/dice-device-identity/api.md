@@ -31,6 +31,19 @@ or `pubArea`, because a DICE device signs no separate attestation structure.
 }
 ```
 
+The object is CBOR, and the client sends it to the challenge URL as the payload
+`{"attObj": "<base64url, unpadded, of the CBOR>"}`
+(draft-ietf-acme-device-attest). The server verifies it from the payload and
+never contacts the device, so a device on a serial port enrolls through a
+gateway that holds the ACME account: the gateway forwards the device's alias
+chain and POSTs. `deviceattest01.EncodeAttestationRequest` builds the payload
+(`ACMEEncodeDeviceAttestRequest` in `sdk/go/acme`).
+
+The server anchors the chain to the operator's `acme.challenges.device_attest.dice_roots`
+and applies the `dice_require_*` policy through `deviceattest01.TrustAnchorVerifier`,
+which calls `dice.Verify`. For an AVR with an ATECC608A set
+`dice_require_device_signed_leaf`.
+
 Verification is dispatched by format. For `dice` it parses the `x5c` leaf and
 requires the `eat_nonce` claim of the leaf's `tcg-dice-UCCS-evidence`
 extension to equal SHA-256 of the ACME key authorization — the digest, because

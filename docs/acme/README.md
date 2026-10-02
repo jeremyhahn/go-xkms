@@ -325,7 +325,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 | Challenge | Identifier Type | Use Case |
 |-----------|-----------------|----------|
-| **device-attest-01** | IP/Permanent-ID | TPM attestation with quote verification |
+| **device-attest-01** | Permanent-ID | TPM or DICE attestation the client POSTs (draft-ietf-acme-device-attest); the server never dials the device |
 | **enroll-01** | IP/Permanent-ID | TCG-CSR-IDevID enrollment with credential activation |
 | **endorse-01** | Permanent-ID | EK certificate issuance for TPMs without manufacturer certs |
 
@@ -390,7 +390,7 @@ The ACME server supports the following JWS signature algorithms for account keys
 
 - **http-01**: Validates domain control via HTTP endpoint
 - **dns-01**: Validates domain control via DNS TXT record
-- **device-attest-01**: TPM quote verification with AK certificate chain validation
+- **device-attest-01**: TPM2_Certify (or DICE) attestation POSTed by the client, anchored to configured trust roots
 - **enroll-01**: TPM credential activation (MakeCredential/ActivateCredential)
 - **endorse-01**: EAB-based authorization for EK certificate issuance
 

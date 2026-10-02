@@ -154,17 +154,11 @@ unaudited (`pkg/ca/audit.go`'s `CA.emitAudit`; the attestation gate in
 - ACME challenge verification — `TPM_ATTESTATION` (a successful `enroll-01`
   challenge) and `ENDORSEMENT_VERIFIED` (a successful `endorse-01`
   challenge), gated in `ChallengeHandler` itself rather than in the
-  `sdk/go/acme.ACMEAttestationVerifiers` challenge-verifier closures: the
+  attesting-verifier closures (`sdk/go/acme.ACMEAttestingVerifiers`): the
   closures have no request-scoped identity/correlation context, and
   `ChallengeHandler` already holds the account, challenge and `s.auditLog`
-  the sibling `CHALLENGE_FAILED` gate uses. `EventDeviceAttestation` stays
-  unemitted: the `device-attest-01` ACME challenge type it would describe
-  (distinct from the TCG `enroll-01`/`endorse-01` pair) has no verifier
-  registered in any `ChallengeMap` built anywhere in this codebase
-  (`cmd/xkmsd/acme.go`'s `buildChallengeMap`, the only production builder,
-  wires `http-01`, `dns-01`, and `sdk/go/acme.ACMEAttestationVerifiers`'s
-  `enroll-01`/`endorse-01` — nothing registers `device-attest-01`) — there is
-  no operation to audit yet.
+  the sibling `CHALLENGE_FAILED` gate uses. A successful `device-attest-01`
+  challenge emits `DEVICE_ATTESTATION` the same way.
 - `xkey/pkg/authenticator` — `OpFIDO2CredentialCreated`
   (`storeCredentialWithPolicy`, the single persist path both `MakeCredential`
   call sites share) and `OpPINSeeded` (`establishPINLocked`, the single path

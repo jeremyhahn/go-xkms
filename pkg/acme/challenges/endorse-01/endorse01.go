@@ -94,6 +94,12 @@ type KeyAttributesWithCN interface {
 
 // Verify performs endorse-01 challenge verification.
 //
+// Deprecated: Verify verifies nothing and returns nil, and a caller that treats
+// that as a verdict authorizes every request (go-xkms#1392). The ACME server does
+// not call it: endorse-01 is authorized by the account's External Account
+// Binding, validated by pkg/acme/server/handlers (EndorseEABValidator), and the
+// identity it attests is the EK that binding names (handlers.NewEndorseVerifier).
+//
 // The endorse-01 challenge verification simply returns nil because the
 // actual validation happens at the CSR submission level through:
 // - ACME External Account Binding (EAB) for authorized enrollment

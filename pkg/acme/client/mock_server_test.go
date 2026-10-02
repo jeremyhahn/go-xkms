@@ -538,6 +538,9 @@ func (m *mockTPMForEnrollment) ProvisionIAKCert(cert *x509.Certificate) error {
 	return nil
 }
 
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *mockTPMForEnrollment) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
+
 func (m *mockTPMForEnrollment) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	if err, ok := m.errors["CreateAttestedKey"]; ok {
 		return nil, err

@@ -263,6 +263,11 @@ once, to the externally visible base.
   `TPM2_MakeCredential` against the verified EK.
 - **A `device-attest-01` attestation authorizes nothing until the CSR's key is
   bound to the attested key.** See device-attest-01 key binding below.
+- **An attestation challenge (`enroll-01`, `endorse-01`, `device-attest-01`)
+  is run only by a verifier that reports the identity it attested, and
+  authorizes nothing unless that identity equals the order's identifier.** It
+  never authorizes an `ip` identifier. A verifier that cannot report an
+  identity is refused, not run.
 - **Every identifier is checked against the issuance policy engine before
   its authorization is created.** `NewOrderHandler`
   (`pkg/acme/server/handlers/new_order.go`) runs each identifier through
@@ -518,14 +523,25 @@ once, to the externally visible base.
 
 The challenge verifies the evidence; finalization binds it to the CSR. Both
 formats (`tpm`, `dice`) bind through the CSR, so `Verify` returns
-`ErrKeyBindingRequired` for both (`deviceattest01.go:233`) and a server holds
-the `VerifiedAttestation` between the two requests
+`ErrKeyBindingRequired` for both and a server holds the `VerifiedAttestation`
+between the two requests
 (`pkg/acme/challenges/device-attest-01/binding.go`).
 
+**The evidence is the client's payload (draft-ietf-acme-device-attest).** The
+client POSTs the challenge URL with `{"attObj": base64url(CBOR)}`.
+`ChallengeHandler` reads it from the verified JWS (`parseKID`) and passes it to
+the verifier as `common.AttestationChallenge.Payload`. The server never dials
+the device: `DialTarget` and `Port` are empty for this challenge, the
+loopback-identifier substitution does not apply to it (`dialsDevice`), and a
+device with no network address enrolls through any gateway that can POST. A
+client that accepts the challenge with `{}`, as for every other type, gets an
+`invalid` challenge, not a pending one.
+
 **`tpm` at the challenge** — `verifyTPMEvidence` (`tpm.go:65`) applies WebAuthn
-Level 2 §8.3, after `VerifyAttestation` has anchored every `x5c` entry through
-`AttestationVerifier.VerifyAKCertificateChain` (`deviceattest01.go:318`; an
-entry that is not a byte string refuses the chain rather than being dropped):
+Level 2 §8.3, after `VerifyAttestation` has asked the `AttestationVerifier` to check the object
+(`VerifyAttestationObject`) and to anchor every `x5c` entry
+(`VerifyAKCertificateChain`; an entry that is not a byte string refuses the
+chain rather than being dropped):
 
 | Check | Where |
 |---|---|
@@ -562,6 +578,142 @@ supplies no `SubjectSPKI` and no challenge is checked exactly as before.
 critical and holds only a `directoryName`, which `crypto/x509` reports in
 `UnhandledCriticalExtensions`; `checkAIKCertificate` reads it, so the
 `AttestationVerifier` must treat it as handled when it verifies the chain.
+`TrustAnchorVerifier` (`anchors.go`), the production implementation, reads the
+SAN with `checkAIKCertificate` first and marks it handled on a copy.
+
+**The production verifier.** `deviceattest01.TrustAnchorVerifier` anchors a
+`tpm` chain to configured `tpm_roots` with `evidence.VerifyAKCertificate` and a
+`dice` chain to configured `dice_roots` with `dice.Verify` (nonce, `Ueid`, and
+the configured policy). The roots are separate per format, and a format with no
+root is refused. `xkmsd` builds it from `acme.challenges.device_attest` and
+refuses to start with `device_attest01` enabled and no anchor
+(`config.ErrACMEDeviceAttestNoAnchors`, `ErrACMEDeviceAttestAnchors`). See
+[the challenge reference](../acme/challenges.md#device-attest-01-challenge).
+
+**Device identity, at the challenge.** Binding the CSR's key to
+the attested key says the certificate is for a key some genuine device holds.
+It says nothing about *which* device, and the evidence is not secret, so a
+challenge verifier that stopped there would let a genuine attestation from
+device X satisfy an order for a different identifier Y.
+`VerifiedAttestation.DeviceIdentity` (`identity.go:78`) closes that: it reads
+the RFC 4043 `permanentIdentifier` otherName from the evidence's leaf
+certificate — `x5c[0]` for `tpm`, the alias certificate for `dice` (read as
+the hex-encoded `tcg-dice-Ueid` extension instead, since a DICE leaf carries
+no otherName) — the same convention
+`pkg/acme/server/handlers.matchesPermanentIdentifierOrder` already reads from
+a CSR. go-xkms's own `enroll-01` issuance (`pkg/ca/tcg.go`) puts the same
+`permanentIdentifier` otherName on the IAK certificate it issues alongside the
+IDevID (TCG DevID v1 r12 §8.1: "on both credentials"), so an AIK this stack
+certified carries it; a `tpm` AIK meeting only WebAuthn L2 §8.3.1's minimum
+(manufacturer/model/version) does not, and `DeviceIdentity` refuses it with
+`ErrDeviceIdentityUnavailable` rather than treating the absence as "no
+identity to check."
+
+**The server side: an attesting verifier for every
+attestation challenge.** `common.ChallengeVerifierFunc` returns only an error,
+so it cannot say which device answered. Beside it, unchanged,
+`common.AttestingVerifier` (`pkg/acme/common/attesting.go`) has one method,
+`VerifyAttested(resolver, ca, AttestationChallenge)`, returning a
+`*common.AttestedIdentity{Identifier, Attestation}`: the identity the evidence
+carries, and the `*entities.DeviceAttestation` to persist for finalization
+(nil where a challenge type has none). `http-01`, `dns-01` and `tls-alpn-01`
+stay on `ChallengeVerifierFunc` in `Params.ChallengeMap`; the attestation types
+register in the additive `Params.AttestingVerifiers`
+(`sdk/go/acme.ACMEAttestingVerifiers` builds the map; `cmd/xkmsd/acme.go`'s
+`buildChallengeMap` registers it). `ChallengeHandler` fails closed on three
+counts, all before the verifier is trusted with anything:
+
+- An attestation type with no entry in `AttestingVerifiers` is refused
+  (`unauthorized`, logged as `handlers.ErrAttestingVerifierRequired`), even
+  when a plain verifier function is registered for it in `ChallengeMap`: that
+  function cannot report an identity, so it is never run. Such a type is also
+  not offered by `createChallenges`.
+- An `ip` authorization is refused (`unsupportedIdentifier`,
+  `handlers.ErrAttestationIdentifierType`) without running the verifier. An
+  attested device identity is not an IP address; inventing a mapping is the
+  hole this design closes. `"ip"` therefore has no default challenge
+  candidates (`xkmsDefaultIdentifierChallengeTypes`), and new-order refuses an
+  `ip` identifier up front as `rejectedIdentifier` (400,
+  `handlers.ErrIPIdentifierNotValidatable`) when the policy offers it no
+  non-attestation challenge.
+- After the verifier returns, the attested `Identifier` is compared with
+  `authz.Identifier.Value` in constant time (both sides are
+  attacker-influenced); a difference is refused as `unauthorized`
+  (`handlers.ErrIdentityMismatch`, which the client never sees). A verifier
+  that reports success with no identity is a server error
+  (`handlers.ErrAttestationNoIdentity`).
+
+Only on a match is the verifier's `Attestation` stored as
+`entities.ACMEChallenge.DeviceAttestation`, through the ordinary
+authorization/challenge DAOs.
+
+What each verifier attests:
+
+| Challenge | Attested identity | Evidence persisted |
+|-----------|-------------------|--------------------|
+| `device-attest-01` | `tpm`: the AIK certificate's RFC 4043 `permanentIdentifier`; `dice`: the TCG `Ueid`. Evidence without one is refused. | yes |
+| `enroll-01` | the order's identifier, which the dial established (a genuine TPM activated a credential at that address); the TPM itself is named by the activated EK in the record | yes: the activation record |
+| `endorse-01` | the EK the account's EAB authorized (`AttestationChallenge.AuthorizedIdentity`), never the order's own identifier | no |
+
+`enroll-01` attests possession of a TPM-resident key at an address. Its order's
+`permanent-identifier` value is also the address the server dials, so reporting
+the identifier is the dial's real binding and the comparison is kept. What the
+dial does not say is *which* TPM, and the TCG-CSR-IDEVID arrives one request
+later, so the challenge records the activated endorsement key certificate (its
+TCG permanent identifier, `ca.EKCertificatePermanentIdentifier`) and the IAK's
+public area, and `bindEnrollActivation` refuses a TCG-CSR built around any other
+(`ErrEnrollActivationMismatch`).
+
+`endorse-01` attests nothing about the device: an EK is decrypt-only and no
+exchange takes place. Its only control is the External Account Binding, so the
+identity it reports is the EK that binding names, derived by
+`EndorseEABValidator` and handed to `handlers.NewEndorseVerifier`; EAB is
+required unless waived, and a binding that names no EK is refused. The
+reasons there is no MakeCredential proof of possession are in
+[the challenge reference](../acme/challenges.md#endorse-01-challenge).
+Separating the `enroll-01` order identifier from the dial address remains an
+open design question.
+
+**The validated challenge decides which finalize request is honored**
+(`order_attestation.go`, `validatedAttestations.requireOnly`). A TCG-CSR-IDEVID
+needs enroll-01 to be the only attestation challenge that validated the order;
+the EK-certificate request needs endorse-01 alone; a standard permanent-identifier
+certificate request needs device-attest-01 alone. Anything else is `badCSR`
+(`ErrFinalizeRequestNotPermitted`): an endorse-01 authorization cannot be turned
+into an IDevID or a cluster node certificate, and an order no attestation
+challenge validated (an `ip` identifier `http-01` validated) cannot be
+finalized with a TCG-CSR.
+
+`handlers.NewDeviceAttestVerifier` (`device_attest.go`) is the
+`device-attest-01` entry. It takes the server's trust policy
+(`deviceattest01.AttestationVerifier`) as an argument. The CA handle is not
+asked to be the verifier, because the shipped `*ca.CA` cannot implement an
+interface defined in a package that imports `pkg/ca`, and the roots that vouch
+for a device are not the CA's issuing configuration. It refuses any identifier
+type other than `permanent-identifier` (`handlers.ErrAttestationIdentifierType`),
+verifies the payload, and returns the evidence's `DeviceIdentity()` with
+`VerifiedAttestation.Record` (`persist.go`) as the record. With no policy it
+refuses every attestation (`ErrNoAttestationVerifier`).
+`OrderFinalizeHandler` finds the recorded evidence at finalization
+(`findDeviceAttestation`, scanning the order's authorizations for a `valid`
+`device-attest-01` challenge carrying one) and calls
+`bindDeviceAttestationKey`, which reconstructs the `VerifiedAttestation`
+(`deviceattest01.FromRecord`) and re-runs `BindCSRKey` against the submitted
+CSR. A permanent-identifier order reaching this point with no record is
+refused (`badCSR`) rather than signed as an ordinary certificate request — the
+order is never anything other than `device-attest-01` once `enroll-01`'s
+TCG-CSR-IDEVID path and `endorse-01`'s EK-public-key identifier have been
+ruled out (`matchesPermanentIdentifierOrder` callers), so there is no
+legitimate case for the record to be absent.
+
+**A missing authorization refuses finalize.** What an order is -- a
+`device-attest-01` order whose key must be bound, an `endorse-01` order, a
+TCG-CSR order -- is decided from the authorizations it references
+(`orderAuthorizations`, `device_attest.go`). A reference storage does not hold
+(a partial restore, a replication fault) is `ErrOrderAuthorizationMissing`, a
+`serverInternal` (500) problem, and the request is refused. It is never read as
+"no authorization attested this", which would route a TCG-CSR or an `endorse-01`
+EK request past the key binding exactly when state is incomplete.
 
 **The client side.** `deviceattest01.Setup` (`setup.go:115`) has the IAK
 certify the certificate key with `pkg/tpm2`'s `CertifyKey` over
@@ -639,7 +791,7 @@ What the client guarantees:
 - **Redirects.** `http-01` follows up to `MaxRedirects` (10) `http`/`https`
   redirects, RFC 8555 section 8.3; each hop dials through the same transport,
   so the dial-time check re-runs per hop (`redirectPolicy`, `client.go:244`).
-  `enroll-01` and `device-attest-01` refuse redirects.
+  `enroll-01` refuses redirects. (`device-attest-01` makes no request.)
 - **Bounded responses.** `readLimited` (`client.go:226`), built on
   `netguard.ReadLimited` (`pkg/netguard/body.go`), reads through
   `io.LimitReader(limit+1)` and refuses -- does not truncate -- a body over
@@ -661,7 +813,7 @@ What the client guarantees:
 One client is built per ACME server: `buildChallengeMap`
 (`cmd/xkmsd/acme.go:486`) for xkmsd, and a `TrustedCA` embedder builds its
 own with `NewACMEChallengeClient` (`sdk/go/acme`) and passes it to
-`http01.Verify` / `ACMEAttestationVerifiers(client, enroll, endorse)`.
+`http01.Verify` / `ACMEAttestingVerifiers(client, enroll, endorse, deviceAttest)`.
 
 ## Circuit breakers and degradation
 
@@ -694,8 +846,9 @@ listing (see `GET /acme/health` below).
 that decides which challenge-map entries get wrapped and under which group
 names: it copies the map, wraps the `http-01` and `dns-01` entries (when
 present) with a per-target breaker group from the `Manager` it is given, and
-returns every other entry — the TPM attestation verifiers
-`sdk/go/acme.ACMEAttestationVerifiers` builds, for instance — unchanged. It
+returns every other entry unchanged. The attestation verifiers
+(`sdk/go/acme.ACMEAttestingVerifiers`) are not in this map: they make no
+outbound call a breaker protects. It
 also calls `Manager.RegisterTargetGroup` for each group it wraps, so
 `http01`/`dns01` are visible in `GET /acme/health` immediately, before any
 target has been validated. `cmd/xkmsd/acme.go`'s `buildChallengeMap` calls
@@ -896,8 +1049,8 @@ cluster:
   `clusterca.ACMEOptions.ChallengeHost`, which becomes
   `acmeclient.EnrollmentConfig.ListenHost` and is joined with the port through
   `net.JoinHostPort` (#140).
-  **It must be `"8080"`** (or, for `endorse-01`/`device-attest-01`, that
-  challenge's own fixed default): the server always validates an enroll-01
+  **It must be `"8080"`** (or, for `endorse-01`, that challenge's own fixed
+  default; `device-attest-01` opens no listener): the server always validates an enroll-01
   family challenge against the challenge type's fixed default port
   (`isEnrollXChallenge` in `pkg/acme/server/handlers/challenge.go`), never a
   port the client advertises. A challenge type carries no port information —
@@ -936,7 +1089,7 @@ bound the service's memory, and #733 for the multi-node gap
 `acme.enrollment.allow_loopback_identifier` (`ACMEEnrollmentConfig`,
 `pkg/config/acme.go`) gates a development-only substitution in
 `ChallengeHandler` (`pkg/acme/server/handlers/challenge.go`): when an
-enrollment challenge's (`enroll-01`/`endorse-01`/`device-attest-01`)
+enrollment challenge's (`enroll-01`/`endorse-01`)
 permanent-identifier is the literal `127.0.0.1`, the handler can validate
 against the request's client IP (or the first `X-Forwarded-For` entry)
 instead of the identifier, so a device that registered with a loopback

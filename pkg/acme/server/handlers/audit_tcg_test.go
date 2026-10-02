@@ -83,6 +83,12 @@ func selfSignedDER(t *testing.T, commonName string, serial *big.Int, validity ti
 // packTCGCSR builds a TCG-CSR-IDEVID carrying the supplied device identity and
 // EK certificate, in the wire form the ACME handler unpacks.
 func packTCGCSR(t *testing.T, prodModel, prodSerial string, ekCertDER []byte) []byte {
+	return packTCGCSRWithAttestKey(t, prodModel, prodSerial, ekCertDER, []byte("attestation-public-area"))
+}
+
+// packTCGCSRWithAttestKey is packTCGCSR for a device whose activation key (the
+// IAK) has the public area attestPub.
+func packTCGCSRWithAttestKey(t *testing.T, prodModel, prodSerial string, ekCertDER, attestPub []byte) []byte {
 	t.Helper()
 
 	size := func(n int) [4]byte {
@@ -91,7 +97,6 @@ func packTCGCSR(t *testing.T, prodModel, prodSerial string, ekCertDER []byte) []
 		return out
 	}
 
-	attestPub := []byte("attestation-public-area")
 	signingPub := []byte("signing-public-area")
 
 	content := tpm2.TCG_IDEVID_CONTENT{

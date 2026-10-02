@@ -36,6 +36,11 @@ type ACMEAuthorizationEntity = entities.ACMEAuthorization
 // ACMEChallengeEntity represents an ACME challenge used to validate authorization.
 type ACMEChallengeEntity = entities.ACMEChallenge
 
+// ACMEDeviceAttestationEntity is the verified device-attest-01 evidence
+// persisted on a validated challenge so order finalization can bind the
+// certificate request's key to it.
+type ACMEDeviceAttestationEntity = entities.DeviceAttestation
+
 // ACMECertificateEntity represents an issued ACME certificate.
 type ACMECertificateEntity = entities.ACMECertificate
 

@@ -26,6 +26,13 @@ type ACMEChallenge struct {
 	Error           *Error `yaml:"error" json:"error,omitempty"`
 	AccountID       uint64 `yaml:"account-id" json:"account_id" index:"true"`
 	AuthorizationID uint64 `yaml:"authorization-id" json:"authorization_id" index:"true"`
+
+	// DeviceAttestation carries the attested key and device identity a
+	// validated device-attest-01 challenge established, or the endorsement
+	// key and activation key a validated enroll-01 challenge activated, kept
+	// so finalization can bind the request to them. Nil for every other
+	// challenge type, and nil until this challenge has validated.
+	DeviceAttestation *DeviceAttestation `yaml:"device-attestation,omitempty" json:"device_attestation,omitempty"`
 }
 
 // SetEntityID sets the unique identifier for the challenge.

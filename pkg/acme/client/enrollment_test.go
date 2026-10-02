@@ -136,6 +136,9 @@ func (m *mockTPM) ProvisionIAKCert(cert *x509.Certificate) error {
 	return nil
 }
 
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *mockTPM) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
+
 func (m *mockTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	if m.attestFunc != nil {
 		return m.attestFunc(name, keyAuth)
@@ -1055,6 +1058,9 @@ func (m *coverageBoostTPM) ProvisionIAKCert(cert *x509.Certificate) error {
 	return nil
 }
 
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *coverageBoostTPM) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
+
 func (m *coverageBoostTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	if m.attestFunc != nil {
 		return m.attestFunc(name, keyAuth)
@@ -1762,26 +1768,6 @@ func TestExpandEnvVars_NoEnvVarsPassthrough(t *testing.T) {
 	}
 }
 
-// TestDeviceAttest_EnvVarExpansionError tests DeviceAttest with env var expansion failure
-func TestDeviceAttest_EnvVarExpansionError(t *testing.T) {
-	client := createCoverageBoostClient(t)
-
-	tpm := &coverageBoostTPM{}
-
-	config := &EnrollmentConfig{
-		Challenge: string(ChallengeTypeDeviceAttest01),
-		IPAddress: "${MISSING_ATTEST_VAR}",
-		TPMModule: tpm,
-	}
-
-	ctx := context.Background()
-	cert, err := client.DeviceAttest(ctx, config)
-
-	assert.Error(t, err)
-	assert.Nil(t, cert)
-	assert.Contains(t, err.Error(), "failed to expand IP address")
-}
-
 // TestActivateCredentialRequest_Variations tests various request body combinations
 func TestActivateCredentialRequest_Variations(t *testing.T) {
 	testCases := []struct {
@@ -2117,6 +2103,9 @@ func (m *enrollmentTestTPM) ProvisionIAKCert(cert *x509.Certificate) error {
 	}
 	return nil
 }
+
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *enrollmentTestTPM) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
 
 func (m *enrollmentTestTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	if m.attestFunc != nil {
@@ -2709,24 +2698,6 @@ func TestRequestEndorsementKeyCertificate_NilEKPublicKey(t *testing.T) {
 	require.ErrorAs(t, err, &caErr)
 	assert.Equal(t, caerrors.BadPublicKey, caErr.Type)
 	assert.Contains(t, err.Error(), "EK public key not available")
-}
-
-// TestDeviceAttest_ExpandEnvVarsFailure tests environment variable expansion failure
-func TestDeviceAttest_ExpandEnvVarsFailure(t *testing.T) {
-	client := createEnrollmentTestClient(t)
-
-	config := &EnrollmentConfig{
-		Challenge: string(ChallengeTypeDeviceAttest01),
-		IPAddress: "${NONEXISTENT_ENV_VAR}",
-		TPMModule: &enrollmentTestTPM{},
-	}
-
-	ctx := context.Background()
-	cert, err := client.DeviceAttest(ctx, config)
-
-	assert.Error(t, err)
-	assert.Nil(t, cert)
-	assert.Contains(t, err.Error(), "failed to expand IP address")
 }
 
 // TestEnrollmentServerIntegration tests actual server startup and handling
@@ -3648,60 +3619,6 @@ func TestStartEndorseServerHandlers(t *testing.T) {
 	assert.Equal(t, []byte("activated"), w.Body.Bytes())
 }
 
-// TestStartAttestServerHandlers tests attest server handler paths directly
-func TestStartAttestServerHandlers(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_ = &Client{logger: logger}
-
-	attestStmt := []byte(`{"fmt":"tpm","attStmt":{"ver":"2.0"}}`)
-	token := "attest-token"
-
-	// Create handler mux matching startAttestServer
-	mux := http.NewServeMux()
-
-	challengePath := "/.well-known/acme-challenge/"
-	mux.HandleFunc(challengePath, func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, token) {
-			http.NotFound(w, r)
-			return
-		}
-
-		attestReq := map[string]interface{}{
-			"attStmt": attestStmt,
-		}
-
-		jsonData, err := json.Marshal(attestReq)
-		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(jsonData)
-	})
-
-	// Test valid request
-	httpReq := httptest.NewRequest(http.MethodGet, challengePath+token, nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httpReq)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-
-	// Verify response structure
-	var resp map[string]interface{}
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp, "attStmt")
-
-	// Test invalid token
-	httpReq = httptest.NewRequest(http.MethodGet, challengePath+"wrong-token", nil)
-	w = httptest.NewRecorder()
-	mux.ServeHTTP(w, httpReq)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // TestDeviceAttest_ValidationError tests DeviceAttest with invalid config
 func TestDeviceAttest_ValidationError(t *testing.T) {
 	client := createEnrollmentTestClient(t)
@@ -3721,13 +3638,11 @@ func TestDeviceAttest_ValidationError(t *testing.T) {
 			expectedErr: ErrMissingTPMModule,
 		},
 		{
-			name: "empty IP address",
+			name: "no challenge type",
 			config: &EnrollmentConfig{
-				Challenge: string(ChallengeTypeDeviceAttest01),
-				IPAddress: "",
 				TPMModule: &enrollmentTestTPM{},
 			},
-			expectedErr: ErrInvalidIPAddress,
+			expectedErr: ErrInvalidChallenge,
 		},
 	}
 
@@ -3810,6 +3725,9 @@ func (m *testTPME2E) ProvisionEKCert(certDER []byte) error {
 func (m *testTPME2E) ProvisionIAKCert(cert *x509.Certificate) error {
 	return nil
 }
+
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *testTPME2E) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
 
 func (m *testTPME2E) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	return newTestAttestedKey(keyAuth)
@@ -4055,9 +3973,8 @@ func TestDeviceAttest_ValidationFailures(t *testing.T) {
 			errMsg: "invalid enrollment config",
 		},
 		{
-			name: "empty IP address",
+			name: "no challenge type",
 			config: &EnrollmentConfig{
-				Challenge: "device-attest-01",
 				TPMModule: newTestTPME2E(t),
 			},
 			errMsg: "invalid enrollment config",
@@ -4489,58 +4406,6 @@ func TestEndorseActivationHandler(t *testing.T) {
 	})
 }
 
-// TestAttestChallengeHandler tests the attestation challenge endpoint
-func TestAttestChallengeHandler(t *testing.T) {
-	token := "test-attest-token"
-	attestationData := map[string]interface{}{
-		"quote":     base64.RawURLEncoding.EncodeToString([]byte("quote-data")),
-		"signature": base64.RawURLEncoding.EncodeToString([]byte("signature-data")),
-		"pcrs":      map[string]string{"0": base64.RawURLEncoding.EncodeToString([]byte("pcr-value"))},
-	}
-
-	// Create handler matching the startAttestServer logic
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, token) {
-			http.NotFound(w, r)
-			return
-		}
-
-		jsonData, err := json.Marshal(attestationData)
-		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(jsonData)
-	})
-
-	t.Run("valid token returns attestation data", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/.well-known/acme-challenge/"+token, nil)
-		rec := httptest.NewRecorder()
-
-		handler.ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
-
-		var response map[string]interface{}
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		require.NoError(t, err)
-		assert.Contains(t, response, "quote")
-		assert.Contains(t, response, "signature")
-	})
-
-	t.Run("invalid token returns 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/.well-known/acme-challenge/wrong-token", nil)
-		rec := httptest.NewRecorder()
-
-		handler.ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusNotFound, rec.Code)
-	})
-}
-
 // mockTPMForActivation is a mock TPM that supports activation
 type mockTPMForActivation struct {
 	secret     []byte
@@ -4556,6 +4421,10 @@ func (m *mockTPMForActivation) IAKAttributes() (*KeyAttributes, error)   { retur
 func (m *mockTPMForActivation) CreateIDevID([]byte) (*IDevIDCSR, error)  { return nil, nil }
 func (m *mockTPMForActivation) ProvisionEKCert([]byte) error             { return nil }
 func (m *mockTPMForActivation) ProvisionIAKCert(*x509.Certificate) error { return nil }
+
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *mockTPMForActivation) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
+
 func (m *mockTPMForActivation) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	return newTestAttestedKey(keyAuth)
 }
@@ -4842,6 +4711,10 @@ func (m *mockTPMWithErrors) CreateIDevID([]byte) (*IDevIDCSR, error)        { re
 func (m *mockTPMWithErrors) ActivateCredential(_, _ []byte) ([]byte, error) { return nil, nil }
 func (m *mockTPMWithErrors) ProvisionEKCert([]byte) error                   { return nil }
 func (m *mockTPMWithErrors) ProvisionIAKCert(*x509.Certificate) error       { return nil }
+
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *mockTPMWithErrors) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
+
 func (m *mockTPMWithErrors) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	return newTestAttestedKey(keyAuth)
 }
@@ -4920,6 +4793,9 @@ func (m *mockTPMModuleForEnroll) ProvisionEKCert(certDER []byte) error {
 func (m *mockTPMModuleForEnroll) ProvisionIAKCert(cert *x509.Certificate) error {
 	return nil
 }
+
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *mockTPMModuleForEnroll) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
 
 func (m *mockTPMModuleForEnroll) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	if m.attestErr != nil {
@@ -5282,53 +5158,6 @@ func TestStartEndorseServer_HandlerDirectCoverage(t *testing.T) {
 	})
 }
 
-// TestStartAttestServer_HandlerDirectCoverage tests startAttestServer handlers directly
-func TestStartAttestServer_HandlerDirectCoverage(t *testing.T) {
-	attestStmt := []byte(`{"fmt":"tpm","attStmt":{"ver":"2.0","alg":-257}}`)
-	token := "attest-token-test"
-
-	// Simulate the handler logic from startAttestServer
-	mux := http.NewServeMux()
-
-	challengePath := "/.well-known/acme-challenge/"
-	mux.HandleFunc(challengePath, func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, token) {
-			http.NotFound(w, r)
-			return
-		}
-
-		attestReq := map[string]interface{}{
-			"attStmt": attestStmt,
-		}
-
-		jsonData, err := json.Marshal(attestReq)
-		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(jsonData)
-	})
-
-	t.Run("challenge_success", func(t *testing.T) {
-		httpReq := httptest.NewRequest(http.MethodGet, challengePath+token, nil)
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httpReq)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-	})
-
-	t.Run("challenge_wrong_token", func(t *testing.T) {
-		httpReq := httptest.NewRequest(http.MethodGet, challengePath+"wrong", nil)
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httpReq)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-	})
-}
-
 // =====================================
 // Tests from enrollment_server_coverage_test.go
 // =====================================
@@ -5423,6 +5252,9 @@ func (m *serverCoverageTPMModule) ProvisionEKCert(certDER []byte) error {
 func (m *serverCoverageTPMModule) ProvisionIAKCert(cert *x509.Certificate) error {
 	return nil
 }
+
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *serverCoverageTPMModule) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
 
 func (m *serverCoverageTPMModule) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	if m.attestErr != nil {
@@ -5854,59 +5686,6 @@ func TestStartEndorseServer_ActivationTPMError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 }
 
-// TestStartAttestServer_RealHandlers tests the actual startAttestServer function
-func TestStartAttestServer_RealHandlers(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	port := getServerFreePort(t)
-
-	config := &EnrollmentConfig{
-		Port: port,
-	}
-
-	attested, err := newTestAttestedKey("attest-server-token-12345.thumbprint")
-	require.NoError(t, err)
-	attestStmt := attested.Statement
-	token := "attest-server-token-12345"
-
-	client := &Client{
-		logger:        logger,
-		accountSigner: signer,
-	}
-
-	go client.startAttestServer(config, attestStmt, token)
-	time.Sleep(200 * time.Millisecond)
-
-	baseURL := "http://127.0.0.1:" + port
-
-	t.Run("challenge_endpoint_valid_token", func(t *testing.T) {
-		resp, err := http.Get(baseURL + "/.well-known/acme-challenge/" + token)
-		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
-
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
-
-		// The statement is already the request the verifier decodes. Wrapping
-		// it again would bury the CBOR attestation object under a second
-		// attStmt that no verifier unwraps.
-		received, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
-		assert.Equal(t, attestStmt, received)
-	})
-
-	t.Run("challenge_endpoint_invalid_token", func(t *testing.T) {
-		resp, err := http.Get(baseURL + "/.well-known/acme-challenge/wrong-token")
-		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
-
-		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	})
-}
-
 // TestEnrollServerHandlers_HTTPTest uses httptest for handler coverage
 func TestEnrollServerHandlers_HTTPTest(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -6290,46 +6069,6 @@ func TestEndorseServerPortInUse(t *testing.T) {
 	}
 }
 
-// TestAttestServerPortInUse tests server behavior when port is already in use
-func TestAttestServerPortInUse(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	// Start a listener to occupy a port
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer func() { _ = listener.Close() }()
-
-	port := fmt.Sprintf("%d", listener.Addr().(*net.TCPAddr).Port)
-
-	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	config := &EnrollmentConfig{
-		Port: port,
-	}
-
-	client := &Client{
-		logger:        logger,
-		accountSigner: signer,
-	}
-
-	attestStmt := []byte(`{"fmt":"tpm"}`)
-
-	// This should fail silently (logs error) as port is in use
-	done := make(chan struct{})
-	go func() {
-		client.startAttestServer(config, attestStmt, "token")
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// Server exited as expected
-	case <-time.After(2 * time.Second):
-		// Timeout is acceptable
-	}
-}
-
 // TestEnrollmentConfigValidation_ServerCoverage tests additional validation paths
 func TestEnrollmentConfigValidation_ServerCoverage(t *testing.T) {
 	tpm := &serverCoverageTPMModule{}
@@ -6471,6 +6210,10 @@ func (m *mockTPMModule) ActivateCredential(credBlob, encSecret []byte) ([]byte, 
 }
 func (m *mockTPMModule) ProvisionEKCert(certDER []byte) error     { return nil }
 func (m *mockTPMModule) ProvisionIAKCert(*x509.Certificate) error { return nil }
+
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *mockTPMModule) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
+
 func (m *mockTPMModule) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	return newTestAttestedKey(keyAuth)
 }
@@ -6800,4 +6543,24 @@ func TestDeviceAttestCSR_ReportsAKeyThatCannotSign(t *testing.T) {
 	der, err := deviceAttestCSR("device.example.com", "192.168.1.1", failingSigner{public: key.Public()})
 	assert.ErrorIs(t, err, ErrAttestedKeyFailed)
 	assert.Nil(t, der)
+}
+
+// failingIdentityTPM is a device whose identity cannot be read.
+type failingIdentityTPM struct{ mockTPM }
+
+func (*failingIdentityTPM) DeviceIdentity() (string, error) { return "", ErrDeviceIdentityFailed }
+
+// A device with no readable identity cannot name an order: DeviceAttest stops
+// before any request, rather than falling back to the IP address.
+func TestDeviceAttest_DeviceIdentityUnavailable(t *testing.T) {
+	client := createCoverageBoostClient(t)
+
+	cert, err := client.DeviceAttest(context.Background(), &EnrollmentConfig{
+		Challenge: string(ChallengeTypeDeviceAttest01),
+		IPAddress: "192.168.1.1",
+		TPMModule: &failingIdentityTPM{},
+	})
+
+	require.ErrorIs(t, err, ErrDeviceIdentityFailed)
+	assert.Nil(t, cert)
 }

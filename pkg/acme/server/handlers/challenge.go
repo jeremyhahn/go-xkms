@@ -14,6 +14,7 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -39,12 +40,26 @@ import (
 const loopbackIdentifier = "127.0.0.1"
 
 // challengeProblem converts a challenge verifier's error into the problem
-// document returned to the ACME client. It never includes err.Error(): a
-// failure to reach or read from the target is the RFC 8555 "connection"
-// problem carrying the validation client's fixed category
-// (validation.Kind), and every other failure is "incorrectResponse" with a
-// fixed detail.
+// document returned to the ACME client. It never includes err.Error() for an
+// unrecognized error: a failure to reach or read from the target is the RFC
+// 8555 "connection" problem carrying the validation client's fixed category
+// (validation.Kind), an authorization of a type an attestation challenge
+// cannot authorize is "unsupportedIdentifier" carrying that detail (safe: it
+// names only the challenge and identifier TYPE, never any evidence), and
+// every other failure is "incorrectResponse" with a fixed detail.
 func challengeProblem(err error) *entities.Error {
+	var identErr *ErrAttestationIdentifierType
+	if errors.As(err, &identErr) {
+		return common.UnsupportedIdentifier(identErr.Error())
+	}
+	var mismatch *ErrIdentityMismatch
+	if errors.As(err, &mismatch) {
+		return common.Unauthorized("Attested device identity does not match the order's identifier")
+	}
+	var noIdentity *ErrAttestationNoIdentity
+	if errors.As(err, &noIdentity) {
+		return common.ServerInternal("Challenge verifier returned no result")
+	}
 	var verr *validation.Error
 	if !errors.As(err, &verr) {
 		return common.IncorrectResponse("Challenge validation failed")
@@ -54,6 +69,56 @@ func challengeProblem(err error) *entities.Error {
 		return common.IncorrectResponse(detail)
 	}
 	return common.ConnectionError(detail)
+}
+
+// verifyAttestation runs an attestation challenge through verifier and
+// enforces the identity binding (go-xkms#828): the identity the device
+// attested must be the identifier the order authorizes, or the challenge is
+// refused. On success the verified evidence, when the verifier produced any,
+// is recorded on challenge so order finalization can bind the certificate
+// request's key to it (go-xkms#789).
+//
+// The returned error is for the audit record and the log only; the client's
+// problem document comes from challengeProblem, which never repeats an
+// identity.
+func (s *RestService) verifyAttestation(
+	verifier common.AttestingVerifier,
+	challenge *entities.ACMEChallenge,
+	identifier entities.ACMEIdentifier,
+	dialTarget, port, keyAuth string,
+	payload []byte,
+	authorizedIdentity string,
+) error {
+	attested, err := verifier.VerifyAttested(net.DefaultResolver, s.ca, common.AttestationChallenge{
+		IdentifierType:     identifier.Type,
+		IdentifierValue:    identifier.Value,
+		DialTarget:         dialTarget,
+		Port:               port,
+		Payload:            payload,
+		AuthorizedIdentity: authorizedIdentity,
+		Token:              challenge.Token,
+		KeyAuthorization:   keyAuth,
+	})
+	if err == nil && attested == nil {
+		err = &ErrAttestationNoIdentity{Challenge: challenge.Type}
+	}
+	// Constant-time because both sides are attacker-influenced: the
+	// identifier was chosen by the account that created the order, and the
+	// evidence is not secret, so it could be replayed by someone who never
+	// held the device.
+	if err == nil && subtle.ConstantTimeCompare([]byte(attested.Identifier), []byte(identifier.Value)) != 1 {
+		err = &ErrIdentityMismatch{Attested: attested.Identifier, Authorized: identifier.Value}
+	}
+	if err != nil {
+		s.logger.Warn(
+			"challenge verification failed",
+			slog.String("error", err.Error()),
+			slog.String("challenge", challenge.Type))
+		return err
+	}
+
+	challenge.DeviceAttestation = attested.Attestation
+	return nil
 }
 
 func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +144,7 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	account, _, err := s.parseKID(ctx, r)
+	account, payload, err := s.parseKID(ctx, r)
 	if err != nil {
 		writeError(w, common.MalformedError("Failed to parse account key", nil))
 		return
@@ -150,8 +215,12 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate EAB authorization for endorse-01 challenges
-	if IsEndorseChallengeType(challenge.Type) && s.endorseEABRequired {
+	// Validate EAB authorization for endorse-01 challenges. EAB is required
+	// unless the operator waived it (Params.EndorseEABOptional), and what it
+	// authorizes -- the EK the binding is bound to -- is the identity the
+	// verifier attests (go-xkms#1392).
+	var endorseAuthorizedIdentity string
+	if IsEndorseChallengeType(challenge.Type) {
 		eabDAO, err := s.storageFactory.ExternalAccountBindingDAO()
 		if err != nil {
 			s.logger.Error("Failed to create EAB DAO for endorse-01 validation", slog.String("error", err.Error()))
@@ -170,10 +239,17 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		s.logger.Info("EAB authorization validated for endorse-01 challenge",
-			slog.Uint64("accountID", account.ID),
-			slog.String("externalAccountID", eabAuth.ExternalAccountID),
-			slog.String("authorizedDeviceID", eabAuth.AuthorizedDeviceID))
+		if eabAuth.Unauthenticated {
+			s.logger.Warn("endorse-01 challenge authorized with no external account binding: EAB is waived, so this account may obtain an EK certificate for any public key",
+				slog.Uint64("accountID", account.ID),
+				slog.String("challengeType", challenge.Type))
+		} else {
+			s.logger.Info("EAB authorization validated for endorse-01 challenge",
+				slog.Uint64("accountID", account.ID),
+				slog.String("externalAccountID", eabAuth.ExternalAccountID),
+				slog.String("authorizedDeviceID", eabAuth.AuthorizedDeviceID))
+		}
+		endorseAuthorizedIdentity = eabAuth.AuthorizedIdentity
 	}
 
 	// If the challenge is not in "pending" state, return it as is
@@ -212,26 +288,50 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 	// go-xkms#1183), so the port is always the type's fixed default and the
 	// verifier is always looked up by the literal type.
 	var challengePort uint16
-	if isEnrollXChallenge(challenge.Type) {
-		// Enrollment challenges default to port 8080
+	if dialsDevice(challenge.Type) {
+		// Challenges that contact the device default to port 8080
 		challengePort = 8080
 	} else if strings.HasPrefix(challenge.Type, "http") {
 		// HTTP-01 defaults to port 80
 		challengePort = 80
 	}
 
-	challengeVerifierFunc, ok := s.challengeMap[challenge.Type]
-	if !ok {
+	// Look up the verifier by the challenge's literal type. An attestation
+	// challenge (enroll-01, endorse-01, device-attest-01) requires an
+	// AttestingVerifier, the only kind that reports the identity the device
+	// attested; every other type uses the ChallengeVerifierFunc map. An
+	// attestation type with only a plain ChallengeVerifierFunc registered is
+	// refused, never run without an identity check (go-xkms#828).
+	attestation := isEnrollXChallenge(challenge.Type)
+	var (
+		challengeVerifierFunc common.ChallengeVerifierFunc
+		attestingVerifier     common.AttestingVerifier
+		ok                    bool
+	)
+	if attestation {
+		attestingVerifier, ok = s.attestingVerifiers[challenge.Type]
+		ok = ok && attestingVerifier != nil
+	} else {
+		challengeVerifierFunc, ok = s.challengeMap[challenge.Type]
+	}
+	_, unattested := s.challengeMap[challenge.Type]
+	switch {
+	case !ok && attestation && unattested:
+		verifyErr = &ErrAttestingVerifierRequired{Challenge: challenge.Type}
+		s.logger.Error("challenge refused", slog.String("error", verifyErr.Error()))
+		challenge.Status = common.StatusInvalid
+		challenge.Error = common.Unauthorized("Challenge verifier cannot establish the attested identity")
+	case !ok:
 		challenge.Status = common.StatusInvalid
 		errmsg := fmt.Sprintf("Unsupported challenge type: %s", challenge.Type)
 		challenge.Error = common.MalformedError(errmsg, nil)
-	} else {
+	default:
 		// For enrollment challenges with permanent-identifier, we need the client's IP or hostname
 		challengeDomain := authz.Identifier.Value
 		loopbackRefused := false
 
 		if authz.Identifier.Type == common.AuthzTypePermanentIdentifier &&
-			isEnrollXChallenge(challenge.Type) {
+			dialsDevice(challenge.Type) {
 			// Only use client IP when identifier is loopback (127.0.0.1)
 			// This supports local development/testing where the device registers with the
 			// loopback address but the actual challenge validation needs to reach the
@@ -276,10 +376,38 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if loopbackRefused {
+		switch {
+		case loopbackRefused:
 			challenge.Status = common.StatusInvalid
 			challenge.Error = common.Unauthorized(ErrLoopbackIdentifierNotAllowed.Error())
-		} else {
+
+		case attestation && authz.Identifier.Type == common.AuthzTypeIP:
+			// go-xkms#828: an attested device identity is not an IP address,
+			// so an attestation challenge never authorizes one.
+			verifyErr = &ErrAttestationIdentifierType{Challenge: challenge.Type, Type: authz.Identifier.Type}
+			s.logger.Warn(
+				"challenge verification failed",
+				slog.String("error", verifyErr.Error()),
+				slog.String("challenge", challenge.Type))
+			challenge.Status = common.StatusInvalid
+			challenge.Error = challengeProblem(verifyErr)
+
+		case attestation:
+			// A challenge the server never dials is handed no address and no
+			// port: the client's payload is all it verifies.
+			dialTarget, port := "", ""
+			if dialsDevice(challenge.Type) {
+				dialTarget, port = challengeDomain, strconv.Itoa(int(challengePort))
+			}
+			verifyErr = s.verifyAttestation(attestingVerifier, challenge, authz.Identifier, dialTarget, port, keyAuth, payload, endorseAuthorizedIdentity)
+			if verifyErr != nil {
+				challenge.Status = common.StatusInvalid
+				challenge.Error = challengeProblem(verifyErr)
+			} else {
+				validationSuccessful = true
+			}
+
+		default:
 			// Get DNS resolver - use default if not configured
 			var resolver *net.Resolver
 			if resolver == nil {
@@ -326,14 +454,16 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		// challenge.Type, not the broader isEnrollXChallenge/
 		// IsEndorseChallengeType family checks: those both match "endorse-01"
 		// (isEnrollXChallenge matches every enrollment-family type, including
-		// endorse-01 and the unwired device-attest-01), so an exact match is
-		// required to tell enroll-01 and endorse-01 apart here.
+		// endorse-01 and device-attest-01), so an exact match is required to
+		// tell enroll-01, endorse-01 and device-attest-01 apart here.
 		var eventType audit.EventType
 		switch challenge.Type {
 		case "enroll-01":
 			eventType = audit.EventTPMAttestation
 		case "endorse-01":
 			eventType = audit.EventEndorsementVerified
+		case common.ChallengeTypeDeviceAttest01:
+			eventType = audit.EventDeviceAttestation
 		}
 		if eventType != "" {
 			if auditErr := s.recordAudit(eventType, s.auditLog.LogWithContext(auditContext(r),
@@ -521,5 +651,19 @@ func (s *RestService) writeChallengeResponse(w http.ResponseWriter, challenge *e
 func isEnrollXChallenge(challengeType string) bool {
 	return strings.HasPrefix(challengeType, "enroll") ||
 		strings.HasPrefix(challengeType, "endorse") ||
-		strings.HasPrefix(challengeType, "device-attest")
+		isDeviceAttestChallenge(challengeType)
+}
+
+// isDeviceAttestChallenge reports whether the challenge type is
+// device-attest-01.
+func isDeviceAttestChallenge(challengeType string) bool {
+	return strings.HasPrefix(challengeType, "device-attest")
+}
+
+// dialsDevice reports whether the server answers the challenge by contacting
+// the device: enroll-01 and endorse-01. device-attest-01 does not
+// (draft-ietf-acme-device-attest): the client POSTs its attestation, so the
+// device needs no address, no listener and no loopback substitution.
+func dialsDevice(challengeType string) bool {
+	return isEnrollXChallenge(challengeType) && !isDeviceAttestChallenge(challengeType)
 }

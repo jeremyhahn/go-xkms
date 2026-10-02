@@ -15,12 +15,16 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 )
@@ -44,6 +48,23 @@ var (
 
 	// ErrEndorseEABDeviceIDRequired is returned when device ID validation is configured but no ID in metadata.
 	ErrEndorseEABDeviceIDRequired = errors.New("handlers: device identifier required in EAB metadata but not found")
+
+	// ErrEndorseEABKeyNotBound is returned when an endorse-01 External Account
+	// Binding does not name the EK it authorizes -- neither the configured
+	// device-id metadata key nor deviceInfo.ekPublicKeyHash. Such a binding
+	// would authorize its account for ANY public key, and endorse-01 holds no
+	// proof that the account holds the key it asks to have certified.
+	ErrEndorseEABKeyNotBound = errors.New("handlers: external account binding does not bind an EK public key (set deviceInfo.ekPublicKeyHash)")
+
+	// ErrEndorseEABKeyMismatch is returned when the EK an endorse-01 order asks
+	// to certify is not the one the account's External Account Binding is bound to.
+	ErrEndorseEABKeyMismatch = errors.New("handlers: EK public key does not match the key authorized by the external account binding")
+
+	// ErrEndorseNoAuthorizedIdentity is returned by the endorse-01 verifier when
+	// it is run without the identity the account's External Account Binding
+	// authorized. endorse-01 attests nothing about the device, so with no
+	// authorization to derive it from there is no identity to report.
+	ErrEndorseNoAuthorizedIdentity = errors.New("handlers: endorse-01 has no EAB-authorized identity to attest")
 )
 
 // EndorseEABAuthorization contains the result of EAB authorization for endorse-01.
@@ -59,6 +80,18 @@ type EndorseEABAuthorization struct {
 
 	// ExternalAccountID is the reference to the external system's account.
 	ExternalAccountID string
+
+	// AuthorizedIdentity is the EK identifier the EAB policy authorized, which
+	// is what endorse-01 reports as the attested identity (go-xkms#1392). It is
+	// the value the binding's device-id metadata holds, or, for a binding
+	// bound by deviceInfo.ekPublicKeyHash, the identifier whose hash the
+	// binding names. It is never read from the request alone.
+	AuthorizedIdentity string
+
+	// Unauthenticated is true when EAB was not required, so nothing authorized
+	// the identifier and AuthorizedIdentity is the request's own. This is the
+	// operator's explicit opt-out; the handler logs every use of it.
+	Unauthenticated bool
 }
 
 // EndorseEABValidator validates EAB authorization for endorse-01 challenges.
@@ -85,12 +118,18 @@ func NewEndorseEABValidator(
 // endorse-01 challenges based on its EAB binding.
 //
 // If EAB is not required (requireEAB=false), this returns an authorized result
-// with no binding information.
+// with no binding information, marked Unauthenticated: the operator has chosen
+// to let any account obtain an EK certificate for any public key.
 //
 // If EAB is required:
 //   - The account must have been registered with EAB
 //   - The EAB binding must be in "used" status (bound to the account)
-//   - If deviceIDMetaKey is configured, the device identifier must match
+//   - The binding must name the EK it authorizes (go-xkms#1392): by the
+//     device-id metadata key when deviceIDMetaKey is configured, and/or by
+//     deviceInfo.ekPublicKeyHash (SHA-256 of the EK's PKIX DER, hex). A binding
+//     that names neither is ErrEndorseEABKeyNotBound, because it would
+//     authorize its account for any key.
+//   - The device identifier must be that EK
 //
 // Parameters:
 //   - ctx: Context for the operation
@@ -106,10 +145,13 @@ func (v *EndorseEABValidator) ValidateEndorseAuthorization(
 	deviceIdentifier string,
 ) (*EndorseEABAuthorization, error) {
 
-	// If EAB is not required, allow all endorse-01 challenges
+	// If EAB is not required, allow all endorse-01 challenges. Nothing
+	// authorized the identifier, so the result says so.
 	if !v.requireEAB {
 		return &EndorseEABAuthorization{
-			Authorized: true,
+			Authorized:         true,
+			AuthorizedIdentity: deviceIdentifier,
+			Unauthenticated:    true,
 		}, nil
 	}
 
@@ -178,9 +220,46 @@ func (v *EndorseEABValidator) ValidateEndorseAuthorization(
 			return nil, caerrors.UnauthorizedError(
 				"device identifier mismatch: expected %s, got %s", authorizedDeviceID, deviceIdentifier)
 		}
+		result.AuthorizedIdentity = authorizedDeviceID
 	}
 
+	// deviceInfo.ekPublicKeyHash binds the EK too. It needs no configuration,
+	// so an operator who registers a device through the admin API binds its key
+	// without setting a metadata key.
+	if binding.DeviceInfo != nil && binding.DeviceInfo.EKPublicKeyHash != "" {
+		if !ekIdentifierHashMatches(deviceIdentifier, binding.DeviceInfo.EKPublicKeyHash) {
+			return nil, ErrEndorseEABKeyMismatch
+		}
+		if result.AuthorizedIdentity == "" {
+			result.AuthorizedIdentity = deviceIdentifier
+		}
+	}
+
+	if result.AuthorizedIdentity == "" {
+		return nil, ErrEndorseEABKeyNotBound
+	}
 	return result, nil
+}
+
+// ekHashPrefix is the optional algorithm prefix an EAB's ekPublicKeyHash may
+// carry ("sha256:<hex>", the form the admin API reference shows).
+const ekHashPrefix = "sha256:"
+
+// ekIdentifierHashMatches reports whether wantHash is the SHA-256 of the PKIX
+// DER public key an endorse-01 identifier carries (base64url of the DER), in
+// hex, with or without the "sha256:" prefix. An identifier that does not
+// decode matches nothing.
+func ekIdentifierHashMatches(identifier, wantHash string) bool {
+	der, err := base64.RawURLEncoding.DecodeString(identifier)
+	if err != nil {
+		return false
+	}
+	want := strings.TrimSpace(wantHash)
+	if len(want) >= len(ekHashPrefix) && strings.EqualFold(want[:len(ekHashPrefix)], ekHashPrefix) {
+		want = want[len(ekHashPrefix):]
+	}
+	digest := sha256.Sum256(der)
+	return strings.EqualFold(want, hex.EncodeToString(digest[:]))
 }
 
 // BoundTPMManufacturer returns the TCG TPM manufacturer code the account's
@@ -304,6 +383,41 @@ func deviceIDMatches(actual, expected string) bool {
 	actual = strings.TrimSpace(strings.ToLower(actual))
 	expected = strings.TrimSpace(strings.ToLower(expected))
 	return actual == expected
+}
+
+// NewEndorseVerifier returns the endorse-01 common.AttestingVerifier
+// (go-xkms#828, go-xkms#1392).
+//
+// endorse-01 attests nothing about the device. An EK is decrypt-only, the server
+// holds no proof that the account holds the key it asks to have certified, and
+// no exchange with the device takes place. What authorizes the request is the
+// account's External Account Binding, which ChallengeHandler validates before
+// this verifier runs and hands over as AttestationChallenge.AuthorizedIdentity.
+// The identity reported is that: the EK the EAB policy authorized, not the
+// identifier of the order being checked. ChallengeHandler then compares it with
+// the order's identifier, so an account bound to one EK cannot obtain a
+// certificate for another.
+//
+// With no authorized identity -- the verifier run by something other than
+// ChallengeHandler -- there is nothing to report and the challenge is refused
+// (ErrEndorseNoAuthorizedIdentity), never answered with the order's own
+// identifier.
+//
+// A MakeCredential proof of possession is not added: it needs the server to
+// reach the device (the order's identifier is an EK, not an address, so there
+// is nothing to dial; see go-xkms#828) or a second request on the challenge,
+// and either changes the protocol.
+func NewEndorseVerifier() common.AttestingVerifier {
+	return common.AttestingVerifierFunc(func(
+		_ *net.Resolver,
+		_ common.CertificateAuthority,
+		challenge common.AttestationChallenge,
+	) (*common.AttestedIdentity, error) {
+		if challenge.AuthorizedIdentity == "" {
+			return nil, ErrEndorseNoAuthorizedIdentity
+		}
+		return &common.AttestedIdentity{Identifier: challenge.AuthorizedIdentity}, nil
+	})
 }
 
 // IsEndorseChallengeType returns true if the challenge type is endorse-01.

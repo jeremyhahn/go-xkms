@@ -824,6 +824,7 @@ func TestOrderFinalizeHandler_IPIdentifierWithTCGCSRFallback(t *testing.T) {
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	authorizeOrder(t, service, account, order, order.Identifiers[0], "enroll-01")
 
 	// Provide invalid CSR data to trigger TCG-CSR parsing attempt
 	payload := OrderFinalizeRequest{
@@ -867,6 +868,7 @@ func TestOrderFinalizeHandler_EKCertWithMinimalCSRFields(t *testing.T) {
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	authorizeOrder(t, service, account, order, order.Identifiers[0], "endorse-01")
 
 	// Create CSR with minimal fields (just common name, no other subject info)
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -932,6 +934,12 @@ func TestOrderFinalizeHandler_DeviceAttest01Path(t *testing.T) {
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
+	// go-xkms#789: finalization refuses a permanent-identifier order with no
+	// validated device-attest-01 attestation to bind the CSR's key against,
+	// so this fixture attaches one for the same key the CSR below uses.
+	attachDeviceAttestation(t, service, order, account.ID, "device-serial-123456", csrKey)
+	require.NoError(t, orderDAO.Save(ctx, order))
+
 	template := &x509.CertificateRequest{
 		Subject: pkix.Name{
 			CommonName: "device-serial-123456",
@@ -984,6 +992,7 @@ func TestOrderFinalizeHandler_DeviceAttest01Path_RejectsUnauthorizedSAN(t *testi
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	authorizeOrder(t, service, account, order, order.Identifiers[0], common.ChallengeTypeDeviceAttest01)
 
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -1038,6 +1047,7 @@ func TestOrderFinalizeHandler_DeviceAttest01Path_RejectsCommonNameFallback(t *te
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	authorizeOrder(t, service, account, order, order.Identifiers[0], common.ChallengeTypeDeviceAttest01)
 
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -1100,6 +1110,7 @@ func TestOrderFinalizeHandler_EKCertWithIPAddresses(t *testing.T) {
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	authorizeOrder(t, service, account, order, order.Identifiers[0], "endorse-01")
 
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)

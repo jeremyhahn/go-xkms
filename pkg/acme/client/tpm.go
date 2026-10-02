@@ -68,6 +68,10 @@ var (
 	// loaded by an adapter given no store for TPM key blobs.
 	ErrKeyBackendNotConfigured = errors.New("acme-client: no TPM key store configured")
 
+	// ErrDeviceIdentityFailed indicates the device's identity could not be
+	// read from its IAK certificate.
+	ErrDeviceIdentityFailed = errors.New("acme-client: the device identity cannot be read")
+
 	// ErrAttestedKeyFailed indicates the device-attest-01 certificate key
 	// could not be created, loaded or certified.
 	ErrAttestedKeyFailed = errors.New("acme-client: device-attest-01 certificate key attestation failed")
@@ -189,6 +193,18 @@ type TPMModule interface {
 	//   - Error if provisioning fails, nil on success
 	ProvisionIAKCert(cert *x509.Certificate) error
 
+	// DeviceIdentity returns the identity this device attests under: the RFC
+	// 4043 permanentIdentifier of its IAK certificate. A device-attest-01
+	// order names it as its permanent-identifier, because the server refuses
+	// a challenge whose attested identity is not the order's identifier.
+	//
+	// Returns:
+	//   - The device identity
+	//   - deviceattest01.ErrDeviceIdentityUnavailable if the IAK certificate
+	//     carries no permanentIdentifier
+	//   - Any other error that occurred reading the IAK certificate
+	DeviceIdentity() (string, error)
+
 	// CreateAttestedKey answers a device-attest-01 challenge for the
 	// certificate key called name: a signing key in the TPM under the
 	// Platform SRK, created on first use and reused after. The IAK certifies
@@ -278,9 +294,10 @@ type IDevIDCSR struct {
 // AttestedKey is a device-attest-01 certificate key and the challenge
 // response that attests it.
 type AttestedKey struct {
-	// Statement is the challenge response the ACME server fetches: the JSON
-	// device-attest-01 request whose attStmt is a WebAuthn "tpm" attestation
-	// object certifying the key.
+	// Statement is the payload the client POSTs to the challenge URL
+	// (draft-ietf-acme-device-attest): the JSON {"attObj": base64url(CBOR)}
+	// whose attestation object is a WebAuthn "tpm" statement certifying the
+	// key.
 	Statement []byte
 
 	// Signer is the attested key. The CSR at finalization must be signed by
@@ -489,6 +506,17 @@ func (a *XKMSTPMAdapter) ProvisionIAKCert(cert *x509.Certificate) error {
 		return caerrors.StorageFailureError("failed to provision IAK certificate: %v", err)
 	}
 	return nil
+}
+
+// DeviceIdentity reads the permanentIdentifier of the IAK certificate, the
+// same certificate and the same rule the server reads the attested identity
+// from (deviceattest01.DeviceIdentityFromCertificate).
+func (a *XKMSTPMAdapter) DeviceIdentity() (string, error) {
+	cert, err := a.tpm.IAKCertificate()
+	if err != nil {
+		return "", &errs.Joined{Lead: ErrDeviceIdentityFailed, Detail: "the IAK certificate cannot be read", Cause: err}
+	}
+	return deviceattest01.DeviceIdentityFromCertificate(deviceattest01.FormatTPM, cert)
 }
 
 // CreateAttestedKey creates or loads the certificate key called name under

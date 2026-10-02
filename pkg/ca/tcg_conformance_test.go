@@ -550,3 +550,35 @@ func createTestCSRWithExtensions(t *testing.T, extensions []pkix.Extension) *x50
 	}
 	return csr
 }
+
+// TestEKCertificatePermanentIdentifier: the identifier the enroll-01
+// activation record names a TPM by is the one the IAK and IDevID carry, so a
+// later TCG-CSR can be recognised as the TPM that passed activation.
+func TestEKCertificatePermanentIdentifier(t *testing.T) {
+	cert := issueTestEKCertificate(t, pkix.Name{CommonName: "ek"}, nil)
+
+	got, err := EKCertificatePermanentIdentifier(cert)
+	if err != nil {
+		t.Fatalf("EKCertificatePermanentIdentifier: %v", err)
+	}
+	identity, err := TCGDeviceIdentityFromEKCertificate(cert, "id:FFFFFFFF")
+	if err != nil {
+		t.Fatalf("TCGDeviceIdentityFromEKCertificate: %v", err)
+	}
+	if got != identity.PermanentIdentifier {
+		t.Errorf("permanent identifier = %q, want the issued credentials' %q", got, identity.PermanentIdentifier)
+	}
+
+	other := issueTestEKCertificate(t, pkix.Name{CommonName: "another-ek"}, nil)
+	if otherID, err := EKCertificatePermanentIdentifier(other); err != nil || otherID == got {
+		t.Errorf("another TPM's certificate = (%q, %v), want a different identifier", otherID, err)
+	}
+}
+
+func TestEKCertificatePermanentIdentifier_RefusesNoCertificate(t *testing.T) {
+	for name, cert := range map[string]*x509.Certificate{"nil": nil, "no DER": {}} {
+		if _, err := EKCertificatePermanentIdentifier(cert); !errors.Is(err, ErrTCGMissingEKCert) {
+			t.Errorf("%s: error = %v, want %v", name, err, ErrTCGMissingEKCert)
+		}
+	}
+}

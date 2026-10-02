@@ -109,6 +109,9 @@ func (m *coveragePushTPMModule) ProvisionIAKCert(cert *x509.Certificate) error {
 	return nil
 }
 
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (m *coveragePushTPMModule) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
+
 func (m *coveragePushTPMModule) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	if m.attestErr != nil {
 		return nil, m.attestErr

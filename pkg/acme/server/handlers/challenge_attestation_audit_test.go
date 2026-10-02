@@ -68,9 +68,9 @@ func TestChallengeHandler_EnrollAttestation_EmitsAuditEvent_OnSuccess(t *testing
 	defer cleanup()
 	service.SetAuditLogger(trail.logger)
 
-	service.challengeMap["enroll-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "enroll-01", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -110,9 +110,9 @@ func TestChallengeHandler_EnrollAttestation_AuditWriteFailure_FailsChallenge(t *
 	auditErr := fmt.Errorf("audit backend unavailable")
 	service.SetAuditLogger(&failingACMEAuditLogger{err: auditErr})
 
-	service.challengeMap["enroll-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "enroll-01", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -154,11 +154,12 @@ func TestChallengeHandler_EndorseAttestation_EmitsAuditEvent_OnSuccess(t *testin
 	trail := newAuditTrail(t, config.ACMEAuditConfig{})
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
+	service.endorseEABRequired = false // the audit event does not depend on EAB
 	service.SetAuditLogger(trail.logger)
 
-	service.challengeMap["endorse-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "endorse-01", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -190,12 +191,13 @@ func TestChallengeHandler_EndorseAttestation_EmitsAuditEvent_OnSuccess(t *testin
 func TestChallengeHandler_EndorseAttestation_AuditWriteFailure_FailsChallenge(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
+	service.endorseEABRequired = false // the audit event does not depend on EAB
 	auditErr := fmt.Errorf("audit backend unavailable")
 	service.SetAuditLogger(&failingACMEAuditLogger{err: auditErr})
 
-	service.challengeMap["endorse-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+	registerLegacyAttesting(service, "endorse-01", func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)

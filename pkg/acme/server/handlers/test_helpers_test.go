@@ -27,12 +27,14 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -43,10 +45,12 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
+	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -561,6 +565,60 @@ func createTestOrderSimple(t *testing.T, service *RestService, accountID uint64)
 	return order
 }
 
+// attachDeviceAttestation creates a valid, "valid"-status permanent-identifier
+// authorization carrying a validated device-attest-01 challenge whose
+// attested key is csrKey, and points order.Authorizations at it. This is what
+// a real device-attest-01 challenge exchange leaves behind
+// (validateDeviceAttestation, device_attest.go); OrderFinalizeHandler's
+// key-binding gate (go-xkms#789) refuses a permanent-identifier finalize
+// request without one, so any test driving that handler for a device-attest-01
+// order needs this fixture, not just a CSR naming the identifier.
+func attachDeviceAttestation(t *testing.T, service *RestService, order *entities.ACMEOrder, accountID uint64, identifierValue string, csrKey *ecdsa.PrivateKey) {
+	t.Helper()
+
+	const keyAuth = "test-token.test-thumbprint"
+	uccs, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{Nonce: deviceattest01.DICENonce(keyAuth)})
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber:    big.NewInt(1),
+		Subject:         pkix.Name{CommonName: "test device"},
+		NotBefore:       time.Now().Add(-time.Hour),
+		NotAfter:        time.Now().Add(time.Hour),
+		ExtraExtensions: []pkix.Extension{uccs},
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, template, template, csrKey.Public(), csrKey)
+	require.NoError(t, err)
+
+	authzDAO, err := service.storageFactory.AuthorizationDAO(accountID)
+	require.NoError(t, err)
+
+	authz := &entities.ACMEAuthorization{
+		AccountID: accountID,
+		OrderID:   order.ID,
+		Identifier: entities.ACMEIdentifier{
+			Type:  common.AuthzTypePermanentIdentifier,
+			Value: identifierValue,
+		},
+		Status: common.StatusValid,
+		Challenges: []entities.ACMEChallenge{{
+			Type:      common.ChallengeTypeDeviceAttest01,
+			Status:    common.StatusValid,
+			AccountID: accountID,
+			DeviceAttestation: &entities.DeviceAttestation{
+				Format:              "dice",
+				DeviceIdentityType:  common.AuthzTypePermanentIdentifier,
+				DeviceIdentityValue: identifierValue,
+				KeyAuthorization:    keyAuth,
+				LeafDER:             leafDER,
+			},
+		}},
+	}
+	require.NoError(t, authzDAO.Save(context.Background(), authz))
+
+	order.Authorizations = []string{fmt.Sprintf("%d", authz.ID)}
+}
+
 // parseErrorResponse parses an ACME error from an HTTP response
 func parseErrorResponse(t *testing.T, resp *httptest.ResponseRecorder) *entities.Error {
 	var acmeError entities.Error
@@ -781,4 +839,65 @@ func parseNextLinkHeaderFromRequest(req *http.Request) (int, error) {
 	}
 
 	return 0, caerrors.NotFoundError("next link not found in header")
+}
+
+// registerLegacyAttesting registers verify as service's attesting verifier
+// for an attestation challenge type. verify has the shape these tests gave
+// attestation verifiers before the attesting-verifier interface existed
+// (go-xkms#828): it receives the dial target and challenge exchange and
+// returns only an error. A nil error attests the order's own identifier, so a
+// test written to exercise something other than the identity comparison
+// (dial-target substitution, audit events, EAB gating) is unaffected by it.
+func registerLegacyAttesting(
+	service *RestService,
+	challengeType string,
+	verify func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error,
+) {
+	if service.attestingVerifiers == nil {
+		service.attestingVerifiers = make(map[string]common.AttestingVerifier)
+	}
+	service.attestingVerifiers[challengeType] = common.AttestingVerifierFunc(func(
+		resolver *net.Resolver,
+		ca common.CertificateAuthority,
+		c common.AttestationChallenge,
+	) (*common.AttestedIdentity, error) {
+		if err := verify(resolver, ca, c.DialTarget, c.Port, c.Token, c.KeyAuthorization); err != nil {
+			return nil, err
+		}
+		return &common.AttestedIdentity{Identifier: c.IdentifierValue}, nil
+	})
+}
+
+// authorizeOrder gives order the authorization a real new-order would have
+// created: one authorization for identifier whose challenge of challengeType
+// validated. It returns the authorization so a test can adjust what the
+// challenge recorded, and saves the order referencing it.
+//
+// An order whose Authorizations name an authorization that does not exist is
+// no longer finalizable (ErrOrderAuthorizationMissing), so a test that
+// finalizes a permanent-identifier or ip order needs this rather than the
+// placeholder reference createTestOrderSimple leaves.
+func authorizeOrder(
+	t *testing.T,
+	service *RestService,
+	account *entities.ACMEAccount,
+	order *entities.ACMEOrder,
+	identifier entities.ACMEIdentifier,
+	challengeType string,
+) *entities.ACMEAuthorization {
+	t.Helper()
+	ctx := context.Background()
+
+	authz := createTestAuthorizationWithChallenges(t, service, account, order, identifier, []string{challengeType})
+	authz.Status = common.StatusValid
+	authz.Challenges[0].Status = common.StatusValid
+	authzDAO, err := service.storageFactory.AuthorizationDAO(account.ID)
+	require.NoError(t, err)
+	require.NoError(t, authzDAO.Save(ctx, authz))
+
+	order.Authorizations = []string{fmt.Sprintf("%s/acme/authz/%d", service.baseRESTURI, authz.ID)}
+	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+	require.NoError(t, err)
+	require.NoError(t, orderDAO.Save(ctx, order))
+	return authz
 }

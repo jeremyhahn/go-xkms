@@ -43,6 +43,12 @@ var (
 	// own dedicated TLS material.
 	ErrACMEMissingTLS = errors.New("acme: tls.cert_file and tls.key_file are required when acme.enabled is true")
 
+	// ErrACMEDeviceAttestNoAnchors is returned when
+	// acme.challenges.device_attest01 is enabled with no trust anchor
+	// configured. Without a root, a device-attest-01 chain cannot be told from
+	// one the client minted, so the challenge is not offered.
+	ErrACMEDeviceAttestNoAnchors = errors.New("acme: challenges.device_attest01 requires at least one of challenges.device_attest.tpm_roots or challenges.device_attest.dice_roots")
+
 	// ErrACMEAuditNegativeRetention is returned when an audit rotation knob is
 	// configured with a negative value. Zero selects the built-in default;
 	// a negative value has no meaning.
@@ -129,11 +135,24 @@ type ACMEConfig struct {
 	// an externalAccountBinding per RFC 8555 Section 7.3.4.
 	ExternalAccountRequired bool `yaml:"external_account_required"`
 
-	// EndorseEABRequired indicates that endorse-01 challenges require EAB.
-	EndorseEABRequired bool `yaml:"endorse_eab_required"`
+	// EndorseEABRequired states whether endorse-01 challenges require an
+	// External Account Binding. UNSET IS TRUE (go-xkms#1392): a configuration
+	// that does not mention it requires EAB, and read it through
+	// EndorseEABIsRequired, which applies that default.
+	//
+	// endorse-01 proves nothing about the key it certifies -- an EK is
+	// decrypt-only and the server holds no proof of possession -- so the EAB is
+	// its only control. With EAB required, an account must hold a binding of
+	// purpose "endorse-01" that names the EK it may have certified
+	// (deviceInfo.ekPublicKeyHash, or the endorse_device_id_meta_key metadata).
+	//
+	// To waive it, set `endorse_eab_required: false` (or
+	// XKMS_ACME_ENDORSE_EAB_REQUIRED=false). Then ANY account can obtain an EK
+	// certificate for ANY public key; do that only on a closed lab server.
+	EndorseEABRequired *bool `yaml:"endorse_eab_required"`
 
-	// EndorseDeviceIDMetaKey is the EAB metadata key used to validate device
-	// identity in endorse-01 challenges. Empty disables device-id validation.
+	// EndorseDeviceIDMetaKey is the EAB metadata key naming the EK an
+	// endorse-01 binding authorizes. Empty uses deviceInfo.ekPublicKeyHash.
 	EndorseDeviceIDMetaKey string `yaml:"endorse_device_id_meta_key"`
 
 	// Challenges controls which challenge verifiers are registered. At least
@@ -746,6 +765,20 @@ type ACMEChallengesConfig struct {
 	// issuance is gated by External Account Binding (EAB).
 	Endorse01 bool `yaml:"endorse01"`
 
+	// DeviceAttest01 enables the device-attest-01 challenge
+	// (draft-ietf-acme-device-attest): remote attestation of a TPM- or
+	// DICE-resident key, binding both the attested device identity to the
+	// order's permanent-identifier (go-xkms#828) and the attested key to the
+	// certificate request at finalization (go-xkms#789). The client POSTs its
+	// attestation; the server never contacts the device. Enabling it requires
+	// DeviceAttest to configure at least one trust anchor, and the server
+	// refuses to start without one.
+	DeviceAttest01 bool `yaml:"device_attest01"`
+
+	// DeviceAttest configures the trust anchors and policy device-attest-01
+	// verifies against. Only read when DeviceAttest01 is enabled.
+	DeviceAttest ACMEDeviceAttestConfig `yaml:"device_attest"`
+
 	// AllowPrivateTargets lets challenge validation (http-01, enroll-01)
 	// connect to reserved addresses: loopback, private (RFC 1918/4193),
 	// link-local including the 169.254.169.254 metadata address, and the
@@ -754,6 +787,50 @@ type ACMEChallengesConfig struct {
 	// network. Turn it on only for tests and for lab deployments whose
 	// devices sit on a private network.
 	AllowPrivateTargets bool `yaml:"allow_private_targets"`
+}
+
+// EndorseEABIsRequired reports whether endorse-01 requires an External Account
+// Binding: true unless the configuration explicitly sets endorse_eab_required to
+// false.
+func (c *ACMEConfig) EndorseEABIsRequired() bool {
+	return c == nil || c.EndorseEABRequired == nil || *c.EndorseEABRequired
+}
+
+// ACMEDeviceAttestConfig is the trust policy for device-attest-01: the roots a
+// device's attestation chain must reach, per attestation format, and the DICE
+// requirements beyond anchoring. A format with no root configured is refused,
+// not verified against another format's roots.
+type ACMEDeviceAttestConfig struct {
+	// TPMRoots are PEM files of the CAs that vouch for TPM attestation key
+	// (AIK) certificates: a manufacturer attestation CA, a privacy CA, or this
+	// deployment's own CA when it certifies AIKs. A "tpm" attestation's AIK
+	// chain must reach one of them.
+	TPMRoots []string `yaml:"tpm_roots"`
+
+	// DICERoots are PEM files of the trust anchors of DICE alias-certificate
+	// chains: the manufacturer or provisioning CA, or the DeviceID certificate
+	// of a device whose alias leaf is device-signed. A "dice" attestation's
+	// chain must reach one of them.
+	DICERoots []string `yaml:"dice_roots"`
+
+	// DICERequireDeviceSignedLeaf states that a DICE alias certificate's issuer
+	// is device-resident, pinning its signature algorithm to the one the
+	// element performs (ECDSA with SHA-256). Set it for an AVR or other
+	// secure-element profile.
+	DICERequireDeviceSignedLeaf bool `yaml:"dice_require_device_signed_leaf"`
+
+	// DICERequireMeasurement demands the alias certificate's DiceTcbInfo carry
+	// a firmware measurement.
+	DICERequireMeasurement bool `yaml:"dice_require_measurement"`
+
+	// DICERequireTCBInfo demands the alias certificate carry a DiceTcbInfo
+	// extension, which is where the operational flags live.
+	DICERequireTCBInfo bool `yaml:"dice_require_tcb_info"`
+}
+
+// HasAnchors reports whether at least one trust anchor file is configured.
+func (c ACMEDeviceAttestConfig) HasAnchors() bool {
+	return len(c.TPMRoots) > 0 || len(c.DICERoots) > 0
 }
 
 // ACMETLSConfig configures TLS for the ACME listener.
@@ -801,8 +878,12 @@ func (c *ACMEConfig) Validate() error {
 	if c.TLS.CertFile == "" || c.TLS.KeyFile == "" {
 		return ErrACMEMissingTLS
 	}
-	if !c.Challenges.HTTP01 && !c.Challenges.DNS01 && !c.Challenges.Enroll01 && !c.Challenges.Endorse01 {
-		return &errs.Message{Msg: "acme: at least one challenge type must be enabled (challenges.http01, dns01, enroll01, or endorse01)"}
+	if !c.Challenges.HTTP01 && !c.Challenges.DNS01 && !c.Challenges.Enroll01 &&
+		!c.Challenges.Endorse01 && !c.Challenges.DeviceAttest01 {
+		return &errs.Message{Msg: "acme: at least one challenge type must be enabled (challenges.http01, dns01, enroll01, endorse01, or device_attest01)"}
+	}
+	if c.Challenges.DeviceAttest01 && !c.Challenges.DeviceAttest.HasAnchors() {
+		return ErrACMEDeviceAttestNoAnchors
 	}
 	if err := c.Audit.Validate(); err != nil {
 		return err

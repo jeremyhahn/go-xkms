@@ -218,13 +218,38 @@ type Params struct {
 	// If nil, CAA validation will be disabled
 	CAAValidator CAAValidatorInterface
 
-	// ChallengeMap maps challenge types to their verifier functions
+	// ChallengeMap maps challenge types to their verifier functions. It
+	// serves http-01, dns-01 and tls-alpn-01. A function registered here for
+	// an attestation challenge type (enroll-01, endorse-01, device-attest-01)
+	// cannot report the identity it attested, so ChallengeHandler refuses the
+	// challenge; attestation verifiers register in AttestingVerifiers.
 	ChallengeMap map[string]common.ChallengeVerifierFunc
 
-	// EndorseEABRequired indicates whether EAB is required for endorse-01 challenges.
-	// When true, accounts attempting endorse-01 challenges must have been created
-	// with External Account Binding that authorizes EK certificate issuance.
+	// AttestingVerifiers maps the attestation challenge types (enroll-01,
+	// endorse-01, device-attest-01) to the verifier that reports the identity
+	// the device attested (go-xkms#828). ChallengeHandler fails closed: an
+	// attestation challenge with no entry here is refused.
+	AttestingVerifiers map[string]common.AttestingVerifier
+
+	// EndorseEABRequired is retained for source compatibility and has no
+	// effect on its own: EAB is required for endorse-01 unless
+	// EndorseEABOptional is set (go-xkms#1392). Setting it true is redundant.
+	//
+	// Deprecated: EAB is required by default. Set EndorseEABOptional to waive it.
 	EndorseEABRequired bool
+
+	// EndorseEABOptional waives the External Account Binding requirement for
+	// endorse-01 challenges. THE ZERO VALUE REQUIRES IT, so a server built
+	// without setting anything fails closed (go-xkms#1392).
+	//
+	// With EAB required, an account attempting endorse-01 must have been
+	// registered with an EAB of purpose "endorse-01" that binds the EK it asks
+	// to have certified (see EndorseEABValidator). With it waived, ANY account
+	// can obtain an EK certificate for ANY public key: endorse-01 proves
+	// nothing about the key (an EK is decrypt-only and the server holds no
+	// proof of possession) and the EAB is its only control. Waive it only for a
+	// closed lab, never on a server reachable by accounts you do not control.
+	EndorseEABOptional bool
 
 	// EndorseDeviceIDMetaKey is the metadata key used to validate device identity
 	// in EAB for endorse-01 challenges. If empty, device ID validation is skipped.
@@ -426,6 +451,7 @@ type RestService struct {
 	caaIdentities           []string
 	caaValidator            CAAValidatorInterface
 	challengeMap            map[string]common.ChallengeVerifierFunc
+	attestingVerifiers      map[string]common.AttestingVerifier
 	challengePolicy         *policy.ChallengePolicy
 	clusterCACN             string
 	endorseEABRequired      bool
@@ -524,21 +550,21 @@ func nonceEpochPrefix(node string, key []byte, epochStartNano int64) string {
 // xkmsDefaultIdentifierChallengeTypes returns go-xkms's default candidate
 // challenge types per identifier type. These preserve the challenge sets the
 // ACME handlers offered before the policy engine (pkg/acme/policy) was
-// wired in: standard web-PKI challenges for DNS identifiers, and TPM/TCG
-// attestation challenges for IP and permanent identifiers. go-xkms overloads
-// the "ip" identifier type for TPM-enrolling devices identified by network
-// address rather than RFC 8738's default HTTP-01/TLS-ALPN-01 domain-control
-// validation, so it is not the policy package's generic default. An operator
-// can restore RFC 8738 semantics, or any other set, via
+// wired in: standard web-PKI challenges for DNS identifiers. Permanent
+// identifiers keep the policy package's device-attestation default. An
+// operator can restore RFC 8738 semantics, or any other set, via
 // PolicyConfig.IdentifierChallengeTypes.
+//
+// "ip" offers no challenge (go-xkms#828): enroll-01, endorse-01 and
+// device-attest-01 are attestation challenges, and an attestation challenge
+// never authorizes an "ip" identifier -- a device's attested identity is not
+// a network address, and mapping one to the other is the hole #828 closes.
+// ChallengeHandler refuses it; offering the challenge would advertise one
+// that can never validate. Devices authorize with "permanent-identifier".
 func xkmsDefaultIdentifierChallengeTypes() map[string][]string {
 	return map[string][]string{
 		policy.IdentifierTypeDNS: {policy.ChallengeTypeHTTP01, policy.ChallengeTypeDNS01},
-		policy.IdentifierTypeIP: {
-			policy.ChallengeTypeDeviceAttest01,
-			policy.ChallengeTypeEnroll01,
-			policy.ChallengeTypeEndorse01,
-		},
+		policy.IdentifierTypeIP:  {},
 	}
 }
 
@@ -717,9 +743,10 @@ func NewRestService(params *Params) (RestServicer, error) {
 		caaIdentities:           params.CAAIdentities,
 		caaValidator:            params.CAAValidator,
 		challengeMap:            params.ChallengeMap,
+		attestingVerifiers:      params.AttestingVerifiers,
 		challengePolicy:         challengePolicy,
 		clusterCACN:             params.ClusterCACN,
-		endorseEABRequired:      params.EndorseEABRequired,
+		endorseEABRequired:      params.EndorseEABRequired || !params.EndorseEABOptional,
 		endorseDeviceIDMetaKey:  params.EndorseDeviceIDMetaKey,
 		externalAccountRequired: params.ExternalAccountRequired,
 		failedValidationLimiter: params.FailedValidationRateLimiter,

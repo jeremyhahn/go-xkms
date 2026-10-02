@@ -194,47 +194,62 @@ func TestNewOrderHandler_Success_WildcardDomain(t *testing.T) {
 	assert.Equal(t, "example.com", authzs[0].Identifier.Value)
 }
 
-func TestNewOrderHandler_Success_IPIdentifier(t *testing.T) {
+// TestNewOrderHandler_IPIdentifier_RejectedIdentifier is go-xkms#828: an
+// attestation challenge never authorizes an "ip" identifier, so even with
+// enroll-01 registered no challenge could validate one. The server declines
+// it as an RFC 8555 section 6.7 rejectedIdentifier problem with a 400, not a
+// server error, and creates no order.
+func TestNewOrderHandler_IPIdentifier_RejectedIdentifier(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	// Add enrollment challenges to the challenge map
-	service.challengeMap["enroll-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
+	registerLegacyAttesting(service, "enroll-01", func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
+		return nil
+	})
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	payload := NewOrderRequest{
+		Identifiers: []entities.ACMEIdentifier{{Type: common.AuthzTypeIP, Value: "192.0.2.1"}},
+	}
+	url := service.baseRESTURI + "/acme/new-order"
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.NewOrderHandler(resp, req)
+
+	require.Equal(t, http.StatusBadRequest, resp.Code)
+	problem := parseErrorResponse(t, resp)
+	assert.Equal(t, "urn:ietf:params:acme:error:rejectedIdentifier", problem.Type)
+}
+
+// TestNewOrderHandler_IPIdentifier_HTTP01StillValidates proves the refusal is
+// narrow: when the policy offers a non-attestation challenge for "ip", the
+// order is created as before.
+func TestNewOrderHandler_IPIdentifier_HTTP01StillValidates(t *testing.T) {
+	cfg := strictPolicyConfig()
+	cfg.IdentifierChallengeTypes = map[string][]string{
+		"ip": {"http-01"},
+	}
+	service, _, cleanup := setupTestServiceWithPolicy(t, cfg)
+	defer cleanup()
+	service.challengeMap["http-01"] = func(*net.Resolver, common.CertificateAuthority, string, string, string, string) error {
 		return nil
 	}
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
-
-	// Create new order request with IP identifier
 	payload := NewOrderRequest{
-		Identifiers: []entities.ACMEIdentifier{
-			{
-				Type:  common.AuthzTypeIP,
-				Value: "192.0.2.1",
-			},
-		},
+		Identifiers: []entities.ACMEIdentifier{{Type: common.AuthzTypeIP, Value: "8.8.8.8"}},
 	}
-
 	url := service.baseRESTURI + "/acme/new-order"
 	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
 
-	// Execute request
 	resp := httptest.NewRecorder()
 	service.NewOrderHandler(resp, req)
 
-	// Verify response
 	require.Equal(t, http.StatusCreated, resp.Code)
-
-	// Parse response body
-	var order entities.ACMEOrder
-	err := json.NewDecoder(resp.Body).Decode(&order)
-	require.NoError(t, err)
-
-	assert.Equal(t, common.StatusPending, order.Status)
-	assert.Len(t, order.Identifiers, 1)
-	assert.Equal(t, common.AuthzTypeIP, order.Identifiers[0].Type)
-	assert.Equal(t, "192.0.2.1", order.Identifiers[0].Value)
 }
 
 func TestNewOrderHandler_Success_PermanentIdentifier(t *testing.T) {
@@ -242,9 +257,9 @@ func TestNewOrderHandler_Success_PermanentIdentifier(t *testing.T) {
 	defer cleanup()
 
 	// Add enrollment challenges to the challenge map
-	service.challengeMap["endorse-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
+	registerLegacyAttesting(service, "endorse-01", func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 		return nil
-	}
+	})
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -608,40 +623,51 @@ func TestCreateChallenges_DNSIdentifier(t *testing.T) {
 	assert.Contains(t, challengeTypes, "dns-01")
 }
 
+// TestCreateChallenges_IPIdentifier proves no challenge is created for an
+// "ip" identifier from the attestation challenges registered, go-xkms#828.
 func TestCreateChallenges_IPIdentifier(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	// Add enrollment challenges to the challenge map
+	for _, challengeType := range []string{"enroll-01", "endorse-01", "device-attest-01"} {
+		registerLegacyAttesting(service, challengeType, func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
+			return nil
+		})
+	}
+
+	challenges, err := service.createChallenges(12345, 67890, entities.ACMEIdentifier{
+		Type:  common.AuthzTypeIP,
+		Value: "192.0.2.1",
+	}, false)
+	var ipErr *ErrIPIdentifierNotValidatable
+	require.ErrorAs(t, err, &ipErr)
+	assert.Equal(t, "192.0.2.1", ipErr.Value)
+	assert.Empty(t, challenges)
+}
+
+// TestCreateChallenges_AttestationNeedsAttestingVerifier proves a plain
+// verifier function registered for an attestation challenge type does not
+// make that challenge offerable: ChallengeHandler would refuse it, so it is
+// never advertised (go-xkms#828).
+func TestCreateChallenges_AttestationNeedsAttestingVerifier(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
 	service.challengeMap["enroll-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 		return nil
 	}
-	service.challengeMap["device-attest-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
+	identifier := entities.ACMEIdentifier{Type: common.AuthzTypePermanentIdentifier, Value: "device-1"}
+
+	_, err := service.createChallenges(1, 2, identifier, false)
+	require.Error(t, err, "a plain verifier function must not make enroll-01 offerable")
+
+	registerLegacyAttesting(service, "enroll-01", func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 		return nil
-	}
-
-	accountID := uint64(12345)
-	authzID := uint64(67890)
-
-	identifier := entities.ACMEIdentifier{
-		Type:  common.AuthzTypeIP,
-		Value: "192.0.2.1",
-	}
-
-	challenges, err := service.createChallenges(accountID, authzID, identifier, false)
+	})
+	challenges, err := service.createChallenges(1, 2, identifier, false)
 	require.NoError(t, err)
-
-	// Should create enrollment challenges
-	assert.Len(t, challenges, 2)
-
-	for _, challenge := range challenges {
-		assert.Equal(t, common.StatusPending, challenge.Status)
-		assert.NotEmpty(t, challenge.Token)
-		assert.NotEmpty(t, challenge.URL)
-		assert.Equal(t, accountID, challenge.AccountID)
-		assert.Equal(t, authzID, challenge.AuthorizationID)
-		assert.True(t, challenge.Type == "enroll-01" || challenge.Type == "device-attest-01")
-	}
+	require.Len(t, challenges, 1)
+	assert.Equal(t, "enroll-01", challenges[0].Type)
 }
 
 func TestCreateChallenges_PermanentIdentifier(t *testing.T) {
@@ -649,9 +675,9 @@ func TestCreateChallenges_PermanentIdentifier(t *testing.T) {
 	defer cleanup()
 
 	// Add enrollment challenges to the challenge map
-	service.challengeMap["endorse-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
+	registerLegacyAttesting(service, "endorse-01", func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 		return nil
-	}
+	})
 
 	accountID := uint64(12345)
 	authzID := uint64(67890)

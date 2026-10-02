@@ -37,18 +37,43 @@ TCG CSR carrying its IDevID, the server issues a `MakeCredential` challenge that
 only the real TPM can activate, and the node's certificate is bound to hardware
 that was verified, not asserted.
 
-`device-attest-01` attests a key, not an identifier, and the key it attests is
-only compared with the certificate's key at finalization: the evidence arrives
-at the challenge and the CSR one request later. Its verification is therefore
-two phases for both formats it accepts — `VerifyAttestation` at the challenge,
+`device-attest-01` follows draft-ietf-acme-device-attest: the client POSTs its
+attestation (`{"attObj": base64url(CBOR)}`) as the challenge response and the
+server verifies it from that payload, contacting nothing. It attests a key and an identity: the
+key it attests is only compared with the certificate's key at finalization
+(the evidence arrives at the challenge and the CSR one request later), and the
+device identity the evidence carries is compared against the order's
+authorized identifier at the challenge itself, before the exchange is allowed
+to validate at all. Its verification is therefore two phases for both formats
+it accepts — `VerifyAttestation` and the identity check at the challenge,
 `VerifiedAttestation.BindCSRKey` at finalization — and the one-shot `Verify`
-refuses both with `ErrKeyBindingRequired`
-(`pkg/acme/challenges/device-attest-01/deviceattest01.go:223`). For the `tpm`
-format the evidence is the WebAuthn Level 2 §8.3 TPM2_Certify of `pubArea` by
-the AIK in `x5c[0]`; the binding requires the CSR's key to be `pubArea`'s key.
-Both phases go through the one binding gate, `attestation.VerifyInvariants`,
-that the TCG-CSR and SignCSR carriers use. See
+refuses both formats with `ErrKeyBindingRequired`
+(`pkg/acme/challenges/device-attest-01/deviceattest01.go`), so the ACME
+server (`pkg/acme/server/handlers`) is what drives both phases rather than
+that one-shot verifier. It does so through the attesting-verifier interface
+(`common.AttestingVerifier`), which every attestation challenge type
+(`enroll-01`, `endorse-01`, `device-attest-01`) must implement and which sits
+beside the unchanged `ChallengeVerifierFunc` that serves `http-01`, `dns-01`
+and `tls-alpn-01`: the verifier returns the attested identity and the evidence
+to bind, and `ChallengeHandler` is what compares the identity against the order
+and persists the evidence (see
+[engineering.md](engineering.md#device-attest-01-key-binding)
+for the exact contract). For the `tpm` format the evidence is the WebAuthn
+Level 2 §8.3 TPM2_Certify of `pubArea` by the AIK in `x5c[0]`; the binding
+requires the CSR's key to be `pubArea`'s key, and the identity is the AIK
+certificate's RFC 4043 `permanentIdentifier` otherName. Both key-binding
+phases go through the one binding gate, `attestation.VerifyInvariants`, that
+the TCG-CSR and SignCSR carriers use. See
 [engineering.md](engineering.md#device-attest-01-key-binding).
+
+The evidence being verifiable says nothing about which device produced it,
+since attestation evidence is not secret: without the identity check, a
+genuine attestation captured from device X could be replayed beside an order
+for an identifier device X was never assigned. `VerifiedAttestation.DeviceIdentity`
+closes that read the same permanent-identifier convention
+`matchesPermanentIdentifierOrder` already enforces on a CSR, so the CSR-side
+and evidence-side checks cannot drift into two different ideas of what a
+permanent identifier is.
 
 Rejected for `tpm`: verifying the statement as a TPM2_Quote over the key
 authorization. That was the previous verifier, and a quote attests platform

@@ -168,28 +168,6 @@ func TestDeviceAttest_Validation_Coverage(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestDeviceAttest_EnvVarExpansion_Coverage tests DeviceAttest with environment variable expansion
-func TestDeviceAttest_EnvVarExpansion_Coverage(t *testing.T) {
-	mockTPM := newMockTPMForEnrollment(t)
-
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	client := &Client{
-		config:        &Config{DirectoryURL: "https://example.com", Timeout: 30 * time.Second},
-		logger:        slog.Default(),
-		accountSigner: key,
-	}
-
-	config := &EnrollmentConfig{
-		Challenge: "device-attest-01",
-		TPMModule: mockTPM,
-		IPAddress: "${NONEXISTENT_VAR_XYZ}",
-	}
-
-	_, err := client.DeviceAttest(context.Background(), config)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "expand IP address")
-}
-
 // TestEnrollmentConfigDefaults_Coverage tests that defaults are properly set
 func TestEnrollmentConfigDefaults_Coverage(t *testing.T) {
 	mockTPM := newMockTPMForEnrollment(t)

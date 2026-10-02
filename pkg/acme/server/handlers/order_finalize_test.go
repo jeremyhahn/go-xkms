@@ -58,9 +58,11 @@ type MockCAForFinalize struct {
 	returnCertWithNilSerial   bool
 	returnCertWithLargeSerial bool
 	lastEKRequest             *ca.CertificateRequest
+	lastSignOptions           *ca.SignOptions
 }
 
 func (m *MockCAForFinalize) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
+	m.lastSignOptions = opts
 	if m.shouldFailSignCSR {
 		return nil, caerrors.SigningFailureError("mock sign CSR error")
 	}
@@ -637,6 +639,7 @@ func TestOrderFinalizeHandler_TCGCSRNotImplemented(t *testing.T) {
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	authorizeOrder(t, service, account, order, order.Identifiers[0], "enroll-01")
 
 	// Provide invalid CSR data to trigger TCG-CSR parsing attempt
 	payload := OrderFinalizeRequest{
@@ -1724,6 +1727,7 @@ func TestOrderFinalizeHandler_PermanentIdentifierEKCertificate(t *testing.T) {
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	authorizeOrder(t, service, account, order, order.Identifiers[0], "endorse-01")
 
 	// Create a valid x509 CSR (not TCG-CSR) with permanent identifier
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -1793,6 +1797,7 @@ func TestOrderFinalizeHandler_EndorseEKCertificateRejectsUnauthorizedSAN(t *test
 	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
 	require.NoError(t, err)
 	require.NoError(t, orderDAO.Save(ctx, order))
+	authorizeOrder(t, service, account, order, order.Identifiers[0], common.ChallengeTypeEndorse01)
 
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -2327,6 +2332,13 @@ type endorse01Fixture struct {
 // newEndorse01Fixture creates the account and its ready endorse-01 order.
 func newEndorse01Fixture(t *testing.T) *endorse01Fixture {
 	t.Helper()
+	return newEndorse01FixtureValidatedBy(t, common.ChallengeTypeEndorse01)
+}
+
+// newEndorse01FixtureValidatedBy is newEndorse01Fixture for an order whose
+// authorization challengeType validated.
+func newEndorse01FixtureValidatedBy(t *testing.T, challengeType string) *endorse01Fixture {
+	t.Helper()
 	service, mockCA, cleanup := setupTestServiceWithMockCA(t)
 	t.Cleanup(cleanup)
 
@@ -2346,6 +2358,7 @@ func newEndorse01Fixture(t *testing.T) *endorse01Fixture {
 	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
 	require.NoError(t, err)
 	require.NoError(t, orderDAO.Save(context.Background(), order))
+	authorizeOrder(t, service, account, order, order.Identifiers[0], challengeType)
 
 	return &endorse01Fixture{service: service, mockCA: mockCA, key: key, account: account, order: order, orderDAO: orderDAO}
 }

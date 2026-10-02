@@ -86,6 +86,11 @@ var (
 	// contains no parseable PEM certificates.
 	ErrACMENoClientCAPEM = errors.New("acme: no PEM certificates parsed")
 
+	// ErrACMEDeviceAttestAnchors is returned when the device-attest-01 trust
+	// anchors cannot be loaded or none is configured. The server does not start:
+	// the challenge would otherwise verify against nothing.
+	ErrACMEDeviceAttestAnchors = errors.New("acme: failed to configure device-attest-01 trust anchors")
+
 	// ErrACMEListen is returned when the ACME listener cannot be bound.
 	ErrACMEListen = errors.New("acme: failed to bind listener")
 
@@ -230,6 +235,15 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		return nil, &acmeInitError{Stage: "assert TCG CA", Err: ErrACMECACreate}
 	}
 
+	// device-attest-01 verifies a device's evidence against configured trust
+	// anchors, so the anchors are loaded and checked before anything is
+	// started: a server offering the challenge with nothing to anchor it to
+	// would verify nothing.
+	deviceAttest, err := buildDeviceAttestVerifier(acmeCfg.Challenges)
+	if err != nil {
+		return nil, &acmeInitError{Stage: "build device-attest-01 verifier", Sentinel: ErrACMEDeviceAttestAnchors, Err: err}
+	}
+
 	// Create the storage factory for ACME accounts/orders/authorizations.
 	// ACME state persists through the server's configured datastore (the same
 	// durable engine — pebble/file/qrdb — as the rest of xkmsd), wrapped as a
@@ -254,8 +268,8 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	// single registry.
 	breakers := circuitbreaker.NewManager()
 
-	// Build the challenge verifier map based on configured challenge types.
-	challengeMap := buildChallengeMap(acmeCfg.Challenges, acmeCfg.Resilience, breakers)
+	// Build the challenge verifiers based on configured challenge types.
+	challengeMap, attestingVerifiers := buildChallengeMap(acmeCfg.Challenges, acmeCfg.Resilience, breakers, deviceAttest)
 
 	// When cluster ACME enrollment is active, register the pre-sign hook that
 	// stamps the SPIFFE node identity (spiffe://<trust-domain>/node/<raft-addr>)
@@ -326,6 +340,7 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	// SignTCGCSRIDevID, ...) exposed by *pkg/ca.CA.
 	service, err := handlers.NewRestService(&handlers.Params{
 		AllowLoopbackIdentifier:     acmeCfg.Enrollment.AllowLoopbackIdentifier,
+		AttestingVerifiers:          attestingVerifiers,
 		AuditLogger:                 auditLogger,
 		BaseRESTURI:                 acmeCfg.ExternalURL,
 		CA:                          tcgCA,
@@ -333,7 +348,7 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		CAAValidator:                caaValidator,
 		ChallengeMap:                challengeMap,
 		ClusterCACN:                 clusterACMEIssuerCN(cfg),
-		EndorseEABRequired:          acmeCfg.EndorseEABRequired,
+		EndorseEABOptional:          !acmeCfg.EndorseEABIsRequired(),
 		EndorseDeviceIDMetaKey:      acmeCfg.EndorseDeviceIDMetaKey,
 		ExternalAccountRequired:     acmeCfg.ExternalAccountRequired,
 		FailedValidationRateLimiter: routerLimiters.failedValidation,
@@ -480,9 +495,12 @@ func (a *acmeServer) Shutdown(ctx context.Context) error {
 	return shutdownErr
 }
 
-// buildChallengeMap builds the map of challenge type -> verifier function
-// based on the supplied configuration. At least one challenge type must be
-// enabled; this is enforced by config.ACMEConfig.Validate.
+// buildChallengeMap builds the verifiers for the supplied configuration: the
+// map of challenge type -> verifier function for http-01 and dns-01, and the
+// attesting verifiers for the attestation challenges (enroll-01, endorse-01,
+// device-attest-01), which report the identity the device attested
+// (go-xkms#828). At least one challenge type must be enabled; this is
+// enforced by config.ACMEConfig.Validate.
 //
 // The http-01 and dns-01 verifiers are wrapped with a breaker from breakers,
 // configured from resilience, so a target that stops responding trips its
@@ -491,11 +509,15 @@ func (a *acmeServer) Shutdown(ctx context.Context) error {
 // the one construction path shared with the standalone TrustedCA
 // (pkg/acme/client/trustedca.go), so neither composition hand-rolls its own
 // wrapping. A nil breakers leaves both verifiers unwrapped.
+//
+// deviceAttest is the device-attest-01 trust policy from
+// buildDeviceAttestVerifier; nil leaves the challenge unregistered.
 func buildChallengeMap(
 	cfg config.ACMEChallengesConfig,
 	resilience config.ACMEResilienceConfig,
 	breakers *circuitbreaker.Manager,
-) map[string]common.ChallengeVerifierFunc {
+	deviceAttest acmesdk.ACMEDeviceAttest01Verifier,
+) (map[string]common.ChallengeVerifierFunc, map[string]common.AttestingVerifier) {
 	// One challenge-validation client serves every verifier that contacts a
 	// client-named target. It refuses reserved addresses unless
 	// acme.challenges.allow_private_targets is set.
@@ -520,13 +542,13 @@ func buildChallengeMap(
 			return dns01.Verify(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		})
 	}
-	// The TPM attestation challenges (enroll-01/endorse-01) use the shared SDK
-	// wiring so every ACME server in the stack (xkmsd, quicbaas) enables them
-	// identically. The verifiers encapsulate the CA type-assertion + Verify.
-	for challengeType, verifier := range acmesdk.ACMEAttestationVerifiers(client, cfg.Enroll01, cfg.Endorse01) {
-		m[challengeType] = verifier
-	}
-	return acmeserver.WrapChallengeVerifiers(m, resilience, breakers)
+	// The attestation challenges (enroll-01/endorse-01/device-attest-01) use
+	// the shared SDK wiring so every ACME server in the stack (xkmsd,
+	// quicbaas) enables them identically. The verifiers encapsulate the CA
+	// type-assertion + Verify. They make no outbound call a breaker protects,
+	// so they are not wrapped.
+	attesting := acmesdk.ACMEAttestingVerifiers(client, cfg.Enroll01, cfg.Endorse01, deviceAttest)
+	return acmeserver.WrapChallengeVerifiers(m, resilience, breakers), attesting
 }
 
 // buildClusterPreSignHooks returns the pre-sign hook registry for the ACME

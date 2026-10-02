@@ -14,7 +14,6 @@
 package deviceattest01
 
 import (
-	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
@@ -23,7 +22,6 @@ import (
 	"errors"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -31,13 +29,28 @@ import (
 
 // device-attest-01 Challenge Implementation
 //
-// The device-attest-01 challenge is a custom ACME extension for remote attestation
-// of TPM-equipped devices. It implements attestation procedures compatible with
-// WebAuthn TPM attestation format and draft ACME device attestation specifications.
+// The device-attest-01 challenge is the ACME extension for remote attestation
+// of devices defined by draft-ietf-acme-device-attest. It implements the
+// draft's challenge-response model together with the WebAuthn TPM attestation
+// format and the DICE format this repository models.
 //
 // References:
-// - https://datatracker.ietf.org/doc/draft-acme-device-attest
+// - https://datatracker.ietf.org/doc/draft-ietf-acme-device-attest
 // - https://www.w3.org/TR/webauthn/#sctn-tpm-attestation
+//
+// The exchange (draft-ietf-acme-device-attest, "Device Attestation Challenge"):
+// the server issues a challenge carrying a token; the client answers by POSTing
+// the challenge URL, as an ordinary authenticated ACME request, with a payload
+//
+//	{"attObj": "<base64url of the CBOR attestation object>"}
+//
+// and the server verifies the attestation from that payload. THE SERVER NEVER
+// CONTACTS THE DEVICE. The device need not run a server or be addressable at
+// all, which is what lets a device on a serial port enroll through a gateway
+// that holds the ACME account. Freshness is the key authorization derived from
+// the challenge token, which the attestation must cover (TPMExtraData for
+// "tpm", DICENonce for "dice"); a recording of an earlier answer does not
+// verify against a new token.
 //
 // TPM Requirements:
 // - TPM 2.0 compliant hardware or software TPM
@@ -66,10 +79,6 @@ import (
 // - sig: the AIK's signature over certInfo (WebAuthn L2 section 6.5.6 encoding)
 // - certInfo: TPMS_ATTEST structure from TPM2_Certify of the attested key
 // - pubArea: TPMT_PUBLIC structure of the attested key
-
-const (
-	challengePath = "/.well-known/acme-challenge/"
-)
 
 // AttestationFormat represents the supported attestation formats
 type AttestationFormat string
@@ -110,9 +119,12 @@ type AttestationStatement struct {
 	PubArea  []byte        `json:"pubArea" cbor:"pubArea"`   // TPMT_PUBLIC of the attested key
 }
 
-// AttestationRequest represents the client's attestation request
+// AttestationRequest is the payload of the client's POST to the challenge URL
+// (draft-ietf-acme-device-attest, "Device Attestation Challenge").
 type AttestationRequest struct {
-	AttStmt []byte `json:"attStmt"` // CBOR-encoded attestation object
+	// AttObj is the base64url (RFC 4648 section 5, unpadded) encoding of the
+	// CBOR attestation object. EncodeAttestationForSubmission produces it.
+	AttObj string `json:"attObj"`
 }
 
 var (
@@ -158,6 +170,25 @@ var (
 	// check could not run, which must never read as the check passing.
 	ErrKeyBindingUnavailable = errors.New("device-attest-01: the attested key cannot be bound to the certificate request")
 
+	// ErrAttestationPayloadInvalid is returned when the client's POST to the
+	// challenge URL does not carry a decodable attestation object: the
+	// payload is not the JSON {"attObj": ...}, attObj is not unpadded
+	// base64url, or what it decodes to is not a CBOR attestation object. The
+	// layer that failed is in the detail.
+	ErrAttestationPayloadInvalid = errors.New("device-attest-01: the challenge response payload is not a decodable attestation object")
+
+	// ErrNoTrustAnchors is returned when a verifier is asked to anchor a
+	// chain it holds no trust anchors for: none at all at construction, or none
+	// for the format being verified. A verifier without anchors cannot tell a
+	// genuine chain from one the caller minted, so the absence is a refusal.
+	ErrNoTrustAnchors = errors.New("device-attest-01: no trust anchors configured")
+
+	// ErrNoAttestationVerifier is returned when an attestation is asked to be
+	// verified with no AttestationVerifier. Verifying without the server's
+	// trust anchors would accept a chain the caller minted, so the absence is
+	// a refusal.
+	ErrNoAttestationVerifier = errors.New("device-attest-01: no attestation verifier configured")
+
 	// ErrNoVerifiedAttestation is returned when a binding is asked for without
 	// a verified attestation to bind. A nil record is a caller that never
 	// verified anything, not one whose device failed.
@@ -178,16 +209,9 @@ type AttestationVerifier interface {
 	VerifyAKCertificateChain(certs [][]byte) error
 }
 
-// Verify performs device-attest-01 challenge verification, in the shape an
-// ACME challenge verifier is called in.
-//
-// This function implements server-side attestation verification:
-//  1. Retrieves attestation statement from client's challenge endpoint
-//  2. Decodes and parses the CBOR-encoded attestation object
-//  3. Anchors the x5c certificate chain to the configured roots
-//  4. Verifies the format's evidence: for "tpm", the WebAuthn Level 2 section
-//     8.3 TPM2_Certify procedure over the key authorization; for "dice", the
-//     nonce the alias certificate echoes
+// Verify performs device-attest-01 challenge verification, in the shape of a
+// one-shot challenge verifier: it takes the client's payload and answers
+// whether the attestation is an authorization.
 //
 // IT REFUSES EVERY FORMAT IT CAN VERIFY, and that refusal is the point rather
 // than a gap. Both "tpm" and "dice" attest a key -- pubArea, the alias
@@ -201,23 +225,15 @@ type AttestationVerifier interface {
 // VerifiedAttestation.BindCSRKey has run against the key being certified.
 //
 // Parameters:
-//   - client: the shared challenge-validation client
-//   - ca: attestation verifier for the attestation object and x5c anchoring
-//   - domain: Domain/identifier to verify
-//   - port: HTTP port for challenge communication
-//   - challengeToken: Challenge token, naming the endpoint to fetch
-//   - expectedKeyAuth: Expected key authorization
+//   - verifier: the server's policy over the attestation object and its x5c
+//   - payload: the body of the client's POST to the challenge URL
+//   - expectedKeyAuth: the key authorization the attestation must answer
 //
 // Returns:
-//   - nil if attestation is valid
 //   - ErrKeyBindingRequired for a format whose binding needs the CSR
 //   - error if verification fails
-func Verify(
-	client *validation.Client,
-	ca AttestationVerifier,
-	domain, port, challengeToken, expectedKeyAuth string) error {
-
-	verified, err := VerifyAttestation(client, ca, domain, port, challengeToken, expectedKeyAuth)
+func Verify(verifier AttestationVerifier, payload []byte, expectedKeyAuth string) error {
+	verified, err := VerifyAttestation(verifier, payload, expectedKeyAuth)
 	if err != nil {
 		return err
 	}
@@ -230,33 +246,19 @@ func Verify(
 // VerifyAttestation is Verify, returning what the attestation established so a
 // caller can finish the job at finalization.
 //
+// payload is the body of the client's POST to the challenge URL: the
+// AttestationRequest JSON. Nothing is fetched: the evidence is exactly what the
+// authenticated ACME request carried, so there is no address to resolve and no
+// device to reach.
+//
 // The returned value is NOT an authorization on its own for a format that
 // binds through the CSR: see VerifiedAttestation.
-func VerifyAttestation(
-	client *validation.Client,
-	ca AttestationVerifier,
-	domain, port, challengeToken, expectedKeyAuth string) (*VerifiedAttestation, error) {
-
-	// Retrieve attestation from client's challenge endpoint through the
-	// shared challenge-validation client: a bare host only, no reserved
-	// target address, no redirects, and a capped response.
-	body, err := client.Get(context.Background(), validation.Target{
-		Host: domain,
-		Port: port,
-		Path: challengePath + challengeToken,
-	})
-	if err != nil {
-		return nil, err
+func VerifyAttestation(verifier AttestationVerifier, payload []byte, expectedKeyAuth string) (*VerifiedAttestation, error) {
+	if verifier == nil {
+		return nil, ErrNoAttestationVerifier
 	}
 
-	// Decode the attestation request
-	var attestReq AttestationRequest
-	if err := json.Unmarshal(body, &attestReq); err != nil {
-		return nil, caerrors.MalformedError("device-attest-01: invalid attestation request: %v", err)
-	}
-
-	// Parse the CBOR-encoded attestation object
-	attestObj, err := ParseAttestationObject(attestReq.AttStmt)
+	attestObj, err := ParseAttestationRequest(payload)
 	if err != nil {
 		return nil, caerrors.MalformedError("device-attest-01: %v", err)
 	}
@@ -267,8 +269,8 @@ func VerifyAttestation(
 		return nil, ErrInvalidAttestationFormat
 	}
 
-	// Verify using CA
-	if err := ca.VerifyAttestationObject(attestObj, []byte(expectedKeyAuth)); err != nil {
+	// Verify using the server's policy
+	if err := verifier.VerifyAttestationObject(attestObj, []byte(expectedKeyAuth)); err != nil {
 		return nil, caerrors.BadAttestationStatementError("device-attest-01: attestation verification failed: %v", err)
 	}
 
@@ -283,8 +285,8 @@ func VerifyAttestation(
 			}
 			certChain = append(certChain, certBytes)
 		}
-		if err := ca.VerifyAKCertificateChain(certChain); err != nil {
-			return nil, ErrCertificateChainInvalid
+		if err := verifier.VerifyAKCertificateChain(certChain); err != nil {
+			return nil, &errs.Joined{Lead: ErrCertificateChainInvalid, Cause: err}
 		}
 	}
 
@@ -296,7 +298,7 @@ func VerifyAttestation(
 	if !supported {
 		return nil, ErrInvalidAttestationFormat
 	}
-	verified, err := verifyEvidence(attestObj, ca, expectedKeyAuth)
+	verified, err := verifyEvidence(attestObj, verifier, expectedKeyAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -307,6 +309,42 @@ func VerifyAttestation(
 		verified.LeafDER = verified.Leaf.Raw
 	}
 	return verified, nil
+}
+
+// ParseAttestationRequest decodes the payload of the client's POST to the
+// challenge URL into its attestation object: the JSON AttestationRequest, its
+// base64url attObj, and the CBOR attestation object inside.
+//
+// Each layer is a separate failure, reported as ErrAttestationPayloadInvalid
+// with the layer named, so a client can tell a payload that is not JSON from an
+// attObj that is not base64url from one that is not CBOR.
+func ParseAttestationRequest(payload []byte) (*AttestationObject, error) {
+	var request AttestationRequest
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return nil, &errs.Joined{Lead: ErrAttestationPayloadInvalid, Detail: "the payload is not a JSON attestation request", Cause: err}
+	}
+	if request.AttObj == "" {
+		return nil, &errs.Detail{Err: ErrAttestationPayloadInvalid, Detail: "attObj is absent"}
+	}
+	encoded, err := base64.RawURLEncoding.DecodeString(request.AttObj)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrAttestationPayloadInvalid, Detail: "attObj is not unpadded base64url", Cause: err}
+	}
+	object, err := ParseAttestationObject(encoded)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrAttestationPayloadInvalid, Detail: "attObj is not a CBOR attestation object", Cause: err}
+	}
+	return object, nil
+}
+
+// EncodeAttestationRequest is the client half of ParseAttestationRequest: the
+// payload to POST to the challenge URL for obj.
+func EncodeAttestationRequest(obj *AttestationObject) ([]byte, error) {
+	attObj, err := EncodeAttestationForSubmission(obj)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(AttestationRequest{AttObj: attObj})
 }
 
 // evidenceVerifier checks the format-specific half of an attestation object,

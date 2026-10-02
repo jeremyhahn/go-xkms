@@ -183,7 +183,7 @@ func TestVerify_Success(t *testing.T) {
 	expectedSecret := []byte("test-secret-value")
 	credBlob := []byte("credential-blob")
 	encSecret := []byte("encrypted-secret")
-	packedCSR := []byte("packed-csr-data")
+	packedCSR, _, _ := newPackedCSR(t)
 
 	// Create a test HTTP server that simulates the client
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

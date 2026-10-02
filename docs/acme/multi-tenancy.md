@@ -201,12 +201,18 @@ curl -X POST \
     "device_info": {
       "device_id": "device-001",
       "manufacturer": "ACME Devices",
-      "model": "SecureModule-X"
+      "model": "SecureModule-X",
+      "ek_public_key_hash": "<hex SHA-256 of the device EK public key, PKIX DER>"
     },
     "expires_in_days": 30
   }' \
   https://ca.example.com/api/v1/tenants/acme-corp/eab
 ```
+
+`ek_public_key_hash` names the EK the binding authorizes. endorse-01 requires
+EAB by default and refuses a binding that names no EK, because endorse-01
+holds no proof that the account holds the key it asks to have certified.
+See [challenges.md](challenges.md#endorse-01-challenge).
 
 ## Data Encryption
 

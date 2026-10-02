@@ -286,16 +286,28 @@ The dns-01 challenge is the **only** challenge type that supports wildcard domai
 
 ### Overview
 
-The device-attest-01 challenge is a custom ACME extension for remote attestation of TPM-equipped devices. The device proves that the key the certificate is issued for lives in its TPM. The evidence is a TPM2_Certify of that key by the device's Initial Attestation Key (IAK), and it is carried as a WebAuthn Level 2 section 8.3 `tpm` attestation statement.
+The device-attest-01 challenge follows [draft-ietf-acme-device-attest](https://datatracker.ietf.org/doc/draft-ietf-acme-device-attest): remote attestation of a device-resident key. The device proves that the key the certificate is issued for lives in its TPM (format `tpm`) or secure element (format `dice`).
+
+**The client answers the challenge; the server never contacts the device.** The client POSTs the challenge URL, as an ordinary authenticated ACME request, with the payload
+
+```json
+{"attObj": "<base64url, unpadded, of the CBOR attestation object>"}
+```
+
+and the server verifies the attestation from that payload. The device needs no HTTP server, no address and no inbound route. An AVR on a serial port enrolls through a gateway that holds the ACME account and POSTs on its behalf. This is the difference from `enroll-01` and `endorse-01`, whose servers do dial the device.
+
+Freshness is the key authorization, derived from the challenge token and the account key. The attestation must cover it: `TPMExtraData(alg, keyAuth)` in the `certInfo` of a `tpm` statement, `DICENonce(keyAuth)` in the `eat_nonce` of a `dice` leaf. A recording of an earlier answer does not verify against a new token.
+
+The `tpm` evidence is a TPM2_Certify of the certificate key by the device's Initial Attestation Key (IAK), carried as a WebAuthn Level 2 section 8.3 attestation statement. The attestation object is the WebAuthn `{fmt, attStmt}` map. The draft has the key authorization take the place of `authenticatorData || clientDataHash`, and says `authData` SHOULD be omitted: the server ignores it if sent, as it ignores any member of the payload besides `attObj` (the draft requires servers to ignore unrecognized fields). The draft's `hardware-module` identifier type is not supported; devices are identified by `permanent-identifier`.
 
 **References:**
-- [ACME Device Attestation Draft](https://datatracker.ietf.org/doc/draft-acme-device-attest)
+- [draft-ietf-acme-device-attest](https://datatracker.ietf.org/doc/draft-ietf-acme-device-attest)
 - [W3C WebAuthn TPM Attestation, section 8.3](https://www.w3.org/TR/webauthn/#sctn-tpm-attestation)
 
 ### TPM Requirements
 
 - TPM 2.0 compliant hardware or software TPM
-- Initial Attestation Key (IAK) provisioned. Its certificate must be installed in the TPM with `ProvisionIAKCert` (`pkg/tpm2/cert_idevid.go:116`) and is read back with `IAKCertificate` (`cert_idevid.go:141`). enroll-01 issues this certificate and returns it to the caller, but does not install it. The certificate must meet WebAuthn Level 2 section 8.3.1 (`checkAIKCertificate`, `pkg/acme/challenges/device-attest-01/tpm.go:155`): X.509 v3, empty Subject, a subjectAltName naming the TPM manufacturer/model/version, `tcg-kp-AIKCertificate` extended key usage, and `CA:FALSE`
+- Initial Attestation Key (IAK) provisioned. Its certificate must be installed in the TPM with `ProvisionIAKCert` (`pkg/tpm2/cert_idevid.go:116`) and is read back with `IAKCertificate` (`cert_idevid.go:141`). enroll-01 issues an IAK certificate and returns it to the caller, but does not install it (see the known limitation under Trust anchors: that certificate does not yet meet section 8.3.1). The certificate must meet WebAuthn Level 2 section 8.3.1 (`checkAIKCertificate`, `pkg/acme/challenges/device-attest-01/tpm.go:155`): X.509 v3, empty Subject, a subjectAltName naming the TPM manufacturer/model/version, `tcg-kp-AIKCertificate` extended key usage, and `CA:FALSE`
 - A Platform SRK, the parent of the certificate key
 - Support for TPM2_Certify (`CertifyKey`, `pkg/tpm2/attestation.go:76`)
 
@@ -317,30 +329,32 @@ Client (TPM)                          ACME Server
    | 3. TPM2_Certify(key) by the IAK,      |
    |    qualifyingData =                   |
    |    TPMExtraData(alg, keyAuth)         |
-   | 4. Serve the attestation object       |
+   | 4. Encode the attestation object      |
    |                                       |
-   | 5. Respond to challenge               |
+   | 5. POST the challenge URL:            |
+   |    {"attObj": base64url(CBOR)}       |
    |-------------------------------------->|
-   |                   6. GET attestation  |
-   |<--------------------------------------|
-   |                   7. VerifyAttestation|
+   |                   6. VerifyAttestation|
    |                      - anchor x5c     |
    |                      - section 8.3    |
+   |                      - identity ==    |
+   |                        identifier     |
+   |                   (nothing is dialed) |
    |                                       |
-   | 8. Finalize: CSR signed by the key,   |
+   | 7. Finalize: CSR signed by the key,   |
    |    permanentIdentifier otherName      |
    |-------------------------------------->|
-   |                   9. BindCSRKey:      |
+   |                   8. BindCSRKey:      |
    |                      CSR key ==       |
    |                      pubArea key      |
 ```
 
 ### Attestation Object Structure
 
-The device serves JSON whose `attStmt` is the CBOR attestation object:
+The `attObj` member of the payload is the base64url (unpadded) encoding of this CBOR attestation object:
 
 ```
-{"attStmt": <CBOR bytes of>
+{"attObj": base64url(CBOR of)
   {
     "fmt": "tpm",
     "attStmt": {
@@ -383,17 +397,16 @@ The ACME client does all of this through `TPMModule.CreateAttestedKey` (`pkg/acm
 adapter := acmeclient.NewXKMSTPMAdapter(tpm, keyBackend)
 cert, err := client.DeviceAttest(ctx, &acmeclient.EnrollmentConfig{
     Challenge:  string(acmeclient.ChallengeTypeDeviceAttest01),
-    IPAddress:  "device-0001",          // the permanent-identifier value
     CommonName: "device-0001.example.com",
     TPMModule:  adapter,
 })
 ```
 
-`DeviceAttest` (`pkg/acme/client/enrollment.go:742`) serves the response verbatim (`startAttestServer`, `enrollment.go:919`). At finalization it signs the CSR with the attested key, not the account key. The CSR names the order's permanent identifier in the RFC 4043 `permanentIdentifier` otherName that finalize matches (`deviceAttestCSR`, `enrollment.go:887`).
+`DeviceAttest` (`pkg/acme/client/enrollment.go`) sends the response as the challenge's payload (`acme.Challenge.Payload`, which `golang.org/x/crypto/acme` sends in place of `{}`). It opens no listener, so `EnrollmentConfig.IPAddress`, `Port` and `ListenHost` are unused for this challenge and may be left empty. At finalization it signs the CSR with the attested key, not the account key. The order's permanent-identifier is the device's own identity, `TPMModule.DeviceIdentity`: the RFC 4043 `permanentIdentifier` of the IAK certificate, read by `deviceattest01.DeviceIdentityFromCertificate`, the same rule the server applies to the evidence. The server refuses a challenge whose attested identity differs from the order's identifier, so the IP address is never sent. The CSR names the same identity in the `permanentIdentifier` otherName that finalize matches (`deviceAttestCSR`).
 
 ### Server
 
-`VerifyAttestation` (`pkg/acme/challenges/device-attest-01/deviceattest01.go:243`) anchors `x5c` through `AttestationVerifier.VerifyAKCertificateChain`. It then applies section 8.3 in `verifyTPMEvidence` (`tpm.go:65`) and returns a `VerifiedAttestation`. That record authorizes nothing until `BindCSRKey` (`binding.go:142`) has confirmed that the CSR's key is `pubArea`'s key. For this reason the one-shot `Verify` (`deviceattest01.go:223`) returns `ErrKeyBindingRequired` for this format.
+`VerifyAttestation(verifier, payload, keyAuth)` (`pkg/acme/challenges/device-attest-01/deviceattest01.go`) decodes the payload (`ParseAttestationRequest`), asks the verifier to check the object and anchor `x5c` (`AttestationVerifier`), then applies section 8.3 in `verifyTPMEvidence` (`tpm.go:65`) and returns a `VerifiedAttestation`. That record authorizes nothing until `BindCSRKey` (`binding.go:142`) has confirmed that the CSR's key is `pubArea`'s key. For this reason the one-shot `Verify` returns `ErrKeyBindingRequired` for this format.
 
 **AttestationVerifier Interface** (`pkg/acme/challenges/device-attest-01/deviceattest01.go:174`):
 
@@ -403,6 +416,45 @@ type AttestationVerifier interface {
     VerifyAKCertificateChain(certs [][]byte) error
 }
 ```
+
+The production implementation is `TrustAnchorVerifier` (`anchors.go`, exposed as `ACMETrustAnchorVerifier` in `sdk/go/acme`). It is passed to the challenge verifier (`handlers.NewDeviceAttestVerifier`, `sdk/go/acme.ACMEAttestingVerifiers`) rather than asserted from the CA handle, because the CA that issues certificates and the roots that vouch for a device are separate configuration. A nil verifier registers nothing and a verifier called with none refuses (`ErrNoAttestationVerifier`).
+
+#### Trust anchors
+
+`TrustAnchorVerifier` is built from two separate root sets. A format with no configured root is refused (`ErrNoTrustAnchors`); it is never verified against the other format's roots.
+
+| Format | Anchoring | Primitive |
+|---|---|---|
+| `tpm` | the AIK certificate in `x5c[0]`, through the intermediates the device sends after it, must chain to a `tpm_roots` entry | `evidence.VerifyAKCertificate`, after `checkAIKCertificate` reads the critical TCG `subjectAltName` |
+| `dice` | the alias chain must descend from a `dice_roots` entry and satisfy the DICE policy, including the `eat_nonce` for this challenge and a `tcg-dice-Ueid` | `dice.Verify` |
+
+`tpm_roots` are the CAs that vouch for AIK certificates: a TPM manufacturer's attestation CA or a privacy CA. A device sends the AIK certificate as `x5c[0]` and any intermediates after it; `Setup` sends only the AIK certificate today, so when the AIK is issued by an intermediate CA, configure that issuing CA itself as the root (a certificate in `tpm_roots` anchors a chain whether or not it is self-signed). A `tpm` statement carries no EK certificate, so the EK-to-manufacturer chain is not re-proven here. It is proven by whoever issued the AIK certificate: for a go-xkms CA, `enroll-01` verifies the EK chain against the configured manufacturer roots (`pkg/ca`, `verifyEKCertificateChain`) before issuing the IAK.
+
+**Known limitation.** The statement's `x5c[0]` must meet WebAuthn Level 2 section 8.3.1, including an empty subject. The IAK certificates a go-xkms CA issues at `enroll-01` carry a subject (`iak-<model>-<serial>`, so the certificate store can key them), so they are not accepted as `x5c[0]` and a device cannot yet enroll with `enroll-01` and then attest with that same certificate. Use AIK certificates from a CA that issues section 8.3.1 conformant ones. Reconciling the two profiles (relaxing the subject requirement for TCG IAK certificates, or issuing the IAK with an empty subject) is an open decision.
+
+`VerifyAKCertificateChain` is the format-blind second check. It requires every certificate to be inside its validity window and signed by the next, and the last to be, or be signed by, a root of either set. It can only remove chains the format-aware check admitted.
+
+#### Configuration
+
+`xkmsd` builds the verifier from `acme.challenges`:
+
+```yaml
+acme:
+  challenges:
+    device_attest01: true
+    device_attest:
+      tpm_roots:  [/etc/xkms/acme/tpm-aik-root.pem]
+      dice_roots: [/etc/xkms/acme/dice-device-id.pem]
+      dice_require_device_signed_leaf: true   # secure-element profiles, e.g. AVR + ATECC608A
+      dice_require_measurement: true         # DiceTcbInfo must carry an FWID
+      dice_require_tcb_info: true            # DiceTcbInfo must be present (operational flags)
+```
+
+`device_attest01` with neither `tpm_roots` nor `dice_roots` fails configuration validation (`config.ErrACMEDeviceAttestNoAnchors`), and the daemon independently refuses to start (`ErrACMEDeviceAttestAnchors` wrapping `ACMEErrNoTrustAnchors`) if no anchor loads. A file that is missing or holds no PEM certificate is also a startup error. No operational flag (`notConfigured`, `notSecure`, `recovery`, `debug`) is tolerated.
+
+The issued certificate carries the attested identity as the RFC 4043 `permanentIdentifier` otherName in its subjectAltName. It is the issuer's statement, taken from the verified evidence and passed to the CA in `SignOptions.OtherNames`; the CA copies no otherName a CSR requests.
+
+At finalization the request's key is bound to the attestation recorded for the device the request names (its `permanentIdentifier`), whatever the order's other identifiers are and however many devices it authorizes.
 
 There is no `VerifyQuote` method: the TPM2_Certify binding (Name match, `extraData` match, signature verification) is made statelessly by `pkg/attestation.VerifyInvariants`/`pkg/tpm2.VerifyCertify` against the AIK certificate already anchored by `VerifyAKCertificateChain`, not by a round trip to the CA.
 
@@ -416,6 +468,9 @@ There is no `VerifyQuote` method: the TPM2_Certify binding (Name match, `extraDa
 | `ErrInvalidKeyAlgorithm` | The IAK signs with an algorithm that has no COSE identifier |
 | `ErrInvalidAttestationFormat` | Unsupported attestation format |
 | `ErrInvalidAttestationObject` | Cannot parse attestation object |
+| `ErrAttestationPayloadInvalid` | The POSTed payload is not `{"attObj": base64url(CBOR)}`; the detail names the layer that failed |
+| `ErrNoAttestationVerifier` | An attestation was verified with no trust policy |
+| `ErrNoTrustAnchors` | No root is configured, or none for the attestation's format |
 | `ErrTPMAttestationInvalid` | The statement fails section 8.3. The cause is joined, e.g. `pkg/tpm2.ErrCertifyWrongType` for a quote |
 | `ErrAIKCertificateInvalid` | `x5c[0]` does not meet section 8.3.1 |
 | `ErrCertificateChainInvalid` | `x5c` does not anchor to the configured roots |
@@ -510,13 +565,16 @@ The CSR follows TCG specification format containing:
 
 ### Implementation Details
 
-**Verify Function:**
+**Verify Functions:**
 
 ```go
-func Verify(
-    resolver *net.Resolver,
-    ca CertificateAuthority,
-    domain, port, token, keyAuth string) error
+func VerifyActivation(
+    client *validation.Client,
+    ca TCGCSRVerifier,
+    domain, port, token, keyAuth string) (*Activation, error)
+
+// Verify is VerifyActivation for a caller with no use for the result.
+func Verify(client *validation.Client, ca TCGCSRVerifier, domain, port, token, keyAuth string) error
 ```
 
 **CertificateAuthority Interface:**
@@ -560,6 +618,17 @@ The server uses TPM2_MakeCredential to create an encrypted credential that can o
                  |  plain secret  |
                  +----------------+
 ```
+
+### Binding the finalize request to the activated TPM
+
+Credential activation proves a TPM holding one endorsement key and one activation key (the IAK) answered. The TCG-CSR-IDEVID that finalizes the order arrives one request later, and without a binding a client that passed the challenge once could build one in software around another device's *public* EK certificate and be issued an IDevID carrying that device's identity.
+
+`VerifyActivation` therefore returns the `Activation` it activated, and the server persists it on the challenge as an `entities.DeviceAttestation` (`Format: "enroll-01"`): `LeafDER` is the activated EK certificate, `DeviceIdentityValue` its TCG permanent identifier (`ca.EKCertificatePermanentIdentifier`, the SHA-256 of its DER, the same value the issued IAK and IDevID carry), and `PubArea` the IAK's TPMT_PUBLIC. At finalize the order is refused unless:
+
+- enroll-01 is the only attestation challenge that validated it (an `endorse-01` or `device-attest-01` authorization cannot become an IDevID; neither can an order no attestation challenge validated, such as an `ip` identifier `http-01` validated), and
+- the TCG-CSR's EK certificate has the recorded permanent identifier and its IAK public area is the recorded one (`bindEnrollActivation`).
+
+The identifier comparison at the challenge is unchanged and real for enroll-01: the dial that proved a genuine TPM answered reached the address the order's identifier names. The TPM itself is named by the activated EK. Typed errors: `ErrEnrollActivationNotFound`, `ErrEnrollActivationMismatch`, `ErrFinalizeRequestNotPermitted` (all `badCSR` 400).
 
 ### Client Setup
 
@@ -668,10 +737,18 @@ func Verify(
     domain, port, challengeToken, expectedKeyAuth string) error
 ```
 
-The endorse-01 verification always returns `nil` because:
-- Authorization is handled by EAB (External Account Binding)
-- Server policy validates the request during CSR processing
-- No TPM operation is possible without an EK certificate
+endorse-01 proves **nothing about the key it certifies**. An EK is decrypt-only, so the key cannot sign a proof of possession, and the server holds no exchange with the device to make one (see below). The External Account Binding is therefore the only control, and `endorse01.Verify`, which returns `nil`, is deprecated and is not what authorizes a request.
+
+What the server does:
+
+1. **EAB is required by default.** A server that sets nothing requires it (`Params.EndorseEABOptional` zero value; `acme.endorse_eab_required` unset means true). A request from an account with no EAB of purpose `endorse-01` is `unauthorized`.
+2. **The EAB must name the EK it authorizes**, by `deviceInfo.ekPublicKeyHash` (the SHA-256 of the EK's PKIX DER, which is what the order's identifier base64url-encodes, in hex, optionally prefixed `sha256:`) and/or the metadata key `acme.endorse_device_id_meta_key`. A binding that names neither would authorize its account for any key and is refused (`ErrEndorseEABKeyNotBound`). An EK other than the bound one is refused (`ErrEndorseEABKeyMismatch`).
+3. **The attested identity is the EAB's**, not the order's. `ChallengeHandler` hands the EAB-authorized identity to the verifier (`AttestationChallenge.AuthorizedIdentity`); `handlers.NewEndorseVerifier` reports it and refuses without one (`ErrEndorseNoAuthorizedIdentity`). The handler then compares it with the order's identifier like every attestation type.
+4. **An endorse-01 authorization finalizes only as an EK certificate.** The EK-certificate path requires endorse-01 to be the only attestation challenge that validated the order, and an endorse-01-validated order cannot finalize a TCG-CSR, IDevID, cluster or device-attest-01 certificate request (`ErrFinalizeRequestNotPermitted`).
+
+**Waiving EAB.** Set `endorse_eab_required: false` (or `XKMS_ACME_ENDORSE_EAB_REQUIRED=false`; `Params.EndorseEABOptional` in Go). Then any account can obtain an EK certificate for any public key, the request's own identifier is the "authorized" identity, and the server logs a warning for every challenge. Do this only on a closed lab server.
+
+**Why there is no MakeCredential proof of possession.** A proof needs the server to learn the name of a key resident in the same TPM and have the device activate a credential made for the EK. The existing primitives (`tpm2.NewCredentialChallenge`, `ActivateCredential`) would do the cryptography, but the exchange has no carrier. The order's identifier is the EK, not an address, so there is nothing for the server to dial (the same separation of identifier and address that  leaves open), and a second request on the challenge changes the ACME protocol. Both are architectural, so EAB, bound to the key, is the control.
 
 ### Client Setup
 
@@ -684,16 +761,15 @@ csr, err := endorse01.Setup(challengeToken, ca, tpm, serializer)
 
 ### Authorization via EAB
 
-For secure deployments, endorse-01 should require External Account Binding:
+endorse-01 requires External Account Binding unless it is explicitly waived:
 
 ```yaml
 acme:
-  external_account_binding:
-    endorse_required: true
-    device_id_meta_key: "ek_pubkey_hash"
+  endorse_eab_required: true          # the default when the key is absent
+  endorse_device_id_meta_key: ""      # optional: name the EK in EAB metadata instead of deviceInfo.ekPublicKeyHash
 ```
 
-This ensures only pre-authorized devices can obtain EK certificates.
+Register each device (or each device's EK within a batch) with an EAB of purpose `endorse-01` whose `deviceInfo.ekPublicKeyHash` is the SHA-256 of its EK's PKIX DER, hex encoded. This ensures only pre-authorized devices can obtain EK certificates. A binding shared by a batch that names no EK is refused.
 
 ### EK Certificate Content
 
@@ -736,7 +812,7 @@ case common.AuthzTypeIP, common.AuthzTypePermanentIdentifier:
 |-----------|------|----------|-----------------|----------|
 | http-01 | 80 | HTTP | dns | No |
 | dns-01 | 53 | DNS | dns | Yes |
-| device-attest-01 | configurable | HTTP | ip, permanent-identifier | N/A |
+| device-attest-01 | none (client POSTs the attestation) | none | permanent-identifier | N/A |
 | enroll-01 | configurable | HTTP | ip, permanent-identifier | N/A |
 | endorse-01 | N/A | N/A | permanent-identifier | N/A |
 

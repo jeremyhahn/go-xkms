@@ -159,7 +159,7 @@ func TestACMEConfig_Validate(t *testing.T) {
 // TestBuildChallengeMap_Selection verifies that buildChallengeMap registers
 // verifiers only for challenge types that have been enabled.
 func TestBuildChallengeMap_Selection(t *testing.T) {
-	m := buildChallengeMap(config.ACMEChallengesConfig{HTTP01: true, DNS01: false}, config.ACMEResilienceConfig{}, nil)
+	m, _ := buildChallengeMap(config.ACMEChallengesConfig{HTTP01: true, DNS01: false}, config.ACMEResilienceConfig{}, nil, nil)
 	if _, ok := m[common.ChallengeTypeHTTP01]; !ok {
 		t.Fatalf("expected http-01 verifier to be registered")
 	}
@@ -167,7 +167,7 @@ func TestBuildChallengeMap_Selection(t *testing.T) {
 		t.Fatalf("expected dns-01 verifier to be absent when disabled")
 	}
 
-	m = buildChallengeMap(config.ACMEChallengesConfig{HTTP01: false, DNS01: true}, config.ACMEResilienceConfig{}, nil)
+	m, _ = buildChallengeMap(config.ACMEChallengesConfig{HTTP01: false, DNS01: true}, config.ACMEResilienceConfig{}, nil, nil)
 	if _, ok := m[common.ChallengeTypeHTTP01]; ok {
 		t.Fatalf("expected http-01 verifier to be absent when disabled")
 	}
@@ -175,22 +175,35 @@ func TestBuildChallengeMap_Selection(t *testing.T) {
 		t.Fatalf("expected dns-01 verifier to be registered")
 	}
 
-	// enroll-01 / endorse-01 TPM attestation challenges.
-	m = buildChallengeMap(config.ACMEChallengesConfig{Enroll01: true, Endorse01: true}, config.ACMEResilienceConfig{}, nil)
-	if _, ok := m[common.ChallengeTypeEnroll01]; !ok {
-		t.Fatalf("expected enroll-01 verifier to be registered")
+	// The attestation challenges register as attesting verifiers, never in
+	// the plain verifier map: a plain function cannot report the identity the
+	// device attested (go-xkms#828).
+	m, attesting := buildChallengeMap(config.ACMEChallengesConfig{Enroll01: true, Endorse01: true, DeviceAttest01: true}, config.ACMEResilienceConfig{}, nil, testDeviceAttestVerifier(t))
+	for _, challengeType := range []string{common.ChallengeTypeEnroll01, common.ChallengeTypeEndorse01, common.ChallengeTypeDeviceAttest01} {
+		if _, ok := attesting[challengeType]; !ok {
+			t.Fatalf("expected %s attesting verifier to be registered", challengeType)
+		}
+		if _, ok := m[challengeType]; ok {
+			t.Fatalf("%s must not be registered as a plain verifier function", challengeType)
+		}
 	}
-	if _, ok := m[common.ChallengeTypeEndorse01]; !ok {
-		t.Fatalf("expected endorse-01 verifier to be registered")
+	if len(m) != 0 {
+		t.Fatalf("expected no plain verifiers when only attestation enabled, got %d", len(m))
 	}
-	if _, ok := m[common.ChallengeTypeHTTP01]; ok {
-		t.Fatalf("expected http-01 verifier to be absent when only attestation enabled")
+
+	// Only the enabled attestation challenges register.
+	_, attesting = buildChallengeMap(config.ACMEChallengesConfig{HTTP01: true, Enroll01: true}, config.ACMEResilienceConfig{}, nil, nil)
+	if _, ok := attesting[common.ChallengeTypeEnroll01]; !ok || len(attesting) != 1 {
+		t.Fatalf("expected only enroll-01 attesting verifier, got %d", len(attesting))
 	}
 
 	// The enroll-01 verifier rejects a CA that does not implement the TCG
 	// verification surface (a nil/placeholder CA fails the type assertion).
-	verify := m[common.ChallengeTypeEnroll01]
-	if err := verify(nil, nil, "device", "8080", "tok", "ka"); !errors.Is(err, acmesdk.ErrACMEEnrollCAUnsupported) {
+	_, err := attesting[common.ChallengeTypeEnroll01].VerifyAttested(nil, nil, common.AttestationChallenge{
+		IdentifierType: common.AuthzTypePermanentIdentifier, IdentifierValue: "device", DialTarget: "device",
+		Port: "8080", Token: "tok", KeyAuthorization: "ka",
+	})
+	if !errors.Is(err, acmesdk.ErrACMEEnrollCAUnsupported) {
 		t.Fatalf("enroll-01 with unsupported CA = %v, want ErrACMEEnrollCAUnsupported", err)
 	}
 }
@@ -210,14 +223,14 @@ func TestBuildChallengeMap_AllowPrivateTargets(t *testing.T) {
 		t.Fatalf("split %s: %v", ts.URL, err)
 	}
 
-	refusing := buildChallengeMap(config.ACMEChallengesConfig{HTTP01: true}, config.ACMEResilienceConfig{}, nil)
+	refusing, _ := buildChallengeMap(config.ACMEChallengesConfig{HTTP01: true}, config.ACMEResilienceConfig{}, nil, nil)
 	err = refusing[common.ChallengeTypeHTTP01](nil, nil, host, port, "tok", keyAuth)
 	var verr *validation.Error
 	if !errors.As(err, &verr) || verr.Kind != validation.KindTargetRefused {
 		t.Fatalf("default http-01 verifier against loopback = %v, want a KindTargetRefused *validation.Error", err)
 	}
 
-	allowing := buildChallengeMap(config.ACMEChallengesConfig{HTTP01: true, AllowPrivateTargets: true}, config.ACMEResilienceConfig{}, nil)
+	allowing, _ := buildChallengeMap(config.ACMEChallengesConfig{HTTP01: true, AllowPrivateTargets: true}, config.ACMEResilienceConfig{}, nil, nil)
 	if err := allowing[common.ChallengeTypeHTTP01](nil, nil, host, port, "tok", keyAuth); err != nil {
 		t.Fatalf("http-01 verifier with allow_private_targets = %v, want nil", err)
 	}
@@ -265,10 +278,11 @@ func TestBuildChallengeMap_WrapsVerifiersWithBreaker(t *testing.T) {
 		DNS01:  config.ACMECircuitBreakerConfig{MaxFailures: 1, ResetTimeoutSeconds: 3600},
 	}
 
-	m := buildChallengeMap(
+	m, _ := buildChallengeMap(
 		config.ACMEChallengesConfig{HTTP01: true, DNS01: true, AllowPrivateTargets: true},
 		resilience,
 		breakers,
+		nil,
 	)
 
 	// http01.Verify against a target nothing listens on returns a connection
@@ -324,10 +338,11 @@ func TestBuildChallengeMap_BreakerIsolatedPerTarget(t *testing.T) {
 	resilience := config.ACMEResilienceConfig{
 		HTTP01: config.ACMECircuitBreakerConfig{MaxFailures: 1, ResetTimeoutSeconds: 3600},
 	}
-	m := buildChallengeMap(
+	m, _ := buildChallengeMap(
 		config.ACMEChallengesConfig{HTTP01: true, AllowPrivateTargets: true},
 		resilience,
 		breakers,
+		nil,
 	)
 	verify := m[common.ChallengeTypeHTTP01]
 

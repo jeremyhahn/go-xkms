@@ -184,6 +184,9 @@ func (s *simpleTPM) ProvisionIAKCert(cert *x509.Certificate) error {
 	return nil
 }
 
+// DeviceIdentity implements TPMModule with the fixed test identity.
+func (s *simpleTPM) DeviceIdentity() (string, error) { return testDeviceIdentity, nil }
+
 func (s *simpleTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	return newTestAttestedKey(keyAuth)
 }
@@ -2179,3 +2182,6 @@ func newMemoryStorage(t *testing.T) xkmssdk.StorageBackend {
 	require.NoError(t, err)
 	return backend
 }
+
+// testDeviceIdentity is the identity the test TPM doubles attest under.
+const testDeviceIdentity = "test-device-identity"

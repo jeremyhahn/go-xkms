@@ -119,9 +119,11 @@ use `errors.Is`.
 `device-attest-01` with the `dice` format is two steps, and both are required:
 
 ```go
-// At the challenge: the device's evidence, verified and kept.
-verified, err := deviceattest01.VerifyAttestation(
-    resolver, ca, host, port, challenge.Token, keyAuthorization)
+// At the challenge: the device's evidence, verified and kept. payload is the
+// body the client POSTed to the challenge URL, {"attObj": base64url(CBOR)};
+// nothing is fetched from the device. verifier is the server's trust policy,
+// e.g. a deviceattest01.TrustAnchorVerifier over the configured DICE roots.
+verified, err := deviceattest01.VerifyAttestation(verifier, payload, keyAuthorization)
 
 // At finalization: the key the CA is about to certify.
 if err := verified.BindCSRKey(csr); err != nil {

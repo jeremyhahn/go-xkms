@@ -132,7 +132,10 @@ func TCGDeviceIdentityFromEKCertificate(
 		}
 	}
 
-	digest := sha256.Sum256(ekCert.Raw)
+	permanentIdentifier, err := EKCertificatePermanentIdentifier(ekCert)
+	if err != nil {
+		return TCGDeviceIdentity{}, err
+	}
 
 	return TCGDeviceIdentity{
 		HardwareSerialNumber: strings.Join([]string{
@@ -140,8 +143,29 @@ func TCGDeviceIdentityFromEKCertificate(
 			hex.EncodeToString(ekCert.AuthorityKeyId),
 			hex.EncodeToString(ekCert.SerialNumber.Bytes()),
 		}, ":"),
-		PermanentIdentifier: hex.EncodeToString(digest[:]),
+		PermanentIdentifier: permanentIdentifier,
 	}, nil
+}
+
+// EKCertificatePermanentIdentifier returns the TCG DevID v1 r12 section 8.1 permanent
+// identifier of the TPM an endorsement key certificate belongs to: the
+// lowercase hex SHA-256 digest of the certificate's DER encoding.
+//
+// It is the one derivation both the issuer of an IAK/IDevID
+// (TCGDeviceIdentityFromEKCertificate) and a server that must recognise the TPM
+// again later (the enroll-01 activation record) use, so the two cannot name the
+// same TPM differently. It requires only a certificate: unlike
+// TCGDeviceIdentityFromEKCertificate it does not need a manufacturer code or an
+// authority key identifier, which it does not read.
+func EKCertificatePermanentIdentifier(ekCert *x509.Certificate) (string, error) {
+	if ekCert == nil || len(ekCert.Raw) == 0 {
+		return "", &errs.Detail{
+			Err:    ErrTCGMissingEKCert,
+			Detail: "the permanent identifier is derived from the endorsement key certificate",
+		}
+	}
+	digest := sha256.Sum256(ekCert.Raw)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // TCGDeviceIdentityFromEKPublicKey derives both §8.1 names for a TPM that has
