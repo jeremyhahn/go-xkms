@@ -1645,6 +1645,47 @@ type EnrollDeviceResponse struct {
 	PlainSecret     []byte `json:"plain_secret"`
 }
 
+// IssueLAKCertificateRequest contains the TPM2_Certify evidence and TPM
+// device attributes for issuing a Local Attestation Key certificate in the
+// WebAuthn Level 2 §8.3.1 profile (go-xkms#715). The LAK's certificate has
+// no Subject (§8.3.1 requirement 2), so unlike every other TCG issuance
+// request here this carries no CommonName/Organization.
+type IssueLAKCertificateRequest struct {
+	// TPMManufacturer, TPMModel and TPMFirmwareVersion identify the TPM chip
+	// itself; they populate the certificate's critical subjectAltName
+	// directoryName (§8.3.1 requirement 3).
+	TPMManufacturer    string `json:"tpm_manufacturer"`
+	TPMModel           string `json:"tpm_model"`
+	TPMFirmwareVersion string `json:"tpm_firmware_version"`
+	// IAKCertificateDER is the device's own IAK certificate (DER), issued by
+	// a prior SignTCGCSR/EnrollDevice call. The evidence below is verified
+	// against it.
+	IAKCertificateDER []byte `json:"iak_certificate_der"`
+	// CertifyInfo and Signature are the raw TPM2_Certify evidence: the
+	// TPMS_ATTEST the IAK certified the LAK's public area with, and the
+	// IAK's ordinary X.509-form signature over it (ASN.1 DER for ECDSA, the
+	// raw big-endian value for RSA -- not a marshalled TPMT_SIGNATURE).
+	CertifyInfo []byte `json:"certify_info"`
+	Signature   []byte `json:"signature"`
+	// SignatureAlgorithm is the IAK's signature algorithm, an
+	// x509.SignatureAlgorithm value.
+	SignatureAlgorithm int `json:"signature_algorithm"`
+	// LAKPublicArea is the LAK's marshalled TPMT_PUBLIC: the subject
+	// TPM2_Certify names.
+	LAKPublicArea []byte `json:"lak_public_area"`
+	// Nonce is the qualifying data the evidence must echo.
+	Nonce []byte `json:"nonce"`
+	// TenantID optionally scopes this operation to a specific tenant.
+	TenantID string `json:"tenant_id,omitempty"`
+}
+
+// IssueLAKCertificateResponse contains the issued LAK certificate.
+type IssueLAKCertificateResponse struct {
+	CertificateDER []byte `json:"certificate_der"`
+	CertificatePEM []byte `json:"certificate_pem"`
+	SerialNumber   string `json:"serial_number"`
+}
+
 // PIV Operations
 
 // ListPIVSlotsRequest contains parameters for listing PIV slots.

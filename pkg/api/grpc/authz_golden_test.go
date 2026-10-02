@@ -115,6 +115,7 @@ var goldenRPCPermissions = map[string]string{
 	"IssueAKCertificate":          "certs:generate",
 	"IssueCertificate":            "certs:generate",
 	"IssueEKCertificate":          "certs:generate",
+	"IssueLAKCertificate":         "certs:generate",
 	"ListBackends":                "backends:list",
 	"ListCerts":                   "certs:list",
 	"ListCustodianGroups":         "ceremony:status",

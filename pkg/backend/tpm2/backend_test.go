@@ -347,6 +347,20 @@ func (m *mockTPM) DeleteIDevIDCertificate() error                   { return nil
 func (m *mockTPM) IAKCertificate() (*x509.Certificate, error)       { return nil, nil }
 func (m *mockTPM) ProvisionIAKCert(cert *x509.Certificate) error    { return nil }
 func (m *mockTPM) DeleteIAKCertificate() error                      { return nil }
+func (m *mockTPM) CreateLAK(ownerAuth types.Password, backend store.KeyBackend, overwrite bool) (*types.KeyAttributes, error) {
+	return nil, nil
+}
+func (m *mockTPM) LAKAttributes() (*types.KeyAttributes, error) { return nil, nil }
+func (m *mockTPM) LAK() (crypto.PublicKey, error)               { return nil, nil }
+func (m *mockTPM) CertifyLAK(nonce []byte, backend store.KeyBackend) (*pkgtpm2.CertifyResult, error) {
+	return nil, nil
+}
+func (m *mockTPM) CertifyKeyWithLAK(keyAttrs *types.KeyAttributes, nonce []byte, backend store.KeyBackend) (*pkgtpm2.CertifyResult, error) {
+	return nil, nil
+}
+func (m *mockTPM) LAKCertificate() (*x509.Certificate, error)    { return nil, nil }
+func (m *mockTPM) ProvisionLAKCert(cert *x509.Certificate) error { return nil }
+func (m *mockTPM) DeleteLAKCertificate() error                   { return nil }
 func (m *mockTPM) VerifyTCGCSR(csr *pkgtpm2.TCG_CSR_IDEVID, sigAlgo x509.SignatureAlgorithm) (*types.KeyAttributes, *pkgtpm2.UNPACKED_TCG_CSR_IDEVID, error) {
 	return nil, nil, nil
 }

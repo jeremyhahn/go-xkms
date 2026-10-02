@@ -983,4 +983,22 @@ type TCGCA interface {
 	//
 	// Thread-safe: Yes
 	EndorsementKeyCertificate(cn string) (*x509.Certificate, error)
+
+	// IssueLAKCertificate issues a Local Attestation Key certificate in the
+	// WebAuthn Level 2 §8.3.1 "TPM Attestation Statement Certificate
+	// Requirements" profile, after verifying the LAK's TPM2_Certify evidence
+	// against the device's IAK certificate (go-xkms#715).
+	//
+	// Returns ErrNotInitialized if the CA has not been initialized.
+	// Returns ErrTCGLAKEvidenceRequired if evidence or its IAK certificate is
+	// nil.
+	// Returns ErrTCGLAKDeviceAttributesRequired if request is missing the TPM
+	// manufacturer, model or firmware version.
+	// Returns ErrTCGIAKUntrusted if the IAK certificate does not chain to the
+	// signing certificate or is expired.
+	// Returns ErrTCGCSRVerificationFailed if the TPM2_Certify evidence does
+	// not verify.
+	//
+	// Thread-safe: Yes
+	IssueLAKCertificate(ctx context.Context, request *CertificateRequest, evidence *LAKCertificationEvidence) (*x509.Certificate, error)
 }

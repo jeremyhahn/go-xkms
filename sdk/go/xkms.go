@@ -411,14 +411,16 @@ type (
 	IsRevokedResponse         = transport.IsRevokedResponse
 
 	// TCG CA Operations
-	IssueEKCertificateRequest  = transport.IssueEKCertificateRequest
-	IssueEKCertificateResponse = transport.IssueEKCertificateResponse
-	IssueAKCertificateRequest  = transport.IssueAKCertificateRequest
-	IssueAKCertificateResponse = transport.IssueAKCertificateResponse
-	SignTCGCSRRequest          = transport.SignTCGCSRRequest
-	SignTCGCSRResponse         = transport.SignTCGCSRResponse
-	EnrollDeviceRequest        = transport.EnrollDeviceRequest
-	EnrollDeviceResponse       = transport.EnrollDeviceResponse
+	IssueEKCertificateRequest   = transport.IssueEKCertificateRequest
+	IssueEKCertificateResponse  = transport.IssueEKCertificateResponse
+	IssueAKCertificateRequest   = transport.IssueAKCertificateRequest
+	IssueAKCertificateResponse  = transport.IssueAKCertificateResponse
+	SignTCGCSRRequest           = transport.SignTCGCSRRequest
+	SignTCGCSRResponse          = transport.SignTCGCSRResponse
+	EnrollDeviceRequest         = transport.EnrollDeviceRequest
+	EnrollDeviceResponse        = transport.EnrollDeviceResponse
+	IssueLAKCertificateRequest  = transport.IssueLAKCertificateRequest
+	IssueLAKCertificateResponse = transport.IssueLAKCertificateResponse
 
 	// PIV Operations
 	ListPIVSlotsRequest         = transport.ListPIVSlotsRequest

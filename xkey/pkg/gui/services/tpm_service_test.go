@@ -460,6 +460,28 @@ func (m *mockTPM) DeleteIDevIDCertificate() error {
 func (m *mockTPM) DeleteIAKCertificate() error {
 	panic("mockTPM: DeleteIAKCertificate not expected")
 }
+func (m *mockTPM) CreateLAK(_ xkms.Password, _ xkms.TPMKeyBackend, _ bool) (*xkms.KeyAttributes, error) {
+	panic("mockTPM: CreateLAK not expected")
+}
+func (m *mockTPM) LAKAttributes() (*xkms.KeyAttributes, error) {
+	panic("mockTPM: LAKAttributes not expected")
+}
+func (m *mockTPM) LAK() (crypto.PublicKey, error) { panic("mockTPM: LAK not expected") }
+func (m *mockTPM) CertifyLAK(_ []byte, _ xkms.TPMKeyBackend) (*xkms.CertifyResult, error) {
+	panic("mockTPM: CertifyLAK not expected")
+}
+func (m *mockTPM) CertifyKeyWithLAK(_ *xkms.KeyAttributes, _ []byte, _ xkms.TPMKeyBackend) (*xkms.CertifyResult, error) {
+	panic("mockTPM: CertifyKeyWithLAK not expected")
+}
+func (m *mockTPM) LAKCertificate() (*x509.Certificate, error) {
+	panic("mockTPM: LAKCertificate not expected")
+}
+func (m *mockTPM) ProvisionLAKCert(_ *x509.Certificate) error {
+	panic("mockTPM: ProvisionLAKCert not expected")
+}
+func (m *mockTPM) DeleteLAKCertificate() error {
+	panic("mockTPM: DeleteLAKCertificate not expected")
+}
 func (m *mockTPM) VerifyTCGCSR(_ *xkms.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*xkms.KeyAttributes, *xkms.UNPACKED_TCG_CSR_IDEVID, error) {
 	panic("mockTPM: VerifyTCGCSR not expected")
 }

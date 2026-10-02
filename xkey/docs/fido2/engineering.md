@@ -1,6 +1,6 @@
 # FIDO2 Daemon and GUI Device Host — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `fido2` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `fido2` · Module: `go-xkms/xkey` · Last verified: 2026-09-30
 
 This file has two halves. The first documents the exported surface this
 folder actually owns: the daemon and GUI process composition. The second is a
@@ -444,6 +444,27 @@ express a plaintext slice the caller does not control (go-xkms#291,
 go-xkms#387). Because protected-buffer borrows must not nest, wrapping one
 protected key under another goes through `wrapFromProtected`, which releases
 the wrapping-key borrow before the plaintext borrow is taken.
+
+### WebAuthn Level 2 §8.3 "tpm" attestation attests with the LAK, not the IAK (go-xkms#715)
+
+`keybackend.TPM2AttestingBackend` (`xkey/pkg/authenticator/keybackend/tpm_attestation.go`)
+produces the "tpm" attestation statement for a TPM2-backed credential by
+certifying the credential's key with `TPM2_Certify`. The attesting key is the
+device's Local Attestation Key (LAK), not its Initial Attestation Key (IAK):
+`GenerateAttestationKey`/`AttestationCertificateChain` load `tpm.LAKAttributes`/
+`LAK`/`LAKCertificate`, and `GetAttestationStatement` certifies the credential
+key with `tpm.CertifyKeyWithLAK`. This is a deliberate split from the IAK, not
+an oversight — TCG DevID v1 r12/v1.10 r9 §8 requires the IAK certificate's
+Subject to be a unique X.500 DN, while WebAuthn §8.3.1 requires the "tpm"
+format's AIK certificate Subject to be empty, and go-webauthn enforces this
+literally. The LAK is created once per device (not per credential) and
+certified by the IAK via `TPM2_Certify`
+(`pkg/tpm2.(*TPM2).CreateLAK`/`CertifyLAK`), then issued a certificate in the
+WebAuthn §8.3.1 profile by `ca.IssueLAKCertificate`
+(see [`../../../docs/certificate-authority/engineering.md`](../../../docs/certificate-authority/engineering.md)
+and [`../../../docs/tpm2/engineering.md`](../../../docs/tpm2/engineering.md)
+for the CA- and TPM-side halves). `ErrTPMLAKUnavailable` is returned when no
+LAK has been provisioned; there is no fallback to the IAK.
 
 ## Error semantics
 

@@ -242,6 +242,21 @@ type TrustedPlatformModule interface {
 	ProvisionIAKCert(cert *x509.Certificate) error
 	DeleteIAKCertificate() error
 
+	// Local Attestation Key (go-xkms#715): a Restricted signing key created
+	// as a child of the Platform SRK and certified by the IAK via
+	// TPM2_Certify (TCG TPM 2.0 Keys for Device Identity and Attestation
+	// v1.10 r9 §5.3/§6.3). xkey's TPM-backed WebAuthn/FIDO2 authenticator
+	// attests with the LAK and its WebAuthn Level 2 §8.3.1 profile
+	// certificate; the IAK's own TCG DevID certificate is unaffected.
+	CreateLAK(ownerAuth types.Password, backend store.KeyBackend, overwrite bool) (*types.KeyAttributes, error)
+	LAKAttributes() (*types.KeyAttributes, error)
+	LAK() (crypto.PublicKey, error)
+	CertifyLAK(nonce []byte, backend store.KeyBackend) (*CertifyResult, error)
+	CertifyKeyWithLAK(keyAttrs *types.KeyAttributes, nonce []byte, backend store.KeyBackend) (*CertifyResult, error)
+	LAKCertificate() (*x509.Certificate, error)
+	ProvisionLAKCert(cert *x509.Certificate) error
+	DeleteLAKCertificate() error
+
 	VerifyTCGCSR(
 		csr *TCG_CSR_IDEVID,
 		sigAlgo x509.SignatureAlgorithm) (*types.KeyAttributes, *UNPACKED_TCG_CSR_IDEVID, error)
@@ -331,6 +346,7 @@ type TPM2 struct {
 	httpClient       *http.Client
 	iakAttrs         *types.KeyAttributes
 	idevidAttrs      *types.KeyAttributes
+	lakAttrs         *types.KeyAttributes
 	logger           *slog.Logger
 	policyDigest     tpm2.TPM2BDigest
 	platformKeyStore PlatformKeyStorer
@@ -1494,7 +1510,7 @@ func (tpm *TPM2) Sign(
 	// caller's digest directly, like any other unrestricted key.
 	switch keyAttrs.KeyType {
 
-	case types.KeyTypeAttestation:
+	case types.KeyTypeAttestation, types.KeyTypeLAK:
 
 		digest, validationDigest, err := tpm.Hash(keyAttrs, digest)
 		if err != nil {

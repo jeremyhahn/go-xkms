@@ -397,6 +397,26 @@ var (
 	// trust anchors configured returns this error for every request rather
 	// than skipping the check.
 	ErrTCGEKCertUntrusted = errors.New("ca: endorsement key certificate is not chained to a trusted tpm manufacturer root")
+
+	// ErrTCGLAKEvidenceRequired indicates IssueLAKCertificate was called with
+	// no LAKCertificationEvidence, or evidence missing the IAK certificate the
+	// TPM2_Certify evidence must be verified against (go-xkms#715).
+	ErrTCGLAKEvidenceRequired = errors.New("ca: LAK certification evidence requires the IAK certificate")
+
+	// ErrTCGIAKUntrusted indicates the IAK certificate presented as part of a
+	// LAK certification request does not chain to the certificate about to
+	// sign the LAK -- this CA's own issuing certificate, or the tenant's
+	// issuer certificate in multi-tenant mode -- or is outside its validity
+	// period. TCG TPM 2.0 Keys for Device Identity and Attestation v1.10 r9
+	// §5.3/§6.3 requires the LAK's TPM2_Certify evidence to be verifiable
+	// against a trusted IAK before the Owner issues the LAK certificate.
+	ErrTCGIAKUntrusted = errors.New("ca: IAK certificate is not chained to a trusted root")
+
+	// ErrTCGLAKDeviceAttributesRequired indicates the request is missing one
+	// of the TPM manufacturer, model or firmware version attributes WebAuthn
+	// Level 2 §8.3.1 requirement 3 requires in the LAK certificate's critical
+	// subjectAltName directoryName.
+	ErrTCGLAKDeviceAttributesRequired = errors.New("ca: LAK certificate request requires the TPM manufacturer, model and firmware version")
 )
 
 // FIDO2 attestation errors indicate that a certificate signing request cannot

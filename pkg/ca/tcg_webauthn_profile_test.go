@@ -30,12 +30,15 @@ import (
 // verifier. The Subject field requirement (§8.3.1 requirement 2, "MUST be set
 // to empty") is deliberately NOT addressed here: TCG TPM 2.0 Keys for Device
 // Identity and Attestation v1.00 r12 §8 mandates the opposite ("the subject
-// field MUST contain a unique X.500 Distinguished Name"), and go-xkms's
-// certificate store is keyed by Subject.CommonName
-// (pkg/certstore.CertStore, compositeCertStore.StoreCertificate), so
-// resolving that contradiction is an architecture decision pending the
-// owner's review. These tests cover only the parts of the profile that hold
-// under every option being considered.
+// field MUST contain a unique X.500 Distinguished Name") for the IAK/AK, and
+// go-xkms's certificate store is keyed by Subject.CommonName
+// (pkg/certstore.CertStore, compositeCertStore.StoreCertificate). The owner
+// resolved that contradiction (option A): the IAK/AK certificate keeps its
+// TCG DevID Subject, as these tests assume, and a second key -- the Local
+// Attestation Key, a Restricted signing child of the Platform SRK certified
+// by the IAK via TPM2_Certify -- carries the empty-Subject WebAuthn profile
+// certificate instead. See tcg_lak.go and tcg_lak_test.go for the LAK's
+// certificate issuance and the requirement 2 (empty Subject) assertion.
 
 // oidExtendedKeyUsage and tpmBasicConstraints reproduce, byte for byte, how
 // go-webauthn@v0.17.4's "tpm" attestation format verifier

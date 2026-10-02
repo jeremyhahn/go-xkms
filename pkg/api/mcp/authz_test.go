@@ -632,10 +632,11 @@ var goldenMethodPermissions = map[string]string{
 	"xkms.ca.sign-csr":    "certs:generate",
 
 	// TCG certificate authority — pkg/api/quic/handlers_ca_tcg.go.
-	"xkms.ca.tcg.enroll":   "certs:generate",
-	"xkms.ca.tcg.issue-ak": "certs:generate",
-	"xkms.ca.tcg.issue-ek": "certs:generate",
-	"xkms.ca.tcg.sign-csr": "certs:generate",
+	"xkms.ca.tcg.enroll":    "certs:generate",
+	"xkms.ca.tcg.issue-ak":  "certs:generate",
+	"xkms.ca.tcg.issue-ek":  "certs:generate",
+	"xkms.ca.tcg.issue-lak": "certs:generate",
+	"xkms.ca.tcg.sign-csr":  "certs:generate",
 
 	// Barrier lifecycle — pkg/api/quic/handlers_barrier_pin.go,
 	// handlers_barrier_shamir.go, pkg/api/rest/server.go.

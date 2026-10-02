@@ -295,6 +295,10 @@ func (m *MockXKMSService) EnrollDevice(ctx context.Context, req *transport.Enrol
 	return nil, &mockUnsupportedError{capability: "TCG CA"}
 }
 
+func (m *MockXKMSService) IssueLAKCertificate(ctx context.Context, req *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	return nil, &mockUnsupportedError{capability: "TCG CA"}
+}
+
 // PIV operations
 
 func (m *MockXKMSService) ListPIVSlots(ctx context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {

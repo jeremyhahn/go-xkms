@@ -469,6 +469,10 @@ func (m *mockBackendsClient) EnrollDevice(ctx context.Context, req *transport.En
 	return nil, nil
 }
 
+func (m *mockBackendsClient) IssueLAKCertificate(ctx context.Context, req *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	return nil, nil
+}
+
 // PIV operations stub implementations
 func (m *mockBackendsClient) ListPIVSlots(ctx context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {
 	return nil, client.ErrNotSupported

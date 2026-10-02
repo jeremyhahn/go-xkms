@@ -72,13 +72,26 @@ func (tpm *TPM2) CreateRSA(
 		return nil, err
 	}
 
-	if keyAttrs.KeyType == types.KeyTypeEncryption {
+	switch {
+	case keyAttrs.KeyType == types.KeyTypeEncryption:
 		// A decryption key carries the decrypt attribute rather than
 		// signEncrypt, and stays unrestricted so TPM2_RSA_Decrypt may be used
 		// on it with a caller-supplied scheme.
 		spec.Sign = false
 		spec.Decrypt = true
-	} else if types.IsRSAPSS(keyAttrs.SignatureAlgorithm) {
+	case keyAttrs.KeyType == types.KeyTypeLAK:
+		// The Local Attestation Key is Restricted (go-xkms#715) and so must
+		// name a scheme rather than leave it TPM_ALG_NULL (TCG TPM 2.0
+		// Library Part 1, section 25.2.3); see the matching ECDSA case.
+		spec.Restricted = true
+		spec.Sign = true
+		if types.IsRSAPSS(keyAttrs.SignatureAlgorithm) {
+			spec.Scheme = tpm2.TPMAlgRSAPSS
+		} else {
+			spec.Scheme = tpm2.TPMAlgRSASSA
+		}
+		spec.SchemeHash = tpm.algID
+	case types.IsRSAPSS(keyAttrs.SignatureAlgorithm):
 		spec.Scheme = tpm2.TPMAlgRSAPSS
 		spec.SchemeHash = tpm.algID
 	}

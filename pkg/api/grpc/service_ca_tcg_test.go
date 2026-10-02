@@ -66,6 +66,16 @@ func (m *mockCAEnrollDevice) EnrollDevice(_ context.Context, _ *transport.Enroll
 	return m.resp, m.err
 }
 
+// mockCAIssueLAK implements grpcCAMethodIssueLAK.
+type mockCAIssueLAK struct {
+	resp *transport.IssueLAKCertificateResponse
+	err  error
+}
+
+func (m *mockCAIssueLAK) IssueLAKCertificate(_ context.Context, _ *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	return m.resp, m.err
+}
+
 func TestIssueEKCertificate(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 
@@ -398,5 +408,113 @@ func TestEnrollDevice(t *testing.T) {
 		assert.Equal(t, []byte("cred-blob"), resp.CredentialBlob)
 		assert.Equal(t, []byte("enc-secret"), resp.EncryptedSecret)
 		assert.Equal(t, []byte("plain-secret"), resp.PlainSecret)
+	})
+}
+
+func TestIssueLAKCertificate(t *testing.T) {
+	svc := NewService(nil, nil, nil)
+
+	validReq := func() *pb.IssueLAKCertificateRequest {
+		return &pb.IssueLAKCertificateRequest{
+			TpmManufacturer:    "IBM",
+			TpmModel:           "SW TPM",
+			TpmFirmwareVersion: "1.2.3",
+			IakCertificateDer:  []byte("iak-cert"),
+			CertifyInfo:        []byte("certify-info"),
+			Signature:          []byte("signature"),
+			LakPublicArea:      []byte("lak-pub"),
+		}
+	}
+
+	t.Run("returns error when CA not configured", func(t *testing.T) {
+		svc.SetCA(nil)
+
+		_, err := svc.IssueLAKCertificate(context.Background(), validReq())
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.Unavailable, st.Code())
+	})
+
+	t.Run("returns error when TPM device info is missing", func(t *testing.T) {
+		svc.SetCA(&mockCAIssueLAK{})
+
+		req := validReq()
+		req.TpmManufacturer = ""
+		_, err := svc.IssueLAKCertificate(context.Background(), req)
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.InvalidArgument, st.Code())
+	})
+
+	t.Run("returns error when IAK certificate is missing", func(t *testing.T) {
+		svc.SetCA(&mockCAIssueLAK{})
+
+		req := validReq()
+		req.IakCertificateDer = nil
+		_, err := svc.IssueLAKCertificate(context.Background(), req)
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.InvalidArgument, st.Code())
+	})
+
+	t.Run("returns error when certify evidence is missing", func(t *testing.T) {
+		svc.SetCA(&mockCAIssueLAK{})
+
+		req := validReq()
+		req.CertifyInfo = nil
+		_, err := svc.IssueLAKCertificate(context.Background(), req)
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.InvalidArgument, st.Code())
+	})
+
+	t.Run("returns error when LAK public area is missing", func(t *testing.T) {
+		svc.SetCA(&mockCAIssueLAK{})
+
+		req := validReq()
+		req.LakPublicArea = nil
+		_, err := svc.IssueLAKCertificate(context.Background(), req)
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.InvalidArgument, st.Code())
+	})
+
+	t.Run("returns error when CA does not support TCG", func(t *testing.T) {
+		svc.SetCA("not-tcg-ca")
+
+		_, err := svc.IssueLAKCertificate(context.Background(), validReq())
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.Unavailable, st.Code())
+	})
+
+	t.Run("returns error when issuance fails", func(t *testing.T) {
+		svc.SetCA(&mockCAIssueLAK{err: errors.New("lak issue failed")})
+
+		_, err := svc.IssueLAKCertificate(context.Background(), validReq())
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.Internal, st.Code())
+	})
+
+	t.Run("returns certificate on success", func(t *testing.T) {
+		svc.SetCA(&mockCAIssueLAK{resp: &transport.IssueLAKCertificateResponse{
+			CertificateDER: []byte("der"),
+			CertificatePEM: []byte("pem"),
+			SerialNumber:   "lak123",
+		}})
+
+		resp, err := svc.IssueLAKCertificate(context.Background(), validReq())
+		require.NoError(t, err)
+		assert.Equal(t, []byte("der"), resp.CertificateDer)
+		assert.Equal(t, []byte("pem"), resp.CertificatePem)
+		assert.Equal(t, "lak123", resp.SerialNumber)
 	})
 }

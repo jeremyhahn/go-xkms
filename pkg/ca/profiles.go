@@ -78,6 +78,7 @@ func (r *defaultProfileRegistry) registerBuiltinProfiles() {
 		NewTCGAttestationKeyProfile(),
 		NewTCGInitialAttestationKeyProfile(),
 		NewTCGDeviceIdentityProfile(),
+		NewTCGLocalAttestationKeyProfile(),
 		NewFIDO2AttestationProfile(),
 		NewDICEDeviceIdentityProfile(),
 		NewIPsecVTEPProfile(),
@@ -506,6 +507,7 @@ const (
 	ProfileNameTCGAttestationKey = "tcg-ak"
 	ProfileNameTCGInitialAK      = "tcg-iak"
 	ProfileNameTCGDeviceIdentity = "tcg-idevid"
+	ProfileNameTCGLocalAK        = "tcg-lak"
 )
 
 // tcgExtKeyUsage is the extended key usage shared by every TCG credential this
@@ -680,6 +682,41 @@ func NewTCGDeviceIdentityProfile() ProfileProvider {
 		unknownExtKeyUsage: tcgIdentityExtKeyUsage(),
 		defaultValidity:    tcgValidityDays,
 		policies:           tcgIdentityPolicies(),
+	}
+}
+
+// NewTCGLocalAttestationKeyProfile creates the profile for a Local
+// Attestation Key (LAK) certificate: the WebAuthn Level 2 §8.3.1 "TPM
+// Attestation Statement Certificate Requirements" profile go-xkms#715 issues
+// over a LAK whose TPM2_Certify evidence the IAK has signed.
+//
+// It is deliberately narrower than NewTCGAttestationKeyProfile:
+//
+//   - Extended key usage is tcg-kp-AIKCertificate (2.23.133.8.3) alone, the
+//     one OID §8.3.1 requirement 4 requires. The TLS ClientAuth/ServerAuth
+//     purposes tcgExtKeyUsage adds for the IAK and IDevID describe a TCG
+//     DevID credential's role in authenticating TLS connections (TCG TPM 2.0
+//     Keys for Device Identity and Attestation v1.00 r12 §8.1); a LAK
+//     authenticates nothing but its own WebAuthn attestations and asserting
+//     TLS purposes it is never used for would be false.
+//   - No certificate policies: tcg-cap-verifiedTPMResidency and
+//     -verifiedTPMRestricted (tcgAttestationPolicies) are TCG DevID
+//     assertions a WebAuthn relying party's "tpm" format verifier does not
+//     read, and WebAuthn §8.3.1 names no certificate policy requirement of
+//     its own.
+//
+// BasicConstraintsValid is asserted with IsCA left false (requirement 5). The
+// Subject is the caller's to leave empty; subjectAltName criticality follows
+// automatically from an empty Subject (BuildSubjectAltName), which is what
+// requirement 2 ("Subject field MUST be empty") and requirement 3's critical
+// TCG directoryName both need.
+func NewTCGLocalAttestationKeyProfile() ProfileProvider {
+	return &baseProfile{
+		name:                  ProfileNameTCGLocalAK,
+		keyUsage:              x509.KeyUsageDigitalSignature,
+		unknownExtKeyUsage:    []asn1.ObjectIdentifier{OIDTCGKpAIKCertificate},
+		defaultValidity:       tcgValidityDays,
+		basicConstraintsValid: true,
 	}
 }
 

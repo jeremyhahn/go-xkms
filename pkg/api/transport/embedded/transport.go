@@ -601,6 +601,15 @@ func (t *Transport) EnrollDevice(ctx context.Context, req *transport.EnrollDevic
 	return t.service.EnrollDevice(ctx, req)
 }
 
+// IssueLAKCertificate issues a Local Attestation Key certificate in the
+// WebAuthn Level 2 §8.3.1 profile (go-xkms#715).
+func (t *Transport) IssueLAKCertificate(ctx context.Context, req *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.IssueLAKCertificate(ctx, req)
+}
+
 // ListPIVSlots returns the status of all PIV slots in the specified backend.
 func (t *Transport) ListPIVSlots(ctx context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {
 	if !t.connected {

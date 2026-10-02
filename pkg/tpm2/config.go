@@ -141,6 +141,21 @@ var (
 			RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 		},
+		// LAK (go-xkms#715): a child of the Platform SRK, so it defaults to
+		// ECDSA P-256 -- the lighter-weight signing algorithm appropriate for
+		// a key created and certified once per device, not a primary EK/IAK
+		// derivation. Handle 0x81020002 is the next free slot after IAK's
+		// 0x81020001 and IDevID's 0x81020000.
+		LAK: &LAKConfig{
+			Debug:  false,
+			Hash:   crypto.SHA256.String(),
+			Handle: 0x81020002,
+			ECCConfig: &store.ECCConfig{
+				Curve: "P-256",
+			},
+			KeyAlgorithm:       x509.ECDSA.String(),
+			SignatureAlgorithm: x509.ECDSAWithSHA256.String(),
+		},
 		PlatformSRK: &PlatformSRKConfig{
 			SRKHandle:      0x81000002,
 			PlatformPolicy: true,
@@ -193,12 +208,23 @@ type Config struct {
 	//   PCR 9: Kernel command line
 	//   PCR 10: Linux IMA (file integrity measurements)
 	// To customize, specify an explicit list, e.g., [0, 7, 9, 10, 14]
-	GoldenPCRs                   []uint             `yaml:"golden-pcrs" json:"golden_pcrs" mapstructure:"golden-pcrs"`
-	Hash                         string             `yaml:"hash" json:"hash" mapstructure:"hash"`
-	IAK                          *IAKConfig         `yaml:"iak" json:"iak" mapstructure:"iak"`
-	IdentityProvisioningStrategy string             `yaml:"identity-provisioning" json:"identity_provisioning" mapstructure:"identity-provisioning"`
-	IDevID                       *IDevIDConfig      `yaml:"idevid" json:"idevid" mapstructure:"idevid"`
-	PlatformSRK                  *PlatformSRKConfig `yaml:"platform-srk" json:"platform_srk" mapstructure:"platform-srk"`
+	GoldenPCRs                   []uint        `yaml:"golden-pcrs" json:"golden_pcrs" mapstructure:"golden-pcrs"`
+	Hash                         string        `yaml:"hash" json:"hash" mapstructure:"hash"`
+	IAK                          *IAKConfig    `yaml:"iak" json:"iak" mapstructure:"iak"`
+	IdentityProvisioningStrategy string        `yaml:"identity-provisioning" json:"identity_provisioning" mapstructure:"identity-provisioning"`
+	IDevID                       *IDevIDConfig `yaml:"idevid" json:"idevid" mapstructure:"idevid"`
+	// LAK configures the Local Attestation Key (go-xkms#715): a Restricted
+	// signing key created as a child of the Platform SRK and certified by the
+	// IAK via TPM2_Certify, per TCG TPM 2.0 Keys for Device Identity and
+	// Attestation v1.10 r9 §5.3/§6.3. Unlike IAK, which stays TCG DevID shaped
+	// (a unique X.500 Subject), the LAK's certificate is issued in the
+	// WebAuthn Level 2 §8.3.1 "tpm" attestation profile: an empty Subject, a
+	// critical TCG subjectAltName, and the tcg-kp-AIKCertificate EKU. xkey's
+	// TPM-backed WebAuthn/FIDO2 authenticator attests with the LAK, never the
+	// IAK, so a strict relying party's empty-Subject requirement is met
+	// without contradicting TCG DevID's non-empty IAK Subject requirement.
+	LAK         *LAKConfig         `yaml:"lak" json:"lak" mapstructure:"lak"`
+	PlatformSRK *PlatformSRKConfig `yaml:"platform-srk" json:"platform_srk" mapstructure:"platform-srk"`
 	// LockoutAuth is the TPM Lockout hierarchy authorization value. Decodes
 	// from, and re-encodes to, a plain reference string in YAML/JSON; the
 	// resolved plaintext is sealed into this field's own memguard enclave
@@ -680,6 +706,97 @@ func IAKAttributesFromConfig(
 			HashAlg:       tpmHashAlg,
 			Hierarchy:     tpm2.TPMRHEndorsement,
 			HierarchyAuth: soPIN,
+		},
+	}
+
+	if config.ECCConfig != nil {
+		curve, err := types.ParseCurve(config.ECCConfig.Curve)
+		if err != nil {
+			return nil, err
+		}
+		attrs.ECCAttributes = &types.ECCAttributes{
+			Curve: curve,
+		}
+	}
+
+	if config.RSAConfig != nil {
+		attrs.RSAAttributes = &types.RSAAttributes{
+			KeySize: config.RSAConfig.KeySize,
+		}
+	}
+
+	return attrs, nil
+}
+
+// LAKAttributesFromConfig creates Local Attestation Key attributes from
+// configuration, mirroring IAKAttributesFromConfig for the one way the two
+// keys differ: the LAK is an ordinary child key of the Platform SRK, not a
+// primary key of the Endorsement hierarchy, so its Hierarchy is
+// TPM_RH_OWNER -- the hierarchy TPM2_EvictControl authorizes under
+// (go-xkms#715) -- and ownerAuth is the Owner hierarchy authorization (the
+// Security Officer PIN when one has been set, empty otherwise), never the
+// Endorsement hierarchy's.
+func LAKAttributesFromConfig(
+	ownerAuth types.Password,
+	config *LAKConfig) (*types.KeyAttributes, error) {
+
+	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
+	if err != nil {
+		switch {
+		case config.RSAConfig != nil:
+			algorithm = x509.RSA
+		case config.ECCConfig != nil:
+			algorithm = x509.ECDSA
+		default:
+			return nil, err
+		}
+	}
+
+	hash := ParseHash(config.Hash)
+
+	sigAlgo, err := types.ParseSignatureAlgorithm(config.SignatureAlgorithm)
+	if err != nil {
+		return nil, err
+	}
+
+	tpmHashAlg, err := ParseHashAlgFromString(config.Hash)
+	if err != nil {
+		return nil, ErrInvalidHashFunction
+	}
+
+	passwordBytes, err := types.SecretValueBytes(config.Password)
+	if err != nil {
+		return nil, err
+	}
+	// NewPassword copies into its own enclave and leaves the source alone.
+	defer secure.Wipe(passwordBytes)
+	password, err := types.NewPassword(passwordBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	cn := config.CN
+	if cn == "" {
+		cn = "lak"
+	}
+
+	attrs := &types.KeyAttributes{
+		CN:                 cn,
+		Debug:              config.Debug,
+		Hash:               hash,
+		KeyAlgorithm:       algorithm,
+		KeyType:            types.KeyTypeLAK,
+		Password:           password,
+		TPMPolicy:          platformPolicyName(config.PlatformPolicy),
+		SignatureAlgorithm: sigAlgo,
+		StoreType:          types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
+			CertHandle:    tpm2.TPMHandle(config.CertHandle),
+			Handle:        tpm2.TPMHandle(config.Handle),
+			HandleType:    tpm2.TPMHTPersistent,
+			HashAlg:       tpmHashAlg,
+			Hierarchy:     tpm2.TPMRHOwner,
+			HierarchyAuth: ownerAuth,
 		},
 	}
 

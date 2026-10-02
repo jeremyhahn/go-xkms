@@ -83,7 +83,13 @@ func (cs *compositeCertStore) StoreCertificate(cert *x509.Certificate) error {
 		return ErrCertInvalid
 	}
 
-	if cert.Subject.CommonName == "" {
+	// A certificate with a non-empty Subject is keyed by its Common Name, as
+	// always. One with an empty Subject -- the WebAuthn Level 2 §8.3.1
+	// profile Local Attestation Key certificate go-xkms#715 introduced is the
+	// first example -- is keyed by its SPKI SHA-256 thumbprint instead of
+	// being refused outright: see CertificateKey.
+	key := CertificateKey(cert)
+	if key == "" {
 		return ErrInvalidCN
 	}
 
@@ -107,7 +113,7 @@ func (cs *compositeCertStore) StoreCertificate(cert *x509.Certificate) error {
 		}
 	}
 
-	if err := cs.storage.SaveCert(context.Background(), cert.Subject.CommonName, cert); err != nil {
+	if err := cs.storage.SaveCert(context.Background(), key, cert); err != nil {
 		return &errs.Wrapped{Msg: "failed to store certificate", Err: err}
 	}
 
@@ -202,8 +208,9 @@ func (cs *compositeCertStore) StoreCertificateChain(chain []*x509.Certificate) e
 		return ErrChainEmpty
 	}
 
-	// Use the leaf certificate's CN as the chain identifier
-	cn := chain[0].Subject.CommonName
+	// Use the leaf certificate's key, the same rule StoreCertificate applies
+	// (see CertificateKey), as the chain identifier.
+	cn := CertificateKey(chain[0])
 	if cn == "" {
 		return ErrInvalidCN
 	}

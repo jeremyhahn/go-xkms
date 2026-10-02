@@ -58,6 +58,9 @@ type mockCAClient struct {
 	signTCGErr  error
 	enrollResp  *transport.EnrollDeviceResponse
 	enrollErr   error
+
+	issueLAKResp *transport.IssueLAKCertificateResponse
+	issueLAKErr  error
 }
 
 func newMockCAClient() *mockCAClient {
@@ -271,6 +274,13 @@ func (m *mockCAClient) EnrollDevice(_ context.Context, _ *transport.EnrollDevice
 		return nil, m.enrollErr
 	}
 	return m.enrollResp, nil
+}
+
+func (m *mockCAClient) IssueLAKCertificate(_ context.Context, _ *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	if m.issueLAKErr != nil {
+		return nil, m.issueLAKErr
+	}
+	return m.issueLAKResp, nil
 }
 
 // PIV stubs

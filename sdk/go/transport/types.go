@@ -162,6 +162,8 @@ type SignTCGCSRRequest = pkgtransport.SignTCGCSRRequest
 type SignTCGCSRResponse = pkgtransport.SignTCGCSRResponse
 type EnrollDeviceRequest = pkgtransport.EnrollDeviceRequest
 type EnrollDeviceResponse = pkgtransport.EnrollDeviceResponse
+type IssueLAKCertificateRequest = pkgtransport.IssueLAKCertificateRequest
+type IssueLAKCertificateResponse = pkgtransport.IssueLAKCertificateResponse
 
 // PIN types.
 type SetSOPINRequest = pkgtransport.SetSOPINRequest

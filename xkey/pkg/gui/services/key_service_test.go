@@ -344,6 +344,9 @@ func (m *mockClient) SignTCGCSR(context.Context, *transport.SignTCGCSRRequest) (
 func (m *mockClient) EnrollDevice(context.Context, *transport.EnrollDeviceRequest) (*transport.EnrollDeviceResponse, error) {
 	return nil, nil
 }
+func (m *mockClient) IssueLAKCertificate(context.Context, *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	return nil, nil
+}
 
 func (m *mockClient) SetSOPIN(context.Context, *transport.SetSOPINRequest) error {
 	panic("not implemented")

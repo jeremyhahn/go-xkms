@@ -800,6 +800,9 @@ var (
 	// ErrIssueAKCertificateFailed is the sentinel error "failed to issue AK certificate".
 	ErrIssueAKCertificateFailed = errors.New("failed to issue AK certificate")
 
+	// ErrIssueLAKCertificateFailed is the sentinel error "failed to issue LAK certificate".
+	ErrIssueLAKCertificateFailed = errors.New("failed to issue LAK certificate")
+
 	// ErrIssueCertificateFailed is the sentinel error "failed to issue certificate".
 	ErrIssueCertificateFailed = errors.New("failed to issue certificate")
 
@@ -969,6 +972,18 @@ var (
 	// ErrReadSignatureFileFailed is the sentinel error "failed to read signature file".
 	ErrReadSignatureFileFailed = errors.New("failed to read signature file")
 
+	// ErrReadIAKCertificateFileFailed is the sentinel error "failed to read IAK certificate file".
+	ErrReadIAKCertificateFileFailed = errors.New("failed to read IAK certificate file")
+
+	// ErrReadCertifyInfoFileFailed is the sentinel error "failed to read certify info file".
+	ErrReadCertifyInfoFileFailed = errors.New("failed to read certify info file")
+
+	// ErrReadLAKPublicAreaFileFailed is the sentinel error "failed to read LAK public area file".
+	ErrReadLAKPublicAreaFileFailed = errors.New("failed to read LAK public area file")
+
+	// ErrInvalidSignatureAlgorithm is the sentinel error "invalid signature algorithm".
+	ErrInvalidSignatureAlgorithm = errors.New("invalid signature algorithm")
+
 	// ErrReadTCGCSRFileFailed is the sentinel error "failed to read TCG CSR file".
 	ErrReadTCGCSRFileFailed = errors.New("failed to read TCG CSR file")
 
@@ -1126,6 +1141,9 @@ var (
 
 	// ErrWriteAKCertificateFailed is the sentinel error "failed to write AK certificate".
 	ErrWriteAKCertificateFailed = errors.New("failed to write AK certificate")
+
+	// ErrWriteLAKCertificateFailed is the sentinel error "failed to write LAK certificate".
+	ErrWriteLAKCertificateFailed = errors.New("failed to write LAK certificate")
 
 	// ErrWriteCRLFailed is the sentinel error "failed to write CRL".
 	ErrWriteCRLFailed = errors.New("failed to write CRL")

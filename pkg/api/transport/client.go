@@ -334,6 +334,10 @@ type TCGCAService interface {
 
 	// EnrollDevice performs complete TCG device enrollment.
 	EnrollDevice(ctx context.Context, req *EnrollDeviceRequest) (*EnrollDeviceResponse, error)
+
+	// IssueLAKCertificate issues a Local Attestation Key certificate in the
+	// WebAuthn Level 2 §8.3.1 profile (go-xkms#715).
+	IssueLAKCertificate(ctx context.Context, req *IssueLAKCertificateRequest) (*IssueLAKCertificateResponse, error)
 }
 
 // PINService handles PIN management operations.

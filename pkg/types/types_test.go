@@ -121,6 +121,7 @@ func TestKeyType_String(t *testing.T) {
 		{"Storage", KeyTypeStorage, "STORAGE"},
 		{"TLS", KeyTypeTLS, "TLS"},
 		{"TPM", KeyTypeTPM, "TPM"},
+		{"LAK", KeyTypeLAK, "LAK"},
 		{"Unknown", KeyType(255), "UNKNOWN(255)"},
 	}
 
@@ -1316,6 +1317,7 @@ func TestParseKeyType(t *testing.T) {
 		{"Storage", "STORAGE", KeyTypeStorage},
 		{"TLS", "TLS", KeyTypeTLS},
 		{"TPM", "TPM", KeyTypeTPM},
+		{"LAK", "LAK", KeyTypeLAK},
 		{"Lowercase_encapsulation", "encapsulation", KeyTypeEncapsulation},
 		{"Lowercase", "tls", KeyTypeTLS},
 		{"WithWhitespace", "  TLS  ", KeyTypeTLS},

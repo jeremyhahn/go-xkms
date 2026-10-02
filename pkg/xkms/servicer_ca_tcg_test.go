@@ -48,6 +48,9 @@ type mockTCGCA struct {
 	encSecret []byte
 	plainSec  []byte
 	enrollErr error
+
+	lakCertDER []byte
+	lakCertErr error
 }
 
 func (m *mockTCGCA) IssueEKCertificateRaw(_ context.Context, commonName, organization string, ekPubDER []byte) ([]byte, error) {
@@ -64,6 +67,17 @@ func (m *mockTCGCA) SignTCGCSRIDevIDRaw(_ context.Context, commonName, organizat
 
 func (m *mockTCGCA) EnrollDeviceRaw(_ context.Context, commonName, organization string, packedCSR []byte) ([]byte, []byte, []byte, []byte, []byte, error) {
 	return m.enrollIAK, m.enrollDev, m.credBlob, m.encSecret, m.plainSec, m.enrollErr
+}
+
+func (m *mockTCGCA) IssueLAKCertificateRaw(
+	_ context.Context,
+	tpmManufacturer, tpmModel, tpmFirmwareVersion string,
+	iakCertDER []byte,
+	certifyInfo, signature []byte,
+	signatureAlgorithm x509.SignatureAlgorithm,
+	lakPublicArea, nonce []byte,
+) ([]byte, error) {
+	return m.lakCertDER, m.lakCertErr
 }
 
 // createTestCertDER generates a self-signed certificate and returns its DER bytes.
@@ -558,4 +572,131 @@ func TestEnrollDevice_CAError(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, caErr)
 	assert.Contains(t, err.Error(), "ca: enroll device")
+}
+
+// ========================================================================
+// IssueLAKCertificate (go-xkms#715)
+// ========================================================================
+
+func validLAKRequest() *transport.IssueLAKCertificateRequest {
+	return &transport.IssueLAKCertificateRequest{
+		TPMManufacturer:    "id:49465800",
+		TPMModel:           "NPCT6xx",
+		TPMFirmwareVersion: "7.2.3.1",
+		IAKCertificateDER:  []byte("fake-iak-cert-der"),
+		CertifyInfo:        []byte("fake-certify-info"),
+		Signature:          []byte("fake-signature"),
+		SignatureAlgorithm: int(x509.ECDSAWithSHA256),
+		LAKPublicArea:      []byte("fake-lak-public-area"),
+		Nonce:              []byte("fake-nonce"),
+	}
+}
+
+func TestIssueLAKCertificate_Success(t *testing.T) {
+	certDER := createTestCertDER(t)
+	tcg := &mockTCGCA{lakCertDER: certDER}
+	svc := setupServiceWithTCGCA(t, tcg)
+	ctx := context.Background()
+
+	resp, err := svc.IssueLAKCertificate(ctx, validLAKRequest())
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	assert.Equal(t, certDER, resp.CertificateDER)
+	assert.NotEmpty(t, resp.CertificatePEM)
+	assert.NotEmpty(t, resp.SerialNumber)
+}
+
+func TestIssueLAKCertificate_NilRequest(t *testing.T) {
+	tcg := &mockTCGCA{}
+	svc := setupServiceWithTCGCA(t, tcg)
+	ctx := context.Background()
+
+	resp, err := svc.IssueLAKCertificate(ctx, nil)
+	assert.Nil(t, resp)
+	assert.ErrorIs(t, err, ErrNilRequest)
+}
+
+func TestIssueLAKCertificate_MissingTPMDeviceInfo(t *testing.T) {
+	tcg := &mockTCGCA{}
+	svc := setupServiceWithTCGCA(t, tcg)
+	ctx := context.Background()
+
+	req := validLAKRequest()
+	req.TPMManufacturer = ""
+
+	resp, err := svc.IssueLAKCertificate(ctx, req)
+	assert.Nil(t, resp)
+	assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
+}
+
+func TestIssueLAKCertificate_MissingIAKCertificate(t *testing.T) {
+	tcg := &mockTCGCA{}
+	svc := setupServiceWithTCGCA(t, tcg)
+	ctx := context.Background()
+
+	req := validLAKRequest()
+	req.IAKCertificateDER = nil
+
+	resp, err := svc.IssueLAKCertificate(ctx, req)
+	assert.Nil(t, resp)
+	assert.ErrorIs(t, err, ErrNilData)
+}
+
+func TestIssueLAKCertificate_MissingCertifyEvidence(t *testing.T) {
+	tcg := &mockTCGCA{}
+	svc := setupServiceWithTCGCA(t, tcg)
+	ctx := context.Background()
+
+	req := validLAKRequest()
+	req.CertifyInfo = nil
+
+	resp, err := svc.IssueLAKCertificate(ctx, req)
+	assert.Nil(t, resp)
+	assert.ErrorIs(t, err, ErrNilData)
+}
+
+func TestIssueLAKCertificate_MissingLAKPublicArea(t *testing.T) {
+	tcg := &mockTCGCA{}
+	svc := setupServiceWithTCGCA(t, tcg)
+	ctx := context.Background()
+
+	req := validLAKRequest()
+	req.LAKPublicArea = nil
+
+	resp, err := svc.IssueLAKCertificate(ctx, req)
+	assert.Nil(t, resp)
+	assert.ErrorIs(t, err, ErrNilData)
+}
+
+func TestIssueLAKCertificate_NoCA(t *testing.T) {
+	svc := setupServiceWithTCGCA(t, nil)
+	ctx := context.Background()
+
+	resp, err := svc.IssueLAKCertificate(ctx, validLAKRequest())
+	assert.Nil(t, resp)
+	assert.ErrorIs(t, err, ErrNotConfigured)
+}
+
+func TestIssueLAKCertificate_NonTCGCA(t *testing.T) {
+	plainCA := &mockCA{}
+	svc := setupServiceWithCA(t, plainCA)
+	ctx := context.Background()
+
+	resp, err := svc.IssueLAKCertificate(ctx, validLAKRequest())
+	assert.Nil(t, resp)
+	assert.ErrorIs(t, err, ErrNotSupported)
+}
+
+func TestIssueLAKCertificate_CAError(t *testing.T) {
+	caErr := errors.New("ca: lak issuance failed")
+	tcg := &mockTCGCA{lakCertErr: caErr}
+	svc := setupServiceWithTCGCA(t, tcg)
+	ctx := context.Background()
+
+	resp, err := svc.IssueLAKCertificate(ctx, validLAKRequest())
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, caErr)
+	assert.Contains(t, err.Error(), "ca: issue lak certificate")
 }

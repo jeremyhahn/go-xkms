@@ -135,6 +135,7 @@ var canonicalCapabilities = map[string]capability{
 	"ca.tcg.enroll":            {GRPC: "EnrollDevice", MCP: "xkms.ca.tcg.enroll", REST: "POST /api/v1/ca/tcg/enroll"},
 	"ca.tcg.issueAK":           {GRPC: "IssueAKCertificate", MCP: "xkms.ca.tcg.issue-ak", REST: "POST /api/v1/ca/tcg/ak"},
 	"ca.tcg.issueEK":           {GRPC: "IssueEKCertificate", MCP: "xkms.ca.tcg.issue-ek", REST: "POST /api/v1/ca/tcg/ek"},
+	"ca.tcg.issueLAK":          {GRPC: "IssueLAKCertificate", MCP: "xkms.ca.tcg.issue-lak", REST: "POST /api/v1/ca/tcg/lak"},
 	"ca.tcg.signCSR":           {GRPC: "SignTCGCSR", MCP: "xkms.ca.tcg.sign-csr", REST: "POST /api/v1/ca/tcg/sign-csr"},
 	"certs.delete":             {GRPC: "DeleteCert", MCP: "xkms.deleteCert", REST: "DELETE /api/v1/certs/{id}"},
 	"certs.exists":             {GRPC: "CertExists", MCP: "xkms.certExists", REST: "HEAD /api/v1/certs/{id}"},

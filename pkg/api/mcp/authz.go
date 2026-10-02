@@ -199,10 +199,11 @@ var methodPermissions = map[string]permission{
 	"xkms.ca.is-revoked":  {auth.ResourceCerts, auth.ActionRead},
 
 	// TCG certificate authority.
-	"xkms.ca.tcg.issue-ek": {auth.ResourceCerts, auth.ActionGenerate},
-	"xkms.ca.tcg.issue-ak": {auth.ResourceCerts, auth.ActionGenerate},
-	"xkms.ca.tcg.sign-csr": {auth.ResourceCerts, auth.ActionGenerate},
-	"xkms.ca.tcg.enroll":   {auth.ResourceCerts, auth.ActionGenerate},
+	"xkms.ca.tcg.issue-ek":  {auth.ResourceCerts, auth.ActionGenerate},
+	"xkms.ca.tcg.issue-ak":  {auth.ResourceCerts, auth.ActionGenerate},
+	"xkms.ca.tcg.sign-csr":  {auth.ResourceCerts, auth.ActionGenerate},
+	"xkms.ca.tcg.enroll":    {auth.ResourceCerts, auth.ActionGenerate},
+	"xkms.ca.tcg.issue-lak": {auth.ResourceCerts, auth.ActionGenerate},
 
 	// Barrier lifecycle.
 	"barrier.initialize":           {auth.ResourceSeal, auth.ActionBootstrap},

@@ -321,6 +321,7 @@ func Routes() []RouteSpec {
 	permIf("POST", "/ca/tcg/ak", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueAKCertificate })
 	permIf("POST", "/ca/tcg/sign-csr", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleSignTCGCSR })
 	permIf("POST", "/ca/tcg/enroll", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleEnrollDevice })
+	permIf("POST", "/ca/tcg/lak", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueLAKCertificate })
 	permIf("GET", "/ca/bundle", auth.ResourceCerts, auth.ActionRead, noCA, func(s *Server) http.HandlerFunc { return s.handlers.GetCABundleHandler })
 
 	// --- Custodian groups. The ceremony:* pairs of

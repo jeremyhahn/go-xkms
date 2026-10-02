@@ -17,6 +17,7 @@ The package is large; the map in [`architecture.md`](architecture.md)
 | attest / certify | `attestation.go`, `certify_verify.go`, `eventlog.go` |
 | IDevID / TCG enrollment | `cert_idevid.go`, `idevid_csr.go`, `tcg_csr_serverside.go`, `cert_convert.go` |
 | IDevID / IAK key policy and delegation | `devid_policy.go`, `devid_policy_session.go`, `devid_delegation.go` |
+| Local Attestation Key (LAK), certified by the IAK | `local_attestation_key.go` (`(*TPM2).CreateLAK`, `LAKAttributes`, `LAK`, `CertifyLAK`, `CertifyKeyWithLAK`), `cert_idevid.go` (`ProvisionLAKCert`, `LAKCertificate`, `DeleteLAKCertificate`) |
 | provision the platform | `platform.go`, `platform_keystore.go`, `platform_types.go`, `provision.go` |
 | classify provisioning state, clear for reprovisioning | `provisioning_state.go` (`ProvisioningState`, `(*TPM2).State`), `provision.go` (`(*TPM2).ClearForReprovision`, `(*TPM2).ForceClear`) |
 | build/answer an EK credential challenge without a provisioned identity key | `credential_challenge.go` (`NewCredentialChallenge`, `ActivationKeyName`), `activation_key.go` (`(*TPM2).CreateActivationKey`, `(*TPM2).AnswerCredentialChallenge`) |
@@ -231,6 +232,57 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   the attributes already hold is cleared before it is replaced. The IAK's
   self-certification (`TPM2_CertifyCreation`) is authorized by the IAK's own
   authValue, not the EK's (#467).
+
+- **The Local Attestation Key (LAK) is an ordinary Platform-SRK child key,
+  not an Endorsement-hierarchy primary (go-xkms#715).** TCG DevID v1 r12/v1.10
+  r9 §8 requires the IAK's certificate Subject to be a unique X.500 DN;
+  WebAuthn Level 2 §8.3.1 requires the "tpm" attestation statement's AIK
+  certificate Subject to be empty, and go-webauthn enforces this literally.
+  Rather than compromise the IAK's TCG shape, the LAK is a second,
+  owner-created attestation key per TCG "TPM 2.0 Keys for Device Identity and
+  Attestation" v1.10 r9 §5.3/§6.3 ("Owner Creation of a LAK Certificate based
+  on an IAK Certificate"): `CreateLAK` (`local_attestation_key.go:45`) builds
+  it with `CreateECDSA`/`CreateRSA` under the Platform SRK, Restricted and
+  Sign-only (`ecdsa.go`, `rsa.go` recognise `types.KeyTypeLAK` and force a
+  named scheme — a Restricted signing key may not use `TPM_ALG_NULL`), then
+  makes it persistent at `LAKConfig.Handle` via `TPM2_EvictControl` under the
+  Owner hierarchy exactly as `CreateIAK` persists the IAK. `LAKAttributes`
+  rebuilds it from the persisted handle on restart, the same shape as
+  `IAKAttributes`. Because it is not a DevID key, `devidKeyKindOf` does not
+  recognise `KeyTypeLAK`: the LAK's own authorization is ordinary
+  password/policy auth, never the DevID admin-policy session an IAK/IDevID
+  target requires.
+- **`CertifyKey`'s TPM2_Certify mechanics are shared by every signer, not
+  duplicated per key.** `certifyKeyAs` (`attestation.go:94`) takes the
+  signing key's attributes as a parameter; `CertifyKey` (signer: IAK),
+  `CertifyLAK` (signer: IAK, target: LAK — the provisioning-time
+  certification) and `CertifyKeyWithLAK` (signer: LAK, target: an ordinary
+  key such as a WebAuthn credential key) are thin wrappers over it. Only the
+  *target*'s own authorization branches on its key type
+  (`devidKeyKindOf`); the signer's session is always ordinary object auth.
+- **`pkg/ca.IssueLAKCertificate` verifies the LAK's TPM2_Certify evidence
+  against the IAK's certificate, never against live TPM state.** The CA has
+  no TPM access; it checks that the presented IAK certificate chains to the
+  certificate about to sign the LAK and is within its validity period, then
+  runs `tpm2.VerifyCertifyByCertificate` — which itself requires the IAK
+  certificate to carry `tcg-kp-AIKCertificate` (2.23.133.8.3), the signature
+  over `certifyInfo` to verify under the IAK's certified public key, the
+  attestation to carry `TPM_GENERATED_VALUE`, and the certified Name to match
+  the LAK's public area. The issued certificate follows the WebAuthn Level 2
+  §8.3.1 profile (`ca.NewTCGLocalAttestationKeyProfile`, `profiles.go:709`):
+  empty Subject, a critical subjectAltName directoryName carrying
+  tcg-at-tpmManufacturer/tpmModel/tpmVersion, the tcg-kp-AIKCertificate EKU
+  alone (no TLS purposes, no TCG certificate policies — this is not a TCG
+  DevID credential), and Basic Constraints CA:false. The IAK's own TCG
+  DevID-shaped certificate is unchanged.
+- **A certificate store cannot key the LAK certificate by Common Name, because
+  it has none.** `certstore.CertificateKey` (`pkg/certstore/certstore.go:44`)
+  keys a certificate by `Subject.CommonName` when non-empty, or by its SPKI
+  SHA-256 thumbprint (`qrdbsdk.ComputeSPKIThumbprint` — qrdb's own canonical
+  mTLS binding identifier, not a parallel algorithm) when the Subject is
+  empty. `compositeCertStore.StoreCertificate`/`StoreCertificateChain` apply
+  this uniformly; a caller retrieving the LAK certificate later must compute
+  the same key to look it up.
 
 - **`DecodePCRs` treats its input as adversarial.** `Quote.PCRs` and the
   TCG-CSR `ProdCaData` carry PCR banks encoded by `EncodePCRs` with

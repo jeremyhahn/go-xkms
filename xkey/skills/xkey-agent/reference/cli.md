@@ -2683,6 +2683,58 @@ Usage: `xkey tpm install [flags]`
 | `--pcr-bank` | string |  | Override the platform PCR bank (e.g., sha256, sha384) |
 | `--platform-pcr` | int | 0 | Override which PCR to extend with golden measurement (e.g., 16) |
 
+## xkey tpm lak
+
+Local Attestation Key (LAK) operations
+
+Usage: `xkey tpm lak`
+
+## xkey tpm lak cert
+
+LAK certificate operations
+
+Usage: `xkey tpm lak cert`
+
+## xkey tpm lak cert export
+
+Certify the LAK and export TPM2_Certify evidence
+
+Usage: `xkey tpm lak cert export [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--certify-info` | string |  | Output file for the raw TPM2_Certify certifyInfo (TPMS_ATTEST) |
+| `--nonce` | string |  | Hex-encoded qualifying data the evidence echoes |
+| `--public-area` | string |  | Output file for the LAK's marshalled TPMT_PUBLIC |
+| `--signature` | string |  | Output file for the IAK's signature over certifyInfo |
+
+## xkey tpm lak cert import
+
+Import signed LAK certificate
+
+Usage: `xkey tpm lak cert import [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--cert` | string |  | Path to PEM-encoded certificate file |
+| `--force` | bool | false | Force import without public key verification |
+
+## xkey tpm lak create
+
+Create a new LAK
+
+Usage: `xkey tpm lak create [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--force` | bool | false | Force recreation even if LAK already exists |
+
+## xkey tpm lak show
+
+Display LAK public key and certificate
+
+Usage: `xkey tpm lak show`
+
 ## xkey tpm pcrs
 
 Display PCR values

@@ -381,6 +381,13 @@ service KeystoreService {
     option (qrdb.v1.permission) = "certs:generate";
   }
 
+  // IssueLAKCertificate issues a Local Attestation Key certificate in the
+  // WebAuthn Level 2 section 8.3.1 profile, after verifying the LAK's
+  // TPM2_Certify evidence against the device's IAK certificate (go-xkms#715).
+  rpc IssueLAKCertificate(IssueLAKCertificateRequest) returns (IssueLAKCertificateResponse) {
+    option (qrdb.v1.permission) = "certs:generate";
+  }
+
   // ==================== Barrier Operations ====================
 
   // BarrierInitialize generates a root key, seals it with the best available
@@ -2829,6 +2836,29 @@ message EnrollDeviceResponse {
   bytes credential_blob = 3;
   bytes encrypted_secret = 4;
   bytes plain_secret = 5;
+}
+
+// IssueLAKCertificateRequest requests issuance of a Local Attestation Key
+// certificate in the WebAuthn Level 2 section 8.3.1 profile (go-xkms#715).
+// The LAK's certificate has no Subject, so this carries no common_name or
+// organization, unlike the other TCG issuance requests above.
+message IssueLAKCertificateRequest {
+  string tpm_manufacturer = 1;
+  string tpm_model = 2;
+  string tpm_firmware_version = 3;
+  bytes iak_certificate_der = 4;
+  bytes certify_info = 5;
+  bytes signature = 6;
+  int32 signature_algorithm = 7;
+  bytes lak_public_area = 8;
+  bytes nonce = 9;
+}
+
+// IssueLAKCertificateResponse contains the issued LAK certificate.
+message IssueLAKCertificateResponse {
+  bytes certificate_der = 1;
+  bytes certificate_pem = 2;
+  string serial_number = 3;
 }
 // ==================== Barrier Operations Messages ====================
 

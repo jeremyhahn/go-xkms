@@ -327,10 +327,11 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"xkms.ca.is-revoked":  (*Server).handleIsRevoked,
 
 	// TCG CA operations
-	"xkms.ca.tcg.issue-ek": (*Server).handleIssueEKCertificate,
-	"xkms.ca.tcg.issue-ak": (*Server).handleIssueAKCertificate,
-	"xkms.ca.tcg.sign-csr": (*Server).handleSignTCGCSR,
-	"xkms.ca.tcg.enroll":   (*Server).handleEnrollDevice,
+	"xkms.ca.tcg.issue-ek":  (*Server).handleIssueEKCertificate,
+	"xkms.ca.tcg.issue-ak":  (*Server).handleIssueAKCertificate,
+	"xkms.ca.tcg.sign-csr":  (*Server).handleSignTCGCSR,
+	"xkms.ca.tcg.enroll":    (*Server).handleEnrollDevice,
+	"xkms.ca.tcg.issue-lak": (*Server).handleIssueLAKCertificate,
 
 	// Barrier and Shamir operations
 	"barrier.initialize":           (*Server).handleBarrierInitialize,

@@ -32,6 +32,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
@@ -63,7 +64,10 @@ func (m *mockCertStoreForTCG) StoreCertificate(cert *x509.Certificate) error {
 	if m.storeError != nil {
 		return m.storeError
 	}
-	m.certs[cert.Subject.CommonName] = cert
+	// Mirrors certstore.CertificateKey: a certificate with an empty Subject
+	// (the WebAuthn §8.3.1 profile LAK certificate, go-xkms#715) is keyed by
+	// its SPKI SHA-256 thumbprint rather than colliding on the empty string.
+	m.certs[certstore.CertificateKey(cert)] = cert
 	return nil
 }
 

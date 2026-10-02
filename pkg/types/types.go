@@ -389,6 +389,15 @@ const (
 	KeyTypeStorage
 	KeyTypeTLS
 	KeyTypeTPM
+	// KeyTypeLAK is a Local Attestation Key: a TPM-resident, Restricted
+	// signing key created as a child of the Platform SRK and certified by the
+	// device's IAK via TPM2_Certify (TCG TPM 2.0 Keys for Device Identity and
+	// Attestation v1.10 r9 §5.3/§6.3, "Owner Creation of a LAK Certificate
+	// based on an IAK Certificate"). Unlike KeyTypeAttestation (the IAK, an
+	// OEM-provisioned primary key under the Endorsement hierarchy with the
+	// TCG DevID admin-policy), the LAK is owner-created and uses ordinary
+	// password/policy authorization under the Platform SRK -- go-xkms#715.
+	KeyTypeLAK
 )
 
 // String returns the string representation of the key type.
@@ -420,6 +429,8 @@ func (kt KeyType) String() string {
 		return "TLS"
 	case KeyTypeTPM:
 		return "TPM"
+	case KeyTypeLAK:
+		return "LAK"
 	default:
 		return fmt.Sprintf("UNKNOWN(%d)", kt)
 	}
@@ -1495,6 +1506,8 @@ func (attrs *KeyAttributes) KeyID() string {
 		keyTypeStr = "tls"
 	case KeyTypeTPM:
 		keyTypeStr = "tpm"
+	case KeyTypeLAK:
+		keyTypeStr = "lak"
 	}
 
 	// Build algorithm string
@@ -3290,6 +3303,8 @@ func ParseKeyType(s string) KeyType {
 		return KeyTypeTLS
 	case "TPM":
 		return KeyTypeTPM
+	case "LAK":
+		return KeyTypeLAK
 	default:
 		return 0
 	}

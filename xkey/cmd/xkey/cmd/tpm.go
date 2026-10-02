@@ -109,6 +109,7 @@ func init() {
 	tpmCmd.AddCommand(tpmEKCmd)
 	tpmCmd.AddCommand(tpmIAKCmd)
 	tpmCmd.AddCommand(tpmIDevIDCmd)
+	tpmCmd.AddCommand(tpmLAKCmd)
 	tpmCmd.AddCommand(tpmQuoteCmd)
 	tpmCmd.AddCommand(tpmPCRsCmd)
 }
@@ -151,6 +152,17 @@ func openTPM() (xkms.TrustedPlatformModule, error) {
 			SignatureAlgorithm: "SHA256-RSA-PSS",
 			Model:              "xkey",
 			Serial:             "001",
+		},
+		// LAK (go-xkms#715): a Restricted, Sign-only child of the Platform
+		// SRK, certified by the IAK via TPM2_Certify. Its certificate is
+		// stored in TPM NVRAM, like IDevID's, rather than the certificate
+		// store -- xkey does not wire a CertificateStorer into TPMParams.
+		LAK: &xkms.LAKConfig{
+			Handle:             0x81010003,
+			CertHandle:         0x01C00003,
+			Hash:               "SHA-256",
+			KeyAlgorithm:       "RSA",
+			SignatureAlgorithm: "SHA256-RSA-PSS",
 		},
 		PlatformPCR:     xkms.DefaultPlatformPCR,
 		PlatformPCRBank: xkms.PCRBankSHA256,
@@ -241,6 +253,14 @@ func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator
 			SignatureAlgorithm: "SHA256-RSA-PSS",
 			Model:              "xkey",
 			Serial:             "001",
+		},
+		// LAK (go-xkms#715): see openTPM's identical block for rationale.
+		LAK: &xkms.LAKConfig{
+			Handle:             0x81010003,
+			CertHandle:         0x01C00003,
+			Hash:               "SHA-256",
+			KeyAlgorithm:       "RSA",
+			SignatureAlgorithm: "SHA256-RSA-PSS",
 		},
 		GoldenPCRs:      goldenPCRs,
 		PlatformPCR:     effectivePlatformPCR,

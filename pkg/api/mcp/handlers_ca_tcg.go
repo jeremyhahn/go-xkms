@@ -98,3 +98,24 @@ func (s *Server) handleEnrollDevice(ctx context.Context, req *JSONRPCRequest) (i
 	}
 	return resp, nil
 }
+
+// handleIssueLAKCertificate handles the xkms.ca.tcg.issue-lak method. It
+// issues a Local Attestation Key certificate in the WebAuthn Level 2
+// section 8.3.1 profile (go-xkms#715).
+func (s *Server) handleIssueLAKCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	svc := s.xkmsService
+	if svc == nil {
+		return nil, errXKMSServiceUnavailable()
+	}
+
+	var params transport.IssueLAKCertificateRequest
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
+	}
+
+	resp, err := svc.IssueLAKCertificate(ctx, &params)
+	if err != nil {
+		return nil, mapCAError(err)
+	}
+	return resp, nil
+}

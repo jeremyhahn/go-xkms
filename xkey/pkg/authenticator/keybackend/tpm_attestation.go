@@ -34,12 +34,19 @@ const tpmAttestationVersion = "2.0"
 // TPM2 attestation errors.
 var (
 	// ErrTPMCertifyFailed indicates TPM2_Certify could not certify the
-	// credential key under the device's Initial Attestation Key.
+	// credential key under the device's Local Attestation Key.
 	ErrTPMCertifyFailed = errors.New("keybackend: TPM2_Certify failed")
 
-	// ErrTPMIAKUnavailable indicates the device's Initial Attestation Key is
+	// ErrTPMLAKUnavailable indicates the device's Local Attestation Key is
 	// not provisioned, so no "tpm" attestation statement can be produced.
-	ErrTPMIAKUnavailable = errors.New("keybackend: TPM Initial Attestation Key is not provisioned")
+	//
+	// go-xkms#715: the "tpm" format attests with the LAK, not the IAK. The
+	// IAK's own certificate keeps its TCG DevID Subject (a unique X.500 DN),
+	// which go-webauthn's "tpm" verifier refuses outright
+	// (aikCert.Subject.String() != ""); the LAK's certificate is issued in
+	// the WebAuthn Level 2 §8.3.1 profile instead (empty Subject, critical
+	// TCG subjectAltName, tcg-kp-AIKCertificate EKU, CA:false).
+	ErrTPMLAKUnavailable = errors.New("keybackend: TPM Local Attestation Key is not provisioned")
 )
 
 // TPM2AttestingBackend adds WebAuthn Level 2 §8.3 "tpm" attestation to a
@@ -47,16 +54,21 @@ var (
 //
 // Unlike AttestingBackend, which signs authData‖clientDataHash directly with a
 // device identity key, this certifies each credential key with TPM2_Certify
-// under the device's Initial Attestation Key (IAK). The IAK is a TPM
-// restricted signing key: the TPM refuses to use it to sign caller-supplied
-// bytes, so it cannot produce an ordinary "packed" signature over
-// authData‖clientDataHash. TPM2_Certify is the operation a restricted key can
-// perform instead -- the TPM itself signs a TPMS_ATTEST it generates, naming
-// the credential key and carrying the caller's nonce as extraData -- which is
-// exactly what §8.3 requires the "tpm" format's certInfo/sig/pubArea triple to
-// be. Per the FIDO2AttestingKeyBackend doc comment, a TPM2 key backend
-// implements this interface directly and takes precedence over the generic
-// device attestation identity AttestingBackend adds.
+// under the device's Local Attestation Key (LAK). The LAK is a TPM restricted
+// signing key: the TPM refuses to use it to sign caller-supplied bytes, so it
+// cannot produce an ordinary "packed" signature over authData‖clientDataHash.
+// TPM2_Certify is the operation a restricted key can perform instead -- the
+// TPM itself signs a TPMS_ATTEST it generates, naming the credential key and
+// carrying the caller's nonce as extraData -- which is exactly what §8.3
+// requires the "tpm" format's certInfo/sig/pubArea triple to be. Per the
+// FIDO2AttestingKeyBackend doc comment, a TPM2 key backend implements this
+// interface directly and takes precedence over the generic device
+// attestation identity AttestingBackend adds.
+//
+// The LAK, not the IAK, is this backend's attesting key (go-xkms#715): the
+// LAK is certified by the IAK via TPM2_Certify once, at provisioning time
+// (`xkey tpm lak create`), and carries a certificate in the WebAuthn §8.3.1
+// profile rather than the IAK's TCG DevID profile. See ErrTPMLAKUnavailable.
 type TPM2AttestingBackend struct {
 	*BackendAdapter
 
@@ -68,7 +80,7 @@ type TPM2AttestingBackend struct {
 var _ FIDO2AttestingKeyBackend = (*TPM2AttestingBackend)(nil)
 
 // NewTPM2AttestingBackend returns inner extended with WebAuthn "tpm"
-// attestation backed by tpm's Initial Attestation Key. blobs is the key
+// attestation backed by tpm's Local Attestation Key. blobs is the key
 // storage backend that holds the transient credential key blobs inner
 // generates -- TPM2_Certify must load them before it can certify them, the
 // same way Sign does.
@@ -84,22 +96,22 @@ func (b *TPM2AttestingBackend) Capabilities() FIDO2KeyCapabilities {
 	return caps
 }
 
-// GenerateAttestationKey loads the device's provisioned IAK and returns its
-// COSE-encoded public key. The IAK is provisioned once per device (`xkey tpm
-// iak create`), not per credential, so this is a load rather than a creation;
-// it errors when no IAK has been provisioned.
+// GenerateAttestationKey loads the device's provisioned LAK and returns its
+// COSE-encoded public key. The LAK is provisioned once per device (`xkey tpm
+// lak create`), not per credential, so this is a load rather than a creation;
+// it errors when no LAK has been provisioned.
 func (b *TPM2AttestingBackend) GenerateAttestationKey() (KeyHandle, []byte, error) {
-	iakAttrs, err := b.tpm.IAKAttributes()
+	lakAttrs, err := b.tpm.LAKAttributes()
 	if err != nil {
-		return nil, nil, &SentinelCauseError{Sentinel: ErrTPMIAKUnavailable, Cause: err}
+		return nil, nil, &SentinelCauseError{Sentinel: ErrTPMLAKUnavailable, Cause: err}
 	}
 
-	pub, err := b.tpm.IAK()
+	pub, err := b.tpm.LAK()
 	if err != nil {
-		return nil, nil, &SentinelCauseError{Sentinel: ErrTPMIAKUnavailable, Cause: err}
+		return nil, nil, &SentinelCauseError{Sentinel: ErrTPMLAKUnavailable, Cause: err}
 	}
 
-	algorithm, err := coseAlgorithmFromSignatureAlgorithm(iakAttrs.SignatureAlgorithm)
+	algorithm, err := coseAlgorithmFromSignatureAlgorithm(lakAttrs.SignatureAlgorithm)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -112,12 +124,12 @@ func (b *TPM2AttestingBackend) GenerateAttestationKey() (KeyHandle, []byte, erro
 	return &attestationKeyHandle{algorithm: algorithm, backend: b.Type()}, publicKeyCOSE, nil
 }
 
-// AttestationCertificateChain returns the provisioned IAK certificate. §8.3.1
+// AttestationCertificateChain returns the provisioned LAK certificate. §8.3.1
 // requires the "tpm" format's x5c[0] to be the AIK certificate; TCG device
 // identity certificates are issued singly, with the root trusted out of band,
 // so there is no intermediate chain to append.
 func (b *TPM2AttestingBackend) AttestationCertificateChain() ([]*x509.Certificate, error) {
-	cert, err := b.tpm.IAKCertificate()
+	cert, err := b.tpm.LAKCertificate()
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrNoAttestationCertificate, Cause: err}
 	}
@@ -126,7 +138,7 @@ func (b *TPM2AttestingBackend) AttestationCertificateChain() ([]*x509.Certificat
 
 // GetAttestationStatement builds a WebAuthn Level 2 §8.3 "tpm" attestation
 // statement for the credential authData describes, by certifying that
-// credential's key with TPM2_Certify under the device's IAK.
+// credential's key with TPM2_Certify under the device's LAK.
 //
 // The credential's identity is read out of authData itself -- the credential
 // ID and the COSE algorithm of the key MakeCredential just generated -- rather
@@ -163,16 +175,16 @@ func (b *TPM2AttestingBackend) GetAttestationStatement(format string, authData, 
 	credAttrs.Parent = srkAttrs
 	credAttrs.TPMAttributes = &xkms.TPMAttributes{Hierarchy: xkms.TPMRHOwner}
 
-	iakAttrs, err := b.tpm.IAKAttributes()
+	lakAttrs, err := b.tpm.LAKAttributes()
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrTPMIAKUnavailable, Cause: err}
+		return nil, &SentinelCauseError{Sentinel: ErrTPMLAKUnavailable, Cause: err}
 	}
 
-	hash, err := hashForSignatureAlgorithm(iakAttrs.SignatureAlgorithm)
+	hash, err := hashForSignatureAlgorithm(lakAttrs.SignatureAlgorithm)
 	if err != nil {
 		return nil, err
 	}
-	coseAlg, err := coseAlgorithmFromSignatureAlgorithm(iakAttrs.SignatureAlgorithm)
+	coseAlg, err := coseAlgorithmFromSignatureAlgorithm(lakAttrs.SignatureAlgorithm)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +198,7 @@ func (b *TPM2AttestingBackend) GetAttestationStatement(format string, authData, 
 	h.Write(attToBeSigned)
 	extraData := h.Sum(nil)
 
-	result, err := b.tpm.CertifyKey(credAttrs, extraData, b.blobs)
+	result, err := b.tpm.CertifyKeyWithLAK(credAttrs, extraData, b.blobs)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrTPMCertifyFailed, Cause: err}
 	}
@@ -199,7 +211,7 @@ func (b *TPM2AttestingBackend) GetAttestationStatement(format string, authData, 
 	return &FIDO2AttestationStatement{
 		Format:    AttestationFormatTPM,
 		Algorithm: coseAlg,
-		// §8.3 "sig" is the ordinary signature value for the AIK's algorithm
+		// §8.3 "sig" is the ordinary signature value for the LAK's algorithm
 		// (ASN.1 DER for ECDSA, the raw big-endian value for RSA), the same
 		// convention x509.Certificate.CheckSignature and every other WebAuthn
 		// format use -- not the marshalled TPMT_SIGNATURE. Result.Signature is
@@ -267,9 +279,10 @@ func coseAlgorithmFromCBORValue(v interface{}) (int, error) {
 }
 
 // coseAlgorithmFromSignatureAlgorithm maps an x509 signature algorithm -- as
-// carried on IAK KeyAttributes -- to its COSE algorithm identifier. An IAK is
-// restricted to ECDSA, RSASSA-PKCS1-v1_5 or RSASSA-PSS with SHA-2, per the TCG
-// IDevID/IAK key templates this library creates.
+// carried on LAK KeyAttributes -- to its COSE algorithm identifier. A LAK is
+// restricted to ECDSA, RSASSA-PKCS1-v1_5 or RSASSA-PSS with SHA-2, the same
+// restricted-key algorithm families the TCG IDevID/IAK/LAK key shapes this
+// library creates allow.
 func coseAlgorithmFromSignatureAlgorithm(sigAlg x509.SignatureAlgorithm) (int, error) {
 	switch sigAlg {
 	case x509.ECDSAWithSHA256:

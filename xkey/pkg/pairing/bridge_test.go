@@ -2001,6 +2001,10 @@ func (m *mockTransportClient) EnrollDevice(_ context.Context, _ *transport.Enrol
 	return nil, errNotImplemented
 }
 
+func (m *mockTransportClient) IssueLAKCertificate(_ context.Context, _ *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	return nil, errNotImplemented
+}
+
 // --- Audit Logging Tests ---
 
 // mockAuditLogger is a minimal audit logger for testing.

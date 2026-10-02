@@ -1018,6 +1018,10 @@ func (m *mockXKMSService) EnrollDevice(ctx context.Context, req *transport.Enrol
 	return nil, nil
 }
 
+func (m *mockXKMSService) IssueLAKCertificate(ctx context.Context, req *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	return nil, nil
+}
+
 // PIV operations
 
 func (m *mockXKMSService) ListPIVSlots(ctx context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {

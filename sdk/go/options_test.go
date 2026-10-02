@@ -250,6 +250,10 @@ func (m *mockService) EnrollDevice(ctx context.Context, req *EnrollDeviceRequest
 	return nil, nil
 }
 
+func (m *mockService) IssueLAKCertificate(ctx context.Context, req *IssueLAKCertificateRequest) (*IssueLAKCertificateResponse, error) {
+	return nil, nil
+}
+
 func (m *mockService) ListPIVSlots(ctx context.Context, req *ListPIVSlotsRequest) (*ListPIVSlotsResponse, error) {
 	return nil, nil
 }

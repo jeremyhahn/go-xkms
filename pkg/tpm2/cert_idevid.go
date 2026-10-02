@@ -24,6 +24,7 @@ import (
 var (
 	ErrIDevIDCertNotFound     = errors.New("tpm: IDevID certificate not found")
 	ErrIAKCertNotFound        = errors.New("tpm: IAK certificate not found")
+	ErrLAKCertNotFound        = errors.New("tpm: LAK certificate not found")
 	ErrCertPublicKeyMismatch  = errors.New("tpm: certificate public key does not match TPM key")
 	ErrCertStoreNotConfigured = errors.New("tpm: certificate store not configured")
 )
@@ -190,4 +191,86 @@ func (tpm *TPM2) DeleteIAKCertificate() error {
 	}
 
 	return tpm.deleteCertFromNVRAM(tpm2.TPMHandle(tpm.config.IAK.CertHandle))
+}
+
+// ProvisionLAKCert stores the Local Attestation Key certificate (go-xkms#715).
+// If CertHandle is 0, the certificate is stored in the certificate store.
+// If CertHandle is set, the certificate is stored in TPM NVRAM.
+func (tpm *TPM2) ProvisionLAKCert(cert *x509.Certificate) error {
+	if tpm.config.LAK == nil {
+		return ErrNotConfigured
+	}
+
+	lakAttrs, err := tpm.LAKAttributes()
+	if err != nil {
+		return err
+	}
+
+	// Validate public key matches
+	if err := validateCertPublicKey(cert, lakAttrs); err != nil {
+		return err
+	}
+
+	if tpm.config.LAK.CertHandle == 0 {
+		return tpm.writeCertToStore(lakAttrs, cert)
+	}
+
+	return tpm.writeCertToNVRAM(tpm2.TPMHandle(tpm.config.LAK.CertHandle), cert.Raw)
+}
+
+// LAKCertificate retrieves the Local Attestation Key certificate.
+// If CertHandle is 0, the certificate is read from the certificate store.
+// If CertHandle is set, the certificate is read from TPM NVRAM.
+func (tpm *TPM2) LAKCertificate() (*x509.Certificate, error) {
+	if tpm.config.LAK == nil {
+		return nil, ErrNotConfigured
+	}
+
+	lakAttrs, err := tpm.LAKAttributes()
+	if err != nil {
+		return nil, err
+	}
+
+	if tpm.config.LAK.CertHandle == 0 {
+		if tpm.certStore == nil {
+			return nil, ErrCertStoreNotConfigured
+		}
+		cert, err := tpm.certStore.Get(lakAttrs)
+		if err != nil {
+			if errors.Is(err, store.ErrCertNotFound) {
+				return nil, ErrLAKCertNotFound
+			}
+			return nil, err
+		}
+		return cert, nil
+	}
+
+	certDER, err := tpm.readCertFromNVRAM(tpm2.TPMHandle(tpm.config.LAK.CertHandle))
+	if err != nil {
+		return nil, err
+	}
+
+	return x509.ParseCertificate(certDER)
+}
+
+// DeleteLAKCertificate removes the Local Attestation Key certificate.
+// If CertHandle is 0, the certificate is deleted from the certificate store.
+// If CertHandle is set, the NV index is undefined from TPM NVRAM.
+func (tpm *TPM2) DeleteLAKCertificate() error {
+	if tpm.config.LAK == nil {
+		return ErrNotConfigured
+	}
+
+	if tpm.config.LAK.CertHandle == 0 {
+		if tpm.certStore == nil {
+			return ErrCertStoreNotConfigured
+		}
+		lakAttrs, err := tpm.LAKAttributes()
+		if err != nil {
+			return err
+		}
+		return tpm.certStore.Delete(lakAttrs)
+	}
+
+	return tpm.deleteCertFromNVRAM(tpm2.TPMHandle(tpm.config.LAK.CertHandle))
 }

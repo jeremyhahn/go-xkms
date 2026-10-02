@@ -20,7 +20,36 @@ package certstore
 
 import (
 	"crypto/x509"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
+
+// CertificateKey returns the key StoreCertificate indexes cert under: its
+// Subject.CommonName, or -- for a certificate with an empty Subject, such as
+// the WebAuthn Level 2 §8.3.1 profile Local Attestation Key certificate
+// go-xkms#715 introduced -- the SPKI SHA-256 thumbprint
+// (qrdbsdk.ComputeSPKIThumbprint), base64url-encoded over the certificate's
+// SubjectPublicKeyInfo.
+//
+// The SPKI thumbprint is qrdb's own canonical mTLS binding identifier
+// (go-qrdb/pkg/user.ComputeSPKIThumbprint, re-exported through
+// go-qrdb/sdk/go), not a go-xkms invention: the ownership/SDK-boundary
+// constitution requires xkms to adopt the ONE cert-binding algorithm the rest
+// of the stack already uses rather than define a parallel one. Because the
+// thumbprint is computed over the public key alone, re-issuing a certificate
+// for the same key -- the LAK is never rotated independently of its key --
+// resolves to the same key both before and after reissuance.
+//
+// Returns "" for a nil certificate.
+func CertificateKey(cert *x509.Certificate) string {
+	if cert == nil {
+		return ""
+	}
+	if cert.Subject.CommonName != "" {
+		return cert.Subject.CommonName
+	}
+	return qrdbsdk.ComputeSPKIThumbprint(cert)
+}
 
 // CertStore provides comprehensive certificate management operations.
 // It extends basic certificate storage with validation, revocation checking,

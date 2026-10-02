@@ -33,6 +33,17 @@ var (
 	tcgPubFile    string
 	tcgCSRFile    string
 	tcgPackedCSR  string
+
+	// LAK (go-xkms#715) flag variables
+	tcgLAKManufacturer string
+	tcgLAKModel        string
+	tcgLAKFirmware     string
+	tcgLAKIAKCertFile  string
+	tcgLAKCertifyInfo  string
+	tcgLAKSignature    string
+	tcgLAKSigAlgo      string
+	tcgLAKPublicArea   string
+	tcgLAKNonceFile    string
 )
 
 // caTCGCmd represents the TCG Certificate Authority command
@@ -477,6 +488,143 @@ func writeEnrollmentOutput(dir string, resp *client.EnrollDeviceResponse) error 
 	return nil
 }
 
+// caTCGIssueLAKCmd issues a Local Attestation Key certificate
+var caTCGIssueLAKCmd = &cobra.Command{
+	Use:   "issue-lak",
+	Short: "Issue a Local Attestation Key certificate",
+	Long: `Issue a Local Attestation Key (LAK) certificate in the WebAuthn Level 2
+section 8.3.1 "TPM Attestation Statement Certificate Requirements" profile
+(go-xkms#715): an empty Subject, a critical subjectAltName carrying the TPM
+manufacturer/model/firmware version, the tcg-kp-AIKCertificate EKU, and
+Basic Constraints CA:false.
+
+The LAK must already have been created on the device and certified under its
+IAK via TPM2_Certify (` + "`xkey tpm lak create`" + `). This command submits that
+evidence -- the IAK's own certificate, the raw TPM2_Certify certifyInfo and
+signature, the LAK's public area, and the nonce the evidence echoes -- for
+the CA to verify before issuing.
+
+Examples:
+  xkmsctl ca tcg issue-lak \
+    --tpm-manufacturer id:49465800 --tpm-model NPCT6xx --tpm-firmware 7.2.3.1 \
+    --iak-cert iak_cert.der --certify-info certify_info.bin --signature signature.bin \
+    --signature-algorithm ECDSA-SHA256 --lak-public-area lak_pub_area.bin \
+    --nonce nonce.bin --output lak_cert.pem`,
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		printVerbose("Issuing LAK certificate")
+
+		issueLAKCertificate(cfg, printer)
+	},
+}
+
+// issueLAKCertificate issues a LAK certificate using the SDK client
+func issueLAKCertificate(cfg *Config, printer *Printer) {
+	// #nosec G304 - IAK certificate file path from CLI argument
+	iakCertDER, err := os.ReadFile(tcgLAKIAKCertFile)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrReadIAKCertificateFileFailed, Err: err})
+		return
+	}
+	// #nosec G304 - certify info file path from CLI argument
+	certifyInfo, err := os.ReadFile(tcgLAKCertifyInfo)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrReadCertifyInfoFileFailed, Err: err})
+		return
+	}
+	// #nosec G304 - signature file path from CLI argument
+	signature, err := os.ReadFile(tcgLAKSignature)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrReadSignatureFileFailed, Err: err})
+		return
+	}
+	// #nosec G304 - LAK public area file path from CLI argument
+	lakPublicArea, err := os.ReadFile(tcgLAKPublicArea)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrReadLAKPublicAreaFileFailed, Err: err})
+		return
+	}
+	var nonce []byte
+	if tcgLAKNonceFile != "" {
+		// #nosec G304 - nonce file path from CLI argument
+		nonce, err = os.ReadFile(tcgLAKNonceFile)
+		if err != nil {
+			handleError(&WrappedError{Sentinel: ErrReadNonceFileFailed, Err: err})
+			return
+		}
+	}
+
+	sigAlg, err := client.ParseSignatureAlgorithm(tcgLAKSigAlgo)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrInvalidSignatureAlgorithm, Err: err})
+		return
+	}
+
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
+		return
+	}
+	defer closeQuietly(cl)
+
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
+		return
+	}
+
+	printVerbose("Connected to xkms service")
+
+	resp, err := cl.IssueLAKCertificate(ctx, &client.IssueLAKCertificateRequest{
+		TPMManufacturer:    tcgLAKManufacturer,
+		TPMModel:           tcgLAKModel,
+		TPMFirmwareVersion: tcgLAKFirmware,
+		IAKCertificateDER:  iakCertDER,
+		CertifyInfo:        certifyInfo,
+		Signature:          signature,
+		SignatureAlgorithm: int(sigAlg),
+		LAKPublicArea:      lakPublicArea,
+		Nonce:              nonce,
+	})
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrIssueLAKCertificateFailed, Err: err})
+		return
+	}
+
+	if tcgOutputFile != "" {
+		// #nosec G306 - Certificate files need to be readable
+		if err := os.WriteFile(tcgOutputFile, resp.CertificatePEM, 0644); err != nil {
+			handleError(&WrappedError{Sentinel: ErrWriteLAKCertificateFailed, Err: err})
+			return
+		}
+		printVerbose("LAK certificate written to: %s", tcgOutputFile)
+	}
+
+	if cfg.OutputFormat == "json" {
+		result := map[string]interface{}{
+			"serial_number": resp.SerialNumber,
+		}
+		if tcgOutputFile != "" {
+			result["cert_file"] = tcgOutputFile
+		} else {
+			result["certificate_pem"] = string(resp.CertificatePEM)
+		}
+		if err := printer.PrintJSON(result); err != nil {
+			handleError(err)
+		}
+	} else {
+		fmt.Printf("LAK Certificate Issued:\n")
+		fmt.Printf("  Serial Number: %s\n", resp.SerialNumber)
+		if tcgOutputFile == "" {
+			fmt.Printf("\n%s", resp.CertificatePEM)
+		} else {
+			fmt.Printf("  Certificate:   %s\n", tcgOutputFile)
+		}
+	}
+}
+
 func init() {
 	// ca tcg issue-ek flags
 	caTCGIssueEKCmd.Flags().StringVar(&tcgCommonName, "cn", "", "common name for the EK certificate (required)")
@@ -510,11 +658,32 @@ func init() {
 	caTCGEnrollCmd.Flags().StringVar(&tcgOrg, "org", "", "organization name")
 	caTCGEnrollCmd.Flags().StringVar(&tcgOutputFile, "output", "", "output directory for enrollment files")
 
+	// ca tcg issue-lak flags
+	caTCGIssueLAKCmd.Flags().StringVar(&tcgLAKManufacturer, "tpm-manufacturer", "", "TCG TPM manufacturer code, e.g. id:49465800 (required)")
+	markFlagRequired(caTCGIssueLAKCmd, "tpm-manufacturer")
+	caTCGIssueLAKCmd.Flags().StringVar(&tcgLAKModel, "tpm-model", "", "TPM model string (required)")
+	markFlagRequired(caTCGIssueLAKCmd, "tpm-model")
+	caTCGIssueLAKCmd.Flags().StringVar(&tcgLAKFirmware, "tpm-firmware", "", "TPM firmware version (required)")
+	markFlagRequired(caTCGIssueLAKCmd, "tpm-firmware")
+	caTCGIssueLAKCmd.Flags().StringVar(&tcgLAKIAKCertFile, "iak-cert", "", "path to the device's IAK certificate (DER, required)")
+	markFlagRequired(caTCGIssueLAKCmd, "iak-cert")
+	caTCGIssueLAKCmd.Flags().StringVar(&tcgLAKCertifyInfo, "certify-info", "", "path to the raw TPM2_Certify certifyInfo (TPMS_ATTEST, required)")
+	markFlagRequired(caTCGIssueLAKCmd, "certify-info")
+	caTCGIssueLAKCmd.Flags().StringVar(&tcgLAKSignature, "signature", "", "path to the IAK's signature over certifyInfo (required)")
+	markFlagRequired(caTCGIssueLAKCmd, "signature")
+	caTCGIssueLAKCmd.Flags().StringVar(&tcgLAKSigAlgo, "signature-algorithm", "", "the IAK's X.509 signature algorithm, e.g. ECDSA-SHA256 (required)")
+	markFlagRequired(caTCGIssueLAKCmd, "signature-algorithm")
+	caTCGIssueLAKCmd.Flags().StringVar(&tcgLAKPublicArea, "lak-public-area", "", "path to the LAK's marshalled TPMT_PUBLIC (required)")
+	markFlagRequired(caTCGIssueLAKCmd, "lak-public-area")
+	caTCGIssueLAKCmd.Flags().StringVar(&tcgLAKNonceFile, "nonce", "", "path to the qualifying data the evidence must echo")
+	caTCGIssueLAKCmd.Flags().StringVar(&tcgOutputFile, "output", "", "output file for certificate (PEM)")
+
 	// Add subcommands to caTCGCmd
 	caTCGCmd.AddCommand(caTCGIssueEKCmd)
 	caTCGCmd.AddCommand(caTCGIssueAKCmd)
 	caTCGCmd.AddCommand(caTCGSignCSRCmd)
 	caTCGCmd.AddCommand(caTCGEnrollCmd)
+	caTCGCmd.AddCommand(caTCGIssueLAKCmd)
 
 	// Wire caTCGCmd as subcommand of caCmd
 	caCmd.AddCommand(caTCGCmd)

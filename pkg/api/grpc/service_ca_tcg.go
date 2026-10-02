@@ -44,6 +44,11 @@ type grpcCAMethodEnrollDevice interface {
 	EnrollDevice(ctx context.Context, req *transport.EnrollDeviceRequest) (*transport.EnrollDeviceResponse, error)
 }
 
+// grpcCAMethodIssueLAK issues a Local Attestation Key certificate.
+type grpcCAMethodIssueLAK interface {
+	IssueLAKCertificate(ctx context.Context, req *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error)
+}
+
 // IssueEKCertificate issues an Endorsement Key certificate for a TPM.
 func (s *Service) IssueEKCertificate(ctx context.Context, req *pb.IssueEKCertificateRequest) (*pb.IssueEKCertificateResponse, error) {
 	ca := s.ca
@@ -202,5 +207,60 @@ func (s *Service) EnrollDevice(ctx context.Context, req *pb.EnrollDeviceRequest)
 		CredentialBlob:  resp.CredentialBlob,
 		EncryptedSecret: resp.EncryptedSecret,
 		PlainSecret:     resp.PlainSecret,
+	}, nil
+}
+
+// IssueLAKCertificate issues a Local Attestation Key certificate in the
+// WebAuthn Level 2 section 8.3.1 profile (go-xkms#715).
+func (s *Service) IssueLAKCertificate(ctx context.Context, req *pb.IssueLAKCertificateRequest) (*pb.IssueLAKCertificateResponse, error) {
+	ca := s.ca
+	if ca == nil {
+		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
+	}
+
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, ""); err != nil {
+		return nil, err
+	}
+
+	if req.GetTpmManufacturer() == "" || req.GetTpmModel() == "" || req.GetTpmFirmwareVersion() == "" {
+		return nil, status.Error(codes.InvalidArgument, "TPM manufacturer, model and firmware version are required")
+	}
+
+	if len(req.GetIakCertificateDer()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "IAK certificate is required")
+	}
+
+	if len(req.GetCertifyInfo()) == 0 || len(req.GetSignature()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "TPM2_Certify evidence (certify info and signature) is required")
+	}
+
+	if len(req.GetLakPublicArea()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "LAK public area is required")
+	}
+
+	issuer, ok := ca.(grpcCAMethodIssueLAK)
+	if !ok {
+		return nil, status.Error(codes.Unavailable, "CA does not support TCG operations")
+	}
+
+	resp, err := issuer.IssueLAKCertificate(ctx, &transport.IssueLAKCertificateRequest{
+		TPMManufacturer:    req.GetTpmManufacturer(),
+		TPMModel:           req.GetTpmModel(),
+		TPMFirmwareVersion: req.GetTpmFirmwareVersion(),
+		IAKCertificateDER:  req.GetIakCertificateDer(),
+		CertifyInfo:        req.GetCertifyInfo(),
+		Signature:          req.GetSignature(),
+		SignatureAlgorithm: int(req.GetSignatureAlgorithm()),
+		LAKPublicArea:      req.GetLakPublicArea(),
+		Nonce:              req.GetNonce(),
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to issue LAK certificate: %v", err)
+	}
+
+	return &pb.IssueLAKCertificateResponse{
+		CertificateDer: resp.CertificateDER,
+		CertificatePem: resp.CertificatePEM,
+		SerialNumber:   resp.SerialNumber,
 	}, nil
 }

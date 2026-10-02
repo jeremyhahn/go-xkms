@@ -155,6 +155,11 @@ type TrustedCAHardwareModuleInfo = pkgca.HardwareModuleInfo
 // from the CA, including subject, SANs, validity, key usage, and TCG fields.
 type TrustedCACertificateRequest = pkgca.CertificateRequest
 
+// LAKCertificationEvidence is the TPM2_Certify proof that a Local
+// Attestation Key is resident in the same TPM as the Initial Attestation Key
+// that certified it, passed to TCGCA.IssueLAKCertificate (go-xkms#715).
+type LAKCertificationEvidence = pkgca.LAKCertificationEvidence
+
 // TrustedCAIssuedCertificate contains the result of a successful certificate
 // issuance including the certificate, private key, and chain information.
 type TrustedCAIssuedCertificate = pkgca.IssuedCertificate

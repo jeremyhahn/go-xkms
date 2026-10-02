@@ -37,15 +37,23 @@ type tcgCAServicer interface {
 
 	// EnrollDevice performs full TCG device enrollment with credential activation challenge.
 	EnrollDevice(ctx context.Context, req *transport.EnrollDeviceRequest) (*transport.EnrollDeviceResponse, error)
+
+	// IssueLAKCertificate issues a Local Attestation Key certificate in the
+	// WebAuthn Level 2 §8.3.1 profile (go-xkms#715).
+	IssueLAKCertificate(ctx context.Context, req *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error)
 }
 
 // Typed errors for TCG CA handlers.
 var (
-	ErrMissingEKPublicKey = &tcgCAError{"missing EK public key"}
-	ErrMissingPublicKey   = &tcgCAError{"missing public key"}
-	ErrMissingTCGCSR      = &tcgCAError{"missing TCG CSR data"}
-	ErrMissingPackedCSR   = &tcgCAError{"missing packed CSR data"}
-	ErrTCGCANotSupported  = &tcgCAError{"CA does not support TCG operations"}
+	ErrMissingEKPublicKey    = &tcgCAError{"missing EK public key"}
+	ErrMissingPublicKey      = &tcgCAError{"missing public key"}
+	ErrMissingTCGCSR         = &tcgCAError{"missing TCG CSR data"}
+	ErrMissingPackedCSR      = &tcgCAError{"missing packed CSR data"}
+	ErrTCGCANotSupported     = &tcgCAError{"CA does not support TCG operations"}
+	ErrMissingIAKCertificate = &tcgCAError{"missing IAK certificate"}
+	ErrMissingCertifyInfo    = &tcgCAError{"missing TPM2_Certify evidence (certify info and signature)"}
+	ErrMissingLAKPublicArea  = &tcgCAError{"missing LAK public area"}
+	ErrMissingTPMDeviceInfo  = &tcgCAError{"missing TPM manufacturer, model or firmware version"}
 )
 
 // tcgCAError is a typed error for TCG CA handler validation failures.
@@ -217,6 +225,56 @@ func (h *CAHandlers) HandleEnrollDevice(w http.ResponseWriter, r *http.Request) 
 
 	h.logger.Info("ca: device enrolled",
 		slog.String("common_name", req.CommonName))
+
+	writeJSON(w, resp, http.StatusCreated)
+}
+
+// HandleIssueLAKCertificate issues a Local Attestation Key certificate in
+// the WebAuthn Level 2 §8.3.1 profile (go-xkms#715).
+// POST /api/v1/ca/tcg/lak
+func (h *CAHandlers) HandleIssueLAKCertificate(w http.ResponseWriter, r *http.Request) {
+	tcg, ok := h.ca.(tcgCAServicer)
+	if !ok {
+		writeError(w, ErrTCGCANotSupported, http.StatusNotImplemented)
+		return
+	}
+
+	var req transport.IssueLAKCertificateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+
+	if req.TPMManufacturer == "" || req.TPMModel == "" || req.TPMFirmwareVersion == "" {
+		writeError(w, ErrMissingTPMDeviceInfo, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.IAKCertificateDER) == 0 {
+		writeError(w, ErrMissingIAKCertificate, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.CertifyInfo) == 0 || len(req.Signature) == 0 {
+		writeError(w, ErrMissingCertifyInfo, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.LAKPublicArea) == 0 {
+		writeError(w, ErrMissingLAKPublicArea, http.StatusBadRequest)
+		return
+	}
+
+	resp, err := tcg.IssueLAKCertificate(r.Context(), &req)
+	if err != nil {
+		h.logger.Warn("ca: issue LAK certificate failed",
+			slog.String("error", err.Error()))
+		writeError(w, err, mapCAError(err))
+		return
+	}
+
+	h.logger.Info("ca: LAK certificate issued",
+		slog.String("serial", resp.SerialNumber))
 
 	writeJSON(w, resp, http.StatusCreated)
 }

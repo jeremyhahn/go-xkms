@@ -333,6 +333,9 @@ func (m *MockCA) ImportEndorsementKeyCertificate(_ *x509.Certificate) error     
 func (m *MockCA) EndorsementKeyCertificate(_ string) (*x509.Certificate, error) {
 	return &x509.Certificate{}, nil
 }
+func (m *MockCA) IssueLAKCertificate(_ context.Context, _ *ca.CertificateRequest, _ *ca.LAKCertificationEvidence) (*x509.Certificate, error) {
+	return &x509.Certificate{}, nil
+}
 
 // setupTestService creates a test ACME REST service with a temporary storage backend
 func setupTestService(t *testing.T) (*RestService, string, func()) {

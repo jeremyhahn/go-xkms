@@ -1027,6 +1027,7 @@ func TestDefaultConfig(t *testing.T) {
 		assert.NotNil(t, DefaultConfig.IDevID)
 		assert.NotNil(t, DefaultConfig.SSRK)
 		assert.NotNil(t, DefaultConfig.PlatformSRK)
+		assert.NotNil(t, DefaultConfig.LAK)
 	})
 
 	t.Run("default EK config", func(t *testing.T) {
@@ -1041,6 +1042,16 @@ func TestDefaultConfig(t *testing.T) {
 		assert.Equal(t, uint32(0x81020001), DefaultConfig.IAK.Handle)
 		assert.Equal(t, x509.RSA.String(), DefaultConfig.IAK.KeyAlgorithm)
 		assert.Equal(t, x509.SHA256WithRSAPSS.String(), DefaultConfig.IAK.SignatureAlgorithm)
+	})
+
+	t.Run("default LAK config", func(t *testing.T) {
+		assert.Equal(t, uint32(0x81020002), DefaultConfig.LAK.Handle)
+		assert.Equal(t, x509.ECDSA.String(), DefaultConfig.LAK.KeyAlgorithm)
+		assert.Equal(t, x509.ECDSAWithSHA256.String(), DefaultConfig.LAK.SignatureAlgorithm)
+		assert.NotEqual(t, DefaultConfig.IAK.Handle, DefaultConfig.LAK.Handle,
+			"the LAK and IAK must not share a persistent handle")
+		assert.NotEqual(t, DefaultConfig.IDevID.Handle, DefaultConfig.LAK.Handle,
+			"the LAK and IDevID must not share a persistent handle")
 	})
 
 	t.Run("default IDevID config", func(t *testing.T) {

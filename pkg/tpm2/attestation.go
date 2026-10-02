@@ -78,11 +78,39 @@ func (tpm *TPM2) CertifyKey(
 	nonce []byte,
 	backend store.KeyBackend) (*CertifyResult, error) {
 
+	// ErrNotInitialized takes priority over ErrIAKNotProvisioned: an
+	// uninitialized TPM has no way to tell whether an IAK was ever
+	// provisioned, so reporting "not provisioned" would claim more than is
+	// known. certifyKeyAs makes the identical check for CertifyLAK and
+	// CertifyKeyWithLAK; it is repeated here only so this ordering holds
+	// before the signer is even resolved.
+	if tpm.transport == nil {
+		return nil, ErrNotInitialized
+	}
+	if tpm.iakAttrs == nil {
+		return nil, ErrIAKNotProvisioned
+	}
+	return tpm.certifyKeyAs(tpm.iakAttrs, keyAttrs, nonce, backend)
+}
+
+// certifyKeyAs is the TPM2_Certify mechanics shared by CertifyKey (signer is
+// always the IAK), CertifyLAK (the IAK certifies the LAK once, at
+// provisioning time) and CertifyKeyWithLAK (the LAK certifies an ordinary key
+// such as a WebAuthn credential key, go-xkms#715). Only which key signs
+// differs; the certified object's own authorization -- the DevID admin-policy
+// session for an IAK/IDevID target, ordinary password auth otherwise -- is
+// unaffected by who the signer is.
+func (tpm *TPM2) certifyKeyAs(
+	signerAttrs *types.KeyAttributes,
+	keyAttrs *types.KeyAttributes,
+	nonce []byte,
+	backend store.KeyBackend) (*CertifyResult, error) {
+
 	if tpm.transport == nil {
 		return nil, ErrNotInitialized
 	}
 
-	if tpm.iakAttrs == nil {
+	if signerAttrs == nil {
 		return nil, ErrIAKNotProvisioned
 	}
 
@@ -135,32 +163,50 @@ func (tpm *TPM2) CertifyKey(
 		}
 	}
 
-	// Determine target key auth
-	var targetAuthValue []byte
-	if keyAttrs.Password != nil {
-		targetAuthValue = keyAttrs.Password.Bytes()
-	}
-
-	// Determine IAK auth
-	var iakAuth []byte
-	if tpm.iakAttrs.Password != nil {
-		iakAuth = tpm.iakAttrs.Password.Bytes()
-	}
-
-	// Execute TPM2_Certify: the IAK signs a TPMS_ATTEST structure
-	// containing the Name of the target key
-	// TPM2_Certify authorizes objectHandle at the ADMIN role. For an
-	// ordinary key that is its authValue. For an IDevID or IAK -- which carry
-	// the TCG IDevID/IAK Key Policy with adminWithPolicy SET -- the authValue
-	// is refused, and the Certify branch of the key policy, satisfied as the
-	// Privacy Administrator, is what authorizes it (section 7.3.6.2). The IAK
-	// signs at the USER role either way, under its authValue.
-	iakSession, closeIAKSession, err := tpm.objectAuthSession(iakAuth, encryptNone)
+	// Execute TPM2_Certify: the signer (IAK or LAK) signs a TPMS_ATTEST
+	// structure containing the Name of the target key.
+	//
+	// The signer's own USER-role authorization goes through objectSession
+	// (object_policy.go), not a bare password session: an IAK/IDevID is
+	// authorized through its TCG DevID Key Policy (devidKeySession, which
+	// also falls back to the platform Delegation Policy when the key has no
+	// authValue and asks for platform binding); the LAK, an ordinary
+	// Platform-SRK child, is authorized the same way every other generic
+	// object is -- a named policy, the platform policy, or its password --
+	// whichever bindObjectPolicy bound it to at creation. Resolving the
+	// signer's session from its own TPM-resident authPolicy, rather than
+	// presenting its authValue (or an empty one) unconditionally, is what
+	// keeps a policy-bound signer's empty-password bypass closed
+	// (go-xkms#715): a signer whose authPolicy requires a policy session
+	// cannot be satisfied merely by omitting a password.
+	signerSession, closeSignerSession, err := tpm.objectSession(signerAttrs, backend, signerAttrs.TPMAttributes.Handle)
 	if err != nil {
 		return nil, err
 	}
-	defer tpm.closeSession(closeIAKSession, "Certify signer")
+	defer tpm.closeSession(closeSignerSession, "Certify signer")
 
+	// TPM2_Certify authorizes objectHandle (the target) at the ADMIN role,
+	// not USER -- unlike the signer above, so objectSession does not apply
+	// here. For an IDevID or IAK -- which carry the TCG IDevID/IAK Key
+	// Policy with adminWithPolicy SET -- the authValue is refused, and the
+	// Certify branch of the key policy, satisfied as the Privacy
+	// Administrator, is what authorizes it (section 7.3.6.2).
+	//
+	// Every other target, the LAK included when it is the object being
+	// certified (CertifyLAK), is built from this package's generic
+	// templates, which never set adminWithPolicy (KeyTemplateSpec.Template,
+	// template.go): TCG TPM 2.0 Part 1 section 19.7.5 makes adminWithPolicy
+	// CLEAR mean ADMIN-role actions are authorized by the object's authValue
+	// alone -- a policy session is refused for that role even when its
+	// digest matches the object's authPolicy exactly, confirmed against the
+	// simulator while diagnosing this. authPolicy and USERWITHAUTH govern
+	// the USER role only (Sign, Certify's SignHandle, ordinary use), which
+	// is where the generic object-policy hardening
+	// (bindObjectPolicy/objectSession, go-xkms#715) actually closes a
+	// bypass; TPM2_Certify naming an object as its target discloses no
+	// secret the object's own policy protects, so password-only ADMIN
+	// authorization here is the TPM's own design, not a gap this package
+	// should route around.
 	var targetAuth tpm2.Session
 	if kind, isDevID := devidKeyKindOf(keyAttrs.KeyType); isDevID {
 		targetPublic, err := targetPubResp.OutPublic.Contents()
@@ -168,9 +214,9 @@ func (tpm *TPM2) CertifyKey(
 			return nil, &errs.Wrapped{Msg: "failed to parse target key public", Err: err}
 		}
 		var hierarchyAuth []byte
-		if tpm.iakAttrs.Parent != nil && tpm.iakAttrs.Parent.TPMAttributes != nil &&
-			tpm.iakAttrs.Parent.TPMAttributes.HierarchyAuth != nil {
-			hierarchyAuth = tpm.iakAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
+		if signerAttrs.Parent != nil && signerAttrs.Parent.TPMAttributes != nil &&
+			signerAttrs.Parent.TPMAttributes.HierarchyAuth != nil {
+			hierarchyAuth = signerAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
 		}
 		adminSession, closeAdmin, err := tpm.DevIDAdminSession(
 			kind, targetPublic.NameAlg, tpm2.TPMCCCertify, hierarchyAuth)
@@ -184,6 +230,10 @@ func (tpm *TPM2) CertifyKey(
 		}()
 		targetAuth = adminSession
 	} else {
+		var targetAuthValue []byte
+		if keyAttrs.Password != nil {
+			targetAuthValue = keyAttrs.Password.Bytes()
+		}
 		targetSession, closeTargetSession, err := tpm.objectAuthSession(targetAuthValue, encryptNone)
 		if err != nil {
 			return nil, err
@@ -198,9 +248,9 @@ func (tpm *TPM2) CertifyKey(
 			Auth:   targetAuth,
 		},
 		SignHandle: tpm2.AuthHandle{
-			Handle: tpm.iakAttrs.TPMAttributes.Handle,
-			Name:   tpm.iakAttrs.TPMAttributes.Name,
-			Auth:   iakSession,
+			Handle: signerAttrs.TPMAttributes.Handle,
+			Name:   signerAttrs.TPMAttributes.Name,
+			Auth:   signerSession,
 		},
 		QualifyingData: tpm2.TPM2BData{
 			Buffer: nonce,
@@ -218,7 +268,7 @@ func (tpm *TPM2) CertifyKey(
 
 	// Read IAK public to determine signature type
 	iakPubResp, err := tpm2.ReadPublic{
-		ObjectHandle: tpm.iakAttrs.TPMAttributes.Handle,
+		ObjectHandle: signerAttrs.TPMAttributes.Handle,
 	}.Execute(tpm.transport)
 	if err != nil {
 		tpm.logger.Error("failed to read IAK public",
@@ -238,7 +288,7 @@ func (tpm *TPM2) CertifyKey(
 	switch iakPub.Type {
 	case tpm2.TPMAlgRSA:
 		var rsaSig *tpm2.TPMSSignatureRSA
-		if store.IsRSAPSS(tpm.iakAttrs.SignatureAlgorithm) {
+		if store.IsRSAPSS(signerAttrs.SignatureAlgorithm) {
 			rsaSig, err = rspCert.Signature.Signature.RSAPSS()
 			if err != nil {
 				return nil, &errs.Wrapped{Msg: "failed to extract RSA-PSS signature", Err: err}
@@ -291,7 +341,7 @@ func (tpm *TPM2) CertifyKey(
 	return &CertifyResult{
 		CertifyInfo:            rspCert.CertifyInfo.Bytes(),
 		Signature:              signature,
-		SignatureAlgorithm:     tpm.iakAttrs.SignatureAlgorithm,
+		SignatureAlgorithm:     signerAttrs.SignatureAlgorithm,
 		AttestingKeyPublic:     iakPubKey,
 		AttestedKeyPublic:      targetPubKey,
 		Nonce:                  nonce,

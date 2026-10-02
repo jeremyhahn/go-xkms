@@ -1993,6 +1993,41 @@ func (t *Transport) EnrollDevice(ctx context.Context, req *transport.EnrollDevic
 	return &resp, nil
 }
 
+// IssueLAKCertificate issues a Local Attestation Key certificate in the
+// WebAuthn Level 2 section 8.3.1 profile (go-xkms#715).
+func (t *Transport) IssueLAKCertificate(ctx context.Context, req *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+
+	body := map[string]interface{}{
+		"tpm_manufacturer":     req.TPMManufacturer,
+		"tpm_model":            req.TPMModel,
+		"tpm_firmware_version": req.TPMFirmwareVersion,
+		"iak_certificate_der":  req.IAKCertificateDER,
+		"certify_info":         req.CertifyInfo,
+		"signature":            req.Signature,
+		"signature_algorithm":  req.SignatureAlgorithm,
+		"lak_public_area":      req.LAKPublicArea,
+		"nonce":                req.Nonce,
+	}
+	if req.TenantID != "" {
+		body["tenant_id"] = req.TenantID
+	}
+
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/lak", body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.IssueLAKCertificateResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
 // PIN Operations
 
 // SetSOPIN sets the Security Officer PIN.

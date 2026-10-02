@@ -406,6 +406,9 @@ func (m *mockCAClient) SignTCGCSR(_ context.Context, _ *transport.SignTCGCSRRequ
 func (m *mockCAClient) EnrollDevice(_ context.Context, _ *transport.EnrollDeviceRequest) (*transport.EnrollDeviceResponse, error) {
 	return nil, nil
 }
+func (m *mockCAClient) IssueLAKCertificate(_ context.Context, _ *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	return nil, nil
+}
 
 // generateTestCertPEM creates a self-signed ECDSA P-256 certificate and returns
 // the PEM-encoded certificate bytes.

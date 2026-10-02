@@ -793,3 +793,12 @@ func (m *MockCertificateAuthority) EndorsementKeyCertificate(cn string) (*x509.C
 	}
 	return args.Get(0).(*x509.Certificate), args.Error(1)
 }
+
+// IssueLAKCertificate issues a Local Attestation Key certificate (go-xkms#715).
+func (m *MockCertificateAuthority) IssueLAKCertificate(ctx context.Context, request *ca.CertificateRequest, evidence *ca.LAKCertificationEvidence) (*x509.Certificate, error) {
+	args := m.Called(request, evidence)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*x509.Certificate), args.Error(1)
+}

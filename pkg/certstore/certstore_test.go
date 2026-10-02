@@ -297,6 +297,11 @@ func TestStoreCertificate_NilCert(t *testing.T) {
 	assert.Equal(t, ErrCertInvalid, err)
 }
 
+// TestStoreCertificate_EmptyCN proves a certificate with an empty Subject --
+// the WebAuthn Level 2 §8.3.1 profile Local Attestation Key certificate shape
+// go-xkms#715 introduced -- is no longer refused outright. It is keyed by its
+// SPKI SHA-256 thumbprint (CertificateKey) instead of its (empty) Common
+// Name, and is retrievable under that key.
 func TestStoreCertificate_EmptyCN(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
@@ -307,8 +312,30 @@ func TestStoreCertificate_EmptyCN(t *testing.T) {
 	cert.Subject.CommonName = ""
 
 	err = cs.StoreCertificate(cert)
-	assert.Error(t, err)
-	assert.Equal(t, ErrInvalidCN, err)
+	require.NoError(t, err)
+
+	key := CertificateKey(cert)
+	assert.NotEmpty(t, key)
+
+	retrieved, err := cs.GetCertificate(key)
+	require.NoError(t, err)
+	assert.Equal(t, cert.SerialNumber, retrieved.SerialNumber)
+}
+
+// TestCertificateKey_NilCertificate proves CertificateKey's error path: a nil
+// certificate has no key, so StoreCertificate's ErrInvalidCN fallback stays
+// reachable rather than panicking.
+func TestCertificateKey_NilCertificate(t *testing.T) {
+	assert.Equal(t, "", CertificateKey(nil))
+}
+
+// TestCertificateKey_UsesCommonNameWhenPresent proves the ordinary case is
+// unchanged: a certificate with a Subject is keyed by its Common Name, not
+// its SPKI thumbprint.
+func TestCertificateKey_UsesCommonNameWhenPresent(t *testing.T) {
+	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
+	cert.Subject.CommonName = "widget-01"
+	assert.Equal(t, "widget-01", CertificateKey(cert))
 }
 
 func TestStoreCertificate_Expired(t *testing.T) {
@@ -983,6 +1010,9 @@ func TestListCertificates_ErrorLoadingCert(t *testing.T) {
 	assert.Empty(t, certs) // Should skip the nil cert
 }
 
+// TestStoreCertificateChain_EmptyCNInFirstCert proves StoreCertificateChain
+// applies the same SPKI-thumbprint fallback as StoreCertificate (see
+// CertificateKey) when the leaf certificate's Subject is empty.
 func TestStoreCertificateChain_EmptyCNInFirstCert(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
@@ -995,8 +1025,12 @@ func TestStoreCertificateChain_EmptyCNInFirstCert(t *testing.T) {
 	chain := []*x509.Certificate{cert}
 
 	err = cs.StoreCertificateChain(chain)
-	assert.Error(t, err)
-	assert.Equal(t, ErrInvalidCN, err)
+	require.NoError(t, err)
+
+	retrieved, err := cs.GetCertificateChain(CertificateKey(cert))
+	require.NoError(t, err)
+	require.Len(t, retrieved, 1)
+	assert.Equal(t, cert.SerialNumber, retrieved[0].SerialNumber)
 }
 
 func TestVerifyCertificate_WithIntermediates(t *testing.T) {

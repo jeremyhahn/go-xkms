@@ -970,6 +970,12 @@ func (s *TestXKMSService) EnrollDevice(ctx context.Context, req *xkms.EnrollDevi
 	return nil, ErrNotImplemented
 }
 
+// IssueLAKCertificate issues a Local Attestation Key certificate in the
+// WebAuthn Level 2 section 8.3.1 profile (go-xkms#715).
+func (s *TestXKMSService) IssueLAKCertificate(ctx context.Context, req *xkms.IssueLAKCertificateRequest) (*xkms.IssueLAKCertificateResponse, error) {
+	return nil, ErrNotImplemented
+}
+
 // PIV operations
 
 func (s *TestXKMSService) ListPIVSlots(ctx context.Context, req *xkms.ListPIVSlotsRequest) (*xkms.ListPIVSlotsResponse, error) {

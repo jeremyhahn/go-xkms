@@ -160,6 +160,52 @@ func (s *XKMSService) EnrollDevice(ctx context.Context, req *transport.EnrollDev
 	}, nil
 }
 
+// IssueLAKCertificate issues a Local Attestation Key certificate in the
+// WebAuthn Level 2 §8.3.1 profile, after verifying the LAK's TPM2_Certify
+// evidence against the device's IAK certificate (go-xkms#715).
+func (s *XKMSService) IssueLAKCertificate(ctx context.Context, req *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	if req.TPMManufacturer == "" || req.TPMModel == "" || req.TPMFirmwareVersion == "" {
+		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "TPM manufacturer, model and firmware version required"}
+	}
+	if len(req.IAKCertificateDER) == 0 {
+		return nil, &ErrValidation{Sentinel: ErrNilData, Detail: "IAK certificate required"}
+	}
+	if len(req.CertifyInfo) == 0 || len(req.Signature) == 0 {
+		return nil, &ErrValidation{Sentinel: ErrNilData, Detail: "TPM2_Certify evidence (certify info and signature) required"}
+	}
+	if len(req.LAKPublicArea) == 0 {
+		return nil, &ErrValidation{Sentinel: ErrNilData, Detail: "LAK public area required"}
+	}
+
+	tcg, err := s.getTCGCA()
+	if err != nil {
+		return nil, err
+	}
+
+	certDER, err := tcg.IssueLAKCertificateRaw(
+		ctx,
+		req.TPMManufacturer, req.TPMModel, req.TPMFirmwareVersion,
+		req.IAKCertificateDER,
+		req.CertifyInfo, req.Signature,
+		x509.SignatureAlgorithm(req.SignatureAlgorithm),
+		req.LAKPublicArea, req.Nonce,
+	)
+	if err != nil {
+		return nil, &ErrCAOperation{Operation: "issue lak certificate", Err: err}
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+	return &transport.IssueLAKCertificateResponse{
+		CertificateDER: certDER,
+		CertificatePEM: certPEM,
+		SerialNumber:   serialFromDER(certDER),
+	}, nil
+}
+
 // serialFromDER extracts the hex serial number from a DER-encoded certificate.
 // Returns empty string if parsing fails.
 func serialFromDER(der []byte) string {

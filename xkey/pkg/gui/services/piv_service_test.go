@@ -326,6 +326,9 @@ func (m *mockPIVClient) SignTCGCSR(_ context.Context, _ *transport.SignTCGCSRReq
 func (m *mockPIVClient) EnrollDevice(_ context.Context, _ *transport.EnrollDeviceRequest) (*transport.EnrollDeviceResponse, error) {
 	return nil, errMockNotImplemented
 }
+func (m *mockPIVClient) IssueLAKCertificate(_ context.Context, _ *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	return nil, errMockNotImplemented
+}
 
 // PIV method implementations with configurable responses.
 

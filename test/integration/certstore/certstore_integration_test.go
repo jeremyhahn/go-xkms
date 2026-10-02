@@ -983,7 +983,12 @@ func TestCertStore_ErrorHandling_NilCertificate(t *testing.T) {
 	assert.Equal(t, certstore.ErrCertInvalid, err)
 }
 
-func TestCertStore_ErrorHandling_EmptyCN(t *testing.T) {
+// TestCertStore_EmptyCNKeyedBySPKIThumbprint proves a certificate with an
+// empty Subject -- the WebAuthn Level 2 §8.3.1 profile Local Attestation Key
+// certificate shape go-xkms#715 introduced -- stores and retrieves through a
+// real on-disk backend, keyed by its SPKI SHA-256 thumbprint rather than
+// being refused.
+func TestCertStore_EmptyCNKeyedBySPKIThumbprint(t *testing.T) {
 	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
@@ -995,8 +1000,11 @@ func TestCertStore_ErrorHandling_EmptyCN(t *testing.T) {
 	cert.Subject.CommonName = ""
 
 	err = cs.StoreCertificate(cert)
-	assert.Error(t, err)
-	assert.Equal(t, certstore.ErrInvalidCN, err)
+	require.NoError(t, err)
+
+	retrieved, err := cs.GetCertificate(certstore.CertificateKey(cert))
+	require.NoError(t, err)
+	assert.Equal(t, cert.SerialNumber, retrieved.SerialNumber)
 }
 
 func TestCertStore_ErrorHandling_EmptyChain(t *testing.T) {
@@ -1480,6 +1488,10 @@ func TestCertStore_New_NilStorage(t *testing.T) {
 	assert.Equal(t, certstore.ErrStorageRequired, err)
 }
 
+// TestCertStore_StoreCertificateChain_EmptyCNInLeaf proves
+// StoreCertificateChain applies the same SPKI-thumbprint fallback as
+// StoreCertificate (go-xkms#715) when the leaf certificate's Subject is
+// empty.
 func TestCertStore_StoreCertificateChain_EmptyCNInLeaf(t *testing.T) {
 	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
@@ -1495,8 +1507,12 @@ func TestCertStore_StoreCertificateChain_EmptyCNInLeaf(t *testing.T) {
 	chain := []*x509.Certificate{cert}
 
 	err = cs.StoreCertificateChain(chain)
-	assert.Error(t, err)
-	assert.Equal(t, certstore.ErrInvalidCN, err)
+	require.NoError(t, err)
+
+	retrieved, err := cs.GetCertificateChain(certstore.CertificateKey(cert))
+	require.NoError(t, err)
+	require.Len(t, retrieved, 1)
+	assert.Equal(t, cert.SerialNumber, retrieved[0].SerialNumber)
 }
 
 func TestCertStore_Close_Multiple(t *testing.T) {

@@ -43,8 +43,8 @@ import (
 )
 
 // simulatorTPM2AttestingBackend provisions the in-process MS TPM reference
-// simulator with a full device identity (EK/SRK/IAK) and returns a
-// TPM2AttestingBackend over it, plus the IAK certificate that vouches for it.
+// simulator with a full device identity (EK/SRK/IAK/LAK) and returns a
+// TPM2AttestingBackend over it, plus the LAK certificate that vouches for it.
 //
 // The go-tpm-tools simulator is a process-global singleton (see
 // xkey/pkg/pairing/bridge_enrollment_simulator_test.go), so tests in this file
@@ -92,18 +92,37 @@ func simulatorTPM2AttestingBackend(t *testing.T) (*TPM2AttestingBackend, *x509.C
 	// Provision is TCG-only (EK + Shared SRK); xkms's own TPM2 backend
 	// resolves its storage parent exclusively off the Platform SRK, so it
 	// must be enrolled before NewTPM2BackendWithTPM is constructed below.
+	// The LAK is also a Platform SRK child (go-xkms#715), so this is a
+	// precondition for CreateLAK too.
 	require.NoError(t, tpm2test.EnrollPlatformSRK(tpm, &config),
 		"simulator must enroll the Platform SRK xkms's own backend uses")
-
-	iakPub, err := tpm.IAK()
-	require.NoError(t, err, "provisioning must leave a usable IAK behind")
-
-	iakCert := issueAIKCertificate(t, iakPub)
-	require.NoError(t, tpm.ProvisionIAKCert(iakCert), "installing the AIK certificate must succeed")
 
 	memStorage, err := xkms.NewMemoryBackend()
 	require.NoError(t, err)
 	blobs := xkms.NewFileBackend(logger, memStorage)
+
+	// Create the Local Attestation Key and certify it under the IAK via
+	// TPM2_Certify, the TCG v1.10 r9 §5.3/§6.3 "Owner Creation of a LAK
+	// Certificate based on an IAK Certificate" flow go-xkms#715 implements.
+	// The harness provisions with an empty Owner hierarchy auth (Provision(nil)
+	// above), so CreateLAK's EvictControl needs none either.
+	_, err = tpm.CreateLAK(nil, blobs, false)
+	require.NoError(t, err, "creating the Local Attestation Key must succeed")
+
+	lakPub, err := tpm.LAK()
+	require.NoError(t, err, "provisioning must leave a usable LAK behind")
+
+	certifyNonce := []byte("lak-provisioning-certify-nonce-01")
+	certifyResult, err := tpm.CertifyLAK(certifyNonce, blobs)
+	require.NoError(t, err, "the IAK must certify the LAK via TPM2_Certify")
+
+	lakCert := issueLAKCertificate(t, lakPub)
+	require.NoError(t, tpm.ProvisionLAKCert(lakCert), "installing the LAK certificate must succeed")
+
+	// The certification evidence is exercised directly here (pkg/ca's own
+	// tests cover ca.IssueLAKCertificate's verification end to end); what
+	// this file verifies is the resulting statement against go-webauthn.
+	_ = certifyResult
 
 	tpm2Backend, err := xkms.NewTPM2BackendWithTPM(&xkms.TPM2BackendExternalConfig{
 		TPM:        tpm,
@@ -113,17 +132,22 @@ func simulatorTPM2AttestingBackend(t *testing.T) (*TPM2AttestingBackend, *x509.C
 	require.NoError(t, err)
 
 	adapter := NewBackendAdapter(tpm2Backend, xkms.BackendTypeTPM2)
-	return NewTPM2AttestingBackend(adapter, tpm, blobs), iakCert
+	return NewTPM2AttestingBackend(adapter, tpm, blobs), lakCert
 }
 
-// issueAIKCertificate builds a self-issued certificate over the TPM's real
-// IAK public key that satisfies the WebAuthn L2 §8.3.1 TPM Attestation
+// issueLAKCertificate builds a self-issued certificate over the TPM's real
+// LAK public key that satisfies the WebAuthn L2 §8.3.1 TPM Attestation
 // Statement Certificate Requirements: an empty Subject, a SubjectAltName
 // carrying the TCG manufacturer/model/version directoryName attributes, the
 // tcg-kp-AIKCertificate (2.23.133.8.3) EKU, and CA:false. A relying party's
 // "tpm" format verifier checks the certificate against these requirements
-// before it trusts anything the AIK signs.
-func issueAIKCertificate(t *testing.T, iakPub crypto.PublicKey) *x509.Certificate {
+// before it trusts anything the LAK signs. (pkg/ca's own tcg_lak_test.go
+// exercises the production ca.IssueLAKCertificate path, which builds a
+// certificate to this identical profile after verifying the LAK's
+// TPM2_Certify evidence against the IAK; this helper reproduces the shape
+// without redoing that verification, since this file's purpose is the
+// go-webauthn interop proof below, not CA issuance.)
+func issueLAKCertificate(t *testing.T, lakPub crypto.PublicKey) *x509.Certificate {
 	t.Helper()
 
 	issuer, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -152,7 +176,7 @@ func issueAIKCertificate(t *testing.T, iakPub crypto.PublicKey) *x509.Certificat
 		ExtraExtensions:       []pkix.Extension{sanExt},
 	}
 
-	der, err := x509.CreateCertificate(rand.Reader, template, template, iakPub, issuer)
+	der, err := x509.CreateCertificate(rand.Reader, template, template, lakPub, issuer)
 	require.NoError(t, err)
 
 	cert, err := x509.ParseCertificate(der)
@@ -230,11 +254,11 @@ func verifyWithGoWebAuthn(t *testing.T, stmt *FIDO2AttestationStatement, authDat
 // TestTPM2AttestingBackend_GetAttestationStatement_VerifiesWithGoWebAuthn is
 // the end-to-end proof that the "tpm" statement this backend produces is
 // WebAuthn L2 §8.3 compliant: TPM2_Certify runs against the simulator's real
-// IAK, and the resulting ver/alg/x5c/sig/certInfo/pubArea are handed to
-// go-webauthn's own production verifier exactly as a relying party would
-// receive them over the wire.
+// LAK (go-xkms#715), and the resulting ver/alg/x5c/sig/certInfo/pubArea are
+// handed to go-webauthn's own production verifier exactly as a relying party
+// would receive them over the wire.
 func TestTPM2AttestingBackend_GetAttestationStatement_VerifiesWithGoWebAuthn(t *testing.T) {
-	backend, iakCert := simulatorTPM2AttestingBackend(t)
+	backend, lakCert := simulatorTPM2AttestingBackend(t)
 
 	credentialID := []byte("tpm-attestation-credential-0001")
 	handle, publicKeyCOSE, err := backend.GenerateCredentialKey(COSEAlgES256, credentialID)
@@ -257,11 +281,11 @@ func TestTPM2AttestingBackend_GetAttestationStatement_VerifiesWithGoWebAuthn(t *
 	require.NotEmpty(t, stmt.PubArea)
 	require.NotEmpty(t, stmt.Signature)
 	require.Len(t, stmt.CertificateChain, 1)
-	require.Equal(t, iakCert.Raw, stmt.CertificateChain[0].Raw)
+	require.Equal(t, lakCert.Raw, stmt.CertificateChain[0].Raw)
 
 	attObj, err := verifyWithGoWebAuthn(t, stmt, authData, clientDataHash)
 	require.NoError(t, err,
-		"a statement produced by TPM2_Certify against a real IAK must verify under go-webauthn's own tpm format handler")
+		"a statement produced by TPM2_Certify against a real LAK must verify under go-webauthn's own tpm format handler")
 	require.Equal(t, string(metadata.AttCA), attObj.Type,
 		"a TPM attestation is CA-anchored (AttCA), never self or basic full attestation")
 }
@@ -345,9 +369,9 @@ func TestTPM2AttestingBackend_Capabilities(t *testing.T) {
 	require.Contains(t, caps.SupportedAlgorithms, COSEAlgES256, "the inner TPM2 adapter's capabilities must be preserved")
 }
 
-// TestTPM2AttestingBackend_GenerateAttestationKey proves the IAK load path:
-// the returned handle carries the IAK's real COSE algorithm and the encoded
-// public key round-trips back to the same key the simulator's IAK() reports.
+// TestTPM2AttestingBackend_GenerateAttestationKey proves the LAK load path:
+// the returned handle carries the LAK's real COSE algorithm and the encoded
+// public key round-trips back to the same key the simulator's LAK() reports.
 func TestTPM2AttestingBackend_GenerateAttestationKey(t *testing.T) {
 	backend, _ := simulatorTPM2AttestingBackend(t)
 
@@ -364,14 +388,14 @@ func TestTPM2AttestingBackend_GenerateAttestationKey(t *testing.T) {
 }
 
 // TestTPM2AttestingBackend_AttestationCertificateChain proves §8.3.1's single-
-// certificate requirement: the chain is exactly the provisioned IAK
+// certificate requirement: the chain is exactly the provisioned LAK
 // certificate, with no intermediate appended.
 func TestTPM2AttestingBackend_AttestationCertificateChain(t *testing.T) {
-	backend, iakCert := simulatorTPM2AttestingBackend(t)
+	backend, lakCert := simulatorTPM2AttestingBackend(t)
 
 	chain, err := backend.AttestationCertificateChain()
 
 	require.NoError(t, err)
 	require.Len(t, chain, 1, "TCG device identity certificates have no intermediate to append")
-	require.Equal(t, iakCert.Raw, chain[0].Raw)
+	require.Equal(t, lakCert.Raw, chain[0].Raw)
 }

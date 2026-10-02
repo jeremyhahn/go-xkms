@@ -964,6 +964,38 @@ func (m *mockXKMSTPM) DeleteIAKCertificate() error {
 	return nil
 }
 
+func (m *mockXKMSTPM) CreateLAK(_ xkmssdk.Password, _ xkmssdk.TPMKeyBackend, _ bool) (*xkmssdk.KeyAttributes, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSTPM) LAKAttributes() (*xkmssdk.KeyAttributes, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSTPM) LAK() (crypto.PublicKey, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSTPM) CertifyLAK(_ []byte, _ xkmssdk.TPMKeyBackend) (*xkmssdk.CertifyResult, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSTPM) CertifyKeyWithLAK(_ *xkmssdk.KeyAttributes, _ []byte, _ xkmssdk.TPMKeyBackend) (*xkmssdk.CertifyResult, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSTPM) LAKCertificate() (*x509.Certificate, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSTPM) ProvisionLAKCert(cert *x509.Certificate) error {
+	return nil
+}
+
+func (m *mockXKMSTPM) DeleteLAKCertificate() error {
+	return nil
+}
+
 // NV space methods
 func (m *mockXKMSTPM) NVDefineCounter(keyAttrs *xkmssdk.KeyAttributes) error {
 	return nil

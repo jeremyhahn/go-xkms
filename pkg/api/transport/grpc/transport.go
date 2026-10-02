@@ -1767,6 +1767,35 @@ func (t *Transport) EnrollDevice(ctx context.Context, req *transport.EnrollDevic
 	}, nil
 }
 
+// IssueLAKCertificate issues a Local Attestation Key certificate in the
+// WebAuthn Level 2 section 8.3.1 profile (go-xkms#715).
+func (t *Transport) IssueLAKCertificate(ctx context.Context, req *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.IssueLAKCertificate(ctx, &pb.IssueLAKCertificateRequest{
+		TpmManufacturer:    req.TPMManufacturer,
+		TpmModel:           req.TPMModel,
+		TpmFirmwareVersion: req.TPMFirmwareVersion,
+		IakCertificateDer:  req.IAKCertificateDER,
+		CertifyInfo:        req.CertifyInfo,
+		Signature:          req.Signature,
+		SignatureAlgorithm: int32(req.SignatureAlgorithm), // #nosec G115 -- x509.SignatureAlgorithm is a small enum
+		LakPublicArea:      req.LAKPublicArea,
+		Nonce:              req.Nonce,
+	})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "issue lak certificate failed", Err: err}
+	}
+
+	return &transport.IssueLAKCertificateResponse{
+		CertificateDER: resp.GetCertificateDer(),
+		CertificatePEM: resp.GetCertificatePem(),
+		SerialNumber:   resp.GetSerialNumber(),
+	}, nil
+}
+
 // ==================== PIV Operations ====================
 
 // ListPIVSlots returns the status of all PIV slots for the specified backend.

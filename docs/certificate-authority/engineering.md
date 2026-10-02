@@ -132,6 +132,58 @@ Attestation* v1.00 r12 §8.1 and §8.2:
   and the OIDs `OIDTCGHwTypeTPM2` (2.23.133.1.2) and
   `OIDTCGOnEKPermIdSha256` (2.23.133.12.1).
 
+**Local Attestation Key (LAK) certificates** (`tcg_lak.go`) — go-xkms#715.
+TCG DevID v1 r12/v1.10 r9 §8 requires the IAK certificate's Subject to be a
+unique X.500 DN; WebAuthn Level 2 §8.3.1 requires the "tpm" attestation
+statement's AIK certificate Subject to be empty, and go-webauthn enforces
+this literally (`aikCert.Subject.String() != ""`). Rather than compromise
+either spec, `IssueLAKCertificate(ctx, request, evidence)` issues a *second*
+attestation key certificate, over a Local Attestation Key the device creates
+separately (`pkg/tpm2.(*TPM2).CreateLAK`) and the IAK certifies via
+`TPM2_Certify`, per TCG "TPM 2.0 Keys for Device Identity and Attestation"
+v1.10 r9 §5.3/§6.3 ("Owner Creation of a LAK Certificate based on an IAK
+Certificate"). The IAK's own certificate is unchanged.
+
+- `LAKCertificationEvidence` carries the TPM2_Certify evidence: `CertifyInfo`,
+  `Signature` (the ordinary X.509-form signature, not a marshalled
+  `TPMT_SIGNATURE`), `SignatureAlgorithm`, the device's `IAKCertificate`,
+  `LAKPublicArea` and the `Nonce` the evidence must echo.
+- Before issuing, `IssueLAKCertificate` verifies (a) `evidence.IAKCertificate`
+  chains to the certificate about to sign the LAK — `resolveTCGSigner`'s
+  `signingCert`, this CA's own issuing certificate or the tenant's issuer
+  certificate in multi-tenant mode — and is within its validity period
+  (`verifyIAKTrustedForLAK`; revocation is deliberately not checked here, the
+  same as every other TCG issuance path in this file), and (b) the
+  TPM2_Certify evidence itself via `tpm2.VerifyCertifyByCertificate`, which
+  requires the IAK certificate to carry `tcg-kp-AIKCertificate`
+  (2.23.133.8.3), the signature over `CertifyInfo` to verify under the IAK's
+  certified public key, `TPM_GENERATED_VALUE`, a Certify (not Quote)
+  attestation, and a certified Name matching `LAKPublicArea`.
+- The issued certificate follows `ca.NewTCGLocalAttestationKeyProfile`
+  (`profiles.go`): an empty Subject; `CertificateSpec.DirectoryNames` carries
+  a critical subjectAltName directoryName with `request.TPMManufacturer`,
+  `TPMModel` and `TPMFirmwareVersion` under tcg-at-tpmManufacturer/tpmModel/
+  tpmVersion (criticality follows automatically from the empty Subject —
+  `BuildSubjectAltName`); Extended Key Usage is `tcg-kp-AIKCertificate` alone,
+  deliberately without the TLS ClientAuth/ServerAuth purposes or the
+  tcg-cap-verifiedTPM\* certificate policies the IAK/AK profiles carry — this
+  is not a TCG DevID credential and asserts no purpose it does not have; Basic
+  Constraints CA:false.
+- A certificate with no Subject has no Common Name, so it cannot be stored the
+  way every other certificate in this package is. `certstore.CertificateKey`
+  keys it by its SPKI SHA-256 thumbprint instead (`qrdbsdk.ComputeSPKIThumbprint`
+  — qrdb's own canonical mTLS binding identifier, applied here rather than
+  reimplemented); `compositeCertStore.StoreCertificate`/`StoreCertificateChain`
+  apply this uniformly, not only to the LAK.
+- `pkg/tpm2` supplies the device-side half: `CreateLAK` builds the LAK as a
+  Restricted, Sign-only child of the Platform SRK (not an Endorsement-hierarchy
+  primary like the IAK/IDevID); `CertifyLAK` produces the IAK-over-LAK
+  TPM2_Certify evidence this method verifies; `CertifyKeyWithLAK` is what
+  xkey's TPM-backed WebAuthn/FIDO2 authenticator then uses to certify each
+  credential key under the LAK, never the IAK. See
+  [`../tpm2/engineering.md`](../tpm2/engineering.md) for the TPM-side
+  invariants.
+
 Constructors are `pkg/ca/constructors.go`; configuration types are
 `pkg/ca/config.go` (`Identity`, and the CA config it hangs off).
 

@@ -339,6 +339,19 @@ type CertificateRequest struct {
 	// neither is refused with ErrTCGEKManufacturerUnknown.
 	TPMManufacturer string `yaml:"tpm-manufacturer" json:"tpm_manufacturer" mapstructure:"tpm-manufacturer"`
 
+	// TPMModel and TPMFirmwareVersion name the TPM chip itself -- its vendor
+	// model string (e.g. "NPCT6xx") and firmware version (e.g. "7.2.3.1") as
+	// TPM2_GetCapability reports them (pkg/tpm2.PropertiesFixed.Model/FwMajor/
+	// FwMinor) -- not the host platform's model or serial number, which
+	// ProdModel and ProdSerial already carry under tcg-at-platformModel.
+	// IssueLAKCertificate records both, alongside TPMManufacturer, in the
+	// Local Attestation Key certificate's critical subjectAltName
+	// directoryName that WebAuthn Level 2 §8.3.1 requirement 3 requires
+	// (go-xkms#715): tcg-at-tpmManufacturer, tcg-at-tpmModel and
+	// tcg-at-tpmVersion.
+	TPMModel           string `yaml:"tpm-model" json:"tpm_model" mapstructure:"tpm-model"`
+	TPMFirmwareVersion string `yaml:"tpm-firmware-version" json:"tpm_firmware_version" mapstructure:"tpm-firmware-version"`
+
 	// IssuerKeyStoreType indicates the CA's keystore backend type for TCG extensions.
 	// When set, adds a tp-issuerKeyStore extension. Common values: "TPM2", "PKCS8", "PKCS11".
 	IssuerKeyStoreType string `yaml:"issuer-keystore-type" json:"issuer_keystore_type" mapstructure:"issuer-keystore-type"`

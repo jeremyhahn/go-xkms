@@ -89,6 +89,7 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodPost, "/api/v1/ca/tcg/ak", "certs", "generate"},
 	{http.MethodPost, "/api/v1/ca/tcg/sign-csr", "certs", "generate"},
 	{http.MethodPost, "/api/v1/ca/tcg/enroll", "certs", "generate"},
+	{http.MethodPost, "/api/v1/ca/tcg/lak", "certs", "generate"},
 
 	// Custodian groups — service_custodian_share_tenant.go.
 	{http.MethodPost, "/api/v1/custodian/groups/", "ceremony", "enroll_custodian"},

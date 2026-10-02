@@ -118,4 +118,20 @@ type TCGCA interface {
 	EnrollDeviceRaw(ctx context.Context, commonName, organization string, packedCSR []byte) (
 		iakDER, idevidDER, credBlob, encSecret, plainSecret []byte, err error,
 	)
+
+	// IssueLAKCertificateRaw issues a Local Attestation Key certificate in
+	// the WebAuthn Level 2 §8.3.1 profile (go-xkms#715), after verifying the
+	// LAK's TPM2_Certify evidence against the device's IAK certificate.
+	// iakCertDER is the device's IAK certificate (DER). certifyInfo and
+	// signature are the raw TPM2_Certify evidence; signatureAlgorithm is the
+	// IAK's X.509 signature algorithm; lakPublicArea is the LAK's marshalled
+	// TPMT_PUBLIC; nonce is the qualifying data the evidence must echo.
+	IssueLAKCertificateRaw(
+		ctx context.Context,
+		tpmManufacturer, tpmModel, tpmFirmwareVersion string,
+		iakCertDER []byte,
+		certifyInfo, signature []byte,
+		signatureAlgorithm x509.SignatureAlgorithm,
+		lakPublicArea, nonce []byte,
+	) (certDER []byte, err error)
 }

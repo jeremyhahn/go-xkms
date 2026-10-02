@@ -29,14 +29,16 @@ import (
 // mockTCGCAServicer implements both caServicer and tcgCAServicer for testing.
 type mockTCGCAServicer struct {
 	mockCAServicer
-	issueEKResp *transport.IssueEKCertificateResponse
-	issueEKErr  error
-	issueAKResp *transport.IssueAKCertificateResponse
-	issueAKErr  error
-	signTCGResp *transport.SignTCGCSRResponse
-	signTCGErr  error
-	enrollResp  *transport.EnrollDeviceResponse
-	enrollErr   error
+	issueEKResp  *transport.IssueEKCertificateResponse
+	issueEKErr   error
+	issueAKResp  *transport.IssueAKCertificateResponse
+	issueAKErr   error
+	signTCGResp  *transport.SignTCGCSRResponse
+	signTCGErr   error
+	enrollResp   *transport.EnrollDeviceResponse
+	enrollErr    error
+	issueLAKResp *transport.IssueLAKCertificateResponse
+	issueLAKErr  error
 }
 
 func (m *mockTCGCAServicer) IssueEKCertificate(_ context.Context, _ *transport.IssueEKCertificateRequest) (*transport.IssueEKCertificateResponse, error) {
@@ -53,6 +55,10 @@ func (m *mockTCGCAServicer) SignTCGCSR(_ context.Context, _ *transport.SignTCGCS
 
 func (m *mockTCGCAServicer) EnrollDevice(_ context.Context, _ *transport.EnrollDeviceRequest) (*transport.EnrollDeviceResponse, error) {
 	return m.enrollResp, m.enrollErr
+}
+
+func (m *mockTCGCAServicer) IssueLAKCertificate(_ context.Context, _ *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	return m.issueLAKResp, m.issueLAKErr
 }
 
 func newTestTCGCAHandlers(mock *mockTCGCAServicer) *CAHandlers {
@@ -393,6 +399,115 @@ func TestHandleEnrollDevice_Error(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	h.HandleEnrollDevice(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// --- HandleIssueLAKCertificate ---
+
+const issueLAKValidBody = `{"tpm_manufacturer":"id:49465800","tpm_model":"NPCT6xx","tpm_firmware_version":"7.2.3.1","iak_certificate_der":"ZGF0YQ==","certify_info":"ZGF0YQ==","signature":"ZGF0YQ==","lak_public_area":"ZGF0YQ=="}`
+
+func TestHandleIssueLAKCertificate_Success(t *testing.T) {
+	mock := &mockTCGCAServicer{
+		issueLAKResp: &transport.IssueLAKCertificateResponse{
+			CertificatePEM: []byte("lak-cert"),
+			SerialNumber:   "300",
+		},
+	}
+	h := newTestTCGCAHandlers(mock)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ca/tcg/lak",
+		strings.NewReader(issueLAKValidBody))
+	w := httptest.NewRecorder()
+
+	h.HandleIssueLAKCertificate(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+}
+
+func TestHandleIssueLAKCertificate_NotSupported(t *testing.T) {
+	h := NewCAHandlers(&mockCAServicer{}, slog.Default())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ca/tcg/lak",
+		strings.NewReader(issueLAKValidBody))
+	w := httptest.NewRecorder()
+
+	h.HandleIssueLAKCertificate(w, req)
+
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
+}
+
+func TestHandleIssueLAKCertificate_InvalidJSON(t *testing.T) {
+	h := newTestTCGCAHandlers(&mockTCGCAServicer{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ca/tcg/lak",
+		strings.NewReader(`{bad`))
+	w := httptest.NewRecorder()
+
+	h.HandleIssueLAKCertificate(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandleIssueLAKCertificate_MissingTPMDeviceInfo(t *testing.T) {
+	h := newTestTCGCAHandlers(&mockTCGCAServicer{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ca/tcg/lak",
+		strings.NewReader(`{"iak_certificate_der":"ZGF0YQ==","certify_info":"ZGF0YQ==","signature":"ZGF0YQ==","lak_public_area":"ZGF0YQ=="}`))
+	w := httptest.NewRecorder()
+
+	h.HandleIssueLAKCertificate(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandleIssueLAKCertificate_MissingIAKCertificate(t *testing.T) {
+	h := newTestTCGCAHandlers(&mockTCGCAServicer{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ca/tcg/lak",
+		strings.NewReader(`{"tpm_manufacturer":"id:49465800","tpm_model":"NPCT6xx","tpm_firmware_version":"7.2.3.1","certify_info":"ZGF0YQ==","signature":"ZGF0YQ==","lak_public_area":"ZGF0YQ=="}`))
+	w := httptest.NewRecorder()
+
+	h.HandleIssueLAKCertificate(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandleIssueLAKCertificate_MissingCertifyInfo(t *testing.T) {
+	h := newTestTCGCAHandlers(&mockTCGCAServicer{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ca/tcg/lak",
+		strings.NewReader(`{"tpm_manufacturer":"id:49465800","tpm_model":"NPCT6xx","tpm_firmware_version":"7.2.3.1","iak_certificate_der":"ZGF0YQ==","lak_public_area":"ZGF0YQ=="}`))
+	w := httptest.NewRecorder()
+
+	h.HandleIssueLAKCertificate(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandleIssueLAKCertificate_MissingLAKPublicArea(t *testing.T) {
+	h := newTestTCGCAHandlers(&mockTCGCAServicer{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ca/tcg/lak",
+		strings.NewReader(`{"tpm_manufacturer":"id:49465800","tpm_model":"NPCT6xx","tpm_firmware_version":"7.2.3.1","iak_certificate_der":"ZGF0YQ==","certify_info":"ZGF0YQ==","signature":"ZGF0YQ=="}`))
+	w := httptest.NewRecorder()
+
+	h.HandleIssueLAKCertificate(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandleIssueLAKCertificate_Error(t *testing.T) {
+	mock := &mockTCGCAServicer{
+		issueLAKErr: errors.New("lak failed"),
+	}
+	h := newTestTCGCAHandlers(mock)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ca/tcg/lak",
+		strings.NewReader(issueLAKValidBody))
+	w := httptest.NewRecorder()
+
+	h.HandleIssueLAKCertificate(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }

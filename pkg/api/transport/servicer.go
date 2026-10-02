@@ -230,6 +230,9 @@ type TCGCAServicer interface {
 	IssueAKCertificate(ctx context.Context, req *IssueAKCertificateRequest) (*IssueAKCertificateResponse, error)
 	SignTCGCSR(ctx context.Context, req *SignTCGCSRRequest) (*SignTCGCSRResponse, error)
 	EnrollDevice(ctx context.Context, req *EnrollDeviceRequest) (*EnrollDeviceResponse, error)
+	// IssueLAKCertificate issues a Local Attestation Key certificate in the
+	// WebAuthn Level 2 §8.3.1 profile (go-xkms#715).
+	IssueLAKCertificate(ctx context.Context, req *IssueLAKCertificateRequest) (*IssueLAKCertificateResponse, error)
 }
 
 // PINServicer handles PIN management operations.

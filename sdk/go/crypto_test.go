@@ -706,6 +706,9 @@ func (n *noopClient) SignTCGCSR(context.Context, *transport.SignTCGCSRRequest) (
 func (n *noopClient) EnrollDevice(context.Context, *transport.EnrollDeviceRequest) (*transport.EnrollDeviceResponse, error) {
 	return nil, nil
 }
+func (n *noopClient) IssueLAKCertificate(context.Context, *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	return nil, nil
+}
 func (n *noopClient) SetSOPIN(context.Context, *transport.SetSOPINRequest) error       { return nil }
 func (n *noopClient) SetUserPIN(context.Context, *transport.SetUserPINRequest) error   { return nil }
 func (n *noopClient) ChangeSOPIN(context.Context, *transport.ChangeSOPINRequest) error { return nil }

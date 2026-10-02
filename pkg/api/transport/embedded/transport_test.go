@@ -411,6 +411,13 @@ func (m *mockService) EnrollDevice(_ context.Context, _ *transport.EnrollDeviceR
 	return &transport.EnrollDeviceResponse{}, nil
 }
 
+func (m *mockService) IssueLAKCertificate(_ context.Context, _ *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.IssueLAKCertificateResponse{}, nil
+}
+
 func (m *mockService) ListPIVSlots(_ context.Context, _ *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {
 	if m.shouldFail {
 		return nil, errMock

@@ -68,7 +68,8 @@ func (tpm *TPM2) CreateECDSA(
 		spec.Curve = keyAttrs.ECCAttributes.Curve
 	}
 
-	if keyAttrs.KeyType == types.KeyTypeEncryption || keyAttrs.KeyType == types.KeyTypeEncapsulation {
+	switch keyAttrs.KeyType {
+	case types.KeyTypeEncryption, types.KeyTypeEncapsulation:
 		// A key created for encryption or key-agreement carries the decrypt
 		// attribute rather than signEncrypt, mirroring CreateRSA. Scheme stays
 		// TPM_ALG_NULL (the zero value): TPM2_ECDH_ZGen requires the key's
@@ -78,6 +79,16 @@ func (tpm *TPM2) CreateECDSA(
 		// keys.
 		spec.Sign = false
 		spec.Decrypt = true
+	case types.KeyTypeLAK:
+		// The Local Attestation Key is Restricted (go-xkms#715): the TPM
+		// refuses to use it to sign caller-supplied bytes, only a TPMS_ATTEST
+		// structure it produced itself (TPM2_Certify, TPM2_Quote). A
+		// restricted signing key may not use TPM_ALG_NULL and must name its
+		// scheme (TCG TPM 2.0 Library Part 1, section 25.2.3).
+		spec.Restricted = true
+		spec.Sign = true
+		spec.Scheme = tpm2.TPMAlgECDSA
+		spec.SchemeHash = tpm.algID
 	}
 
 	eccTemplate, err := tpm.KeyTemplate(spec)

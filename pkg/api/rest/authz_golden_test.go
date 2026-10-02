@@ -149,6 +149,7 @@ var goldenRESTPermissions = map[string]string{
 	"POST /api/v1/ca/tcg/ak":                                     "certs:generate",
 	"POST /api/v1/ca/tcg/ek":                                     "certs:generate",
 	"POST /api/v1/ca/tcg/enroll":                                 "certs:generate",
+	"POST /api/v1/ca/tcg/lak":                                    "certs:generate",
 	"POST /api/v1/ca/tcg/sign-csr":                               "certs:generate",
 	"POST /api/v1/certs":                                         "certs:generate",
 	"POST /api/v1/certs/{id}/chain":                              "certs:generate",

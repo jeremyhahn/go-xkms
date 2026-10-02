@@ -318,6 +318,10 @@ func (b *baseSDKClient) EnrollDevice(ctx context.Context, req *transport.EnrollD
 	return nil, errNotImplemented
 }
 
+func (b *baseSDKClient) IssueLAKCertificate(ctx context.Context, req *transport.IssueLAKCertificateRequest) (*transport.IssueLAKCertificateResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (b *baseSDKClient) BeginRegistration(ctx context.Context, req *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
 	return nil, errNotImplemented
 }

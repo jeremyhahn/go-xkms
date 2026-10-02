@@ -79,6 +79,7 @@ grant of its own for it.
 | Issue AK certificate | `POST /api/v1/ca/tcg/ak` | `IssueAKCertificate` | same as REST | **MISSING — docs/13** | `IssueAKCertificate` | `certs:generate` |
 | Sign TCG CSR | `POST /api/v1/ca/tcg/sign-csr` | `SignTCGCSR` | same as REST | **MISSING — docs/13** | `SignTCGCSR` | `certs:generate` |
 | Enroll device | `POST /api/v1/ca/tcg/enroll` | `EnrollDevice` | same as REST | `xkms.ca.tcg.enroll` | `EnrollDevice` | `certs:generate` |
+| Issue LAK certificate (go-xkms#715) | **MISSING** | **MISSING** | **MISSING** | **MISSING** | **MISSING** | `certs:generate` (planned) |
 
 ### Certificate storage (`CertService`)
 
@@ -156,6 +157,18 @@ issue, revoke, CRL and TCG-enroll methods but not `SignCSR`, `IsRevoked`, or
 three of the four TCG methods. Every gap above is written as a row rather than
 omitted, per the convention, so it is tracked debt with an owner rather than an
 invisible hole.
+
+**`IssueLAKCertificate` has no transport wiring yet (go-xkms#715).**
+`ca.TCGCA.IssueLAKCertificate` (`pkg/ca/tcg_lak.go`) and the device-side
+`pkg/tpm2.(*TPM2).CreateLAK`/`CertifyLAK`/`CertifyKeyWithLAK` primitives are
+implemented and tested (`pkg/ca/tcg_lak_test.go`,
+`pkg/tpm2/local_attestation_key_simulator_test.go`), and xkey's TPM-backed
+WebAuthn/FIDO2 authenticator already attests with the LAK
+(`xkey/pkg/authenticator/keybackend/tpm_attestation.go`). No REST, gRPC/Unix,
+QUIC, MCP or embedded verb submits `LAKCertificationEvidence` to a running
+`xkmsd` yet; a device today reaches `IssueLAKCertificate` only by embedding
+the CA in-process. Recorded as a gap rather than a row with a made-up
+endpoint.
 
 **Get CRL is REST-only (#275).** `CA.CRL(ctx)` — the read that only
 regenerates when the persisted artifact is missing or stale — is reachable

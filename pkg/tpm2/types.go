@@ -425,6 +425,10 @@ var (
 	ErrIAKPublicParse                 = errors.New("tpm: failed to parse IAK public key")
 	ErrIDevIDNotInitialized           = errors.New("tpm: initial device identifier not initialized")
 	ErrIDevIDPublicParse              = errors.New("tpm: failed to parse IDevID public key")
+	ErrLAKNotProvisioned              = errors.New("tpm: LAK not provisioned")
+	ErrLAKNotInitialized              = errors.New("tpm: local attestation key not initialized")
+	ErrLAKPublicParse                 = errors.New("tpm: failed to parse LAK public key")
+	ErrLAKConfigFailed                = errors.New("tpm: failed to create LAK attributes from config")
 	ErrGoldenMeasurements             = errors.New("tpm: failed to compute golden measurements")
 	ErrPolicyDigest                   = errors.New("tpm: failed to compute platform policy digest")
 	ErrIAKConfigFailed                = errors.New("tpm: failed to create IAK attributes from config")
@@ -482,6 +486,7 @@ var (
 	ErrEKConfigNil                 = errors.New("tpm: EK config is nil")
 	ErrIAKConfigNil                = errors.New("tpm: IAK config is nil")
 	ErrIDevIDConfigNil             = errors.New("tpm: IDevID config is nil")
+	ErrLAKConfigNil                = errors.New("tpm: LAK config is nil")
 	ErrSSRKConfigNil               = errors.New("tpm: SSRK config is nil")
 
 	// Handle enumeration errors

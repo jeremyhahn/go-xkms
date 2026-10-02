@@ -269,6 +269,9 @@ func (s *stubClient) SignTCGCSR(context.Context, *SignTCGCSRRequest) (*SignTCGCS
 func (s *stubClient) EnrollDevice(context.Context, *EnrollDeviceRequest) (*EnrollDeviceResponse, error) {
 	panic("stub")
 }
+func (s *stubClient) IssueLAKCertificate(context.Context, *IssueLAKCertificateRequest) (*IssueLAKCertificateResponse, error) {
+	panic("stub")
+}
 
 func (s *stubClient) SetSOPIN(context.Context, *SetSOPINRequest) error       { panic("stub") }
 func (s *stubClient) SetUserPIN(context.Context, *SetUserPINRequest) error   { panic("stub") }
