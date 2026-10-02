@@ -114,3 +114,56 @@ func TestSignCSR_RawSubjectMustBeADistinguishedName(t *testing.T) {
 		})
 	}
 }
+
+// csrAskingToBeACA requests, through its extensionRequest attribute, a CA
+// certificate that can sign others, a server-auth EKU and a private
+// extension -- everything a CSR could try to smuggle into an officer
+// certificate (go-xkms#1411).
+func csrAskingToBeACA(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	basicConstraints, err := asn1.Marshal(struct {
+		IsCA bool `asn1:"optional"`
+	}{IsCA: true})
+	require.NoError(t, err)
+	keyUsage, err := asn1.Marshal(asn1.BitString{Bytes: []byte{0x06}, BitLength: 7}) // keyCertSign | cRLSign
+	require.NoError(t, err)
+	extKeyUsage, err := asn1.Marshal([]asn1.ObjectIdentifier{{1, 3, 6, 1, 5, 5, 7, 3, 1}}) // serverAuth
+	require.NoError(t, err)
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "admin"},
+		ExtraExtensions: []pkix.Extension{
+			{Id: asn1.ObjectIdentifier{2, 5, 29, 19}, Critical: true, Value: basicConstraints},
+			{Id: asn1.ObjectIdentifier{2, 5, 29, 15}, Critical: true, Value: keyUsage},
+			{Id: asn1.ObjectIdentifier{2, 5, 29, 37}, Value: extKeyUsage},
+			{Id: asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 1}, Value: []byte{0x05, 0x00}},
+		},
+	}, key)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
+}
+
+// A holder certificate signed under a raw subject is never a CA and carries
+// exactly the requested key usage and extended key usage: a CSR asking for
+// CA:true, keyCertSign, serverAuth or a private extension gets none of them
+// (go-xkms#1411, go-qrdb's officer-certificate contract).
+func TestSignCSR_RawSubjectIgnoresTheCSRsExtensions(t *testing.T) {
+	ca := setupTestCA(t)
+	raw := holderRawSubject(t, "officer-1", "acme", "officer")
+
+	cert, err := ca.SignCSR(context.Background(), csrAskingToBeACA(t), &SignOptions{
+		RawSubject:  raw,
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	})
+	require.NoError(t, err)
+	assert.False(t, cert.IsCA, "a holder certificate is never a CA")
+	assert.Zero(t, cert.KeyUsage&x509.KeyUsageCertSign, "a holder certificate cannot sign certificates")
+	assert.Zero(t, cert.KeyUsage&x509.KeyUsageCRLSign)
+	assert.Equal(t, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, cert.ExtKeyUsage, "the EKU is exactly the requested one")
+	assert.Empty(t, cert.UnknownExtKeyUsage)
+	for _, ext := range cert.Extensions {
+		assert.False(t, ext.Id.Equal(asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 1}), "the CSR's private extension is not copied")
+	}
+}
