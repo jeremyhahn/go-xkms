@@ -25,7 +25,7 @@ import (
 	"sync"
 	"testing"
 
-	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
+	xkmsevidence "github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
 	xkmstpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
@@ -1049,8 +1049,11 @@ func TestTPMAttestingRuntime_Attest_BindsPCRsToSignedQuote(t *testing.T) {
 		if !errors.As(err, &mismatch) {
 			t.Fatalf("expected *QuotedPCRDigestMismatchError, got %T", err)
 		}
-		if bytes.Equal(mismatch.Signed, mismatch.Recomputed) {
-			t.Fatal("the reported digests must differ")
+		if len(mismatch.Signed) == 0 {
+			t.Fatal("the signed digest must be reported")
+		}
+		if !errors.Is(err, xkmsevidence.ErrForged) {
+			t.Fatalf("error %v must carry go-xkms's forged-evidence cause", err)
 		}
 		if mismatch.Bank != DefaultMeasurementBank {
 			t.Errorf("Bank = %q, want %q", mismatch.Bank, DefaultMeasurementBank)
@@ -1165,54 +1168,64 @@ func TestTPMAttestingRuntime_Attest_BindsPCRsToSignedQuote(t *testing.T) {
 	})
 }
 
-// TestBindQuotedPCRs_MultiBankSelection covers the shapes a quote can take
-// that a single-bank TPM never produces: the same register selected in two
-// banks, with matching and with differing values.
-func TestBindQuotedPCRs_MultiBankSelection(t *testing.T) {
+// TestBindQuotedPCRs_RefusesQuotesNoSingleBankReferenceCanJudge covers the
+// selections go-xkms's evidence primitive refuses: a quote over two banks
+// (whose index->value map a golden comparison cannot use) and a quote over
+// the SHA-1 bank (not acceptable evidence of state). Both are absences, not
+// forgeries, and both leave the quote unbound.
+func TestBindQuotedPCRs_RefusesQuotesNoSingleBankReferenceCanJudge(t *testing.T) {
 	sha1Value := bytes.Repeat([]byte{0x11}, 20)
 	sha256Value := bytes.Repeat([]byte{0x22}, sha256.Size)
-	nonce := []byte("nonce-for-a-multi-bank-quote")
-
-	banks := func(sha1PCR, sha256PCR []byte) []xkmstpm2.PCRBank {
-		return []xkmstpm2.PCRBank{
-			{Algorithm: "SHA1", PCRs: []xkmstpm2.PCR{{ID: 7, Value: sha1PCR}}},
-			{Algorithm: "SHA256", PCRs: []xkmstpm2.PCR{{ID: 7, Value: sha256PCR}}},
-		}
-	}
-	selections := []testSelection{
-		{bank: "sha1", indices: []uint32{7}},
-		{bank: "sha256", indices: []uint32{7}},
+	nonce := []byte("nonce-for-a-refused-quote")
+	banks := []xkmstpm2.PCRBank{
+		{Algorithm: "SHA1", PCRs: []xkmstpm2.PCR{{ID: 7, Value: sha1Value}}},
+		{Algorithm: "SHA256", PCRs: []xkmstpm2.PCR{{ID: 7, Value: sha256Value}}},
 	}
 
-	t.Run("DifferingValuesForOneIndexAreAmbiguous", func(t *testing.T) {
-		// pcrDigest covers sha1(PCR7) || sha256(PCR7); the digest itself is
-		// honest, but the index->value map a golden comparison needs is not
-		// well defined, so the quote is refused rather than resolved.
-		digest := quotePCRDigest(t, "sha256", [][]byte{sha1Value, sha256Value})
-		quoted := encodeTPMSAttestSelections(t, nonce, selections, digest)
+	cases := map[string]struct {
+		selections []testSelection
+		digest     []byte
+	}{
+		"TwoBanks": {
+			selections: []testSelection{{bank: "sha1", indices: []uint32{7}}, {bank: "sha256", indices: []uint32{7}}},
+			digest:     quotePCRDigest(t, "sha256", [][]byte{sha1Value, sha256Value}),
+		},
+		"SHA1Bank": {
+			// The digest is the signing scheme's SHA-256 over the SHA-1
+			// register, as a TPM produces it; the bank is what is refused.
+			selections: []testSelection{{bank: "sha1", indices: []uint32{7}}},
+			digest:     quotePCRDigest(t, "sha256", [][]byte{sha1Value}),
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			quoted := encodeTPMSAttestSelections(t, nonce, tc.selections, tc.digest)
+			_, err := bindQuotedPCRs("alpine", quoted, nonce, banks)
+			if !errors.Is(err, ErrQuoteNotBound) {
+				t.Fatalf("error %v does not wrap ErrQuoteNotBound", err)
+			}
+			if !errors.Is(err, xkmsevidence.ErrAbsent) {
+				t.Fatalf("error %v must carry go-xkms's absent-evidence cause", err)
+			}
+		})
+	}
+}
 
-		_, err := bindQuotedPCRs("alpine", quoted, nonce, banks(sha1Value, sha256Value))
-		if !errors.Is(err, ErrQuoteNotBound) {
-			t.Fatalf("error %v does not wrap ErrQuoteNotBound", err)
-		}
-	})
+// TestBindQuotedPCRs_ShortRegisterIsRejected proves a read whose register is
+// not the bank's digest size cannot bind, even when its bytes happen to hash
+// to the signed digest: go-xkms checks the register size before the digest.
+func TestBindQuotedPCRs_ShortRegisterIsRejected(t *testing.T) {
+	short := bytes.Repeat([]byte{0x44}, 16)
+	nonce := []byte("nonce-for-a-short-register")
+	quoted := encodeTPMSAttestSelections(t, nonce,
+		[]testSelection{{bank: "sha256", indices: []uint32{7}}},
+		quotePCRDigest(t, "sha256", [][]byte{short}))
+	banks := []xkmstpm2.PCRBank{{Algorithm: "SHA256", PCRs: []xkmstpm2.PCR{{ID: 7, Value: short}}}}
 
-	t.Run("IdenticalValuesBindAndReportTheFirstBank", func(t *testing.T) {
-		shared := bytes.Repeat([]byte{0x33}, 20)
-		digest := quotePCRDigest(t, "sha256", [][]byte{shared, shared})
-		quoted := encodeTPMSAttestSelections(t, nonce, selections, digest)
-
-		bound, err := bindQuotedPCRs("alpine", quoted, nonce, banks(shared, shared))
-		if err != nil {
-			t.Fatalf("bindQuotedPCRs: %v", err)
-		}
-		if bound.bank != "sha1" {
-			t.Errorf("bank = %q, want the first selected bank sha1", bound.bank)
-		}
-		if !bytes.Equal(bound.values[7], shared) {
-			t.Errorf("PCR 7 = %x, want %x", bound.values[7], shared)
-		}
-	})
+	_, err := bindQuotedPCRs("alpine", quoted, nonce, banks)
+	if !errors.Is(err, ErrQuotedPCRDigestMismatch) {
+		t.Fatalf("error %v does not wrap ErrQuotedPCRDigestMismatch", err)
+	}
 }
 
 // extendBetweenQuoteAndReadTPM extends a PCR after the quote is taken and
@@ -1284,30 +1297,6 @@ func TestVerifyExpectedPCRs(t *testing.T) {
 	})
 }
 
-// TestPCRDigestHash proves the pcrDigest hash is resolved from its length,
-// which is what lets a quote over any bank be verified without the TPM naming
-// the signing scheme's hash inside TPMS_QUOTE_INFO.
-func TestPCRDigestHash(t *testing.T) {
-	t.Run("EverySupportedBankResolves", func(t *testing.T) {
-		for _, bank := range supportedPCRBankNames {
-			size := xkmstpm2.PCRDigestSize(bank)
-			hash, err := pcrDigestHash(size)
-			if err != nil {
-				t.Fatalf("pcrDigestHash(%d) for %s: %v", size, bank, err)
-			}
-			if hash.Size() != size {
-				t.Fatalf("%s resolved to a %d-byte hash, want %d", bank, hash.Size(), size)
-			}
-		}
-	})
-
-	t.Run("UnknownLengthIsRejected", func(t *testing.T) {
-		if _, err := pcrDigestHash(7); !errors.Is(err, ErrPCRBankUnavailable) {
-			t.Fatalf("error %v does not wrap ErrPCRBankUnavailable", err)
-		}
-	})
-}
-
 // TestPCRBankName proves the TPM algorithm ID in a signed selection maps back
 // to the bank name go-xkms reports, using go-xkms's own mapping in both
 // directions.
@@ -1331,27 +1320,6 @@ func TestPCRBankName(t *testing.T) {
 	t.Run("UnknownAlgorithmIsRejected", func(t *testing.T) {
 		if _, err := pcrBankName(0x0099); !errors.Is(err, ErrPCRBankUnavailable) {
 			t.Fatalf("error %v does not wrap ErrPCRBankUnavailable", err)
-		}
-	})
-}
-
-// TestSelectedPCRIndices pins the bitmap expansion order, which is part of the
-// digest recomputation and not a presentation detail: the TPM concatenates the
-// selected registers in exactly this order.
-func TestSelectedPCRIndices(t *testing.T) {
-	t.Run("AscendingLittleEndianBits", func(t *testing.T) {
-		// bits 0 and 7 of byte 0 -> PCR 0 and 7; bit 0 of byte 1 -> PCR 8;
-		// bit 7 of byte 2 -> PCR 23.
-		selection := deviceattest01TestSelection([]byte{0x81, 0x01, 0x80})
-		want := []uint32{0, 7, 8, 23}
-		if got := selectedPCRIndices(selection); !reflect.DeepEqual(got, want) {
-			t.Fatalf("selectedPCRIndices = %v, want %v", got, want)
-		}
-	})
-
-	t.Run("EmptyBitmapSelectsNothing", func(t *testing.T) {
-		if got := selectedPCRIndices(deviceattest01TestSelection([]byte{0x00, 0x00, 0x00})); len(got) != 0 {
-			t.Fatalf("selectedPCRIndices = %v, want none", got)
 		}
 	})
 }
@@ -1409,12 +1377,12 @@ func TestAttestationErrorsUnwrap(t *testing.T) {
 		},
 		{
 			name:   "QuotedPCRDigestMismatch",
-			err:    &QuotedPCRDigestMismatchError{Image: "alpine", Bank: "sha256", Signed: []byte{0x01}, Recomputed: []byte{0x02}},
+			err:    &QuotedPCRDigestMismatchError{Image: "alpine", Bank: "sha256", Signed: []byte{0x01}, Cause: errors.New("digest differs")},
 			target: ErrQuotedPCRDigestMismatch,
 		},
 		{
 			name:   "QuotedPCRDigestMismatchIsAlsoUnbound",
-			err:    &QuotedPCRDigestMismatchError{Image: "alpine", Bank: "sha256", Signed: []byte{0x01}, Recomputed: []byte{0x02}},
+			err:    &QuotedPCRDigestMismatchError{Image: "alpine", Bank: "sha256", Signed: []byte{0x01}, Cause: errors.New("digest differs")},
 			target: ErrQuoteNotBound,
 		},
 		{
@@ -1458,15 +1426,5 @@ func TestAttestingRuntimeSatisfiesContainerRuntime(t *testing.T) {
 	}
 	if !attester.TrustCapabilities().HostTPM {
 		t.Fatal("attesting runtime must advertise host TPM support")
-	}
-}
-
-// deviceattest01TestSelection builds a PCR selection carrying bitmap, so the
-// bitmap-expansion test does not depend on the rest of the quote structure.
-func deviceattest01TestSelection(bitmap []byte) deviceattest01.TPMSPCRSelection {
-	return deviceattest01.TPMSPCRSelection{
-		Hash:         0x000B, // TPM_ALG_SHA256
-		SizeOfBitmap: uint8(len(bitmap)),
-		PCRBitmap:    bitmap,
 	}
 }

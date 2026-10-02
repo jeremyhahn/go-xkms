@@ -16,20 +16,12 @@ package orchestration
 import (
 	"bytes"
 	"context"
-	"crypto"
 	"crypto/rand"
 	"sort"
 	"strings"
 	"time"
 
-	// The PCR-digest recomputation resolves its hash from the digest length
-	// reported by the TPM, so every bank a TPM 2.0 PC Client platform can
-	// expose must be linked into the binary for crypto.Hash.New to work.
-	_ "crypto/sha1" // #nosec G505 -- TPM 2.0 PC Client platforms expose a SHA-1 PCR bank; the hash only recomputes quoted PCR digests, never signs.
-	_ "crypto/sha256"
-	_ "crypto/sha512"
-
-	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
 	xkmstpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -450,15 +442,15 @@ func quotePCRIndices(spec *ContainerSpec, measured bool) []uint {
 //
 // Comparing golden values against that read alone establishes nothing: the
 // read carries no signature, and a PCR can be extended in the window between
-// the quote and the read. bindQuotedPCRs closes the gap by recomputing
-// pcrDigest over the values that were read and requiring it to equal the
-// digest inside the signed body, and by requiring the body's extraData to be
-// the nonce this process just generated.
+// the quote and the read. bindQuotedPCRs closes the gap by requiring the
+// values that were read to reproduce the digest inside the signed body, and
+// by requiring the body's extraData to be the nonce this process just
+// generated.
 //
-// Every TPM structure here is parsed by go-xkms (deviceattest01.ParseTPMSAttest
-// and VerifyQualifyingData) and every algorithm mapping comes from go-xkms
-// (tpm2.ParsePCRBankAlgID, ParsePCRBankCryptoHash, PCRDigestSize). Nothing in
-// this file hand-rolls a TPM structure.
+// Every TPM structure here is parsed and checked by go-xkms's evidence
+// primitives (pkg/attestation/evidence) and every bank mapping comes from
+// go-xkms (tpm2.ParsePCRBankAlgID). Nothing in this file hand-rolls a TPM
+// structure or recomputes a digest.
 
 // boundPCRs is a PCR read that has been proven to agree with a signed quote.
 // Its values are the only ones Attest will compare against a golden set.
@@ -478,7 +470,7 @@ type boundPCRs struct {
 // What this establishes: the returned values are exactly the ones covered by
 // the signed pcrDigest, and the signed body carries this attestation's nonce.
 // A TOCTOU change between the quote and the read, or a tampered read path,
-// makes the recomputed digest differ and is rejected.
+// makes the values fail to reproduce the signed digest and is rejected.
 //
 // What this does NOT establish: that the signature over quoted verifies under
 // a trusted attestation key. That check needs the AK public key and its
@@ -487,119 +479,68 @@ type boundPCRs struct {
 // .Signature. Locally, the quote body is trusted because it came from the
 // host's own TPM handle; what is being defended against here is a divergence
 // between that body and the separate PCR read.
+//
+// Every check is go-xkms's evidence primitive: ParseQuote (a TPM-generated
+// TPM2_Quote over exactly one accepted bank), VerifyQualifyingData (the nonce,
+// in constant time) and VerifyPCRValues (the reported set equals the
+// selection and hashes to the signed digest). Nothing here re-derives the
+// digest or decodes a selection bitmap.
 func bindQuotedPCRs(image string, quoted, nonce []byte, banks []xkmstpm2.PCRBank) (*boundPCRs, error) {
-	attest, err := deviceattest01.ParseTPMSAttest(quoted)
+	quote, err := evidence.ParseQuote(quoted)
 	if err != nil {
 		return nil, &QuoteBindingError{
 			Image:  image,
-			Reason: "signed quote body could not be parsed",
+			Reason: "signed quote body is not a single-bank TPM2_Quote",
 			Cause:  err,
-		}
-	}
-
-	// ParseTPMSAttest fills Attested only for TPM_ST_ATTEST_QUOTE, so an
-	// empty selection or digest means the signed body attests to something
-	// other than a PCR quote and cannot be bound to a PCR read. Testing the
-	// parsed result rather than the raw type code keeps the TPM structure
-	// codes in go-xkms, where they belong.
-	if len(attest.Attested.PCRSelect) == 0 || len(attest.Attested.PCRDigest) == 0 {
-		return nil, &QuoteBindingError{
-			Image:  image,
-			Reason: "signed body carries no TPMS_QUOTE_INFO; it does not attest to a PCR quote",
 		}
 	}
 
 	// Freshness: the nonce must be inside the signed body, not merely
-	// alongside it. The parse above already succeeded, so VerifyQualifyingData
-	// compares extraData exactly and never reaches its containment fallback.
-	if !deviceattest01.VerifyQualifyingData(quoted, nonce) {
+	// alongside it.
+	if err := quote.VerifyQualifyingData(nonce); err != nil {
 		return nil, &QuoteBindingError{
 			Image:  image,
 			Reason: "signed quote does not carry the nonce this attestation generated",
-		}
-	}
-
-	hash, err := pcrDigestHash(len(attest.Attested.PCRDigest))
-	if err != nil {
-		return nil, &QuoteBindingError{
-			Image:  image,
-			Reason: "signed pcrDigest length matches no supported PCR bank",
 			Cause:  err,
 		}
 	}
 
-	composite := hash.New()
-	values := make(map[uint32][]byte)
-	primaryBank := ""
+	bankName, err := pcrBankName(uint16(quote.Bank))
+	if err != nil {
+		return nil, err
+	}
+	read, err := flattenPCRBanks(banks, bankName)
+	if err != nil {
+		return nil, err
+	}
 
-	for _, selection := range attest.Attested.PCRSelect {
-		bankName, err := pcrBankName(selection.Hash)
-		if err != nil {
+	reported := make(map[int][]byte, len(quote.Selected))
+	for _, index := range quote.Selected {
+		value, ok := read[uint32(index)]
+		if !ok {
 			return nil, &QuoteBindingError{
-				Image:  image,
-				Reason: "signed quote selects a PCR bank this build does not support",
-				Cause:  err,
+				Image: image,
+				Reason: "PCR " + intToStr(index) + " is in the signed selection but absent from the " +
+					bankName + " read",
 			}
 		}
-		read, err := flattenPCRBanks(banks, bankName)
-		if err != nil {
-			return nil, err
-		}
-		if primaryBank == "" {
-			primaryBank = bankName
-		}
-
-		for _, index := range selectedPCRIndices(selection) {
-			value, ok := read[index]
-			if !ok {
-				return nil, &QuoteBindingError{
-					Image: image,
-					Reason: "PCR " + intToStr(int(index)) + " is in the signed selection but absent from the " +
-						bankName + " read",
-				}
-			}
-			if previous, duplicated := values[index]; duplicated && !bytes.Equal(previous, value) {
-				// The same index selected in two banks would make the
-				// index->value map ambiguous, and a golden comparison
-				// against an ambiguous value is not a comparison.
-				return nil, &QuoteBindingError{
-					Image:  image,
-					Reason: "PCR " + intToStr(int(index)) + " is selected in more than one bank with differing values",
-				}
-			}
-			values[index] = value
-			// hash.Hash never returns a write error (documented in the
-			// hash package), so the result is discarded deliberately.
-			_, _ = composite.Write(value)
-		}
+		reported[index] = value
 	}
 
-	if recomputed := composite.Sum(nil); !bytes.Equal(recomputed, attest.Attested.PCRDigest) {
+	if err := quote.VerifyPCRValues(reported); err != nil {
 		return nil, &QuotedPCRDigestMismatchError{
-			Image:      image,
-			Bank:       primaryBank,
-			Signed:     append([]byte(nil), attest.Attested.PCRDigest...),
-			Recomputed: recomputed,
+			Image:  image,
+			Bank:   bankName,
+			Signed: bytes.Clone(quote.PCRDigest),
+			Cause:  err,
 		}
 	}
 
-	return &boundPCRs{bank: primaryBank, values: values}, nil
-}
-
-// selectedPCRIndices expands a TPMS_PCR_SELECTION bitmap into ascending PCR
-// indices. The TPM numbers bits little-endian within each byte, and the
-// pcrDigest concatenates the selected registers in exactly this order, so the
-// expansion order is part of the verification and not a presentation choice.
-func selectedPCRIndices(selection deviceattest01.TPMSPCRSelection) []uint32 {
-	indices := make([]uint32, 0, len(selection.PCRBitmap)*8)
-	for byteIndex, bitmap := range selection.PCRBitmap {
-		for bit := 0; bit < 8; bit++ {
-			if bitmap&(1<<uint(bit)) != 0 {
-				indices = append(indices, uint32(byteIndex*8+bit))
-			}
-		}
+	values := make(map[uint32][]byte, len(reported))
+	for index, value := range reported {
+		values[uint32(index)] = value
 	}
-	return indices
+	return &boundPCRs{bank: bankName, values: values}, nil
 }
 
 // pcrBankName maps the TPM algorithm ID carried in a signed PCR selection back
@@ -617,31 +558,6 @@ func pcrBankName(algID uint16) (string, error) {
 		}
 	}
 	return "", &PCRBankUnavailableError{Requested: "TPM algorithm 0x" + hexOrAbsent([]byte{byte(algID >> 8), byte(algID)})}
-}
-
-// pcrDigestHash resolves the hash a quote's pcrDigest was computed with from
-// its length. The TPM does not name that algorithm inside TPMS_QUOTE_INFO —
-// it is the signing scheme's hash — but the four banks a PC Client TPM can
-// expose have four distinct digest sizes, so the length determines it
-// uniquely.
-func pcrDigestHash(digestLength int) (crypto.Hash, error) {
-	for _, name := range supportedPCRBankNames {
-		if xkmstpm2.PCRDigestSize(name) != digestLength {
-			continue
-		}
-		hash, err := xkmstpm2.ParsePCRBankCryptoHash(name)
-		if err != nil {
-			return 0, err
-		}
-		if !hash.Available() {
-			return 0, &PCRBankUnavailableError{Requested: name}
-		}
-		return hash, nil
-	}
-	return 0, &PCRBankUnavailableError{
-		Requested: intToStr(digestLength) + "-byte digest",
-		Available: supportedPCRBankNames,
-	}
 }
 
 // flattenPCRBanks reduces the multi-bank PCR read to a single index->digest
@@ -771,30 +687,38 @@ func (e *QuoteBindingError) Unwrap() []error {
 	return []error{ErrQuoteNotBound, e.Cause}
 }
 
-// QuotedPCRDigestMismatchError indicates the pcrDigest inside the signed quote
-// does not match a recomputation over the PCR values the TPM reported. The
-// signed evidence and the PCR read disagree about the state of the host, so
-// neither may be trusted.
+// QuotedPCRDigestMismatchError indicates the PCR values the TPM reported do
+// not reproduce the pcrDigest inside the signed quote. The signed evidence and
+// the PCR read disagree about the state of the host, so neither may be
+// trusted. Cause is go-xkms's evidence error naming the exact check that
+// failed (set, register size or digest).
 //
 // It reports both ErrQuotedPCRDigestMismatch and ErrQuoteNotBound, so a caller
 // can catch the specific failure or the whole class of unbound quotes.
 type QuotedPCRDigestMismatchError struct {
-	Image      string
-	Bank       string
-	Signed     []byte
-	Recomputed []byte
+	Image  string
+	Bank   string
+	Signed []byte
+	Cause  error
 }
 
 // Error implements the error interface.
 func (e *QuotedPCRDigestMismatchError) Error() string {
-	return ErrQuotedPCRDigestMismatch.Error() + ": " + e.Image + ": the " + e.Bank +
-		" PCR read hashes to " + hexOrAbsent(e.Recomputed) +
-		" but the signed quote commits to " + hexOrAbsent(e.Signed)
+	msg := ErrQuotedPCRDigestMismatch.Error() + ": " + e.Image + ": the " + e.Bank +
+		" PCR read does not reproduce the digest the signed quote commits to (" +
+		hexOrAbsent(e.Signed) + ")"
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
 }
 
-// Unwrap returns both sentinels for errors.Is support.
+// Unwrap returns both sentinels and the cause for errors.Is support.
 func (e *QuotedPCRDigestMismatchError) Unwrap() []error {
-	return []error{ErrQuotedPCRDigestMismatch, ErrQuoteNotBound}
+	if e.Cause == nil {
+		return []error{ErrQuotedPCRDigestMismatch, ErrQuoteNotBound}
+	}
+	return []error{ErrQuotedPCRDigestMismatch, ErrQuoteNotBound, e.Cause}
 }
 
 // PCRBankUnavailableError indicates the PCR bank a verification step requires
