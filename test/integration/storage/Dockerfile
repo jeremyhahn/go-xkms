@@ -15,6 +15,17 @@
 # runner-log-proven for test/integration/pkcs8, task 3001, and already fixed
 # the same way for the other nine lanes). This bakes the source into the
 # image at build time instead.
+# SoftHSM 2.7.0 from its pinned, checksum-verified release
+# (scripts/build-softhsm.sh) instead of Debian's 2.6.1, which answers an AES-GCM
+# tag mismatch with the ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper could not
+# be classified as types.ErrSealedDataAuthentication (go-xkms#1418).
+FROM golang:1.27.0-bookworm AS softhsm
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf automake libtool libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/build-softhsm.sh /build/build-softhsm.sh
+RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
+
 FROM golang:bookworm
 
 ARG EXTRA_APT_PACKAGES=""
@@ -24,6 +35,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV GOTOOLCHAIN=auto
 ENV GOWORK=off
+
+# Every lane gets the same SoftHSM; only test-hardware-pkcs11 loads it.
+# SoftHSM 2.7.0: /usr/lib/softhsm/libsofthsm2.so, softhsm2-util, /etc/softhsm.
+COPY --from=softhsm /build/softhsm-install/ /
 
 WORKDIR /app
 

@@ -34,8 +34,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgnutls28-dev \
     libtasn1-6-dev \
     # PKCS#11 and smart card development
-    libsofthsm2 \
-    softhsm2 \
     opensc \
     opensc-pkcs11 \
     libpcsclite-dev \
@@ -68,6 +66,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Go tools for protobuf/gRPC code generation
 RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
     go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+# SoftHSM 2.7.0 from its pinned, checksum-verified release, replacing Debian's
+# 2.6.1: that release answers an AES-GCM tag mismatch with the ambiguous
+# CKR_GENERAL_ERROR, so PKCS#11 tamper could not be classified as
+# types.ErrSealedDataAuthentication (go-xkms#1418). The script is the single
+# pin (scripts/build-softhsm.sh); this build's context is .devcontainer/, so
+# docker-compose.yml passes the repository's scripts/ directory in as the
+# named build context "softhsm-pin".
+COPY --from=softhsm-pin build-softhsm.sh /build/build-softhsm.sh
+RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
 # Build libfido2 v1.17.0 from source for HID_NAME fallback support
 # Ubuntu/Debian ship 1.14.0 which lacks UHID virtual device product name display
@@ -291,9 +299,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     libgnutls30 \
     libtasn1-6 \
-    # PKCS#11 and smart card
-    libsofthsm2 \
-    softhsm2 \
+    # PKCS#11 and smart card (SoftHSM is built in the builder stage)
     opensc \
     opensc-pkcs11 \
     pcscd \
@@ -414,6 +420,10 @@ COPY --from=builder /build/libfido2-install/usr /usr
 
 # Copy built libtpms v0.10.1 from builder stage
 COPY --from=builder /build/libtpms-install/usr /usr
+
+# SoftHSM 2.7.0 from the builder stage: /usr/lib/softhsm/libsofthsm2.so, the
+# softhsm2-* utilities and /etc/softhsm (Debian's paths).
+COPY --from=builder /build/softhsm-install/ /
 
 # Copy pkcs11-provider so the OpenSSL 3 interop tests can drive the module
 # through a provider (the interface that replaced ENGINEs) as well as libp11.

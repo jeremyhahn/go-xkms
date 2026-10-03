@@ -476,9 +476,6 @@ jobs:
               apt-get update
               apt-get install -y --no-install-recommends \
                 gcc-aarch64-linux-gnu \
-                libsofthsm2:arm64 \
-                libsofthsm2-dev:arm64 \
-                softhsm2:arm64 \
                 libtss2-dev:arm64 \
                 libicu-dev:arm64 \
                 libusb-1.0-0-dev:arm64 \
@@ -486,9 +483,6 @@ jobs:
               export CC=aarch64-linux-gnu-gcc
             else
               apt-get install -y --no-install-recommends \
-                libsofthsm2 \
-                libsofthsm2-dev \
-                softhsm2 \
                 libtss2-dev \
                 libicu-dev \
                 libusb-1.0-0-dev \
@@ -798,12 +792,22 @@ jobs:
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential \
               pkg-config \
-              libsofthsm2 \
               libtss2-dev \
               libicu-dev \
               libusb-1.0-0-dev \
               ca-certificates \
               && rm -rf /var/lib/apt/lists/*
+
+          # SoftHSM 2.7.0 for the runtime stage, from its pinned,
+          # checksum-verified release (scripts/build-softhsm.sh) instead of
+          # Debian's 2.6.1, which answers an AES-GCM tag mismatch with the
+          # ambiguous CKR_GENERAL_ERROR (go-xkms#1418). xkmsd itself needs no
+          # SoftHSM to build: PKCS#11 modules are dlopen()ed at run time.
+          COPY scripts/build-softhsm.sh /build/build-softhsm.sh
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+              autoconf automake libtool libssl-dev && \
+              rm -rf /var/lib/apt/lists/* && \
+              DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
           WORKDIR /build
 
@@ -868,8 +872,7 @@ jobs:
           RUN apt-get update && apt-get upgrade -y && \
               apt-get install -y --no-install-recommends \
               ca-certificates \
-              libsofthsm2 \
-              softhsm2 \
+              libssl3 \
               libtss2-esys-3.0.2-0 \
               libtss2-tcti-device0 \
               && rm -rf /var/lib/apt/lists/*
@@ -880,6 +883,10 @@ jobs:
           # Create directories
           RUN mkdir -p /etc/xkms /var/lib/xkms /var/lib/softhsm/tokens && \
               chown -R xkms:xkms /etc/xkms /var/lib/xkms /var/lib/softhsm
+
+          # SoftHSM 2.7.0 built in the builder stage:
+          # /usr/lib/softhsm/libsofthsm2.so, softhsm2-util, /etc/softhsm.
+          COPY --from=builder /build/softhsm-install/ /
 
           # Copy binary from builder
           COPY --from=builder /build/xkmsd /usr/local/bin/xkmsd

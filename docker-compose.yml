@@ -23,6 +23,9 @@ services:
     build:
       context: test/docker/softhsm
       dockerfile: Dockerfile
+      # The SoftHSM pin (scripts/build-softhsm.sh, go-xkms#1418).
+      additional_contexts:
+        softhsm-pin: ./scripts
     image: go-xkms-softhsm:${XKMS_IMAGE_TAG:-latest}
     volumes:
       - softhsm-tokens:/tokens

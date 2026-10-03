@@ -44,6 +44,17 @@ RUN mkdir -p /build/lib && \
         ./cmd/pkcs11-module && \
     echo "PKCS#11 module built successfully"
 
+# SoftHSM 2.7.0 from its pinned, checksum-verified release
+# (scripts/build-softhsm.sh) instead of Debian's 2.6.1, which answers an AES-GCM
+# tag mismatch with the ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper could not
+# be classified as types.ErrSealedDataAuthentication (go-xkms#1418).
+FROM golang:1.27.0-bookworm AS softhsm
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf automake libtool libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/build-softhsm.sh /build/build-softhsm.sh
+RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
+
 # Stage 2: Test runtime environment
 FROM golang:1.27.0-bookworm
 
@@ -66,9 +77,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     opensc-pkcs11 \
     libengine-pkcs11-openssl \
     p11-kit \
-    # SoftHSM2 for pkcs11 backend testing
-    softhsm2 \
-    libsofthsm2 \
     # Network utilities
     netcat-openbsd \
     curl \
@@ -80,6 +88,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Development utilities
     jq \
     && rm -rf /var/lib/apt/lists/*
+
+# SoftHSM 2.7.0: /usr/lib/softhsm/libsofthsm2.so, softhsm2-util, /etc/softhsm.
+COPY --from=softhsm /build/softhsm-install/ /
 
 # Configure SoftHSM2
 RUN mkdir -p /var/lib/softhsm/tokens /etc/softhsm && \

@@ -12,29 +12,23 @@ FROM alpine:3.24 AS builder
 
 # Install build dependencies
 RUN apk --no-cache upgrade && apk add --no-cache \
-    git \
     build-base \
     automake \
     autoconf \
     libtool \
+    pkgconf \
     openssl-dev \
-    sqlite-dev \
-    p11-kit-dev
+    curl
 
-# Build SoftHSM v2.6.1
-WORKDIR /build
-RUN git clone https://github.com/opendnssec/SoftHSMv2.git && \
-    cd SoftHSMv2 && \
-    git checkout 2.6.1 && \
-    sh autogen.sh && \
-    ./configure \
-        --prefix=/usr/local \
-        --disable-gost \
-        --with-crypto-backend=openssl \
-        --with-objectstore-backend-db \
-        --with-sqlite3=/usr && \
-    make -j$(nproc) && \
-    make install DESTDIR=/build/softhsm-install
+# Build SoftHSM 2.7.0 from its pinned, checksum-verified release. 2.6.1, built
+# here before, answers an AES-GCM tag mismatch with the ambiguous
+# CKR_GENERAL_ERROR, so PKCS#11 tamper could not be classified as
+# types.ErrSealedDataAuthentication (go-xkms#1418). The pin lives in the
+# repository's scripts/build-softhsm.sh, which every compose file that builds
+# this image passes in as the named build context "softhsm-pin". Only the file
+# object store is used (softhsm2.conf), so the SQLite backend is not built.
+COPY --from=softhsm-pin build-softhsm.sh /build/build-softhsm.sh
+RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh /usr/local
 
 # Runtime stage
 FROM alpine:3.24
@@ -45,7 +39,6 @@ FROM alpine:3.24
 # libsofthsm2.so and softhsm2-util cannot load (#227).
 RUN apk --no-cache upgrade && apk add --no-cache \
     openssl \
-    sqlite-libs \
     p11-kit \
     p11-kit-server \
     libstdc++ \

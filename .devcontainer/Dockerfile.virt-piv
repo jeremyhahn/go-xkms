@@ -3,6 +3,20 @@
 # This provides a software-based PIV-like environment without requiring hardware
 #
 # Note: This replaces the virt_cacard approach which was too complex for containers
+#
+# SoftHSM is 2.7.0, built from the pinned, checksum-verified release in the
+# repository's scripts/build-softhsm.sh (go-xkms#1418), which this build reads
+# from the named context "softhsm-pin". From the repository root:
+#   docker build --build-context softhsm-pin=scripts \
+#       -f .devcontainer/Dockerfile.virt-piv .devcontainer
+
+FROM debian:bookworm-slim AS softhsm
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential autoconf automake libtool pkg-config libssl-dev \
+    curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=softhsm-pin build-softhsm.sh /build/build-softhsm.sh
+RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
 FROM debian:bookworm-slim
 
@@ -10,14 +24,16 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    softhsm2 \
-    libsofthsm2 \
+    libssl3 \
     opensc \
     opensc-pkcs11 \
     openssl \
     ca-certificates \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
+
+# SoftHSM 2.7.0: /usr/lib/softhsm/libsofthsm2.so, softhsm2-util, /etc/softhsm.
+COPY --from=softhsm /build/softhsm-install/ /
 
 # Create required directories
 RUN mkdir -p /var/lib/softhsm/tokens \

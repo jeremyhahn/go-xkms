@@ -14,6 +14,17 @@
 # E2E testing environment for xKey GUI application
 # Includes swtpm (software TPM 2.0), Playwright (headless Chromium),
 # Xvfb (virtual display), and all Wails v2 build dependencies.
+# SoftHSM 2.7.0 from its pinned, checksum-verified release
+# (scripts/build-softhsm.sh) instead of Ubuntu's 2.6.1, which answers an
+# AES-GCM tag mismatch with the ambiguous CKR_GENERAL_ERROR (go-xkms#1418).
+FROM ubuntu:24.04 AS softhsm
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential autoconf automake libtool pkg-config libssl-dev \
+    curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/build-softhsm.sh /build/build-softhsm.sh
+RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
+
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -55,10 +66,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # /usr/lib/softhsm/libsofthsm2.so so the PIV-via-PKCS#11 GUI workflows run.
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    softhsm2 \
     opensc \
     openssl \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=softhsm /build/softhsm-install/ /
 
 # ---------------------------------------------------------------------------
 # Virtual display + image manipulation (headless GUI rendering)

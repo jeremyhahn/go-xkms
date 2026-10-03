@@ -25,6 +25,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # The SoftHSM pin lives in the repository's scripts/build-softhsm.sh;
+      # the Dockerfile copies it from this named context (go-xkms#1418).
+      additional_contexts:
+        softhsm-pin: ../scripts
     image: go-xkms-dev:${XKMS_IMAGE_TAG:-latest}
     # Privileged mode required for QEMU with KVM acceleration
     privileged: true
@@ -161,6 +165,9 @@ services:
     build:
       context: ../test/docker/softhsm
       dockerfile: Dockerfile
+      # The SoftHSM pin (scripts/build-softhsm.sh, go-xkms#1418).
+      additional_contexts:
+        softhsm-pin: ../scripts
     image: go-xkms-softhsm:${XKMS_IMAGE_TAG:-dev}
     volumes:
       - softhsm-tokens:/tokens

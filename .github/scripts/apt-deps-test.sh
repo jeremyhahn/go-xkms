@@ -126,34 +126,34 @@ check "apt-get not invoked at all" [ ! -s "$FAKE_LOG" ]
 
 echo "== only the missing packages are installed =="
 reset libicu-dev
-run libicu-dev libusb-1.0-0-dev softhsm2
+run libicu-dev libusb-1.0-0-dev swtpm
 check "exit 0" [ "$rc" -eq 0 ]
 check "one install call" [ "$(installs)" -eq 1 ]
-check "install names only the missing packages" grep -q ' install -y libusb-1.0-0-dev softhsm2$' "$FAKE_LOG"
+check "install names only the missing packages" grep -q ' install -y libusb-1.0-0-dev swtpm$' "$FAKE_LOG"
 check "install does not name the present package" sh -c '! grep -q "install.*libicu-dev" "$FAKE_LOG"'
 check "IPv6 skipped on the fetch" grep -q 'Acquire::ForceIPv4=true install' "$FAKE_LOG"
 
 echo "== a transient failure is retried =="
 reset
 echo 2 > "$FAKE_FAILS"
-APT_DEPS_ATTEMPTS=5 run softhsm2
+APT_DEPS_ATTEMPTS=5 run swtpm
 check "exit 0 after two failures then success" [ "$rc" -eq 0 ]
 check "three install attempts" [ "$(installs)" -eq 3 ]
 
 echo "== a persistent failure fails the step, bounded, naming the packages =="
 reset
 echo 99 > "$FAKE_FAILS"
-APT_DEPS_ATTEMPTS=3 run softhsm2 libtss2-dev
+APT_DEPS_ATTEMPTS=3 run swtpm libtss2-dev
 check "exit 1" [ "$rc" -eq 1 ]
 check "exactly the configured number of attempts" [ "$(installs)" -eq 3 ]
-check "message names softhsm2" grep -q 'softhsm2' "$work/out"
+check "message names swtpm" grep -q 'swtpm' "$work/out"
 check "message names libtss2-dev" grep -q 'libtss2-dev' "$work/out"
 check "message says it gave up" grep -q 'giving up after 3' "$work/out"
 
 echo "== apt's exit status is not the verdict =="
 reset
 : > "$FAKE_LIE"
-APT_DEPS_ATTEMPTS=1 run softhsm2
+APT_DEPS_ATTEMPTS=1 run swtpm
 check "exit 1 when apt says yes but dpkg says no" [ "$rc" -eq 1 ]
 check "message names the package dpkg lacks" grep -q 'dpkg does not have' "$work/out"
 

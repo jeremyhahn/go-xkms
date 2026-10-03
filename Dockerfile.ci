@@ -14,8 +14,6 @@ ENV GOTOOLCHAIN=auto
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
-    libsofthsm2 \
-    softhsm2 \
     opensc \
     openssl \
     swtpm \
@@ -36,6 +34,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
     && rm -rf /var/lib/apt/lists/*
+
+# SoftHSM 2.7.0, built from its pinned, checksum-verified release instead of
+# Debian's 2.6.1 package: 2.6.1 answers an AES-GCM tag mismatch with the
+# ambiguous CKR_GENERAL_ERROR, so PKCS#11 tamper could not be classified as
+# types.ErrSealedDataAuthentication on this image (go-xkms#1418). The module
+# lands at Debian's path, /usr/lib/softhsm/libsofthsm2.so.
+COPY scripts/build-softhsm.sh /tmp/build-softhsm.sh
+RUN sh /tmp/build-softhsm.sh && rm /tmp/build-softhsm.sh
 
 # Install Node.js for the web UI suites. `make test` runs test-web, which
 # no-ops when npm is missing — without Node here the SPA, SDK, and svelte-auth

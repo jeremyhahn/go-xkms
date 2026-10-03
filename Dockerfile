@@ -11,8 +11,6 @@ ENV GOTOOLCHAIN=auto
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
-    libsofthsm2 \
-    softhsm2 \
     opensc \
     swtpm \
     swtpm-tools \
@@ -40,6 +38,13 @@ RUN git clone https://github.com/stefanberger/libtpms.git && \
     make -j$(nproc) && \
     make install DESTDIR=/build/libtpms-install
 
+# SoftHSM 2.7.0 from its pinned, checksum-verified release, staged for the
+# runtime stage. Debian's 2.6.1 answers an AES-GCM tag mismatch with the
+# ambiguous CKR_GENERAL_ERROR, so PKCS#11 tamper could not be classified as
+# types.ErrSealedDataAuthentication (go-xkms#1418).
+COPY scripts/build-softhsm.sh /build/build-softhsm.sh
+RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
+
 # Stage 2: Test runtime environment
 FROM golang:1.27.0-bookworm
 
@@ -54,8 +59,6 @@ ENV GOTOOLCHAIN=auto
 # go-qrdb), not gated by any backend tag -- this stage is also where the
 # module builds/tests below run.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsofthsm2 \
-    softhsm2 \
     opensc \
     swtpm \
     swtpm-tools \
@@ -80,6 +83,11 @@ RUN DPKG_ARCH=$(dpkg --print-architecture) && \
         *) ARCH=${DPKG_ARCH} ;; \
     esac && \
     rm -f /usr/lib/${ARCH}-linux-gnu/libtpms.so* /lib/${ARCH}-linux-gnu/libtpms.so*
+
+# SoftHSM 2.7.0 from the builder stage: /usr/lib/softhsm/libsofthsm2.so, the
+# softhsm2-* utilities and /etc/softhsm. Its only runtime dependencies,
+# libssl3 and the C++ runtime, are already present.
+COPY --from=builder /build/softhsm-install/ /
 
 # Copy built libtpms v0.10.1 from builder stage
 # This version fixes TPM_RC_RETRY issue in CheckLockedOut

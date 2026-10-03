@@ -450,8 +450,9 @@ deps:
 	@$(GOMOD) verify
 	@echo "$(GREEN)✓ Go dependencies installed$(RESET)"
 	@echo "$(YELLOW)Note: unit tests need SWTPM (pkg/tpm2/vtpm runs real vTPMs); integration tests also need SoftHSM:$(RESET)"
-	@echo "  - Ubuntu/Debian: sudo apt-get install softhsm2 swtpm swtpm-tools"
-	@echo "  - macOS: brew install softhsm swtpm"
+	@echo "  - Ubuntu/Debian: sudo apt-get install swtpm swtpm-tools"
+	@echo "  - SoftHSM 2.7.0+: sudo sh scripts/build-softhsm.sh (distro 2.6.1 cannot report PKCS#11 tamper)"
+	@echo "  - macOS: brew install softhsm swtpm (SoftHSM 2.7.0+ for PKCS#11 tamper classification)"
 
 .PHONY: build
 ## build: Build the shared library, CLI, server binaries, and xkey (default)
@@ -991,6 +992,7 @@ test-scripts:
 	@bash test/scripts/release-assets.test.sh
 	@bash test/scripts/changelog-assemble.test.sh
 	@bash test/scripts/retry.test.sh
+	@bash test/scripts/softhsm-pin.test.sh
 	@bash test/scripts/check-public-literals.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
@@ -3461,10 +3463,6 @@ gitea-host:
 ## docker-build: Build Docker container for integration testing
 docker-build: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Building Docker image...$(RESET)"
-	@if [ ! -f "Dockerfile" ]; then \
-		echo "$(YELLOW)⚠ Dockerfile not found. Creating default Dockerfile...$(RESET)"; \
-		$(MAKE) --no-print-directory create-dockerfile; \
-	fi
 	@DOCKER_BUILDKIT=1 docker buildx build --load \
 		--secret id=gomodauth,src=$(GOMODAUTH_FILE) \
 		-t $(DOCKER_INTEGRATION_IMAGE) -f Dockerfile .
@@ -3601,36 +3599,6 @@ docker-clean: docker-stop
 	@docker rmi $(DOCKER_IMAGE) 2>/dev/null || true
 	@docker rmi $(DOCKER_INTEGRATION_IMAGE) 2>/dev/null || true
 	@echo "$(GREEN)✓ Docker resources cleaned$(RESET)"
-
-.PHONY: create-dockerfile
-# Create default Dockerfile if it doesn't exist
-create-dockerfile:
-	@echo "# Dockerfile for go-xkms integration testing" > Dockerfile
-	@echo "FROM golang:1.27.0-alpine" >> Dockerfile
-	@echo "" >> Dockerfile
-	@echo "# Install dependencies" >> Dockerfile
-	@echo "RUN apk add --no-cache \\" >> Dockerfile
-	@echo "    build-base \\" >> Dockerfile
-	@echo "    softhsm \\" >> Dockerfile
-	@echo "    openssl \\" >> Dockerfile
-	@echo "    bash \\" >> Dockerfile
-	@echo "    git \\" >> Dockerfile
-	@echo "    make \\" >> Dockerfile
-	@echo "    bc" >> Dockerfile
-	@echo "" >> Dockerfile
-	@echo "# Set working directory" >> Dockerfile
-	@echo "WORKDIR /workspace" >> Dockerfile
-	@echo "" >> Dockerfile
-	@echo "# Copy go modules" >> Dockerfile
-	@echo "COPY go.mod go.sum ./" >> Dockerfile
-	@echo "RUN go mod download" >> Dockerfile
-	@echo "" >> Dockerfile
-	@echo "# Copy source code" >> Dockerfile
-	@echo "COPY . ." >> Dockerfile
-	@echo "" >> Dockerfile
-	@echo "# Default command" >> Dockerfile
-	@echo 'CMD ["/bin/bash"]' >> Dockerfile
-	@echo "$(GREEN)✓ Created Dockerfile$(RESET)"
 
 # ==============================================================================
 # Docker Compose Targets

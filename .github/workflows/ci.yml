@@ -328,7 +328,13 @@ jobs:
           # CGO_ENABLED defaults to 1 whenever a C toolchain is present.
           # swtpm: pkg/tpm2/vtpm supervises a real swtpm process per tenant,
           # and this job's `make coverage` run exercises those tests.
-          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev swtpm
+          sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev swtpm
+          # SoftHSM 2.7.0 from its pinned, checksum-verified release, not the
+          # distro's 2.6.1, which answers an AES-GCM tag mismatch with the
+          # ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper cannot be classified
+          # (go-xkms#1418). Installs at the distro's paths.
+          sudo .github/scripts/apt-deps.sh build-essential autoconf automake libtool pkg-config libssl-dev
+          sudo sh scripts/build-softhsm.sh
           # Create token directory
           mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
           # Create SoftHSM2 config
@@ -885,7 +891,13 @@ jobs:
       # this job's tpm_simulator-tagged run can include that package.
       - name: Install and configure SoftHSM2
         run: |
-          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev swtpm
+          sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev swtpm
+          # SoftHSM 2.7.0 from its pinned, checksum-verified release, not the
+          # distro's 2.6.1, which answers an AES-GCM tag mismatch with the
+          # ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper cannot be classified
+          # (go-xkms#1418). Installs at the distro's paths.
+          sudo .github/scripts/apt-deps.sh build-essential autoconf automake libtool pkg-config libssl-dev
+          sudo sh scripts/build-softhsm.sh
           mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
           cat > ${GITHUB_WORKSPACE}/softhsm2.conf << EOF
           directories.tokendir = ${GITHUB_WORKSPACE}/softhsm2/tokens
@@ -1264,7 +1276,8 @@ jobs:
           # unconditional dependencies of the module graph, not gated by any
           # of this job's build tags, so every CGO_ENABLED=1 build here needs
           # them regardless of which backend tags are requested.
-          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libtss2-dev libicu-dev libusb-1.0-0-dev
+          # No SoftHSM: building only -- PKCS#11 modules are dlopen()ed at run time.
+          sudo .github/scripts/apt-deps.sh libtss2-dev libicu-dev libusb-1.0-0-dev
 
       - name: Build ${{ matrix.binary }} with all backends
         env:
@@ -1664,7 +1677,13 @@ jobs:
           # google/gousb via go-qrdb), needed for any CGO_ENABLED=1 build
           # regardless of tags. swtpm: pkg/tpm2/vtpm supervises a real swtpm
           # process per tenant, and `go test ./...` below includes that package.
-          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libtss2-dev libicu-dev libusb-1.0-0-dev swtpm
+          sudo .github/scripts/apt-deps.sh libtss2-dev libicu-dev libusb-1.0-0-dev swtpm
+          # SoftHSM 2.7.0 from its pinned, checksum-verified release, not the
+          # distro's 2.6.1, which answers an AES-GCM tag mismatch with the
+          # ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper cannot be classified
+          # (go-xkms#1418). Installs at the distro's paths.
+          sudo .github/scripts/apt-deps.sh build-essential autoconf automake libtool pkg-config libssl-dev
+          sudo sh scripts/build-softhsm.sh
 
       - name: Configure SoftHSM2
         run: |

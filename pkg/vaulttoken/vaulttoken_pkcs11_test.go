@@ -112,7 +112,7 @@ func TestPKCS11Factor_PIVSlotKeyAgreesOnTheToken(t *testing.T) {
 }
 
 // TestPKCS11Factor_TokenWithoutOAEP256IsCaughtAtEnrollment proves why the
-// clients self-test a token before enrolling it: SoftHSM 2.6 decrypts RSA-OAEP with
+// clients self-test a token before enrolling it: SoftHSM (2.6 and 2.7 alike) decrypts RSA-OAEP with
 // SHA-1 only, so an RSA key on it can never recover an RSA-OAEP-256
 // secret. Verify reports it at once, and the client removes the factor
 // instead of leaving the user a factor that cannot open.

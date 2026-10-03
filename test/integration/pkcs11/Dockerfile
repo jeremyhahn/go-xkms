@@ -1,11 +1,23 @@
+# SoftHSM 2.7.0 from its pinned, checksum-verified release
+# (scripts/build-softhsm.sh) instead of Debian's 2.6.1, which answers an AES-GCM
+# tag mismatch with the ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper could not
+# be classified as types.ErrSealedDataAuthentication (go-xkms#1418).
+FROM golang:1.27.0-bookworm AS softhsm
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf automake libtool libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/build-softhsm.sh /build/build-softhsm.sh
+RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
+
 FROM golang:1.27.0-bookworm
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     netcat-openbsd \
-    softhsm2 \
-    libsofthsm2 \
     && rm -rf /var/lib/apt/lists/*
+
+# SoftHSM 2.7.0: /usr/lib/softhsm/libsofthsm2.so, softhsm2-util, /etc/softhsm.
+COPY --from=softhsm /build/softhsm-install/ /
 
 ENV GOTOOLCHAIN=auto
 ENV GOWORK=off

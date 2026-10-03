@@ -1,6 +1,6 @@
 # PKCS#11 Backend — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pkcs11-backend` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `pkcs11-backend` · Repo: `go-xkms` · Last verified: 2026-10-03
 
 All symbols below require `-tags pkcs11` and cgo. See
 [`architecture.md`](architecture.md) for the package's place in the stack.
@@ -218,6 +218,61 @@ leave `CKA_EXTRACTABLE` at the token default — verify with
 `backend.ErrAsymmetricKeyExportNotAllowed`,
 `backend.ErrOperationNotSupported` (`RotateKey`; `Capabilities().KeyRotation
 == false`).
+
+## SoftHSM version — 2.7.0, built from a pinned release
+
+Every image and workflow in this repository that runs PKCS#11 tests or ships
+SoftHSM — `Dockerfile.ci`, the devcontainer (and its `Dockerfile.virt-piv`),
+the integration-test image `Dockerfile`, the SoftHSM sidecar
+(`test/docker/softhsm`), the `test/integration/{pkcs11,pkcs11/module,
+acmeadmin,storage}` images, xkey's e2e image, the published runtime images
+(`Dockerfile.{server,rest,grpc,mcp,quic,cli}` and the one `release.yml`
+generates), and the `ci.yml` jobs that initialize a token — builds SoftHSM
+**2.7.0** with `scripts/build-softhsm.sh` instead of installing the
+distribution package (2.6.1 on Debian bookworm and Ubuntu 24.04). Images
+that only compile (`Dockerfile.builder`, the build stages, `release.yml`'s
+binary legs) carry no SoftHSM at all: the xkms binaries `dlopen()` a PKCS#11
+module at run time and link nothing from SoftHSM.
+
+The script is the one pin: `SOFTHSM_VERSION` and the SHA-256 of the upstream
+release archive
+(`https://github.com/softhsm/SoftHSMv2/archive/refs/tags/2.7.0.tar.gz`), checked
+before anything is extracted. It installs at Debian's paths
+(`/usr/lib/softhsm/libsofthsm2.so`, `/usr/bin/softhsm2-util`,
+`/etc/softhsm/softhsm2.conf`, tokens under `/var/lib/softhsm/tokens`) — the
+Alpine sidecar passes `/usr/local` as its prefix, as before — so no test,
+config or path changed. Builds whose context cannot reach `scripts/`
+(`.devcontainer/`, `test/docker/softhsm/`) receive it as the named build
+context `softhsm-pin` from their compose file. The module is stripped and
+built with the file object store only, the one every token here uses.
+
+**Why 2.7.0 is the minimum.** On an AES-GCM tag mismatch SoftHSM 2.6.1's
+`C_Decrypt` returns `CKR_GENERAL_ERROR`, the code PKCS#11 reserves for an
+unrecoverable token error; 2.7.0 returns `CKR_ENCRYPTED_DATA_INVALID`. This
+backend reports a ciphertext refusal as sealed-data authentication only for
+a code that names the ciphertext, never for `CKR_GENERAL_ERROR`, so PKCS#11
+tamper is classified only on SoftHSM ≥ 2.7.0 (or a token that answers with
+`CKR_ENCRYPTED_DATA_INVALID`, `CKR_ENCRYPTED_DATA_LEN_RANGE` or
+`CKR_AEAD_DECRYPT_FAILED`). Unchanged between the two releases: RSA-OAEP is
+still SHA-1 only (see `docs/password-vault/engineering.md`).
+
+`TestSupportedSoftHSM_ReportsTamperAsSealedDataAuthentication`
+(`pkg/backend/pkcs11/softhsm_tamper_test.go`, `pkcs11` tag) is the proof on
+the images: it requires the token to be SoftHSM 2.7.0 or later — failing,
+with the script's name, on an image that regressed to 2.6.x — and then that
+a flipped ciphertext, tag or nonce, a truncated or extended ciphertext, a
+mismatched or omitted AAD and a foreign key each fail `Unseal` with
+`types.ErrSealedDataAuthentication` and the token's own
+`CKR_ENCRYPTED_DATA_INVALID`.
+
+`test/scripts/softhsm-pin.test.sh` (run by `make test-scripts`) fails if any
+Dockerfile, compose file, workflow or script installs a `softhsm2` /
+`libsofthsm2` package, if a Dockerfile that uses SoftHSM does not build it
+with the script, if a workflow runs `softhsm2-util` without it, or if the
+script would accept an archive that does not hash to the pin. To bump:
+change `SOFTHSM_VERSION` and `SOFTHSM_SHA256` in the script (the header
+says how to take the hash) and confirm the release still answers a GCM tag
+mismatch with a code `ciphertextRejections` lists.
 
 ## Testing (Makefile targets, verified current)
 

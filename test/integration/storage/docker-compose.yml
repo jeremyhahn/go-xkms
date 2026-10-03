@@ -70,7 +70,7 @@ services:
         # libicu-dev/libusb-1.0-0-dev: see the "test" service's comment --
         # unconditional cgo deps of the module graph, needed for any
         # CGO_ENABLED=1 build regardless of tags.
-        EXTRA_APT_PACKAGES: "build-essential softhsm2 libsofthsm2 libicu-dev libusb-1.0-0-dev"
+        EXTRA_APT_PACKAGES: "build-essential libicu-dev libusb-1.0-0-dev"
       secrets:
         - gomodauth
     working_dir: /app
@@ -121,30 +121,32 @@ services:
       - storage-test-network
 
   # SoftHSM initialization service. Runs no Go code and needs no module
-  # source at all -- just provisions a token via the softhsm2-util CLI --
-  # so it stays on the bare image rather than the shared Dockerfile. Its
-  # old `../../..:/app` mount was pure vestige (its command never read
-  # anything under /app); the config it does need (directories.tokendir)
-  # is written inline below instead of bind-mounting
-  # test/integration/storage/softhsm2.conf from the host, for the same
-  # reason every other relative bind mount in this file was removed: on the
-  # Gitea Actions runner that path resolves against the JOB CONTAINER's
-  # filesystem, not the true host's, so the mount would silently attach an
-  # unrelated (usually empty) directory instead of erroring.
+  # source, so it builds only the shared Dockerfile's "softhsm" stage -- the
+  # same pinned SoftHSM 2.7.0 (scripts/build-softhsm.sh, go-xkms#1418) the
+  # test lanes load, so the token is written by the release that later opens
+  # it -- and runs softhsm2-util (with --module) from that stage's staged
+  # install. The config it needs (directories.tokendir) is written inline
+  # below instead of bind-mounting test/integration/storage/softhsm2.conf
+  # from the host: on the Gitea Actions runner a relative bind mount
+  # resolves against the JOB CONTAINER's filesystem, not the true host's, so
+  # the mount would silently attach an unrelated (usually empty) directory
+  # instead of erroring.
   softhsm-init:
-    image: golang:bookworm
+    build:
+      context: ../../..
+      dockerfile: test/integration/storage/Dockerfile
+      target: softhsm
     volumes:
       - softhsm-tokens:/var/lib/softhsm/tokens
     environment:
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
     command: >
       sh -c "
-      apt-get update && apt-get install -y --no-install-recommends softhsm2 &&
       mkdir -p /var/lib/softhsm/tokens /etc/softhsm &&
       echo 'directories.tokendir = /var/lib/softhsm/tokens' > /etc/softhsm/softhsm2.conf &&
       echo 'objectstore.backend = file' >> /etc/softhsm/softhsm2.conf &&
       echo 'log.level = INFO' >> /etc/softhsm/softhsm2.conf &&
-      softhsm2-util --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234 &&
+      /build/softhsm-install/usr/bin/softhsm2-util --module /build/softhsm-install/usr/lib/softhsm/libsofthsm2.so --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234 &&
       echo 'SoftHSM initialized successfully'
       "
     networks:

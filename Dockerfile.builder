@@ -15,9 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libusb-1.0-0-dev \
     # ICU regex (dolthub/go-icu-regex via the qrdb SQL engine)
     libicu-dev \
-    # PKCS#11 support
-    libsofthsm2 \
-    softhsm2 \
+    # PKCS#11 tooling. No SoftHSM: this image only builds, and PKCS#11
+    # modules are dlopen()ed at run time (go-xkms#1418).
     opensc \
     && rm -rf /var/lib/apt/lists/*
 

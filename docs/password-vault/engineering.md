@@ -266,7 +266,7 @@ pre-release, so old layouts are not carried forward).
   created in the data directory's registry (refused once the PCR drifts).
   `make test` runs them all: `tpm_simulator` is in `TEST_TAGS`, and the
   `test-pkcs11` lane adds `pkcs11` for `./pkg/vaulttoken/...`.
-- **SoftHSM 2.6 and RSA-OAEP.** SoftHSM 2.6 implements `CKM_RSA_PKCS_OAEP`
+- **SoftHSM and RSA-OAEP.** SoftHSM (2.6 and 2.7 alike) implements `CKM_RSA_PKCS_OAEP`
   with SHA-1 only and answers `CKR_ARGUMENTS_BAD` for the SHA-256 OAEP the
   vault seals RSA factors with (RSA-OAEP-256). This is deliberate: the vault
   does not fall back to SHA-1. An RSA key on such a token is refused at

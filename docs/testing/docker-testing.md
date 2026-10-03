@@ -86,7 +86,11 @@ docker-compose run --rm test
 
 ### PKCS#11 (SoftHSM)
 
-Uses SoftHSM2 to simulate HSM hardware.
+Uses SoftHSM2 to simulate HSM hardware: SoftHSM 2.7.0, built in every test
+image from the pinned, checksum-verified release in `scripts/build-softhsm.sh`
+rather than the distribution's 2.6.1 (see
+[`../pkcs11-backend/engineering.md`](../pkcs11-backend/engineering.md)
+§"SoftHSM version").
 
 **Configuration:**
 - Token Label: test-token

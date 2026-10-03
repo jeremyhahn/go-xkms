@@ -19,10 +19,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # USB support (google/gousb → phone backend)
     libusb-1.0-0-dev \
     # PKCS#11 support
-    libsofthsm2 \
-    softhsm2 \
     opensc \
     && rm -rf /var/lib/apt/lists/*
+
+# SoftHSM 2.7.0 for the runtime stage, from its pinned, checksum-verified
+# release (scripts/build-softhsm.sh) instead of Debian's 2.6.1, which answers an
+# AES-GCM tag mismatch with the ambiguous CKR_GENERAL_ERROR (go-xkms#1418).
+# The xkms binary itself needs no SoftHSM to build: PKCS#11 modules are
+# dlopen()ed at run time.
+COPY scripts/build-softhsm.sh /build/build-softhsm.sh
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf automake libtool libssl-dev && \
+    rm -rf /var/lib/apt/lists/* && \
+    DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
 # Set working directory
 WORKDIR /build
@@ -83,8 +92,7 @@ RUN apt-get update && apt-get upgrade -y && \
     ca-certificates \
     tzdata \
     libusb-1.0-0 \
-    libsofthsm2 \
-    softhsm2 \
+    libssl3 \
     opensc \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -96,6 +104,10 @@ RUN groupadd -g 1000 appuser && \
 # Create required directories
 RUN mkdir -p /app /etc/xkms /var/lib/xkms /data && \
     chown -R appuser:appuser /app /etc/xkms /var/lib/xkms /data
+
+# SoftHSM 2.7.0 built in the builder stage: /usr/lib/softhsm/libsofthsm2.so,
+# the softhsm2-* utilities and /etc/softhsm.
+COPY --from=builder /build/softhsm-install/ /
 
 # Copy binary from builder
 COPY --from=builder --chown=appuser:appuser /build/xkmsd /app/xkmsd

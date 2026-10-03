@@ -152,7 +152,7 @@ The design keeps the DEK on the server at every step (owner-approved
   key" (`vaultkey.ErrWrongKey`) from a rejected credential before it sends.
 - **Self-test before enrollment.** Every client seals a throwaway secret to
   the token's own key and opens it (`vaulttoken.SelfTest`) before enrolling,
-  so a token that cannot perform the algorithm -- e.g. SoftHSM 2.6, whose
+  so a token that cannot perform the algorithm -- e.g. SoftHSM (2.6 and 2.7 alike), whose
   RSA-OAEP is SHA-1 only -- is refused before the user relies on it.
 - **One implementation, every client.** `pkg/vaultkey` is the wire format,
   `pkg/vaulttoken` the client side over xkms key backends (PIV through the
