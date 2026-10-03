@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -78,8 +77,10 @@ func (s *SecretSealer) CanSeal() bool {
 	return s != nil && len(s.dataKey) == 32
 }
 
-// Seal encrypts data with AES-256-GCM under the derived data key.
-func (s *SecretSealer) Seal(_ context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
+// Seal encrypts data with AES-256-GCM under the derived data key, binding
+// opts.AAD (when opts is non-nil) as additional authenticated data. A value
+// sealed without AAD is byte-for-byte what earlier builds produced.
+func (s *SecretSealer) Seal(_ context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
 	if !s.CanSeal() {
 		return nil, ErrSecretSealerEmptySecret
 	}
@@ -87,11 +88,15 @@ func (s *SecretSealer) Seal(_ context.Context, data []byte, _ *types.SealOptions
 	if err != nil {
 		return nil, err
 	}
+	var aad []byte
+	if opts != nil {
+		aad = opts.AAD
+	}
 	// Seal generates the nonce inside the module and prepends it. Split it back
 	// out so SealedData keeps its existing shape: the Nonce and Ciphertext
 	// fields hold exactly what they held before, so blobs sealed by earlier
 	// builds still unseal and blobs sealed now are readable by them.
-	sealed := gcm.Seal(nil, nil, data, nil)
+	sealed := gcm.Seal(nil, nil, data, aad)
 	return &types.SealedData{
 		Backend:    types.BackendTypeSoftware,
 		Ciphertext: sealed[gcmNonceSize:],
@@ -99,30 +104,71 @@ func (s *SecretSealer) Seal(_ context.Context, data []byte, _ *types.SealOptions
 	}, nil
 }
 
-// Unseal decrypts sealed data produced by Seal.
-func (s *SecretSealer) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+// Unseal decrypts sealed data produced by Seal, authenticating opts.AAD
+// (when opts is non-nil) as the additional authenticated data Seal bound.
+//
+// Sealed-data authentication: the error matches
+// types.ErrSealedDataAuthentication, joined with the AEAD's error where it
+// produced one, exactly when the sealed data is at fault -- sealed.Backend is
+// not the software backend Seal stamps, the nonce is not 12 bytes, or
+// gcm.Open refuses a ciphertext that was tampered with, truncated or
+// extended, sealed under another secret, or sealed under different AAD. A
+// cancelled or expired ctx, and a sealer without a usable key, are not.
+func (s *SecretSealer) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	return s.open(ctx, nil, sealed, opts)
+}
+
+// open authenticates and decrypts sealed, appending the plaintext to dst. It
+// is the one implementation behind Unseal and UnsealInto.
+func (s *SecretSealer) open(ctx context.Context, dst []byte, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
 		return nil, ErrSecretSealerNilSealedData
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !s.CanSeal() {
 		return nil, ErrSecretSealerEmptySecret
+	}
+	if err := checkEnvelope(sealed); err != nil {
+		return nil, err
 	}
 	gcm, err := s.gcm()
 	if err != nil {
 		return nil, err
 	}
-	// The nonce arrives from stored/caller data. The random-nonce AEAD expects
-	// it prepended to the ciphertext rather than passed separately, and rejects
-	// a short input, but checking here keeps the specific error message a
-	// corrupted or malicious sealed blob used to get.
-	if len(sealed.Nonce) != gcmNonceSize {
-		return nil, &errs.Message{Msg: fmt.Sprintf(
-			"seal: nonce is %d bytes, want %d", len(sealed.Nonce), gcmNonceSize)}
+	var aad []byte
+	if opts != nil {
+		aad = opts.AAD
 	}
+	// The random-nonce AEAD expects its nonce at the head of the payload
+	// rather than passed separately. Only the ciphertext is reassembled here;
+	// Open writes the plaintext straight into dst.
 	blob := make([]byte, 0, len(sealed.Nonce)+len(sealed.Ciphertext))
 	blob = append(blob, sealed.Nonce...)
 	blob = append(blob, sealed.Ciphertext...)
-	return gcm.Open(nil, nil, blob, nil)
+	plaintext, err := gcm.Open(dst, nil, blob, aad)
+	if err != nil {
+		return nil, types.SealedDataAuthenticationError("seal: AES-GCM open", err)
+	}
+	return plaintext, nil
+}
+
+// checkEnvelope rejects sealed data whose shape is not one Seal produces: a
+// backend other than the software backend Seal stamps, or a nonce that is not
+// 12 bytes. Both are sealed-data authentication failures. The nonce arrives
+// from stored or caller data; the random-nonce AEAD would reject a short one
+// too, but checking here names the defect.
+func checkEnvelope(sealed *types.SealedData) error {
+	if sealed.Backend != types.BackendTypeSoftware {
+		return types.SealedDataAuthenticationError(
+			fmt.Sprintf("seal: sealed data was not created by the secret sealer (backend %s)", sealed.Backend), nil)
+	}
+	if len(sealed.Nonce) != gcmNonceSize {
+		return types.SealedDataAuthenticationError(
+			fmt.Sprintf("seal: nonce is %d bytes, want %d", len(sealed.Nonce), gcmNonceSize), nil)
+	}
+	return nil
 }
 
 // gcmNonceSize is the 96-bit GCM nonce length. cipher.NewGCMWithRandomNonce

@@ -269,19 +269,23 @@ func (p *platformPolicySealer) keyAttrs() *types.KeyAttributes {
 
 // Seal seals data under the Platform SRK, ignoring any KeyAttributes the
 // caller supplied in opts (the platform store's sealer always owns key
-// identity for its own strategy).
-func (p *platformPolicySealer) Seal(ctx context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
-	return p.inner.Seal(ctx, data, &types.SealOptions{KeyAttributes: p.keyAttrs()})
+// identity for its own strategy). The caller's AAD is passed through, so the
+// sealed value is bound to it.
+func (p *platformPolicySealer) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	return p.inner.Seal(ctx, data, &types.SealOptions{KeyAttributes: p.keyAttrs(), AAD: sealAAD(opts)})
 }
 
-// Unseal unseals data under the Platform SRK, ignoring any (always-nil, from
-// sealed.Backend) caller-supplied opts. Authorizing the Platform SRK itself
+// Unseal unseals data under the Platform SRK, ignoring any KeyAttributes the
+// caller supplied in opts (always nil from sealed.Backend). Authorizing the Platform SRK itself
 // requires a live-PCR PolicyPCR session (no PIN is presented here), so a
 // platform state that no longer matches what the Platform SRK -- or, when
 // the sealed object itself -- was authorized under
 // fails TPM2_PolicyPCR, and this call surfaces that as an unseal error.
-func (p *platformPolicySealer) Unseal(ctx context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
-	return p.inner.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: p.keyAttrs()})
+//
+// The caller's AAD is passed through, so a value sealed under other AAD fails
+// with types.ErrSealedDataAuthentication like any other mismatch.
+func (p *platformPolicySealer) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	return p.inner.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: p.keyAttrs(), AAD: unsealAAD(opts)})
 }
 
 // fixedKeyAttrsSealer wraps a types.Sealer so every Seal/Unseal call carries
@@ -306,13 +310,31 @@ func (f *fixedKeyAttrsSealer) CanSeal() bool {
 }
 
 // Seal seals data using the fixed key identity, ignoring any KeyAttributes
-// the caller supplied in opts.
-func (f *fixedKeyAttrsSealer) Seal(ctx context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
-	return f.inner.Seal(ctx, data, &types.SealOptions{KeyAttributes: f.attrs})
+// the caller supplied in opts. The caller's AAD is passed through.
+func (f *fixedKeyAttrsSealer) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	return f.inner.Seal(ctx, data, &types.SealOptions{KeyAttributes: f.attrs, AAD: sealAAD(opts)})
 }
 
-// Unseal unseals data using the fixed key identity, ignoring any
-// (always-nil, from sealed.Backend) caller-supplied opts.
-func (f *fixedKeyAttrsSealer) Unseal(ctx context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
-	return f.inner.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: f.attrs})
+// Unseal unseals data using the fixed key identity, ignoring any KeyAttributes
+// the caller supplied in opts (always nil from sealed.Backend). The caller's
+// AAD is passed through, so a value sealed under other AAD fails with
+// types.ErrSealedDataAuthentication.
+func (f *fixedKeyAttrsSealer) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	return f.inner.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: f.attrs, AAD: unsealAAD(opts)})
+}
+
+// sealAAD returns the caller's AAD from opts, which may be nil.
+func sealAAD(opts *types.SealOptions) []byte {
+	if opts == nil {
+		return nil
+	}
+	return opts.AAD
+}
+
+// unsealAAD returns the caller's AAD from opts, which may be nil.
+func unsealAAD(opts *types.UnsealOptions) []byte {
+	if opts == nil {
+		return nil
+	}
+	return opts.AAD
 }

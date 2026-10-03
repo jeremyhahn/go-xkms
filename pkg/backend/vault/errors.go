@@ -73,4 +73,12 @@ var (
 	// INTO it. A key created with Exportable=true can still be read directly
 	// with ExportKeyMaterial; this error names that alternative.
 	ErrWrappedExportNotSupported = errors.New("vault: wrapped export has no Vault-native equivalent; use ExportKeyMaterial for exportable keys")
+
+	// ErrAssociatedDataIgnored is returned when an encrypt or decrypt that
+	// carries additional authenticated data reaches a Vault server whose
+	// Transit engine reports it ignored the associated_data parameter. Such
+	// a server would neither bind the AAD on encrypt nor check it on
+	// decrypt, so the operation fails closed instead of silently dropping
+	// the binding the caller asked for.
+	ErrAssociatedDataIgnored = errors.New("vault: Transit ignored associated_data; this server cannot bind additional authenticated data")
 )

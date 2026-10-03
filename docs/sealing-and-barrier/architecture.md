@@ -1,6 +1,6 @@
 # Sealing and Barrier — Architecture
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## The problem
 
@@ -141,6 +141,56 @@ twice concurrently must not produce two root keys.
   and leaving them where the barrier is is equivalent to not having a barrier.
 - **Per-tenant barriers isolate tenants from each other**, not from the
   operator.
+
+## Telling an attack from an outage
+
+A failed unseal has two very different causes. Either the sealed data is
+wrong — forged, tampered with, cut short, produced under another key or
+backend, or sealed under other AAD — and retrying is pointless, or the
+environment is — the device or KMS is unreachable, throttling, refusing the
+credential, or (TPM) the platform's PCRs moved — and the same data may unseal
+later. Each backend reports its native signal differently (an AES-GCM open
+failure, `InvalidCiphertextException`, `TPM_RC_INTEGRITY`,
+`CKR_ENCRYPTED_DATA_INVALID`, Transit's message text), so the distinction is
+made where that signal is understood: inside each `types.Sealer`, which joins
+`types.ErrSealedDataAuthentication` onto exactly the native errors that blame
+the data. Wrappers (the platform sealer, the composite key store, the TPM
+backend) pass the classification through and add only the mismatches they
+detect themselves. The per-backend mapping is the table in
+[`engineering.md`](engineering.md) §"Sealed-data authentication".
+
+Rules that shape it:
+
+- **Allow-list, not deny-list.** Only native errors that name the input are
+  authentication. Anything unrecognised stays unclassified -- it may be the
+  environment or, where the native signal is ambiguous, bad data -- so a new
+  outage mode can never page as an attack.
+- **Scope matters on a TPM.** `TPM2_Load`'s only parameters are the sealed
+  object's two areas, so a parameter-scoped response code from it blames the
+  data; the same code from `TPM2_PolicyPCR` is a policy failure. Only the
+  load is classified.
+- **An ambiguous code is never promoted.** PKCS#11 reserves
+  `CKR_GENERAL_ERROR` for an unrecoverable token error; SoftHSM before 2.7.0
+  also returns it for an AES-GCM tag mismatch, and nothing in the failed
+  operation tells the two apart. The PKCS#11 backend therefore classifies
+  only the codes that name the ciphertext (`CKR_ENCRYPTED_DATA_INVALID`,
+  `_LEN_RANGE`, `CKR_AEAD_DECRYPT_FAILED`): on those SoftHSM versions a
+  tampered ciphertext fails with the token's own code and without the
+  sentinel, and SoftHSM 2.7.0, which answers `CKR_ENCRYPTED_DATA_INVALID`, is
+  classified. The sentinel's presence is conclusive; its absence is not. Repeating the decrypt or
+  probing the token afterwards was considered and rejected -- a later
+  success does not prove why the original operation failed. Likewise a Cloud
+  KMS `InvalidArgument` that reports a request CRC32C mismatch is corruption
+  in transit, not a bad ciphertext.
+- **AAD must actually be bound before a mismatch can be reported.** Vault
+  Transit ignored the parameter AAD was sent in, and the TPM sealed object has
+  no AAD input; both now bind it (see the engineering contract).
+
+Rejected: classifying in the transports (they see flattened errors, and the
+SDK/embedded callers need it in-process); matching error strings generically
+(only Vault, which has no codes, is matched on text, and only its
+documented decrypt messages); treating every unseal failure as one error
+(the distinction is the point).
 
 ## What this feature deliberately does not do
 

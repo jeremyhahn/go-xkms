@@ -18,6 +18,7 @@ import (
 	"crypto"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -344,6 +345,37 @@ func TestCompositeKeyStore_Unseal_BackendMismatch(t *testing.T) {
 	})
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrBackendMismatch)
+	assert.ErrorIs(t, err, types.ErrSealedDataAuthentication,
+		"sealed data from another backend is sealed-data authentication")
+}
+
+// TestCompositeKeyStore_Unseal_ClassificationPassesThrough proves the
+// key provider's classification survives the ErrSealOperation wrapper in
+// both directions: an authentication failure still matches the sentinel, an
+// environment failure still does not.
+func TestCompositeKeyStore_Unseal_ClassificationPassesThrough(t *testing.T) {
+	outage := errors.New("hsm: device removed")
+	for name, tc := range map[string]struct {
+		providerErr error
+		wantAuth    bool
+	}{
+		"authentication failure": {types.SealedDataAuthenticationError("aead open", errors.New("cipher: message authentication failed")), true},
+		"environment failure":    {outage, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			backend := newMockSealerBackendForComposite()
+			backend.unsealErr = tc.providerErr
+			ks, err := New(&BackendConfig{Backend: backend, CertStorage: storage.New()})
+			require.NoError(t, err)
+
+			_, err = ks.Unseal(context.Background(), &types.SealedData{
+				Backend:    types.BackendTypeSoftware,
+				Ciphertext: []byte("encrypted"),
+			}, &types.UnsealOptions{KeyAttributes: &types.KeyAttributes{CN: "test"}})
+			require.ErrorIs(t, err, tc.providerErr)
+			assert.Equal(t, tc.wantAuth, errors.Is(err, types.ErrSealedDataAuthentication))
+		})
+	}
 }
 
 func TestCompositeKeyStore_Unseal_BackendError(t *testing.T) {
@@ -409,4 +441,29 @@ func TestCompositeKeyStore_SealUnseal_RoundTrip(t *testing.T) {
 			assert.Equal(t, tc.data, plaintext)
 		})
 	}
+}
+
+// TestCompositeKeyStore_Unseal_ContextBeforeBackendMismatch proves a
+// cancelled or expired context is reported as itself even for sealed data
+// from another backend, which would otherwise be sealed-data authentication.
+func TestCompositeKeyStore_Unseal_ContextBeforeBackendMismatch(t *testing.T) {
+	backend := newMockSealerBackendForComposite()
+	backend.backendType = types.BackendTypeSoftware
+	ks, err := New(&BackendConfig{Backend: backend, CertStorage: storage.New()})
+	require.NoError(t, err)
+
+	foreign := &types.SealedData{Backend: types.BackendTypePKCS11, Ciphertext: []byte("encrypted")}
+	opts := &types.UnsealOptions{KeyAttributes: &types.KeyAttributes{CN: "test"}}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = ks.Unseal(cancelled, foreign, opts)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, types.ErrSealedDataAuthentication)
+
+	expired, cancelExpired := context.WithDeadline(context.Background(), time.Unix(0, 0))
+	defer cancelExpired()
+	_, err = ks.Unseal(expired, foreign, opts)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, types.ErrSealedDataAuthentication)
 }

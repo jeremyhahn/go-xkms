@@ -125,6 +125,13 @@ func (b *Backend) recordSealed(ctx context.Context, scope *keyScope, attrs *type
 //   - opts: Unsealing options (may be nil for defaults)
 //
 // Returns the original plaintext data, or error if unsealing fails.
+//
+// Sealed-data authentication is classified by pkg/tpm2's TPM2.Unseal, whose
+// errors this method returns unchanged: forged, tampered, truncated,
+// foreign, malformed or AAD-mismatched sealed data matches
+// types.ErrSealedDataAuthentication; a closed backend, a cancelled context,
+// a tenant scope that cannot be opened, and TPM authorization failures (PCR
+// policy, UserAuth) do not.
 func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) (_ []byte, err error) {
 	if sealed == nil {
 		return nil, ErrNilSealedData
@@ -135,6 +142,10 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 
 	if b.closed {
 		return nil, ErrNotInitialized
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	if opts == nil || opts.KeyAttributes == nil {

@@ -741,7 +741,10 @@ func (e *ErrSealOperation) Error() string {
 // Unwrap returns the underlying error.
 func (e *ErrSealOperation) Unwrap() error { return e.Err }
 
-// ErrSealBackendMismatch represents a sealed data backend mismatch error.
+// ErrSealBackendMismatch represents a sealed data backend mismatch error:
+// the sealed data names a different backend than the one asked to unseal it.
+// It matches ErrBackendMismatch and, because the sealed data itself is what
+// does not fit, types.ErrSealedDataAuthentication.
 type ErrSealBackendMismatch struct {
 	SealedBy types.BackendType
 	Current  types.BackendType
@@ -753,8 +756,11 @@ func (e *ErrSealBackendMismatch) Error() string {
 		ErrBackendMismatch.Error(), e.SealedBy, e.Current)
 }
 
-// Unwrap returns the underlying sentinel error.
-func (e *ErrSealBackendMismatch) Unwrap() error { return ErrBackendMismatch }
+// Unwrap returns the sentinels the mismatch matches: ErrBackendMismatch and
+// types.ErrSealedDataAuthentication.
+func (e *ErrSealBackendMismatch) Unwrap() []error {
+	return []error{ErrBackendMismatch, types.ErrSealedDataAuthentication}
+}
 
 // ErrBackendClose represents a multi-backend close failure.
 type ErrBackendClose struct {

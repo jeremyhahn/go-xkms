@@ -18,6 +18,7 @@ package pkcs11
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -137,13 +138,41 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 //   - opts: Unsealing options (KeyAttributes required, AAD must match if used during sealing)
 //
 // Returns the original plaintext data, or error if unsealing fails.
+//
+// Sealed-data authentication: the error matches
+// types.ErrSealedDataAuthentication, joined with the native cause, exactly
+// when the sealed data is at fault --
+//   - sealed.Backend is not PKCS#11, or sealed.KeyID names a different key
+//     than opts.KeyAttributes;
+//   - the nonce or tag is not the AES-GCM length (ErrInvalidNonceLength,
+//     ErrInvalidTagLength), checked before the token is touched;
+//   - C_Decrypt refuses the ciphertext with a return value that names it
+//     (ErrCiphertextRejected): CKR_ENCRYPTED_DATA_INVALID,
+//     CKR_ENCRYPTED_DATA_LEN_RANGE or CKR_AEAD_DECRYPT_FAILED -- a ciphertext
+//     that was tampered with, truncated or extended, produced under another
+//     key, or sealed under different AAD.
+//
+// Every other failure -- a cancelled or expired ctx, an uninitialized or
+// closed backend, a key missing from the token, a C_DecryptInit failure
+// (ErrDecryptInit), and any other token answer (CKR_DEVICE_ERROR,
+// CKR_DEVICE_REMOVED, CKR_SESSION_*, CKR_*_MEMORY, CKR_USER_NOT_LOGGED_IN,
+// CKR_PIN_*, CKR_GENERAL_ERROR) -- does not match the sentinel.
+// CKR_GENERAL_ERROR is the specification's unrecoverable token error; a
+// module that also returns it for a GCM tag mismatch (SoftHSM v2) reports a
+// tampered ciphertext without the sentinel, because the code alone cannot
+// tell the tag check from a token fault (see ciphertextRejections).
 func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
 		return nil, &errs.Message{Msg: "sealed data is required"}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if sealed.Backend != types.BackendTypePKCS11 {
-		return nil, &errs.Message{Msg: fmt.Sprintf("sealed data was not created by PKCS#11 backend (got %s)", sealed.Backend)}
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("sealed data was not created by PKCS#11 backend (got %s)", sealed.Backend), nil)
 	}
 
 	if opts == nil || opts.KeyAttributes == nil {
@@ -158,7 +187,8 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 
 	// Verify key ID matches if present
 	if sealed.KeyID != "" && sealed.KeyID != keyAttrs.ID() {
-		return nil, &errs.Message{Msg: fmt.Sprintf("key ID mismatch: sealed with %s, attempting unseal with %s", sealed.KeyID, keyAttrs.ID())}
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("key ID mismatch: sealed with %s, attempting unseal with %s", sealed.KeyID, keyAttrs.ID()), nil)
 	}
 
 	// Validate that the key is a symmetric key
@@ -192,10 +222,22 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 	// Decrypt the data on the HSM
 	plaintext, err := encrypter.Decrypt(encrypted, decOpts)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to decrypt data (check key and AAD)", Err: err}
+		wrapped := &errs.Wrapped{Msg: "failed to decrypt data (check key and AAD)", Err: err}
+		if rejectsSealedData(err) {
+			return nil, types.SealedDataAuthenticationError("", wrapped)
+		}
+		return nil, wrapped
 	}
 
 	return plaintext, nil
+}
+
+// rejectsSealedData reports whether a Decrypt error blames the sealed data:
+// a malformed nonce or tag, or a ciphertext the token refused.
+func rejectsSealedData(err error) bool {
+	return errors.Is(err, ErrCiphertextRejected) ||
+		errors.Is(err, ErrInvalidNonceLength) ||
+		errors.Is(err, ErrInvalidTagLength)
 }
 
 // MarshalSealedData serializes SealedData to JSON for storage

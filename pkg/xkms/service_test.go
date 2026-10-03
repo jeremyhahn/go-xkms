@@ -3582,6 +3582,7 @@ func TestErrSealBackendMismatch_ErrorAndUnwrap(t *testing.T) {
 	assert.Contains(t, e.Error(), string(types.BackendTypeTPM2))
 	assert.Contains(t, e.Error(), string(types.BackendTypeSoftware))
 	assert.ErrorIs(t, e, ErrBackendMismatch)
+	assert.ErrorIs(t, e, types.ErrSealedDataAuthentication)
 }
 
 func TestErrBackendClose_ErrorAndUnwrap(t *testing.T) {

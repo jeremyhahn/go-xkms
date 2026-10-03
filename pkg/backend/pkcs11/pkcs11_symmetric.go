@@ -602,22 +602,14 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 		pkcs11.NewMechanism(pkcs11.CKM_AES_GCM, gcmParams),
 	}
 
-	// Initialize decryption
-	if err := e.backend.p11ctx.DecryptInit(session, mechanism, handle); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to initialize decryption", Err: err}
-	}
-
 	// PKCS#11 v3.2 6.13.2: C_Decrypt takes the ciphertext with the tag
 	// appended.
 	fullCiphertext := concatCiphertextAndTag(data.Ciphertext, data.Tag)
 
-	// Decrypt the data
-	plaintext, err := e.backend.p11ctx.Decrypt(session, fullCiphertext)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "decryption failed (authentication error)", Err: err}
-	}
-
-	return plaintext, nil
+	// Decrypt the data. A refusal that is about the ciphertext -- rather than
+	// the token, the session or the key -- carries ErrCiphertextRejected so
+	// Unseal can report it as sealed-data authentication (see decryptGCM).
+	return decryptGCM(e.backend.p11ctx, session, mechanism, handle, fullCiphertext)
 }
 
 // withKeySession opens a session on the token's resolved slot, logs in, finds

@@ -301,3 +301,44 @@ func TestUnseal_NilSealedDataCheckedBeforeClosedCheck(t *testing.T) {
 		t.Errorf("Unseal(nil) on closed backend error = %v, want ErrNilSealedData", err)
 	}
 }
+
+// TestUnseal_SealedDataAuthenticationPassesThrough proves the backend returns
+// the TPM's sealed-data authentication failure intact on both the default
+// and the key-attributes path, so a caller can still classify it.
+func TestUnseal_SealedDataAuthenticationPassesThrough(t *testing.T) {
+	rejected := types.SealedDataAuthenticationError("", errors.New("TPM_RC_INTEGRITY (parameter 1)"))
+	for name, opts := range map[string]*types.UnsealOptions{
+		"default attributes": nil,
+		"key attributes":     {KeyAttributes: &types.KeyAttributes{CN: "sealed"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := newSealerTestBackend(&sealerMockTPM{unsealErr: rejected})
+			_, err := b.Unseal(context.Background(), &types.SealedData{Backend: types.BackendTypeTPM2}, opts)
+			if !errors.Is(err, types.ErrSealedDataAuthentication) {
+				t.Fatalf("Unseal() error = %v, want ErrSealedDataAuthentication", err)
+			}
+		})
+	}
+}
+
+// TestUnseal_EnvironmentFailuresAreNotAuthentication proves a closed backend
+// and a cancelled context are reported before the TPM is asked, and never as
+// sealed-data authentication.
+func TestUnseal_EnvironmentFailuresAreNotAuthentication(t *testing.T) {
+	rejected := types.SealedDataAuthenticationError("", errors.New("TPM_RC_INTEGRITY (parameter 1)"))
+	sealed := &types.SealedData{Backend: types.BackendTypeTPM2}
+
+	closed := newSealerTestBackend(&sealerMockTPM{unsealErr: rejected})
+	closed.closed = true
+	_, err := closed.Unseal(context.Background(), sealed, nil)
+	if !errors.Is(err, ErrNotInitialized) || errors.Is(err, types.ErrSealedDataAuthentication) {
+		t.Fatalf("closed backend: Unseal() error = %v, want ErrNotInitialized only", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = newSealerTestBackend(&sealerMockTPM{unsealErr: rejected}).Unseal(ctx, sealed, nil)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, types.ErrSealedDataAuthentication) {
+		t.Fatalf("cancelled context: Unseal() error = %v, want context.Canceled only", err)
+	}
+}

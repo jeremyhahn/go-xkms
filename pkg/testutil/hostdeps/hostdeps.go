@@ -22,6 +22,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"errors"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -106,6 +107,9 @@ func NewCAConfig(commonName string) *ca.MultiIdentityCAConfig {
 	}
 }
 
+// ErrNilSealedData is returned by Sealer.Unseal for a nil envelope.
+var ErrNilSealedData = errors.New("hostdeps: sealed data is nil")
+
 // Sealer is an AES-256-GCM types.Sealer over a random in-memory key,
 // standing in for a host's hardware sealer. Like a TPM sealer it carries its
 // own key, so it seals with nil options.
@@ -129,22 +133,45 @@ func NewSealer(t *testing.T) *Sealer {
 	return &Sealer{aead: aead}
 }
 
-// Seal encrypts data under the sealer's key.
-func (s *Sealer) Seal(_ context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
+// Seal encrypts data under the sealer's key, binding opts.AAD when given.
+func (s *Sealer) Seal(_ context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
 	nonce := make([]byte, s.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
+	var aad []byte
+	if opts != nil {
+		aad = opts.AAD
+	}
 	return &types.SealedData{
 		Backend:    types.BackendTypeSoftware,
-		Ciphertext: s.aead.Seal(nil, nonce, data, nil),
+		Ciphertext: s.aead.Seal(nil, nonce, data, aad),
 		Nonce:      nonce,
 	}, nil
 }
 
-// Unseal decrypts data sealed by Seal.
-func (s *Sealer) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
-	return s.aead.Open(nil, sealed.Nonce, sealed.Ciphertext, nil)
+// Unseal decrypts data sealed by Seal. Like every production sealer it
+// reports sealed data that is not its own, malformed or fails the AEAD as
+// types.ErrSealedDataAuthentication, and a cancelled context as itself.
+func (s *Sealer) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	if sealed == nil {
+		return nil, ErrNilSealedData
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if sealed.Backend != types.BackendTypeSoftware || len(sealed.Nonce) != s.aead.NonceSize() {
+		return nil, types.SealedDataAuthenticationError("hostdeps: not a sealed value of this sealer", nil)
+	}
+	var aad []byte
+	if opts != nil {
+		aad = opts.AAD
+	}
+	plaintext, err := s.aead.Open(nil, sealed.Nonce, sealed.Ciphertext, aad)
+	if err != nil {
+		return nil, types.SealedDataAuthenticationError("hostdeps: AES-GCM open", err)
+	}
+	return plaintext, nil
 }
 
 // CanSeal reports that the sealer is usable.

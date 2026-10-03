@@ -1,6 +1,6 @@
 # Sealing and Barrier — API
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1227, #1228, #1244)
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-02 (#1227, #1228, #1244)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -125,6 +125,21 @@ Verified by `pkg/api/rest/handlers_certseal_crosstenant_test.go`,
 `pkg/api/mcp/handlers_certseal_crosstenant_test.go`,
 `pkg/xkms/servicer_certseal_tenant_test.go` and
 `pkg/xkms/backend_tenant_seal_test.go`.
+
+### Unseal failures that blame the sealed data
+
+In process — the embedded transport, the Go SDK, and any caller holding a
+`types.Sealer` — an unseal error matches `ErrSealedDataAuthentication`
+(`types.` or the SDK's `xkms.`) when the sealed value itself was forged,
+modified, truncated, produced under another key or backend, malformed, or
+presented with different AAD, and never when the device, KMS, permissions,
+context or TPM authorization failed. The native cause stays reachable with
+`errors.As`. A match is conclusive; no match is not: a backend whose native
+signal cannot tell bad data from a failing device (SoftHSM before 2.7.0)
+reports that failure without the sentinel. See [`engineering.md`](engineering.md) §"Sealed-data
+authentication" for each backend's mapping. On REST, gRPC and MCP the status
+an unseal failure maps to is unchanged; the error text begins
+`sealed data failed authentication` for this class.
 
 ## TPM policies
 

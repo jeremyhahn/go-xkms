@@ -18,7 +18,12 @@ package vault
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"strings"
+
+	vaultapi "github.com/hashicorp/vault/api"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -114,13 +119,39 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 //   - opts: Unsealing options (KeyAttributes required, AAD must match if used during sealing)
 //
 // Returns the original plaintext data, or error if unsealing fails.
+//
+// Sealed-data authentication: the error matches
+// types.ErrSealedDataAuthentication, joined with the native cause, exactly
+// when the sealed data is at fault --
+//   - sealed.Backend is not Vault, sealed.KeyID names a different key than
+//     opts.KeyAttributes, or the ciphertext is empty (checked locally);
+//   - Transit's decrypt answers HTTP 400 with "cipher: message
+//     authentication failed" (a ciphertext tampered with, truncated or
+//     extended, produced under another key, or sealed under different
+//     associated_data) or an "invalid ciphertext" message (no "vault:v"
+//     prefix, an undecodable version or base64 body, a body shorter than a
+//     nonce). Transit reports these only as text, so the messages are matched;
+//     see rejectsSealedData.
+//
+// Every other failure -- a cancelled or expired ctx, a Vault that is
+// unreachable, sealed or throttling (5xx, 429), a token without permission
+// (403), a key Transit does not have ("encryption key not found"), a
+// ciphertext version the key no longer has or no longer allows ("version is
+// too new", "disallowed by policy (too old)"), or a server that ignores
+// associated_data (ErrAssociatedDataIgnored) -- is the environment, not the
+// data, and does not match the sentinel.
 func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
 		return nil, &errs.Message{Msg: "sealed data is required"}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if sealed.Backend != BackendTypeVault {
-		return nil, &errs.Message{Msg: fmt.Sprintf("sealed data was not created by Vault backend (got %s)", sealed.Backend)}
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("sealed data was not created by Vault backend (got %s)", sealed.Backend), nil)
 	}
 
 	if opts == nil || opts.KeyAttributes == nil {
@@ -131,12 +162,18 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 
 	// Verify key ID matches if present
 	if sealed.KeyID != "" && sealed.KeyID != keyAttrs.ID() {
-		return nil, &errs.Message{Msg: fmt.Sprintf("key ID mismatch: sealed with %s, attempting unseal with %s", sealed.KeyID, keyAttrs.ID())}
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("key ID mismatch: sealed with %s, attempting unseal with %s", sealed.KeyID, keyAttrs.ID()), nil)
 	}
 
 	// Validate that the key is a symmetric key
 	if !keyAttrs.IsSymmetric() {
 		return nil, &errs.Message{Msg: fmt.Sprintf("Vault unsealing requires a symmetric key, got %s", keyAttrs.KeyAlgorithm)}
+	}
+
+	// A Transit ciphertext is never empty; one that is was truncated away.
+	if len(sealed.Ciphertext) == 0 {
+		return nil, types.SealedDataAuthenticationError("ciphertext is empty", nil)
 	}
 
 	// Get the symmetric encrypter for this key
@@ -164,10 +201,58 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 	// Decrypt the data via Vault Transit
 	plaintext, err := encrypter.Decrypt(encrypted, decOpts)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to decrypt data (check key and AAD)", Err: err}
+		wrapped := &errs.Wrapped{Msg: "failed to decrypt data (check key and AAD)", Err: err}
+		if rejectsSealedData(err) {
+			return nil, types.SealedDataAuthenticationError("", wrapped)
+		}
+		return nil, wrapped
 	}
 
 	return plaintext, nil
+}
+
+// transitCiphertextRejections are the message prefixes Vault Transit's
+// decrypt endpoint answers with HTTP 400 when the ciphertext itself does not
+// authenticate or does not parse: the AEAD open failure Go's crypto/cipher
+// reports, and the "invalid ciphertext" family (no prefix, an undecodable
+// version or base64 body, a body shorter than a nonce).
+var transitCiphertextRejections = []string{
+	"cipher: message authentication failed",
+	"invalid ciphertext",
+}
+
+// transitKeyReferenceFailures are "invalid ciphertext" answers that are about
+// the key Transit holds rather than the ciphertext: a version newer than the
+// key's latest means the key lost versions (a restore, a different mount), the
+// same as a key that is not found.
+var transitKeyReferenceFailures = map[string]struct{}{
+	"invalid ciphertext: version is too new": {},
+}
+
+// rejectsSealedData reports whether err is a Transit decrypt answer that
+// blames the ciphertext: an HTTP 400 whose every message is one of
+// transitCiphertextRejections and none a transitKeyReferenceFailures.
+func rejectsSealedData(err error) bool {
+	var respErr *vaultapi.ResponseError
+	if !errors.As(err, &respErr) || respErr.StatusCode != http.StatusBadRequest || len(respErr.Errors) == 0 {
+		return false
+	}
+	for _, msg := range respErr.Errors {
+		if _, keyFailure := transitKeyReferenceFailures[msg]; keyFailure || !hasAnyPrefix(msg, transitCiphertextRejections) {
+			return false
+		}
+	}
+	return true
+}
+
+// hasAnyPrefix reports whether s starts with one of prefixes.
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // MarshalSealedData serializes SealedData to JSON for storage

@@ -60,6 +60,23 @@ type transitDouble struct {
 	// for test speed -- the BYOK wire format this double proves (RSA-OAEP
 	// concatenated with AES-GCM) does not depend on the modulus size.
 	wrappingRSAKey *rsa.PrivateKey
+
+	// legacyTransit makes the double behave like a Vault whose Transit
+	// engine predates associated_data: it ignores the parameter, binds no
+	// AAD, and says so in the response warnings, as a real server does for
+	// any parameter it does not recognise.
+	legacyTransit bool
+
+	// decryptFault, when non-nil, answers every decrypt with this status and
+	// message instead of decrypting -- an outage, a throttle, a permission
+	// failure.
+	decryptFault *transitFault
+}
+
+// transitFault is an injected Vault error response.
+type transitFault struct {
+	status  int
+	message string
 }
 
 // transitKey is a single Transit key, with every version's material
@@ -525,8 +542,9 @@ func (d *transitDouble) export(w http.ResponseWriter, keyType, rest string) {
 }
 
 // encrypt performs AES-256-GCM over the base64 plaintext using the key's
-// latest version, binding the base64 "context" field as additional
-// authenticated data.
+// latest version, binding the base64 "associated_data" field as additional
+// authenticated data. Like real Transit on a non-derived key, the "context"
+// field (key-derivation input) binds nothing.
 func (d *transitDouble) encrypt(w http.ResponseWriter, r *http.Request, name string) {
 	body, err := decodeRequest(r)
 	if err != nil {
@@ -545,24 +563,45 @@ func (d *transitDouble) encrypt(w http.ResponseWriter, r *http.Request, name str
 		writeVaultError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	aad, err := decodeField(body, "context", false)
+	aad, warnings, err := d.associatedData(body)
 	if err != nil {
 		writeVaultError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	blob := gcm.Seal(nil, nil, plaintext, aad)
-	writeVaultData(w, map[string]interface{}{
+	writeVaultDataWithWarnings(w, map[string]interface{}{
 		"ciphertext":  vaultVersionPrefix(version) + base64.StdEncoding.EncodeToString(blob),
 		"key_version": version,
-	})
+	}, warnings)
+}
+
+// associatedData returns the request's associated_data, or -- for a
+// legacyTransit double -- nothing, with the unrecognised-parameter warning a
+// real server of that age returns.
+func (d *transitDouble) associatedData(body map[string]interface{}) ([]byte, []string, error) {
+	if d.legacyTransit {
+		if _, present := body["associated_data"]; present {
+			return nil, []string{"Endpoint ignored these unrecognized parameters: [associated_data]"}, nil
+		}
+		return nil, nil, nil
+	}
+	aad, err := decodeField(body, "associated_data", false)
+	return aad, nil, err
 }
 
 // decrypt reverses encrypt. It decrypts with the version embedded in the
 // ciphertext envelope -- not the key's current version -- exactly as real
 // Vault does, so a caller that preserves the envelope (rather than
 // discarding it) can still decrypt ciphertext produced before a rotation.
+// Its error messages are the ones real Vault Transit returns for the same
+// conditions.
 func (d *transitDouble) decrypt(w http.ResponseWriter, r *http.Request, name string) {
+	if d.decryptFault != nil {
+		writeVaultError(w, d.decryptFault.status, d.decryptFault.message)
+		return
+	}
+
 	body, err := decodeRequest(r)
 	if err != nil {
 		writeVaultError(w, http.StatusBadRequest, err.Error())
@@ -570,15 +609,37 @@ func (d *transitDouble) decrypt(w http.ResponseWriter, r *http.Request, name str
 	}
 
 	envelope, _ := body["ciphertext"].(string)
-	segments := strings.SplitN(envelope, ":", 3)
-	if len(segments) != 3 || segments[0] != "vault" {
-		writeVaultError(w, http.StatusBadRequest, "invalid ciphertext envelope")
+	if envelope == "" {
+		writeVaultError(w, http.StatusBadRequest, "missing ciphertext to decrypt")
+		return
+	}
+	if !strings.HasPrefix(envelope, "vault:v") {
+		writeVaultError(w, http.StatusBadRequest, "invalid ciphertext: no prefix")
+		return
+	}
+	segments := strings.SplitN(strings.TrimPrefix(envelope, "vault:"), ":", 2)
+	if len(segments) != 2 {
+		writeVaultError(w, http.StatusBadRequest, "invalid ciphertext: wrong number of fields")
 		return
 	}
 
-	version, err := parseVaultVersion(segments[1])
+	version, err := parseVaultVersion(segments[0])
+	if err != nil {
+		writeVaultError(w, http.StatusBadRequest, "invalid ciphertext: version number could not be decoded")
+		return
+	}
+	// Transit reads version 0 as version 1.
+	if version == 0 {
+		version = 1
+	}
+
+	_, latest, err := d.latestAEAD(name)
 	if err != nil {
 		writeVaultError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if version > latest {
+		writeVaultError(w, http.StatusBadRequest, "invalid ciphertext: version is too new")
 		return
 	}
 
@@ -588,17 +649,17 @@ func (d *transitDouble) decrypt(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 
-	blob, err := base64.StdEncoding.DecodeString(segments[2])
+	blob, err := base64.StdEncoding.DecodeString(segments[1])
 	if err != nil {
-		writeVaultError(w, http.StatusBadRequest, "invalid ciphertext encoding")
+		writeVaultError(w, http.StatusBadRequest, "invalid ciphertext: could not decode base64")
 		return
 	}
-	if len(blob) < gcm.Overhead() {
-		writeVaultError(w, http.StatusBadRequest, "ciphertext too short")
+	if len(blob) < 12 {
+		writeVaultError(w, http.StatusBadRequest, "invalid ciphertext length")
 		return
 	}
 
-	aad, err := decodeField(body, "context", false)
+	aad, warnings, err := d.associatedData(body)
 	if err != nil {
 		writeVaultError(w, http.StatusBadRequest, err.Error())
 		return
@@ -607,14 +668,15 @@ func (d *transitDouble) decrypt(w http.ResponseWriter, r *http.Request, name str
 	plaintext, err := gcm.Open(nil, nil, blob, aad)
 	if err != nil {
 		// Vault reports an authentication failure the same way for a wrong
-		// context and a tampered ciphertext.
-		writeVaultError(w, http.StatusBadRequest, "message authentication failed")
+		// associated_data, a wrong key and a tampered ciphertext: the
+		// crypto/cipher error text.
+		writeVaultError(w, http.StatusBadRequest, "cipher: message authentication failed")
 		return
 	}
 
-	writeVaultData(w, map[string]interface{}{
+	writeVaultDataWithWarnings(w, map[string]interface{}{
 		"plaintext": base64.StdEncoding.EncodeToString(plaintext),
-	})
+	}, warnings)
 }
 
 // sign produces an RSA signature (PKCS#1 v1.5, or PSS when requested) over
@@ -849,6 +911,13 @@ func decodeField(body map[string]interface{}, field string, required bool) ([]by
 func writeVaultData(w http.ResponseWriter, data map[string]interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": data})
+}
+
+// writeVaultDataWithWarnings renders a Vault success response envelope that
+// also carries response warnings.
+func writeVaultDataWithWarnings(w http.ResponseWriter, data map[string]interface{}, warnings []string) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": data, "warnings": warnings})
 }
 
 // writeVaultError renders a Vault error response envelope.

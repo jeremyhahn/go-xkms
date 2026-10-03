@@ -1,6 +1,6 @@
 # Sealing and Barrier — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## Exported surface — `pkg/seal`
 
@@ -249,6 +249,78 @@ matter to a caller:
 **Fail-closed paths:** every unseal failure. There is no partial unseal, and no
 degraded mode in which the barrier is "mostly" open.
 
+### Sealed-data authentication — `types.ErrSealedDataAuthentication`
+
+Every `types.Sealer` answers one question the same way: *was the sealed data
+itself at fault?* `Unseal` (and `UnsealerInto.UnsealInto` /
+`PlaintextLen`) returns an error matching
+`types.ErrSealedDataAuthentication` exactly when the `SealedData` was forged,
+tampered with, truncated or extended, produced under a different key or by a
+different backend, is malformed (wrong backend type, a missing field, a
+wrong-length nonce or tag), or was sealed under different AAD. It never
+matches for the environment: an unreachable device or KMS, throttling, a
+permission or credential failure, a missing key, a cancelled or expired
+context, or a TPM authorization failure (a PCR policy the platform no longer
+satisfies, a wrong UserAuth). Retrying an authentication failure is
+pointless; an environment failure may succeed on retry.
+
+**Presence is conclusive; absence is not.** A backend matches the sentinel
+only when its native signal establishes that the data is at fault. Where the
+signal is ambiguous -- a PKCS#11 module that answers both an AES-GCM tag
+mismatch and a token fault with `CKR_GENERAL_ERROR`, as SoftHSM before 2.7.0
+does (2.7.0 answers `CKR_ENCRYPTED_DATA_INVALID`) -- the failure is reported
+with the native error and without the sentinel, because the contract's first
+rule is that an outage is never reported as an attack. A caller that sees no
+sentinel must not conclude the environment failed; it can conclude only that
+the backend could not prove the data bad.
+
+The error is built by `types.SealedDataAuthenticationError(detail, cause)`,
+an `errs.Joined` of the sentinel and the backend's own error, so
+`errors.Is` / `errors.As` still reach the native cause (an
+`InvalidCiphertextException`, a `pkcs11.Error`, a `tpm2.TPMRC`, a
+`*vaultapi.ResponseError`). The SDK re-exports the sentinel as
+`xkms.ErrSealedDataAuthentication`. A nil `*SealedData` is a caller bug and
+keeps each backend's own argument error. Every `Unseal` checks `ctx.Err()`
+first, so a cancelled context is reported as itself even for sealed data that
+would also fail authentication.
+
+| Backend (file) | Authentication — matches the sentinel | Environment — does not |
+|---|---|---|
+| AWS KMS (`pkg/backend/awskms/sealer.go`) | backend type or `KeyID` mismatch; empty ciphertext or one over the 6144 bytes `Decrypt` accepts; `Decrypt` → `InvalidCiphertextException` (tamper, truncation, extension, encryption-context/AAD mismatch) or `IncorrectKeyException` (another KMS key) | `NotFound`, `Disabled`, `KMSInvalidState`, `KMSInternal`, `DependencyTimeout`, `LimitExceeded`/throttling, AccessDenied, network, missing key metadata |
+| GCP KMS (`pkg/backend/gcpkms/sealer.go`) | backend type or `KeyID` mismatch; empty ciphertext; `Decrypt` → `codes.InvalidArgument` (the key is resolved with `GetCryptoKey` first, so `InvalidArgument` names the ciphertext or AAD) | an `InvalidArgument` reporting a request `crc32c` mismatch (corruption in transit, which Google says to retry); every other status (`Unavailable`, `DeadlineExceeded`, `ResourceExhausted`, `PermissionDenied`, `Unauthenticated`, `FailedPrecondition`, `NotFound`, `Internal`), a response failing its plaintext CRC32C |
+| Azure Key Vault (`pkg/backend/azurekv/sealer.go`) | backend type or `KeyID` mismatch; an unknown `azurekv:gcm_nonce_mode`; `azurekv.ErrCiphertextRejected` from the local AES-GCM open (wrong-length tag or nonce, `gcm.Open` failure) | the key secret not retrievable (503, 429, 403, 404, network), key material that is not an AES key, a GCM construction the FIPS mode refuses |
+| HashiCorp Vault (`pkg/backend/vault/sealer.go`) | backend type or `KeyID` mismatch; empty ciphertext; Transit `400` whose messages are all `cipher: message authentication failed` or `invalid ciphertext…` | 5xx, 429, 403, `encryption key not found`, `invalid ciphertext: version is too new`, `…disallowed by policy (too old)`, `vault.ErrAssociatedDataIgnored` |
+| PKCS#11 (`pkg/backend/pkcs11/sealer.go`) | backend type or `KeyID` mismatch; `ErrInvalidNonceLength` / `ErrInvalidTagLength`; `pkcs11.ErrCiphertextRejected` from `C_Decrypt` answering `CKR_ENCRYPTED_DATA_INVALID`, `CKR_ENCRYPTED_DATA_LEN_RANGE` or `CKR_AEAD_DECRYPT_FAILED` | uninitialized or closed backend, key not on the token, `C_DecryptInit` failures (`pkcs11.ErrDecryptInit`), `CKR_DEVICE_*`, `CKR_SESSION_*`, `CKR_*_MEMORY`, `CKR_USER_NOT_LOGGED_IN`, `CKR_PIN_*`, and `CKR_GENERAL_ERROR` -- the specification's unrecoverable token error. SoftHSM before 2.7.0 also returns `CKR_GENERAL_ERROR` for a GCM tag mismatch, indistinguishably from an OpenSSL engine fault, so on those versions a tampered ciphertext is reported with that native code and without the sentinel (SoftHSM 2.7.0 answers `CKR_ENCRYPTED_DATA_INVALID` and is classified) |
+| TPM 2.0 (`pkg/tpm2/sealer.go`; `pkg/backend/tpm2/sealer.go` passes it through) | backend type mismatch; only one of `TPMPublic`/`TPMPrivate`; an area over 2048 bytes or the two over 3072, larger than any TPM creates and than one `TPM2_Load` command carries (`tpm2.ErrObjectAreaTooLarge`, checked before the TPM is asked); `TPM2_Load` refusing the object with a parameter-scoped code — `TPM_RC_INTEGRITY` (tampered private area, or one created under another parent or TPM), `TPM_RC_BINDING`, `TPM_RC_SIZE`, `TPM_RC_INSUFFICIENT` — or `TPM_RC_SENSITIVE`, inline or from storage (`tpm2.ErrSealedObjectRejected`); `TPM2_Unseal` refusing a loaded object that is not sealed data (`TPM_RC_TYPE` / `TPM_RC_ATTRIBUTES` on the item handle, e.g. an AES or HMAC key); an AAD binding that does not match | missing Platform SRK or stored object, transport errors, warnings (`TPM_RC_RETRY`, `TPM_RC_OBJECT_MEMORY`, `TPM_RC_LOCKOUT`), handle- and session-scoped codes: `TPM_RC_POLICY_FAIL` / PolicyPCR `TPM_RC_VALUE` (PCRs moved), `TPM_RC_AUTH_FAIL` / `TPM_RC_BAD_AUTH` (wrong UserAuth) |
+| Software / PKCS#8 (`pkg/backend/software/software.go`, `pkg/keyprovider/pkcs8/sealer.go`) | backend type or `KeyID` mismatch; nonce not 12 or tag not 16 bytes; `gcm.Open` failure | closed backend, private key not loadable, sealing key not derivable |
+| Secret sealer (`pkg/seal/secret_sealer.go`) | backend type not software; nonce not 12 bytes; payload shorter than the AEAD overhead (`PlaintextLen`); `gcm.Open` failure | sealer without a key |
+| Platform sealer (`pkg/seal/platform_sealer.go`) | no strategy tag (also `ErrStrategyMismatch`); a strategy it does not hold (also `ErrStrategyNotFound`); the delegate's own classification | the delegate's environment failures |
+| Composite key store (`pkg/xkms/composite_seal.go`) | `ErrSealBackendMismatch` (also `ErrBackendMismatch`); the provider's classification through `ErrSealOperation` | a cancelled or expired context (checked before the backend type); the provider's environment failures |
+| Platform-store adapters (`pkg/server/platform_store.go`: `platformPolicySealer`, `fixedKeyAttrsSealer`) | the delegate's classification; they replace only the key identity they own and pass the caller's AAD through | the delegate's environment failures |
+
+Two backends needed more than a mapping, because their AAD was not bound:
+
+- **Vault Transit** binds AAD through `associated_data`. The backend sent it
+  as `context`, which Transit uses only to derive keys and ignores for the
+  non-derived keys this backend creates, so a wrong AAD decrypted. Encrypt and
+  decrypt now send `associated_data`, and fail closed with
+  `vault.ErrAssociatedDataIgnored` when the server warns it ignored the
+  parameter (a Transit engine without AEAD associated data).
+- **TPM 2.0** keyed-hash objects have no AAD input, and `Seal` ignored
+  `opts.AAD`. The binding now travels inside the integrity-protected sealed
+  secret: `magic(16) ‖ SHA-256(AAD) ‖ data`, compared in constant time on
+  `Unseal`. A seal without AAD is byte-for-byte what earlier builds wrote; data
+  that happens to start with the magic is wrapped, so the forms never collide.
+  The binding costs 48 of the object's 128 bytes: at most 80 bytes of data
+  seal with AAD (`tpm2.ErrSealAADTooLarge`). A nil-data seal binds the
+  `SealData` preset on the key attributes, or with none a fresh 32-byte random
+  secret; a preset is wrapped like any other data, so it cannot forge a
+  binding.
+
+`SecretSealer.Seal` / `Unseal` / `UnsealInto` now honour `opts.AAD` through the
+GCM associated data the same way; a value sealed without AAD still unseals with
+nil options.
+
 ## Configuration
 
 Strategy is chosen at initialization and recorded with the sealed root key. The
@@ -393,6 +465,25 @@ so this is the one compatibility rule in the repo with no workaround.
   `tenant_metadata_store_test.go`.
 - **Transport** — `pkg/api/rest/handlers_barrier_shamir.go` and
   `handlers_seal_test.go`; `pkg/api/grpc/service_barrier_shamir.go`.
+- **Sealed-data authentication** — one `sealer_authentication_test.go` per
+  backend (`pkg/backend/{awskms,gcpkms,azurekv,vault,pkcs11,software}`,
+  `pkg/keyprovider/pkcs8`), `pkg/seal/sealed_data_authentication_test.go`,
+  and `pkg/tpm2/sealed_data_authentication{,_simulator}_test.go`: bit-flipped,
+  truncated, extended, foreign-key, wrong-backend, malformed and
+  AAD-mismatched sealed data match the sentinel with the native cause
+  reachable; injected KMS/Key Vault/Transit faults, a closed or
+  uninitialized backend, a missing key, a cancelled context, and (TPM, on the
+  reference simulator) a moved PCR and a wrong UserAuth do not. AWS, GCP and
+  Vault run against in-process doubles doing real AES-GCM with the services'
+  own error answers; TPM on the simulator; PKCS#11 on SoftHSM, where the
+  token's refusal codes are exercised through a decrypt seam that answers a
+  real tampered ciphertext with each specification code
+  (`TestDecryptGCM_Classification`), and end to end the sentinel is pinned
+  to follow the token's own code -- never for SoftHSM 2.6's ambiguous
+  `CKR_GENERAL_ERROR` (`TestUnseal_TokenRefusalClassifiedByItsOwnCode`). The
+  classifiers have table tests of their own (`TestRejectsCiphertext`,
+  `TestRejectsSealedData`, `TestLoadRejectsSealedObject`), and
+  `test/integration/vault` asserts the AAD binding against a real Vault.
 - **Integration** — `test/integration/tpm2`, `awskms`, `gcpkms`, `azurekv`,
   `vault`, `pkcs11`, `storage`.
 

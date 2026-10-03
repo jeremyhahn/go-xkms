@@ -1,6 +1,6 @@
 # Sealing and Barrier — CLI
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 Binary: `xkmsctl`. Groups: `barrier` (`cmd/xkmsctl/barrier*.go`), `policy`
 (`cmd/xkmsctl/policy.go`), and the top-level `seal` / `unseal` / `can-seal`
@@ -153,6 +153,23 @@ neither is refused (`ErrSealUnprotected`), because nothing would protect the
 object. With a policy, the password counts only inside it. See
 [`../tpm2/engineering.md`](../tpm2/engineering.md) §"Object
 authorization".
+
+`--aad` binds additional authenticated data on every backend, `tpm2` and
+`vault` included; `unseal` must present the same `--aad`. On `tpm2` at most 80
+bytes of data seal with `--aad`.
+
+```
+xkmsctl seal "secret payload" --backend tpm2 --tpm-policy platform --aad volume=root
+xkmsctl unseal "$SEALED" --backend tpm2 --aad volume=root
+```
+
+An unseal that fails because the backend established that the sealed value
+is wrong — modified, truncated, from another key or backend, or a different
+`--aad` — prints an error beginning `sealed data failed authentication`;
+retrying it will not help. Any other error is not proof of an outage: a
+backend whose own answer is ambiguous (a PKCS#11 token returning
+`CKR_GENERAL_ERROR`, as SoftHSM before 2.7.0 does for a modified value)
+reports bad data without that prefix.
 
 `--key-id` names one of the calling tenant's keys; without it the tenant's
 own default sealing key is used. A tenant account is refused on `tpm2`

@@ -112,6 +112,34 @@ var (
 	// verification does not match the checksum recorded when the blob
 	// identified by VerifyOpts.BlobCN was signed.
 	ErrIntegrityCheckFailed = errors.New("verify: integrity check failed")
+
+	// ErrSealedDataAuthentication is returned, joined with the backend's
+	// native cause, by every Sealer.Unseal (and UnsealerInto.UnsealInto)
+	// when the backend establishes that the SealedData itself is the
+	// problem: it was forged, tampered with, truncated or extended, produced
+	// under a different key or by a different backend, is malformed (missing
+	// or wrong-length fields), or was sealed under different additional
+	// authenticated data than the unseal presents.
+	//
+	// It is never returned for a failure of the environment the data is
+	// unsealed in: an unreachable device or KMS, throttling, a permission or
+	// credential error, a cancelled or expired context, a missing key, or a
+	// TPM authorization failure (a PCR mismatch or a wrong UserAuth). Those
+	// say nothing about the data, may succeed on retry, and are the outage a
+	// caller must not mistake for an attack.
+	//
+	// Its presence is conclusive; its absence is not. Where a backend's
+	// native signal cannot tell bad data from a failing device -- a PKCS#11
+	// module that answers both an AES-GCM tag mismatch and a token fault
+	// with CKR_GENERAL_ERROR, as SoftHSM before 2.7.0 does -- the failure is
+	// reported with the native error and without this sentinel, so that an
+	// outage is never reported as an attack. Each backend documents which
+	// native errors it maps.
+	//
+	// Test it with errors.Is: the backend's own error stays reachable
+	// alongside it with errors.Is and errors.As. A nil *SealedData is a
+	// caller bug, not sealed data, and is reported without this sentinel.
+	ErrSealedDataAuthentication = errors.New("sealed data failed authentication")
 )
 
 // =============================================================================

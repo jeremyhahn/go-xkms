@@ -162,14 +162,33 @@ func (b *PKCS8Backend) Seal(ctx context.Context, data []byte, opts *types.SealOp
 //   - opts: Unsealing options (KeyAttributes required, AAD must match if used during sealing)
 //
 // Returns the original plaintext data, or error if unsealing fails.
+//
+// Sealed-data authentication: the AES-GCM open runs locally under a key
+// derived from the private key, so the error matches
+// types.ErrSealedDataAuthentication, joined with the native cause, exactly
+// when the sealed data is at fault -- sealed.Backend is not the software
+// backend, sealed.KeyID names a different key than opts.KeyAttributes, the
+// nonce or tag is not the AES-GCM length, or gcm.Open refuses a ciphertext
+// that was tampered with, truncated or extended, produced under another key,
+// or sealed under different AAD.
+//
+// Every other failure -- a cancelled or expired ctx, a closed backend, a
+// private key that cannot be loaded, a sealing key that cannot be derived,
+// or a cipher that cannot be built -- is the environment, not the data, and
+// does not match the sentinel.
 func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
 		return nil, &errs.Message{Msg: "sealed data is required"}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Verify this is a software backend sealed data
 	if sealed.Backend != types.BackendTypeSoftware {
-		return nil, &errs.Message{Msg: fmt.Sprintf("sealed data was not created by software backend (got %s)", sealed.Backend)}
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("sealed data was not created by software backend (got %s)", sealed.Backend), nil)
 	}
 
 	if opts == nil || opts.KeyAttributes == nil {
@@ -187,7 +206,21 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 
 	// Verify key ID matches (check both KeyID() and legacy ID() formats)
 	if sealed.KeyID != "" && sealed.KeyID != keyAttrs.KeyID() && sealed.KeyID != keyAttrs.ID() {
-		return nil, &errs.Message{Msg: fmt.Sprintf("key ID mismatch: sealed with %s, attempting unseal with %s", sealed.KeyID, keyAttrs.KeyID())}
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("key ID mismatch: sealed with %s, attempting unseal with %s", sealed.KeyID, keyAttrs.KeyID()), nil)
+	}
+
+	// Verify the envelope's shape before touching the key. The random-nonce
+	// AEAD reports a NonceSize of zero because it manages the nonce itself,
+	// so the stored nonce and tag are checked against the constants Seal
+	// splits them out with rather than against the AEAD.
+	if len(sealed.Nonce) != gcmNonceSize {
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("invalid nonce size: expected %d, got %d", gcmNonceSize, len(sealed.Nonce)), nil)
+	}
+	if len(sealed.Tag) != gcmTagSize {
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("invalid tag size: expected %d, got %d", gcmTagSize, len(sealed.Tag)), nil)
 	}
 
 	// Load the private key
@@ -220,13 +253,6 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
-	// Verify nonce size. The random-nonce AEAD reports a NonceSize of zero
-	// because it manages the nonce itself, so the stored nonce is checked
-	// against the constant rather than against the AEAD.
-	if len(sealed.Nonce) != gcmNonceSize {
-		return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: expected %d, got %d", gcmNonceSize, len(sealed.Nonce))}
-	}
-
 	// Decrypt with AAD if provided
 	var aad []byte
 	if opts.AAD != nil {
@@ -242,7 +268,8 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 
 	plaintext, err := gcm.Open(nil, nil, blob, aad)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to decrypt (check password/key and AAD)", Err: err}
+		return nil, types.SealedDataAuthenticationError("",
+			&errs.Wrapped{Msg: "failed to decrypt (check password/key and AAD)", Err: err})
 	}
 
 	return plaintext, nil

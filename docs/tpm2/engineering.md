@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## Exported surface — `pkg/tpm2`
 
@@ -366,6 +366,29 @@ policy.
   systemd-cryptsetup unseals (`luks.ErrTPMSSRKUnsealUnsupported`). The PCR
   selection behind the digest is the caller's own record (the token's PCR
   list); `Seal` takes only the digest.
+- **AAD is bound inside the sealed secret.** A keyed-hash object has no
+  AAD input, so `Seal` with `SealOptions.AAD` seals
+  `magic(16) ‖ SHA-256(AAD) ‖ data` (`bindSealAAD`,
+  `sealed_data_authentication.go`) and `Unseal` returns the data only for the
+  same AAD, compared in constant time (`openSealAAD`). The TPM
+  integrity-protects the whole secret. It costs 48 of the 128 bytes
+  (`MAX_SYM_DATA`), so AAD seals hold at most 80 bytes
+  (`ErrSealAADTooLarge`). A seal without AAD is unchanged on the wire.
+- **Unseal classifies its failures.** A refusal of the sealed object by
+  `TPM2_Load` with a parameter-scoped response code (`TPM_RC_INTEGRITY`,
+  `_BINDING`, `_SIZE`, `_INSUFFICIENT`, …) or `TPM_RC_SENSITIVE`, a wrong
+  backend type, a half-present public/private pair, an area over 2048 bytes
+  or the two over 3072 (`ErrObjectAreaTooLarge`, refused by `LoadKeyPair` /
+  `LoadKeyPairFromBlobs` before the TPM is asked), a loaded object
+  `TPM2_Unseal` refuses as not sealed data (`TPM_RC_TYPE` /
+  `TPM_RC_ATTRIBUTES` on the item handle), or a mismatched AAD matches
+  `types.ErrSealedDataAuthentication` (`ErrSealedObjectRejected`,
+  `ErrSealedObjectIncomplete`); a policy or UserAuth failure, a warning, a
+  transport or storage error does not. Only `TPM2_Load` is classified:
+  `TPM2_PolicyPCR` answers a moved PCR with the parameter-scoped
+  `TPM_RC_VALUE`, which is environment. See
+  [`../sealing-and-barrier/engineering.md`](../sealing-and-barrier/engineering.md)
+  §"Sealed-data authentication".
 - **Existing objects keep their attributes.** An object or NV index created
   before this rule keeps `userWithAuth` (or `TPMA_NV_AUTHREAD`) SET and, when
   passwordless and platform-bound, its open `PolicyAuthValue` branch.

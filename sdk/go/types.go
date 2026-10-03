@@ -464,6 +464,17 @@ var (
 
 	// ErrInvalidKeyAlgorithm is returned when an invalid key algorithm is specified.
 	ErrInvalidKeyAlgorithm = types.ErrInvalidKeyAlgorithm
+
+	// ErrSealedDataAuthentication is matched (errors.Is) by every Sealer's
+	// Unseal error when the backend establishes that the sealed data itself
+	// was forged, tampered with, truncated or extended, produced under
+	// another key or backend, is malformed, or was sealed under different
+	// AAD -- and never for an outage, a permission failure, a cancelled
+	// context or a TPM authorization (PCR / UserAuth) failure. Its presence
+	// is conclusive; its absence is not: a native signal that cannot tell
+	// the two apart (SoftHSM before 2.7.0 answers a PKCS#11 AES-GCM tag
+	// mismatch with CKR_GENERAL_ERROR) is reported without it.
+	ErrSealedDataAuthentication = types.ErrSealedDataAuthentication
 )
 
 // =============================================================================

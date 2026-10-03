@@ -15,6 +15,7 @@ package pkcs8
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -77,6 +78,7 @@ func TestUnseal_LoadSealingKeyError(t *testing.T) {
 		Backend: types.BackendTypeSoftware,
 		KeyID:   attrs.KeyID(),
 		Nonce:   make([]byte, 12),
+		Tag:     make([]byte, 16),
 	}
 
 	_, err := be.Unseal(context.Background(), sealed, &types.UnsealOptions{KeyAttributes: attrs})
@@ -85,6 +87,9 @@ func TestUnseal_LoadSealingKeyError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to load sealing key") {
 		t.Errorf("expected 'failed to load sealing key' error, got: %v", err)
+	}
+	if errors.Is(err, types.ErrSealedDataAuthentication) {
+		t.Errorf("a missing sealing key is the environment, not sealed-data authentication: %v", err)
 	}
 }
 
@@ -105,6 +110,7 @@ func TestUnseal_UnsupportedKeyTypeForSealing(t *testing.T) {
 		Backend: types.BackendTypeSoftware,
 		KeyID:   attrs.KeyID(),
 		Nonce:   make([]byte, 12),
+		Tag:     make([]byte, 16),
 	}
 
 	_, err := be.Unseal(context.Background(), sealed, &types.UnsealOptions{KeyAttributes: attrs})
@@ -113,6 +119,9 @@ func TestUnseal_UnsupportedKeyTypeForSealing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to derive sealing key") {
 		t.Errorf("expected 'failed to derive sealing key' error, got: %v", err)
+	}
+	if errors.Is(err, types.ErrSealedDataAuthentication) {
+		t.Errorf("a key type that cannot seal is the environment, not sealed-data authentication: %v", err)
 	}
 }
 

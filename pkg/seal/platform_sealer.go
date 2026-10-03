@@ -15,6 +15,7 @@ package seal
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -75,6 +76,13 @@ func (p *PlatformSealer) Seal(
 
 // Unseal decrypts data by reading the strategy tag from metadata and
 // delegating to the appropriate sealer.
+//
+// Sealed-data authentication: sealed data with no strategy tag
+// (ErrStrategyMismatch) or tagged with a strategy this sealer does not hold
+// (ErrStrategyNotFound) was not produced by this sealer, and the error also
+// matches types.ErrSealedDataAuthentication. Every other failure is the
+// delegate's, classified by the delegate; a cancelled or expired ctx is
+// reported as such before any classification.
 func (p *PlatformSealer) Unseal(
 	ctx context.Context,
 	sealed *types.SealedData,
@@ -84,10 +92,14 @@ func (p *PlatformSealer) Unseal(
 		return nil, ErrNilSealedData
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Read strategy from metadata.
 	stratBytes, ok := sealed.Metadata[strategyMetadataKey]
 	if !ok {
-		return nil, ErrStrategyMismatch
+		return nil, types.SealedDataAuthenticationError("no strategy tag", ErrStrategyMismatch)
 	}
 	id := StrategyID(stratBytes)
 
@@ -97,7 +109,8 @@ func (p *PlatformSealer) Unseal(
 			"deny", map[string]string{"error": ErrStrategyNotFound.Error()}); auditErr != nil {
 			return nil, auditErr
 		}
-		return nil, ErrStrategyNotFound
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("strategy %q", id), ErrStrategyNotFound)
 	}
 
 	plaintext, err := sealer.Unseal(ctx, sealed, opts)

@@ -65,9 +65,20 @@ func (c *compositeBackend) Seal(ctx context.Context, data []byte, opts *types.Se
 //
 // For TPM key providers, this requires the same PCR state as when the data was sealed.
 // For cloud key providers, the same key must be accessible.
+//
+// Sealed data created by another backend type is ErrSealBackendMismatch,
+// which matches types.ErrSealedDataAuthentication; a cancelled or expired ctx
+// is reported first, as itself; every other failure is the key provider's,
+// wrapped in ErrSealOperation with its classification intact.
 func (c *compositeBackend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
 		return nil, ErrInvalidSealedData
+	}
+
+	// A cancelled or expired context is reported as itself before the
+	// backend-type check can classify the sealed data.
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	// Check if key provider implements Sealer interface

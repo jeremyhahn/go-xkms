@@ -21,7 +21,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
+	vaultapi "github.com/hashicorp/vault/api"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -329,14 +331,23 @@ func (e *vaultSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 		"plaintext": input,
 	}
 
-	// Vault Transit supports AAD via the "context" parameter (must be base64-encoded)
-	if opts != nil && opts.AdditionalData != nil {
-		data["context"] = base64.StdEncoding.EncodeToString(opts.AdditionalData)
+	// Vault Transit binds AAD through associated_data (base64). Its
+	// "context" parameter is key-derivation input, which Transit ignores for
+	// the non-derived keys this backend creates: sending AAD there bound
+	// nothing, so a mismatched AAD used to decrypt successfully.
+	hasAAD := opts != nil && opts.AdditionalData != nil
+	if hasAAD {
+		data[transitAssociatedData] = base64.StdEncoding.EncodeToString(opts.AdditionalData)
 	}
 
 	secret, err := logical.WriteWithContext(ctx, path, data)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "Vault Transit encryption failed", Err: err}
+	}
+	if hasAAD {
+		if err := requireAssociatedDataHonored(secret); err != nil {
+			return nil, err
+		}
 	}
 
 	if secret == nil || secret.Data == nil {
@@ -383,14 +394,21 @@ func (e *vaultSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types
 		"ciphertext": string(data.Ciphertext), // Vault-formatted ciphertext
 	}
 
-	// If AAD was used during encryption, it must be provided during decryption
-	if opts != nil && opts.AdditionalData != nil {
-		requestData["context"] = base64.StdEncoding.EncodeToString(opts.AdditionalData)
+	// If AAD was used during encryption, it must be provided during
+	// decryption; see Encrypt for why it travels as associated_data.
+	hasAAD := opts != nil && opts.AdditionalData != nil
+	if hasAAD {
+		requestData[transitAssociatedData] = base64.StdEncoding.EncodeToString(opts.AdditionalData)
 	}
 
 	secret, err := logical.WriteWithContext(ctx, path, requestData)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "Vault Transit decryption failed (authentication or key error)", Err: err}
+	}
+	if hasAAD {
+		if err := requireAssociatedDataHonored(secret); err != nil {
+			return nil, err
+		}
 	}
 
 	if secret == nil || secret.Data == nil {
@@ -414,6 +432,26 @@ func (e *vaultSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types
 	}
 
 	return plaintext, nil
+}
+
+// transitAssociatedData is the Transit encrypt/decrypt parameter that
+// carries AEAD additional authenticated data.
+const transitAssociatedData = "associated_data"
+
+// requireAssociatedDataHonored fails closed when Vault's response warns that
+// it ignored the associated_data parameter -- a server whose Transit engine
+// predates AEAD associated data answers "Endpoint ignored these unrecognized
+// parameters: [associated_data]" and encrypts or decrypts without it.
+func requireAssociatedDataHonored(secret *vaultapi.Secret) error {
+	if secret == nil {
+		return nil
+	}
+	for _, warning := range secret.Warnings {
+		if strings.Contains(warning, transitAssociatedData) {
+			return &errs.Detail{Err: ErrAssociatedDataIgnored, Detail: warning}
+		}
+	}
+	return nil
 }
 
 // GetTracker returns the AEAD safety tracker for this backend.

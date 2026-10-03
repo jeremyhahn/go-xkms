@@ -484,25 +484,25 @@ func (k *azureSymmetricKey) Decrypt(encrypted *types.EncryptedData, opts *types.
 		// against the fixed random-nonce framing rather than against gcm's
 		// own (zero) NonceSize.
 		if len(encrypted.Tag) != aead.GCMFullTagSize {
-			return nil, &errs.Message{Msg: fmt.Sprintf(
-				"azurekv: authentication tag is %d bytes, want %d", len(encrypted.Tag), aead.GCMFullTagSize)}
+			return nil, &errs.Detail{Err: ErrCiphertextRejected, Detail: fmt.Sprintf(
+				"authentication tag is %d bytes, want %d", len(encrypted.Tag), aead.GCMFullTagSize)}
 		}
 		if len(encrypted.Nonce) != aead.GCMRandomNonceSize {
-			return nil, &errs.Message{Msg: fmt.Sprintf(
-				"azurekv: nonce is %d bytes, want %d", len(encrypted.Nonce), aead.GCMRandomNonceSize)}
+			return nil, &errs.Detail{Err: ErrCiphertextRejected, Detail: fmt.Sprintf(
+				"nonce is %d bytes, want %d", len(encrypted.Nonce), aead.GCMRandomNonceSize)}
 		}
 
 		joined := aead.JoinGCMWithRandomNonce(encrypted.Nonce, encrypted.Ciphertext, encrypted.Tag)
 		plaintext, err := gcm.Open(nil, nil, joined, aad)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "decryption failed", Err: err}
+			return nil, &errs.Joined{Lead: ErrCiphertextRejected, Detail: "decryption failed", Cause: err}
 		}
 		return plaintext, nil
 	}
 
 	if len(encrypted.Tag) != gcm.Overhead() {
-		return nil, &errs.Message{Msg: fmt.Sprintf(
-			"azurekv: authentication tag is %d bytes, want %d", len(encrypted.Tag), gcm.Overhead())}
+		return nil, &errs.Detail{Err: ErrCiphertextRejected, Detail: fmt.Sprintf(
+			"authentication tag is %d bytes, want %d", len(encrypted.Tag), gcm.Overhead())}
 	}
 
 	// crypto/cipher panics rather than returning an error when the nonce is
@@ -510,8 +510,8 @@ func (k *azureSymmetricKey) Decrypt(encrypted *types.EncryptedData, opts *types.
 	// without this check any request carrying a short nonce takes the whole
 	// daemon down.
 	if len(encrypted.Nonce) != gcm.NonceSize() {
-		return nil, &errs.Message{Msg: fmt.Sprintf(
-			"azurekv: nonce is %d bytes, want %d", len(encrypted.Nonce), gcm.NonceSize())}
+		return nil, &errs.Detail{Err: ErrCiphertextRejected, Detail: fmt.Sprintf(
+			"nonce is %d bytes, want %d", len(encrypted.Nonce), gcm.NonceSize())}
 	}
 
 	// Reconstruct ciphertext with tag into a fresh slice -- appending onto
@@ -526,7 +526,7 @@ func (k *azureSymmetricKey) Decrypt(encrypted *types.EncryptedData, opts *types.
 	// Decrypt
 	plaintext, err := gcm.Open(nil, encrypted.Nonce, ciphertextWithTag, aad)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "decryption failed", Err: err}
+		return nil, &errs.Joined{Lead: ErrCiphertextRejected, Detail: "decryption failed", Cause: err}
 	}
 
 	return plaintext, nil

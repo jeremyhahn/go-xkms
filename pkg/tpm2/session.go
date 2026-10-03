@@ -977,6 +977,9 @@ func (tpm *TPM2) LoadKeyPair(
 		return nil, err
 	}
 	tpm.logger.Debug("tpm: LoadKeyPair - loaded public blob", slog.Int("bytes", len(pub)))
+	if err := checkLoadAreaSizes(pub, priv); err != nil {
+		return nil, err
+	}
 
 	// Create the ParentHandle authorization session if the caller did not
 	// supply one. CreateSession authorizes the *parent* (using the
@@ -1066,6 +1069,10 @@ func (tpm *TPM2) LoadKeyPairFromBlobs(
 
 	if keyAttrs.Parent == nil {
 		return nil, store.ErrInvalidParentAttributes
+	}
+
+	if err := checkLoadAreaSizes(tpmPublic, tpmPrivate); err != nil {
+		return nil, err
 	}
 
 	closer := func() error { return nil }

@@ -720,29 +720,35 @@ func TestVaultIntegration(t *testing.T) {
 			assert.Equal(t, plaintext, decrypted, "Decrypted data should match plaintext")
 			t.Logf("✓ Successfully decrypted with correct AAD")
 
-			// NOTE: Vault Transit's context parameter behavior varies by version
-			// In some Vault versions, the context is used for key derivation rather than
-			// strict AAD validation, so wrong context may not always cause decryption to fail.
-			// We test the expected behavior but note that Vault's implementation may vary.
-
-			// Decrypt with wrong AAD - may or may not fail depending on Vault version
+			// AAD travels as Transit's associated_data, which binds it into
+			// the AEAD: a wrong or missing AAD must fail authentication.
 			wrongAAD := []byte("user-id:99999,timestamp:0000000000")
 			_, err = encrypter.Decrypt(encrypted, &types.DecryptOptions{
 				AdditionalData: wrongAAD,
 			})
-			if err != nil {
-				t.Logf("✓ Vault correctly rejected decryption with wrong AAD: %v", err)
-			} else {
-				t.Logf("⚠ Vault allowed decryption with wrong AAD (version-dependent behavior)")
-			}
+			require.Error(t, err, "Decryption with wrong AAD must fail")
 
-			// Decrypt without AAD when it was used - may or may not fail depending on Vault version
 			_, err = encrypter.Decrypt(encrypted, nil)
-			if err != nil {
-				t.Logf("✓ Vault correctly rejected decryption without AAD: %v", err)
-			} else {
-				t.Logf("⚠ Vault allowed decryption without AAD (version-dependent behavior)")
-			}
+			require.Error(t, err, "Decryption without the AAD it was sealed under must fail")
+
+			// The Sealer reports the same failures as sealed-data
+			// authentication, distinct from an environment failure.
+			sealOpts := &types.SealOptions{KeyAttributes: attrs, AAD: aad}
+			sealed, err := b.Seal(context.Background(), plaintext, sealOpts)
+			require.NoError(t, err, "Failed to seal with AAD")
+
+			_, err = b.Unseal(context.Background(), sealed, &types.UnsealOptions{KeyAttributes: attrs, AAD: wrongAAD})
+			require.ErrorIs(t, err, types.ErrSealedDataAuthentication, "a wrong AAD is sealed-data authentication")
+
+			flipped := *sealed
+			flipped.Ciphertext = append([]byte(nil), sealed.Ciphertext...)
+			flipped.Ciphertext[len(flipped.Ciphertext)-2] ^= 0x01
+			_, err = b.Unseal(context.Background(), &flipped, &types.UnsealOptions{KeyAttributes: attrs, AAD: aad})
+			require.ErrorIs(t, err, types.ErrSealedDataAuthentication, "a modified ciphertext is sealed-data authentication")
+
+			unsealed, err := b.Unseal(context.Background(), sealed, &types.UnsealOptions{KeyAttributes: attrs, AAD: aad})
+			require.NoError(t, err, "the untouched sealed value must unseal")
+			assert.Equal(t, plaintext, unsealed)
 
 			// Cleanup
 			err = b.DeleteKey(context.Background(), attrs)

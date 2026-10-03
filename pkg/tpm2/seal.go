@@ -284,7 +284,7 @@ func (tpm *TPM2) unsealKeyInternal(
 		} else {
 			tpm.logger.Error("failed to load key pair for unseal", slog.String("error", err.Error()))
 		}
-		return nil, err
+		return nil, classifyLoadError(err)
 	}
 	if err := closer(); err != nil {
 		tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
@@ -323,7 +323,7 @@ func (tpm *TPM2) unsealKeyInternal(
 	}.Execute(tpm.transport, encSession)
 	if err != nil {
 		tpm.logger.Error("failed to unseal data", slog.String("error", err.Error()))
-		return nil, err
+		return nil, classifyUnsealError(err)
 	}
 
 	// Set TPM attributes
@@ -392,7 +392,7 @@ func (tpm *TPM2) unsealFromBlobs(
 			}
 		}
 		tpm.logger.Error("failed to load key pair from blobs", slog.String("error", err.Error()))
-		return nil, err
+		return nil, classifyLoadError(err)
 	}
 	if err := closer(); err != nil {
 		tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
@@ -433,7 +433,7 @@ func (tpm *TPM2) unsealFromBlobs(
 	}.Execute(tpm.transport, encSession)
 	if err != nil {
 		tpm.logger.Error("failed to unseal data from blobs", slog.String("error", err.Error()))
-		return nil, err
+		return nil, classifyUnsealError(err)
 	}
 
 	// Set TPM attributes

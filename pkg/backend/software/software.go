@@ -1271,6 +1271,10 @@ func (b *SoftwareBackend) Seal(ctx context.Context, data []byte, opts *types.Sea
 //
 // This method accepts sealed data from both Software and PKCS8 backends,
 // since Software backend delegates sealing to PKCS8 internally.
+//
+// Sealed data that is not the software backend's matches
+// types.ErrSealedDataAuthentication; everything else is classified by
+// PKCS8Backend.Unseal.
 func (b *SoftwareBackend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
 		return nil, &errs.Message{Msg: "sealed data is required"}
@@ -1283,9 +1287,14 @@ func (b *SoftwareBackend) Unseal(ctx context.Context, sealed *types.SealedData, 
 		return nil, ErrStorageClosed
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Verify this is a software backend sealed data
 	if sealed.Backend != types.BackendTypeSoftware {
-		return nil, &errs.Message{Msg: fmt.Sprintf("sealed data was not created by software backend (got %s)", sealed.Backend)}
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("sealed data was not created by software backend (got %s)", sealed.Backend), nil)
 	}
 
 	return b.pkcs8Backend.Unseal(ctx, sealed, opts)

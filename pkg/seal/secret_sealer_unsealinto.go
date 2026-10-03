@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -37,14 +36,13 @@ var _ types.UnsealerInto = (*SecretSealer)(nil)
 // avoid; measured against the AEAD rather than assumed.
 func (s *SecretSealer) PlaintextLen(sealed *types.SealedData) (int, error) {
 	if sealed == nil {
-		return 0, &errs.Message{Msg: "seal: sealed data is nil"}
+		return 0, ErrSecretSealerNilSealedData
 	}
 	if !s.CanSeal() {
 		return 0, ErrSecretSealerEmptySecret
 	}
-	if len(sealed.Nonce) != gcmNonceSize {
-		return 0, &errs.Message{Msg: fmt.Sprintf(
-			"seal: nonce is %d bytes, want %d", len(sealed.Nonce), gcmNonceSize)}
+	if err := checkEnvelope(sealed); err != nil {
+		return 0, err
 	}
 	gcm, err := s.gcm()
 	if err != nil {
@@ -55,9 +53,9 @@ func (s *SecretSealer) PlaintextLen(sealed *types.SealedData) (int, error) {
 		// Shorter than the overhead it must carry: the envelope is truncated or
 		// corrupt. Reported here rather than left to surface as a confusing
 		// negative allocation in the caller.
-		return 0, &errs.Message{Msg: fmt.Sprintf(
+		return 0, types.SealedDataAuthenticationError(fmt.Sprintf(
 			"seal: sealed payload is %d bytes, shorter than the %d bytes of AEAD overhead",
-			len(sealed.Nonce)+len(sealed.Ciphertext), gcm.Overhead())}
+			len(sealed.Nonce)+len(sealed.Ciphertext), gcm.Overhead()), nil)
 	}
 	return n, nil
 }
@@ -72,25 +70,9 @@ func (s *SecretSealer) PlaintextLen(sealed *types.SealedData) (int, error) {
 // The caller must confirm the result aliases dst; see types.UnsealerInto. Open
 // appends, so a dst without the capacity quietly reallocates onto the heap and
 // returns that instead, which is indistinguishable from success here.
-func (s *SecretSealer) UnsealInto(_ context.Context, dst []byte, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
-	if sealed == nil {
-		return nil, &errs.Message{Msg: "seal: sealed data is nil"}
-	}
-	if !s.CanSeal() {
-		return nil, ErrSecretSealerEmptySecret
-	}
-	if len(sealed.Nonce) != gcmNonceSize {
-		return nil, &errs.Message{Msg: fmt.Sprintf(
-			"seal: nonce is %d bytes, want %d", len(sealed.Nonce), gcmNonceSize)}
-	}
-	gcm, err := s.gcm()
-	if err != nil {
-		return nil, err
-	}
-	// The random-nonce AEAD expects its nonce at the head of the payload rather
-	// than passed separately, exactly as Unseal reassembles it.
-	blob := make([]byte, 0, len(sealed.Nonce)+len(sealed.Ciphertext))
-	blob = append(blob, sealed.Nonce...)
-	blob = append(blob, sealed.Ciphertext...)
-	return gcm.Open(dst, nil, blob, nil)
+//
+// It authenticates exactly as Unseal does, and reports a failure of the
+// sealed data as types.ErrSealedDataAuthentication the same way.
+func (s *SecretSealer) UnsealInto(ctx context.Context, dst []byte, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	return s.open(ctx, dst, sealed, opts)
 }

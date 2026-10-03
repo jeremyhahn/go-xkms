@@ -19,8 +19,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -120,13 +123,39 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 //   - opts: Unsealing options (KeyAttributes required, AAD must match if used during sealing)
 //
 // Returns the original plaintext data, or error if unsealing fails.
+//
+// Sealed-data authentication: the error matches
+// types.ErrSealedDataAuthentication, joined with the native cause, exactly
+// when the sealed data is at fault --
+//   - sealed.Backend is not GCP KMS, sealed.KeyID names a different key than
+//     opts.KeyAttributes, or the ciphertext is empty (checked locally);
+//   - the Decrypt RPC answers codes.InvalidArgument, which is how Cloud KMS
+//     rejects a ciphertext that was tampered with, truncated or extended,
+//     produced under a different CryptoKey, or sealed under different
+//     additional authenticated data. The key itself was already resolved
+//     (GetCryptoKey) before Decrypt is called, so InvalidArgument there
+//     cannot mean a malformed key name; an InvalidArgument that reports a
+//     request CRC32C mismatch is corruption in transit and is excluded (see
+//     rejectsSealedData).
+//
+// Every other failure -- a cancelled or expired ctx, an uninitialized client,
+// a key that cannot be resolved, and every other status (Unavailable,
+// DeadlineExceeded, ResourceExhausted, PermissionDenied, Unauthenticated,
+// FailedPrecondition for a disabled or destroyed key version, NotFound,
+// Internal) or a response whose plaintext checksum does not verify -- is the
+// environment, not the data, and does not match the sentinel.
 func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
 		return nil, &errs.Message{Msg: "sealed data is required"}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if sealed.Backend != types.BackendTypeGCPKMS {
-		return nil, &errs.Message{Msg: fmt.Sprintf("sealed data was not created by GCP KMS backend (got %s)", sealed.Backend)}
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("sealed data was not created by GCP KMS backend (got %s)", sealed.Backend), nil)
 	}
 
 	if opts == nil || opts.KeyAttributes == nil {
@@ -144,12 +173,18 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 
 	// Verify key ID matches if present
 	if sealed.KeyID != "" && sealed.KeyID != keyAttrs.ID() {
-		return nil, &errs.Message{Msg: fmt.Sprintf("key ID mismatch: sealed with %s, attempting unseal with %s", sealed.KeyID, keyAttrs.ID())}
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("key ID mismatch: sealed with %s, attempting unseal with %s", sealed.KeyID, keyAttrs.ID()), nil)
 	}
 
 	// Validate that the key is a symmetric key
 	if !keyAttrs.IsSymmetric() {
 		return nil, &errs.Message{Msg: fmt.Sprintf("GCP KMS unsealing requires a symmetric key, got %s", keyAttrs.KeyAlgorithm)}
+	}
+
+	// Cloud KMS ciphertext is never empty; one that is was truncated away.
+	if len(sealed.Ciphertext) == 0 {
+		return nil, types.SealedDataAuthenticationError("ciphertext is empty", nil)
 	}
 
 	// Get the symmetric encrypter for this key
@@ -176,10 +211,32 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 	// Decrypt the data via GCP KMS
 	plaintext, err := encrypter.Decrypt(encrypted, decOpts)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to decrypt data (check key and AAD)", Err: err}
+		wrapped := &errs.Wrapped{Msg: "failed to decrypt data (check key and AAD)", Err: err}
+		if rejectsSealedData(err) {
+			return nil, types.SealedDataAuthenticationError("", wrapped)
+		}
+		return nil, wrapped
 	}
 
 	return plaintext, nil
+}
+
+// requestIntegrityMarker appears in Cloud KMS's InvalidArgument message when
+// the request's ciphertext_crc32c (or additional_authenticated_data_crc32c)
+// does not match the bytes the service received -- corruption in transit,
+// which Google's data-integrity guidance says to retry, not a ciphertext
+// that fails authentication.
+const requestIntegrityMarker = "crc32c"
+
+// rejectsSealedData reports whether err is Cloud KMS refusing the ciphertext
+// itself: codes.InvalidArgument from Decrypt, except a request-integrity
+// failure (requestIntegrityMarker in the message), which is the environment.
+func rejectsSealedData(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		return false
+	}
+	return !strings.Contains(strings.ToLower(st.Message()), requestIntegrityMarker)
 }
 
 // MarshalSealedData serializes SealedData to JSON for storage

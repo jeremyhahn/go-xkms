@@ -1,6 +1,6 @@
 # Sealing and Barrier — User Guide
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## What the barrier is
 
@@ -133,6 +133,12 @@ state, `--password` makes it unseal only with the password, and both makes the
 password a recovery path inside the policy. A TPM seal with neither is
 refused.
 
+`--aad` binds context to the sealed value on every backend: unsealing
+needs the same `--aad`. On `tpm2` the binding takes 48 of the 128 bytes a
+sealed object holds, so at most 80 bytes seal with `--aad`. A value sealed on
+`tpm2` or `vault` with `--aad` by an earlier release was not actually bound
+(those releases dropped it): unseal it without `--aad` and seal it again.
+
 Sealing belongs to your tenant. With `--key-id`, the key must be one of your
 tenant's keys; another tenant's key reads as "key not found". Without it, a
 software, PKCS#11 or cloud-KMS backend uses your tenant's own default sealing
@@ -152,6 +158,8 @@ platform accounts may use it.
 | shares rejected | fewer than M, or shares from a different init | you need M shares from **this** barrier |
 | old shares stopped working | someone ran `rekey` | redistribute the new ones |
 | a cloud-strategy barrier will not unseal | the provider is unreachable or credentials expired | fix the **server's** environment |
+| `unseal` fails with "sealed data failed authentication" | the sealed value itself is wrong: modified, cut short, from another key or backend, or unsealed with different `--aad` than it was sealed with | do not retry — find where the value came from |
+| `unseal` fails with any other error | not proven either way: usually the environment (unreachable, permission, PCR), but a backend whose own error is ambiguous — a PKCS#11 token answering `CKR_GENERAL_ERROR`, as SoftHSM before 2.7.0 does for a modified value — reports bad data this way too | read the cause in the message; fix the environment if it names one, otherwise check the value and `--aad` as well |
 | you have no credential and no recovery keys | there is no way in | the root key is unrecoverable — this is what a barrier is |
 
 That last row is not a bug. Plan for it before you need it: generate recovery

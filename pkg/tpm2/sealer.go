@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/google/go-tpm/tpm2"
@@ -87,6 +88,10 @@ func (tpm *TPM2) defaultUnsealKeyAttributes(keyID string) (*types.KeyAttributes,
 //   - data: The plaintext data to seal
 //   - opts: Sealing options (optional; defaults provided if nil)
 //
+// opts.AAD, when set, is bound into the sealed secret (bindSealAAD): Unseal
+// then returns the data only for the same AAD. It costs 48 of the sealed
+// object's 128 bytes, so at most 80 bytes of data seal with AAD.
+//
 // Returns SealedData containing the TPM public/private areas, or error.
 func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
 	if opts == nil {
@@ -103,9 +108,40 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 
 	keyAttrs := opts.KeyAttributes
 
-	// Set the seal data on the key attributes
-	if data != nil {
-		keyAttrs.SealData = types.NewSealData(data)
+	// The plaintext is data or, when data is nil, the SealData the caller
+	// preset on the key attributes; with neither, a random secret is sealed.
+	// The AAD binding (see bindSealAAD) wraps whichever it is.
+	preset := keyAttrs.SealData
+	plaintext := data
+	if plaintext == nil && preset != nil {
+		plaintext = preset.Bytes()
+		if plaintext == nil {
+			return nil, store.ErrInvalidKeyedHashSecret
+		}
+		defer enclave.Wipe(plaintext)
+	}
+	secret, ownedSecret, err := bindSealAAD(tpm.random, plaintext, opts.AAD)
+	if err != nil {
+		return nil, err
+	}
+	if secret != nil {
+		keyAttrs.SealData = types.NewSealData(secret)
+	}
+	if ownedSecret {
+		// The envelope belongs to this call alone. Once it is sealed (or the
+		// seal fails) the caller's attributes get back what they would hold
+		// without it -- the data handed in, or the untouched preset -- so
+		// reusing the same options seals the same plaintext again instead of
+		// wrapping the envelope a second time.
+		envelope := keyAttrs.SealData
+		defer func() {
+			enclave.Wipe(secret)
+			envelope.Clear()
+			keyAttrs.SealData = preset
+			if data != nil {
+				keyAttrs.SealData = types.NewSealData(data)
+			}
+		}()
 	}
 
 	// Apply password if provided. The password becomes the sealed object's
@@ -210,13 +246,44 @@ func (tpm *TPM2) applySealAuthPolicy(keyAttrs *types.KeyAttributes, authPolicy [
 // If sealed.TPMPublic and sealed.TPMPrivate are provided, they will be used directly
 // instead of reading from backend storage. This allows unsealing from in-memory blobs
 // without requiring prior storage of the sealed data.
+//
+// Sealed-data authentication: the error matches
+// types.ErrSealedDataAuthentication, joined with the native cause, exactly
+// when the sealed data is at fault --
+//   - sealed.Backend is not TPM2 (ErrSealedDataBackendMismatch), or it
+//     carries only one of TPMPublic and TPMPrivate
+//     (ErrSealedObjectIncomplete);
+//   - TPM2_Load refuses the object's public or private area
+//     (ErrSealedObjectRejected joined with the response code): TPM_RC_INTEGRITY
+//     for a tampered private area or one created under another parent or
+//     TPM, TPM_RC_BINDING for mismatched areas, TPM_RC_SIZE /
+//     TPM_RC_INSUFFICIENT and the other parameter-scoped codes for truncated,
+//     extended or malformed areas, TPM_RC_SENSITIVE for a private area that
+//     decrypts to garbage -- whether the areas came inline or from storage;
+//   - the AAD bound at Seal does not match opts.AAD (see openSealAAD).
+//
+// Never for the environment: a cancelled or expired ctx, a missing Platform
+// SRK or storage object, a transport failure, a TPM warning or resource code,
+// or a TPM authorization failure of the sealed object or its parent --
+// TPM_RC_POLICY_FAIL or TPM_RC_VALUE from a PCR policy whose PCRs moved,
+// TPM_RC_AUTH_FAIL / TPM_RC_BAD_AUTH for a wrong UserAuth, TPM_RC_LOCKOUT.
+// Those are session- or command-scoped and say nothing about the data.
 func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
 		return nil, ErrNilSealedData
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if sealed.Backend != types.BackendTypeTPM2 {
-		return nil, &errs.Detail{Err: ErrSealedDataBackendMismatch, Detail: fmt.Sprintf("got %s", sealed.Backend)}
+		return nil, types.SealedDataAuthenticationError("",
+			&errs.Detail{Err: ErrSealedDataBackendMismatch, Detail: fmt.Sprintf("got %s", sealed.Backend)})
+	}
+
+	if (len(sealed.TPMPublic) > 0) != (len(sealed.TPMPrivate) > 0) {
+		return nil, types.SealedDataAuthenticationError("", ErrSealedObjectIncomplete)
 	}
 
 	if opts == nil {
@@ -262,10 +329,15 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 	// directly instead of reading them from backend storage. This enables
 	// unsealing from in-memory blobs (e.g., loaded from EFI partition files
 	// during boot). The object's policy binding record, when it has one, is
-	// still read from the caller's key store.
-	if len(sealed.TPMPublic) > 0 && len(sealed.TPMPrivate) > 0 {
+	// still read from the caller's key store. Both are present or neither is,
+	// checked above.
+	if len(sealed.TPMPublic) > 0 {
 		tpm.logger.Debug("unseal: using provided TPMPublic/TPMPrivate blobs directly")
-		return tpm.unsealFromBlobs(keyAttrs, backend, sealed.TPMPublic, sealed.TPMPrivate)
+		secret, err := tpm.unsealFromBlobs(keyAttrs, backend, sealed.TPMPublic, sealed.TPMPrivate)
+		if err != nil {
+			return nil, err
+		}
+		return openSealAAD(secret, opts.AAD)
 	}
 
 	if backend == nil {
@@ -273,12 +345,12 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 	}
 
 	// Call the internal unseal operation
-	plaintext, err := tpm.UnsealKey(keyAttrs, backend)
+	secret, err := tpm.UnsealKey(keyAttrs, backend)
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrUnsealFailed, Cause: err}
 	}
 
-	return plaintext, nil
+	return openSealAAD(secret, opts.AAD)
 }
 
 // SealKey creates a sealed keyed hash object under the provided Storage Root

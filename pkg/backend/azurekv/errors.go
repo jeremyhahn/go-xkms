@@ -92,4 +92,14 @@ var (
 	// other than the record genuinely not existing (go-xkms#1098, mirroring
 	// awskms.ErrMetadataStorage from go-xkms#839).
 	ErrMetadataStorage = errors.New("azurekv: metadata storage failed")
+
+	// ErrCiphertextRejected is returned, joined with the AEAD's own error
+	// where it produced one, when an AES-GCM ciphertext does not authenticate
+	// under the key: its tag or nonce is not the length the construction
+	// requires, or gcm.Open refuses it because it was tampered with,
+	// truncated or extended, produced under another key, or sealed under
+	// different additional authenticated data. Failures to build the cipher
+	// itself (an unusable key, a construction the process's FIPS mode
+	// refuses) are not this error.
+	ErrCiphertextRejected = errors.New("azurekv: AES-GCM ciphertext failed authentication")
 )

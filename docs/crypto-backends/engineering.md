@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-10-02
 
 ## Exported surface
 
@@ -187,6 +187,11 @@ Two consequences follow directly from this table:
   names use an injective (one-to-one) escape to avoid name collision.
   Wrapped export (`ExportKey`) has no Vault-native equivalent and is not
   supported for any key.
+- **Vault binds AAD through Transit's `associated_data`.** It was sent as
+  `context`, a key-derivation input Transit ignores for the non-derived keys
+  this backend creates, so AAD bound nothing. Encrypt and decrypt now send
+  `associated_data` and fail closed with `vault.ErrAssociatedDataIgnored`
+  when the server's response warns it ignored the parameter.
 - **GCP resolves the live primary key version** at backend initialization, and
   Azure, Vault and GCP signers **pin the resolved version** at construction time
   so version rotations do not cause unexpected signing key changes mid-request.
@@ -297,6 +302,18 @@ practice:
 **Fail closed:** a missing tag, an unreachable device, an unreadable provider
 credential, or an unmet PIN requirement all return an error. No backend falls
 back to software.
+
+Unseal on every backend separates sealed data that fails authentication
+(`types.ErrSealedDataAuthentication`) from environment failures; the native
+signals each backend maps are listed in
+[`../sealing-and-barrier/engineering.md`](../sealing-and-barrier/engineering.md)
+§"Sealed-data authentication". Two new backend sentinels carry the AES-GCM
+refusal on the backends where it is not a provider exception:
+`azurekv.ErrCiphertextRejected` and `pkcs11.ErrCiphertextRejected` (the
+latter only for `CKR_ENCRYPTED_DATA_INVALID`, `CKR_ENCRYPTED_DATA_LEN_RANGE`
+and `CKR_AEAD_DECRYPT_FAILED`; `CKR_GENERAL_ERROR`, which SoftHSM before
+2.7.0 also returns for a GCM tag mismatch, is never classified, and a
+`C_DecryptInit` failure is `pkcs11.ErrDecryptInit`).
 
 **The not-found contract is exact, not "any error means absent" (#801,
 #808).** It binds every backend method that resolves a key by name, not

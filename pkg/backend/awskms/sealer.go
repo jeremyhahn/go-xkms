@@ -18,8 +18,10 @@ package awskms
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
+	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -118,13 +120,35 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 //   - opts: Unsealing options (KeyAttributes required, AAD must match if used during sealing)
 //
 // Returns the original plaintext data, or error if unsealing fails.
+//
+// Sealed-data authentication: the error matches
+// types.ErrSealedDataAuthentication, joined with the native cause, exactly
+// when the sealed data is at fault --
+//   - sealed.Backend is not AWS KMS, sealed.KeyID names a different key than
+//     opts.KeyAttributes, or the ciphertext blob is empty or longer than the
+//     6144 bytes Decrypt accepts (checked locally);
+//   - KMS Decrypt answers InvalidCiphertextException (the blob was tampered
+//     with, truncated or extended, or its encryption context -- the AAD --
+//     does not match) or IncorrectKeyException (the blob was produced under
+//     a different KMS key).
+//
+// Every other failure -- a cancelled or expired ctx, an uninitialized client,
+// key metadata that cannot be resolved, and any other KMS answer (throttling,
+// AccessDenied, NotFound, Disabled, KMSInvalidState, KMSInternal, a network
+// error) -- is the environment, not the data, and does not match the
+// sentinel.
 func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
 		return nil, &errs.Message{Msg: "sealed data is required"}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if sealed.Backend != types.BackendTypeAWSKMS {
-		return nil, &errs.Message{Msg: fmt.Sprintf("sealed data was not created by AWS KMS backend (got %s)", sealed.Backend)}
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("sealed data was not created by AWS KMS backend (got %s)", sealed.Backend), nil)
 	}
 
 	if opts == nil || opts.KeyAttributes == nil {
@@ -139,12 +163,22 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 
 	// Verify key ID matches if present
 	if sealed.KeyID != "" && sealed.KeyID != keyAttrs.ID() {
-		return nil, &errs.Message{Msg: fmt.Sprintf("key ID mismatch: sealed with %s, attempting unseal with %s", sealed.KeyID, keyAttrs.ID())}
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("key ID mismatch: sealed with %s, attempting unseal with %s", sealed.KeyID, keyAttrs.ID()), nil)
 	}
 
 	// Validate that the key is a symmetric key
 	if !keyAttrs.IsSymmetric() {
 		return nil, &errs.Message{Msg: fmt.Sprintf("AWS KMS unsealing requires a symmetric key, got %s", keyAttrs.KeyAlgorithm)}
+	}
+
+	// KMS ciphertext blobs are never empty, and Decrypt accepts at most
+	// maxCiphertextBlobSize bytes: a blob outside that range was truncated
+	// away or extended, and KMS would refuse it as request validation rather
+	// than as an invalid ciphertext.
+	if len(sealed.Ciphertext) == 0 || len(sealed.Ciphertext) > maxCiphertextBlobSize {
+		return nil, types.SealedDataAuthenticationError(
+			fmt.Sprintf("ciphertext is %d bytes, want 1 to %d", len(sealed.Ciphertext), maxCiphertextBlobSize), nil)
 	}
 
 	// Get the symmetric encrypter for this key
@@ -172,10 +206,32 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 	// Decrypt the data via AWS KMS
 	plaintext, err := encrypter.Decrypt(encrypted, decOpts)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to decrypt data (check key and AAD)", Err: err}
+		wrapped := &errs.Wrapped{Msg: "failed to decrypt data (check key and AAD)", Err: err}
+		if rejectsSealedData(err) {
+			return nil, types.SealedDataAuthenticationError("", wrapped)
+		}
+		return nil, wrapped
 	}
 
 	return plaintext, nil
+}
+
+// maxCiphertextBlobSize is the largest CiphertextBlob AWS KMS Decrypt
+// accepts (API reference, Decrypt request parameters).
+const maxCiphertextBlobSize = 6144
+
+// rejectsSealedData reports whether err is a KMS Decrypt answer that blames
+// the ciphertext blob rather than the service, the key's state or the
+// caller's permissions: InvalidCiphertextException (tampered, truncated or
+// extended blob, or an encryption context -- the AAD -- that does not match)
+// or IncorrectKeyException (a blob produced under a different KMS key).
+func rejectsSealedData(err error) bool {
+	var invalidCiphertext *kmstypes.InvalidCiphertextException
+	if errors.As(err, &invalidCiphertext) {
+		return true
+	}
+	var incorrectKey *kmstypes.IncorrectKeyException
+	return errors.As(err, &incorrectKey)
 }
 
 // MarshalSealedData serializes SealedData to JSON for storage
