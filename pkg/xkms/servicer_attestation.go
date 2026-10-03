@@ -62,6 +62,38 @@ type AttestationService interface {
 	// the registered ContainerAttestor. Returns ErrAttestationNoAttestor
 	// when no attestor has been registered.
 	AttestContainer(ctx context.Context, req *AttestContainerRequest) (*AttestContainerResponse, error)
+
+	// PutEndorsement stores (or replaces) a trust anchor of the Verifier:
+	// a reference-value signer or an attestation-key root.
+	PutEndorsement(ctx context.Context, req *PutEndorsementRequest) (*Endorsement, error)
+
+	// ListEndorsements lists the tenant's endorsements, optionally of one
+	// kind.
+	ListEndorsements(ctx context.Context, req *ListEndorsementsRequest) (*ListEndorsementsResponse, error)
+
+	// DeleteEndorsement removes an endorsement. Reference values it signed
+	// stop appraising until another endorsement verifies them.
+	DeleteEndorsement(ctx context.Context, req *DeleteEndorsementRequest) error
+
+	// PutReferenceValues verifies a signed CoRIM against the stored
+	// reference-signer endorsements and stores it under a name. Unsigned or
+	// unendorsed reference values are refused: there is no trust on first
+	// use.
+	PutReferenceValues(ctx context.Context, req *PutReferenceValuesRequest) (*ReferenceValues, error)
+
+	// GetReferenceValues returns stored reference values.
+	GetReferenceValues(ctx context.Context, req *GetReferenceValuesRequest) (*ReferenceValues, error)
+
+	// ListReferenceValues lists stored reference values.
+	ListReferenceValues(ctx context.Context) (*ListReferenceValuesResponse, error)
+
+	// DeleteReferenceValues removes stored reference values.
+	DeleteReferenceValues(ctx context.Context, req *DeleteReferenceValuesRequest) error
+
+	// AppraiseQuote appraises TPM quote evidence — attestation-key
+	// certificate, quote, optional event log — against stored, signed
+	// reference values and returns the attestation result.
+	AppraiseQuote(ctx context.Context, req *AppraiseQuoteRequest) (*AttestationResult, error)
 }
 
 // ContainerAttestor is the application-supplied orchestration hook the
@@ -300,6 +332,29 @@ var (
 type attestationService struct {
 	verifier *xkmsattestation.Verifier
 	attestor ContainerAttestor
+
+	// store holds the Verifier's endorsements and reference values; nil
+	// leaves those verbs reporting AttestationStoreUnavailableError.
+	store AttestationStore
+
+	// now is the appraisal clock.
+	now func() time.Time
+}
+
+// AttestationOption configures NewAttestationService.
+type AttestationOption func(*attestationService)
+
+// WithAttestationStore gives the service the store its Verifier keeps
+// endorsements and reference values in. The server passes the platform
+// shard's qrdb KV; an embedder may pass any AttestationStore.
+func WithAttestationStore(store AttestationStore) AttestationOption {
+	return func(s *attestationService) { s.store = store }
+}
+
+// WithAttestationClock sets the clock appraisals and validity windows are
+// evaluated at. The default is time.Now.
+func WithAttestationClock(now func() time.Time) AttestationOption {
+	return func(s *attestationService) { s.now = now }
 }
 
 // NewAttestationService creates an AttestationService.
@@ -308,11 +363,16 @@ type attestationService struct {
 // may supply additional per-call anchors through the request options. A nil
 // attestor is valid — AttestContainer then returns ErrAttestationNoAttestor
 // until an application registers one, matching the DANEPublisher contract.
-func NewAttestationService(trustAnchors []*x509.Certificate, attestor ContainerAttestor) AttestationService {
-	return &attestationService{
+func NewAttestationService(trustAnchors []*x509.Certificate, attestor ContainerAttestor, opts ...AttestationOption) AttestationService {
+	s := &attestationService{
 		verifier: xkmsattestation.NewVerifier(trustAnchors),
 		attestor: attestor,
+		now:      time.Now,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // NewRuntimeContainerAttestor adapts a standalone attesting container runtime
