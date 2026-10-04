@@ -103,7 +103,7 @@ func TestWireOATH_RoundTripPreservesTimestamp(t *testing.T) {
 	back := localOATH(wire)
 	require.Len(t, back, 1)
 	assert.True(t, updated.Equal(back[0].UpdatedAt))
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", back[0].Secret)
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", textOf(back[0].Secret))
 }
 
 func TestWirePasswords_RoundTrip(t *testing.T) {
