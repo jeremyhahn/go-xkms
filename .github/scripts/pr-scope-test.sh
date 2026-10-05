@@ -12,7 +12,7 @@
 #   2. A single non-doc path in an otherwise-docs diff must flip docs_only
 #      to false -- the dangerous direction is mislabeling a code change as
 #      docs-only, not the reverse.
-#   3. Tier selection: train/* head ref -> full_tier=true; anything else on
+#   3. Tier selection: train/* or merge-train/* head ref -> full_tier=true; anything else on
 #      a pull_request -> false; push/dispatch -> true regardless of ref.
 #   4. Every "no usable base" path (empty BASE_SHA, all-zero BEFORE_SHA, a
 #      base sha this clone cannot reach) fails OPEN: docs_only=false.
@@ -125,6 +125,24 @@ check "exit 0" [ "$rc" -eq 0 ]
 check "full_tier=true" [ "$(outval full_tier)" = true ]
 check "docs_only still true (independent axis)" [ "$(outval docs_only)" = true ]
 (cd "$repo" && git checkout -q main && git branch -q -D "train/7")
+
+echo "== merge-train/* head ref (automerge v7 train PR) forces the full tier =="
+(
+	cd "$repo"
+	git checkout -q -b "merge-train/1759600000-42"
+	mkdir -p pkg/foo && echo 'package foo' >pkg/foo/train.go
+	git add -A
+	git commit -q -m code-on-merge-train
+)
+run pull_request "$base_sha" "" "merge-train/1759600000-42"
+check "exit 0" [ "$rc" -eq 0 ]
+check "full_tier=true" [ "$(outval full_tier)" = true ]
+check "docs_only=false" [ "$(outval docs_only)" = false ]
+(cd "$repo" && git checkout -q main && git branch -q -D "merge-train/1759600000-42")
+
+echo "== a branch merely containing train in its name stays fast tier =="
+run pull_request "$base_sha" "" "issue/9-merge-train-docs"
+check "full_tier=false" [ "$(outval full_tier)" = false ]
 
 echo "== push and workflow_dispatch are always full tier =="
 run push "$base_sha" "$base_sha" ""

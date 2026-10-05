@@ -48,12 +48,14 @@ out="${GITHUB_OUTPUT:?GITHUB_OUTPUT must be set (run from a GitHub/Gitea Actions
 # Non-pull_request events (push to main, workflow_dispatch) always get the
 # full tier: main requires it, and a manual dispatch is rare enough that
 # erring toward "run everything" costs nothing. A pull_request gets it only
-# when its head branch is train/* -- see the top-of-file note in ci.yml for
-# why trains, not every PR, carry the full matrix.
+# when its head branch is train/* or merge-train/* (automerge.yml v7 opens
+# each train as a PR from merge-train/<epoch>-<run id>, #1422) -- see the
+# top-of-file note in ci.yml for why trains, not every PR, carry the full
+# matrix.
 full_tier=true
 if [ "${EVENT_NAME:-}" = "pull_request" ]; then
 	case "${HEAD_REF:-}" in
-	train/*) full_tier=true ;;
+	train/* | merge-train/*) full_tier=true ;;
 	*) full_tier=false ;;
 	esac
 fi

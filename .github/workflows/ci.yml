@@ -1,9 +1,21 @@
-# ci-template: v1.9 (customized)
+# ci-template: v1.15 (customized)
 # Reconciled against software/templates/github-actions/ci.yml in the
 # automatethethings repo (devops.md §1/§8/§9). Divergence outside the
 # repo-specific blocks below is a defect.
 #
-# v1.9 STAGED FAIL-FAST (adopted 2026-08-21, go-xkms #37). Fail-fast comes from
+# v1.15 (2026-10-05, automatethethings#209, #1422): EVERY JOB STARTS AT ONCE.
+# Template v1.14 dropped the v1.9 staged fail-fast below: no job `needs:`
+# lint, build or arch-gates any more, so a run takes as long as its slowest
+# job -- the shortest wall-clock to a green gate, which is what an automerge
+# v7 merge train waits on. A broken head now spends the heavy tier too; the
+# concurrency block still sheds superseded heads. `changes` stays a `needs:`
+# wherever a job reads its outputs (that is data, not staging). CI Gate still
+# needs every job and fails closed on each. push runs on main only; v7's
+# trains are PRs from merge-train/* and pr-scope.sh puts them on the full
+# tier, as train/* was. The v1.9 history below is kept as the record.
+#
+# v1.9 STAGED FAIL-FAST (adopted 2026-08-21, go-xkms #37; SUPERSEDED by v1.15
+# above -- the ordering it describes is gone). Fail-fast came from
 # ORDERING: a cheap fast tier gates the expensive one. Measured on run 4384,
 # this repo's jobs are:
 #
@@ -17,9 +29,8 @@
 #   concurrency block below. The ordering it introduced is unaffected and stays
 #   exactly as designed. Ordering and cancellation are COMPLEMENTARY, not
 #   alternatives: ordering bounds what a BROKEN head burns (nothing supersedes
-#   it), cancellation sheds a SUPERSEDED head. Keep both -- do not drop the
-#   expensive tier's `needs: [lint, build, arch-gates]` or the arch-gates
-#   deviation below.
+#   it), cancellation sheds a SUPERSEDED head. (v1.15 dropped the ordering by
+#   owner ruling; cancellation stays.)
 #
 # Integration Tests (17m25s) left this file entirely on 2026-08-21 -- it was
 # already advisory and is now known-red on a cause outside this repo (#61); see
@@ -30,11 +41,9 @@
 # tier still ran. Now a broken push reports in minutes and skips roughly 100+
 # runner-minutes downstream; a green push pays one fast-tier of extra latency.
 #
-# DEVIATION from the template, deliberate: the template's fast tier is
-# lint + build. arch-gates is added here because it runs in SIX SECONDS and
-# previously gated nothing at all -- an architectural boundary check that costs
-# nothing and reports instantly belongs in front of a 29-minute race detector,
-# not beside it.
+# (v1.9-era DEVIATION, retired by v1.15: arch-gates joined lint + build in
+# the fast tier that gated the expensive jobs. With no staging it is simply
+# one more job that starts at once and that CI Gate requires.)
 #
 # trivy already lives in nightly.yml (#43) and this repo has no fips job (its
 # gate is withheld pending #23), so the template's nightly migration is a
@@ -47,7 +56,8 @@
 # Lint and Security Scan jobs and .github/scripts/require-tool.sh.
 #
 # TWO-TIER PIPELINE (2026-09-24, branch ci/two-tier-pipeline). Almost every
-# change lands through a merge-train PR (head branch `train/<n>`): many PRs
+# change lands through a merge-train PR (head branch `train/<n>`, and since
+# automerge.yml v7 `merge-train/<epoch>-<run id>`, #1422): many PRs
 # merged into one branch, then that one branch fast-forwards into main. An
 # ordinary PR's own CI run was therefore never the thing standing between a
 # defect and main -- the train's run is -- so running the FULL 9-14 job
@@ -69,7 +79,7 @@
 #               arch-gates is a six-second grep with nothing to gain by
 #               excluding it.
 #
-#   full_tier   true for a train/* PR or a push to main (or a manual
+#   full_tier   true for a train/* or merge-train/* PR or a push to main (or a manual
 #               dispatch); false for every other pull_request. Selects which
 #               of the two mutually-exclusive job sets below runs:
 #
@@ -93,7 +103,7 @@
 # ci-gate treats a job's `skipped` result as PASS exactly when the tier/
 # docs-only split says that job was not supposed to run for THIS PR, and as
 # FAIL otherwise -- the same "a gate that can pass vacuously is worse than no
-# gate" principle the v1.9 block above already applies to the staged
+# gate" principle the v1.9 block above applied to the staged
 # ordering, extended to cover deliberate exclusion as well as upstream
 # failure.
 #
@@ -236,12 +246,10 @@ jobs:
   # toolchain, no `needs:`) so it starts immediately and reports back fast --
   # a `git diff` against a full clone, no compilation. `lint` and
   # `arch-gates` stay unconditional and start immediately too, same as
-  # before this change. `build` now needs this job's `docs_only` output
-  # before it can start (a docs-only diff has nothing to build), so it pays
-  # this job's runtime as added latency on its own critical path; every
-  # OTHER job already staged behind `[lint, build, arch-gates]` (the v1.9
-  # fail-fast) absorbs that delay for free since `changes` finishes well
-  # before `build`'s own ~7m matrix does.
+  # before this change. Every Go job needs this job's outputs before it can
+  # start (a docs-only diff has nothing to build, and the tier picks which
+  # jobs run), so each pays this job's short runtime as added latency; that
+  # is a data dependency, not staging, and v1.15 keeps it.
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
@@ -281,7 +289,7 @@ jobs:
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
-    needs: [lint, build, arch-gates, changes]
+    needs: [changes]
     # Full tier only (see the top-of-file TWO-TIER PIPELINE note): this is
     # the `make coverage` run with the root 89% COVERAGE_THRESHOLD gate,
     # reserved for train/* PRs and pushes to main. An ordinary PR gets the
@@ -502,16 +510,14 @@ jobs:
   nested-module-test:
     name: Nested Module Tests (sdk/go, xkey)
     runs-on: ubuntu-latest
-    # STAGED (ci-template v1.9): waits on the fast tier so a broken push stops
-    # spending immediately. Gitea has no run-cancel API, so ordering is the
-    # only fail-fast available — without it a red lint keeps the whole suite
-    # burning runners in parallel.
+    # No staging behind lint/build/arch-gates (ci-template v1.15): starts at
+    # once; `changes` is needed only for its outputs.
     #
     # Full tier only (TWO-TIER PIPELINE note, top of file): these are the
     # full race-detector suites. An ordinary PR gets `nested-module-build`
     # instead -- sdk/go and xkey still have to COMPILE on every PR, but the
     # full run is reserved for train/* PRs and pushes to main.
-    needs: [lint, build, arch-gates, changes]
+    needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
 
     steps:
@@ -811,7 +817,7 @@ jobs:
   nested-module-build:
     name: Nested Module Build (sdk/go, xkey, web/desktop) [fast tier]
     runs-on: ubuntu-latest
-    needs: [lint, build, arch-gates, changes]
+    needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier != 'true'
 
     steps:
@@ -860,7 +866,7 @@ jobs:
   test-changed:
     name: Unit Tests (changed packages) [fast tier]
     runs-on: ubuntu-latest
-    needs: [lint, build, arch-gates, changes]
+    needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier != 'true'
 
     # Same cgroup-unaware Go toolchain bound as the `test` job above (see its
@@ -1139,13 +1145,11 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
-    # STAGED (ci-template v1.9): waits on the fast tier so a broken push stops
-    # spending immediately. Gitea has no run-cancel API, so ordering is the
-    # only fail-fast available — without it a red lint keeps the whole suite
-    # burning runners in parallel.
+    # No staging behind lint/build/arch-gates (ci-template v1.15): starts at
+    # once; `changes` is needed only for its outputs.
     #
     # Full tier only (TWO-TIER PIPELINE note, top of file).
-    needs: [lint, build, arch-gates, changes]
+    needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
     permissions:
       security-events: write
@@ -1241,8 +1245,7 @@ jobs:
     name: Build Binaries
     runs-on: ubuntu-latest
     # Runs on BOTH tiers (TWO-TIER PIPELINE note, top of file) -- lint,
-    # build and arch-gates are the fast-tier trio every other job stages
-    # behind, and stay unconditional except for the one thing that can
+    # build and arch-gates run on every tier, and stay unconditional except for the one thing that can
     # legitimately skip them: a docs-only diff has nothing for a build to
     # compile.
     needs: [changes]
@@ -1382,14 +1385,12 @@ jobs:
   build-raft:
     name: Build & Test (raft tag matrix)
     runs-on: ubuntu-latest
-    # STAGED (ci-template v1.9): waits on the fast tier so a broken push stops
-    # spending immediately. Gitea has no run-cancel API, so ordering is the
-    # only fail-fast available — without it a red lint keeps the whole suite
-    # burning runners in parallel.
+    # No staging behind lint/build/arch-gates (ci-template v1.15): starts at
+    # once; `changes` is needed only for its outputs.
     #
     # Full tier only (TWO-TIER PIPELINE note, top of file): this is the raft
     # tag matrix, part of "all tagged backends".
-    needs: [lint, build, arch-gates, changes]
+    needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
     strategy:
       matrix:
@@ -1471,7 +1472,11 @@ jobs:
   docker:
     name: Docker Build & Scan
     runs-on: ubuntu-latest
-    needs: [lint, build, arch-gates, security, changes]
+    needs: [changes]
+    # v1.15: no longer waits on security. That edge was ordering only: this
+    # job publishes nothing (its push step is `if: false`; release.yml
+    # publishes), so there is no artefact or side effect to hold back, and
+    # CI Gate fails closed on security either way.
     # Push-only, as before, PLUS docs_only (TWO-TIER PIPELINE note, top of
     # file): a docs-only push straight to main -- a train that turned out to
     # carry only doc changes -- has no image worth building or scanning
@@ -1645,13 +1650,11 @@ jobs:
   race:
     name: Race Detector
     runs-on: ubuntu-latest
-    # STAGED (ci-template v1.9): waits on the fast tier so a broken push stops
-    # spending immediately. Gitea has no run-cancel API, so ordering is the
-    # only fail-fast available — without it a red lint keeps the whole suite
-    # burning runners in parallel.
+    # No staging behind lint/build/arch-gates (ci-template v1.15): starts at
+    # once; `changes` is needed only for its outputs.
     #
     # Full tier only (TWO-TIER PIPELINE note, top of file).
-    needs: [lint, build, arch-gates, changes]
+    needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
 
     # Same cgroup-unaware Go toolchain bound as the `test` job above (see its
@@ -1745,9 +1748,7 @@ jobs:
   # `make test-tpm2-simulator` is the single entry point; the suite measures
   # ~90 s on a workstation and the target bounds it at 20 minutes.
   #
-  # Deliberately does not `need` [lint, build, arch-gates]: the suite is
-  # cheap and independent of the fast tier, so staging it behind that trio
-  # would add latency without saving runner time. It IS a required check
+  # Does not `need` [lint, build, arch-gates] (no job does since v1.15). It IS a required check
   # (see its entry in ci-gate's needs list below); the paragraph that used
   # to say otherwise here was stale.
   #
@@ -1859,8 +1860,8 @@ jobs:
   #
   # TWO-TIER PIPELINE (top-of-file note): a job's `skipped` result is now
   # ambiguous between two causes that must be judged oppositely --
-  #   - the v1.9 staged fail-fast: an upstream stage (lint/build/arch-gates)
-  #     failed and this job never got a chance to run -- FAIL, same as ever.
+  #   - an upstream need (only `changes` since v1.15) failed and this job
+  #     never got a chance to run -- FAIL, same as ever.
   #   - the two-tier/docs-only split deliberately excluded this job from
   #     THIS run (a fast-tier PR skipping a full-tier-only job, or a
   #     docs-only diff skipping every Go job) -- PASS, by design: failing it
@@ -1891,7 +1892,7 @@ jobs:
                 if [ "$3" = 1 ]; then
                   echo "SKIP $1 (excluded by the tier/docs-only split, by design)"
                 else
-                  echo "FAIL $1 (should have run for this tier -- or an upstream fast-tier stage failed, see lint/build/arch-gates)"
+                  echo "FAIL $1 (should have run for this tier -- or its upstream need failed, see changes)"
                   BAD=1
                 fi
                 ;;
