@@ -5,8 +5,8 @@
 # WHY THIS EXISTS
 #
 # The natural way to write that comparison is `case "$report" in *"$bare"*)` —
-# a SUBSTRING test, which FAILS OPEN. A `v1.7.0` pin accepts a tool reporting
-# `v11.7.0`; a `v2.29.0` pin accepts `v12.29.0`. CI would run an unintended
+# a SUBSTRING test, which FAILS OPEN. A `v1.8.0` pin accepts a tool reporting
+# `v11.8.0`; a `v2.29.0` pin accepts `v12.29.0`. CI would run an unintended
 # scanner version and print `ok`, defeating the exact reproducibility assertion
 # the check exists to make. That is a check looser than the property it claims
 # — the same defect class this whole change is about, appearing inside the fix
@@ -20,9 +20,9 @@
 # The fakes here print the REAL output formats, captured from the actual
 # binaries rather than written from memory:
 #
-#	golangci-lint has version 2.13.2 built with go1.26.7 from (unknown, ...
+#	golangci-lint has version 2.14.0 built with go1.27.1 from (unknown, ...
 #	Version: v2.29.0
-#	Go: go1.26.7 / Scanner: govulncheck@v1.7.0
+#	Go: go1.27.1 / Scanner: govulncheck@v1.8.0
 #
 # govulncheck's is the one that matters most: its output's FIRST version-shaped
 # token is the GO TOOLCHAIN's, so a generic "find something version-shaped"
@@ -111,20 +111,20 @@ GOSEC=github.com/securego/gosec/v2/cmd/gosec
 GOVULN=golang.org/x/vuln/cmd/govulncheck
 
 echo "== real output, matching pin: must ACCEPT =="
-fake golangci-lint 'golangci-lint has version 2.13.2 built with go1.26.7 from (unknown, modified: ?, mod sum: "h1:x") on (unknown)'
-expect accept "golangci-lint 2.13.2 vs pin v2.13.2" golangci-lint v2.13.2 "$GCL"
+fake golangci-lint 'golangci-lint has version 2.14.0 built with go1.27.1 from (unknown, modified: ?, mod sum: "h1:x") on (unknown)'
+expect accept "golangci-lint 2.14.0 vs pin v2.14.0" golangci-lint v2.14.0 "$GCL"
 fake gosec 'Version: v2.29.0' 'Git tag: ' 'Build date: '
 expect accept "gosec v2.29.0 vs pin v2.29.0" gosec v2.29.0 "$GOSEC"
-fake govulncheck 'Go: go1.26.7' 'Scanner: govulncheck@v1.7.0' 'DB: https://vuln.go.dev'
-expect accept "govulncheck v1.7.0 vs pin v1.7.0" govulncheck v1.7.0 "$GOVULN"
+fake govulncheck 'Go: go1.27.1' 'Scanner: govulncheck@v1.8.0' 'DB: https://vuln.go.dev'
+expect accept "govulncheck v1.8.0 vs pin v1.8.0" govulncheck v1.8.0 "$GOVULN"
 
 echo "== NEAR MISS: the substring hole. Must REJECT =="
-fake govulncheck 'Go: go1.26.7' 'Scanner: govulncheck@v11.7.0' 'DB: https://vuln.go.dev'
-expect reject "govulncheck v11.7.0 vs pin v1.7.0  (prefix digit)" govulncheck v1.7.0 "$GOVULN"
+fake govulncheck 'Go: go1.27.1' 'Scanner: govulncheck@v11.8.0' 'DB: https://vuln.go.dev'
+expect reject "govulncheck v11.8.0 vs pin v1.8.0  (prefix digit)" govulncheck v1.8.0 "$GOVULN"
 fake gosec 'Version: v12.29.0' 'Git tag: ' 'Build date: '
 expect reject "gosec v12.29.0 vs pin v2.29.0  (prefix digit)" gosec v2.29.0 "$GOSEC"
-fake golangci-lint 'golangci-lint has version 12.13.2 built with go1.26.7 from (unknown) on (unknown)'
-expect reject "golangci-lint 12.13.2 vs pin v2.13.2  (prefix digit)" golangci-lint v2.13.2 "$GCL"
+fake golangci-lint 'golangci-lint has version 12.14.0 built with go1.27.1 from (unknown) on (unknown)'
+expect reject "golangci-lint 12.14.0 vs pin v2.14.0  (prefix digit)" golangci-lint v2.14.0 "$GCL"
 fake gosec 'Version: v2.29.01' 'Git tag: ' 'Build date: '
 expect reject "gosec v2.29.01 vs pin v2.29.0  (suffix digit)" gosec v2.29.0 "$GOSEC"
 fake gosec 'Version: v2.29.0-rc1' 'Git tag: ' 'Build date: '
@@ -134,15 +134,15 @@ echo "== the skew this change removes: must REJECT =="
 # The exact state measured on this repo's Lint leg: the image bakes v2.13.2 and
 # the job had installed v2.12.2 over it. With the install gone, a runner that
 # has not been rebuilt reports the old version and this is what says so.
-fake golangci-lint 'golangci-lint has version 2.12.2 built with go1.26.7 from (unknown, modified: ?, mod sum: "h1:x") on (unknown)'
-expect reject "golangci-lint 2.12.2 vs pin v2.13.2  (stale runner image)" golangci-lint v2.13.2 "$GCL"
+fake golangci-lint 'golangci-lint has version 2.12.2 built with go1.27.1 from (unknown, modified: ?, mod sum: "h1:x") on (unknown)'
+expect reject "golangci-lint 2.12.2 vs pin v2.14.0  (stale runner image)" golangci-lint v2.14.0 "$GCL"
 
 echo "== the WRONG-TOKEN trap: a generic extractor would take the Go version =="
 # If the pin were ever the same shape as the toolchain version in the output, a
-# loose extractor matches `go1.26.7` and reports a pass for a tool that is a
+# loose extractor matches `go1.27.1` and reports a pass for a tool that is a
 # completely different version.
-fake govulncheck 'Go: go1.26.7' 'Scanner: govulncheck@v1.7.0' 'DB: https://vuln.go.dev'
-expect reject "govulncheck vs pin v1.26.7  (must not match 'Go: go1.26.7')" govulncheck v1.26.7 "$GOVULN"
+fake govulncheck 'Go: go1.27.1' 'Scanner: govulncheck@v1.8.0' 'DB: https://vuln.go.dev'
+expect reject "govulncheck vs pin v1.27.1  (must not match 'Go: go1.27.1')" govulncheck v1.27.1 "$GOVULN"
 
 echo "== unparseable / unreadable: must REJECT, never fall back to looser =="
 fake gosec 'Version: dev' 'Git tag: ' 'Build date: '

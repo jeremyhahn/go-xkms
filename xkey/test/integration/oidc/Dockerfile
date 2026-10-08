@@ -1,7 +1,7 @@
 # Dockerfile for xkey OIDC integration tests
 # Uses ORY Hydra as the OIDC provider
 
-FROM golang:1.27.0-bookworm
+FROM golang:1.27.1-bookworm
 
 ENV GOTOOLCHAIN=auto
 

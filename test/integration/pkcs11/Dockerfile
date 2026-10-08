@@ -2,14 +2,14 @@
 # (scripts/build-softhsm.sh) instead of Debian's 2.6.1, which answers an AES-GCM
 # tag mismatch with the ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper could not
 # be classified as types.ErrSealedDataAuthentication (go-xkms#1418).
-FROM golang:1.27.0-bookworm AS softhsm
+FROM golang:1.27.1-bookworm AS softhsm
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf automake libtool libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY scripts/build-softhsm.sh /build/build-softhsm.sh
 RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
-FROM golang:1.27.0-bookworm
+FROM golang:1.27.1-bookworm
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \

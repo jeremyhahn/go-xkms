@@ -194,7 +194,7 @@ env:
   # pin all moved together; the Dockerfiles followed to close out #36). Bump
   # the patch version here as 1.27.x releases ship; re-run the swiss/pebble
   # compatibility check above before ever bumping the minor version again.
-  GO_VERSION: '1.27.0'
+  GO_VERSION: '1.27.1'
   # ANALYSIS TOOL PINS (#189). These are the versions BAKED INTO the
   # self-hosted runner image; .github/scripts/require-tool.sh asserts the
   # binary on PATH self-reports exactly this and fails the job otherwise.
@@ -221,16 +221,16 @@ env:
   # the old install was blocking the 1.27 wave from the runner it was already
   # fixed on. This does NOT bump GO_VERSION -- that is the wave's decision
   # (company task #121), and it is now unblocked rather than made.
-  GOLANGCI_LINT_VERSION: 'v2.13.2'
+  GOLANGCI_LINT_VERSION: 'v2.14.0'
   GOSEC_VERSION: 'v2.29.0'
-  GOVULNCHECK_VERSION: 'v1.7.0'
+  GOVULNCHECK_VERSION: 'v1.8.0'
   # Coverage RATCHET, not aspiration: set just under the current measured
   # baseline (89.9% at 2026-08-17) so the gate fails on regression instead
   # of being permanently red — it had never passed at 90 and therefore
   # guarded nothing. Raise it as coverage grows; 90%+ remains the
   # CLAUDE.md target and the Makefile's own gate stays at 80.
   COVERAGE_THRESHOLD: 89
-  TRIVY_DIGEST: 'sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969'
+  TRIVY_DIGEST: 'sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa'
   REGISTRY: ghcr.io
   IMAGE_NAME: jeremyhahn/xkms-cli
   # NO GOPROXY / GOSUMDB overrides here (ci-template v1.1 prohibition). The
@@ -1008,7 +1008,7 @@ jobs:
       # on a developer's machine — a guard nothing executes is a guard that can
       # rot into agreement with whatever the code does. They exist because the
       # comparison they cover is easy to write FAILING OPEN: a substring test
-      # accepts v11.7.0 for a v1.7.0 pin. Fakes printing the real output
+      # accepts v11.8.0 for a v1.8.0 pin. Fakes printing the real output
       # formats; no network, no host mutation, under a second.
       - name: Test the pinned-version gate
         run: .github/scripts/require-tool-test.sh
@@ -1577,7 +1577,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         if: github.server_url == 'https://github.com'
         with:
-          version: v0.74.0
+          version: v0.75.0
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           format: 'sarif'
           output: 'trivy-results.sarif'
@@ -1598,11 +1598,11 @@ jobs:
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
           # Pull trivy image by digest to ensure exact version
-          docker pull "aquasec/trivy:0.74.0@${TRIVY_DIGEST}"
+          docker pull "aquasec/trivy:0.75.0@${TRIVY_DIGEST}"
 
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            "aquasec/trivy:0.74.0@${TRIVY_DIGEST}" image \
+            "aquasec/trivy:0.75.0@${TRIVY_DIGEST}" image \
               --format table \
               --severity CRITICAL,HIGH \
               --ignore-unfixed \

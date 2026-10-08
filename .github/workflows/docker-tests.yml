@@ -14,7 +14,7 @@ on:
 # ci.yml records -- `GOSUMDB: off` disabled checksum verification for every
 # third-party dependency.
 env:
-  GO_VERSION: '1.27.0'
+  GO_VERSION: '1.27.1'
 
 jobs:
   lint:
@@ -43,7 +43,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
         with:
-          version: v2.13.2
+          version: v2.14.0
 
   unit-tests:
     name: Unit Tests

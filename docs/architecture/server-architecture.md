@@ -1042,7 +1042,7 @@ xkms_keys_total{backend}
 ### Docker
 
 ```dockerfile
-FROM golang:1.27.0-alpine AS builder
+FROM golang:1.27.1-alpine AS builder
 WORKDIR /build
 COPY . .
 RUN go build -o xkmsd ./cmd/server

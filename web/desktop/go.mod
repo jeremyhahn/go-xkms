@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-xkms/web/desktop
 
-go 1.27.0
+go 1.27.1
 
 // Intra-repo submodule resolution (valid in-workspace and standalone on GitHub).
 // Cross-repo deps resolve via the parent go.work `use` directives; no cross-repo

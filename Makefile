@@ -4101,16 +4101,16 @@ install-gosec:
 ## install-tools: Install development tools (golangci-lint, gosec, govulncheck, trivy, etc.)
 install-tools: install-gosec install-govulncheck install-trivy
 	@echo "$(CYAN)$(BOLD)→ Installing development tools...$(RESET)"
-	@echo "$(CYAN)  Installing golangci-lint v2.13.2 (same as CI)...$(RESET)"
+	@echo "$(CYAN)  Installing golangci-lint v2.14.0 (same as CI)...$(RESET)"
 	@cd /tmp && \
-		wget -q https://github.com/golangci/golangci-lint/releases/download/v2.13.2/golangci-lint-2.13.2-linux-amd64.tar.gz && \
-		tar -xzf golangci-lint-2.13.2-linux-amd64.tar.gz && \
+		wget -q https://github.com/golangci/golangci-lint/releases/download/v2.14.0/golangci-lint-2.14.0-linux-amd64.tar.gz && \
+		tar -xzf golangci-lint-2.14.0-linux-amd64.tar.gz && \
 		sudo mkdir -p $(shell go env GOPATH)/bin && \
-		sudo cp golangci-lint-2.13.2-linux-amd64/golangci-lint $(shell go env GOPATH)/bin/ && \
+		sudo cp golangci-lint-2.14.0-linux-amd64/golangci-lint $(shell go env GOPATH)/bin/ && \
 		sudo chmod +x $(shell go env GOPATH)/bin/golangci-lint && \
 		sudo chown $(shell whoami):$(shell whoami) $(shell go env GOPATH)/bin/golangci-lint && \
-		rm -rf golangci-lint-2.13.2-linux-amd64*
-	@echo "$(GREEN)  ✓ golangci-lint v2.13.2 installed$(RESET)"
+		rm -rf golangci-lint-2.14.0-linux-amd64*
+	@echo "$(GREEN)  ✓ golangci-lint v2.14.0 installed$(RESET)"
 	@echo "$(GREEN)✓ Development tools installed$(RESET)"
 
 # ==============================================================================

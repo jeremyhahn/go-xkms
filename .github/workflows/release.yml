@@ -59,7 +59,7 @@ env:
   # generated Dockerfile does not fetch anything -- the pin holds.
   #
   # Unpin with ci.yml in the Go 1.27.0 wave (company task #121).
-  GO_VERSION: '1.27.0'
+  GO_VERSION: '1.27.1'
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: jeremyhahn/xkms-server
   IMAGE_NAME_CLI: jeremyhahn/xkms-cli
@@ -965,7 +965,7 @@ jobs:
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.74.0 image \
+            aquasec/trivy:0.75.0 image \
               --format table \
               --severity CRITICAL,HIGH \
               --ignore-unfixed \
@@ -1105,7 +1105,7 @@ jobs:
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.74.0 image \
+            aquasec/trivy:0.75.0 image \
               --format table \
               --severity CRITICAL,HIGH \
               --ignore-unfixed \

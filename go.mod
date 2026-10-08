@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-xkms
 
-go 1.27.0
+go 1.27.1
 
 require (
 	cloud.google.com/go/kms v1.31.0

@@ -177,5 +177,5 @@ Typed sentinels in `pkg/escrow/errors.go`: `ErrAgentNotConfigured`,
   `ErrNotConfigured` (no registry set) and `ErrNilRequest` (nil request)
   guards for every method that takes one.
 
-Run: `GOTOOLCHAIN=go1.26.7 GOWORK=off go test ./pkg/escrow/... ./pkg/config/... -run Escrow` and
-`GOTOOLCHAIN=go1.26.7 GOWORK=off go test ./pkg/xkms/... -run 'Escrow|RecoverKey' -tags "codec_cbor codec_json codec_msgpack tpm_simulator"`.
+Run: `GOTOOLCHAIN=go1.27.1 GOWORK=off go test ./pkg/escrow/... ./pkg/config/... -run Escrow` and
+`GOTOOLCHAIN=go1.27.1 GOWORK=off go test ./pkg/xkms/... -run 'Escrow|RecoverKey' -tags "codec_cbor codec_json codec_msgpack tpm_simulator"`.
