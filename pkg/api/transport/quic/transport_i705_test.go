@@ -207,63 +207,9 @@ func TestPKCS11StateList_NotConnected(t *testing.T) {
 
 // --- GetShare / DeleteShare ---
 
-func TestGetShare_Connected(t *testing.T) {
-	tr, srv := newI705RecordingTransport(t, mustJSON(t, transport.ShareInfo{GroupID: "g1", ServerURL: "https://a"}))
-	resp, err := tr.GetShare(context.Background(), "https://a", "g1", 2)
-	require.NoError(t, err)
-	assert.Equal(t, "g1", resp.GroupID)
-	assert.Equal(t, sharePath("https://a", "g1", 2), srv.gotPath)
-}
-
-func TestGetShare_MalformedResponse(t *testing.T) {
-	tr, _ := newI705RecordingTransport(t, []byte("not json"))
-	_, err := tr.GetShare(context.Background(), "https://a", "g1", 0)
-	require.Error(t, err)
-}
-
-func TestDeleteShare_Connected(t *testing.T) {
-	tr, srv := newI705RecordingTransport(t, mustJSON(t, map[string]bool{"success": true}))
-	err := tr.DeleteShare(context.Background(), "https://a", "g1", 3)
-	require.NoError(t, err)
-	assert.Equal(t, sharePath("https://a", "g1", 3), srv.gotPath)
-}
-
 // --- QueryAudit ---
 
-func TestQueryAudit_Connected(t *testing.T) {
-	tr, srv := newI705RecordingTransport(t, mustJSON(t, transport.AuditPage{
-		Events: []transport.AuditEvent{{Actor: "alice", Action: "sign"}}, Total: 1,
-	}))
-	page, err := tr.QueryAudit(context.Background(), &transport.AuditFilter{Actor: "alice", Limit: 10})
-	require.NoError(t, err)
-	assert.Equal(t, 1, page.Total)
-	require.Len(t, page.Events, 1)
-	assert.Equal(t, "alice", page.Events[0].Actor)
-	assert.Contains(t, srv.gotPath, "actor=alice")
-	assert.Contains(t, srv.gotPath, "limit=10")
-}
-
-func TestQueryAudit_NilFilter(t *testing.T) {
-	tr := newDisconnectedTransport()
-	_, err := tr.QueryAudit(context.Background(), nil)
-	assert.ErrorIs(t, err, transport.ErrInvalidRequest)
-}
-
 // --- TenantBarrierStatus / UpdateTenantEntitlements / UpdateTenantQuotas ---
-
-func TestTenantBarrierStatus_Connected(t *testing.T) {
-	tr, srv := newI705RecordingTransport(t, mustJSON(t, transport.TenantBarrierStatusResponse{TenantID: "acme", Initialized: true}))
-	resp, err := tr.TenantBarrierStatus(context.Background(), "acme")
-	require.NoError(t, err)
-	assert.True(t, resp.Initialized)
-	assert.Equal(t, "/api/v1/tenants/acme/barrier/status", srv.gotPath)
-}
-
-func TestTenantBarrierStatus_MalformedResponse(t *testing.T) {
-	tr, _ := newI705RecordingTransport(t, []byte("not json"))
-	_, err := tr.TenantBarrierStatus(context.Background(), "acme")
-	require.Error(t, err)
-}
 
 func TestUpdateTenantEntitlements_Connected(t *testing.T) {
 	tr, srv := newI705RecordingTransport(t, mustJSON(t, transport.UpdateTenantEntitlementsResponse{
@@ -293,44 +239,7 @@ func TestUpdateTenantQuotas_Connected(t *testing.T) {
 
 // --- ClaimShareComplete ---
 
-func TestClaimShareComplete_Connected(t *testing.T) {
-	tr, srv := newI705RecordingTransport(t, mustJSON(t, transport.ClaimShareCompleteResponse{}))
-	_, err := tr.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, "/api/v1/init/claim-share/complete", srv.gotPath)
-}
-
-func TestClaimShareComplete_NotConnected(t *testing.T) {
-	_, err := newDisconnectedTransport().ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestClaimShareComplete_MalformedResponse(t *testing.T) {
-	tr, _ := newI705RecordingTransport(t, []byte("not json"))
-	_, err := tr.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
-	require.Error(t, err)
-}
-
 // --- BarrierEnableEncryption ---
-
-func TestBarrierEnableEncryption_Connected(t *testing.T) {
-	tr, srv := newI705RecordingTransport(t, mustJSON(t, transport.BarrierEnableEncryptionResponse{Status: "started", Scope: "system"}))
-	resp, err := tr.BarrierEnableEncryption(context.Background(), &transport.BarrierEnableEncryptionRequest{Strategy: "passphrase"})
-	require.NoError(t, err)
-	assert.Equal(t, "started", resp.Status)
-	assert.Equal(t, "/api/v1/barrier/enable-encryption", srv.gotPath)
-}
-
-func TestBarrierEnableEncryption_NotConnected(t *testing.T) {
-	_, err := newDisconnectedTransport().BarrierEnableEncryption(context.Background(), &transport.BarrierEnableEncryptionRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierEnableEncryption_MalformedResponse(t *testing.T) {
-	tr, _ := newI705RecordingTransport(t, []byte("not json"))
-	_, err := tr.BarrierEnableEncryption(context.Background(), &transport.BarrierEnableEncryptionRequest{})
-	require.Error(t, err)
-}
 
 // --- BootstrapListenerKeys ---
 

@@ -20,6 +20,10 @@ import "errors"
 // the TPM policy service needs.
 var ErrUnsupportedTPM = errors.New("compose: the TPM2 backend's TPM is not a pkg/tpm2 TPM")
 
+// ErrNilDAOFactory is returned by FactoryBackend and FactoryStorage when
+// they are given no DAO factory.
+var ErrNilDAOFactory = errors.New("compose: a DAO factory is required")
+
 // Feature names a store-backed subsystem this package composes.
 type Feature string
 
@@ -61,19 +65,8 @@ const (
 	// (pkg/oidc/credential) and its refresh scheduler.
 	FeatureOIDCCredentials Feature = "oidc-credentials"
 
-	// FeatureBarrier is the system barrier served by the barrier routes.
-	FeatureBarrier Feature = "barrier"
-
-	// FeatureCustody is Shamir share custody: custodian groups and share
-	// collection over the qrdb node.
-	FeatureCustody Feature = "custody"
-
 	// FeatureInvite is the enrollment-invitation store (go-xkms#1294 part B).
 	FeatureInvite Feature = "invite"
-
-	// FeatureBackup is whole-node backup/restore over the qrdb node's
-	// shard-snapshot capability (go-xkms#728).
-	FeatureBackup Feature = "backup"
 )
 
 // FeatureDisabledError reports a feature left off because a dependency it

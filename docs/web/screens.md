@@ -32,12 +32,10 @@ every view renders the 403 it gets back.
 | Security | Platform Secrets | `#/platform` | — | `platform` |
 | Security | Init Ceremony | `#/ceremony` | — | `ceremony` |
 | Identity & Access | Users | `#/users` | `users:list` | — |
-| Identity & Access | Auth Factors | `#/factors` | `users:read` | `factors` |
 | Identity & Access | Audit | `#/audit` | `audit:read` | `audit` |
 | Identity & Access | Tenants | `#/tenants` | `tenants:list` | `tenants` |
 | Identity & Access | Custodians | `#/custodians` | — | `custodians` |
 | Identity & Access | Shares | `#/shares` | — | `shares` |
-| Cluster | Cluster | `#/cluster` | — | `cluster` |
 | Settings | Settings | `#/settings` | — | — |
 
 Signed out, only two screens exist: Login (`#/login`) and Register
@@ -82,9 +80,8 @@ and platform-sealed secrets.
 
 **Init Ceremony** — first-boot initialisation state and credential strategy.
 
-**Users / Auth Factors** — user lifecycle, and per-user N-factor enrolment
-across mTLS, FIDO2, and PIV. Revoking a user's last active factor is refused
-unless forced, and forcing it deactivates the account.
+**Users** — user lifecycle. Per-user auth factors are go-qrdb's
+`UserAuthFactorService`, managed with `xkmsctl auth factor`.
 
 **Audit** — the tamper-evident chain, filterable by actor, resource, action,
 outcome, and time range, paged by cursor. The detail drawer shows the full
@@ -92,9 +89,6 @@ event including `prev_hash`.
 
 **Tenants / Custodians / Shares** — tenant lifecycle, custodian groups and
 share distribution, and submitted share status.
-
-**Cluster** — read-only. Membership changes go through the Raft admin plane
-via `xkmsctl cluster`.
 
 **Settings** — session identity, theme, and the deployment's capability flags.
 

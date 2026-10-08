@@ -49,7 +49,7 @@ func seedPINConfig(t *testing.T, storageType FIDO2StorageType, storagePath, pin 
 func TestNewFIDO2Device_SetPINEstablishesInitialPIN(t *testing.T) {
 	cfg := seedPINConfig(t, FIDO2StorageTypeMemory, t.TempDir(), "123456")
 
-	device, err := newFIDO2Device(cfg, discardLogger())
+	device, err := newFIDO2Device(t.Context(), cfg, discardLogger())
 	require.NoError(t, err)
 	defer func() { _ = device.Close() }()
 
@@ -61,7 +61,7 @@ func TestNewFIDO2Device_SetPINEstablishesInitialPIN(t *testing.T) {
 func TestNewFIDO2Device_SetPINRefusesPolicyViolatingPIN(t *testing.T) {
 	cfg := seedPINConfig(t, FIDO2StorageTypeMemory, t.TempDir(), "12")
 
-	device, err := newFIDO2Device(cfg, discardLogger())
+	device, err := newFIDO2Device(t.Context(), cfg, discardLogger())
 	require.Nil(t, device, "no device may be handed back with an error")
 	require.ErrorIs(t, err, ErrFIDO2PINSetFailed)
 	require.ErrorIs(t, err, authenticator.ErrPINPolicyViolation,
@@ -77,13 +77,13 @@ func TestNewFIDO2Device_SetPINRefusesPolicyViolatingPIN(t *testing.T) {
 func TestNewFIDO2Device_SetPINRefusesToOverwritePersistedPIN(t *testing.T) {
 	dir := t.TempDir()
 
-	first, err := newFIDO2Device(seedPINConfig(t, FIDO2StorageTypeFile, dir, "123456"), discardLogger())
+	first, err := newFIDO2Device(t.Context(), seedPINConfig(t, FIDO2StorageTypeFile, dir, "123456"), discardLogger())
 	require.NoError(t, err)
 	require.True(t, first.auth.IsPINSet())
 	require.NoError(t, first.Close())
 
 	// Restart with --set-pin and a different PIN: refused, typed both ways.
-	second, err := newFIDO2Device(seedPINConfig(t, FIDO2StorageTypeFile, dir, "654321"), discardLogger())
+	second, err := newFIDO2Device(t.Context(), seedPINConfig(t, FIDO2StorageTypeFile, dir, "654321"), discardLogger())
 	require.Nil(t, second, "no device may be handed back with an error")
 	require.ErrorIs(t, err, ErrFIDO2PINAlreadySet)
 	require.ErrorIs(t, err, authenticator.ErrPINAlreadySet)
@@ -91,7 +91,7 @@ func TestNewFIDO2Device_SetPINRefusesToOverwritePersistedPIN(t *testing.T) {
 		"an already-set PIN is not a failed set; the operator needs the distinct message")
 
 	// Restart without --set-pin: the persisted PIN is still there.
-	third, err := newFIDO2Device(seedPINConfig(t, FIDO2StorageTypeFile, dir, ""), discardLogger())
+	third, err := newFIDO2Device(t.Context(), seedPINConfig(t, FIDO2StorageTypeFile, dir, ""), discardLogger())
 	require.NoError(t, err)
 	defer func() { _ = third.Close() }()
 	require.True(t, third.auth.IsPINSet(), "the PIN established on the first start must persist")

@@ -37,12 +37,19 @@ func (s *Server) buildOIDCCredentials() {
 		s.logger.Warn("xkms feature off", "feature", compose.FeatureOIDCCredentials, "reason", err.Error())
 		return
 	}
-	svc, err := compose.BuildOIDCCredentialService(compose.OIDCCredentialParams{
+	params := compose.OIDCCredentialParams{
 		Registry: s.barrierRegistry,
 		Leases:   coord,
 		Audit:    s.auditLogger,
 		Logger:   s.logger,
-	})
+	}
+	// The refresh leases are xkms's own coordination: over the embedded node
+	// they run as its service principal, as they run as xkms's mTLS identity
+	// against a remote datastore.
+	if s.qrdbNode != nil {
+		params.LeaseContext = s.qrdbNode.ServiceContext
+	}
+	svc, err := compose.BuildOIDCCredentialService(params)
 	if err != nil {
 		s.logger.Error("xkms feature failed to build; it stays off", "feature", compose.FeatureOIDCCredentials, "error", err)
 		return

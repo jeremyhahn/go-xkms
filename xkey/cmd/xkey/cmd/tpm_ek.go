@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/spf13/cobra"
 )
@@ -421,7 +422,7 @@ func runEKExport(cmd *cobra.Command, args []string) (err error) {
 		return nil
 	}
 
-	if err := os.WriteFile(ekExportOutput, pemData, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(ekExportOutput, pemData, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
@@ -457,7 +458,7 @@ func runEKBackup(cmd *cobra.Command, args []string) (err error) {
 			Type:  "CERTIFICATE",
 			Bytes: rsaCert.Raw,
 		}
-		if err := os.WriteFile(rsaPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(rsaPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
 			return &WrappedError{Msg: "failed to write RSA EK certificate", Err: err}
 		}
 		_, _ = fmt.Fprintf(out, "RSA EK certificate backed up to: %s\n", rsaPath)
@@ -476,7 +477,7 @@ func runEKBackup(cmd *cobra.Command, args []string) (err error) {
 			Type:  "CERTIFICATE",
 			Bytes: ecCert.Raw,
 		}
-		if err := os.WriteFile(ecPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(ecPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
 			return &WrappedError{Msg: "failed to write EC EK certificate", Err: err}
 		}
 		_, _ = fmt.Fprintf(out, "EC EK certificate backed up to: %s\n", ecPath)

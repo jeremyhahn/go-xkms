@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — Architecture
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-10-07
 
 ## Scope
 
@@ -46,7 +46,14 @@ document does not repeat it.
 `xkms.Barrier` (`sdk/go`) implements `storage.Backend`: `Put`/`Get`/`Delete`
 transparently encrypt/decrypt with a data encryption key (DEK) derived from
 a root key. The root key is generated once (`xkey barrier init`), sealed
-with the chosen strategy, and persisted at `<data dir>/barrier/root_key`.
+with the chosen strategy, and stored as the `barrier/root_key` entry of the
+data directory's go-qrdb file engine. The entry is not a file below
+`<data dir>`: the engine places each key under a hashed path and only claims
+an empty directory (or one carrying its own format marker). Because of that,
+`xkey barrier init` must run **before** any `xkey tpm` or `xkey pin` command
+on a fresh data directory — those write TPM key-store state first and the
+engine then refuses the non-empty directory. A data directory written by an
+earlier release must be re-initialized; there is no migration.
 Unsealing (`xkey barrier unseal`, or a headless command's own unseal path)
 loads that blob, unseals the root key via the recorded strategy, and derives
 the DEK into memory; sealing (`xkey barrier seal`) zeroes the DEK. The
@@ -98,7 +105,8 @@ This auto-unseal is distinct from — and does not touch — the
 
 ## Cloud KMS strategies: one composition path, two entry points
 
-`xkmsd` (`pkg/server/seal_strategies.go`) and xkey both build a cloud KMS
+`xkmsd` (`pkg/embeddednode/node_seal_cloud.go`, for its node seal) and xkey
+both build a cloud KMS
 seal strategy (`aws_kms`/`gcp_kms`/`azure_kv`/`vault`) through the same
 function, `pkg/seal.BuildCloudKMSStrategy` (re-exported as
 `sdk/go.BuildCloudKMSStrategy`): given an already-constructed backend
@@ -107,13 +115,12 @@ implementing `types.KeyProvider`), it provisions the symmetric wrapping key
 the barrier root key is sealed under — a fixed name (`sdk/go.SealKeyCN`),
 created on first use and reused thereafter — and returns the matching
 `CloudKMSStrategy`. Sharing this one function is what lets a barrier
-initialized by `xkmsd` unseal under xkey and vice versa; xkmsd's
-`buildHardwareSealStrategy` calls it for the same four strategy IDs xkey
-does.
+initialized by `xkmsd` unseal under xkey and vice versa; xkmsd's node seal
+calls it for the same four strategy IDs xkey does.
 
-What differs between the two is how the backend itself gets built, because
-xkey has no backend/provider registry of its own the way `xkmsd`'s
-`s.keyProviders` is:
+What differs between the two is how the backend itself gets built. xkmsd's
+node seal builds it from `backends.<provider>` over its own key metadata
+store; xkey builds it from its own barrier config:
 
 - `cmd/xkey/cmd/barrier_cloudkms_<provider>.go` (one file per provider,
   gated by that provider's Go build tag — `awskms`, `gcpkms`, `azurekv`,
@@ -127,16 +134,19 @@ xkey has no backend/provider registry of its own the way `xkmsd`'s
   fallback.
 - `services.BarrierService` (used by both the GUI and, via
   `cmd/xkey/cmd/extension_serve.go`, the headless daemon) has no cloud
-  backend wiring of its own either. `SetCloudKMSStrategyFunc` injects a
+  backend wiring of its own either. `SetExternalStrategyFunc` injects a
   `func(strategyID string) (xkms.SealingStrategy, error)` the same way
   `SetTPMSealerFunc` injects a TPM2 sealer; `extension serve` builds the
   strategy via the dispatch map above and injects it before calling
   `Unseal`. This replaces the flat refusal `extension serve` used to return
-  for every cloud KMS strategy (go-xkms#699); `pkcs11` and `shamir` are
-  still refused (see cli.md) because unsealing them headlessly needs a
-  secret source (a TPM-sealed PIN store, an operator share quorum) that does
-  not exist yet — a different problem from "no backend wiring", which cloud
-  KMS had until this issue.
+  for every cloud KMS strategy (go-xkms#699). `pkcs11` is injected the
+  same way (go-xkms#677). Its token PIN is the pre-barrier secret that
+  `xkey barrier init` sealed into the preseal store (`<data-dir>/preseal`)
+  under the Platform SRK and the platform PCR policy, and
+  `sdk/go.BuildPKCS11StrategyWithSealedPIN` releases it and logs in. That is
+  the same path `xkmsd` takes for a PKCS#11 node seal. `shamir` is still
+  refused (see cli.md), because no headless process can collect an operator
+  share quorum.
 
 Credentials follow the layer that owns the concept: an explicit credential
 is a `*xkms.SecretValue` config field (`BarrierAWSKMSConfig.SecretAccessKey`,
@@ -155,7 +165,7 @@ serve is registered.
 ## Named TPM policies: one service, shared by the GUI and every CLI command
 
 xKey does not keep a policy store of its own. Locally it runs the shared
-TPM policy service (`pkg/tpmpolicy`, reached through `sdk/go`
+TPM policy service (`pkg/tpm2/policy`, reached through `sdk/go`
 `BuildTPMPolicyService`) in-process over its own TPM, in the system scope,
 exactly as `xkmsd` does over its TPM — `localtpm.Open` (go-xkms
 `pkg/localtpm`, the same implementation xkmsctl runs for its TPM vault keys). Its registry lives in

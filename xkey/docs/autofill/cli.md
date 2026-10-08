@@ -1,6 +1,6 @@
 # Browser Extension AutoFill — CLI
 
-> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-10-07
 
 Every flag below is read from `cmd/xkey/cmd/extension.go`/`extension_serve.go`'s
 `init()` and matches `xkey extension <verb> --help` built from this
@@ -95,8 +95,10 @@ sessions with no desktop environment.
 | `--tpm-device` | `$TPM_DEVICE_PATH` or `/dev/tpmrm0` | TPM device for the `tpm2` barrier strategy |
 | `--tpm-simulator` | `false` | In-process TPM simulator (requires a simulator build) |
 
-A `pkcs11`, `shamir`, or cloud-KMS barrier strategy is refused at startup
-with a typed error naming why a headless process cannot drive it — see
+A `pkcs11` or cloud-KMS barrier strategy unseals at startup with no
+password, using the settings and TPM-sealed PIN that `xkey barrier init`
+saved. A `shamir` strategy is refused with a typed error, because a headless
+process cannot collect an operator quorum. See
 [engineering.md](engineering.md)'s error table.
 
 ```bash

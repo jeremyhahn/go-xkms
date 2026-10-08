@@ -94,7 +94,7 @@ func TestResolveClusterCAKeyPassphrase_CredentialReference(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, sec)
 
-	buf, err := sec.Open()
+	buf, err := sec.Open(t.Context())
 	require.NoError(t, err)
 	defer buf.Destroy()
 	assert.Equal(t, credValue, string(buf.Bytes()))

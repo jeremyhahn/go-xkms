@@ -1,6 +1,7 @@
 package tpm2
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -408,7 +409,7 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 		// otherwise assume empty auth for fresh TPMs.
 		var currentAuth types.Password
 		if tpm.config.EK != nil {
-			hierarchyAuthBytes, err := types.SecretValueBytes(tpm.config.EK.HierarchyAuth)
+			hierarchyAuthBytes, err := types.SecretValueBytes(context.Background(), tpm.config.EK.HierarchyAuth)
 			if err != nil {
 				return err
 			}

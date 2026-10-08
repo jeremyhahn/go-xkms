@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // credential_run_test.go closes the remaining branches in
-// runCredentialSubmit / runCredentialStrategy: the doInitRequest transport
+// runCredentialSubmit / runCredentialStrategy: the doServerRequest transport
 // error (unreachable server) and the JSON-decode-failure paths, neither of
 // which credential_test.go's httptest-server-error case reaches.
 package main
@@ -27,16 +27,16 @@ import (
 
 func TestRunCredentialSubmit_TransportError(t *testing.T) {
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	// Port 1 on loopback: nothing listens there, so the connection is
 	// refused immediately without any real network access.
 	globalConfig = &Config{Server: "http://127.0.0.1:1", OutputFormat: "text"}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return &http.Client{}, nil
 	}
 
@@ -58,14 +58,14 @@ func TestRunCredentialSubmit_MalformedJSONResponse(t *testing.T) {
 	defer server.Close()
 
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	globalConfig = &Config{Server: server.URL, OutputFormat: "text"}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return server.Client(), nil
 	}
 
@@ -81,14 +81,14 @@ func TestRunCredentialSubmit_MalformedJSONResponse(t *testing.T) {
 
 func TestRunCredentialStrategy_TransportError(t *testing.T) {
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	globalConfig = &Config{Server: "http://127.0.0.1:1", OutputFormat: "text"}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return &http.Client{}, nil
 	}
 
@@ -106,14 +106,14 @@ func TestRunCredentialStrategy_MalformedJSONResponse(t *testing.T) {
 	defer server.Close()
 
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	globalConfig = &Config{Server: server.URL, OutputFormat: "text"}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return server.Client(), nil
 	}
 
@@ -136,14 +136,14 @@ func TestRunCredentialList_Success(t *testing.T) {
 	defer server.Close()
 
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	globalConfig = &Config{Server: server.URL, OutputFormat: "text"}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return server.Client(), nil
 	}
 
@@ -170,14 +170,14 @@ func TestRunCredentialList_Empty(t *testing.T) {
 	defer server.Close()
 
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	globalConfig = &Config{Server: server.URL, OutputFormat: "text"}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return server.Client(), nil
 	}
 
@@ -210,14 +210,14 @@ func TestRunCredentialList_MalformedJSONResponse(t *testing.T) {
 	defer server.Close()
 
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	globalConfig = &Config{Server: server.URL, OutputFormat: "text"}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return server.Client(), nil
 	}
 

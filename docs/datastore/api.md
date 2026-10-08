@@ -1,6 +1,6 @@
 # Datastore — API
 
-> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-10-07
 
 No API surface: verified — none of REST (`pkg/api/rest/routes.go`), gRPC
 (`pkg/api/grpc`), or MCP (`pkg/api/mcp`) declares a route, RPC, or tool for

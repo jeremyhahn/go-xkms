@@ -36,8 +36,8 @@ type StorageFactory struct {
 // file-based engine rooted at baseDir. If baseDir is empty, a temporary
 // directory is created and removed on Close. This constructor is for direct
 // file/test use (see doc comment on StorageFactory); a caller composing
-// through the shared datastore (pkg/datastore.Open, or any other
-// storage.Backend -- e.g. pkg/server's createStorage view) uses NewFactory
+// through the shared datastore (pkg/compose.FactoryBackend over its DAO
+// factory, or any other storage.Backend -- e.g. pkg/server's createStorage view) uses NewFactory
 // instead, so TPM key blobs are never a second, private storage engine.
 func NewStorageFactory(logger *slog.Logger, baseDir string) (*StorageFactory, error) {
 	var tempDir string
@@ -91,8 +91,8 @@ func NewMemoryStorageFactory(logger *slog.Logger) (*StorageFactory, error) {
 }
 
 // NewFactory creates a storage factory over an already-open storage.Backend
-// -- e.g. a key-prefixed view of the shared datastore (pkg/datastore.Open,
-// or pkg/server's createStorage) -- rather than opening a private file or
+// -- e.g. a key-prefixed view of the shared datastore
+// (pkg/compose.FactoryBackend, or pkg/server's createStorage) -- rather than opening a private file or
 // memory engine. This is the constructor datastore-backed callers use;
 // NewStorageFactory/NewMemoryStorageFactory remain for direct file/in-memory
 // use (tests, standalone tooling) and are implemented in terms of this one.

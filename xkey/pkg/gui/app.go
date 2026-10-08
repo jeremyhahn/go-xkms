@@ -133,8 +133,6 @@ type App struct {
 	secureBrowserService     *services.SecureBrowserService
 	apiExplorerService       *services.APIExplorerService
 	loginTokens              *tokenstore.FileStore // nil when the store could not be opened
-	shareService             *services.ShareService
-	custodianService         *services.CustodianService
 	tenantService            *services.TenantService
 	agentService             *services.AgentService
 	autofillService          *services.AutoFillService
@@ -962,33 +960,6 @@ func (a *App) initializeDataDir() error {
 			a.log.Warn("failed to create OIDC data directory", "error", mkErr)
 		} else {
 			a.oidcService.SetDataDir(oidcDataDir)
-		}
-	}
-
-	// Share storage — encrypted via barrier or plain file fallback.
-	if barrierBackend != nil {
-		ss, ssErr := xkmssdk.NewBackendShareStore(barrierBackend, "shares/")
-		if ssErr != nil {
-			a.log.Warn("failed to create share backend store", "error", ssErr)
-		} else {
-			a.shareService.SetShareStore(ss)
-		}
-	} else {
-		shareDataDir := filepath.Join(dir, "shares")
-		if mkErr := os.MkdirAll(shareDataDir, 0700); mkErr != nil {
-			a.log.Warn("failed to create share data directory", "error", mkErr)
-		} else {
-			shareBackend, sbErr := a.openStore(shareDataDir)
-			if sbErr != nil {
-				a.log.Warn("failed to create share file backend", "error", sbErr)
-			} else {
-				ss, ssErr := xkmssdk.NewBackendShareStore(shareBackend, "")
-				if ssErr != nil {
-					a.log.Warn("failed to create share file store", "error", ssErr)
-				} else {
-					a.shareService.SetShareStore(ss)
-				}
-			}
 		}
 	}
 
@@ -1974,8 +1945,6 @@ func NewApp(cfg *GUIConfig) *App {
 		sealProtectionSvc:        sealProtSvc,
 		appLockService:           appLockSvc,
 		pkcs11Service:            services.NewPKCS11Service(),
-		shareService:             services.NewShareService(),
-		custodianService:         services.NewCustodianService(),
 		tenantService:            services.NewTenantService(),
 		agentService:             services.NewAgentService(),
 		teamService:              services.NewTeamService(),
@@ -2293,16 +2262,6 @@ func NewApp(cfg *GUIConfig) *App {
 		a.applyConnectionEvent(evt.Type, connSvc.GetClient())
 	})
 
-	// Wire ShareService event emitter.
-	a.shareService.SetEventEmitter(func(evt events.Event) {
-		a.EmitEvent(evt)
-	})
-
-	// Wire CustodianService event emitter.
-	a.custodianService.SetEventEmitter(func(evt events.Event) {
-		a.EmitEvent(evt)
-	})
-
 	// Wire TenantService event emitter.
 	a.tenantService.SetEventEmitter(func(evt events.Event) {
 		a.EmitEvent(evt)
@@ -2609,7 +2568,6 @@ func (a *App) applyConnectionEvent(eventType events.EventType, client xkmssdk.Cl
 	switch eventType {
 	case events.EventServerConnected:
 		a.pivService.SetClient(client)
-		a.custodianService.SetClient(client)
 		a.tenantService.SetClient(client)
 		a.certificateService.SetClient(client)
 		a.tpmPolicyService.SetClient(client)
@@ -2755,8 +2713,6 @@ func (a *App) Run() error {
 		a.pinService,
 		a.barrierService,
 		a.authService,
-		a.shareService,
-		a.custodianService,
 		a.tenantService,
 		a.agentService,
 		a.autofillService,
@@ -2861,8 +2817,6 @@ func (a *App) startup(ctx context.Context) {
 	a.trustService.SetContext(ctx)
 	a.barrierService.SetContext(ctx)
 	a.authService.SetContext(ctx)
-	a.shareService.SetContext(ctx)
-	a.custodianService.SetContext(ctx)
 	a.tenantService.SetContext(ctx)
 	a.agentService.SetContext(ctx)
 	a.autofillService.SetContext(ctx)

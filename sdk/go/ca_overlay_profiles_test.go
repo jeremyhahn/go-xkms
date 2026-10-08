@@ -27,6 +27,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // newSDKTestCA builds an initialized in-memory TrustedCA using only the SDK's
@@ -41,7 +43,7 @@ func newSDKTestCA(t *testing.T) TrustedCA {
 	if err != nil {
 		t.Fatalf("service backend: %v", err)
 	}
-	certs, err := NewCertStore(&CertStoreConfig{CertStorage: NewStorageCertAdapter(NewStorageMemory())})
+	certs, err := NewCertStore(&CertStoreConfig{DAOs: testutil.NewMemoryDAOFactory()})
 	if err != nil {
 		t.Fatalf("cert store: %v", err)
 	}

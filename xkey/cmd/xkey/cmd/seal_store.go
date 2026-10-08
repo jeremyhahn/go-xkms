@@ -22,6 +22,7 @@ import (
 	"github.com/jeremyhahn/go-enclave"
 	"github.com/spf13/cobra"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -388,7 +389,7 @@ func runSealStoreGet(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	if outputPath != "" {
-		if err := os.WriteFile(outputPath, resp.Secret, 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(outputPath, resp.Secret, 0600); err != nil {
 			return &SentinelCauseError{Sentinel: ErrSealStoreOutputWrite, Cause: err}
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Secret written to: %s\n", outputPath)

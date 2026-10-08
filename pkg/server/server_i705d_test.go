@@ -90,7 +90,7 @@ func TestFirstBootTrustDomain_UsesConfiguredTrustDomain(t *testing.T) {
 }
 
 // TestFirstBootTrustDomain_DefaultsWhenUnset proves an unconfigured trust
-// domain falls back to daemon.DefaultTrustDomain rather than stamping an
+// domain falls back to embeddednode.DefaultTrustDomain rather than stamping an
 // empty (unusable) SPIFFE trust domain.
 func TestFirstBootTrustDomain_DefaultsWhenUnset(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
@@ -468,42 +468,4 @@ func TestNew_AuditLoggerInitFailureAbortsCleanly(t *testing.T) {
 	var svcErr *ErrServiceInit
 	require.ErrorAs(t, err, &svcErr)
 	assert.Equal(t, "chained file audit logger", svcErr.Service)
-}
-
-// TestNew_BarrierInitFailureAbortsCleanly used to prove New's barrier-init
-// failure branch by colliding a regular file with the "barrier" subdirectory
-// createStorage would create. That fault injection is no longer reachable:
-// createStorage (pkg/server/storage_factory.go) no longer touches the
-// filesystem at all -- it derives a key namespace ("barrier/") over the one
-// shared datastore, so a blocked directory at that path has no effect
-// (go-xkms#1345).
-
-// TestNew_BarrierRegistryInitFailureAbortsCleanly proves New's
-// barrier-registry init failure branch: a storage path collision at the
-// tenant-volumes pool root aborts server construction with a typed
-// *ErrServiceInit wrapping buildVolumePool's own error, after the barrier
-// itself already built successfully. buildVolumePool is real filesystem
-// code, unaffected by the datastore refactor -- unlike createStorage above.
-// barrier.strategy "pkcs11" is not NodeFlipWired, so this deployment keeps
-// xkms's own (non-node) barrier/barrier-registry construction -- the code
-// this test exercises -- instead of adopting the qrdb node's barrier, which
-// would skip both entirely and block boot on an operator unseal for the
-// flip-wired default ("passphrase").
-func TestNew_BarrierRegistryInitFailureAbortsCleanly(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Barrier.Enabled = true
-	cfg.Barrier.Strategy = "pkcs11"
-	blocker := filepath.Join(cfg.Datastore.Path, "tenant-volumes")
-	require.NoError(t, os.WriteFile(blocker, []byte("not a directory"), 0o600))
-
-	server, err := New(cfg)
-	require.Error(t, err)
-	assert.Nil(t, server)
-
-	var svcErr *ErrServiceInit
-	require.ErrorAs(t, err, &svcErr)
-	assert.Equal(t, "barrier registry", svcErr.Service)
 }

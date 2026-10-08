@@ -15,7 +15,7 @@
 // the unified qrdb MCP server's Streamable HTTP "tools/call" surface:
 // connection setup (including mTLS and SPKI-pinned TLS), the MCP protocol
 // handshake, marshaling a params/result pair through one MCP tool call per
-// method, and decoding a failing call's go-qrdb wire.ErrorEnvelope.
+// method, and decoding a failing call's go-qrdb qrdbsdk.MCPErrorEnvelope.
 //
 // It exists as its own leaf package, with no dependency on pkg/api/mcp's
 // dispatch core or its xkms-specific error taxonomy, so that every client in
@@ -30,8 +30,8 @@
 //
 // # Error classification is envelope-only
 //
-// A failing tool call is classified from go-qrdb's wire.ErrorEnvelope in the
-// result's StructuredContent (see wire.DecodeErrorPayload) and from nothing
+// A failing tool call is classified from go-qrdb's qrdbsdk.MCPErrorEnvelope in the
+// result's StructuredContent (see qrdbsdk.DecodeMCPErrorPayload) and from nothing
 // else. go-qrdb#438 deleted the fail-open pattern of guessing a
 // classification from the failure's prose; this package does not bring it
 // back. A result with no envelope is reported as *EnvelopeMissingError, a
@@ -60,7 +60,7 @@ import (
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 
-	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
@@ -102,14 +102,14 @@ var (
 )
 
 // RPCError is a typed error for a failed MCP tool call whose result carried
-// go-qrdb's wire.ErrorEnvelope in its StructuredContent. WireCode is the
+// go-qrdb's qrdbsdk.MCPErrorEnvelope in its StructuredContent. WireCode is the
 // envelope's raw classification (go-qrdb's shared 17-code vocabulary), never
 // guessed from prose; Code is WireCode translated onto a caller-specific
 // numeric vocabulary via an optional ErrorClassifier, or 0 when the Client
 // carries none. Message is the envelope's message.
 type RPCError struct {
 	Code     int
-	WireCode wire.Code
+	WireCode qrdbsdk.MCPCode
 	Message  string
 }
 
@@ -119,7 +119,7 @@ func (e *RPCError) Error() string {
 }
 
 // EnvelopeMissingError is returned when an MCP tool call fails but its
-// result carries no go-qrdb wire.ErrorEnvelope in StructuredContent. A
+// result carries no go-qrdb qrdbsdk.MCPErrorEnvelope in StructuredContent. A
 // server built on pkg/apimodule/module_mcp.go's codedToolResult stamps one
 // onto every failing xkms tool result, so a missing envelope means the
 // response did not come from that contract; it is reported as a protocol
@@ -197,11 +197,11 @@ func (e *TLSSetupError) Error() string {
 // Unwrap returns the underlying error.
 func (e *TLSSetupError) Unwrap() error { return e.Err }
 
-// ErrorClassifier turns go-qrdb's wire.Code into a caller-specific numeric
+// ErrorClassifier turns go-qrdb's qrdbsdk.MCPCode into a caller-specific numeric
 // code (pkg/api/transport/mcp's xkms JSON-RPC vocabulary, via its
 // wireCodeToRPCCode table). A Client without a classifier leaves RPCError.Code
 // at 0; callers should branch on RPCError.WireCode instead in that case.
-type ErrorClassifier func(code wire.Code) int
+type ErrorClassifier func(code qrdbsdk.MCPCode) int
 
 // ClientOption configures a Client at construction.
 type ClientOption func(*Client)
@@ -405,7 +405,7 @@ func (c *Client) Config() *transport.Config {
 // marshaled to JSON and passed as the tool's single "params_json" string
 // argument. On success, the tool's first text content item is unmarshaled
 // into result (when result is non-nil); a tool-level failure (IsError=true)
-// is classified from its go-qrdb wire.ErrorEnvelope into an *RPCError, or
+// is classified from its go-qrdb qrdbsdk.MCPErrorEnvelope into an *RPCError, or
 // into an *EnvelopeMissingError when the result carries no envelope, and any
 // failure to complete the tool call at all becomes a *ReceiveError.
 func (c *Client) Call(ctx context.Context, method string, params, result interface{}) error {
@@ -456,13 +456,13 @@ func (c *Client) Call(ctx context.Context, method string, params, result interfa
 }
 
 // newToolError converts a tool-level MCP error result (IsError=true) into a
-// typed error: a result carrying go-qrdb's wire.ErrorEnvelope in its
+// typed error: a result carrying go-qrdb's qrdbsdk.MCPErrorEnvelope in its
 // StructuredContent becomes an *RPCError classified by CODE, via c.classify
 // when set; a result with no envelope becomes an *EnvelopeMissingError. There
 // is no text-based fallback classification (go-qrdb#438, go-xkms#797) --
 // "Don't invent a text channel."
 func (c *Client) newToolError(tool string, result *mcp.CallToolResult) error {
-	payload, ok := wire.DecodeErrorPayload(result.StructuredContent)
+	payload, ok := qrdbsdk.DecodeMCPErrorPayload(result.StructuredContent)
 	if !ok {
 		return &EnvelopeMissingError{Tool: tool, Message: extractToolErrorText(result)}
 	}

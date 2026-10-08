@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -453,10 +454,8 @@ func setupTLSTestCA(t *testing.T) *CA {
 	})
 	require.NoError(t, err)
 
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: certAdapter,
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	require.NoError(t, err)
 

@@ -37,11 +37,12 @@ func conformanceTestConfig() *Config {
 // for conformance testing.
 func conformanceTestService(t *testing.T) *Service {
 	t.Helper()
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          conformanceTestConfig(),
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 	return svc
@@ -231,11 +232,12 @@ func TestConformance_RequireResidentKeyPresence(t *testing.T) {
 			cfg := conformanceTestConfig()
 			cfg.ResidentKeyRequirement = tc.setting
 
+			users, creds := newTestStores(t)
 			svc, err := NewService(ServiceParams{
 				Config:          cfg,
-				UserStore:       NewMemoryUserStore(),
+				UserStore:       users,
 				SessionStore:    NewMemorySessionStore(),
-				CredentialStore: NewMemoryCredentialStore(),
+				CredentialStore: creds,
 			})
 			require.NoError(t, err)
 

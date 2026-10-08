@@ -27,96 +27,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
-
-// mockCertStorage is a simple in-memory implementation of CertificateStorageAdapter for testing.
-type mockCertStorage struct {
-	certs  map[string]*x509.Certificate
-	chains map[string][]*x509.Certificate
-	closed bool
-}
-
-func newMockCertStorage() *mockCertStorage {
-	return &mockCertStorage{
-		certs:  make(map[string]*x509.Certificate),
-		chains: make(map[string][]*x509.Certificate),
-		closed: false,
-	}
-}
-
-func (m *mockCertStorage) SaveCert(ctx context.Context, id string, cert *x509.Certificate) error {
-	if m.closed {
-		return ErrStorageClosed
-	}
-	m.certs[id] = cert
-	return nil
-}
-
-func (m *mockCertStorage) GetCert(ctx context.Context, id string) (*x509.Certificate, error) {
-	if m.closed {
-		return nil, ErrStorageClosed
-	}
-	cert, ok := m.certs[id]
-	if !ok {
-		return nil, ErrCertNotFound
-	}
-	return cert, nil
-}
-
-func (m *mockCertStorage) DeleteCert(ctx context.Context, id string) error {
-	if m.closed {
-		return ErrStorageClosed
-	}
-	if _, ok := m.certs[id]; !ok {
-		return ErrCertNotFound
-	}
-	delete(m.certs, id)
-	delete(m.chains, id)
-	return nil
-}
-
-func (m *mockCertStorage) SaveCertChain(ctx context.Context, id string, chain []*x509.Certificate) error {
-	if m.closed {
-		return ErrStorageClosed
-	}
-	m.chains[id] = chain
-	return nil
-}
-
-func (m *mockCertStorage) GetCertChain(ctx context.Context, id string) ([]*x509.Certificate, error) {
-	if m.closed {
-		return nil, ErrStorageClosed
-	}
-	chain, ok := m.chains[id]
-	if !ok {
-		return nil, ErrChainNotFound
-	}
-	return chain, nil
-}
-
-func (m *mockCertStorage) ListCerts(ctx context.Context) ([]string, error) {
-	if m.closed {
-		return nil, ErrStorageClosed
-	}
-	var ids []string
-	for id := range m.certs {
-		ids = append(ids, id)
-	}
-	return ids, nil
-}
-
-func (m *mockCertStorage) CertExists(ctx context.Context, id string) (bool, error) {
-	if m.closed {
-		return false, ErrStorageClosed
-	}
-	_, ok := m.certs[id]
-	return ok, nil
-}
-
-func (m *mockCertStorage) Close() error {
-	m.closed = true
-	return nil
-}
 
 // Helper functions for test certificate generation
 
@@ -234,9 +148,8 @@ func generateNotYetValidCert(t *testing.T, cn string) *x509.Certificate {
 // ========================================================================
 
 func TestNew_Success(t *testing.T) {
-	storage := newMockCertStorage()
 	config := &Config{
-		CertStorage: storage,
+		DAOs: testutil.NewMemoryDAOFactory(),
 	}
 
 	cs, err := New(config)
@@ -254,15 +167,20 @@ func TestNew_NilConfig(t *testing.T) {
 	assert.Equal(t, ErrInvalidConfig, err)
 }
 
-func TestNew_NilStorage(t *testing.T) {
-	config := &Config{
-		CertStorage: nil,
-	}
-
-	cs, err := New(config)
-	assert.Error(t, err)
+func TestNew_NilFactory(t *testing.T) {
+	cs, err := New(&Config{})
 	assert.Nil(t, cs)
-	assert.Equal(t, ErrStorageRequired, err)
+	assert.ErrorIs(t, err, dao.ErrNilFactory)
+}
+
+// TestNew_DatabaseNotServed proves a factory with no store for DatabaseName
+// is refused rather than handing the store a nil store.
+func TestNew_DatabaseNotServed(t *testing.T) {
+	cs, err := New(&Config{DAOs: dao.NewStoreFactory(nil)})
+	assert.Nil(t, cs)
+	var unavailable *dao.DatabaseUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	assert.Equal(t, DatabaseName, unavailable.Database)
 }
 
 // ========================================================================
@@ -270,8 +188,7 @@ func TestNew_NilStorage(t *testing.T) {
 // ========================================================================
 
 func TestStoreCertificate_Success(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -287,8 +204,7 @@ func TestStoreCertificate_Success(t *testing.T) {
 }
 
 func TestStoreCertificate_NilCert(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -303,8 +219,7 @@ func TestStoreCertificate_NilCert(t *testing.T) {
 // SPKI SHA-256 thumbprint (CertificateKey) instead of its (empty) Common
 // Name, and is retrievable under that key.
 func TestStoreCertificate_EmptyCN(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -339,8 +254,7 @@ func TestCertificateKey_UsesCommonNameWhenPresent(t *testing.T) {
 }
 
 func TestStoreCertificate_Expired(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -352,8 +266,7 @@ func TestStoreCertificate_Expired(t *testing.T) {
 }
 
 func TestStoreCertificate_NotYetValid(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -365,8 +278,7 @@ func TestStoreCertificate_NotYetValid(t *testing.T) {
 }
 
 func TestGetCertificate_Success(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -380,8 +292,7 @@ func TestGetCertificate_Success(t *testing.T) {
 }
 
 func TestGetCertificate_NotFound(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -390,8 +301,7 @@ func TestGetCertificate_NotFound(t *testing.T) {
 }
 
 func TestGetCertificate_EmptyCN(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -401,8 +311,7 @@ func TestGetCertificate_EmptyCN(t *testing.T) {
 }
 
 func TestDeleteCertificate_Success(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -419,8 +328,7 @@ func TestDeleteCertificate_Success(t *testing.T) {
 }
 
 func TestDeleteCertificate_NotFound(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -429,8 +337,7 @@ func TestDeleteCertificate_NotFound(t *testing.T) {
 }
 
 func TestDeleteCertificate_EmptyCN(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -440,8 +347,7 @@ func TestDeleteCertificate_EmptyCN(t *testing.T) {
 }
 
 func TestListCertificates_Success(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -459,8 +365,7 @@ func TestListCertificates_Success(t *testing.T) {
 }
 
 func TestListCertificates_Empty(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -474,8 +379,7 @@ func TestListCertificates_Empty(t *testing.T) {
 // ========================================================================
 
 func TestStoreCertificateChain_Success(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -496,8 +400,7 @@ func TestStoreCertificateChain_Success(t *testing.T) {
 }
 
 func TestStoreCertificateChain_Empty(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -507,8 +410,7 @@ func TestStoreCertificateChain_Empty(t *testing.T) {
 }
 
 func TestStoreCertificateChain_NilCertInChain(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -520,8 +422,7 @@ func TestStoreCertificateChain_NilCertInChain(t *testing.T) {
 }
 
 func TestGetCertificateChain_Success(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -538,8 +439,7 @@ func TestGetCertificateChain_Success(t *testing.T) {
 }
 
 func TestGetCertificateChain_NotFound(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -548,8 +448,7 @@ func TestGetCertificateChain_NotFound(t *testing.T) {
 }
 
 func TestGetCertificateChain_EmptyCN(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -563,8 +462,7 @@ func TestGetCertificateChain_EmptyCN(t *testing.T) {
 // ========================================================================
 
 func TestStoreCRL_Success(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -589,8 +487,7 @@ func TestStoreCRL_Success(t *testing.T) {
 }
 
 func TestStoreCRL_Nil(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -600,8 +497,7 @@ func TestStoreCRL_Nil(t *testing.T) {
 }
 
 func TestStoreCRL_Expired(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -626,8 +522,7 @@ func TestStoreCRL_Expired(t *testing.T) {
 }
 
 func TestGetCRL_Success(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -655,8 +550,7 @@ func TestGetCRL_Success(t *testing.T) {
 }
 
 func TestGetCRL_NotFound(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -666,8 +560,7 @@ func TestGetCRL_NotFound(t *testing.T) {
 }
 
 func TestGetCRL_EmptyIssuer(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -681,8 +574,7 @@ func TestGetCRL_EmptyIssuer(t *testing.T) {
 // ========================================================================
 
 func TestVerifyCertificate_Success(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -699,8 +591,7 @@ func TestVerifyCertificate_Success(t *testing.T) {
 }
 
 func TestVerifyCertificate_NilCert(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -711,8 +602,7 @@ func TestVerifyCertificate_NilCert(t *testing.T) {
 }
 
 func TestVerifyCertificate_NilRoots(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -724,8 +614,7 @@ func TestVerifyCertificate_NilRoots(t *testing.T) {
 }
 
 func TestVerifyCertificate_UntrustedRoot(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -747,8 +636,7 @@ func TestVerifyCertificate_UntrustedRoot(t *testing.T) {
 // ========================================================================
 
 func TestIsRevoked_NotRevoked(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -778,8 +666,7 @@ func TestIsRevoked_NotRevoked(t *testing.T) {
 }
 
 func TestIsRevoked_Revoked(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -815,8 +702,7 @@ func TestIsRevoked_Revoked(t *testing.T) {
 }
 
 func TestIsRevoked_NilCert(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -826,8 +712,7 @@ func TestIsRevoked_NilCert(t *testing.T) {
 }
 
 func TestIsRevoked_NoCRL(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -841,9 +726,8 @@ func TestIsRevoked_NoCRL(t *testing.T) {
 }
 
 func TestStoreCertificate_RevokedWithAllowRevoked(t *testing.T) {
-	storage := newMockCertStorage()
 	cs, err := New(&Config{
-		CertStorage:  storage,
+		DAOs:         testutil.NewMemoryDAOFactory(),
 		AllowRevoked: true, // Allow storing revoked certs
 	})
 	require.NoError(t, err)
@@ -881,9 +765,8 @@ func TestStoreCertificate_RevokedWithAllowRevoked(t *testing.T) {
 }
 
 func TestStoreCertificate_RevokedWithoutAllowRevoked(t *testing.T) {
-	storage := newMockCertStorage()
 	cs, err := New(&Config{
-		CertStorage:  storage,
+		DAOs:         testutil.NewMemoryDAOFactory(),
 		AllowRevoked: false, // Don't allow storing revoked certs
 	})
 	require.NoError(t, err)
@@ -926,8 +809,7 @@ func TestStoreCertificate_RevokedWithoutAllowRevoked(t *testing.T) {
 // ========================================================================
 
 func TestClose_Success(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	err = cs.Close()
@@ -940,8 +822,7 @@ func TestClose_Success(t *testing.T) {
 }
 
 func TestClose_Idempotent(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	err = cs.Close()
@@ -957,8 +838,7 @@ func TestClose_Idempotent(t *testing.T) {
 // ========================================================================
 
 func TestConcurrentAccess(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -991,31 +871,41 @@ func TestConcurrentAccess(t *testing.T) {
 // Additional Edge Case Tests for 90%+ Coverage
 // ========================================================================
 
-func TestListCertificates_ErrorLoadingCert(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+// TestStore_CorruptRecordIsDecodeError proves a stored record whose DER does
+// not parse fails Get, GetChain and List with a decode *StoreError rather
+// than being skipped.
+func TestStore_CorruptRecordIsDecodeError(t *testing.T) {
+	ctx := context.Background()
+	daos := testutil.NewMemoryDAOFactory()
+	cs, err := New(&Config{DAOs: daos})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
-	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
-	err = cs.StoreCertificate(cert)
+	certs, err := newDAO(daos, certificateEntityType, func() *certificateEntity { return &certificateEntity{} })
 	require.NoError(t, err)
+	require.NoError(t, certs.Save(ctx, &certificateEntity{Key: "corrupt.example.com", DER: []byte("not DER")}))
+	chains, err := newDAO(daos, chainEntityType, func() *chainEntity { return &chainEntity{} })
+	require.NoError(t, err)
+	require.NoError(t, chains.Save(ctx, &chainEntity{Key: "corrupt.example.com", DER: [][]byte{[]byte("not DER")}}))
 
-	// Corrupt the certificate in storage
-	storage.certs["test.example.com"] = nil
+	var storeErr *StoreError
+	_, err = cs.GetCertificate("corrupt.example.com")
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "decode", storeErr.Op)
 
-	// ListCertificates should skip the bad cert
-	certs, err := cs.ListCertificates()
-	assert.NoError(t, err)
-	assert.Empty(t, certs) // Should skip the nil cert
+	_, err = cs.GetCertificateChain("corrupt.example.com")
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "decode", storeErr.Op)
+
+	_, err = cs.ListCertificates()
+	require.ErrorAs(t, err, &storeErr)
 }
 
 // TestStoreCertificateChain_EmptyCNInFirstCert proves StoreCertificateChain
 // applies the same SPKI-thumbprint fallback as StoreCertificate (see
 // CertificateKey) when the leaf certificate's Subject is empty.
 func TestStoreCertificateChain_EmptyCNInFirstCert(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -1034,7 +924,6 @@ func TestStoreCertificateChain_EmptyCNInFirstCert(t *testing.T) {
 }
 
 func TestVerifyCertificate_WithIntermediates(t *testing.T) {
-	storage := newMockCertStorage()
 
 	// Create a certificate chain
 	rootCert, rootKey := generateTestCert(t, "root.example.com", true, nil, nil)
@@ -1048,7 +937,7 @@ func TestVerifyCertificate_WithIntermediates(t *testing.T) {
 	}
 
 	cs, err := New(&Config{
-		CertStorage:   storage,
+		DAOs:          testutil.NewMemoryDAOFactory(),
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
@@ -1064,12 +953,11 @@ func TestVerifyCertificate_WithIntermediates(t *testing.T) {
 }
 
 func TestVerifyCertificate_WithKeyUsages(t *testing.T) {
-	storage := newMockCertStorage()
 	verifyOpts := &x509.VerifyOptions{
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	cs, err := New(&Config{
-		CertStorage:   storage,
+		DAOs:          testutil.NewMemoryDAOFactory(),
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
@@ -1086,8 +974,7 @@ func TestVerifyCertificate_WithKeyUsages(t *testing.T) {
 }
 
 func TestIsRevoked_ExpiredCRL(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -1126,8 +1013,7 @@ func TestIsRevoked_ExpiredCRL(t *testing.T) {
 }
 
 func TestIsRevoked_CertWithoutIssuer(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -1141,8 +1027,7 @@ func TestIsRevoked_CertWithoutIssuer(t *testing.T) {
 }
 
 func TestClosed_Operations(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)

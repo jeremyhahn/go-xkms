@@ -373,6 +373,13 @@ type Params struct {
 	// default for a RestService built without opting in.
 	Breakers *circuitbreaker.Manager
 
+	// Health is the go-qrdb SDK health checker HealthHandler runs as its
+	// readiness probe: the composing binary registers the ACME server's
+	// dependencies on it -- the datastore ACME state persists in, above all --
+	// and HealthHandler reports every check and turns unhealthy when any check
+	// does. Nil reports no dependency checks.
+	Health *qrdbsdk.HealthChecker
+
 	// StorageBreaker configures the circuit breaker RestService creates from
 	// Breakers to guard its own CA/keystore-backed certificate storage
 	// access (CABundleHandler's call to CA.CABundleFiltered). Nil selects
@@ -499,6 +506,7 @@ type RestService struct {
 	// is the default. See serveOrDegrade and serveCachedWhenOpen in
 	// resilience.go.
 	breakers            *circuitbreaker.Manager
+	health              *qrdbsdk.HealthChecker
 	storageBreaker      *circuitbreaker.CircuitBreaker
 	directoryCache      *degradation.Cache
 	caBundleCache       *degradation.Cache
@@ -768,6 +776,7 @@ func NewRestService(params *Params) (RestServicer, error) {
 		storageFactory:          params.StorageFactory,
 		termsOfService:          params.TermsOfService,
 		breakers:                params.Breakers,
+		health:                  params.Health,
 		storageBreaker:          storageBreaker,
 		directoryCache:          directoryCache,
 		caBundleCache:           caBundleCache,

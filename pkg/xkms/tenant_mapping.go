@@ -108,17 +108,3 @@ func transportToQuotas(q transport.TenantQuotas) *qrdbsdk.Quotas {
 		MaxTSMetrics:         q.MaxTSMetrics,
 	}
 }
-
-// tenantBarrierStatusToTransport maps the service-layer per-tenant barrier
-// status onto the wire DTO.
-func tenantBarrierStatusToTransport(s *qrdbsdk.ServiceTenantBarrierStatus) *transport.TenantBarrierStatusResponse {
-	return &transport.TenantBarrierStatusResponse{
-		TenantID:        s.TenantID,
-		Sealed:          s.Sealed,
-		Initialized:     s.Initialized,
-		Strategy:        s.Strategy,
-		HardwareBacked:  s.HardwareBacked,
-		ShamirThreshold: s.ShamirThreshold,
-		ShamirTotal:     s.ShamirTotal,
-	}
-}

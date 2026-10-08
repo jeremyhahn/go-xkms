@@ -102,7 +102,7 @@ func TestImporter_Import_CSV(t *testing.T) {
 	}
 
 	imp := newTestImporter(t)
-	result, err := imp.Import(&ImportOptions{
+	result, err := imp.Import(t.Context(), &ImportOptions{
 		FilePath: filePath,
 		Format:   FormatCSV,
 	})
@@ -135,7 +135,7 @@ func TestImporter_Import_AutoDetectFormat(t *testing.T) {
 	}
 
 	imp := newTestImporter(t)
-	result, err := imp.Import(&ImportOptions{
+	result, err := imp.Import(t.Context(), &ImportOptions{
 		FilePath: filePath,
 		// Format not specified - should auto-detect from extension.
 	})
@@ -161,7 +161,7 @@ func TestImporter_Import_SkipDuplicates(t *testing.T) {
 	imp := newTestImporter(t)
 
 	// First import.
-	result1, err := imp.Import(&ImportOptions{
+	result1, err := imp.Import(t.Context(), &ImportOptions{
 		FilePath: filePath,
 	})
 	if err != nil {
@@ -172,7 +172,7 @@ func TestImporter_Import_SkipDuplicates(t *testing.T) {
 	}
 
 	// Second import with SkipDuplicates.
-	result2, err := imp.Import(&ImportOptions{
+	result2, err := imp.Import(t.Context(), &ImportOptions{
 		FilePath:       filePath,
 		SkipDuplicates: true,
 	})
@@ -200,7 +200,7 @@ func TestImporter_Import_OverwriteDuplicates(t *testing.T) {
 	imp := newTestImporter(t)
 
 	// First import.
-	result1, err := imp.Import(&ImportOptions{
+	result1, err := imp.Import(t.Context(), &ImportOptions{
 		FilePath: filePath,
 	})
 	if err != nil {
@@ -211,7 +211,7 @@ func TestImporter_Import_OverwriteDuplicates(t *testing.T) {
 	}
 
 	// Second import with OverwriteDuplicates.
-	result2, err := imp.Import(&ImportOptions{
+	result2, err := imp.Import(t.Context(), &ImportOptions{
 		FilePath:            filePath,
 		OverwriteDuplicates: true,
 	})
@@ -239,7 +239,7 @@ func TestImporter_Import_DuplicateError(t *testing.T) {
 	imp := newTestImporter(t)
 
 	// First import.
-	_, err := imp.Import(&ImportOptions{
+	_, err := imp.Import(t.Context(), &ImportOptions{
 		FilePath: filePath,
 	})
 	if err != nil {
@@ -247,7 +247,7 @@ func TestImporter_Import_DuplicateError(t *testing.T) {
 	}
 
 	// Second import without duplicate handling - should fail.
-	result2, err := imp.Import(&ImportOptions{
+	result2, err := imp.Import(t.Context(), &ImportOptions{
 		FilePath: filePath,
 	})
 	if err != nil {
@@ -282,7 +282,7 @@ func TestImporter_Import_GetErrorOtherThanNotFound(t *testing.T) {
 	store := &getErrorStore{StaticPasswordStore: realStore, getErr: getErr}
 	imp := NewImporter(store)
 
-	result, err := imp.Import(&ImportOptions{FilePath: filePath})
+	result, err := imp.Import(t.Context(), &ImportOptions{FilePath: filePath})
 	if err != nil {
 		t.Fatalf("Import() error = %v", err)
 	}
@@ -302,7 +302,7 @@ func TestImporter_Import_GetErrorOtherThanNotFound(t *testing.T) {
 
 func TestImporter_Import_UnsupportedFormat(t *testing.T) {
 	imp := newTestImporter(t)
-	_, err := imp.Import(&ImportOptions{
+	_, err := imp.Import(t.Context(), &ImportOptions{
 		FilePath: "/path/to/file.txt",
 		Format:   "",
 	})
@@ -313,7 +313,7 @@ func TestImporter_Import_UnsupportedFormat(t *testing.T) {
 
 func TestImporter_Import_InvalidFormat(t *testing.T) {
 	imp := newTestImporter(t)
-	_, err := imp.Import(&ImportOptions{
+	_, err := imp.Import(t.Context(), &ImportOptions{
 		FilePath: "/path/to/file.csv",
 		Format:   "invalid",
 	})
@@ -334,7 +334,7 @@ func TestImporter_Preview(t *testing.T) {
 	}
 
 	imp := newTestImporter(t)
-	entries, err := imp.Preview(&ImportOptions{
+	entries, err := imp.Preview(t.Context(), &ImportOptions{
 		FilePath: filePath,
 	})
 	if err != nil {
@@ -369,7 +369,7 @@ func TestImporter_Import_WithTargetFolder(t *testing.T) {
 	store := xkms.NewStaticPasswordStore(backend)
 	imp := NewImporter(store)
 
-	result, err := imp.Import(&ImportOptions{
+	result, err := imp.Import(t.Context(), &ImportOptions{
 		FilePath:     filePath,
 		TargetFolder: "Imported/KeePass",
 	})
@@ -413,7 +413,7 @@ func TestImporter_Import_TOTPTracking(t *testing.T) {
 	}
 
 	imp := newTestImporter(t)
-	result, err := imp.Import(&ImportOptions{
+	result, err := imp.Import(t.Context(), &ImportOptions{
 		FilePath:   filePath,
 		ImportTOTP: true,
 	})

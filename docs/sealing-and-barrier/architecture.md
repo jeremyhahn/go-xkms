@@ -1,6 +1,6 @@
 # Sealing and Barrier — Architecture
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-02
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## The problem
 
@@ -71,6 +71,11 @@ Rejected alternatives:
 
 - **Implementing the barrier in go-xkms.** Rejected by ownership: qrdb owns the
   barrier, the registry and Shamir custody; go-xkms implements seams.
+- **A second, xkms-built barrier beside the node's.** Removed: xkmsd once
+  built its own `StorageBarrier` and registry over the store for the
+  strategies the node could not take (pkcs11 and the cloud KMS strategies),
+  and wrapped the node's registry in an xkms type. Every strategy is now a
+  node seal, so there is one barrier and it is go-qrdb's, unwrapped.
 - **Defaulting to the strongest available strategy.** Rejected — see above.
 - **One strategy interface per hardware type.** Rejected: `SealingStrategy` is
   qrdb's single seam, and every implementation satisfies it.
@@ -83,11 +88,14 @@ Rejected alternatives:
 | `none`, `passphrase`, `EpochBarrier`, the Shamir GF(256) primitive | go-quicraft | **go-quicraft** |
 | Hardware and cloud strategies | `pkg/seal/strategy_{tpm2,pkcs11,cloud,software}.go` | go-xkms |
 | Cloud KMS strategy composition (shared by `xkmsd` and `xkey`, go-xkms#757) | `pkg/seal/cloud_provision.go` | go-xkms |
-| Barrier adapter and CAS put | `pkg/seal/barrier_adapter.go`, `barrier_putifabsent.go` | go-xkms |
+| PKCS#11 strategy composition from a sealed PIN (shared by `xkmsd` and `xkey`, go-xkms#677) | `pkg/pkcs11strategy` | go-xkms |
+| Pre-barrier secret store (the PKCS#11 PIN) | `pkg/preseal` | go-xkms |
+| Node seal resolution and injection | `pkg/embeddednode` (`ResolveNodeSeal`, `NodeSealOptions`, `node_seal_*.go`) | go-xkms |
+| Barrier type aliases, xkms-storage guard, CAS put | `pkg/seal/barrier_adapter.go`, `barrier_putifabsent.go` | go-xkms |
 | Hardware encryptor | `pkg/seal/hardware_encryptor.go` | go-xkms |
 | Platform secret store | `pkg/seal/platform_store.go`, `platform_sealer.go`, `platform_store_tenant.go` | go-xkms |
 | Secret sealer | `pkg/seal/secret_sealer.go` | go-xkms |
-| TPM policies (named, TPM-authorized) | `pkg/tpmpolicy` — see [`../tpm-policies/`](../tpm-policies/) | go-xkms |
+| TPM policies (named, TPM-authorized) | `pkg/tpm2/policy` — see [`../tpm-policies/`](../tpm-policies/) | go-xkms |
 | Autodetection | `pkg/seal/autodetect.go` | go-xkms |
 | Seal audit | `pkg/seal/audit.go` | go-xkms |
 | Sealed blob store | `pkg/sealblobstore` | go-xkms |
@@ -103,24 +111,99 @@ describes something that does not exist.
 
 ```
 initialize:
-  xkmsctl barrier init --barrier-strategy tpm2
+  xkmsd init --barrier-strategy tpm2
     → qrdb's barrier generates a root key
       → SealingStrategy.Seal(rootKey, credentials)   ← go-xkms's implementation
         → TPM: PCR-bound seal · PKCS#11: HSM-resident KEK · cloud: envelope
       → SealedRootKey persisted by qrdb
 
 unseal:
-  xkmsctl barrier unseal
+  node unseal (go-qrdb's barrier surface)
     → SealingStrategy.Unseal(sealedRootKey, credentials)
       → hardware or provider releases the root key
     → barrier open; every other subsystem becomes usable
 
 per-tenant:
-  tenants get their own barriers — pkg/seal/platform_store_tenant.go
+  TenantService.CreateTenant (go-qrdb, through the node's Services().Tenant)
+    → a per-tenant barrier in the node's BarrierRegistry
+    → sealed by any strategy in the injected StrategyRegistry
 ```
+
+### One barrier: the node's
+
+An embedded xkmsd (`datastore.mode: standalone`, `barrier.enabled: true`)
+has exactly one barrier: the embedded go-qrdb node's own, which encrypts the
+node's whole data plane at rest. go-xkms never builds or wraps a barrier; it
+only chooses the strategy and hands it to the node.
+
+```
+embeddednode.ResolveNodeSeal(cfg)          builds the configured strategy:
+                                           tpm2 · pkcs11 · awskms · gcpkms · azurekv · vault
+embeddednode.NodeSealOptions(resolved)
+  → node.WithSealStrategy(strategy)        the node barrier seals its root key with it
+  → node.WithTenantIsolation()
+  → node.WithDefaultTenantEntitlements(…)  every isolation mode, system-managed auto-unseal
+  → sdk.WithStrategyRegistry(registry)     per-tenant barriers resolve the same strategy by ID
+node.NewStandaloneNode(…)                  a hardware or cloud strategy auto-unseals here
+xkmsd adopts:
+  node.BarrierRegistry()                   s.barrierRegistry (go-qrdb's type, unwrapped)
+  node.BarrierRegistry().SystemBarrier()   s.barrier
+  node.Services().Tenant                   the tenant service
+```
+
+`passphrase` and `shamir` leave the node sealed, and xkmsd waits behind the
+sealed-window listener for an operator unseal. With `datastore.mode: remote`
+the barrier belongs to the remote go-qrdb, and this process has none.
+
+The cloud node seals keep their KMS key metadata in
+`<datastore.path>/node-seal/<strategy>`, outside the barrier, because the
+metadata names the key that opens it. Each is compiled in only under its
+provider's build tag; a binary without the tag refuses the strategy at boot.
 
 `barrier_putifabsent.go` is the compare-and-swap path: initializing a barrier
 twice concurrently must not produce two root keys.
+
+### Pre-barrier secrets (go-xkms#677)
+
+A `pkcs11` barrier needs the token user PIN, and a `vault` barrier its
+Transit token, before the barrier, or anything stored behind it, is open.
+These secrets live in the pre-barrier secret store
+(`pkg/preseal`). The store is a platform store (`seal.PlatformStore`) over
+a go-qrdb file engine in `<datastore>/preseal`, beside the barriered
+datastore and never inside it. Every record is sealed by
+`seal.PlatformPolicySealer` under the Platform SRK and the built-in platform
+PCR policy. The TPM releases a secret only on the machine that sealed it, and
+only while the platform PCRs match. No operator is involved, so a `pkcs11` or
+`vault` node boots unattended exactly as a `tpm2` node does.
+
+```
+seal (once):   xkmsd seal-pkcs11-pin --config xkmsd.yaml < pin
+                 → preseal.Store.Put("platform/pkcs11-pin") → TPM seal under PSRK + platform policy
+boot:          embeddednode.ResolveNodeSeal (barrier.strategy: pkcs11)
+                 → preseal.Store.Get → pkcs11strategy.BuildWithSealedPIN
+                   → C_Login with the released PIN; the released copy is wiped
+                 → the PKCS#11 SealingStrategy seals the qrdb node
+
+seal (once):   xkmsd seal-vault-token --config xkmsd.yaml < token
+boot:          embeddednode.ResolveNodeSeal (barrier.strategy: vault)
+                 → preseal.Store.Get("platform/vault-token") → the Vault backend's token
+                 → the Transit SealingStrategy seals the qrdb node
+```
+
+xkey's `barrier init --strategy pkcs11` seals into its own store
+(`<data-dir>/preseal`), and its unseal takes the same
+`BuildWithSealedPIN` path through `sdk/go`.
+
+Rejected alternatives:
+
+- **The secret in configuration or a flag.** Rejected: a config file is
+  readable by whoever reads the config, and argv is readable by everyone on
+  the host.
+- **The secret behind a `credential://` reference.** Rejected: that reference
+  resolves through the credential service, which needs the open barrier.
+  Using it would be a cycle.
+- **A second sealed store.** Rejected: `pkg/preseal` composes the existing
+  platform store and platform-policy sealer instead of adding a new format.
 
 ## Trust boundaries
 
@@ -134,11 +217,7 @@ twice concurrently must not produce two root keys.
   behaviour, because the alternative is coming up in a weaker posture nobody
   noticed.
 - **Shamir custody is qrdb's.** go-xkms neither holds nor distributes shares;
-  see [`../share-custody/`](../share-custody/architecture.md) for the client
-  surface.
-- **Recovery keys are a second door.** `barrier recovery generate` produces
-  keys that open the barrier without the primary credential; generating them
-  and leaving them where the barrier is is equivalent to not having a barrier.
+  holders and the quorum are go-qrdb's holder/quorum model.
 - **Per-tenant barriers isolate tenants from each other**, not from the
   operator.
 

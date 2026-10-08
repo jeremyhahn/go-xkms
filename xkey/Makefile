@@ -425,13 +425,6 @@ test-oidc:
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/oidc/...
 	@echo "$(GREEN)OIDC tests passed$(RESET)"
 
-.PHONY: test-ssh
-## test-ssh: Run SSH package unit tests
-test-ssh:
-	@echo "$(CYAN)Running SSH tests...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/ssh/...
-	@echo "$(GREEN)SSH tests passed$(RESET)"
-
 .PHONY: test-virtualdevice
 ## test-virtualdevice: Run virtual device package unit tests
 test-virtualdevice:

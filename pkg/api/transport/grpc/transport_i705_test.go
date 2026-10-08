@@ -16,15 +16,12 @@ package grpc
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
-	"google.golang.org/protobuf/types/known/structpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 
@@ -77,38 +74,6 @@ func (s *mockKeystoreServer) ListUserCredentials(_ context.Context, req *pb.List
 	return &pb.ListUserCredentialsResponse{Credentials: []*pb.UserCredential{
 		{Id: "cred-1", Name: "yubikey-" + req.GetUsername()},
 	}}, nil
-}
-
-func (s *mockKeystoreServer) GetShare(_ context.Context, req *pb.GetShareRequest) (*pb.ShareInfo, error) {
-	return &pb.ShareInfo{
-		ServerUrl: req.GetServerUrl(), GroupId: req.GetGroupId(), ShareIndex: req.GetShareIndex(),
-		GroupName: "recovery", Purpose: "shamir-recovery", TenantId: "tenant-a",
-		SubmittedAt: time.Now().Format(time.RFC3339),
-	}, nil
-}
-
-func (s *mockKeystoreServer) DeleteShare(_ context.Context, _ *pb.DeleteShareRequest) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (s *mockKeystoreServer) QueryAudit(_ context.Context, req *pb.QueryAuditRequest) (*pb.QueryAuditResponse, error) {
-	attrs, _ := structpb.NewStruct(map[string]any{"ip": "127.0.0.1"})
-	return &pb.QueryAuditResponse{
-		Events: []*pb.AuditEvent{{
-			Timestamp: timestamppb.New(time.Unix(1700000000, 0)),
-			Actor:     req.GetActor(), TenantId: req.GetTenantId(), Resource: req.GetResource(),
-			Action: req.GetAction(), Outcome: req.GetOutcome(), Attributes: attrs,
-			ClientIp: "10.0.0.1", RequestId: "req-1", PrevHash: "abc123",
-		}},
-		Next: "cursor-2", Total: 1,
-	}, nil
-}
-
-func (s *mockKeystoreServer) TenantBarrierStatus(_ context.Context, req *pb.TenantBarrierStatusRequest) (*pb.TenantBarrierStatusResponse, error) {
-	return &pb.TenantBarrierStatusResponse{
-		TenantId: req.GetTenantId(), Sealed: false, Initialized: true, Strategy: "shamir",
-		HardwareBacked: true, ShamirThreshold: 3, ShamirTotal: 5,
-	}, nil
 }
 
 func (s *mockKeystoreServer) UpdateTenantEntitlements(_ context.Context, req *pb.UpdateTenantEntitlementsRequest) (*pb.UpdateTenantEntitlementsResponse, error) {
@@ -203,22 +168,6 @@ func (s *errorKeystoreServer) ListUserCredentials(_ context.Context, _ *pb.ListU
 	return nil, status.Error(codes.Internal, "list user credentials failed")
 }
 
-func (s *errorKeystoreServer) GetShare(_ context.Context, _ *pb.GetShareRequest) (*pb.ShareInfo, error) {
-	return nil, status.Error(codes.Internal, "get share failed")
-}
-
-func (s *errorKeystoreServer) DeleteShare(_ context.Context, _ *pb.DeleteShareRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "delete share failed")
-}
-
-func (s *errorKeystoreServer) QueryAudit(_ context.Context, _ *pb.QueryAuditRequest) (*pb.QueryAuditResponse, error) {
-	return nil, status.Error(codes.Internal, "query audit failed")
-}
-
-func (s *errorKeystoreServer) TenantBarrierStatus(_ context.Context, _ *pb.TenantBarrierStatusRequest) (*pb.TenantBarrierStatusResponse, error) {
-	return nil, status.Error(codes.Internal, "tenant barrier status failed")
-}
-
 func (s *errorKeystoreServer) UpdateTenantEntitlements(_ context.Context, _ *pb.UpdateTenantEntitlementsRequest) (*pb.UpdateTenantEntitlementsResponse, error) {
 	return nil, status.Error(codes.Internal, "update tenant entitlements failed")
 }
@@ -233,10 +182,6 @@ func (s *errorKeystoreServer) Algorithms(_ context.Context, _ *pb.AlgorithmsRequ
 
 func (s *errorKeystoreServer) BootstrapListenerKeys(_ context.Context, _ *emptypb.Empty) (*pb.BootstrapListenerKeysResponse, error) {
 	return nil, status.Error(codes.Internal, "bootstrap listener keys failed")
-}
-
-func (s *errorKeystoreServer) BarrierHasRecoveryKeys(_ context.Context, _ *emptypb.Empty) (*pb.BarrierHasRecoveryKeysResponse, error) {
-	return nil, status.Error(codes.Internal, "barrier has recovery keys failed")
 }
 
 func (s *errorKeystoreServer) PKCS11StatePut(_ context.Context, _ *pb.PKCS11StatePutRequest) (*pb.PKCS11StatePutResponse, error) {
@@ -305,33 +250,6 @@ func TestListUserCredentials_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestQueryAudit_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).QueryAudit(context.Background(), &transport.AuditFilter{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestQueryAudit_NilFilter(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	_, err := tr.QueryAudit(context.Background(), nil)
-	assert.ErrorIs(t, err, transport.ErrInvalidRequest)
-}
-
-func TestGetShare_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).GetShare(context.Background(), "https://a", "g1", 0)
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestDeleteShare_NotConnected(t *testing.T) {
-	err := newDisconnected(t).DeleteShare(context.Background(), "https://a", "g1", 0)
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestTenantBarrierStatus_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).TenantBarrierStatus(context.Background(), "tenant-a")
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 func TestUpdateTenantEntitlements_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).UpdateTenantEntitlements(context.Background(), &transport.UpdateTenantEntitlementsRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
@@ -354,11 +272,6 @@ func TestBootstrapListenerKeys_NotConnected_I705(t *testing.T) {
 
 func TestGeneratePIVCSR_NotConnected_I705(t *testing.T) {
 	_, err := newDisconnected(t).GeneratePIVCSR(context.Background(), &transport.GeneratePIVCSRRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierEnableEncryption_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).BarrierEnableEncryption(context.Background(), &transport.BarrierEnableEncryptionRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
@@ -457,49 +370,6 @@ func TestListUserCredentials_Connected(t *testing.T) {
 	assert.Equal(t, "yubikey-alice", resp.Credentials[0].DisplayName)
 }
 
-func TestGetShare_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	resp, err := tr.GetShare(context.Background(), "https://a.example", "group-1", 2)
-	require.NoError(t, err)
-	assert.Equal(t, "https://a.example", resp.ServerURL)
-	assert.Equal(t, "group-1", resp.GroupID)
-	assert.Equal(t, 2, resp.ShareIndex)
-}
-
-func TestDeleteShare_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.DeleteShare(context.Background(), "https://a.example", "group-1", 2))
-}
-
-func TestQueryAudit_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	page, err := tr.QueryAudit(context.Background(), &transport.AuditFilter{
-		Actor: "alice", Resource: "key", Action: "sign", Outcome: "success",
-		From: time.Now().Add(-time.Hour), To: time.Now(), Limit: 10, Cursor: "c1",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, page.Total)
-	assert.Equal(t, "cursor-2", page.Next)
-	require.Len(t, page.Events, 1)
-	assert.Equal(t, "alice", page.Events[0].Actor)
-	assert.Equal(t, "sign", page.Events[0].Action)
-	assert.Equal(t, "127.0.0.1", page.Events[0].Attributes["ip"])
-}
-
-func TestTenantBarrierStatus_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	resp, err := tr.TenantBarrierStatus(context.Background(), "tenant-a")
-	require.NoError(t, err)
-	assert.Equal(t, "tenant-a", resp.TenantID)
-	assert.True(t, resp.Initialized)
-	assert.Equal(t, 3, resp.ShamirThreshold)
-	assert.Equal(t, 5, resp.ShamirTotal)
-}
-
 func TestUpdateTenantEntitlements_Connected(t *testing.T) {
 	tr, cleanup := newBufconnTransport(t)
 	defer cleanup()
@@ -560,18 +430,6 @@ func TestGeneratePIVCSR_Connected_I705(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "9a", resp.Slot)
 	assert.NotEmpty(t, resp.CSR)
-}
-
-func TestBarrierEnableEncryption_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	tr.connected = true
-	resp, err := tr.BarrierEnableEncryption(context.Background(), &transport.BarrierEnableEncryptionRequest{
-		Strategy: "shamir", Mechanism: "in-place", Availability: "online", ShamirThreshold: 3, ShamirTotal: 5,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "started", resp.Status)
-	assert.Equal(t, "system", resp.Scope)
 }
 
 func TestPKCS11StatePut_Connected(t *testing.T) {
@@ -708,38 +566,6 @@ func TestListUserCredentials_ServerError(t *testing.T) {
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
-func TestGetShare_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-	_, err := tr.GetShare(context.Background(), "u", "g", 0)
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestDeleteShare_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-	err := tr.DeleteShare(context.Background(), "u", "g", 0)
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestQueryAudit_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-	_, err := tr.QueryAudit(context.Background(), &transport.AuditFilter{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestTenantBarrierStatus_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-	_, err := tr.TenantBarrierStatus(context.Background(), "tenant-a")
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
 func TestUpdateTenantEntitlements_ServerError(t *testing.T) {
 	tr, cleanup := newErrorBufconnTransport(t)
 	defer cleanup()
@@ -768,22 +594,6 @@ func TestBootstrapListenerKeys_ServerError_I705(t *testing.T) {
 	tr, cleanup := newErrorBufconnTransport(t)
 	defer cleanup()
 	_, err := tr.BootstrapListenerKeys(context.Background())
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestBarrierHasRecoveryKeys_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-	_, err := tr.BarrierHasRecoveryKeys(context.Background())
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestBarrierEnableEncryption_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-	_, err := tr.BarrierEnableEncryption(context.Background(), &transport.BarrierEnableEncryptionRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
 }

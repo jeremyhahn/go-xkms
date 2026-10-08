@@ -141,14 +141,18 @@ The server can be configured via environment variables:
 
 ### 1. Use Persistent Storage
 
-Replace memory stores with database-backed implementations:
+The example boots an in-process go-qrdb node on the `memory` backend, so its
+users and credentials are gone on restart. Users are go-qrdb's, and
+credentials are go-qrdb DAO entities on the datastore's DAO factory; point the
+node at a persistent backend (e.g. `pebble`) and the same wiring persists:
 
 ```go
-// Instead of:
-userStore := webauthn.NewMemoryUserStore()
-
-// Use:
-userStore := NewDatabaseUserStore(db)
+ds, err := datastore.New(node.Client(), config.DatastoreConfig{})
+users, credentials, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
+    Users:      node.Client().Users(),
+    DAOFactory: ds.DAOFactory(),
+    TenantID:   "system",
+})
 ```
 
 ### 2. Configure Proper Origins
@@ -184,14 +188,11 @@ tlsConfig := &tls.Config{
 
 ### 5. Session Cleanup
 
-Enable automatic session cleanup:
+Sweep expired sessions until the context ends:
 
 ```go
-stores := rest.NewWebAuthnStores(&rest.WebAuthnStoresConfig{
-    SessionTTL: 5 * time.Minute,
-})
-cancel := stores.StartCleanupRoutine(ctx, time.Minute)
-defer cancel()
+sessions := webauthn.NewMemorySessionStoreWithTTL(5 * time.Minute)
+go webauthn.SweepSessions(ctx, sessions, time.Minute)
 ```
 
 ## Security Best Practices

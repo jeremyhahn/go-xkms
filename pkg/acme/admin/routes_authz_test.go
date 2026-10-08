@@ -47,9 +47,9 @@ type routeCase struct {
 
 // adminRouteCases covers every route registered by Handlers.RegisterRoutes.
 var adminRouteCases = []routeCase{
-	{"list certificates", http.MethodGet, "/admin/certificates", auth.ResourceCerts, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameCustodian},
-	{"list expiring certificates", http.MethodGet, "/admin/certificates/expiring", auth.ResourceCerts, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameCustodian},
-	{"get certificate", http.MethodGet, "/admin/certificates/abc123", auth.ResourceCerts, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameCustodian},
+	{"list certificates", http.MethodGet, "/admin/certificates", auth.ResourceCerts, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
+	{"list expiring certificates", http.MethodGet, "/admin/certificates/expiring", auth.ResourceCerts, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+	{"get certificate", http.MethodGet, "/admin/certificates/abc123", auth.ResourceCerts, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
 	{"revoke certificate", http.MethodPost, "/admin/certificates/abc123/revoke", auth.ResourceCerts, auth.ActionRevoke, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
 	{"list accounts", http.MethodGet, "/admin/accounts", auth.ResourceACMEAccounts, auth.ActionList, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
 	{"get account", http.MethodGet, "/admin/accounts/1", auth.ResourceACMEAccounts, auth.ActionRead, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
@@ -57,8 +57,8 @@ var adminRouteCases = []routeCase{
 	{"list orders", http.MethodGet, "/admin/orders", auth.ResourceACMEOrders, auth.ActionList, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
 	{"get order", http.MethodGet, "/admin/orders/1", auth.ResourceACMEOrders, auth.ActionRead, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
 	{"list audit logs", http.MethodGet, "/admin/audit", auth.ResourceAudit, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
-	{"get status", http.MethodGet, "/admin/status", auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
-	{"get stats", http.MethodGet, "/admin/stats", auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
+	{"get status", http.MethodGet, "/admin/status", auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, unprivilegedRole},
+	{"get stats", http.MethodGet, "/admin/stats", auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, unprivilegedRole},
 	{"get algorithms", http.MethodGet, "/admin/algorithms", auth.ResourceAdmin, auth.ActionCapabilities, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
 }
 
@@ -98,23 +98,13 @@ var tenantRouteCases = []routeCase{
 	{"delete user", http.MethodDelete, "/api/v1/tenants/t1/users/u1", auth.ResourceUsers, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
 }
 
-// barrierRouteCases covers every route registered by
-// BarrierHandlers.RegisterRoutes.
-var barrierRouteCases = []routeCase{
-	{"barrier status", http.MethodGet, "/admin/barrier/status", auth.ResourceSeal, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
-	{"barrier initialize", http.MethodPost, "/admin/barrier/initialize", auth.ResourceSeal, auth.ActionBootstrap, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
-	{"barrier seal", http.MethodPost, "/admin/barrier/seal", auth.ResourceSeal, auth.ActionSeal, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
-	{"barrier unseal", http.MethodPost, "/admin/barrier/unseal", auth.ResourceSeal, auth.ActionUnseal, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
-	{"shamir initialize", http.MethodPost, "/admin/barrier/shamir/initialize", auth.ResourceSeal, auth.ActionInitializeShamir, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
-	{"shamir unseal share", http.MethodPost, "/admin/barrier/shamir/unseal-share", auth.ResourceBarrier, auth.ActionUnsealShare, qrdbsdk.RoleNameCustodian, qrdbsdk.RoleNameAdmin},
-	{"barrier rekey", http.MethodPost, "/admin/barrier/rekey", auth.ResourceSeal, auth.ActionRekey, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
-	{"recovery generate", http.MethodPost, "/admin/barrier/recovery/generate", auth.ResourceSeal, auth.ActionGenerateRecovery, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
-	{"recovery recover", http.MethodPost, "/admin/barrier/recovery/recover", auth.ResourceSeal, auth.ActionRecoverWithKeys, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
-	{"recovery status", http.MethodGet, "/admin/barrier/recovery/status", auth.ResourceSeal, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
-	{"barrier root token", http.MethodPost, "/admin/barrier/root-token", auth.ResourceSeal, auth.ActionRotateRootKey, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
-}
+// unprivilegedRole names a role that is not a canonical go-qrdb role and so
+// holds no permission. Every canonical role carries admin:status since
+// go-qrdb v0.40, so the status routes need a non-canonical caller to prove the
+// gate still refuses one without the grant.
+const unprivilegedRole = "unprivileged"
 
-// newAdminRouter builds a router with the admin, tenant, and barrier routes
+// newAdminRouter builds a router with the admin and tenant routes
 // registered against the qrdb-backed gate. Authentication middleware is nil so
 // each test injects the identity it wants directly.
 func newAdminRouter(t *testing.T) (*mux.Router, *qrdbRoleRBAC) {
@@ -125,7 +115,6 @@ func newAdminRouter(t *testing.T) (*mux.Router, *qrdbRoleRBAC) {
 
 	NewHandlers(newAuthzMockService(), discardLogger()).RegisterRoutes(router, nil, gate)
 	NewTenantHandlers(newAuthzMockTenantService(), discardLogger()).RegisterRoutes(router, nil, gate)
-	NewBarrierHandlers(newStubBarrierService(), discardLogger()).RegisterRoutes(router, nil, gate)
 
 	return router, client
 }
@@ -164,7 +153,7 @@ var platformOnlyRoutes = map[string]bool{
 // route asks the qrdb authorizer for exactly the resource:action pair it
 // declares, and for nothing else.
 func TestACMEAdminRoutes_RequestExactPermission(t *testing.T) {
-	for _, group := range [][]routeCase{adminRouteCases, tenantRouteCases, barrierRouteCases} {
+	for _, group := range [][]routeCase{adminRouteCases, tenantRouteCases} {
 		for _, tc := range group {
 			t.Run(tc.name, func(t *testing.T) {
 				router, client := newAdminRouter(t)
@@ -182,7 +171,7 @@ func TestACMEAdminRoutes_RequestExactPermission(t *testing.T) {
 // TestACMEAdminRoutes_AllowedWithGrant verifies every route is served when the
 // caller holds a canonical qrdb role carrying its grant.
 func TestACMEAdminRoutes_AllowedWithGrant(t *testing.T) {
-	for _, group := range [][]routeCase{adminRouteCases, tenantRouteCases, barrierRouteCases} {
+	for _, group := range [][]routeCase{adminRouteCases, tenantRouteCases} {
 		for _, tc := range group {
 			t.Run(tc.name, func(t *testing.T) {
 				router, _ := newAdminRouter(t)
@@ -201,7 +190,7 @@ func TestACMEAdminRoutes_AllowedWithGrant(t *testing.T) {
 // TestACMEAdminRoutes_DeniedWithoutGrant verifies every route is refused when
 // the caller holds a canonical role that lacks its grant.
 func TestACMEAdminRoutes_DeniedWithoutGrant(t *testing.T) {
-	for _, group := range [][]routeCase{adminRouteCases, tenantRouteCases, barrierRouteCases} {
+	for _, group := range [][]routeCase{adminRouteCases, tenantRouteCases} {
 		for _, tc := range group {
 			t.Run(tc.name, func(t *testing.T) {
 				router, _ := newAdminRouter(t)
@@ -221,7 +210,7 @@ func TestACMEAdminRoutes_DeniedWithoutGrant(t *testing.T) {
 // carried no authorization decorator at all and only the authentication
 // middleware stood between an anonymous caller and the data.
 func TestACMEAdminRoutes_DeniedWithoutIdentity(t *testing.T) {
-	for _, group := range [][]routeCase{adminRouteCases, tenantRouteCases, barrierRouteCases} {
+	for _, group := range [][]routeCase{adminRouteCases, tenantRouteCases} {
 		for _, tc := range group {
 			t.Run(tc.name, func(t *testing.T) {
 				router, _ := newAdminRouter(t)
@@ -242,17 +231,15 @@ func TestACMEAdminRoutes_DeniedWithoutIdentity(t *testing.T) {
 // conferred nothing here — the ACME API ran its own super-admin / endorser /
 // viewer vocabulary that shared no members with the qrdb roles.
 func TestACMEAdminRoutes_QRDBAdminReachesEverySurface(t *testing.T) {
-	// The routes an Admin is expected to reach. The SO-exclusive barrier
-	// governance operations and the SO-exclusive role-mutation operations are
-	// deliberately excluded — qrdb reserves those for the Security Officer.
+	// The routes an Admin is expected to reach. The SO-exclusive
+	// role-mutation operations are deliberately excluded — qrdb reserves
+	// those for the Security Officer.
 	soOnly := map[string]bool{
-		"barrier initialize": true, "shamir initialize": true, "barrier rekey": true,
-		"recovery generate": true, "barrier root token": true, "shamir unseal share": true,
 		"create role": true, "update role": true, "delete role": true,
 		"create intermediate CA": true,
 	}
 
-	for _, group := range [][]routeCase{adminRouteCases, tenantRouteCases, barrierRouteCases} {
+	for _, group := range [][]routeCase{adminRouteCases, tenantRouteCases} {
 		for _, tc := range group {
 			if soOnly[tc.name] {
 				continue
@@ -274,7 +261,7 @@ func TestACMEAdminRoutes_QRDBAdminReachesEverySurface(t *testing.T) {
 // regression: taking the admin role away removes ACME admin access. An identity
 // with no roles at all reaches nothing.
 func TestACMEAdminRoutes_RevokingAdminRemovesAccess(t *testing.T) {
-	for _, group := range [][]routeCase{adminRouteCases, tenantRouteCases, barrierRouteCases} {
+	for _, group := range [][]routeCase{adminRouteCases, tenantRouteCases} {
 		for _, tc := range group {
 			t.Run(tc.name, func(t *testing.T) {
 				router, _ := newAdminRouter(t)

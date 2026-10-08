@@ -23,7 +23,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -113,54 +112,6 @@ func TestInvokeMethod_CertDomainSentinel(t *testing.T) {
 	var keyErr *KeyOpError
 	require.ErrorAs(t, dispatchErr, &keyErr)
 	assert.Equal(t, sdkssh.JSONRPCCodeNotFound, keyErr.Code)
-}
-
-// TestInvokeMethod_BarrierDomainSentinel_NotConfigured proves that a
-// barrier method reaches the caller as a classified *KeyOpError, through the
-// real InvokeMethod dispatch, when no barrier is wired at all (createTestServer's
-// fixture carries none).
-func TestInvokeMethod_BarrierDomainSentinel_NotConfigured(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupXKMS()
-
-	params, err := json.Marshal(BarrierInitializeParams{Secret: "correct-horse-battery-staple"})
-	require.NoError(t, err)
-
-	_, dispatchErr := server.InvokeMethod(context.Background(), "barrier.initialize", params)
-	require.Error(t, dispatchErr)
-
-	// The service carries no barrier, which it reports as ErrNotConfigured;
-	// the shared barrier table classifies that as unavailable.
-	var keyErr *KeyOpError
-	require.ErrorAs(t, dispatchErr, &keyErr)
-	assert.Equal(t, ErrCodeServiceUnavailable, keyErr.Code)
-	assert.ErrorIs(t, dispatchErr, xkms.ErrNotConfigured)
-}
-
-// TestInvokeMethod_BarrierDomainSentinel_AlreadyInitialized proves a real
-// barrier domain sentinel -- seal.ErrAlreadyInitialized, raised by the
-// barrier itself, not a transport-level nil check -- reaches the caller as
-// Duplicate (sdkssh.JSONRPCCodeDuplicate) through the real InvokeMethod
-// dispatch, via apierrors.BarrierSentinelClasses' ClassAlreadyExists
-// (go-xkms#912).
-func TestInvokeMethod_BarrierDomainSentinel_AlreadyInitialized(t *testing.T) {
-	server, _, _, _ := createTestBarrierServer(t)
-	defer cleanupXKMS()
-
-	ctx := context.Background()
-	initParams, err := json.Marshal(BarrierInitializeShamirParams{})
-	require.NoError(t, err)
-
-	_, firstErr := server.InvokeMethod(ctx, "barrier.initializeShamir", initParams)
-	require.NoError(t, firstErr)
-
-	_, secondErr := server.InvokeMethod(ctx, "barrier.initializeShamir", initParams)
-	require.Error(t, secondErr)
-
-	var keyErr *KeyOpError
-	require.ErrorAs(t, secondErr, &keyErr)
-	assert.Equal(t, sdkssh.JSONRPCCodeDuplicate, keyErr.Code)
-	assert.ErrorIs(t, secondErr, seal.ErrAlreadyInitialized)
 }
 
 // TestInvokeMethod_PasswordUnlock_SystemTenant proves a caller rooted in the

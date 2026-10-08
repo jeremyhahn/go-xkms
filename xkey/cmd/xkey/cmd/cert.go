@@ -20,11 +20,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/cobra"
 )
@@ -463,7 +463,7 @@ func runCertExport(cmd *cobra.Command, args []string) (err error) {
 		Bytes: cert.Raw,
 	})
 
-	if err := os.WriteFile(filePath, pemData, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(filePath, pemData, 0600); err != nil {
 		return errors.Join(ErrCertExportFailed, err)
 	}
 

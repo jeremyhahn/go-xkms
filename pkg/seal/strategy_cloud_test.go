@@ -192,7 +192,7 @@ func TestCloudKMSStrategy_UnsealRootKey_UnsealerError(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = strategy.UnsealRootKey(context.Background(), sealed, Credentials{})
-	assert.ErrorIs(t, err, unsealErr)
+	assertRootKeyUnsealError(t, err, StrategyGCPKMS, unsealErr)
 }
 
 func TestCloudKMSStrategy_UnsealRootKey_CorruptPayload(t *testing.T) {

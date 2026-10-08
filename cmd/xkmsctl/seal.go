@@ -46,7 +46,7 @@ The result is output as base64-encoded ciphertext.`,
 			handleError(err)
 			return
 		}
-		password, err := sealPassword(passwordFlag)
+		password, err := sealPassword(cmd.Context(), passwordFlag)
 		if err != nil {
 			handleError(err)
 			return
@@ -97,11 +97,11 @@ type unsealTPMParams struct {
 // sealPassword seals a --password value into protected memory as soon as it
 // is read, so the authorization value is never held in a struct as a string.
 // An empty value means the object has no password and yields nil.
-func sealPassword(password string) (*secure.Secret, error) {
+func sealPassword(ctx context.Context, password string) (*secure.Secret, error) {
 	if password == "" {
 		return nil, nil
 	}
-	secret, err := secure.NewSecret([]byte(password))
+	secret, err := secure.NewSecret(ctx, []byte(password))
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrPasswordSealFailed, Err: err}
 	}
@@ -111,11 +111,11 @@ func sealPassword(password string) (*secure.Secret, error) {
 // openPassword opens a sealed object's authorization value for the wire
 // request, which carries it as client.SecretBytes. A nil password opens to
 // nil. The caller owns the result and must Wipe it.
-func openPassword(password *secure.Secret) (client.SecretBytes, error) {
+func openPassword(ctx context.Context, password *secure.Secret) (client.SecretBytes, error) {
 	if password == nil {
 		return nil, nil
 	}
-	buf, err := password.Open()
+	buf, err := password.Open(ctx)
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrPasswordOpenFailed, Err: err}
 	}
@@ -144,7 +144,7 @@ func sealData(cfg *Config, printer *Printer, keyID string, data, aad []byte, tpm
 
 	printVerbose("Connected to xkms service")
 
-	password, err := openPassword(tpm.Password)
+	password, err := openPassword(ctx, tpm.Password)
 	if err != nil {
 		handleError(err)
 		return
@@ -227,7 +227,7 @@ Use --nonce and --tag for algorithms that require them.`,
 			return
 		}
 
-		password, err := sealPassword(passwordFlag)
+		password, err := sealPassword(cmd.Context(), passwordFlag)
 		if err != nil {
 			handleError(err)
 			return
@@ -325,7 +325,7 @@ func unsealData(cfg *Config, printer *Printer, keyID string, ciphertext, nonce, 
 
 	printVerbose("Connected to xkms service")
 
-	password, err := openPassword(tpm.Password)
+	password, err := openPassword(ctx, tpm.Password)
 	if err != nil {
 		handleError(err)
 		return

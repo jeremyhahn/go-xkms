@@ -84,75 +84,16 @@ On first start, the server outputs three pieces of information:
 2. **SPKI Pin** -- SHA-256 hash of the server's TLS certificate public key
 3. **Hostname** -- Server address and port
 
-## Custodian Setup
+## Custodians, Shares and Barriers
 
-Custodian groups manage Shamir secret sharing for barrier operations.
-
-```bash
-# Create a group with 3-of-5 threshold
-xkmsctl custodian create --name "Production Ops" --threshold 3 --total 5
-
-# Add members
-xkmsctl custodian add-member --group-id <id> --user-id user-1 --username alice
-xkmsctl custodian add-member --group-id <id> --user-id user-2 --username bob
-xkmsctl custodian add-member --group-id <id> --user-id user-3 --username carol
-
-# Distribute shares to all members
-xkmsctl custodian distribute --group-id <id>
-```
-
-Each member receives one Shamir share via their configured delivery method.
-
-## Share Distribution and Barrier Unsealing
-
-Custodians receive and manage their shares locally in `~/.xkey/shares/`, encrypted by the local barrier when active.
-
-```bash
-# Custodian polls server for assigned shares
-xkey share receive --server grpc://kms.example.com:9090
-
-# List locally stored shares
-xkey share list
-
-# Import/export shares for offline transfer or backup
-xkey share import --file /tmp/share-1.json
-xkey share export --server grpc://kms.example.com:9090 --group-id <id> --file /tmp/share.json
-```
-
-Custodians submit their shares to unseal the server barrier:
-
-```bash
-xkey share unseal --server grpc://kms.example.com:9090 --group-id <id>
-```
-
-The server reports progress. Once the threshold is reached, the barrier is unsealed and key operations resume.
-
-## Client Certificate Enrollment
-
-After the barrier is unsealed, clients enroll for mTLS certificates:
-
-```bash
-xkey cert request --server https://kms.example.com:8443 \
-  --cn "alice@example.com" --spki-pin e5f6a7b8...
-```
-
-The private key never leaves the client device. Only the CSR (public key) is sent to the server CA.
-
-## Multi-Tenant Barriers
-
-Each tenant can have an independent barrier with its own custodian quorum:
-
-```bash
-xkmsctl tenant create --id acme --name "Acme Corporation"
-xkmsctl tenant barrier-init --id acme --threshold 3 --shares 5
-xkmsctl tenant barrier-unseal --id acme --share <base64-share>
-xkmsctl tenant barrier-status --id acme
-```
-
-Tenant barriers are isolated -- cross-tenant access is denied.
+Custodian groups, Shamir share distribution, barrier unsealing and tenant
+barriers belong to go-qrdb. xkms no longer exposes them: there is no
+`xkmsctl custodian`, `xkmsctl barrier` or `xkey share` verb and no matching
+route on any transport. Operate the barrier through go-qrdb's own surface; see
+[`../sealing-and-barrier/`](../sealing-and-barrier/) for the hardware and cloud
+seal strategies xkms contributes.
 
 ## See Also
 
 - [Getting Started](../../xkey/docs/usage/getting-started.md) -- End-to-end setup walkthrough
 - [xkey auth](../../xkey/docs/usage/cli/auth.md) -- Authentication commands
-- [xkey share](../../xkey/docs/usage/cli/share.md) -- Share management commands

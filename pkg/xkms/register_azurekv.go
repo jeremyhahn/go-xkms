@@ -22,6 +22,7 @@
 package xkms
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend/azurekv"
@@ -62,7 +63,7 @@ func newAzureKVKeyProvider(config map[string]interface{}) (types.KeyProvider, er
 		azConfig.ClientID = clientID
 	}
 	if clientSecret, ok := config["client_secret"].(string); ok {
-		secret, err := types.NewLiteralSecretValue([]byte(clientSecret))
+		secret, err := types.NewLiteralSecretValue(context.Background(), []byte(clientSecret))
 		if err != nil {
 			return nil, err
 		}

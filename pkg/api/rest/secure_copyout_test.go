@@ -16,11 +16,9 @@ package rest
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/api/rest/secureio"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -72,35 +70,4 @@ func TestBuffersProvider_RefusesAbsentOrDestroyed(t *testing.T) {
 			assert.Nil(t, buf)
 		})
 	}
-}
-
-// TestBarrierCredentialsFromRequest_CopiesWithoutConsuming proves the
-// credentials are built from a copy: the request's own field survives and can
-// still be destroyed by the handler.
-func TestBarrierCredentialsFromRequest_CopiesWithoutConsuming(t *testing.T) {
-	var req struct {
-		Password secureio.PasswordField `json:"password_b64"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(`{"password_b64":"aHVudGVyMg=="}`), &req))
-	defer req.Password.Destroy()
-
-	creds, ok, err := barrierCredentialsFromRequest(req.Password)
-	require.NoError(t, err)
-	require.True(t, ok)
-	defer creds.Secret.Destroy()
-	assert.NotNil(t, creds.Secret)
-
-	require.NoError(t, req.Password.Buffer().WithBytes(func(b []byte) error {
-		assert.Equal(t, []byte("hunter2"), b)
-		return nil
-	}))
-}
-
-// TestBarrierCredentialsFromRequest_Absent proves an absent password reports
-// ok=false with the zero Credentials rather than an error.
-func TestBarrierCredentialsFromRequest_Absent(t *testing.T) {
-	creds, ok, err := barrierCredentialsFromRequest(secureio.PasswordField{})
-	require.NoError(t, err)
-	assert.False(t, ok)
-	assert.Nil(t, creds.Secret)
 }

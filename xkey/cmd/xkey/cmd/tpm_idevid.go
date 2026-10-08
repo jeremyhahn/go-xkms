@@ -20,8 +20,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -358,7 +358,7 @@ func runIDevIDExport(cmd *cobra.Command, args []string) (err error) {
 		return nil
 	}
 
-	if err := os.WriteFile(idevidExportOutput, pemData, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(idevidExportOutput, pemData, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
@@ -410,7 +410,7 @@ func runIDevIDCSR(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Write CSR to file
-	if err := os.WriteFile(idevidCSROutput, csrBytes, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(idevidCSROutput, csrBytes, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 

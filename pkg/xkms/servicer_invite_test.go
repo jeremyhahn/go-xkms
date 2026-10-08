@@ -36,6 +36,8 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	xkmstransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -44,12 +46,9 @@ import (
 // invite, and BeginInviteRegistration/FinishInviteRegistration (FIDO2) and
 // ActivateInvitePIV redeem it, activating the account exactly once.
 //
-// The webauthn.Service under test is real, wired to an in-memory UserStore
-// seeded to agree with the mockUserClient's qrdb user record: the two are
-// logically the same store in production (webauthn's qrdb adapter wraps the
-// same qrdb client CreateUser writes through), but decoupling them here
-// keeps this test free of the qrdb KV-adapter plumbing pkg/webauthn's own
-// tests already cover.
+// The webauthn.Service under test is real, wired through webauthn's qrdb
+// adapter to the same mockUserClient CreateUser writes through, exactly as
+// production shares one qrdb client between the two.
 
 // newInviteEC2Credential returns a virtualwebauthn EC2 credential whose
 // P-256 public key has full-length (32-byte) X and Y coordinates.
@@ -75,13 +74,12 @@ func newInviteEC2Credential(t *testing.T) virtualwebauthn.Credential {
 	return virtualwebauthn.Credential{}
 }
 
-// inviteFixture wires a real XKMSService with a real webauthn.Service (over
-// an in-memory user store), a real qrdb invite store (over an in-memory KV
-// store) and a mock qrdb user client, all agreeing on one pending account.
+// inviteFixture wires a real XKMSService with a real webauthn.Service, a real
+// qrdb invite store (over an in-memory KV store) and a mock qrdb user client
+// that both services read, so they agree on one pending account.
 type inviteFixture struct {
 	svc       *XKMSService
 	users     *mockUserClient
-	waUsers   *webauthn.MemoryUserStore
 	rp        virtualwebauthn.RelyingParty
 	inviteTTL time.Duration
 }
@@ -91,7 +89,7 @@ const inviteFixtureEmail = "invitee@example.com"
 const inviteFixtureTenant = "system"
 
 // newInviteFixture builds the fixture with the account already pending in
-// both the qrdb mock and the webauthn user store.
+// the qrdb mock.
 func newInviteFixture(t *testing.T) *inviteFixture {
 	t.Helper()
 	setupService(t)
@@ -107,6 +105,12 @@ func newInviteFixture(t *testing.T) *inviteFixture {
 		getUser: func(_ context.Context, id uint64) (*qrdbtransport.User, error) {
 			if id != qrdbUser.ID {
 				return nil, &qrdbtransport.UserNotFoundError{ID: id}
+			}
+			return qrdbUser, nil
+		},
+		getUserByEmail: func(_ context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+			if tenantID != qrdbUser.TenantID || email != qrdbUser.Email {
+				return nil, &qrdbtransport.UserNotFoundError{Lookup: qrdbtransport.UserLookupKey(tenantID, email)}
 			}
 			return qrdbUser, nil
 		},
@@ -128,11 +132,8 @@ func newInviteFixture(t *testing.T) *inviteFixture {
 	}
 	svc.SetUserClients(users, &mockRoleClient{})
 
-	// webauthn side: the SAME account, by the SAME qrdb-id-derived handle.
-	waUsers := webauthn.NewMemoryUserStore()
-	waUser := webauthn.NewDefaultUser(webauthn.HandleFromUserID(qrdbUser.ID), inviteFixtureEmail, "Invitee")
-	waUser.SetLifecycle(qrdbsdk.LifecyclePending)
-	require.NoError(t, waUsers.Save(context.Background(), waUser))
+	// webauthn side: the SAME qrdb account, by its qrdb-id-derived handle.
+	waStores := webauthntest.NewStoresFor(t, users)
 
 	cfg := &webauthn.Config{
 		RPID:          "example.com",
@@ -141,19 +142,19 @@ func newInviteFixture(t *testing.T) *inviteFixture {
 	}
 	waSvc, err := webauthn.NewService(webauthn.ServiceParams{
 		Config:          cfg,
-		UserStore:       waUsers,
+		UserStore:       waStores.Users,
 		SessionStore:    webauthn.NewMemorySessionStore(),
-		CredentialStore: webauthn.NewMemoryCredentialStore(),
+		CredentialStore: waStores.Credentials,
 	})
 	require.NoError(t, err)
 	svc.SetWebAuthn(waSvc)
 
-	inviteStore, err := qrdbsdk.NewTenantInviteStore(singleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	inviteStore, err := invitetest.New(singleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
 	require.NoError(t, err)
 	svc.SetInviteStore(inviteStore)
 
 	return &inviteFixture{
-		svc: svc, users: users, waUsers: waUsers,
+		svc: svc, users: users,
 		rp:        virtualwebauthn.RelyingParty{Name: cfg.RPDisplayName, ID: cfg.RPID, Origin: cfg.RPOrigins[0]},
 		inviteTTL: time.Hour,
 	}

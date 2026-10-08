@@ -41,7 +41,7 @@ func sealedWindowTestConfig(dataDir string) *qrdbsdk.DaemonConfig {
 	return &qrdbsdk.DaemonConfig{
 		Raft: qrdbsdk.DaemonRaftConfig{DataDir: dataDir},
 		Databases: []qrdbsdk.DaemonDatabaseConfig{
-			{Name: "default", Engine: "mvcc", Backend: "pebble"},
+			{Name: "default", Backend: "pebble"},
 		},
 		Seal: qrdbsdk.DaemonSealConfig{Enabled: true, Strategy: "passphrase"},
 	}

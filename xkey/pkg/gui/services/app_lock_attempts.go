@@ -20,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // AppLockPINMaxAttempts is the app lock's own unlock-attempt budget for the
@@ -166,11 +168,7 @@ func (c *appLockAttemptCounter) save(remaining int) error {
 		return &AppLockAttemptsSaveError{Path: c.path, Cause: err}
 	}
 
-	tmpPath := c.path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return &AppLockAttemptsSaveError{Path: c.path, Cause: err}
-	}
-	if err := os.Rename(tmpPath, c.path); err != nil {
+	if err := fsutil.WriteFileAtomic(c.path, data, 0600); err != nil {
 		return &AppLockAttemptsSaveError{Path: c.path, Cause: err}
 	}
 	return nil

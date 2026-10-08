@@ -67,7 +67,7 @@ func testPasswordSetup(t *testing.T) (*seal.BarrierRegistry, *staticpw.BackendSt
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	sysCreds := seal.MustCredentials([]byte("test-pw"))
+	sysCreds := seal.MustCredentials(t.Context(), []byte("test-pw"))
 	defer sysCreds.Secret.Destroy()
 	require.NoError(t, sysBarrier.Initialize(ctx, sysCreds))
 
@@ -75,9 +75,9 @@ func testPasswordSetup(t *testing.T) (*seal.BarrierRegistry, *staticpw.BackendSt
 	require.NoError(t, err)
 
 	for _, tenant := range []string{tenantA, tenantB} {
-		_, err = registry.RegisterTenant(tenant)
+		_, err = registry.RegisterTenantDefault(tenant)
 		require.NoError(t, err)
-		tenantCreds := seal.MustCredentials([]byte(tenant + "-pw"))
+		tenantCreds := seal.MustCredentials(t.Context(), []byte(tenant+"-pw"))
 		require.NoError(t, registry.InitializeTenant(ctx, tenant, tenantCreds))
 		tenantCreds.Secret.Destroy()
 	}

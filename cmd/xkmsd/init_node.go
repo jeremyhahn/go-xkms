@@ -56,8 +56,8 @@ var (
 	// `xkmsd init` does not yet drive; running it here would either block
 	// forever waiting on shares nothing supplies, or silently leave the node
 	// sealed. Deployments that need a Shamir-protected node barrier must use
-	// a strategy NodeFlipWired covers that init CAN complete unattended today
-	// (none, passphrase, tpm2) until that ceremony is wired.
+	// a strategy init CAN complete today (none, passphrase, or a hardware or
+	// cloud strategy that auto-unseals) until that ceremony is wired.
 	ErrNodeShamirUnsupported = errors.New("init: --barrier-strategy shamir is not yet supported for the durable node barrier")
 
 	// ErrNodeStillSealed is returned when the node remains sealed after the
@@ -97,15 +97,6 @@ func resolveInitNodeConfig(cfg *config.Config, flags *initFlags, dataDir string)
 	if nodeCfg.Barrier.Strategy == "" {
 		nodeCfg.Barrier.Strategy = flags.barrierStrategy
 	}
-	if flags.barrierStrategy == "shamir" {
-		if flags.shares > 0 {
-			nodeCfg.Barrier.ShamirTotal = flags.shares
-		}
-		if flags.threshold > 0 {
-			nodeCfg.Barrier.ShamirThreshold = flags.threshold
-		}
-	}
-
 	return &nodeCfg
 }
 
@@ -140,8 +131,8 @@ func openDurableInitNode(ctx context.Context, nodeCfg *config.Config, logger *sl
 // unsealDurableInitNode completes the node's own barrier when the resolved
 // seal posture leaves it sealed after construction.
 //
-// "none" and a provisioned tpm2 auto-unseal unattended at construction (see
-// server.ResolveNodeSeal), so node.IsSealed() is already false for them here
+// "none" and every hardware or cloud strategy auto-unseal unattended at
+// construction (see embeddednode.ResolveNodeSeal), so node.IsSealed() is already false for them here
 // and this is a no-op. "passphrase" leaves the node sealed: `xkmsd init` IS
 // the operator-present ceremony -- the operator supplied --so-pin to run it
 // at all -- so it completes the unseal directly with that credential rather
@@ -162,7 +153,7 @@ func unsealDurableInitNode(ctx context.Context, node *qrdbnode.Node, sealRes emb
 	if strategy == "shamir" {
 		return ErrNodeShamirUnsupported
 	}
-	creds, err := seal.CredentialsFor(soPin)
+	creds, err := seal.CredentialsFor(ctx, soPin)
 	if err != nil {
 		return &WrappedError{Sentinel: ErrNodeUnsealFailed, Err: err}
 	}

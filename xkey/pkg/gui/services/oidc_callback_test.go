@@ -373,7 +373,7 @@ func TestOIDCService_RefreshToken_TokenEndpointErrorIsTerminalInert(t *testing.T
 	defer server.Close()
 
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 	require.NoError(t, svc.AddProvider(&OIDCProviderEntry{Name: "p", Issuer: server.URL, ClientID: "cid"}))
 	require.NoError(t, store.Save(server.URL, &oidc.TokenResponse{AccessToken: "at", RefreshToken: "rt"}))

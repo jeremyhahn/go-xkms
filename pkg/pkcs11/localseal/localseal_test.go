@@ -247,7 +247,7 @@ var errCredentialsFor = errors.New("localseal test: CredentialsFor unavailable")
 func withFailingCredentialsFor(t *testing.T) {
 	t.Helper()
 	original := seal.CredentialsFor
-	seal.CredentialsFor = func(secret []byte) (seal.Credentials, error) {
+	seal.CredentialsFor = func(_ context.Context, _ []byte) (seal.Credentials, error) {
 		return seal.Credentials{}, errCredentialsFor
 	}
 	t.Cleanup(func() { seal.CredentialsFor = original })
@@ -300,11 +300,11 @@ func TestController_Rekey_NewCredentialsFailureSurfacesErrorAndReseals(t *testin
 	require.NoError(t, ctrl.Seal())
 
 	original := seal.CredentialsFor
-	seal.CredentialsFor = func(secret []byte) (seal.Credentials, error) {
+	seal.CredentialsFor = func(ctx context.Context, secret []byte) (seal.Credentials, error) {
 		// Let the real implementation authenticate the old PIN so Rekey
 		// reaches the newPassphrase call, which is the one made to fail.
 		if string(secret) == string(pin) {
-			return original(secret)
+			return original(ctx, secret)
 		}
 		return seal.Credentials{}, errCredentialsFor
 	}

@@ -186,46 +186,6 @@ func TestAllMethods_NotConnected(t *testing.T) {
 	_, err = tr.GeneratePIVCSR(ctx, &transport.GeneratePIVCSRRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
 
-	// Barrier service
-	err = tr.BarrierInitialize(ctx, &transport.BarrierInitializeRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.BarrierUnseal(ctx, &transport.BarrierUnsealRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.BarrierSeal(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.BarrierStatus(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.BarrierUnsealWithShare(ctx, &transport.BarrierUnsealShareRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.BarrierUnsealWithShares(ctx, &transport.BarrierUnsealSharesRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.BarrierRekey(ctx, &transport.BarrierRekeyRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.BarrierRecoverWithKeys(ctx, &transport.BarrierRecoverWithKeysRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.BarrierDeleteRecoveryKeys(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.BarrierHasRecoveryKeys(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.BarrierGenerateRootToken(ctx, &transport.BarrierGenerateRootTokenRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
 	// PIN service
 	err = tr.SetSOPIN(ctx, &transport.SetSOPINRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
@@ -282,37 +242,7 @@ func TestAllMethods_NotConnected(t *testing.T) {
 	_, err = tr.PasswordGenerate(ctx, &transport.PasswordGenerateRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
 
-	// Custodian/Share/Tenant service
-	_, err = tr.CreateCustodianGroup(ctx, &transport.CreateCustodianGroupRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.GetCustodianGroup(ctx, "g1")
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.ListCustodianGroups(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.DeleteCustodianGroup(ctx, "g1")
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.AddCustodianMember(ctx, &transport.AddCustodianMemberRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.RemoveCustodianMember(ctx, &transport.RemoveCustodianMemberRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.DistributeShares(ctx, &transport.DistributeSharesRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.SubmitShare(ctx, &transport.SubmitShareRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.ListShares(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.GetShareCollectionStatus(ctx, "g1")
-	assert.ErrorIs(t, err, ErrNotConnected)
-
+	// Tenant service
 	_, err = tr.CreateTenant(ctx, &transport.CreateTenantRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
 
@@ -325,28 +255,7 @@ func TestAllMethods_NotConnected(t *testing.T) {
 	err = tr.DeleteTenant(ctx, "t1")
 	assert.ErrorIs(t, err, ErrNotConnected)
 
-	err = tr.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.TenantBarrierUnseal(ctx, &transport.TenantBarrierUnsealRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
 	// Init ceremony
-	_, err = tr.GetInitStatus(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.ClaimCertBegin(ctx, &transport.ClaimCertBeginRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.ClaimCertComplete(ctx, &transport.ClaimCertCompleteRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.ClaimShareBegin(ctx, &transport.ClaimShareBeginRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.SignCSRInit(ctx, &transport.SignCSRInitRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
 	_, err = tr.SubmitCredential(ctx, &transport.CredentialSubmitRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
 

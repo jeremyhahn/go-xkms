@@ -12,7 +12,7 @@ registrations in `xkey/cmd/xkey/cmd/`.
 > **Not to be confused with `xkmsctl`**, which is the *server* admin CLI for
 > `xkmsd` — key and certificate management, tenants, cluster, backends. Most
 > files in this directory document `xkmsctl` rather than `xkey`, and each now
-> carries a scope banner saying so: `admin.md`, `backends.md`, `barrier.md`,
+> carries a scope banner saying so: `admin.md`, `backends.md`,
 > `bootstrap.md`, `ca.md`, `cert.md`, `fido2.md`, `frost.md`, `key.md`,
 > `migrate.md`, `noise.md`, `pin.md`, `piv.md`, `tls.md`, `user.md`. (On
 > `noise.md`: the top-level `xkmsctl noise` group was removed, and what
@@ -130,7 +130,6 @@ which drives *external* FIDO2 hardware keys.)
 | `xkey password` | `add`, `list`, `get`, `remove`, `type`, `unlock`, `lock`, `status`, `access-mode` |
 | `xkey oath` | `add`, `list`, `generate`, `remove`, `scan`, `sync`, `push`, `pull` |
 | `xkey platform-store` | `put`, `get`, `delete`, `list`, `reseal`, `status` |
-| `xkey share` | `list`, `receive`, `import`, `export`, `unseal`, `delete` |
 
 ```bash
 echo BASE32SECRET | xkey oath add --name GitHub --issuer GitHub --secret-stdin
@@ -231,7 +230,6 @@ the phone does that. See
 ## See Also
 
 - [xkey auth](auth.md) -- server authentication in detail
-- [xkey share](share.md) -- key share management
 - [Browser Extension](extension.md)
 - [FIDO2 Daemon Overview](../../fido2/architecture.md)
 - [FIDO2 Daemon Configuration](../../virtual-authenticator/cli.md)

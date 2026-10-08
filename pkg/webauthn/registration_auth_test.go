@@ -32,10 +32,11 @@ import (
 // enrollFixture is a relying-party service plus a virtual authenticator
 // that can complete real registration ceremonies against it.
 type enrollFixture struct {
-	svc   *Service
-	users UserStore
-	creds CredentialStore
-	rp    virtualwebauthn.RelyingParty
+	svc      *Service
+	users    UserStore
+	creds    CredentialStore
+	accounts *fakeUserClient
+	rp       virtualwebauthn.RelyingParty
 }
 
 // newEnrollFixture builds a service over memory stores with public
@@ -44,8 +45,7 @@ func newEnrollFixture(t *testing.T, allow bool) *enrollFixture {
 	t.Helper()
 	cfg := validTestConfig()
 	cfg.AllowPublicRegistration = &allow
-	users := NewMemoryUserStore()
-	creds := NewMemoryCredentialStore()
+	users, creds, accounts := newTestAdapter(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
 		UserStore:       users,
@@ -54,10 +54,11 @@ func newEnrollFixture(t *testing.T, allow bool) *enrollFixture {
 	})
 	require.NoError(t, err)
 	return &enrollFixture{
-		svc:   svc,
-		users: users,
-		creds: creds,
-		rp:    virtualwebauthn.RelyingParty{Name: cfg.RPDisplayName, ID: cfg.RPID, Origin: cfg.RPOrigins[0]},
+		svc:      svc,
+		users:    users,
+		creds:    creds,
+		accounts: accounts,
+		rp:       virtualwebauthn.RelyingParty{Name: cfg.RPDisplayName, ID: cfg.RPID, Origin: cfg.RPOrigins[0]},
 	}
 }
 
@@ -237,9 +238,7 @@ func TestBeginInviteRegistration_EnrollsPendingAccount(t *testing.T) {
 	ctx := context.Background()
 	provisioned, err := f.users.Create(ctx, "new@example.com", "New Hire")
 	require.NoError(t, err)
-	du, ok := provisioned.(*DefaultUser)
-	require.True(t, ok)
-	du.SetLifecycle(qrdbsdk.LifecyclePending)
+	f.setStanding(t, "new@example.com", qrdbsdk.LifecyclePending, nil)
 
 	options, sessionID, err := f.svc.BeginInviteRegistration(ctx, "new@example.com")
 	require.NoError(t, err)

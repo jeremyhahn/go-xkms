@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -71,7 +72,7 @@ Supported backends:
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		globalConfig.PKCS11PIN = pkcs11PINSecret(pkcs11PINFlag)
+		globalConfig.PKCS11PIN = pkcs11PINSecret(cmd.Context(), pkcs11PINFlag)
 		return nil
 	},
 }
@@ -85,11 +86,11 @@ Supported backends:
 // practice this path is unreachable: the underlying memguard allocator
 // panics the whole process on allocation failure before NewSecret could
 // return an error here.
-func pkcs11PINSecret(s string) *secure.Secret {
+func pkcs11PINSecret(ctx context.Context, s string) *secure.Secret {
 	if s == "" {
 		return nil
 	}
-	secret, err := secure.NewSecret([]byte(s))
+	secret, err := secure.NewSecret(ctx, []byte(s))
 	if err != nil {
 		slog.Default().Error("xkmsctl: failed to seal --pkcs11-pin into protected memory", "error", err)
 		return nil
@@ -178,8 +179,6 @@ func init() {
 	rootCmd.AddCommand(canSealCmd)
 	rootCmd.AddCommand(bootstrapCmd)
 	rootCmd.AddCommand(pivCmd)
-	rootCmd.AddCommand(barrierCmd)
-	// initCmd is registered in init.go's init() function; do not re-add.
 	rootCmd.AddCommand(credentialCmd)
 	rootCmd.AddCommand(caCmd)
 	rootCmd.AddCommand(pkcs11Cmd)

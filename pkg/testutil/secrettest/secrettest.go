@@ -22,9 +22,15 @@ import (
 
 // Literal seals value into a SecretValue (types.NewLiteralSecretValue),
 // failing the test when it cannot be sealed.
+// Literal seals value into a SecretValue (types.NewLiteralSecretValue),
+// failing the test when it cannot be sealed. The value is cleared when the
+// test ends, releasing its locked memory: a package that seals a secret per
+// test would otherwise exhaust RLIMIT_MEMLOCK before its run completes.
+// Literal seals value into a SecretValue (types.NewLiteralSecretValue),
+// failing the test when it cannot be sealed.
 func Literal(t testing.TB, value []byte) *types.SecretValue {
 	t.Helper()
-	sv, err := types.NewLiteralSecretValue(value)
+	sv, err := types.NewLiteralSecretValue(t.Context(), value)
 	if err != nil {
 		t.Fatalf("secrettest: seal a literal secret: %v", err)
 	}

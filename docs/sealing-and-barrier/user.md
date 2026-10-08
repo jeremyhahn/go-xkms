@@ -1,6 +1,6 @@
 # Sealing and Barrier — User Guide
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-02
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## What the barrier is
 
@@ -10,15 +10,6 @@ unavailable and nothing that needs a key works. Unsealing releases it.
 
 A freshly started server is sealed. That is normal.
 
-## The first command to run when anything is broken
-
-```
-xkmsctl barrier status
-```
-
-Most "the server is broken" reports are a sealed barrier. This is the cheapest
-check there is.
-
 ## Choosing a strategy — the decision that lasts
 
 You pick it once, at `barrier init`, and it is your deployment's security
@@ -27,16 +18,15 @@ posture from then on:
 | Strategy | The root key is protected by | Unsealing needs |
 |---|---|---|
 | `tpm2` | the machine's TPM | the machine, in the same measured state |
-| `pkcs11` | an HSM or token | the token, and its PIN |
+| `pkcs11` | an HSM or token | the token, and its PIN, which this machine's TPM releases at boot |
 | `awskms` / `gcpkms` / `azurekv` / `vault` | a cloud provider | the provider, reachable and authorized |
 | `passphrase` | a passphrase | someone who knows it |
-| `shamir` | M-of-N shares | M share-holders |
+| `shamir` | M-of-N shares | M share-holders (enrolled and run through go-qrdb's holder/quorum ceremony, not `xkmsd init`) |
 | `none` | nothing — encryption is off | nothing |
 
 ```
-xkmsctl barrier init --barrier-strategy tpm2 --user-pin -
-xkmsctl barrier init --barrier-strategy passphrase --passphrase -
-xkmsctl barrier init-shamir --threshold 3 --total 5
+xkmsd init --barrier-strategy tpm2 --so-pin "$XKMS_SO_PIN"
+xkmsd init --barrier-strategy passphrase --so-pin "$XKMS_SO_PIN"
 ```
 
 **Nothing falls back.** If you initialize with `passphrase`, the barrier stays
@@ -49,73 +39,39 @@ back up weaker than you think it is, with nothing to tell you.
 
 ## Unsealing
 
-```
-xkmsctl barrier unseal --passphrase -
-xkmsctl barrier unseal-shares --share "$S1" --share "$S2" --share "$S3"
-```
-
 With `tpm2` or a cloud strategy you supply nothing — the hardware or the
 provider releases the key, if the machine is still in the state it was sealed
 against.
 
-## Shamir shares: write them down at init
-
-`barrier init-shamir` prints the shares **once**. There is no command to list
-them later, and there never will be — a server that could hand out its own
-shares would not be protecting anything.
+With `pkcs11` you supply nothing at boot either, once you have sealed the
+token's PIN to this machine's TPM. Set `backends.pkcs11.library` and
+`backends.pkcs11.token`, then run this once:
 
 ```
-xkmsctl barrier init-shamir --threshold 3 --total 5
+xkmsd seal-pkcs11-pin --config /etc/xkmsd/xkmsd.yaml < /run/secrets/token-pin
 ```
 
-Distribute them to different people in different places. Three of five means any
-three can unseal, and any two cannot.
+From then on, every `xkmsd run` releases the PIN from the TPM, logs in to the
+token and unseals. The TPM releases the PIN only while the machine is in the
+measured state it was in when you sealed it. After a firmware or boot change,
+seal the PIN again. The PIN never appears in the config file or on a command
+line.
 
-## Sealing on purpose
-
-```
-xkmsctl barrier seal --so-pin -
-```
-
-Everything stops until it is unsealed. That is the point — it is the response to
-a suspected compromise.
-
-## Recovery keys, and why to think twice
+With a cloud strategy, the server's own environment carries the provider
+credentials (`awskms`, `gcpkms`, `azurekv`); the server must be built with the
+strategy's build tag. `vault` takes its token from this machine's TPM in the
+same way as the PKCS#11 PIN. Set `backends.vault`, then run this once:
 
 ```
-xkmsctl barrier recovery generate --threshold 2 --total 3 --so-pin -
-xkmsctl barrier recovery recover --share "$R1" --share "$R2"
-xkmsctl barrier recovery delete-keys
+xkmsd seal-vault-token --config /etc/xkmsd/xkmsd.yaml < /run/secrets/vault-token
 ```
 
-Recovery keys are a **second door** into the barrier that does not need the
-primary credential. That is useful when the primary credential is lost, and it
-is a complete bypass in the hands of anyone who finds them. Storing them next to
-the server is equivalent to not having a barrier. `delete-keys` closes the door
-again once the emergency is over.
+A software strategy is unsealed through go-qrdb's own barrier surface;
+xkms does not re-expose it.
 
-## Rotating the root key
-
-```
-xkmsctl barrier rekey --so-pin -
-```
-
-New root key, re-sealed. **Old shares and old recovery keys stop working** —
-redistribute before you need them.
-
-## Turning encryption on later
-
-If a barrier was initialized `none`:
-
-```
-xkmsctl barrier enable-encryption --strategy passphrase --passphrase - \
-    --mechanism swap --availability quiesced
-```
-
-Defaults are the cautious ones: `swap` stages the re-encryption, `quiesced`
-stops writes during it. `--availability online` keeps writes flowing;
-`--mechanism in-place` is faster and leaves less room to recover if it is
-interrupted.
+There is one barrier: the database node's. The strategy you choose seals
+that barrier, and every tenant's barrier sits beneath it. A server that uses a
+remote datastore has no barrier of its own; the remote node seals the data.
 
 ## Sealing individual pieces of data
 
@@ -151,24 +107,22 @@ platform accounts may use it.
 
 | What you see | What it means | What to do |
 |---|---|---|
-| everything returns "sealed" | the barrier is closed | `barrier unseal` |
-| `barrier status` says sealed after a reboot | normal | unseal it, or automate unsealing |
 | a `tpm2` barrier will not unseal after a firmware or boot change | the PCRs no longer match | this is the mechanism working; you need the recovery path |
-| "already initialized" | there is already a root key | `rekey` replaces it; `init` will not |
-| shares rejected | fewer than M, or shares from a different init | you need M shares from **this** barrier |
-| old shares stopped working | someone ran `rekey` | redistribute the new ones |
+| a `pkcs11` node will not boot: "the TPM refused to release platform/pkcs11-pin" | the platform PCRs changed since the PIN was sealed | check the change was expected, then run `xkmsd seal-pkcs11-pin` again |
+| a `pkcs11` node will not boot: "no secret is sealed under platform/pkcs11-pin" | the PIN was never sealed on this machine | run `xkmsd seal-pkcs11-pin` |
 | a cloud-strategy barrier will not unseal | the provider is unreachable or credentials expired | fix the **server's** environment |
+| a cloud-strategy node will not boot: "is not compiled into this binary" | the server was built without that strategy's build tag | use a build that includes it |
+| a `vault` node will not boot: "releasing the vault node seal token" | the token was never sealed on this machine, or the platform PCRs changed since | run `xkmsd seal-vault-token` |
+| unseal fails with "could not unseal the root key" on a hardware or cloud strategy | the TPM, token or KMS key refused the root key: it is not the one the barrier was sealed under | point the server at the original TPM, token or key |
 | `unseal` fails with "sealed data failed authentication" | the sealed value itself is wrong: modified, cut short, from another key or backend, or unsealed with different `--aad` than it was sealed with | do not retry — find where the value came from |
 | `unseal` fails with any other error | not proven either way: usually the environment (unreachable, permission, PCR), but a backend whose own error is ambiguous — a PKCS#11 token answering `CKR_GENERAL_ERROR`, as SoftHSM before 2.7.0 does for a modified value — reports bad data this way too | read the cause in the message; fix the environment if it names one, otherwise check the value and `--aad` as well |
 | you have no credential and no recovery keys | there is no way in | the root key is unrecoverable — this is what a barrier is |
 
-That last row is not a bug. Plan for it before you need it: generate recovery
-keys, or use Shamir with enough holders, and make sure the shares are not all in
-one place.
+That last row is not a bug. Plan for it before you need it: use a quorum with
+enough holders, and make sure the shares are not all in one place.
 
 ## Where to go next
 
 - The hardware behind the strategy: [`../crypto-backends/user.md`](../crypto-backends/user.md)
 - PINs and lockout: [`../pin-management/user.md`](../pin-management/user.md)
-- Distributing and collecting shares: [`../share-custody/user.md`](../share-custody/user.md)
 - First-boot setup: [`../init-ceremony/user.md`](../init-ceremony/user.md)

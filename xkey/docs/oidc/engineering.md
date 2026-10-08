@@ -1,6 +1,6 @@
 # OIDC — Engineering
 
-Status: current. Last verified: 2026-09-29.
+Status: current. Last verified: 2026-10-08.
 
 This document covers the CLI's token-store surface
 (`cmd/xkey/cmd/oidc_token_store.go`, `cmd/xkey/cmd/oidc.go`), the GUI's token
@@ -184,22 +184,25 @@ such as `credential_process`, which AWS tooling executes. So:
 
 ## GUI token store (go-xkms#1203)
 
-`OIDCService.SetDataDir` (`pkg/gui/services/oidc_service.go:255`) and
-`OIDCService.SetBackend` (`:284`) are the GUI's two token-store paths,
-selected by `App.initializeDataDir` (`pkg/gui/app.go:976`) exactly the way
-every other GUI store picks between its barrier-backed and no-barrier forms:
+`OIDCService.SetDataDir` (`pkg/gui/services/oidc_service.go:284`) and
+`OIDCService.SetBackend` (`:313`) are the GUI's two token-store paths,
+selected by `App.initializeDataDir` (`pkg/gui/app.go:719`) exactly the way
+every other GUI store picks between its barrier-backed and no-barrier forms.
+Both build the store with `newOIDCTokenStore(kv)`, which serves `kv` as the
+DAO factory for every database (`xkms.NewStoreDAOFactory`) and opens
+`oidc.NewDAOStore(factory)` (`pkg/oidc/dao_store.go`) on it:
 
 - **With a barrier**: `SetBackend` adapts `backend` to a `qrdbsdk.KVStore`
   (`xkms.NewKVStoreAdapter`, wrapping `pkg/storage/kvadapter` — xkey hosts no
   go-qrdb node of its own, so this is how it reaches go-qrdb's DAO layer)
-  and opens `oidc.NewDAOStore(kv)` (`pkg/oidc/dao_store.go`) over it. Tokens
+  and builds the token store over it. Tokens
   persist as go-qrdb DAO entities (`OIDCTokenEntity`, keyed by normalized
   issuer), encrypted by the same barrier backend as before the move off a
   raw `Put`/`Get` pair (`oidc.BackendTokenStore`, deleted; see
   [`../../../docs/datastore/architecture.md`](../../../docs/datastore/architecture.md)'s
   "Feature-owned databases").
-- **Without a barrier**: `SetDataDir` installs an `oidc.NewMemoryTokenStore()`
-  (`pkg/oidc/store.go`) and logs one `slog.Warn` — "no barrier available:
+- **Without a barrier**: `SetDataDir` builds the token store over
+  `qrdbsdk.NewMemoryKVStore()` and logs one `slog.Warn` — "no barrier available:
   OIDC tokens are kept in memory only and will not survive a restart" —
   naming the remedy (`xkey barrier init`), the same log-once pattern
   `initializeDataDir`'s FIDO2 passkey-store fallback already uses (#181).
@@ -218,13 +221,14 @@ were deleted outright, not deprecated, by #1203; go-xkms#1325 finished the
 job by deleting `oidc.FileTokenStore` itself (`pkg/oidc/store.go`) along with
 its `ErrEncryptionFailed`/`ErrDecryptionFailed`/`ErrInvalidEncryptionKey`
 sentinels, once a `go-xkms` audit confirmed no production caller had used it
-since #1203 replaced its only caller with `MemoryTokenStore` — there is now
+since #1203 replaced its only caller with an in-memory store — there is now
 no fixed-key file store left in this package for a future caller to reach
 for by mistake. `DAOStore` (go-qrdb DAO/entity-backed, barrier-encrypted
-when its `KVStore` is adapted from a barrier backend) and `MemoryTokenStore`
-(no-barrier, in-memory) are the only two `TokenStore` implementations here.
+when the factory's store is adapted from a barrier backend) is the only
+`TokenStore` implementation. `MemoryTokenStore` was deleted once the
+no-barrier path moved onto a DAO factory over a memory store, and
 `BackendTokenStore`, `DAOStore`'s raw-`Put`/`Get` predecessor, was deleted
-outright, not deprecated, once `DAOStore` replaced its only caller.
+outright once `DAOStore` replaced its only caller.
 
 ## Errors
 
@@ -254,7 +258,7 @@ the underlying cause.
 
 | Flag | Commands | Meaning |
 |---|---|---|
-| `--token-store <path>` | `login`, `token`, `refresh`, `logout`, `status`, `stop`, `providers ...` | Default `~/.xkey/tokens.json`, used verbatim by the derived provider-config/PID/log-file paths regardless of the barrier decision; an explicit `--token-store` also selects a plain file at exactly that path for the token content itself (bypasses barrier auto-detection) |
+| `--token-store <dir>` | `login`, `token`, `refresh`, `logout`, `status`, `stop`, `providers ...` | Default `~/.xkey/tokens`, used verbatim by the derived provider-config/PID/log-file paths regardless of the barrier decision; an explicit `--token-store` also selects an unencrypted go-qrdb file store in exactly that directory for the token content itself (bypasses barrier auto-detection) |
 | `--barrier-password-stdin` | `login`, `token`, `refresh`, `logout` | Read the barrier password from standard input |
 | `--barrier-password-file <path>` | `login`, `token`, `refresh`, `logout` | First line of the named file |
 | `XKEY_BARRIER_PASSWORD` | (environment) | Read when neither flag is set; the source the detached background worker relies on via environment inheritance |
@@ -290,10 +294,10 @@ The GUI token store's barrier-first decision (go-xkms#1203) is covered by:
 
 | File | Covers |
 |---|---|
-| `pkg/oidc/store_test.go` | `MemoryTokenStore`'s CRUD and closed-store behavior, `normalizeIssuer`, and the `TokenStore` interface assertion (`DAOStore`'s own assertion lives beside its implementation in `dao_store.go`) — `oidc.FileTokenStore` and its dedicated tests were deleted outright by go-xkms#1325 once confirmed unused in production since #1203 |
-| `pkg/oidc/dao_store_test.go` | `DAOStore`'s CRUD, closed-store, duplicate-issuer (upsert), concurrency, and pagination behavior over an in-memory `qrdbsdk.KVStore` |
-| `sdk/go/oidc/oidc_test.go` | `NewDAOStore`/`DatabaseName` round-trip through the `sdk/go/oidc` re-export, with the nil-`KVStore` error reaching the `pkg/oidc.ErrNilBackend` sentinel across the alias |
-| `xkey/pkg/gui/services/oidc_token_store_security_test.go` | No barrier: no file named `tokens*` is ever written to the data directory, `svc.tokenStore` is an `*oidc.MemoryTokenStore`, a token round-trips within the session, and the warning logs exactly once naming the exposure; with a barrier: `SetBackend` still round-trips through the storage backend under the `oidc/tokens/` key prefix |
+| `pkg/oidc/store_test.go` | `normalizeIssuer` — `oidc.FileTokenStore` and its dedicated tests were deleted outright by go-xkms#1325 once confirmed unused in production since #1203 |
+| `pkg/oidc/dao_store_test.go` | `DAOStore`'s CRUD, closed-store, duplicate-issuer (upsert), concurrency, and pagination behavior on a real in-process DAO factory; tokens persisting through the factory into the `oidc` database; a nil factory and an unserved `oidc` database refused with `ErrDAOCreation` |
+| `sdk/go/oidc/oidc_test.go` | `NewDAOStore`/`DatabaseName` through the `sdk/go/oidc` re-export, with the nil-factory error reaching `pkg/oidc.ErrDAOCreation` across the alias |
+| `xkey/pkg/gui/services/oidc_token_store_security_test.go` | No barrier: no file named `tokens*` is ever written to the data directory, `svc.tokenStore` is an `*oidc.DAOStore`, a token round-trips within the session, and the warning logs exactly once naming the exposure; with a barrier: `SetBackend` still round-trips through the storage backend under the `oidc/tokens/` key prefix |
 | `xkey/pkg/gui/oidc_token_store_warning_test.go` | The same behavior end to end through `App.initializeDataDir()`, mirroring `fido2_passkey_store_warning_test.go`'s pattern for the FIDO2 passkey store: the warning fires without a barrier and does not fire with one, and the `oidc/` data directory carries no token file |
 
 The AWS credentials writer is covered in `pkg/oidc/handlers`:

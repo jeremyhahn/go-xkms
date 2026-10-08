@@ -27,12 +27,10 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/go-chi/chi/v5"
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/correlation"
-	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -56,27 +54,20 @@ type Server struct {
 	barrierRegistry *seal.BarrierRegistry
 	xkmsService     *xkms.XKMSService
 	webauthnHandler *webauthnhttp.Handler
-	webauthnStores  *WebAuthnStores
 	rbacMiddleware  *RBACMiddleware
 
 	// Custodian handlers
-	custodianHandlers      *CustodianHandlers
-	shareHandlers          *ShareHandlers
 	tenantHandlers         *TenantHandlers
 	passwordHandlers       *PasswordHandlers
 	pkcs11StateHandlers    *PKCS11StateHandlers
 	platformHandlers       *SealStoreHandlers
 	tpmPolicyHandlers      *TPMPolicyHandlers
 	oidcCredentialHandlers *OIDCCredentialHandlers
-	initHandlers           *InitHandlers
 	credentialHandlers     *CredentialHandlers
-	authFactorHandlers     *AuthFactorHandlers
-	auditHandlers          *AuditHandlers
 	bootstrapHandlers      *BootstrapHandlers
 	caHandlers             *CAHandlers
 	sshHandlers            *SSHHandlers
 	sshClient              sdkssh.Client
-	clusterHandlers        *ClusterHandlers
 
 	// cors carries the CORS policy for the router; nil disables CORS
 	// entirely (no headers emitted — correct for the same-origin web UI).
@@ -98,8 +89,8 @@ type Server struct {
 	rbacAuthorizer *auth.Authorizer
 
 	// auditor records authentication-plane audit events when the configured
-	// audit logger implements audit.Logger.
-	auditor audit.Logger
+	// audit logger implements qrdbsdk.NodeAuditLogger.
+	auditor qrdbsdk.NodeAuditLogger
 
 	// authRateLimiter throttles the login/refresh/ceremony endpoints.
 	authRateLimiter *ratelimit.Limiter
@@ -159,9 +150,9 @@ type Config struct {
 	// WebAuthnConfig is the WebAuthn configuration (optional, enables WebAuthn if provided)
 	WebAuthnConfig *webauthn.Config
 
-	// WebAuthnService is an optional, pre-built WebAuthn relying-party service.
-	// When provided (together with WebAuthnConfig), the REST server mounts its
-	// browser handlers on this exact instance instead of constructing its own.
+	// WebAuthnService is the pre-built WebAuthn relying-party service. It is
+	// required when WebAuthnConfig is set: the REST server mounts its browser
+	// handlers on this exact instance instead of constructing its own.
 	// This lets the server share a single WebAuthn service between the REST
 	// browser ceremony and the SDK ceremony (via XKMSService.SetWebAuthn), so
 	// sessions and credentials live in one place.
@@ -169,17 +160,6 @@ type Config struct {
 
 	// RateLimiter is the rate limiter instance (optional, disables rate limiting if not provided)
 	RateLimiter *ratelimit.Limiter
-
-	// WebAuthnUsers is the qrdb user client used to persist WebAuthn users
-	// (optional). When set together with WebAuthnKV, the WebAuthn relying
-	// party persists users and credentials on qrdb instead of in memory.
-	WebAuthnUsers qrdbtransport.UserClient
-
-	// WebAuthnKV is the qrdb KV client used to persist WebAuthn credentials.
-	WebAuthnKV qrdbtransport.KVClient
-
-	// WebAuthnTenantID scopes qrdb-backed WebAuthn user creation and lookup.
-	WebAuthnTenantID string
 
 	// RBACAuthorizer is the qrdb-backed authorizer. When EnableRBAC is true it
 	// is mandatory and gates every protected endpoint against the hosted
@@ -203,21 +183,6 @@ type Config struct {
 
 	// BarrierRegistry is the optional barrier registry for multi-tenant isolation
 	BarrierRegistry *seal.BarrierRegistry
-
-	// CustodianEnabled enables the custodian group REST endpoints. The
-	// handlers delegate to the XKMSService servicer, which passes calls
-	// through to the embedded go-qrdb node's custodian client. Set true only
-	// when the node is available.
-	CustodianEnabled bool
-
-	// ShareEnabled enables the Shamir share REST endpoints. The handlers
-	// delegate to the XKMSService servicer, which passes calls through to the
-	// embedded go-qrdb node's share client. Set true only when the node is
-	// available.
-	ShareEnabled bool
-
-	// CeremonyService is the optional init ceremony service
-	CeremonyService *initialize.CeremonyService
 
 	// CA is the optional CA instance for certificate authority operations.
 	// Stored as any to break import cycles. Must implement caServicer methods.
@@ -372,16 +337,11 @@ func NewServer(cfg *Config) (*Server, error) {
 		authRateLimiter: cfg.AuthRateLimiter,
 		trustedProxies:  cfg.TrustedProxies,
 		ui:              cfg.UI,
-		// Cluster status/membership reads must work on a standalone node
-		// (degrading gracefully rather than requiring an "enabled" gate), so
-		// unlike the other optional handler groups below, clusterHandlers is
-		// constructed unconditionally, exactly like handlers above.
-		clusterHandlers: NewClusterHandlers(cfg.XKMSService),
 	}
 
 	// Authentication-plane audit events flow through the same logger as the
 	// rest of the server when it implements the audit contract.
-	if al, ok := cfg.AuditLogger.(audit.Logger); ok {
+	if al, ok := cfg.AuditLogger.(qrdbsdk.NodeAuditLogger); ok {
 		server.auditor = al
 	}
 
@@ -416,70 +376,16 @@ func NewServer(cfg *Config) (*Server, error) {
 
 	// Set up WebAuthn if configured.
 	if cfg.WebAuthnConfig != nil {
-		// Prefer a pre-built service shared with the SDK ceremony (via
-		// XKMSService.SetWebAuthn) so sessions and credentials live in one
-		// place. Only construct stores + a service locally when the caller did
-		// not supply one (e.g. standalone REST usage / tests).
-		svc := cfg.WebAuthnService
-		if svc == nil {
-			var webauthnUserStore webauthn.UserStore
-			var sessionStore webauthn.SessionStore
-			var credentialStore webauthn.CredentialStore
-
-			// Sessions are ephemeral and always live in memory; persistence
-			// applies to users and credentials only.
-			stores := NewWebAuthnStores(&WebAuthnStoresConfig{
-				SessionTTL: 5 * time.Minute,
-			})
-			sessionStore = stores.SessionStore()
-			server.webauthnStores = stores
-
-			// When the qrdb clients are configured, persist WebAuthn users and
-			// credentials on the qrdb node — the single source of identity.
-			// Otherwise fall back to in-memory stores for development/testing.
-			if cfg.WebAuthnUsers != nil && cfg.WebAuthnKV != nil {
-				qrdbUsers, qrdbCreds, qerr := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-					Users:    cfg.WebAuthnUsers,
-					KV:       cfg.WebAuthnKV,
-					TenantID: cfg.WebAuthnTenantID,
-				})
-				if qerr != nil {
-					return nil, &errs.Wrapped{Msg: "failed to create qrdb webauthn stores", Err: qerr}
-				}
-				webauthnUserStore = qrdbUsers
-				credentialStore = qrdbCreds
-				log.Info("WebAuthn using qrdb stores for persistence")
-			} else {
-				webauthnUserStore = stores.UserStore()
-				credentialStore = stores.CredentialStore()
-				log.Info("WebAuthn using in-memory stores")
-			}
-
-			var err error
-			svc, err = webauthn.NewService(webauthn.ServiceParams{
-				Config:          cfg.WebAuthnConfig,
-				UserStore:       webauthnUserStore,
-				SessionStore:    sessionStore,
-				CredentialStore: credentialStore,
-				AuditLogger:     server.auditor,
-			})
-			if err != nil {
-				return nil, &errs.Wrapped{Msg: "failed to create webauthn service", Err: err}
-			}
-		} else {
-			log.Info("WebAuthn using shared service instance")
+		// The service is built by the composition root and shared with the
+		// SDK ceremony (via XKMSService.SetWebAuthn), so sessions and
+		// credentials live in one place.
+		if cfg.WebAuthnService == nil {
+			return nil, ErrWebAuthnServiceRequired
 		}
-
-		server.webauthnHandler = webauthnhttp.NewHandler(svc)
+		server.webauthnHandler = webauthnhttp.NewHandler(cfg.WebAuthnService)
 
 		log.Info("WebAuthn enabled",
 			slog.String("rpid", cfg.WebAuthnConfig.RPID))
-	}
-
-	// Set up custodian handlers when the embedded qrdb node is available.
-	if cfg.CustodianEnabled {
-		server.custodianHandlers = NewCustodianHandlers(cfg.XKMSService)
-		log.Info("Custodian handlers enabled")
 	}
 
 	// Set up SSH handlers when an SSH SDK client is wired.
@@ -491,12 +397,6 @@ func NewServer(cfg *Config) (*Server, error) {
 		server.sshHandlers = sshHandlers
 		server.sshClient = cfg.SSHClient
 		log.Info("SSH handlers enabled")
-	}
-
-	// Set up share handlers when the embedded qrdb node is available.
-	if cfg.ShareEnabled {
-		server.shareHandlers = NewShareHandlers(cfg.XKMSService)
-		log.Info("Share handlers enabled")
 	}
 
 	// Set up tenant handlers if barrier registry is configured. TenantService
@@ -541,27 +441,6 @@ func NewServer(cfg *Config) (*Server, error) {
 		server.tpmPolicyHandlers = NewTPMPolicyHandlers(cfg.XKMSService)
 		server.oidcCredentialHandlers = NewOIDCCredentialHandlers(cfg.XKMSService)
 		server.credentialHandlers = NewCredentialHandlers(cfg.XKMSService, log)
-	}
-
-	// Set up init ceremony handlers if ceremony service is configured
-	if cfg.CeremonyService != nil {
-		server.initHandlers = NewInitHandlers(cfg.CeremonyService, log)
-		log.Info("Init ceremony handlers enabled")
-	}
-
-	// Set up auth-factor handlers when the embedded qrdb node is available.
-	// Factor state belongs to qrdb; xkms proxies the surface so an operator
-	// reaches identity through the same endpoint it uses for keys.
-	if cfg.XKMSService != nil {
-		server.authFactorHandlers = NewAuthFactorHandlers(cfg.XKMSService, log)
-		log.Info("Auth factor handlers enabled")
-	}
-
-	// Set up audit handlers alongside them. The chain itself belongs to the
-	// qrdb node; this exposes only the read half.
-	if cfg.XKMSService != nil {
-		server.auditHandlers = NewAuditHandlers(cfg.XKMSService, log)
-		log.Info("Audit handlers enabled")
 	}
 
 	// Set up bootstrap-listener-key handlers. The listener publishes its own

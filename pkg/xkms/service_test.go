@@ -3338,20 +3338,6 @@ func TestTLSCertificateByID_InvalidKeyRef(t *testing.T) {
 // Test setter methods and accessors for optional subsystems
 // ========================================================================
 
-func TestSetBarrier_AndGet(t *testing.T) {
-	setupService(t)
-	svc, err := Get()
-	require.NoError(t, err)
-
-	// Initially nil
-	assert.Nil(t, svc.barrier.load())
-
-	// We can't easily create a real Barrier without storage/strategy,
-	// but we can set nil and verify it stays nil
-	svc.SetBarrier(nil)
-	assert.Nil(t, svc.barrier.load())
-}
-
 func TestSetWebAuthn_NilSet(t *testing.T) {
 	setupService(t)
 	svc, err := Get()

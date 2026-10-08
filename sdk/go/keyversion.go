@@ -75,6 +75,10 @@ const (
 	KeyVersionStateEnabled  = keyversion.StateEnabled
 	KeyVersionStateDisabled = keyversion.StateDisabled
 	KeyVersionStateRetired  = keyversion.StateRetired
+
+	// KeyVersionDatabase is the go-qrdb database key-version records live
+	// in.
+	KeyVersionDatabase = keyversion.DatabaseName
 )
 
 var (
@@ -82,11 +86,14 @@ var (
 	// a key's versions when no version store is wired.
 	ErrKeyVersionsNotConfigured = pkgxkms.ErrKeyVersionsNotConfigured
 
-	// NewKeyVersionStore returns a KeyVersionStore over a storage backend.
+	// NewKeyVersionStore returns a KeyVersionStore over a DAO factory that
+	// serves the KeyVersionDatabase database, its DAO calls running on the
+	// context the call-context function derives (nil: the caller's).
 	NewKeyVersionStore = keyversion.NewStore
 
-	// BuildKeyVersionStore builds the KeyVersionStore over a StorageFactory,
-	// as xkmsd does.
+	// BuildKeyVersionStore builds the KeyVersionStore over a DAO factory
+	// serving the KeyVersionDatabase database, as xkmsd does; over an
+	// embedded node pass its ServiceContext so the store's calls run as xkms.
 	BuildKeyVersionStore = compose.BuildKeyVersionStore
 
 	// KeyVersionName returns the backend key name of a version of a key:

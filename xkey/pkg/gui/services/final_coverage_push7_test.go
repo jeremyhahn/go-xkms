@@ -162,14 +162,6 @@ func TestP9_TenantService_DeleteTenant_NoClient(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTenantServiceNoClient)
 }
 
-func TestP9_TenantService_BarrierUnseal_NoClient(t *testing.T) {
-	svc := NewTenantService()
-	svc.ctx = context.Background()
-
-	err := svc.BarrierUnseal("test-tenant", []byte("share"), nil)
-	assert.ErrorIs(t, err, ErrTenantServiceNoClient)
-}
-
 // ===========================================================================
 // AgentService: StartServer with nil enrollment (lines 149-152)
 // ===========================================================================

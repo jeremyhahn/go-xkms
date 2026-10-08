@@ -30,6 +30,10 @@ import (
 // path to prefer; a client without transactions reports
 // ErrTransactionsUnsupported rather than checking and then writing.
 func (b *Backend) PutIfAllAbsent(ctx context.Context, key string, value []byte, fences ...string) (bool, error) {
+	ctx, err := b.callContext(ctx)
+	if err != nil {
+		return false, &BackendError{Op: "put-if-all-absent", Key: key, Err: err}
+	}
 	txClient, ok := b.client.(transport.TransactionClient)
 	if !ok {
 		return false, &BackendError{Op: "put-if-all-absent", Key: key, Err: ErrTransactionsUnsupported}

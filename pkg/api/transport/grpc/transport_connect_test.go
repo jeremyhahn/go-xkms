@@ -175,56 +175,12 @@ func (s *errorKeystoreServer) AttestKey(_ context.Context, _ *pb.AttestKeyReques
 	return nil, status.Error(codes.Internal, "attest key failed")
 }
 
-func (s *errorKeystoreServer) BarrierInitialize(_ context.Context, _ *pb.BarrierInitializeRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "barrier init failed")
-}
-
-func (s *errorKeystoreServer) BarrierUnseal(_ context.Context, _ *pb.BarrierUnsealRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "barrier unseal failed")
-}
-
 func (s *errorKeystoreServer) BarrierSeal(_ context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Internal, "barrier seal failed")
 }
 
-func (s *errorKeystoreServer) BarrierStatus(_ context.Context, _ *emptypb.Empty) (*pb.BarrierStatusResponse, error) {
-	return nil, status.Error(codes.Internal, "barrier status failed")
-}
-
-func (s *errorKeystoreServer) BarrierInitializeShamir(_ context.Context, _ *pb.BarrierInitializeShamirRequest) (*pb.BarrierShamirInitResponse, error) {
-	return nil, status.Error(codes.Internal, "barrier init shamir failed")
-}
-
-func (s *errorKeystoreServer) BarrierUnsealShare(_ context.Context, _ *pb.BarrierUnsealShareRequest) (*pb.BarrierQuorumProgressResponse, error) {
-	return nil, status.Error(codes.Internal, "barrier unseal share failed")
-}
-
-func (s *errorKeystoreServer) BarrierUnsealShares(_ context.Context, _ *pb.BarrierUnsealSharesRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "barrier unseal shares failed")
-}
-
-func (s *errorKeystoreServer) BarrierRekey(_ context.Context, _ *pb.BarrierRekeyRequest) (*pb.BarrierShamirInitResponse, error) {
-	return nil, status.Error(codes.Internal, "barrier rekey failed")
-}
-
-func (s *errorKeystoreServer) BarrierGenerateRecoveryKeys(_ context.Context, _ *pb.BarrierGenerateRecoveryKeysRequest) (*pb.BarrierRecoveryKeysResponse, error) {
-	return nil, status.Error(codes.Internal, "barrier gen recovery failed")
-}
-
-func (s *errorKeystoreServer) BarrierEnableEncryption(_ context.Context, _ *pb.BarrierEnableEncryptionRequest) (*pb.BarrierEnableEncryptionResponse, error) {
-	return nil, status.Error(codes.Internal, "barrier enable encryption failed")
-}
-
-func (s *errorKeystoreServer) BarrierRecoverWithKeys(_ context.Context, _ *pb.BarrierRecoverWithKeysRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "barrier recover failed")
-}
-
 func (s *errorKeystoreServer) BarrierDeleteRecoveryKeys(_ context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Internal, "barrier delete recovery failed")
-}
-
-func (s *errorKeystoreServer) BarrierGenerateRootToken(_ context.Context, _ *pb.BarrierGenerateRootTokenRequest) (*pb.BarrierRootTokenResponse, error) {
-	return nil, status.Error(codes.Internal, "barrier gen root token failed")
 }
 
 func (s *errorKeystoreServer) SetSOPIN(_ context.Context, _ *pb.SetSOPINRequest) (*emptypb.Empty, error) {
@@ -335,46 +291,6 @@ func (s *errorKeystoreServer) GeneratePIVCSR(_ context.Context, _ *pb.GeneratePI
 	return nil, status.Error(codes.Internal, "generate piv csr failed")
 }
 
-func (s *errorKeystoreServer) CreateCustodianGroup(_ context.Context, _ *pb.CreateCustodianGroupRequest) (*pb.CreateCustodianGroupResponse, error) {
-	return nil, status.Error(codes.Internal, "create custodian group failed")
-}
-
-func (s *errorKeystoreServer) GetCustodianGroup(_ context.Context, _ *pb.GetCustodianGroupRequest) (*pb.GetCustodianGroupResponse, error) {
-	return nil, status.Error(codes.Internal, "get custodian group failed")
-}
-
-func (s *errorKeystoreServer) ListCustodianGroups(_ context.Context, _ *pb.ListCustodianGroupsRequest) (*pb.ListCustodianGroupsResponse, error) {
-	return nil, status.Error(codes.Internal, "list custodian groups failed")
-}
-
-func (s *errorKeystoreServer) DeleteCustodianGroup(_ context.Context, _ *pb.DeleteCustodianGroupRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "delete custodian group failed")
-}
-
-func (s *errorKeystoreServer) AddCustodianMember(_ context.Context, _ *pb.AddCustodianMemberRequest) (*pb.AddCustodianMemberResponse, error) {
-	return nil, status.Error(codes.Internal, "add custodian member failed")
-}
-
-func (s *errorKeystoreServer) RemoveCustodianMember(_ context.Context, _ *pb.RemoveCustodianMemberRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "remove custodian member failed")
-}
-
-func (s *errorKeystoreServer) DistributeShares(_ context.Context, _ *pb.DistributeSharesRequest) (*pb.DistributeSharesResponse, error) {
-	return nil, status.Error(codes.Internal, "distribute shares failed")
-}
-
-func (s *errorKeystoreServer) SubmitShare(_ context.Context, _ *pb.SubmitShareRequest) (*pb.SubmitShareResponse, error) {
-	return nil, status.Error(codes.Internal, "submit share failed")
-}
-
-func (s *errorKeystoreServer) ListShares(_ context.Context, _ *pb.ListSharesRequest) (*pb.ListSharesResponse, error) {
-	return nil, status.Error(codes.Internal, "list shares failed")
-}
-
-func (s *errorKeystoreServer) GetShareCollectionStatus(_ context.Context, _ *pb.GetShareCollectionStatusRequest) (*pb.ShareCollectionStatusResponse, error) {
-	return nil, status.Error(codes.Internal, "get share collection status failed")
-}
-
 func (s *errorKeystoreServer) CreateTenant(_ context.Context, _ *pb.CreateTenantRequest) (*pb.CreateTenantResponse, error) {
 	return nil, status.Error(codes.Internal, "create tenant failed")
 }
@@ -389,14 +305,6 @@ func (s *errorKeystoreServer) ListTenants(_ context.Context, _ *pb.ListTenantsRe
 
 func (s *errorKeystoreServer) DeleteTenant(_ context.Context, _ *pb.DeleteTenantRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Internal, "delete tenant failed")
-}
-
-func (s *errorKeystoreServer) TenantBarrierInit(_ context.Context, _ *pb.TenantBarrierInitRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "tenant barrier init failed")
-}
-
-func (s *errorKeystoreServer) TenantBarrierUnseal(_ context.Context, _ *pb.TenantBarrierUnsealRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "tenant barrier unseal failed")
 }
 
 func (s *errorKeystoreServer) PasswordAdd(_ context.Context, _ *pb.PasswordAddRequest) (*pb.PasswordAddResponse, error) {
@@ -907,102 +815,6 @@ func TestAttestKey_ServerError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestBarrierInitialize_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.BarrierInitialize(context.Background(), &transport.BarrierInitializeRequest{})
-	require.Error(t, err)
-}
-
-func TestBarrierUnseal_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.BarrierUnseal(context.Background(), &transport.BarrierUnsealRequest{})
-	require.Error(t, err)
-}
-
-func TestBarrierSeal_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.BarrierSeal(context.Background())
-	require.Error(t, err)
-}
-
-func TestBarrierStatus_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.BarrierStatus(context.Background())
-	require.Error(t, err)
-}
-
-func TestBarrierInitializeShamir_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.BarrierInitializeShamir(context.Background(), &transport.BarrierInitializeShamirRequest{Threshold: 2, TotalShares: 3})
-	require.Error(t, err)
-}
-
-func TestBarrierUnsealShare_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.BarrierUnsealWithShare(context.Background(), &transport.BarrierUnsealShareRequest{Share: "share-1"})
-	require.Error(t, err)
-}
-
-func TestBarrierUnsealShares_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.BarrierUnsealWithShares(context.Background(), &transport.BarrierUnsealSharesRequest{Shares: []string{"s1", "s2"}})
-	require.Error(t, err)
-}
-
-func TestBarrierRekey_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.BarrierRekey(context.Background(), &transport.BarrierRekeyRequest{Threshold: 2, Total: 3})
-	require.Error(t, err)
-}
-
-func TestBarrierGenerateRecoveryKeys_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.BarrierGenerateRecoveryKeys(context.Background(), &transport.BarrierGenerateRecoveryKeysRequest{Threshold: 2, Total: 3})
-	require.Error(t, err)
-}
-
-func TestBarrierRecoverWithKeys_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.BarrierRecoverWithKeys(context.Background(), &transport.BarrierRecoverWithKeysRequest{Keys: []string{"k1"}})
-	require.Error(t, err)
-}
-
-func TestBarrierDeleteRecoveryKeys_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.BarrierDeleteRecoveryKeys(context.Background())
-	require.Error(t, err)
-}
-
-func TestBarrierGenerateRootToken_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.BarrierGenerateRootToken(context.Background(), &transport.BarrierGenerateRootTokenRequest{Shares: []string{"s1"}})
-	require.Error(t, err)
-}
-
 func TestSetSOPIN_ServerError(t *testing.T) {
 	tr, cleanup := newErrorBufconnTransport(t)
 	defer cleanup()
@@ -1219,86 +1031,6 @@ func TestGeneratePIVCSR_ServerError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestCreateCustodianGroup_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.CreateCustodianGroup(context.Background(), &transport.CreateCustodianGroupRequest{Name: "test"})
-	require.Error(t, err)
-}
-
-func TestGetCustodianGroup_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.GetCustodianGroup(context.Background(), "g1")
-	require.Error(t, err)
-}
-
-func TestListCustodianGroups_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.ListCustodianGroups(context.Background())
-	require.Error(t, err)
-}
-
-func TestDeleteCustodianGroup_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.DeleteCustodianGroup(context.Background(), "g1")
-	require.Error(t, err)
-}
-
-func TestAddCustodianMember_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.AddCustodianMember(context.Background(), &transport.AddCustodianMemberRequest{GroupID: "g1"})
-	require.Error(t, err)
-}
-
-func TestRemoveCustodianMember_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.RemoveCustodianMember(context.Background(), &transport.RemoveCustodianMemberRequest{GroupID: "g1", UserID: "u1"})
-	require.Error(t, err)
-}
-
-func TestDistributeShares_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.DistributeShares(context.Background(), &transport.DistributeSharesRequest{GroupID: "g1"})
-	require.Error(t, err)
-}
-
-func TestSubmitShare_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.SubmitShare(context.Background(), &transport.SubmitShareRequest{GroupID: "g1"})
-	require.Error(t, err)
-}
-
-func TestListShares_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.ListShares(context.Background())
-	require.Error(t, err)
-}
-
-func TestGetShareCollectionStatus_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.GetShareCollectionStatus(context.Background(), "g1")
-	require.Error(t, err)
-}
-
 func TestCreateTenant_ServerError(t *testing.T) {
 	tr, cleanup := newErrorBufconnTransport(t)
 	defer cleanup()
@@ -1328,22 +1060,6 @@ func TestDeleteTenant_ServerError(t *testing.T) {
 	defer cleanup()
 
 	err := tr.DeleteTenant(context.Background(), "t1")
-	require.Error(t, err)
-}
-
-func TestTenantBarrierInit_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.TenantBarrierInit(context.Background(), &transport.TenantBarrierInitRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestTenantBarrierUnseal_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.TenantBarrierUnseal(context.Background(), &transport.TenantBarrierUnsealRequest{TenantID: "t1"})
 	require.Error(t, err)
 }
 

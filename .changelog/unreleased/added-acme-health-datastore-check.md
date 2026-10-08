@@ -1,0 +1,1 @@
+- **`GET /acme/health` reports datastore readiness** -- the response carries a `checks` list from the go-qrdb SDK health checker (`handlers.Params.Health`). xkmsd registers a `datastore` check backed by the new `(*datastore.Datastore).HealthCheck`, and an unhealthy datastore answers 503. `server.Server.Datastore()` exposes the shared datastore to the composing binary.

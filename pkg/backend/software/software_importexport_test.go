@@ -931,7 +931,7 @@ func TestUnwrapKey_ExpiredToken(t *testing.T) {
 	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	tokenUUID := "expired-token-uuid"
 	swBe.importTokens = importtoken.New[*importTokenData](time.Nanosecond, importtoken.DefaultMaxTokens, (*importTokenData).destroy)
-	wrappingKey, err := importtoken.NewSealedRSAKey(rsaKey)
+	wrappingKey, err := importtoken.NewSealedRSAKey(t.Context(), rsaKey)
 	if err != nil {
 		t.Fatalf("NewSealedRSAKey failed: %v", err)
 	}
@@ -1024,7 +1024,7 @@ func TestImportKey_ExpiredToken(t *testing.T) {
 	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	tokenUUID := "expired-import-token"
 	swBe.importTokens = importtoken.New[*importTokenData](time.Nanosecond, importtoken.DefaultMaxTokens, (*importTokenData).destroy)
-	wrappingKey, wrapErr := importtoken.NewSealedRSAKey(rsaKey)
+	wrappingKey, wrapErr := importtoken.NewSealedRSAKey(t.Context(), rsaKey)
 	if wrapErr != nil {
 		t.Fatalf("NewSealedRSAKey failed: %v", wrapErr)
 	}

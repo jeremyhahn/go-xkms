@@ -37,56 +37,14 @@ type CAAdapter = initialize.CAAdapter
 var NewCAAdapter = initialize.NewCAAdapter
 
 // ---------------------------------------------------------------------------
-// Init ceremony orchestration
+// Init ceremony hardware seams
 //
-// This is the single init-ceremony surface for the stack. go-qrdb owns the
-// ceremony state machine, Shamir splitting, and the officer claim handshake;
-// go-xkms wraps it with the hardware-backed pieces qrdb deliberately does not
-// implement — a CA whose signing key may live in a TPM / PKCS#11 token, and
-// administrator login factors performed against real FIDO2 and PIV hardware.
-//
-// Downstream projects consume the ceremony from HERE rather than reaching for
-// go-qrdb's constructor directly. Going straight to qrdb yields a ceremony
-// that can only ever do software crypto, which is a layering violation: qrdb
-// sits below go-xkms and exposes seams (pkg/authfactors.FactorRegistry,
-// ceremony.CeremonyCA) precisely so go-xkms can fill them.
+// go-qrdb owns the ceremony state machine, holder enrolment, Shamir custody
+// and the share-claim handshake, and serves them on every node transport.
+// go-xkms fills the seams qrdb deliberately leaves open: a CA whose signing
+// key may live in a TPM / PKCS#11 token (CAAdapter), and administrator login
+// factors performed against real FIDO2 and PIV hardware.
 // ---------------------------------------------------------------------------
-
-// InitCeremonyService drives the initialization ceremony: barrier init, Shamir
-// splitting, officer certificate enrollment, and credential sealing, issuing
-// from the go-xkms CA.
-type InitCeremonyService = initialize.CeremonyService
-
-// InitCeremonyConfig configures the ceremony (SO / user PINs, threshold,
-// officers, hostname, data dir).
-type InitCeremonyConfig = initialize.CeremonyConfig
-
-// InitCeremonyState is the ceremony's current state.
-type InitCeremonyState = initialize.CeremonyState
-
-// Init ceremony states.
-const (
-	// InitStateAwaitingInit means the barrier has not been initialized.
-	InitStateAwaitingInit = initialize.StateAwaitingInit
-
-	// InitStateEnrolling means M-of-N mode is live and officers are claiming
-	// their certificates and shares.
-	InitStateEnrolling = initialize.StateEnrolling
-
-	// InitStateOperational means the system is ready for service.
-	InitStateOperational = initialize.StateOperational
-)
-
-// InitCeremonyResult reports the outcome of a ceremony initialization.
-type InitCeremonyResult = initialize.InitResult
-
-// InitOfficerConfig describes one Security Officer enrolled by the ceremony.
-type InitOfficerConfig = initialize.OfficerConfig
-
-// NewInitCeremonyService constructs the ceremony over a barrier and credential
-// service. The barrier type is go-qrdb's StorageBarrier, so a node built
-// through this SDK passes its own barrier straight in.
-var NewInitCeremonyService = initialize.NewCeremonyService
 
 // ---------------------------------------------------------------------------
 // Administrator login-factor enrollment (hardware)
@@ -119,30 +77,3 @@ var EnrollAdminFactors = initialize.EnrollAdminFactors
 // NewAdminEnrollmentParams returns the per-factor input provider used by
 // EnrollAdminFactors. Exposed for callers driving enrollment themselves.
 var NewAdminEnrollmentParams = initialize.NewAdminEnrollmentParams
-
-// ---------------------------------------------------------------------------
-// Security Officer enrolment
-//
-// Step 1 of go-qrdb's Security Officer distribution model, surfaced here so
-// every project composed on go-xkms offers the SAME officer flow. Nothing here
-// returns share bytes: registration assigns a share INDEX, and each share is
-// released to its officer exactly once through the live claim handshake.
-// ---------------------------------------------------------------------------
-
-// RegisterOfficerRequest carries one officer's enrolment material (username,
-// CSR, and the authenticator backing their credential).
-type RegisterOfficerRequest = initialize.RegisterOfficerRequest
-
-// RegisterOfficerResult returns the signed certificate and the officer's
-// assigned Shamir share index.
-type RegisterOfficerResult = initialize.RegisterOfficerResult
-
-// CeremonyOfficerStatus is a non-secret view of an enrolled officer.
-type CeremonyOfficerStatus = initialize.OfficerStatus
-
-// EnrollExternalOfficerRequest enrols an officer whose key material was issued
-// by an external CA rather than minted from a CSR by the ceremony CA.
-type EnrollExternalOfficerRequest = initialize.EnrollExternalOfficerRequest
-
-// EnrollExternalOfficerResponse reports the outcome of an external enrolment.
-type EnrollExternalOfficerResponse = initialize.EnrollExternalOfficerResponse

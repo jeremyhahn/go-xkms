@@ -47,9 +47,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
-	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 )
@@ -87,18 +90,41 @@ func main() {
 	fmt.Printf("  TLS:        %t\n", tlsEnabled)
 	fmt.Println()
 
-	// Create WebAuthn stores (use database stores for production)
+	// Boot an in-memory qrdb node. Users are qrdb user records and passkey
+	// credentials are DAO entities on the node's datastore, exactly as in
+	// xkmsd; only the storage backend differs.
 	fmt.Println("1. Initializing WebAuthn stores...")
-	stores := rest.NewWebAuthnStores(&rest.WebAuthnStoresConfig{
-		SessionTTL: 5 * time.Minute,
-	})
-	fmt.Println("   ✓ Memory stores initialized")
-
-	// Start session cleanup routine
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cleanupCancel := stores.StartCleanupRoutine(ctx, time.Minute)
-	defer cleanupCancel()
+	node, dataDir, err := startQRDBNode(ctx)
+	if err != nil {
+		log.Fatalf("Failed to start qrdb node: %v", err)
+	}
+	defer func() {
+		if err := node.Close(); err != nil {
+			log.Printf("Failed to stop qrdb node: %v", err)
+		}
+		if err := os.RemoveAll(dataDir); err != nil {
+			log.Printf("Failed to remove qrdb data directory: %v", err)
+		}
+	}()
+	ds, err := datastore.New(node.Client(), config.DatastoreConfig{})
+	if err != nil {
+		log.Fatalf("Failed to open datastore: %v", err)
+	}
+	users, credentials, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
+		Users:      node.Client().Users(),
+		DAOFactory: ds.DAOFactory(),
+		TenantID:   "system",
+	})
+	if err != nil {
+		log.Fatalf("Failed to build WebAuthn stores: %v", err)
+	}
+	sessions := webauthn.NewMemorySessionStoreWithTTL(5 * time.Minute)
+	fmt.Println("   ✓ In-memory qrdb node and stores initialized")
+
+	// Sweep expired ceremony sessions until shutdown
+	go webauthn.SweepSessions(ctx, sessions, time.Minute)
 	fmt.Println("   ✓ Session cleanup routine started")
 
 	// Create WebAuthn configuration
@@ -114,9 +140,9 @@ func main() {
 	// Create WebAuthn service
 	svc, err := webauthn.NewService(webauthn.ServiceParams{
 		Config:          cfg,
-		UserStore:       stores.UserStore(),
-		SessionStore:    stores.SessionStore(),
-		CredentialStore: stores.CredentialStore(),
+		UserStore:       users,
+		SessionStore:    sessions,
+		CredentialStore: credentials,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create WebAuthn service: %v", err)
@@ -266,6 +292,31 @@ func main() {
 	}
 
 	fmt.Println("Server stopped")
+}
+
+// startQRDBNode boots a standalone qrdb node with an in-memory database and
+// no network listeners. Its raft metadata lives in a temporary directory the
+// caller removes.
+func startQRDBNode(ctx context.Context) (*qrdbnode.Node, string, error) {
+	dataDir, err := os.MkdirTemp("", "webauthn-example-")
+	if err != nil {
+		return nil, "", err
+	}
+	cfg := qrdbsdk.DefaultDaemonConfig()
+	cfg.Raft.DataDir = dataDir
+	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
+	cfg.Protocols.REST = false
+	cfg.Protocols.GRPC = false
+	cfg.Protocols.QUIC = false
+	cfg.Protocols.Unix = false
+	cfg.Protocols.MCP = false
+	cfg.Seal.Enabled = false
+	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil)
+	if err != nil {
+		_ = os.RemoveAll(dataDir)
+		return nil, "", err
+	}
+	return node, dataDir, nil
 }
 
 func getEnv(key, defaultValue string) string {

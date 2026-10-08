@@ -14,11 +14,9 @@
 package webauthn
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 
@@ -130,6 +128,20 @@ func (f *fakeUserClient) GetUserByEmail(ctx context.Context, tenantID, email str
 	return u, nil
 }
 
+// setStanding rewrites the record's lifecycle and auth-method policy, the way
+// an administrator's action on the qrdb account would.
+func (f *fakeUserClient) setStanding(t *testing.T, tenantID, email string, state qrdbsdk.Lifecycle, methods []string) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.byEmail[f.emailKeyFor(tenantID, email)]
+	if !ok {
+		t.Fatalf("setStanding: no account for %q", email)
+	}
+	u.Lifecycle = string(state)
+	u.AuthMethods = methods
+}
+
 func (f *fakeUserClient) GetUserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbtransport.User, error) {
 	return nil, errFakeUserNotFound
 }
@@ -209,136 +221,46 @@ func (f *fakeUserClient) AddCertBinding(ctx context.Context, userID uint64, thum
 	return u, nil
 }
 
-// ----- in-memory qrdbtransport.KVClient stub -----
-
-type fakeKV struct {
-	mu sync.Mutex
-	m  map[string][]byte
-}
-
-func newFakeKV() *fakeKV {
-	return &fakeKV{m: make(map[string][]byte)}
-}
-
-func (f *fakeKV) Put(ctx context.Context, key string, value []byte, opts ...qrdbtransport.WriteOption) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cp := make([]byte, len(value))
-	copy(cp, value)
-	f.m[key] = cp
-	return nil
-}
-
-func (f *fakeKV) Get(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) ([]byte, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	v, ok := f.m[key]
-	if !ok {
-		// The real KV transports report a missing key as
-		// *transport.KeyNotFoundError, and the adapter classifies on that type
-		// rather than on message text. A stub returning a plain error would
-		// exercise a path the production transports never produce.
-		return nil, &qrdbtransport.KeyNotFoundError{Key: key}
-	}
-	cp := make([]byte, len(v))
-	copy(cp, v)
-	return cp, nil
-}
-
-func (f *fakeKV) Delete(ctx context.Context, key string, opts ...qrdbtransport.WriteOption) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.m, key)
-	return nil
-}
-
-func (f *fakeKV) Scan(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) (map[string][]byte, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make(map[string][]byte)
-	for k, v := range f.m {
-		if strings.HasPrefix(k, prefix) {
-			cp := make([]byte, len(v))
-			copy(cp, v)
-			out[k] = cp
-		}
-	}
-	return out, nil
-}
-
-func (f *fakeKV) List(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) ([]string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]string, 0)
-	for k := range f.m {
-		if strings.HasPrefix(k, prefix) {
-			out = append(out, k)
-		}
-	}
-	return out, nil
-}
-
-func (f *fakeKV) Exists(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	_, ok := f.m[key]
-	return ok, nil
-}
-
-// PutIfAbsent, CompareAndDelete and CompareAndSwap make the stub a
-// qrdbtransport.GuardedKVClient, which the adapter requires.
-func (f *fakeKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, ok := f.m[key]; ok {
-		return false, nil
-	}
-	f.m[key] = bytes.Clone(value)
-	return true, nil
-}
-
-func (f *fakeKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	v, ok := f.m[key]
-	if !ok || !bytes.Equal(v, expected) {
-		return false, nil
-	}
-	delete(f.m, key)
-	return true, nil
-}
-
-func (f *fakeKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	v, ok := f.m[key]
-	if !ok || !bytes.Equal(v, expected) {
-		return false, nil
-	}
-	f.m[key] = bytes.Clone(next)
-	return true, nil
-}
-
 // ----- adapter tests -----
 
-func newTestAdapter(t *testing.T) (UserStore, CredentialStore, *fakeUserClient, *fakeKV) {
+// newTestDAOFactory returns a DAO factory over a fresh in-process go-qrdb
+// KV store, which supports the atomic conditional writes and secondary
+// indexes the credential store relies on.
+func newTestDAOFactory() *qrdbsdk.DAOFactory {
+	kv := qrdbsdk.NewMemoryKVStore()
+	return qrdbsdk.NewDAOFactory(func(uint64) qrdbsdk.KVStore { return kv })
+}
+
+// newTestStores returns a user and credential store pair over a fake qrdb
+// user client and a real in-process DAO.
+func newTestStores(t testing.TB) (UserStore, CredentialStore) {
+	t.Helper()
+	us, cs, _ := newTestAdapterWith(t, newTestDAOFactory())
+	return us, cs
+}
+
+func newTestAdapter(t testing.TB) (UserStore, CredentialStore, *fakeUserClient) {
+	t.Helper()
+	return newTestAdapterWith(t, newTestDAOFactory())
+}
+
+func newTestAdapterWith(t testing.TB, factory *qrdbsdk.DAOFactory) (UserStore, CredentialStore, *fakeUserClient) {
 	t.Helper()
 	u := newFakeUserClient()
-	k := newFakeKV()
 	us, cs, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
-		Users: u, KV: k, TenantID: "system",
+		Users: u, DAOFactory: factory, TenantID: "system",
 	})
 	if err != nil {
 		t.Fatalf("adapter: %v", err)
 	}
-	return us, cs, u, k
+	return us, cs, u
 }
 
 func TestQRDBAdapter_NewMissingFields(t *testing.T) {
 	cases := []QRDBUserStoreOptions{
-		{KV: newFakeKV(), TenantID: "system"},
+		{DAOFactory: newTestDAOFactory(), TenantID: "system"},
 		{Users: newFakeUserClient(), TenantID: "system"},
-		{Users: newFakeUserClient(), KV: newFakeKV()},
+		{Users: newFakeUserClient(), DAOFactory: newTestDAOFactory()},
 	}
 	for i, c := range cases {
 		_, _, err := NewQRDBUserStoreAdapter(c)
@@ -353,7 +275,7 @@ func TestQRDBAdapter_NewMissingFields(t *testing.T) {
 }
 
 func TestQRDBAdapter_CreateAndGetByEmail(t *testing.T) {
-	us, _, _, _ := newTestAdapter(t)
+	us, _, _ := newTestAdapter(t)
 	ctx := context.Background()
 	user, err := us.Create(ctx, "alice@example.com", "Alice")
 	if err != nil {
@@ -377,7 +299,7 @@ func TestQRDBAdapter_CreateAndGetByEmail(t *testing.T) {
 }
 
 func TestQRDBAdapter_GetByEmail_NotFound(t *testing.T) {
-	us, _, _, _ := newTestAdapter(t)
+	us, _, _ := newTestAdapter(t)
 	_, err := us.GetByEmail(context.Background(), "nobody@example.com")
 	if !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("expected ErrUserNotFound, got %v", err)
@@ -385,7 +307,7 @@ func TestQRDBAdapter_GetByEmail_NotFound(t *testing.T) {
 }
 
 func TestQRDBAdapter_GetByID(t *testing.T) {
-	us, _, _, _ := newTestAdapter(t)
+	us, _, _ := newTestAdapter(t)
 	ctx := context.Background()
 	user, err := us.Create(ctx, "bob@example.com", "Bob")
 	if err != nil {
@@ -401,7 +323,7 @@ func TestQRDBAdapter_GetByID(t *testing.T) {
 }
 
 func TestQRDBAdapter_GetByID_Empty(t *testing.T) {
-	us, _, _, _ := newTestAdapter(t)
+	us, _, _ := newTestAdapter(t)
 	_, err := us.GetByID(context.Background(), nil)
 	if !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("expected ErrUserNotFound, got %v", err)
@@ -409,7 +331,7 @@ func TestQRDBAdapter_GetByID_Empty(t *testing.T) {
 }
 
 func TestQRDBAdapter_CredentialSaveAndGet(t *testing.T) {
-	us, cs, _, _ := newTestAdapter(t)
+	us, cs, _ := newTestAdapter(t)
 	ctx := context.Background()
 	user, err := us.Create(ctx, "carol@example.com", "Carol")
 	if err != nil {
@@ -443,7 +365,7 @@ func TestQRDBAdapter_CredentialSaveAndGet(t *testing.T) {
 }
 
 func TestQRDBAdapter_CredentialSaveDuplicate(t *testing.T) {
-	us, cs, _, _ := newTestAdapter(t)
+	us, cs, _ := newTestAdapter(t)
 	ctx := context.Background()
 	user, _ := us.Create(ctx, "dan@example.com", "Dan")
 	cred := &Credential{
@@ -465,7 +387,7 @@ func TestQRDBAdapter_CredentialSaveDuplicate(t *testing.T) {
 }
 
 func TestQRDBAdapter_CredentialUpdate(t *testing.T) {
-	us, cs, _, _ := newTestAdapter(t)
+	us, cs, _ := newTestAdapter(t)
 	ctx := context.Background()
 	user, _ := us.Create(ctx, "ed@example.com", "Ed")
 	cred := &Credential{ID: []byte("c"), UserID: user.WebAuthnID(), PublicKey: []byte("v1")}
@@ -483,7 +405,7 @@ func TestQRDBAdapter_CredentialUpdate(t *testing.T) {
 }
 
 func TestQRDBAdapter_CredentialUpdate_NotFound(t *testing.T) {
-	_, cs, _, _ := newTestAdapter(t)
+	_, cs, _ := newTestAdapter(t)
 	cred := &Credential{ID: []byte("missing"), UserID: []byte("1")}
 	err := cs.Update(context.Background(), cred)
 	if !errors.Is(err, ErrCredentialNotFound) {
@@ -492,7 +414,7 @@ func TestQRDBAdapter_CredentialUpdate_NotFound(t *testing.T) {
 }
 
 func TestQRDBAdapter_CredentialDelete(t *testing.T) {
-	us, cs, _, _ := newTestAdapter(t)
+	us, cs, _ := newTestAdapter(t)
 	ctx := context.Background()
 	user, _ := us.Create(ctx, "fay@example.com", "Fay")
 	cred := &Credential{ID: []byte("c"), UserID: user.WebAuthnID()}
@@ -513,7 +435,7 @@ func TestQRDBAdapter_CredentialDelete(t *testing.T) {
 }
 
 func TestQRDBAdapter_CredentialDelete_NotFound(t *testing.T) {
-	_, cs, _, _ := newTestAdapter(t)
+	_, cs, _ := newTestAdapter(t)
 	err := cs.Delete(context.Background(), []byte("nope"))
 	if !errors.Is(err, ErrCredentialNotFound) {
 		t.Fatalf("expected ErrCredentialNotFound, got %v", err)
@@ -521,7 +443,7 @@ func TestQRDBAdapter_CredentialDelete_NotFound(t *testing.T) {
 }
 
 func TestQRDBAdapter_DeleteByUserID(t *testing.T) {
-	us, cs, _, _ := newTestAdapter(t)
+	us, cs, _ := newTestAdapter(t)
 	ctx := context.Background()
 	user, _ := us.Create(ctx, "g@example.com", "G")
 	for i := 0; i < 3; i++ {
@@ -540,7 +462,7 @@ func TestQRDBAdapter_DeleteByUserID(t *testing.T) {
 }
 
 func TestQRDBAdapter_UserDeleteCascadesCredentials(t *testing.T) {
-	us, cs, _, _ := newTestAdapter(t)
+	us, cs, _ := newTestAdapter(t)
 	ctx := context.Background()
 	user, _ := us.Create(ctx, "h@example.com", "H")
 	cred := &Credential{ID: []byte("c"), UserID: user.WebAuthnID()}
@@ -561,14 +483,14 @@ func TestQRDBAdapter_UserDeleteCascadesCredentials(t *testing.T) {
 }
 
 func TestQRDBAdapter_SaveCredential_NilArg(t *testing.T) {
-	_, cs, _, _ := newTestAdapter(t)
+	_, cs, _ := newTestAdapter(t)
 	if err := cs.Save(context.Background(), nil); err == nil {
 		t.Fatalf("expected error for nil credential")
 	}
 }
 
 func TestQRDBAdapter_SaveCredential_EmptyID(t *testing.T) {
-	_, cs, _, _ := newTestAdapter(t)
+	_, cs, _ := newTestAdapter(t)
 	err := cs.Save(context.Background(), &Credential{UserID: []byte("1")})
 	if !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("expected ErrInvalidCredential, got %v", err)
@@ -576,25 +498,9 @@ func TestQRDBAdapter_SaveCredential_EmptyID(t *testing.T) {
 }
 
 func TestQRDBAdapter_SaveUser_NilArg(t *testing.T) {
-	us, _, _, _ := newTestAdapter(t)
+	us, _, _ := newTestAdapter(t)
 	if err := us.Save(context.Background(), nil); err == nil {
 		t.Fatalf("expected error for nil user")
-	}
-}
-
-func TestQRDBAdapter_FormatUserIDForTest(t *testing.T) {
-	// The webauthn handle is the fixed 8-byte big-endian form of the qrdb
-	// uint64 user id, matching qrdb's on-disk key encoding.
-	got := formatUserIDForTest(42)
-	if len(got) != 8 {
-		t.Fatalf("expected 8-byte handle, got %d bytes", len(got))
-	}
-	id, err := UserIDFromHandle(got)
-	if err != nil {
-		t.Fatalf("UserIDFromHandle: %v", err)
-	}
-	if id != 42 {
-		t.Fatalf("got id %d want 42", id)
 	}
 }
 

@@ -497,7 +497,7 @@ func TestDecodeUnsealTPMParams(t *testing.T) {
 // commands do, destroying it when the test ends.
 func testPassword(t *testing.T, password string) *secure.Secret {
 	t.Helper()
-	secret, err := sealPassword(password)
+	secret, err := sealPassword(t.Context(), password)
 	require.NoError(t, err)
 	t.Cleanup(secret.Destroy)
 	return secret
@@ -506,11 +506,11 @@ func testPassword(t *testing.T, password string) *secure.Secret {
 // TestSealPassword_EmptyIsNone proves an empty --password yields no secret,
 // and a nil one opens to the empty wire value.
 func TestSealPassword_EmptyIsNone(t *testing.T) {
-	secret, err := sealPassword("")
+	secret, err := sealPassword(t.Context(), "")
 	require.NoError(t, err)
 	assert.Nil(t, secret)
 
-	wire, err := openPassword(nil)
+	wire, err := openPassword(t.Context(), nil)
 	require.NoError(t, err)
 	assert.Empty(t, wire)
 }
@@ -518,10 +518,10 @@ func TestSealPassword_EmptyIsNone(t *testing.T) {
 // TestOpenPassword_Destroyed proves a password destroyed before the request
 // is built is refused with ErrPasswordOpenFailed rather than sent empty.
 func TestOpenPassword_Destroyed(t *testing.T) {
-	secret, err := sealPassword("pw")
+	secret, err := sealPassword(t.Context(), "pw")
 	require.NoError(t, err)
 	secret.Destroy()
 
-	_, err = openPassword(secret)
+	_, err = openPassword(t.Context(), secret)
 	assert.ErrorIs(t, err, ErrPasswordOpenFailed)
 }

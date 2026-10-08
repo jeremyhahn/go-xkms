@@ -21,6 +21,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -147,6 +148,15 @@ func discardPrinter() *Printer {
 	return NewPrinter("text", &bytes.Buffer{})
 }
 
+// init gives the vault commands the context Execute would: these tests drive
+// Run directly, which leaves cmd.Context() nil, and the PIN is sealed under
+// the command's context.
+func init() {
+	for _, cmd := range []*cobra.Command{passwordVaultEnrollCmd, passwordVaultRotateCmd, passwordVaultRecoverCmd, passwordUnlockCmd} {
+		cmd.SetContext(context.Background())
+	}
+}
+
 func TestPasskeyVault_EnrollThenUnlockEndToEnd(t *testing.T) {
 	server := newVaultServer(t)
 	key := newSimKey("123456")
@@ -249,7 +259,7 @@ func TestPasskeyVault_MissingPINNeverTouchesTheKey(t *testing.T) {
 	t.Cleanup(func() { resetCmdFlags(t, passwordUnlockCmd) })
 	require.NoError(t, passwordUnlockCmd.Flags().Set("passkey", "true"))
 
-	_, err := resolveVaultPasskeyPIN(passwordUnlockCmd)
+	_, err := resolveVaultPasskeyPIN(t.Context(), passwordUnlockCmd)
 	assert.ErrorIs(t, err, ErrVaultPasskeyPINRequired)
 
 	if code := captureExit(t, func() { passwordUnlockCmd.Run(passwordUnlockCmd, nil) }); code != 1 {
@@ -263,10 +273,10 @@ func TestResolveVaultPasskeyPIN_Sources(t *testing.T) {
 		t.Setenv(pinEnvVar, "")
 		resetCmdFlags(t, passwordUnlockCmd)
 		withTerminalPrompt(t, "246810", nil)
-		pin, err := resolveVaultPasskeyPIN(passwordUnlockCmd)
+		pin, err := resolveVaultPasskeyPIN(t.Context(), passwordUnlockCmd)
 		require.NoError(t, err)
 		defer pin.Destroy()
-		buf, err := pin.Open()
+		buf, err := pin.Open(t.Context())
 		require.NoError(t, err)
 		defer buf.Destroy()
 		assert.Equal(t, "246810", string(buf.Bytes()))
@@ -275,14 +285,14 @@ func TestResolveVaultPasskeyPIN_Sources(t *testing.T) {
 		t.Setenv(pinEnvVar, "")
 		resetCmdFlags(t, passwordUnlockCmd)
 		withTerminalPrompt(t, "", nil)
-		_, err := resolveVaultPasskeyPIN(passwordUnlockCmd)
+		_, err := resolveVaultPasskeyPIN(t.Context(), passwordUnlockCmd)
 		assert.ErrorIs(t, err, ErrVaultPasskeyPINRequired)
 	})
 	t.Run("environment wins over the prompt", func(t *testing.T) {
 		t.Setenv(pinEnvVar, "135791")
 		resetCmdFlags(t, passwordUnlockCmd)
 		withTerminalPrompt(t, "", errPromptBoom)
-		pin, err := resolveVaultPasskeyPIN(passwordUnlockCmd)
+		pin, err := resolveVaultPasskeyPIN(t.Context(), passwordUnlockCmd)
 		require.NoError(t, err)
 		pin.Destroy()
 	})
@@ -290,7 +300,7 @@ func TestResolveVaultPasskeyPIN_Sources(t *testing.T) {
 		t.Setenv(pinEnvVar, "")
 		resetCmdFlags(t, passwordUnlockCmd)
 		withTerminalPrompt(t, "", errPromptBoom)
-		_, err := resolveVaultPasskeyPIN(passwordUnlockCmd)
+		_, err := resolveVaultPasskeyPIN(t.Context(), passwordUnlockCmd)
 		assert.ErrorIs(t, err, errPromptBoom)
 	})
 }

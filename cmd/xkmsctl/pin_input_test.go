@@ -31,7 +31,7 @@ func openTestPIN(t *testing.T, secret *secure.Secret) string {
 	if secret == nil {
 		return ""
 	}
-	buf, err := secret.Open()
+	buf, err := secret.Open(t.Context())
 	if err != nil {
 		t.Fatalf("open resolved PIN: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestAddPINFlagsDeclaresBothSources(t *testing.T) {
 	}
 
 	t.Setenv(pinEnvVar, "")
-	pin, err := resolvePINInput(cmd)
+	pin, err := resolvePINInput(t.Context(), cmd)
 	if err != nil {
 		t.Fatalf("resolvePINInput: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestResolvePINInputPrecedence(t *testing.T) {
 			t.Fatalf("set %s: %v", pinFlagValue, err)
 		}
 
-		pin, err := resolvePINInput(cmd)
+		pin, err := resolvePINInput(t.Context(), cmd)
 		if err != nil {
 			t.Fatalf("resolvePINInput: %v", err)
 		}
@@ -115,7 +115,7 @@ func TestResolvePINInputPrecedence(t *testing.T) {
 			t.Fatalf("set %s: %v", pinFlagValue, err)
 		}
 
-		pin, err := resolvePINInput(cmd)
+		pin, err := resolvePINInput(t.Context(), cmd)
 		if err != nil {
 			t.Fatalf("resolvePINInput: %v", err)
 		}
@@ -132,7 +132,7 @@ func TestResolvePINInputPrecedence(t *testing.T) {
 			t.Fatalf("set %s: %v", pinFlagValue, err)
 		}
 
-		pin, err := resolvePINInput(cmd)
+		pin, err := resolvePINInput(t.Context(), cmd)
 		if err != nil {
 			t.Fatalf("resolvePINInput: %v", err)
 		}
@@ -151,7 +151,7 @@ func TestResolvePINInputStdinErrors(t *testing.T) {
 			t.Fatalf("set %s: %v", pinFlagStdin, err)
 		}
 
-		_, err := resolvePINInput(cmd)
+		_, err := resolvePINInput(t.Context(), cmd)
 		if !errors.Is(err, ErrPINInputStdinEmpty) {
 			t.Fatalf("want ErrPINInputStdinEmpty, got %v", err)
 		}
@@ -167,7 +167,7 @@ func TestResolvePINInputStdinErrors(t *testing.T) {
 			t.Fatalf("set %s: %v", pinFlagStdin, err)
 		}
 
-		_, err := resolvePINInput(cmd)
+		_, err := resolvePINInput(t.Context(), cmd)
 		if !errors.Is(err, ErrPINInputStdinRead) {
 			t.Fatalf("want ErrPINInputStdinRead, got %v", err)
 		}
@@ -184,7 +184,7 @@ func TestResolvePINInputStdinErrors(t *testing.T) {
 func TestResolvePINInputRejectsUndeclaredFlags(t *testing.T) {
 	cmd := &cobra.Command{}
 
-	_, err := resolvePINInput(cmd)
+	_, err := resolvePINInput(t.Context(), cmd)
 	if !errors.Is(err, ErrPINInputFlagsMissing) {
 		t.Fatalf("want ErrPINInputFlagsMissing, got %v", err)
 	}

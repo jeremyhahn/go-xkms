@@ -170,62 +170,6 @@ func (s *TenantService) DeleteTenant(tenantID string) error {
 	return nil
 }
 
-// BarrierInit initializes a per-tenant barrier.
-func (s *TenantService) BarrierInit(tenantID string, threshold, shares int) error {
-	if tenantID == "" {
-		return ErrTenantIDRequired
-	}
-
-	client, err := s.getClient()
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
-	defer cancel()
-
-	if err := client.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
-		TenantID:  tenantID,
-		Threshold: threshold,
-		Shares:    shares,
-	}); err != nil {
-		s.log.Error("failed to init tenant barrier", "tenant_id", tenantID, "error", err)
-		return err
-	}
-
-	s.emit(events.EventTenantBarrierInited, map[string]string{"tenant_id": tenantID})
-	s.log.Info("tenant barrier initialized", "tenant_id", tenantID)
-	return nil
-}
-
-// BarrierUnseal unseals a per-tenant barrier with a share or key.
-func (s *TenantService) BarrierUnseal(tenantID string, share, key []byte) error {
-	if tenantID == "" {
-		return ErrTenantIDRequired
-	}
-
-	client, err := s.getClient()
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
-	defer cancel()
-
-	if err := client.TenantBarrierUnseal(ctx, &transport.TenantBarrierUnsealRequest{
-		TenantID: tenantID,
-		Share:    share,
-		Key:      key,
-	}); err != nil {
-		s.log.Error("failed to unseal tenant barrier", "tenant_id", tenantID, "error", err)
-		return err
-	}
-
-	s.emit(events.EventTenantBarrierUnsealed, map[string]string{"tenant_id": tenantID})
-	s.log.Info("tenant barrier unsealed", "tenant_id", tenantID)
-	return nil
-}
-
 // emit sends an event to the frontend if an emitter is registered.
 func (s *TenantService) emit(eventType events.EventType, payload any) {
 	if s.emitter != nil {

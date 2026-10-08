@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -98,7 +99,7 @@ func TestRevokeCert_DeleteKeys_ServerGeneratedKey_DeletesKeyAndCert(t *testing.T
 
 	_, err = ca.certStore.GetCertificate(cert.Subject.CommonName)
 	require.Error(t, err, "certificate must be gone from the certstore after DeleteKeys")
-	assert.ErrorIs(t, err, storage.ErrNotFound)
+	assert.ErrorIs(t, err, certstore.ErrCertNotFound)
 
 	// The bookkeeping record itself must also be gone, so a second
 	// resolution reports the CSR-signed no-op shape rather than stale data.
@@ -128,7 +129,7 @@ func TestRevokeCert_DeleteKeys_CSRSigned_NoOp(t *testing.T) {
 	require.NoError(t, err, "DeleteKeys on a CSR-signed certificate must be a no-op, not a failure")
 
 	_, err = ca.certStore.GetCertificate(cert.Subject.CommonName)
-	assert.ErrorIs(t, err, storage.ErrNotFound, "the certificate itself is still removed")
+	assert.ErrorIs(t, err, certstore.ErrCertNotFound, "the certificate itself is still removed")
 
 	revoked, err := ca.IsRevoked(cert.SerialNumber)
 	require.NoError(t, err)

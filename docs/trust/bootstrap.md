@@ -385,7 +385,7 @@ roadmap for the per-sub-phase commit history.
 
 - [Bootstrap (server-side)](../bootstrap/README.md) — how the xkms server
   exposes the bootstrap endpoints.
-- [Init System](../init/README.md) — the `xkmsd init` ceremony that
+- [Init ceremony](../init-ceremony/architecture.md) — the `xkmsd init` ceremony that
   produces the CA bundle the trust library fetches.
 - [QuicBaaS SDK — Trust accessor](https://github.com/jeremyhahn/go-quicbaas/tree/master/sdk/go/xkms/trust/bootstrap) — SDK re-export
   package.

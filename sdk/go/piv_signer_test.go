@@ -137,7 +137,7 @@ func TestPIVCryptoSigner_SignWithPIN(t *testing.T) {
 	signer, err := NewPIVCryptoSigner("software", PIVSlot("9a"), pub)
 	require.NoError(t, err)
 
-	pin, err := secure.NewSecret([]byte("123456"))
+	pin, err := secure.NewSecret(t.Context(), []byte("123456"))
 	require.NoError(t, err)
 	signer.PIN = pin
 
@@ -160,7 +160,7 @@ func TestPIVCryptoSigner_SignPINOpenFailure(t *testing.T) {
 	signer, err := NewPIVCryptoSigner("software", PIVSlot("9a"), pub)
 	require.NoError(t, err)
 
-	pin, err := secure.NewSecret([]byte("123456"))
+	pin, err := secure.NewSecret(t.Context(), []byte("123456"))
 	require.NoError(t, err)
 	pin.Destroy()
 	signer.PIN = pin

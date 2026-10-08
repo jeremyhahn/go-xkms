@@ -165,11 +165,12 @@ func TestFinishLogin_DecoySessionFailsVerification(t *testing.T) {
 // found" is.
 func TestBeginLoginForEmail_StoreFault(t *testing.T) {
 	cfg := validTestConfig()
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       &faultingUserStore{UserStore: NewMemoryUserStore()},
+		UserStore:       &faultingUserStore{UserStore: users},
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 

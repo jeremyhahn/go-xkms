@@ -637,13 +637,6 @@ func (s *MultiProtocolServer) buildRouter() {
 		tenantHandlers.RegisterRoutes(s.router, s.authMiddleware, s.gate)
 	}
 
-	// Register barrier handlers if the admin service supports them
-	if taSvc, ok := s.adminService.(admin.TenantAwareService); ok {
-		if barrierSvc := taSvc.BarrierSvc(); barrierSvc != nil {
-			admin.NewBarrierHandlers(barrierSvc, s.logger).RegisterRoutes(s.router, s.authMiddleware, s.gate)
-		}
-	}
-
 	// Health check endpoint (no auth required)
 	s.router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

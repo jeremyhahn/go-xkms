@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // TestAgentError_CarriesSentinelAndCause pins both halves of the contract at
@@ -87,9 +89,8 @@ func TestFileStore_SaveAgent_ReportsWriteCause(t *testing.T) {
 	if !errors.Is(saveErr, ErrStoreWrite) {
 		t.Errorf("want the ErrStoreWrite sentinel, got %v", saveErr)
 	}
-	var pathErr *os.PathError
-	if !errors.As(saveErr, &pathErr) {
-		t.Errorf("the underlying *os.PathError must survive wrapping; got %v", saveErr)
+	if !errors.Is(saveErr, fsutil.ErrTargetNotRegular) {
+		t.Errorf("the underlying fsutil cause must survive wrapping; got %v", saveErr)
 	}
 	if !strings.Contains(saveErr.Error(), deviceID) {
 		t.Errorf("the message should name the path that failed; got %q", saveErr)

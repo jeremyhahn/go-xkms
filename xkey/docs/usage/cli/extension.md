@@ -154,7 +154,7 @@ xkey extension serve --no-barrier
 xkey extension serve --socket /tmp/xkey.sock --log-level debug --log-file /var/log/xkey.log
 ```
 
-The headless server auto-detects the barrier strategy from the stored root key (`~/.xkey/data/barrier/root_key`). For software-sealed barriers, a password is required. For TPM2-sealed barriers, the hardware unseals automatically.
+The headless server auto-detects the barrier strategy from the stored root key (the `barrier/root_key` entry of the data directory's storage engine). For software-sealed barriers, a password is required. For TPM2-sealed barriers, the hardware unseals automatically.
 
 The `passphrase`, `tpm2`, `aws_kms`, `gcp_kms`, `azure_kv`, and `vault` strategies all unseal headlessly. A cloud KMS strategy needs no password: the server rebuilds the backend from the connection settings `xkey barrier init` persisted to the config file and authenticates with the provider's ambient credentials (or an explicit `*SecretValue` reference set by hand in the config), exactly like `xkey barrier unseal` does interactively -- see [seal/cli.md](../../seal/cli.md). A barrier sealed with `pkcs11` or `shamir` is refused with a typed, named error rather than hanging or attempting a login it cannot complete:
 
@@ -270,7 +270,7 @@ To remove a paired extension:
 | `~/.xkey/pairing.json` | Ed25519 public key + origin of paired extension | No (public key only) |
 | `~/.xkey/data/staticpw/` | Static password entries | Yes (barrier) |
 | `~/.xkey/data/oath.json` | OATH/TOTP account data | Yes (barrier) |
-| `~/.xkey/data/barrier/root_key` | Sealed barrier root key envelope | Sealed |
+| `barrier/root_key` entry in `~/.xkey/data/` | Sealed barrier root key envelope (an engine entry, not a file) | Sealed |
 | `~/.xkey/data/pin-state.json` | PIN lockout state | No (lockout metadata only) |
 
 ## Deployment Patterns

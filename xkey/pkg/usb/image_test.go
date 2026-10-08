@@ -31,7 +31,7 @@ import (
 // testSecret seals s into a *secure.Secret for test fixtures.
 func testSecret(t *testing.T, s string) *secure.Secret {
 	t.Helper()
-	secret, err := secure.NewSecret([]byte(s))
+	secret, err := secure.NewSecret(t.Context(), []byte(s))
 	require.NoError(t, err)
 	return secret
 }
@@ -40,7 +40,7 @@ func testSecret(t *testing.T, s string) *secure.Secret {
 // string, for asserting on test fixtures only.
 func openSecretString(t *testing.T, secret *secure.Secret) string {
 	t.Helper()
-	buf, err := secret.Open()
+	buf, err := secret.Open(t.Context())
 	require.NoError(t, err)
 	defer buf.Destroy()
 	return string(buf.Bytes())
@@ -62,7 +62,7 @@ func TestCreateImage_RequiresRoot(t *testing.T) {
 		SizeBytes:  4 * GB,
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := CreateImage(cfg)
+	err := CreateImage(t.Context(), cfg)
 	assert.ErrorIs(t, err, ErrPermissionDenied)
 }
 
@@ -77,7 +77,7 @@ func TestCreateImage_EmptyPassphrase(t *testing.T) {
 		Path:      filepath.Join(t.TempDir(), "test.img"),
 		SizeBytes: 4 * GB,
 	}
-	err := CreateImage(cfg)
+	err := CreateImage(t.Context(), cfg)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrInvalidSize))
 
@@ -102,7 +102,7 @@ func TestCreateImage_NonBlockDevice_RoutesToImageFile(t *testing.T) {
 	// This will go through createOnImageFile, create the file,
 	// set up a mock loop device, run the partitioning (all mocked),
 	// and succeed.
-	err := CreateImage(cfg)
+	err := CreateImage(t.Context(), cfg)
 	require.NoError(t, err)
 }
 
@@ -118,7 +118,7 @@ func TestCreateOnImageFile_SizeTooSmall(t *testing.T) {
 		SizeBytes:  100 * MB,
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := createOnImageFile(cfg)
+	err := createOnImageFile(t.Context(), cfg)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrInvalidSize))
 
@@ -139,7 +139,7 @@ func TestCreateOnImageFile_FileExists(t *testing.T) {
 		SizeBytes:  2 * GB,
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := createOnImageFile(cfg)
+	err := createOnImageFile(t.Context(), cfg)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrImageExists))
 
@@ -164,7 +164,7 @@ func TestCreateOnImageFile_LoopSetupFails(t *testing.T) {
 		SizeBytes:  2 * GB,
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := createOnImageFile(cfg)
+	err := createOnImageFile(t.Context(), cfg)
 	require.Error(t, err)
 
 	var usbErr *USBError
@@ -203,7 +203,7 @@ func TestCreateOnImageFile_PartitionFails(t *testing.T) {
 		SizeBytes:  2 * GB,
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := createOnImageFile(cfg)
+	err := createOnImageFile(t.Context(), cfg)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPartitionFailed))
 	assert.True(t, detached, "loop device should be detached on error")
@@ -224,7 +224,7 @@ func TestCreateOnImageFile_Success(t *testing.T) {
 		SizeBytes:  2 * GB,
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := createOnImageFile(cfg)
+	err := createOnImageFile(t.Context(), cfg)
 	require.NoError(t, err)
 
 	info, statErr := os.Stat(cfg.Path)
@@ -250,7 +250,7 @@ func TestCreateOnImageFile_DetachWarning(t *testing.T) {
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
 	// Should still succeed -- detach failure is a warning, not an error.
-	err := createOnImageFile(cfg)
+	err := createOnImageFile(t.Context(), cfg)
 	require.NoError(t, err)
 }
 
@@ -269,7 +269,7 @@ func TestCreateOnBlockDevice_DelegatesToPartitionAndFormat(t *testing.T) {
 		Path:       "/dev/sdb",
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := createOnBlockDevice(cfg)
+	err := createOnBlockDevice(t.Context(), cfg)
 	require.NoError(t, err)
 }
 
@@ -291,7 +291,7 @@ func TestPartitionAndFormat_CreateTableFails(t *testing.T) {
 	}
 
 	cfg := ImageConfig{Passphrase: testSecret(t, "test")}
-	err := partitionAndFormat("/dev/sdb", cfg)
+	err := partitionAndFormat(t.Context(), "/dev/sdb", cfg)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPartitionFailed))
 }
@@ -310,7 +310,7 @@ func TestPartitionAndFormat_FAT32FormatFails(t *testing.T) {
 	}
 
 	cfg := ImageConfig{Passphrase: testSecret(t, "test")}
-	err := partitionAndFormat("/dev/sdb", cfg)
+	err := partitionAndFormat(t.Context(), "/dev/sdb", cfg)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrFormatFailed))
 }
@@ -327,7 +327,7 @@ func TestPartitionAndFormat_LUKSFormatFails(t *testing.T) {
 	}
 
 	cfg := ImageConfig{Passphrase: testSecret(t, "test")}
-	err := partitionAndFormat("/dev/sdb", cfg)
+	err := partitionAndFormat(t.Context(), "/dev/sdb", cfg)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrFormatFailed))
 
@@ -351,7 +351,7 @@ func TestPartitionAndFormat_MountFails(t *testing.T) {
 	}
 
 	cfg := ImageConfig{Passphrase: testSecret(t, "test")}
-	err := partitionAndFormat("/dev/sdb", cfg)
+	err := partitionAndFormat(t.Context(), "/dev/sdb", cfg)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrMountFailed))
 }
@@ -377,7 +377,7 @@ func TestPartitionAndFormat_PartprobeFailsFallsBack(t *testing.T) {
 	}
 
 	cfg := ImageConfig{Passphrase: testSecret(t, "test")}
-	err := partitionAndFormat("/dev/sdb", cfg)
+	err := partitionAndFormat(t.Context(), "/dev/sdb", cfg)
 	require.NoError(t, err)
 	assert.True(t, partprobeCalled)
 	assert.True(t, partxCalled)
@@ -393,7 +393,7 @@ func TestPartitionAndFormat_FullSuccess(t *testing.T) {
 		Passphrase: testSecret(t, "test-passphrase"),
 		Binaries:   nil,
 	}
-	err := partitionAndFormat("/dev/sdb", cfg)
+	err := partitionAndFormat(t.Context(), "/dev/sdb", cfg)
 	require.NoError(t, err)
 }
 
@@ -531,7 +531,7 @@ func TestFormatLUKS_Success(t *testing.T) {
 	luksMakeFilesystem = func(device, fstype, label string) error { return nil }
 	luksLock = func(name string) error { return nil }
 
-	err := formatLUKS("/dev/sdb2", testSecret(t, "test-passphrase"))
+	err := formatLUKS(t.Context(), "/dev/sdb2", testSecret(t, "test-passphrase"))
 	require.NoError(t, err)
 }
 
@@ -544,7 +544,7 @@ func TestFormatLUKS_FormatFails(t *testing.T) {
 		return errors.New("format failed")
 	}
 
-	err := formatLUKS("/dev/sdb2", testSecret(t, "test-passphrase"))
+	err := formatLUKS(t.Context(), "/dev/sdb2", testSecret(t, "test-passphrase"))
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrFormatFailed))
 
@@ -563,7 +563,7 @@ func TestFormatLUKS_UnlockFails(t *testing.T) {
 		return errors.New("unlock failed")
 	}
 
-	err := formatLUKS("/dev/sdb2", testSecret(t, "test-passphrase"))
+	err := formatLUKS(t.Context(), "/dev/sdb2", testSecret(t, "test-passphrase"))
 	require.Error(t, err)
 
 	var usbErr *USBError
@@ -596,7 +596,7 @@ func TestCreateImage_KeyringUnavailable(t *testing.T) {
 		SizeBytes:  4 * GB,
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := CreateImage(cfg)
+	err := CreateImage(t.Context(), cfg)
 	require.Error(t, err)
 
 	var usbErr *USBError
@@ -627,7 +627,7 @@ func TestFormatLUKS_MakeFilesystemFails(t *testing.T) {
 		return nil
 	}
 
-	err := formatLUKS("/dev/sdb2", testSecret(t, "test-passphrase"))
+	err := formatLUKS(t.Context(), "/dev/sdb2", testSecret(t, "test-passphrase"))
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrFormatFailed))
 	assert.True(t, lockCalled, "luksLock should be called on mkfs failure")
@@ -649,7 +649,7 @@ func TestFormatLUKS_LockFails(t *testing.T) {
 		return errors.New("lock failed")
 	}
 
-	err := formatLUKS("/dev/sdb2", testSecret(t, "test-passphrase"))
+	err := formatLUKS(t.Context(), "/dev/sdb2", testSecret(t, "test-passphrase"))
 	require.Error(t, err)
 
 	var usbErr *USBError
@@ -1313,7 +1313,7 @@ func TestCreateImage_FullFlow_ImageFile(t *testing.T) {
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
 
-	err := CreateImage(cfg)
+	err := CreateImage(t.Context(), cfg)
 	require.NoError(t, err)
 }
 
@@ -1329,7 +1329,7 @@ func TestCreateImage_FullFlow_SizeTooSmall(t *testing.T) {
 		SizeBytes:  100 * MB,
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := CreateImage(cfg)
+	err := CreateImage(t.Context(), cfg)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrInvalidSize))
 }
@@ -1358,7 +1358,7 @@ func TestCreateImage_BlockDevice_ValidateBlockDeviceError(t *testing.T) {
 		Path:       testDevicePath,
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := CreateImage(cfg)
+	err := CreateImage(t.Context(), cfg)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrSystemDisk))
 }
@@ -1388,7 +1388,7 @@ func TestCreateImage_BlockDevice_ValidatePassesPartitionFails(t *testing.T) {
 		Path:       testDevicePath,
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := CreateImage(cfg)
+	err := CreateImage(t.Context(), cfg)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPartitionFailed))
 }
@@ -1406,7 +1406,7 @@ func TestCreateOnImageFile_CreateDirError(t *testing.T) {
 		SizeBytes:  2 * GB,
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := createOnImageFile(cfg)
+	err := createOnImageFile(t.Context(), cfg)
 	require.Error(t, err)
 
 	var usbErr *USBError
@@ -1430,7 +1430,7 @@ func TestCreateOnImageFile_CreateFileError(t *testing.T) {
 		SizeBytes:  2 * GB,
 		Passphrase: testSecret(t, "test-passphrase"),
 	}
-	err := createOnImageFile(cfg)
+	err := createOnImageFile(t.Context(), cfg)
 	require.Error(t, err)
 
 	var usbErr *USBError
@@ -1642,7 +1642,7 @@ func TestFormatLUKS_PassphraseForwarded(t *testing.T) {
 	luksMakeFilesystem = func(device, fstype, label string) error { return nil }
 	luksLock = func(name string) error { return nil }
 
-	err := formatLUKS("/dev/sdb2", testSecret(t, "my-secret-passphrase"))
+	err := formatLUKS(t.Context(), "/dev/sdb2", testSecret(t, "my-secret-passphrase"))
 	require.NoError(t, err)
 	assert.Equal(t, []byte("my-secret-passphrase"), formatPassphrase)
 	assert.Equal(t, []byte("my-secret-passphrase"), unlockPassphrase)
@@ -1654,7 +1654,7 @@ func TestFormatLUKS_NilPassphrase(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
-	err := formatLUKS("/dev/sdb2", nil)
+	err := formatLUKS(t.Context(), "/dev/sdb2", nil)
 	require.Error(t, err)
 }
 
@@ -1677,7 +1677,7 @@ func TestPartitionAndFormat_WithBinaries(t *testing.T) {
 		Passphrase: testSecret(t, "test-passphrase"),
 		Binaries:   []string{binPath},
 	}
-	err := partitionAndFormat("/dev/sdb", cfg)
+	err := partitionAndFormat(t.Context(), "/dev/sdb", cfg)
 	require.NoError(t, err)
 }
 
@@ -1692,7 +1692,7 @@ func TestPartitionAndFormat_PopulateBinaryFails(t *testing.T) {
 		Passphrase: testSecret(t, "test-passphrase"),
 		Binaries:   []string{"/nonexistent/binary"},
 	}
-	err := partitionAndFormat("/dev/sdb", cfg)
+	err := partitionAndFormat(t.Context(), "/dev/sdb", cfg)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrBinaryNotFound))
 }
@@ -1718,7 +1718,7 @@ func TestCreateOnImageFile_SuccessWithBinaries(t *testing.T) {
 		Passphrase: testSecret(t, "test-passphrase"),
 		Binaries:   []string{binPath},
 	}
-	err := createOnImageFile(cfg)
+	err := createOnImageFile(t.Context(), cfg)
 	require.NoError(t, err)
 }
 

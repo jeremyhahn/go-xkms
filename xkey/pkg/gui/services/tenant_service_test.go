@@ -93,25 +93,6 @@ func (m *mockTenantClient) DeleteTenant(_ context.Context, tenantID string) erro
 	return nil
 }
 
-func (m *mockTenantClient) TenantBarrierInit(_ context.Context, req *transport.TenantBarrierInitRequest) error {
-	if m.err != nil {
-		return m.err
-	}
-	m.barriers[req.TenantID] = true
-	return nil
-}
-
-func (m *mockTenantClient) TenantBarrierUnseal(_ context.Context, req *transport.TenantBarrierUnsealRequest) error {
-	if m.err != nil {
-		return m.err
-	}
-	if !m.barriers[req.TenantID] {
-		return errors.New("barrier not initialized")
-	}
-	m.unsealed[req.TenantID] = true
-	return nil
-}
-
 func setupTenantService(t *testing.T) (*TenantService, *mockTenantClient) {
 	t.Helper()
 	svc := NewTenantService()
@@ -266,84 +247,6 @@ func TestTenantService_DeleteTenant_NotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
-// --- BarrierInit ---
-
-func TestTenantService_BarrierInit_Success(t *testing.T) {
-	svc, mock := setupTenantService(t)
-
-	err := svc.BarrierInit("tenant-1", 3, 5)
-	require.NoError(t, err)
-	assert.True(t, mock.barriers["tenant-1"])
-}
-
-func TestTenantService_BarrierInit_EmptyID(t *testing.T) {
-	svc, _ := setupTenantService(t)
-
-	err := svc.BarrierInit("", 3, 5)
-	require.ErrorIs(t, err, ErrTenantIDRequired)
-}
-
-func TestTenantService_BarrierInit_ServerError(t *testing.T) {
-	svc, mock := setupTenantService(t)
-	mock.err = errors.New("barrier already initialized")
-
-	err := svc.BarrierInit("tenant-1", 3, 5)
-	require.Error(t, err)
-}
-
-func TestTenantService_BarrierInit_NoClient(t *testing.T) {
-	svc := NewTenantService()
-	svc.SetContext(context.Background())
-
-	err := svc.BarrierInit("tenant-1", 3, 5)
-	require.ErrorIs(t, err, ErrTenantServiceNoClient)
-}
-
-// --- BarrierUnseal ---
-
-func TestTenantService_BarrierUnseal_Success(t *testing.T) {
-	svc, mock := setupTenantService(t)
-
-	// Init first.
-	mock.barriers["tenant-1"] = true
-
-	err := svc.BarrierUnseal("tenant-1", []byte("share-data"), nil)
-	require.NoError(t, err)
-	assert.True(t, mock.unsealed["tenant-1"])
-}
-
-func TestTenantService_BarrierUnseal_EmptyID(t *testing.T) {
-	svc, _ := setupTenantService(t)
-
-	err := svc.BarrierUnseal("", []byte("share-data"), nil)
-	require.ErrorIs(t, err, ErrTenantIDRequired)
-}
-
-func TestTenantService_BarrierUnseal_NotInitialized(t *testing.T) {
-	svc, _ := setupTenantService(t)
-
-	err := svc.BarrierUnseal("tenant-1", []byte("share-data"), nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not initialized")
-}
-
-func TestTenantService_BarrierUnseal_WithKey(t *testing.T) {
-	svc, mock := setupTenantService(t)
-	mock.barriers["tenant-1"] = true
-
-	err := svc.BarrierUnseal("tenant-1", nil, []byte("master-key"))
-	require.NoError(t, err)
-	assert.True(t, mock.unsealed["tenant-1"])
-}
-
-func TestTenantService_BarrierUnseal_ServerError(t *testing.T) {
-	svc, mock := setupTenantService(t)
-	mock.err = errors.New("invalid share")
-
-	err := svc.BarrierUnseal("tenant-1", []byte("bad-share"), nil)
-	require.Error(t, err)
-}
-
 // --- Event emission ---
 
 func TestTenantService_EventEmission_Create(t *testing.T) {
@@ -387,47 +290,6 @@ func TestTenantService_EventEmission_Delete(t *testing.T) {
 	defer mu.Unlock()
 	require.Len(t, captured, 2)
 	assert.Equal(t, events.EventTenantDeleted, captured[1].Type)
-}
-
-func TestTenantService_EventEmission_BarrierInit(t *testing.T) {
-	svc, _ := setupTenantService(t)
-
-	var mu sync.Mutex
-	var captured []events.Event
-	svc.SetEventEmitter(func(e events.Event) {
-		mu.Lock()
-		defer mu.Unlock()
-		captured = append(captured, e)
-	})
-
-	err := svc.BarrierInit("tenant-ev", 2, 3)
-	require.NoError(t, err)
-
-	mu.Lock()
-	defer mu.Unlock()
-	require.Len(t, captured, 1)
-	assert.Equal(t, events.EventTenantBarrierInited, captured[0].Type)
-}
-
-func TestTenantService_EventEmission_BarrierUnseal(t *testing.T) {
-	svc, mock := setupTenantService(t)
-	mock.barriers["tenant-ev"] = true
-
-	var mu sync.Mutex
-	var captured []events.Event
-	svc.SetEventEmitter(func(e events.Event) {
-		mu.Lock()
-		defer mu.Unlock()
-		captured = append(captured, e)
-	})
-
-	err := svc.BarrierUnseal("tenant-ev", []byte("share"), nil)
-	require.NoError(t, err)
-
-	mu.Lock()
-	defer mu.Unlock()
-	require.Len(t, captured, 1)
-	assert.Equal(t, events.EventTenantBarrierUnsealed, captured[0].Type)
 }
 
 // --- Conversion helpers ---

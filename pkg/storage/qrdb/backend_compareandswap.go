@@ -73,6 +73,10 @@ import (
 // put-if-absent transactions never had a read branch; this one, uniquely,
 // used to).
 func (b *Backend) CompareAndSwap(ctx context.Context, key string, expected, newValue []byte) (bool, []byte, error) {
+	ctx, err := b.callContext(ctx)
+	if err != nil {
+		return false, nil, &BackendError{Op: "compare-and-swap", Key: key, Err: err}
+	}
 	// Same capability-refusal-falls-through rule as PutIfAbsent and
 	// CompareAndDelete: ONLY a capability refusal from the guarded path falls
 	// through to the transaction, because it is the one error that means the

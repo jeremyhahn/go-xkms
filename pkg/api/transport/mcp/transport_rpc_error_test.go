@@ -11,7 +11,7 @@ import (
 	"errors"
 	"testing"
 
-	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -91,13 +91,13 @@ func TestHealthy_Connected_Success(t *testing.T) {
 }
 
 // TestRpcCall_ToolError_ClassifiedByCode proves classifyToolError branches on
-// the wire.Code carried in a failing result's StructuredContent, mapping
+// the qrdbsdk.MCPCode carried in a failing result's StructuredContent, mapping
 // every code the server's keyOpCodeToWire table can produce (plus
-// wire.CodeNotFound, go-qrdb#438's addition) onto the JSON-RPC error code
+// qrdbsdk.MCPCodeNotFound, go-qrdb#438's addition) onto the JSON-RPC error code
 // this SDK has always exposed as *RPCError.Code — never by matching the
 // message text, which the server is free to phrase however it likes.
 //
-// wire.CodeNotFound classifies onto sdkssh.JSONRPCCodeNotFound, not
+// qrdbsdk.MCPCodeNotFound classifies onto sdkssh.JSONRPCCodeNotFound, not
 // xkmsmcp.ErrCodeInvalidParams (go-xkms#814): a missing key or user is
 // reported distinctly from a malformed request, matching go-qrdb's own
 // MCP/gRPC/QUIC transports' NotFound classification for the same
@@ -105,21 +105,21 @@ func TestHealthy_Connected_Success(t *testing.T) {
 func TestRpcCall_ToolError_ClassifiedByCode(t *testing.T) {
 	tests := []struct {
 		name     string
-		code     wire.Code
+		code     qrdbsdk.MCPCode
 		message  string
 		wantCode int
 	}{
-		{"unauthenticated", wire.CodeUnauthenticated, "missing credential", xkmsmcp.ErrCodeUnauthorized},
-		{"permission denied", wire.CodePermissionDenied, "role required", xkmsmcp.ErrCodeForbidden},
-		{"not found", wire.CodeNotFound, "key k1 not found", sdkssh.JSONRPCCodeNotFound},
-		{"unavailable", wire.CodeUnavailable, "backend unavailable", xkmsmcp.ErrCodeServiceUnavailable},
-		{"invalid argument", wire.CodeInvalidArgument, "validation failed: weak hash refused", xkmsmcp.ErrCodeInvalidParams},
-		{"unimplemented", wire.CodeUnimplemented, "operation not supported by this backend", xkmsmcp.ErrCodeMethodNotFound},
-		{"internal", wire.CodeInternal, "xkms: internal error", xkmsmcp.ErrCodeInternalError},
+		{"unauthenticated", qrdbsdk.MCPCodeUnauthenticated, "missing credential", xkmsmcp.ErrCodeUnauthorized},
+		{"permission denied", qrdbsdk.MCPCodePermissionDenied, "role required", xkmsmcp.ErrCodeForbidden},
+		{"not found", qrdbsdk.MCPCodeNotFound, "key k1 not found", sdkssh.JSONRPCCodeNotFound},
+		{"unavailable", qrdbsdk.MCPCodeUnavailable, "backend unavailable", xkmsmcp.ErrCodeServiceUnavailable},
+		{"invalid argument", qrdbsdk.MCPCodeInvalidArgument, "validation failed: weak hash refused", xkmsmcp.ErrCodeInvalidParams},
+		{"unimplemented", qrdbsdk.MCPCodeUnimplemented, "operation not supported by this backend", xkmsmcp.ErrCodeMethodNotFound},
+		{"internal", qrdbsdk.MCPCodeInternal, "xkms: internal error", xkmsmcp.ErrCodeInternalError},
 		// A code with no JSON-RPC counterpart degrades to ErrCodeInternalError
 		// rather than being dropped or panicking.
-		{"unmapped code degrades to internal", wire.CodeResourceExhausted, "quota exceeded", xkmsmcp.ErrCodeInternalError},
-		{"unrecognized future code degrades to internal", wire.Code(-32098), "from a later server", xkmsmcp.ErrCodeInternalError},
+		{"unmapped code degrades to internal", qrdbsdk.MCPCodeResourceExhausted, "quota exceeded", xkmsmcp.ErrCodeInternalError},
+		{"unrecognized future code degrades to internal", qrdbsdk.MCPCode(-32098), "from a later server", xkmsmcp.ErrCodeInternalError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -160,7 +160,7 @@ func TestRpcCall_ToolError_TriggerWordWithDifferentCode(t *testing.T) {
 		// envelope says Internal, and Internal is what must reach the caller.
 		return jsonrpcResponse{
 			ErrorText: "raft apply failed: key not found while forbidden path was retried",
-			Envelope:  wire.CodeInternal,
+			Envelope:  qrdbsdk.MCPCodeInternal,
 		}
 	})
 	defer cleanup()

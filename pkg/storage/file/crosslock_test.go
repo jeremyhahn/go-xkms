@@ -19,11 +19,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
@@ -251,4 +253,67 @@ func runCrossProcessWorker(t *testing.T, dir string) {
 		incrementSharedCounter(t, store)
 	}
 	fmt.Fprintln(os.Stdout, "worker done")
+}
+
+// TestNew_OpensUnderDirectoryLock pins the deterministic half of the race
+// TestFileStorage_CompareAndSwap_CrossProcessAccumulates hits by chance:
+// go-qrdb's file engine sweeps temp files and initialises a fresh directory
+// when it opens, so an open that ran while another process held the lock
+// could delete that process's in-flight temp file. New must therefore wait
+// for the directory lock, and must succeed once it is released.
+func TestNew_OpensUnderDirectoryLock(t *testing.T) {
+	dir := t.TempDir()
+	type result struct {
+		store storage.Backend
+		err   error
+	}
+	done := make(chan result, 1)
+
+	openedWhileLocked := false
+	err := withCrossProcessLock(context.Background(), dir, func() error {
+		go func() {
+			store, err := New(dir)
+			done <- result{store: store, err: err}
+		}()
+		select {
+		case r := <-done:
+			openedWhileLocked = true
+			done <- r
+		case <-time.After(50 * time.Millisecond):
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withCrossProcessLock: %v", err)
+	}
+
+	r := <-done
+	if r.store != nil {
+		t.Cleanup(func() { _ = r.store.Close() })
+	}
+	if openedWhileLocked {
+		t.Fatal("New returned while another holder had the directory lock")
+	}
+	if r.err != nil {
+		t.Fatalf("New after the lock was released: %v", r.err)
+	}
+	if err := r.store.Put(context.Background(), "k", []byte("v")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+}
+
+// TestWithCrossProcessLock_MissingDirectory checks that a store directory
+// that cannot be opened fails the lock without running fn.
+func TestWithCrossProcessLock_MissingDirectory(t *testing.T) {
+	ran := false
+	err := withCrossProcessLock(context.Background(), filepath.Join(t.TempDir(), "absent"), func() error {
+		ran = true
+		return nil
+	})
+	if err == nil {
+		t.Fatal("withCrossProcessLock on a missing directory returned nil")
+	}
+	if ran {
+		t.Fatal("fn ran without the lock")
+	}
 }

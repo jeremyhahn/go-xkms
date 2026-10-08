@@ -145,9 +145,13 @@ func (p *PKCS11Strategy) UnsealRootKey(
 		return nil, ErrCorruptRootKey
 	}
 
-	return p.sealer.Unseal(ctx, &sd, &types.UnsealOptions{
+	rootKey, err := p.sealer.Unseal(ctx, &sd, &types.UnsealOptions{
 		KeyAttributes: p.keyAttrs,
 	})
+	if err != nil {
+		return nil, &RootKeyUnsealError{Strategy: StrategyPKCS11, Err: err}
+	}
+	return rootKey, nil
 }
 
 // BarrierEncryptor returns a SymmetricEncrypter for barrier data operations.

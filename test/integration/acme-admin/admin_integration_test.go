@@ -19,17 +19,16 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
-	"time"
 
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
-	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,44 +36,61 @@ import (
 // TestContext provides common test setup for integration tests
 type TestContext struct {
 	logger         *slog.Logger
-	qrdbSvc        qrdb.Service
 	adminService   *admin.TenantAwareAdminService
 	storageFactory storage.Factory
 	cleanup        func()
 }
 
-// setupTestContext creates a new test context with QRDB.
-// Note: For full integration tests, this would connect to a real QRDB.
-// For now, we use in-memory components with RBAC via QRDB.
-func setupTestContext(t *testing.T) *TestContext {
-	t.Helper()
+// setupTestContext composes the admin service the way xkmsd's
+// finalizeAdminModule does: over a real in-process go-qrdb node with the node
+// barrier engaged. ACME storage comes from the node's datastore DAO factory,
+// tenant identity from the node's TenantService, and roles and users from the
+// node's client.
+func setupTestContext(tb testing.TB) *TestContext {
+	tb.Helper()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	// Storage is backed by an in-memory KV store via kvadapter, matching the
-	// datastore path used in production (any storage.Backend wrapped by
-	// kvadapter.New).
-	kv, err := kvadapter.New(xkmsstorage.NewMemory())
-	require.NoError(t, err)
+	dir := tb.TempDir()
+	srv, err := server.New(&config.Config{
+		Server:    config.ServerConfig{Host: "127.0.0.1", RESTPort: 0},
+		Protocols: config.ProtocolsConfig{Unix: true},
+		Unix: config.UnixConfig{
+			Enabled:    true,
+			SocketPath: filepath.Join(dir, "xkms.sock"),
+			Protocol:   "grpc",
+		},
+		Logging:   config.LoggingConfig{Level: "error", Format: "json"},
+		TLS:       config.TLSConfig{Enabled: false},
+		Auth:      config.AuthConfig{Enabled: false},
+		Datastore: config.DatastoreConfig{Engine: "memory", Path: dir},
+		Barrier:   config.BarrierConfig{Enabled: true, Strategy: "none"},
+		Default:   config.DefaultConfig("software"),
+		Backends: config.BackendsConfig{
+			Software: &config.SoftwareConfig{Enabled: true, Path: filepath.Join(dir, "software")},
+		},
+	})
+	require.NoError(tb, err)
+	require.NotNil(tb, srv.Datastore(), "the embedded node must publish its datastore")
+	require.NotNil(tb, srv.QRDBClient(), "the embedded node must publish its client")
+	require.NotNil(tb, srv.TenantService(), "the node barrier must compose qrdb's TenantService")
 
 	// Create tenant-aware storage factory for ACME storage (including EAB and tenants)
-	storageFactory, err := objstore.NewTenantAwareFactoryFromKVStore(kv)
-	require.NoError(t, err)
+	storageFactory, err := objstore.NewTenantAwareFactory(srv.Datastore().DAOFactory())
+	require.NoError(tb, err)
 
-	// Create QRDB service with in-memory components
-	qrdbSvc := qrdb.NewTestService()
-
-	// Create admin service with storage factory
-	adminSvc, err := admin.NewTenantAwareAdminService(nil, storageFactory, qrdbSvc, logger, "1.0.0-test")
-	require.NoError(t, err)
+	adminSvc, err := admin.NewTenantAwareAdminService(nil, storageFactory, srv.QRDBClient(), logger, "1.0.0-test")
+	require.NoError(tb, err)
+	adminSvc.SetTenantService(srv.TenantService())
 
 	return &TestContext{
 		logger:         logger,
-		qrdbSvc:        qrdbSvc,
 		adminService:   adminSvc,
 		storageFactory: storageFactory,
 		cleanup: func() {
-			qrdbSvc.Close()
+			if err := srv.Shutdown(); err != nil {
+				tb.Errorf("server.Shutdown: %v", err)
+			}
 		},
 	}
 }
@@ -246,8 +262,8 @@ func TestAdminService_TenantRole(t *testing.T) {
 	role, err := ctx.adminService.CreateTenantRole(testCtx, tenantID, &db.CreateRoleRequest{
 		Name: "test-role",
 		Permissions: []string{
-			"certificates:read",
-			"accounts:read",
+			"certs:read",
+			"users:read",
 		},
 	})
 	require.NoError(t, err)
@@ -265,9 +281,9 @@ func TestAdminService_TenantRole(t *testing.T) {
 		ID:   role.ID,
 		Name: "updated-role",
 		Permissions: []string{
-			"certificates:read",
-			"certificates:write",
-			"accounts:read",
+			"certs:read",
+			"certs:issue",
+			"users:read",
 		},
 	})
 	require.NoError(t, err)
@@ -315,13 +331,14 @@ func TestAdminService_TenantUser(t *testing.T) {
 	// Create a role to assign to the user
 	role, err := ctx.adminService.CreateTenantRole(testCtx, tenantID, &db.CreateRoleRequest{
 		Name:        "user-test-role",
-		Permissions: []string{"certificates:read"},
+		Permissions: []string{"certs:read"},
 	})
 	require.NoError(t, err)
 
 	// Create user with role assignment
 	user, err := ctx.adminService.CreateTenantUser(testCtx, tenantID, &db.CreateUserRequest{
 		Username: "test-user",
+		Email:    "test-user@example.com",
 		RoleIDs:  []string{role.ID},
 	})
 	require.NoError(t, err)
@@ -412,25 +429,18 @@ func TestConcurrentTenantOperations(t *testing.T) {
 
 // BenchmarkTenantCreation benchmarks tenant creation performance
 func BenchmarkTenantCreation(b *testing.B) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-
-	// Create in-memory components
-	qrdbSvc := qrdb.NewTestService()
-	defer qrdbSvc.Close()
-
-	adminSvc, err := admin.NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "bench")
-	require.NoError(b, err)
+	ctx := setupTestContext(b)
+	defer ctx.cleanup()
 	testCtx := context.Background()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tenantID := "bench-tenant-" + time.Now().Format("20060102150405.000000000") + "-" + string(rune('a'+i%26))
-		_, _ = adminSvc.CreateTenant(testCtx, admin.CreateTenantRequest{
-			ID:   tenantID,
+		_, err := ctx.adminService.CreateTenant(testCtx, admin.CreateTenantRequest{
+			ID:   "bench-tenant-" + strconv.Itoa(i),
 			Name: "Benchmark Tenant",
 		})
+		if err != nil {
+			b.Fatalf("CreateTenant: %v", err)
+		}
 	}
 }
-
-// Suppress unused import warnings for time package (used in benchmark)
-var _ = time.Now

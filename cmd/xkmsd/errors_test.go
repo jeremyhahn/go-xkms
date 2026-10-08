@@ -21,19 +21,19 @@ import (
 
 // TestWrappedDetailError_ErrorWithCause proves the "<sentinel>: <detail>:
 // <cause>" rendering: every existing caller that constructs a
-// WrappedDetailError with a non-nil Err (init.go's CSR read/parse failures,
+// WrappedDetailError with a non-nil Err (init_ceremony.go's artifact write failures,
 // init_factor_persister.go's persist failures) only ever exercises this
 // through errors.Is/errors.As, never Error() itself, so a nil-pointer
 // dereference on e.Err or a dropped segment would not have been caught.
 func TestWrappedDetailError_ErrorWithCause(t *testing.T) {
 	cause := errors.New("permission denied")
-	err := &WrappedDetailError{Sentinel: ErrCSRReadFailed, Detail: "/etc/xkms/officer.csr", Err: cause}
+	err := &WrappedDetailError{Sentinel: ErrCABundleWriteFailed, Detail: "/etc/xkms/ca-bundle.pem", Err: cause}
 
 	msg := err.Error()
-	if !strings.Contains(msg, ErrCSRReadFailed.Error()) {
-		t.Errorf("Error() = %q, want it to contain the sentinel %q", msg, ErrCSRReadFailed.Error())
+	if !strings.Contains(msg, ErrCABundleWriteFailed.Error()) {
+		t.Errorf("Error() = %q, want it to contain the sentinel %q", msg, ErrCABundleWriteFailed.Error())
 	}
-	if !strings.Contains(msg, "/etc/xkms/officer.csr") {
+	if !strings.Contains(msg, "/etc/xkms/ca-bundle.pem") {
 		t.Errorf("Error() = %q, want it to contain the detail", msg)
 	}
 	if !strings.Contains(msg, cause.Error()) {
@@ -47,13 +47,13 @@ func TestWrappedDetailError_ErrorWithCause(t *testing.T) {
 // message rather than panicking on a nil e.Err or leaving a trailing
 // "<nil>" segment.
 func TestWrappedDetailError_ErrorWithoutCause(t *testing.T) {
-	err := &WrappedDetailError{Sentinel: ErrEmptyCSRPath, Detail: `"admin1:"`}
+	err := &WrappedDetailError{Sentinel: ErrSPKIPinWriteFailed, Detail: `"spki-pin.txt"`}
 
 	msg := err.Error()
-	if !strings.Contains(msg, ErrEmptyCSRPath.Error()) {
-		t.Errorf("Error() = %q, want it to contain the sentinel %q", msg, ErrEmptyCSRPath.Error())
+	if !strings.Contains(msg, ErrSPKIPinWriteFailed.Error()) {
+		t.Errorf("Error() = %q, want it to contain the sentinel %q", msg, ErrSPKIPinWriteFailed.Error())
 	}
-	if !strings.Contains(msg, `"admin1:"`) {
+	if !strings.Contains(msg, `"spki-pin.txt"`) {
 		t.Errorf("Error() = %q, want it to contain the detail", msg)
 	}
 	if strings.Contains(msg, "<nil>") {
@@ -74,9 +74,9 @@ func TestWrappedDetailError_Unwrap(t *testing.T) {
 		t.Error("errors.Is must see the cause through Unwrap")
 	}
 
-	withoutCause := &WrappedDetailError{Sentinel: ErrEmptyCSRPath, Detail: "x"}
+	withoutCause := &WrappedDetailError{Sentinel: ErrSPKIPinWriteFailed, Detail: "x"}
 	unwrapped := withoutCause.Unwrap()
-	if len(unwrapped) != 1 || unwrapped[0] != ErrEmptyCSRPath {
+	if len(unwrapped) != 1 || unwrapped[0] != ErrSPKIPinWriteFailed {
 		t.Errorf("Unwrap() with no cause = %v, want exactly [Sentinel]", unwrapped)
 	}
 }

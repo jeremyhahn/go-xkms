@@ -25,7 +25,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
 
-	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -67,18 +66,6 @@ func (m *mockClient) Health(context.Context) (*transport.HealthResponse, error) 
 }
 
 func (m *mockClient) Algorithms(context.Context) (*transport.AlgorithmsResponse, error) {
-	panic("not implemented")
-}
-
-func (m *mockClient) GetShare(context.Context, string, string, int) (*transport.ShareInfo, error) {
-	panic("not implemented")
-}
-
-func (m *mockClient) DeleteShare(context.Context, string, string, int) error {
-	panic("not implemented")
-}
-
-func (m *mockClient) QueryAudit(context.Context, *transport.AuditFilter) (*transport.AuditPage, error) {
 	panic("not implemented")
 }
 
@@ -220,45 +207,7 @@ func (m *mockClient) Unseal(context.Context, *transport.UnsealRequest) (*transpo
 func (m *mockClient) CanSeal(context.Context, string) (*transport.CanSealResponse, error) {
 	panic("not implemented")
 }
-func (m *mockClient) BarrierInitialize(context.Context, *transport.BarrierInitializeRequest) error {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierUnseal(context.Context, *transport.BarrierUnsealRequest) error {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierSeal(context.Context) error { panic("not implemented") }
-func (m *mockClient) BarrierStatus(context.Context) (*transport.BarrierStatusResponse, error) {
-	panic("not implemented")
-}
 func (m *mockClient) BootstrapListenerKeys(context.Context) (*transport.BootstrapListenerKeysResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierInitializeShamir(context.Context, *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierUnsealWithShare(context.Context, *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierUnsealWithShares(context.Context, *transport.BarrierUnsealSharesRequest) error {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierRekey(context.Context, *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierGenerateRecoveryKeys(context.Context, *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierRecoverWithKeys(context.Context, *transport.BarrierRecoverWithKeysRequest) error {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierDeleteRecoveryKeys(context.Context) error { panic("not implemented") }
-func (m *mockClient) BarrierHasRecoveryKeys(context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierGenerateRootToken(context.Context, *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierEnableEncryption(context.Context, *pkgtransport.BarrierEnableEncryptionRequest) (*pkgtransport.BarrierEnableEncryptionResponse, error) {
 	panic("not implemented")
 }
 func (m *mockClient) ListPIVSlots(context.Context, *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {
@@ -471,56 +420,6 @@ func (m *mockClient) RevokeEscrow(context.Context, string) error {
 	panic("not implemented")
 }
 
-// Backup operations (go-xkms#728)
-func (m *mockClient) CreateBackup(context.Context, *transport.BackupRequest) (*transport.BackupInfo, error) {
-	return nil, nil
-}
-func (m *mockClient) ListBackups(context.Context) ([]transport.BackupInfo, error) { return nil, nil }
-func (m *mockClient) GetBackup(context.Context, string) (*transport.BackupInfo, error) {
-	return nil, nil
-}
-func (m *mockClient) DeleteBackup(context.Context, string) error { return nil }
-func (m *mockClient) RestoreBackup(context.Context, *transport.RestoreRequest) (*transport.RestoreResult, error) {
-	return nil, nil
-}
-func (m *mockClient) VerifyBackup(context.Context, string) (*transport.VerifyResult, error) {
-	return nil, nil
-}
-
-// Custodian group operations
-func (m *mockClient) CreateCustodianGroup(context.Context, *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	return nil, nil
-}
-func (m *mockClient) GetCustodianGroup(context.Context, string) (*transport.GetCustodianGroupResponse, error) {
-	return nil, nil
-}
-func (m *mockClient) ListCustodianGroups(context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	return nil, nil
-}
-func (m *mockClient) DeleteCustodianGroup(context.Context, string) error {
-	return nil
-}
-func (m *mockClient) AddCustodianMember(context.Context, *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	return nil, nil
-}
-func (m *mockClient) RemoveCustodianMember(context.Context, *transport.RemoveCustodianMemberRequest) error {
-	return nil
-}
-
-// Share operations
-func (m *mockClient) DistributeShares(context.Context, *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	return nil, nil
-}
-func (m *mockClient) SubmitShare(context.Context, *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	return nil, nil
-}
-func (m *mockClient) ListShares(context.Context) (*transport.ListSharesResponse, error) {
-	return nil, nil
-}
-func (m *mockClient) GetShareCollectionStatus(context.Context, string) (*transport.ShareCollectionStatus, error) {
-	return nil, nil
-}
-
 // Tenant operations
 func (m *mockClient) CreateTenant(context.Context, *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
 	return nil, nil
@@ -534,40 +433,10 @@ func (m *mockClient) ListTenants(context.Context) (*transport.ListTenantsRespons
 func (m *mockClient) DeleteTenant(context.Context, string) error {
 	return nil
 }
-func (m *mockClient) TenantBarrierInit(context.Context, *transport.TenantBarrierInitRequest) error {
-	return nil
-}
-func (m *mockClient) TenantBarrierUnseal(context.Context, *transport.TenantBarrierUnsealRequest) error {
-	return nil
-}
-func (m *mockClient) TenantBarrierStatus(context.Context, string) (*transport.TenantBarrierStatusResponse, error) {
-	return &transport.TenantBarrierStatusResponse{}, nil
-}
 func (m *mockClient) UpdateTenantEntitlements(context.Context, *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
 	return nil, nil
 }
 func (m *mockClient) UpdateTenantQuotas(context.Context, *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
-	return nil, nil
-}
-
-// InitCeremonyService stub implementations
-func (m *mockClient) GetInitStatus(context.Context) (*transport.InitStatusResponse, error) {
-	return nil, nil
-}
-func (m *mockClient) ClaimCertBegin(context.Context, *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	return nil, nil
-}
-func (m *mockClient) ClaimCertComplete(context.Context, *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	return nil, nil
-}
-func (m *mockClient) ClaimShareBegin(context.Context, *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
-	return nil, nil
-}
-
-func (m *mockClient) ClaimShareComplete(context.Context, *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
-	return nil, nil
-}
-func (m *mockClient) SignCSRInit(context.Context, *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
 	return nil, nil
 }
 

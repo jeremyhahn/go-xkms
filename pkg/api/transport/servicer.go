@@ -41,7 +41,6 @@ type XKMSServicer interface {
 	CryptoServicer
 	CertServicer
 	SealServicer
-	BarrierServicer
 	PIVServicer
 	FIDO2Servicer
 	CAServicer
@@ -52,15 +51,10 @@ type XKMSServicer interface {
 	SealStoreServicer
 	TPMPolicyServicer
 	OIDCCredentialServicer
-	CustodianGroupServicer
-	ShareServicer
 	TenantServicer
-	InitCeremonyServicer
 	CredentialManagementServicer
-	AuditServicer
 	BootstrapServicer
 	InviteServicer
-	BackupServicer
 }
 
 // InviteServicer redeems administrator-issued account-activation
@@ -164,24 +158,6 @@ type SealServicer interface {
 	Seal(ctx context.Context, req *SealRequest) (*SealResponse, error)
 	Unseal(ctx context.Context, req *UnsealRequest) (*UnsealResponse, error)
 	CanSeal(ctx context.Context, backend string) (*CanSealResponse, error)
-}
-
-// BarrierServicer manages the cryptographic barrier.
-type BarrierServicer interface {
-	BarrierInitialize(ctx context.Context, req *BarrierInitializeRequest) error
-	BarrierUnseal(ctx context.Context, req *BarrierUnsealRequest) error
-	BarrierSeal(ctx context.Context) error
-	BarrierStatus(ctx context.Context) (*BarrierStatusResponse, error)
-	BarrierInitializeShamir(ctx context.Context, req *BarrierInitializeShamirRequest) (*BarrierInitializeShamirResponse, error)
-	BarrierUnsealWithShare(ctx context.Context, req *BarrierUnsealShareRequest) (*BarrierUnsealShareResponse, error)
-	BarrierUnsealWithShares(ctx context.Context, req *BarrierUnsealSharesRequest) error
-	BarrierRekey(ctx context.Context, req *BarrierRekeyRequest) (*BarrierRekeyResponse, error)
-	BarrierGenerateRecoveryKeys(ctx context.Context, req *BarrierGenerateRecoveryKeysRequest) (*BarrierRecoveryKeysResponse, error)
-	BarrierRecoverWithKeys(ctx context.Context, req *BarrierRecoverWithKeysRequest) error
-	BarrierDeleteRecoveryKeys(ctx context.Context) error
-	BarrierHasRecoveryKeys(ctx context.Context) (*BarrierHasRecoveryKeysResponse, error)
-	BarrierGenerateRootToken(ctx context.Context, req *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error)
-	BarrierEnableEncryption(ctx context.Context, req *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error)
 }
 
 // BootstrapServicer reports the running trust-bootstrap listener's public
@@ -312,82 +288,14 @@ type EscrowServicer interface {
 	RevokeEscrow(ctx context.Context, escrowID string) error
 }
 
-// BackupServicer provides whole-node backup and restore operations over the
-// embedded go-qrdb node's shard-snapshot capability (owner ruling
-// 2026-09-30, go-xkms#728). Restore is the most destructive operation here —
-// it overwrites live shard state — which is why qrdb grants backup:restore
-// separately from backup:create/backup:read.
-type BackupServicer interface {
-	// CreateBackup initiates a new backup with the specified options.
-	CreateBackup(ctx context.Context, req *BackupRequest) (*BackupInfo, error)
-
-	// ListBackups returns metadata for all available backups.
-	ListBackups(ctx context.Context) ([]BackupInfo, error)
-
-	// GetBackup returns metadata for a specific backup by ID.
-	GetBackup(ctx context.Context, id string) (*BackupInfo, error)
-
-	// DeleteBackup removes a backup by ID.
-	DeleteBackup(ctx context.Context, id string) error
-
-	// RestoreBackup restores data from a backup.
-	RestoreBackup(ctx context.Context, req *RestoreRequest) (*RestoreResult, error)
-
-	// VerifyBackup verifies the integrity of a backup by computing and
-	// comparing checksums.
-	VerifyBackup(ctx context.Context, id string) (*VerifyResult, error)
-}
-
-// CustodianGroupServicer provides custodian group management operations.
-type CustodianGroupServicer interface {
-	CreateCustodianGroup(ctx context.Context, req *CreateCustodianGroupRequest) (*CreateCustodianGroupResponse, error)
-	GetCustodianGroup(ctx context.Context, groupID string) (*GetCustodianGroupResponse, error)
-	ListCustodianGroups(ctx context.Context) (*ListCustodianGroupsResponse, error)
-	DeleteCustodianGroup(ctx context.Context, groupID string) error
-	AddCustodianMember(ctx context.Context, req *AddCustodianMemberRequest) (*AddCustodianMemberResponse, error)
-	RemoveCustodianMember(ctx context.Context, req *RemoveCustodianMemberRequest) error
-	DistributeShares(ctx context.Context, req *DistributeSharesRequest) (*DistributeSharesResponse, error)
-}
-
-// ShareServicer provides share management operations. A share is addressed
-// by the triple (serverURL, groupID, shareIndex); sensitive share material
-// is never returned by GetShare.
-type ShareServicer interface {
-	SubmitShare(ctx context.Context, req *SubmitShareRequest) (*SubmitShareResponse, error)
-	ListShares(ctx context.Context) (*ListSharesResponse, error)
-	GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*ShareInfo, error)
-	DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error
-	GetShareCollectionStatus(ctx context.Context, groupID string) (*ShareCollectionStatus, error)
-}
-
-// AuditServicer provides read access to the audit chain. Emission is not part
-// of this contract: events are written through pkg/audit's Logger seam as a
-// side effect of the operation being audited, never by an API caller.
-type AuditServicer interface {
-	QueryAudit(ctx context.Context, filter *AuditFilter) (*AuditPage, error)
-}
-
 // TenantServicer provides tenant management operations.
 type TenantServicer interface {
 	CreateTenant(ctx context.Context, req *CreateTenantRequest) (*CreateTenantResponse, error)
 	GetTenant(ctx context.Context, tenantID string) (*GetTenantResponse, error)
 	ListTenants(ctx context.Context) (*ListTenantsResponse, error)
 	DeleteTenant(ctx context.Context, tenantID string) error
-	TenantBarrierInit(ctx context.Context, req *TenantBarrierInitRequest) error
-	TenantBarrierUnseal(ctx context.Context, req *TenantBarrierUnsealRequest) error
-	TenantBarrierStatus(ctx context.Context, tenantID string) (*TenantBarrierStatusResponse, error)
 	UpdateTenantEntitlements(ctx context.Context, req *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error)
 	UpdateTenantQuotas(ctx context.Context, req *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error)
-}
-
-// InitCeremonyServicer provides init ceremony operations.
-type InitCeremonyServicer interface {
-	GetInitStatus(ctx context.Context) (*InitStatusResponse, error)
-	ClaimCertBegin(ctx context.Context, req *ClaimCertBeginRequest) (*ClaimCertBeginResponse, error)
-	ClaimCertComplete(ctx context.Context, req *ClaimCertCompleteRequest) (*ClaimCertCompleteResponse, error)
-	ClaimShareBegin(ctx context.Context, req *ClaimShareBeginRequest) (*ClaimShareBeginResponse, error)
-	ClaimShareComplete(ctx context.Context, req *ClaimShareCompleteRequest) (*ClaimShareCompleteResponse, error)
-	SignCSRInit(ctx context.Context, req *SignCSRInitRequest) (*SignCSRInitResponse, error)
 }
 
 // CredentialManagementServicer provides credential management operations.

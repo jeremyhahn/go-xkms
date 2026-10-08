@@ -54,7 +54,7 @@ func raftCoordinator(t *testing.T) *qrdbsdk.Coordinator {
 	cfg.Raft.RaftAddress = fmt.Sprintf("127.0.0.1:%d", port)
 	cfg.Raft.ReplicaID = 1
 	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "pebble"}}
-	cfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{{Name: "default", Paths: []string{t.TempDir()}}}
+	cfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{{Name: "default", Path: t.TempDir()}}
 	cfg.Seal.Enabled = true
 	cfg.Seal.Strategy = "none"
 	cfg.Protocols.REST = false

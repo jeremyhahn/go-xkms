@@ -14,7 +14,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -55,6 +54,12 @@ its own ambient credential chain (the AWS SDK default chain, GCP Application
 Default Credentials, Azure DefaultAzureCredential, Vault's VAULT_TOKEN) by
 default.
 
+The pkcs11 strategy needs the PKCS#11 module and token label (the
+--pkcs11-* flags below), saved to the xkey config the same way. Its token
+PIN is prompted for -- or read from the first line of piped stdin, before
+the barrier password -- and sealed to this host's TPM under the platform
+PCR policy, so every later unseal logs in to the token unattended.
+
 Examples:
   # Auto-detect best strategy
   xkey barrier init
@@ -78,6 +83,10 @@ Examples:
 
   # HashiCorp Vault, ambient VAULT_TOKEN
   xkey barrier init --strategy vault --vault-address https://vault.example.com:8200
+
+  # PKCS#11 HSM token (prompts for the token PIN, then the barrier password)
+  xkey barrier init --strategy pkcs11 \
+    --pkcs11-library /usr/lib/softhsm/libsofthsm2.so --pkcs11-token xkey-barrier
 
   # Use a custom data directory
   xkey barrier init --data-dir /secure/xkey`,
@@ -126,6 +135,13 @@ func runBarrierInit(cmd *cobra.Command, args []string) (err error) {
 		}
 	}
 
+	// The pkcs11 strategy's token is saved to the xkey config and its PIN
+	// sealed to this host's TPM before the barrier is built, so this and
+	// every later unseal logs in to the token without asking again.
+	if err := initBarrierPKCS11(cmd.Context(), out, barrierStrategy, dataDir); err != nil {
+		return err
+	}
+
 	// Read and confirm password.
 	password, err := readAndConfirmBarrierPassword(out)
 	if err != nil {
@@ -151,7 +167,8 @@ func runBarrierInit(cmd *cobra.Command, args []string) (err error) {
 	// The CLI has already rejected an empty password above, and this []byte
 	// conversion is a fresh copy this function owns and never reads again, so
 	// NewCredentials (move + wipe) is used rather than CredentialsFor (copy).
-	creds, credErr := xkms.NewCredentials([]byte(password))
+	ctx := cmd.Context()
+	creds, credErr := xkms.NewCredentials(ctx, []byte(password))
 	if credErr != nil {
 		return &BarrierError{
 			Operation: "build_credentials",
@@ -160,7 +177,7 @@ func runBarrierInit(cmd *cobra.Command, args []string) (err error) {
 	}
 	defer creds.Secret.Destroy()
 
-	if err := barrier.Initialize(context.Background(), creds); err != nil {
+	if err := barrier.Initialize(ctx, creds); err != nil {
 		return &BarrierError{
 			Operation: "initialize",
 			Err:       err,

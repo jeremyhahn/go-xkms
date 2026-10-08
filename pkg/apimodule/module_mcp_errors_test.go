@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -68,7 +68,7 @@ func newMCPBackendWithBarrier(t *testing.T) *xkmsmcp.Server {
 		seal.NewSoftwareStrategy(),
 	)
 	require.NoError(t, err)
-	creds := seal.MustCredentials([]byte("test-password"))
+	creds := seal.MustCredentials(t.Context(), []byte("test-password"))
 	defer creds.Secret.Destroy()
 	require.NoError(t, barrier.Initialize(context.Background(), creds))
 	registry, err := seal.NewBarrierRegistry(barrier)
@@ -126,11 +126,11 @@ func callXKMSTool(t *testing.T, client *mcpclient.Client, ctx context.Context, t
 }
 
 // decodeToolErrorCode asserts res is a coded tool failure and returns its
-// go-qrdb wire.Code, the classification a real SDK client branches on.
-func decodeToolErrorCode(t *testing.T, res *mcpgo.CallToolResult) *wire.ErrorPayload {
+// go-qrdb qrdbsdk.MCPCode, the classification a real SDK client branches on.
+func decodeToolErrorCode(t *testing.T, res *mcpgo.CallToolResult) *qrdbsdk.MCPErrorPayload {
 	t.Helper()
 	require.True(t, res.IsError, "expected a tool-level error result")
-	payload, ok := wire.DecodeErrorPayload(res.StructuredContent)
+	payload, ok := qrdbsdk.DecodeMCPErrorPayload(res.StructuredContent)
 	require.True(t, ok, "expected a classified error envelope in StructuredContent, got %#v", res.StructuredContent)
 	return payload
 }
@@ -141,7 +141,7 @@ func decodeToolErrorCode(t *testing.T, res *mcpgo.CallToolResult) *wire.ErrorPay
 // MCP error-code test above does not reach — those three are produced only
 // by SSH tool dispatch (mapSSHError), not by the xkms.* methods that test
 // drives. It also pins the documented fallback: a code the table does not
-// declare renders as wire.CodeInternal rather than panicking or losing its
+// declare renders as qrdbsdk.MCPCodeInternal rather than panicking or losing its
 // classification.
 func TestWireCodeForKeyOp_MapsEveryDeclaredRowAndFallsBackOnUnknown(t *testing.T) {
 	for code, want := range keyOpCodeToWire {
@@ -151,14 +151,14 @@ func TestWireCodeForKeyOp_MapsEveryDeclaredRowAndFallsBackOnUnknown(t *testing.T
 	const undeclaredCode = -999999
 	_, declared := keyOpCodeToWire[undeclaredCode]
 	require.False(t, declared, "test fixture assumption: this code must not collide with a real table entry")
-	assert.Equal(t, wire.CodeInternal, wireCodeForKeyOp(undeclaredCode),
+	assert.Equal(t, qrdbsdk.MCPCodeInternal, wireCodeForKeyOp(undeclaredCode),
 		"a code with no table entry must fall back to CodeInternal rather than panicking or losing its classification")
 }
 
 // TestMCPToolHandler_ErrorCodesReachCaller proves, through the real
 // unified-server MCP path (a genuine mcp-go server and in-process client,
 // exactly as go-qrdb's own SDK client exercises it), that mcpToolHandler
-// carries a *KeyOpError's JSON-RPC code to the caller as go-qrdb's wire.Code
+// carries a *KeyOpError's JSON-RPC code to the caller as go-qrdb's qrdbsdk.MCPCode
 // envelope instead of collapsing it to prose -- issue #791.
 func TestMCPToolHandler_ErrorCodesReachCaller(t *testing.T) {
 	backend := newMCPBackendWithBarrier(t)
@@ -181,7 +181,7 @@ func TestMCPToolHandler_ErrorCodesReachCaller(t *testing.T) {
 			"key_id":  "does-not-matter",
 		})
 		payload := decodeToolErrorCode(t, res)
-		assert.Equal(t, wire.CodeUnimplemented, payload.Code)
+		assert.Equal(t, qrdbsdk.MCPCodeUnimplemented, payload.Code)
 		assert.NotEmpty(t, payload.Message)
 	})
 
@@ -204,7 +204,7 @@ func TestMCPToolHandler_ErrorCodesReachCaller(t *testing.T) {
 			"hash":   "SHA256",
 		})
 		payload := decodeToolErrorCode(t, res)
-		assert.Equal(t, wire.CodeInvalidArgument, payload.Code)
+		assert.Equal(t, qrdbsdk.MCPCodeInvalidArgument, payload.Code)
 		assert.NotEmpty(t, payload.Message)
 	})
 
@@ -218,14 +218,14 @@ func TestMCPToolHandler_ErrorCodesReachCaller(t *testing.T) {
 
 		res := callXKMSTool(t, client, ctx, "xkms_listBackends", nil)
 		payload := decodeToolErrorCode(t, res)
-		assert.Equal(t, wire.CodePermissionDenied, payload.Code)
+		assert.Equal(t, qrdbsdk.MCPCodePermissionDenied, payload.Code)
 	})
 
 	// The untagged build's routeFrostMethods "not compiled in" refusal --
 	// before go-xkms#930 a bare *errs.Message that mcpToolHandler could only
 	// report as the generic internal-fault floor below -- is now a
 	// *KeyOpError carrying ErrCodeMethodNotFound and reaches the caller as
-	// wire.CodeUnimplemented. That behaviour is build-tag-dependent (it
+	// qrdbsdk.MCPCodeUnimplemented. That behaviour is build-tag-dependent (it
 	// flips to a real FROST call under -tags frost), so it is pinned in
 	// pkg/api/mcp's own build-tagged tests
 	// (server_frost_stub_test.go's TestServer_HandleRequest_FrostMethodWithError)
@@ -238,7 +238,7 @@ func TestMCPToolHandler_ErrorCodesReachCaller(t *testing.T) {
 		// fallback in mcpToolHandler (module_mcp.go) currently has no live
 		// production trigger left to drive it end-to-end through a real MCP
 		// call. The branch itself -- "an error InvokeMethod did not classify
-		// reports wire.CodeInternal with no detail" -- is still load-bearing
+		// reports qrdbsdk.MCPCodeInternal with no detail" -- is still load-bearing
 		// defense-in-depth for a future handler that regresses, so it stays
 		// in module_mcp.go; it is no longer exercised here because doing so
 		// requires reintroducing the exact bug this issue fixed.
@@ -249,10 +249,10 @@ func TestMCPToolHandler_ErrorCodesReachCaller(t *testing.T) {
 // floor wireCodeForKeyOp's doc comment describes: a *KeyOpError code this
 // package's table does not declare — none exist today, which is exactly why
 // this has to be exercised directly rather than through a live tool call —
-// answers wire.CodeInternal instead of a zero value or a panic, so a future
+// answers qrdbsdk.MCPCodeInternal instead of a zero value or a panic, so a future
 // xkms code added to pkg/api/mcp without a matching row here still reaches
 // callers as a classified fault.
 func TestWireCodeForKeyOp_UnknownCodeFallsBackToInternal(t *testing.T) {
 	const noSuchCode = -999999
-	assert.Equal(t, wire.CodeInternal, wireCodeForKeyOp(noSuchCode))
+	assert.Equal(t, qrdbsdk.MCPCodeInternal, wireCodeForKeyOp(noSuchCode))
 }

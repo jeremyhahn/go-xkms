@@ -40,6 +40,7 @@
 package mlkem512
 
 import (
+	"context"
 	"crypto/fips140"
 	"crypto/rand"
 	"errors"
@@ -139,7 +140,7 @@ func New() (*MLKEM512, error) {
 	pk, sk := mlkem512.NewKeyFromSeed(seed)
 
 	// NewSecret wipes seed, so the plaintext copy does not outlive this call.
-	sealed, sealErr := secure.NewSecret(seed)
+	sealed, sealErr := secure.NewSecret(context.Background(), seed)
 	if sealErr != nil {
 		return nil, sealErr
 	}
@@ -161,7 +162,7 @@ func Create(seed []byte) (*MLKEM512, error) {
 	pk, sk := mlkem512.NewKeyFromSeed(ownedSeed)
 
 	// NewSecret wipes ownedSeed; the caller's own slice is untouched.
-	sealed, sealErr := secure.NewSecret(ownedSeed)
+	sealed, sealErr := secure.NewSecret(context.Background(), ownedSeed)
 	if sealErr != nil {
 		return nil, sealErr
 	}
@@ -202,7 +203,7 @@ func (k *MLKEM512) ExportSecretKey() []byte {
 		return nil
 	}
 
-	buf, err := k.seed.Open()
+	buf, err := k.seed.Open(context.Background())
 	if err != nil {
 		return nil
 	}

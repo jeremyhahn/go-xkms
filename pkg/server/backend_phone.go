@@ -92,7 +92,7 @@ func (s *Server) RegisterPhoneBackend(sender phonebackend.Sender) error {
 	// phonebackend.Config.NoiseStaticKey is validated, never read, by the
 	// backend, so the plaintext is handed over as bytes and wiped below as
 	// soon as NewBackend returns.
-	noiseStaticKey, err := types.SecretValueBytes(phoneCfg.NoiseStaticKey)
+	noiseStaticKey, err := types.SecretValueBytes(s.ctx, phoneCfg.NoiseStaticKey)
 	if err != nil {
 		return errors.Join(ErrPhoneBackendCreate, err)
 	}

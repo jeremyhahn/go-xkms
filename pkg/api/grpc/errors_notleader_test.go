@@ -27,46 +27,26 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// grpcFakeClusterReader is a minimal xkms.ClusterClient double whose only
-// meaningful behavior is leader-endpoint resolution; the not-leader
-// translation path never touches membership or mutation.
-type grpcFakeClusterReader struct {
-	leaderID  uint64
-	hasLeader bool
-
+// grpcFakeClusterClient is a minimal xkms.ClusterClient double resolving the
+// leader's API endpoint for the not-leader translation path.
+type grpcFakeClusterClient struct {
 	leaderEndpoint    string
 	leaderEndpointErr error
 }
 
-func (f *grpcFakeClusterReader) Members(context.Context, uint64) ([]xkms.ClusterMember, error) {
-	return nil, nil
-}
-
-func (f *grpcFakeClusterReader) Leader(context.Context, uint64) (uint64, bool, error) {
-	return f.leaderID, f.hasLeader, nil
-}
-
-func (f *grpcFakeClusterReader) LeaderEndpoint(context.Context, uint64, string) (string, error) {
+func (f *grpcFakeClusterClient) LeaderEndpoint(context.Context, uint64, string) (string, error) {
 	if f.leaderEndpointErr != nil {
 		return "", f.leaderEndpointErr
 	}
 	return f.leaderEndpoint, nil
 }
 
-func (f *grpcFakeClusterReader) AddReplica(context.Context, uint64, uint64, string, string) error {
-	return nil
-}
-
-func (f *grpcFakeClusterReader) RemoveReplica(context.Context, uint64, uint64) error {
-	return nil
-}
-
 // setClusterClientForTest wires the fake cluster client into a fresh
 // XKMSService so the not-leader translation can resolve leader endpoints.
-func setClusterClientForTest(t *testing.T, c xkms.ClusterClient, shardID, nodeID uint64) *xkms.XKMSService {
+func setClusterClientForTest(t *testing.T, c xkms.ClusterClient, shardID uint64) *xkms.XKMSService {
 	t.Helper()
 	svc := &xkms.XKMSService{}
-	svc.SetClusterClient(c, shardID, nodeID)
+	svc.SetClusterClient(c, shardID)
 	return svc
 }
 
@@ -109,12 +89,10 @@ func TestNotLeaderStatus_NoMatch(t *testing.T) {
 // endpoint: the resolved address must be folded into the leader_api_address
 // metadata key.
 func TestNotLeaderStatus_ResolvesAPIAddress(t *testing.T) {
-	reader := &grpcFakeClusterReader{
-		leaderID:       3,
-		hasLeader:      true,
+	reader := &grpcFakeClusterClient{
 		leaderEndpoint: "10.0.0.3:9443",
 	}
-	xkmsSvc := setClusterClientForTest(t, reader, 7, 1)
+	xkmsSvc := setClusterClientForTest(t, reader, 7)
 
 	src := &qrdbtransport.NotLeaderError{ShardID: 7, LeaderID: 3, LeaderAddress: "10.0.0.3:63001"}
 	err, ok := notLeaderStatus(context.Background(), xkmsSvc, src)
@@ -134,12 +112,10 @@ func TestNotLeaderStatus_ResolvesAPIAddress(t *testing.T) {
 // into a harder failure, and leader_api_address must be omitted entirely
 // rather than emitted empty.
 func TestNotLeaderStatus_ResolutionFailureOmitsAPIAddress(t *testing.T) {
-	reader := &grpcFakeClusterReader{
-		leaderID:          3,
-		hasLeader:         true,
+	reader := &grpcFakeClusterClient{
 		leaderEndpointErr: errors.New("registry unreachable"),
 	}
-	xkmsSvc := setClusterClientForTest(t, reader, 7, 1)
+	xkmsSvc := setClusterClientForTest(t, reader, 7)
 
 	src := &qrdbtransport.NotLeaderError{ShardID: 7, LeaderID: 3, LeaderAddress: "10.0.0.3:63001"}
 	err, ok := notLeaderStatus(context.Background(), xkmsSvc, src)

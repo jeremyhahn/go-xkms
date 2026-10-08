@@ -108,6 +108,17 @@ func bindTenantTarget(ctx context.Context, op, target string) error {
 	return &TenantBindingError{Op: op, CallerTenantID: caller, TargetTenantID: target}
 }
 
+// bindTenantIAM enforces the tenant binding for a user or role operation on
+// target and returns ctx scoped to target. qrdb resolves a user or role
+// within the context's tenant, so a cross-tenant caller's IAM call is scoped
+// to the tenant the request addressed once the binding has admitted it.
+func bindTenantIAM(ctx context.Context, op, target string) (context.Context, error) {
+	if err := bindTenantTarget(ctx, op, target); err != nil {
+		return nil, err
+	}
+	return qrdbsdk.ContextWithTenant(ctx, target), nil
+}
+
 // requirePlatformScope admits only a cross-tenant caller to op. The refusal
 // is a *PlatformScopeError, which reads as a missing permission.
 func requirePlatformScope(ctx context.Context, op string) error {

@@ -92,6 +92,7 @@ func TestRunBarrierUnseal_AutoFlagDispatches(t *testing.T) {
 
 	var buf bytes.Buffer
 	barrierUnsealCmd.SetOut(&buf)
+	barrierUnsealCmd.SetContext(t.Context())
 
 	err = runBarrierUnseal(barrierUnsealCmd, nil)
 	require.Error(t, err)

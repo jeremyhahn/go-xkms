@@ -18,7 +18,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/audit/audittest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -303,7 +304,7 @@ func TestPlatformSealer_SealWith_NilMetadata(t *testing.T) {
 // audit events through a non-nil audit logger on success.
 func TestPlatformSealer_SealWith_WithAuditLogger(t *testing.T) {
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		AuditLogger:     &audit.NoOpLogger{},
+		AuditLogger:     &audittest.Recorder{},
 		PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2},
 	}, map[StrategyID]types.Sealer{
 		StrategyPassphrase: &mockSealer{canSeal: true},
@@ -320,7 +321,7 @@ func TestPlatformSealer_SealWith_WithAuditLogger(t *testing.T) {
 func TestPlatformSealer_SealError_WithAuditLogger(t *testing.T) {
 	sealErr := errors.New("seal failed with audit")
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		AuditLogger:     &audit.NoOpLogger{},
+		AuditLogger:     &audittest.Recorder{},
 		PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2},
 	}, map[StrategyID]types.Sealer{
 		StrategyPassphrase: &mockSealer{canSeal: true, sealErr: sealErr},
@@ -335,7 +336,7 @@ func TestPlatformSealer_SealError_WithAuditLogger(t *testing.T) {
 // audit events through a non-nil audit logger.
 func TestPlatformSealer_Unseal_WithAuditLogger(t *testing.T) {
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		AuditLogger:     &audit.NoOpLogger{},
+		AuditLogger:     &audittest.Recorder{},
 		PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2},
 	}, map[StrategyID]types.Sealer{
 		StrategyPassphrase: &mockSealer{canSeal: true},
@@ -355,7 +356,7 @@ func TestPlatformSealer_Unseal_WithAuditLogger(t *testing.T) {
 // a deny audit event when the strategy is not found.
 func TestPlatformSealer_UnsealUnknown_WithAuditLogger(t *testing.T) {
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		AuditLogger:     &audit.NoOpLogger{},
+		AuditLogger:     &audittest.Recorder{},
 		PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2},
 	}, map[StrategyID]types.Sealer{
 		StrategyPassphrase: &mockSealer{canSeal: true},
@@ -375,7 +376,7 @@ func TestPlatformSealer_UnsealUnknown_WithAuditLogger(t *testing.T) {
 func TestPlatformSealer_UnsealError_WithAuditLogger(t *testing.T) {
 	unsealErr := errors.New("unseal failed with audit")
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		AuditLogger:     &audit.NoOpLogger{},
+		AuditLogger:     &audittest.Recorder{},
 		PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2},
 	}, map[StrategyID]types.Sealer{
 		StrategyPassphrase: &mockSealer{canSeal: true, unsealErr: unsealErr},
@@ -396,7 +397,7 @@ func TestPlatformSealer_UnsealError_WithAuditLogger(t *testing.T) {
 func TestPlatformSealer_Seal_AuditWriteFailureFailsOperation(t *testing.T) {
 	auditErr := errors.New("audit backend unavailable")
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		AuditLogger:     &failingAuditLogger{logErr: auditErr},
+		AuditLogger:     &failingAuditLogger{Err: auditErr},
 		PreferenceOrder: []StrategyID{StrategyPassphrase},
 	}, map[StrategyID]types.Sealer{
 		StrategyPassphrase: &mockSealer{canSeal: true},
@@ -405,7 +406,7 @@ func TestPlatformSealer_Seal_AuditWriteFailureFailsOperation(t *testing.T) {
 
 	_, err = ps.Seal(context.Background(), []byte("data"), nil)
 	require.Error(t, err)
-	var writeErr *audit.ErrAuditWriteFailed
+	var writeErr *qrdbsdk.AuditGateError
 	require.ErrorAs(t, err, &writeErr)
 	assert.ErrorIs(t, err, auditErr)
 }
@@ -416,7 +417,7 @@ func TestPlatformSealer_Seal_AuditWriteFailureFailsOperation(t *testing.T) {
 func TestPlatformSealer_Unseal_AuditWriteFailureFailsOperation(t *testing.T) {
 	auditErr := errors.New("audit backend unavailable")
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		AuditLogger:     &audit.NoOpLogger{},
+		AuditLogger:     &audittest.Recorder{},
 		PreferenceOrder: []StrategyID{StrategyPassphrase},
 	}, map[StrategyID]types.Sealer{
 		StrategyPassphrase: &mockSealer{canSeal: true},
@@ -426,10 +427,10 @@ func TestPlatformSealer_Unseal_AuditWriteFailureFailsOperation(t *testing.T) {
 	sealed, err := ps.Seal(context.Background(), []byte("data"), nil)
 	require.NoError(t, err)
 
-	ps.config.AuditLogger = &failingAuditLogger{logErr: auditErr}
+	ps.config.AuditLogger = &failingAuditLogger{Err: auditErr}
 	_, err = ps.Unseal(context.Background(), sealed, nil)
 	require.Error(t, err)
-	var writeErr *audit.ErrAuditWriteFailed
+	var writeErr *qrdbsdk.AuditGateError
 	require.ErrorAs(t, err, &writeErr)
 	assert.ErrorIs(t, err, auditErr)
 }

@@ -36,9 +36,10 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -79,20 +80,11 @@ func newTestServer(t *testing.T, uids []uint32) *Server {
 		AllowedUIDs:    uids,
 		Backends:       map[string]xkms.Backend{"software": newSoftwareBackend(t)},
 		DefaultBackend: "software",
-		StateStorage:   fileState(t),
+		StateDAOs:      testutil.NewMemoryDAOFactory(),
 		Slots:          []Slot{{Token: testToken, Keys: []string{testLabel, testLabel2}}},
 	})
 	require.NoError(t, err)
 	return srv
-}
-
-// fileState returns a durable, path-normalizing token store, the kind a
-// deployment uses.
-func fileState(t *testing.T) storage.Backend {
-	t.Helper()
-	backend, err := file.New(t.TempDir())
-	require.NoError(t, err)
-	return backend
 }
 
 // serve starts srv and waits until its socket accepts connections.
@@ -356,11 +348,11 @@ func TestNewValidatesConfig(t *testing.T) {
 	backends := map[string]xkms.Backend{"software": newSoftwareBackend(t)}
 	valid := func() Config {
 		return Config{
-			SocketPath:   socketPath(t),
-			AllowedUIDs:  []uint32{1000},
-			Backends:     backends,
-			StateStorage: storage.NewMemory(),
-			Slots:        []Slot{{Token: testToken, Keys: []string{testLabel}}},
+			SocketPath:  socketPath(t),
+			AllowedUIDs: []uint32{1000},
+			Backends:    backends,
+			StateDAOs:   testutil.NewMemoryDAOFactory(),
+			Slots:       []Slot{{Token: testToken, Keys: []string{testLabel}}},
 		}
 	}
 	tests := map[string]struct {
@@ -370,7 +362,7 @@ func TestNewValidatesConfig(t *testing.T) {
 		"socket path":   {func(c *Config) { c.SocketPath = "" }, ErrSocketPathRequired},
 		"peers":         {func(c *Config) { c.AllowedUIDs = nil }, ErrNoAllowedPeers},
 		"backends":      {func(c *Config) { c.Backends = nil }, ErrBackendsRequired},
-		"state":         {func(c *Config) { c.StateStorage = nil }, ErrStateStorageRequired},
+		"state":         {func(c *Config) { c.StateDAOs = nil }, ErrStateStorageRequired},
 		"slots":         {func(c *Config) { c.Slots = nil }, ErrSlotsRequired},
 		"slot token":    {func(c *Config) { c.Slots = []Slot{{Keys: []string{"k"}}} }, ErrSlotTokenRequired},
 		"slot keys":     {func(c *Config) { c.Slots = []Slot{{Token: "t"}} }, ErrSlotKeysRequired},
@@ -391,6 +383,21 @@ func TestNewValidatesConfig(t *testing.T) {
 	srv, err := New(context.Background(), valid())
 	require.NoError(t, err)
 	assert.Equal(t, DefaultSocketMode, srv.config.SocketMode)
+}
+
+// TestNewRefusesAStateFactoryWithoutTheDatabase proves a DAO factory that does
+// not serve StateDatabase fails New as "open token store", not at first use.
+func TestNewRefusesAStateFactoryWithoutTheDatabase(t *testing.T) {
+	_, err := New(context.Background(), Config{
+		SocketPath:  socketPath(t),
+		AllowedUIDs: []uint32{1000},
+		Backends:    map[string]xkms.Backend{"software": newSoftwareBackend(t)},
+		StateDAOs:   dao.NewStoreFactory(nil),
+		Slots:       []Slot{{Token: testToken, Keys: []string{testLabel}}},
+	})
+	var serr *Error
+	require.ErrorAs(t, err, &serr)
+	assert.Equal(t, "open token store", serr.Op)
 }
 
 func TestRefreshHonoursCancellation(t *testing.T) {
@@ -445,11 +452,11 @@ func TestServeReportsBindFailure(t *testing.T) {
 	require.NoError(t, os.Chmod(dir, 0o777))
 
 	srv, err := New(context.Background(), Config{
-		SocketPath:   filepath.Join(dir, "sign.sock"),
-		AllowedUIDs:  []uint32{uint32(os.Geteuid())},
-		Backends:     map[string]xkms.Backend{"software": newSoftwareBackend(t)},
-		StateStorage: storage.NewMemory(),
-		Slots:        []Slot{{Token: testToken, Keys: []string{testLabel}}},
+		SocketPath:  filepath.Join(dir, "sign.sock"),
+		AllowedUIDs: []uint32{uint32(os.Geteuid())},
+		Backends:    map[string]xkms.Backend{"software": newSoftwareBackend(t)},
+		StateDAOs:   testutil.NewMemoryDAOFactory(),
+		Slots:       []Slot{{Token: testToken, Keys: []string{testLabel}}},
 	})
 	require.NoError(t, err)
 

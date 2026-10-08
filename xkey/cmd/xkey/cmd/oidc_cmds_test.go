@@ -42,13 +42,14 @@ import (
 // oidcTestCmd builds a detached cobra command carrying every flag the OIDC
 // handlers read, wired to a token store inside a temp directory. --token-store
 // is explicitly Set (not just defaulted), so openOIDCTokenStore always takes
-// the plain-file-at-this-exact-path branch here -- exactly like `xkey oath`'s
-// --store override -- keeping these tests independent of barrier state. See
-// oidc_barrier_test.go for the barrier-auto-detection behavior itself.
+// the unencrypted-store-at-this-directory branch here -- exactly like `xkey
+// oath`'s --store override -- keeping these tests independent of barrier
+// state. See oidc_barrier_test.go for the barrier-auto-detection behavior
+// itself.
 func oidcTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer, string) {
 	t.Helper()
 
-	store := filepath.Join(t.TempDir(), "tokens.json")
+	store := filepath.Join(t.TempDir(), "tokens")
 
 	cmd := &cobra.Command{Use: "oidc-test"}
 	fs := cmd.Flags()

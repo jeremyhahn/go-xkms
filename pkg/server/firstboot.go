@@ -24,8 +24,9 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
-	"github.com/jeremyhahn/go-xkms/pkg/daemon"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // AdminCredentialError reports a failure to write the bootstrap administrator's
@@ -236,16 +237,21 @@ func RunFirstBoot(ctx context.Context, node *qrdbnode.Node, p FirstBootParams) (
 	if err != nil {
 		return nil, err
 	}
-	result, err := firstBootInitialize(ctx, deps)
+	result, err := firstBootInitialize(ctx, node, deps)
 	if err != nil {
 		return nil, &FirstBootError{Op: "initialize", Cause: err}
 	}
 	return result, nil
 }
 
-// firstBootInitialize indirects qrdbsdk.FirstBootInitialize so the retry
-// loop is unit-testable; production always uses the SDK function.
-var firstBootInitialize = qrdbsdk.FirstBootInitialize
+// firstBootInitialize indirects the node's first-boot so the retry loop is
+// unit-testable. Production always runs Node.FirstBoot, which holds first-boot
+// to the node's own auth.mtls_binding_policy and, under "required", verifies
+// the bootstrap administrator can log in by certificate before reporting
+// success (go-qrdb#517).
+var firstBootInitialize = func(ctx context.Context, node *qrdbnode.Node, deps qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error) {
+	return node.FirstBoot(ctx, deps)
+}
 
 // firstBootWithLeaderRetry runs FirstBootInitialize under the boot-time
 // leader retry (leader_retry.go).
@@ -253,7 +259,7 @@ func (s *Server) firstBootWithLeaderRetry(ctx context.Context, deps qrdbsdk.Firs
 	var result *qrdbsdk.FirstBootResult
 	err := retryNotLeader(ctx, s.logger, "first-boot", func() error {
 		var innerErr error
-		result, innerErr = firstBootInitialize(ctx, deps)
+		result, innerErr = firstBootInitialize(ctx, s.qrdbNode, deps)
 		return innerErr
 	})
 	if err != nil {
@@ -341,7 +347,7 @@ func PersistAdminCredential(dataDir string, result *qrdbsdk.FirstBootResult, log
 	}
 	// The private key is owner-read-only: it authenticates as the highest
 	// privilege account on the daemon.
-	if err := os.WriteFile(keyPath, result.AdminKeyPEM, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(keyPath, result.AdminKeyPEM, 0o600); err != nil {
 		return &AdminCredentialError{Path: keyPath, Err: err}
 	}
 
@@ -369,5 +375,5 @@ func (s *Server) firstBootTrustDomain() string {
 	if td := s.config.Cluster.RaftEnrollment.TrustDomain; td != "" {
 		return td
 	}
-	return daemon.DefaultTrustDomain
+	return embeddednode.DefaultTrustDomain
 }

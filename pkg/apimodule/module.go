@@ -209,8 +209,7 @@ type BarrierRegistryResolver func() *qrdbsdk.BarrierRegistry
 // WithBarrierRegistry wires the host's tenant barrier registry into the
 // module's host composition (pkg/compose). It enables per-tenant Password
 // Manager routing (each tenant's entries behind that tenant's barrier) and
-// the "barrier" credential strategy, and is the barrier WithBarrierRoutes
-// serves. Only consulted when the module self-builds (no WithRESTServer).
+// the "barrier" credential strategy. Only consulted when the module self-builds (no WithRESTServer).
 func WithBarrierRegistry(resolve BarrierRegistryResolver) Option {
 	return func(m *Module) {
 		m.resolveBarrierRegistry = resolve
@@ -270,19 +269,6 @@ func WithVTPM(cfg *vtpm.Config) Option {
 	}
 }
 
-// WithBarrierRoutes mounts the barrier route families (barrier, custodian,
-// shares, init ceremony; rest.IsBarrierRoute) on a self-built module and
-// serves them over the host's qrdb node: the barrier routes operate on the
-// system barrier of WithBarrierRegistry's registry, and custodian and share
-// routes on WithQRDBClient's node. Off by default, so a host that owns its
-// barrier keeps those paths. A module bound to a host-supplied REST server
-// (WithRESTServer) always mounts them: that server decides what it serves.
-func WithBarrierRoutes() Option {
-	return func(m *Module) {
-		m.barrierRoutes = true
-	}
-}
-
 // Module is go-xkms's hardware crypto + identity plane as a qrdb
 // ServiceModule. It registers the full KeystoreService gRPC surface into the
 // unified server's gRPC-wire transports (gRPC and unix), the full REST route
@@ -319,7 +305,6 @@ type Module struct {
 	credentialStrategy     string
 	caConfig               *ca.MultiIdentityCAConfig
 	vtpm                   *vtpm.Config
-	barrierRoutes          bool
 
 	uiPrefix       string
 	uiRedirectRoot bool

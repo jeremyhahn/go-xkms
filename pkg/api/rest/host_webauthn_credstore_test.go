@@ -25,6 +25,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -103,15 +104,15 @@ func qrdbWebAuthnConfig() *webauthn.Config {
 	})
 }
 
-// independentQRDBCredentialStore builds a SECOND qrdb-backed credential
-// store over the same client, so a test can read what the relying party
+// independentQRDBCredentialStore builds a SECOND credential store over the
+// same client and DAO factory, so a test can read what the relying party
 // actually persisted instead of asking the store instance it was handed.
-func independentQRDBCredentialStore(t *testing.T, client *qrdbsdk.Client) webauthn.CredentialStore {
+func independentQRDBCredentialStore(t *testing.T, client *qrdbsdk.Client, factory *qrdbsdk.DAOFactory) webauthn.CredentialStore {
 	t.Helper()
 	_, creds, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:    client.Users(),
-		KV:       client.KV(),
-		TenantID: DefaultWebAuthnTenant,
+		Users:      client.Users(),
+		DAOFactory: factory,
+		TenantID:   DefaultWebAuthnTenant,
 	})
 	require.NoError(t, err)
 	return creds
@@ -126,6 +127,7 @@ func independentQRDBCredentialStore(t *testing.T, client *qrdbsdk.Client) webaut
 // unified login ceremony answered "factor not found").
 func TestBuildWebAuthnService_CredentialStoreDecoratorSeesRegistration(t *testing.T) {
 	client, _ := newFakeQRDBClient(t)
+	factory := testutil.NewMemoryDAOFactory()
 
 	var decoratorCalls int
 	var recorder *recordingCredentialStore
@@ -133,6 +135,7 @@ func TestBuildWebAuthnService_CredentialStoreDecoratorSeesRegistration(t *testin
 	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
 		Config:     qrdbWebAuthnConfig(),
 		QRDBClient: client,
+		DAOFactory: factory,
 		CredentialStoreDecorator: func(inner webauthn.CredentialStore) webauthn.CredentialStore {
 			decoratorCalls++
 			require.NotNil(t, inner, "the decorator receives the qrdb-backed store, never nil")
@@ -154,7 +157,7 @@ func TestBuildWebAuthnService_CredentialStoreDecoratorSeesRegistration(t *testin
 	// Delegation is the other half of the contract: the wrapped qrdb store
 	// must still hold the credential, so decorating cannot cost the relying
 	// party its persistence.
-	persisted, err := independentQRDBCredentialStore(t, client).GetByCredentialID(context.Background(), credID)
+	persisted, err := independentQRDBCredentialStore(t, client, factory).GetByCredentialID(context.Background(), credID)
 	require.NoError(t, err, "the decorated write must still reach the qrdb-backed store")
 	assert.Equal(t, credID, persisted.ID)
 }
@@ -164,16 +167,18 @@ func TestBuildWebAuthnService_CredentialStoreDecoratorSeesRegistration(t *testin
 // place, and a registration lands there exactly as before.
 func TestBuildWebAuthnService_NoDecoratorPersistsToQRDBStore(t *testing.T) {
 	client, _ := newFakeQRDBClient(t)
+	factory := testutil.NewMemoryDAOFactory()
 
 	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
 		Config:     qrdbWebAuthnConfig(),
 		QRDBClient: client,
+		DAOFactory: factory,
 	})
 	require.NoError(t, err)
 
 	credID := registerPasskey(t, svc, "example.com", "https://example.com", "bob@example.com")
 
-	persisted, err := independentQRDBCredentialStore(t, client).GetByCredentialID(context.Background(), credID)
+	persisted, err := independentQRDBCredentialStore(t, client, factory).GetByCredentialID(context.Background(), credID)
 	require.NoError(t, err, "without a decorator the credential still lands in the qrdb store")
 	assert.Equal(t, credID, persisted.ID)
 }
@@ -185,10 +190,12 @@ func TestBuildWebAuthnService_NoDecoratorPersistsToQRDBStore(t *testing.T) {
 // vanish.
 func TestBuildWebAuthnService_CredentialStoreDecoratorReturningNil(t *testing.T) {
 	client, _ := newFakeQRDBClient(t)
+	factory := testutil.NewMemoryDAOFactory()
 
 	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
 		Config:     qrdbWebAuthnConfig(),
 		QRDBClient: client,
+		DAOFactory: factory,
 		CredentialStoreDecorator: func(webauthn.CredentialStore) webauthn.CredentialStore {
 			return nil
 		},
@@ -208,10 +215,12 @@ func TestBuildWebAuthnService_CredentialStoreDecoratorReturningNil(t *testing.T)
 // refuse it with the same typed error as an untyped nil.
 func TestBuildWebAuthnService_CredentialStoreDecoratorReturningTypedNil(t *testing.T) {
 	client, _ := newFakeQRDBClient(t)
+	factory := testutil.NewMemoryDAOFactory()
 
 	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
 		Config:     qrdbWebAuthnConfig(),
 		QRDBClient: client,
+		DAOFactory: factory,
 		CredentialStoreDecorator: func(webauthn.CredentialStore) webauthn.CredentialStore {
 			var typedNil *recordingCredentialStore
 			return typedNil
@@ -228,10 +237,12 @@ func TestBuildWebAuthnService_CredentialStoreDecoratorReturningTypedNil(t *testi
 // side effects never covered.
 func TestBuildWebAuthnService_CredentialStoreDecoratorErrorPropagates(t *testing.T) {
 	client, _ := newFakeQRDBClient(t)
+	factory := testutil.NewMemoryDAOFactory()
 
 	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
 		Config:     qrdbWebAuthnConfig(),
 		QRDBClient: client,
+		DAOFactory: factory,
 		CredentialStoreDecorator: func(inner webauthn.CredentialStore) webauthn.CredentialStore {
 			return &failingCredentialStore{CredentialStore: inner}
 		},

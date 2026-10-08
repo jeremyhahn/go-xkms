@@ -407,7 +407,7 @@ func TestRegisterPhoneBackend_ResolvableCredentialReference(t *testing.T) {
 	// The field now carries the resolved SecretValue (custody transfer),
 	// with Raw still naming the reference and real material behind it.
 	assert.Equal(t, "credential://"+credName, phoneCfg.NoiseStaticKey.Raw)
-	got, err := types.SecretValueBytes(phoneCfg.NoiseStaticKey)
+	got, err := types.SecretValueBytes(t.Context(), phoneCfg.NoiseStaticKey)
 	require.NoError(t, err)
 	assert.Equal(t, noiseKeyHex, string(got))
 }
@@ -426,7 +426,7 @@ func TestResolveConfigSecrets_UnresolvableCredentialReference(t *testing.T) {
 	srv := newTestServerForPhoneWithCredentials(t, phoneCfg, svc)
 	// The "manual" strategy's RetrieveCredential blocks waiting for an
 	// operator to submit the named credential rather than failing fast on a
-	// miss (see credentials.Service.retrieveManual) -- exactly right for its
+	// miss (go-qrdb's manual credential strategy) -- exactly right for its
 	// real interactive use, but this test wants "no such credential exists
 	// and nobody ever will submit one", so it bounds s.ctx instead of
 	// hanging for test.timeout.

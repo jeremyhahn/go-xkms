@@ -44,7 +44,7 @@ test.describe('Authenticated shell', () => {
     await page.goto('/#/dashboard');
 
     const nav = page.getByRole('navigation', { name: 'Primary' });
-    for (const label of ['Keys', 'FROST', 'Certificates', 'Certificate Authority', 'Users', 'Audit', 'Tenants', 'Cluster']) {
+    for (const label of ['Keys', 'FROST', 'Certificates', 'Certificate Authority', 'Users', 'Tenants', 'Cluster']) {
       await expect(nav.getByRole('button', { name: label })).toBeVisible();
     }
   });
@@ -61,7 +61,7 @@ test.describe('Authenticated shell', () => {
     await expect(nav.getByRole('button', { name: 'Users' })).toHaveCount(0);
     // A sibling item in the same section with a different gate stays visible —
     // proves the whole "Identity & Access" section isn't blanket-hidden.
-    await expect(nav.getByRole('button', { name: 'Audit' })).toBeVisible();
+    await expect(nav.getByRole('button', { name: 'Tenants' })).toBeVisible();
   });
 
   test('hides a capability-gated item when the server has not wired that subsystem', async ({ page }) => {

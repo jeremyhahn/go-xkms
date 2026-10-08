@@ -26,6 +26,13 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
+// callerContext binds id as the authenticated caller, the shape every request
+// context carries in production: the node's role client authorizes each
+// lookup as that caller.
+func callerContext(id *Identity) context.Context {
+	return WithIdentity(context.Background(), id)
+}
+
 // seededRoles returns the role client of a first-boot-seeded qrdb node and a
 // function resolving a built-in role name to its persisted identifier.
 func seededRoles(t *testing.T) (qrdbtransport.RoleClient, func(string) string) {
@@ -44,37 +51,42 @@ func seededRoles(t *testing.T) (qrdbtransport.RoleClient, func(string) string) {
 // holds nothing else.
 func TestHoldsSystemRole_MatchesPersistedRoleID(t *testing.T) {
 	roles, roleID := seededRoles(t)
-	ctx := context.Background()
 	admin := &Identity{Subject: "admin", TenantID: qrdbsdk.SystemTenantID, Roles: []string{roleID(qrdbsdk.RoleNameUser), roleID(qrdbsdk.RoleNameAdmin)}}
 
-	held, err := HoldsSystemRole(ctx, roles, admin, qrdbsdk.RoleNameAdmin)
+	held, err := HoldsSystemRole(callerContext(admin), roles, admin, qrdbsdk.RoleNameAdmin)
 	require.NoError(t, err)
 	assert.True(t, held, "the Admin role ID must hold Admin")
 
-	held, err = HoldsSystemRole(ctx, roles, admin, qrdbsdk.RoleNameSO)
+	held, err = HoldsSystemRole(callerContext(admin), roles, admin, qrdbsdk.RoleNameSO)
 	require.NoError(t, err)
 	assert.False(t, held, "the Admin role ID must not hold SO")
 
-	// An empty TenantID is the system tenant, as everywhere else in xkms.
+	// The lookup resolves in the system tenant, but qrdb authorizes it as the
+	// caller, and a caller bound to no tenant is outside every tenant: the
+	// check fails closed rather than answering "not a member".
 	unscoped := &Identity{Subject: "admin", Roles: []string{roleID(qrdbsdk.RoleNameAdmin)}}
-	held, err = HoldsSystemRole(ctx, roles, unscoped, qrdbsdk.RoleNameAdmin)
-	require.NoError(t, err)
-	assert.True(t, held)
+	held, err = HoldsSystemRole(callerContext(unscoped), roles, unscoped, qrdbsdk.RoleNameAdmin)
+	var resErr *RoleResolutionError
+	require.ErrorAs(t, err, &resErr)
+	assert.Equal(t, qrdbsdk.SystemTenantID, resErr.TenantID)
+	assert.False(t, held)
 }
 
 // TestHoldsSystemRole_NonMemberRefused proves an identity holding a lesser
-// role, or none, is not a member.
+// role, or none, is never a member. An identity with no roles is answered
+// without a lookup; a lesser role that may not read roles is refused by
+// qrdb's RBAC, which surfaces as *RoleResolutionError.
 func TestHoldsSystemRole_NonMemberRefused(t *testing.T) {
 	roles, roleID := seededRoles(t)
-	ctx := context.Background()
 
 	operator := &Identity{Subject: "op", TenantID: qrdbsdk.SystemTenantID, Roles: []string{roleID(qrdbsdk.RoleNameOperator)}}
-	held, err := HoldsSystemRole(ctx, roles, operator, qrdbsdk.RoleNameAdmin)
-	require.NoError(t, err)
+	held, err := HoldsSystemRole(callerContext(operator), roles, operator, qrdbsdk.RoleNameAdmin)
+	var resErr *RoleResolutionError
+	require.ErrorAs(t, err, &resErr)
 	assert.False(t, held)
 
 	for _, id := range []*Identity{nil, {Subject: "nobody", TenantID: qrdbsdk.SystemTenantID}} {
-		held, err = HoldsSystemRole(ctx, roles, id, qrdbsdk.RoleNameAdmin)
+		held, err = HoldsSystemRole(callerContext(id), roles, id, qrdbsdk.RoleNameAdmin)
 		require.NoError(t, err)
 		assert.False(t, held)
 	}
@@ -86,11 +98,10 @@ func TestHoldsSystemRole_NonMemberRefused(t *testing.T) {
 // role's identifier is.
 func TestHoldsSystemRole_RoleNameConfersNothing(t *testing.T) {
 	roles, _ := seededRoles(t)
-	ctx := context.Background()
 
 	for _, name := range []string{qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameSO} {
 		named := &Identity{Subject: "claims", TenantID: qrdbsdk.SystemTenantID, Roles: []string{name}}
-		held, err := HoldsSystemRole(ctx, roles, named, name)
+		held, err := HoldsSystemRole(callerContext(named), roles, named, name)
 		require.NoError(t, err)
 		assert.False(t, held, "a role name on the identity must not confer %q", name)
 	}
@@ -107,15 +118,14 @@ func TestHoldsSystemRole_TenantScoped(t *testing.T) {
 	require.NoError(t, err)
 	systemAdminID, err := n.RoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
 	require.NoError(t, err)
-	ctx := context.Background()
 
 	tenantAdmin := &Identity{Subject: "admin", TenantID: "tenant-a", Roles: []string{tenantAdminID}}
-	held, err := HoldsSystemRole(ctx, n.Client().Roles(), tenantAdmin, qrdbsdk.RoleNameAdmin)
+	held, err := HoldsSystemRole(callerContext(tenantAdmin), n.Client().Roles(), tenantAdmin, qrdbsdk.RoleNameAdmin)
 	require.NoError(t, err)
 	assert.True(t, held)
 
 	borrowed := &Identity{Subject: "admin", TenantID: "tenant-a", Roles: []string{systemAdminID}}
-	held, err = HoldsSystemRole(ctx, n.Client().Roles(), borrowed, qrdbsdk.RoleNameAdmin)
+	held, err = HoldsSystemRole(callerContext(borrowed), n.Client().Roles(), borrowed, qrdbsdk.RoleNameAdmin)
 	require.NoError(t, err)
 	assert.False(t, held, "another tenant's Admin ID must not hold this tenant's Admin")
 }
@@ -159,7 +169,22 @@ func TestHoldsSystemRole_StoreFailure(t *testing.T) {
 	assert.ErrorIs(t, err, errRoleStoreDown)
 	assert.Contains(t, err.Error(), "tenant-a")
 
-	held, err = HoldsSystemRole(context.Background(), failingRoleClient{}, id, qrdbsdk.RoleNameAdmin)
+	for _, answer := range []failingRoleClient{{}, {role: &qrdbtransport.Role{Name: qrdbsdk.RoleNameAdmin}}} {
+		held, err = HoldsSystemRole(context.Background(), answer, id, qrdbsdk.RoleNameAdmin)
+		assert.False(t, held)
+		require.ErrorAs(t, err, &resErr)
+		assert.ErrorIs(t, err, ErrRoleNotResolved, "a role with no identifier is no answer")
+	}
+}
+
+// TestHoldsSystemRole_UnknownRoleGrantsNothing proves a tenant with no role
+// of the requested name answers "not a member" rather than an error: there is
+// nothing to hold.
+func TestHoldsSystemRole_UnknownRoleGrantsNothing(t *testing.T) {
+	roles, roleID := seededRoles(t)
+	admin := &Identity{Subject: "admin", TenantID: qrdbsdk.SystemTenantID, Roles: []string{roleID(qrdbsdk.RoleNameAdmin)}}
+
+	held, err := HoldsSystemRole(callerContext(admin), roles, admin, "no-such-role")
+	require.NoError(t, err)
 	assert.False(t, held)
-	require.ErrorAs(t, err, &resErr)
 }

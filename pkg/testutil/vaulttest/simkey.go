@@ -15,6 +15,7 @@ package vaulttest
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -54,7 +55,7 @@ func NewSimulatedKey(pin string) *SimulatedKey {
 	if pin == "" {
 		return k
 	}
-	sealed, err := secure.NewSecret([]byte(pin))
+	sealed, err := secure.NewSecret(context.Background(), []byte(pin))
 	if err != nil {
 		// NewSecret only fails on a non-positive size, which pin != ""
 		// already rules out: a test fixture construction bug, not a
@@ -72,7 +73,7 @@ func (k *SimulatedKey) checkPIN(pin *secure.Secret) error {
 	if k.PIN == nil {
 		return fido2.ErrInvalidPIN
 	}
-	buf, err := pin.Open()
+	buf, err := pin.Open(context.Background())
 	if err != nil {
 		return err
 	}
@@ -84,7 +85,7 @@ func (k *SimulatedKey) checkPIN(pin *secure.Secret) error {
 		return err
 	}
 	defer secure.Wipe(candidate)
-	kbuf, err := k.PIN.Open()
+	kbuf, err := k.PIN.Open(context.Background())
 	if err != nil {
 		return err
 	}

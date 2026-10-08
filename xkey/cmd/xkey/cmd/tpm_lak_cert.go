@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -168,13 +169,13 @@ func runLAKCertExport(cmd *cobra.Command, args []string) (err error) {
 		return &SentinelCauseError{Sentinel: ErrLAKCertifyFailed, Cause: err}
 	}
 
-	if err := os.WriteFile(lakCertifyInfoOutput, result.CertifyInfo, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(lakCertifyInfoOutput, result.CertifyInfo, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
-	if err := os.WriteFile(lakSignatureOutput, result.Signature, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(lakSignatureOutput, result.Signature, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
-	if err := os.WriteFile(lakPublicAreaOutput, result.AttestedKeyPublicArea, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(lakPublicAreaOutput, result.AttestedKeyPublicArea, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 

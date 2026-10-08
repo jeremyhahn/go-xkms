@@ -81,6 +81,18 @@ func (m *CoverageMockEABDAO) SaveWithCondition(_ context.Context, _ *entities.Ex
 	panic("not implemented")
 }
 
+func (m *CoverageMockEABDAO) GetByNaturalKey(_ context.Context, _ string) (*entities.ExternalAccountBinding, error) {
+	panic("not implemented")
+}
+
+func (m *CoverageMockEABDAO) CompareAndSwap(_ context.Context, _, _ *entities.ExternalAccountBinding) (bool, error) {
+	panic("not implemented")
+}
+
+func (m *CoverageMockEABDAO) DeleteIfMatch(_ context.Context, _ *entities.ExternalAccountBinding) (bool, error) {
+	panic("not implemented")
+}
+
 func (m *CoverageMockEABDAO) SaveIfAbsent(_ context.Context, _ *entities.ExternalAccountBinding) (bool, error) {
 	panic("not implemented")
 }

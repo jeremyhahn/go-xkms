@@ -248,7 +248,7 @@ var uiPermissionMatrix = [][2]string{
 	{auth.ResourceKeys, auth.ActionImport},
 	{auth.ResourceKeys, auth.ActionExport},
 	{auth.ResourceCerts, auth.ActionList},
-	{auth.ResourceCerts, auth.ActionGenerate},
+	{auth.ResourceCerts, auth.ActionIssue},
 	{auth.ResourceCerts, auth.ActionRevoke},
 	{auth.ResourceBackends, auth.ActionList},
 	{auth.ResourceUsers, auth.ActionList},
@@ -259,17 +259,11 @@ var uiPermissionMatrix = [][2]string{
 	{auth.ResourceUsers, auth.ActionDisable},
 	{auth.ResourceUsers, auth.ActionDelete},
 	{auth.ResourceTenants, auth.ActionList},
-	{auth.ResourceSeal, auth.ActionStatus},
-	{auth.ResourceSeal, auth.ActionSeal},
-	{auth.ResourceSeal, auth.ActionUnseal},
-	{auth.ResourceSeal, auth.ActionRekey},
 	{auth.ResourcePIN, auth.ActionRead},
 	{auth.ResourcePIV, auth.ActionRead},
 	{auth.ResourceSSH, auth.ActionRead},
 	{auth.ResourcePasswords, auth.ActionRead},
 	{auth.ResourceCA, auth.ActionRead},
-	{auth.ResourceCeremony, auth.ActionStatus},
-	{auth.ResourceAudit, auth.ActionRead},
 	{auth.ResourceOIDCCredentials, auth.ActionList},
 }
 
@@ -526,35 +520,24 @@ func (s *Server) capabilityFlags() map[string]bool {
 		"piv_login":        s.pivLogin != nil && s.pivLogin.Enabled,
 		"rbac":             s.rbacMiddleware != nil,
 		"ca":               s.caHandlers != nil,
-		"custodians":       s.custodianHandlers != nil,
-		"shares":           s.shareHandlers != nil,
 		"tenants":          s.tenantHandlers != nil,
 		"passwords":        s.passwordHandlers != nil,
 		"platform":         s.platformHandlers != nil,
 		"tpm_policies":     s.xkmsService != nil && s.xkmsService.TPMPolicyService() != nil,
 		"oidc_credentials": s.xkmsService != nil && s.xkmsService.OIDCCredentialService() != nil,
-		"ceremony":         s.initHandlers != nil,
 		"ssh":              s.sshHandlers != nil,
 		"frost":            frostEnabled,
-		"factors":          s.authFactorHandlers != nil,
-		"audit":            s.auditHandlers != nil,
 		"cluster":          s.xkmsService != nil && s.xkmsService.Clustered(),
 	}
 }
 
-// auditAuthEvent records an authentication-plane audit event and applies the
-// go-xkms audit write-failure policy (docs/audit-log/engineering.md,
-// pkg/audit.ClassifyAction): every "auth.*" action classifies
-// SeveritySecurity (the default for an action not explicitly reviewed as
-// informational), so a failed write returns *audit.ErrAuditWriteFailed and
-// the caller must fail the login/logout request rather than let an
-// authentication decision — grant or refusal — stand unaudited. A nil audit
-// logger drops the event and returns nil: audit logging is opt-in wiring,
-// not itself a failure.
+// auditAuthEvent records an authentication-plane audit event. A failed write
+// returns *qrdbsdk.AuditGateError and the caller must fail the login/logout
+// request rather than let an authentication decision — grant or refusal —
+// stand unaudited (docs/audit-log/engineering.md). A nil audit logger drops
+// the event and returns nil: audit logging is opt-in wiring, not itself a
+// failure.
 func (s *Server) auditAuthEvent(ctx context.Context, subject, action, outcome, detail string) error {
-	if s.auditor == nil {
-		return nil
-	}
 	event := &audit.Event{
 		Timestamp: time.Now().UTC(),
 		Subject:   subject,
@@ -565,7 +548,7 @@ func (s *Server) auditAuthEvent(ctx context.Context, subject, action, outcome, d
 	if detail != "" {
 		event.Details = map[string]string{"reason": detail}
 	}
-	return audit.HandleWriteFailure(s.logger, action, s.auditor.Log(ctx, event))
+	return audit.Emit(ctx, s.auditor, event)
 }
 
 // auditAuthDenyOrFail records a deny outcome for action and reports whether

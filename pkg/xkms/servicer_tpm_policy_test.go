@@ -24,7 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmpolicytest"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 )
 
 // These tests drive the TPM policy servicer over a real policy service that

@@ -21,19 +21,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/hostdeps"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -74,19 +76,17 @@ func platformCtx() context.Context {
 // fullDeps supplies every dependency Build knows.
 func fullDeps(t *testing.T, svc *xkms.XKMSService) Deps {
 	t.Helper()
+	leases, _ := barriertest.NewStandaloneCoordinator(t)
 	return Deps{
 		Service:            svc,
 		Storage:            memoryStorage(t),
+		DAOs:               testutil.NewMemoryDAOFactory(),
 		BarrierRegistry:    hostdeps.NewBarrierRegistry(t),
 		PIN:                hostdeps.NewPINBackend(t, "so-pin-123456", "user-pin-654321"),
 		PlatformSealer:     &PlatformSealer{Strategy: "passphrase", Sealer: hostdeps.NewSealer(t)},
 		CredentialStrategy: "barrier",
 		CA:                 hostdeps.NewCAConfig("Compose Test Root"),
-		Custodians:         custodians{},
-		Shares:             shares{},
-		Backup:             backupClient{},
-		ServeBarrier:       true,
-		Leases:             barriertest.NewStandaloneCoordinator(t),
+		Leases:             leases,
 	}
 }
 
@@ -96,158 +96,6 @@ func TestBuild_RequiresService(t *testing.T) {
 	var nilSvc *NilServiceError
 	require.ErrorAs(t, err, &nilSvc)
 	assert.Contains(t, err.Error(), "XKMSService")
-}
-
-// TestBuild_EveryDependencyComposesEveryFeature proves a host that supplies
-// every dependency gets every feature, and that Wire makes each one answer
-// through the XKMSService rather than its "not configured" error. The TPM
-// policy service needs a TPM, which only the simulator tests supply
-// (compose_tpm_sim_test.go), so here it is the one feature off.
-func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
-	svc := hostdeps.NewService(t)
-	st, err := Build(context.Background(), fullDeps(t, svc))
-	require.NoError(t, err)
-	require.Len(t, st.Disabled, 1, "only the TPM policy service may be off: no TPM2 backend is supplied")
-	var disabled *FeatureDisabledError
-	require.ErrorAs(t, st.Disabled[0], &disabled)
-	assert.Equal(t, FeatureTPMPolicies, disabled.Feature)
-
-	assert.NotNil(t, st.PasswordStore)
-	assert.NotNil(t, st.PasswordManager)
-	assert.NotNil(t, st.PIN)
-	assert.NotNil(t, st.PlatformStore)
-	assert.NotNil(t, st.Credentials)
-	assert.NotNil(t, st.SSH)
-	assert.NotNil(t, st.CA)
-	assert.Nil(t, st.TPMPolicies)
-	assert.NotNil(t, st.KeyVersions)
-	assert.NotNil(t, st.Barrier)
-	assert.NotNil(t, st.Custodians)
-	assert.NotNil(t, st.Shares)
-	assert.NotNil(t, st.Invite)
-	assert.NotNil(t, st.OIDCCredentials)
-	assert.NotNil(t, st.Backup)
-	assert.Equal(t, "barrier", st.Credentials.Strategy())
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
-
-	st.Wire(svc)
-	ctx := platformCtx()
-
-	// The OIDC credential service is wired over the host's barriers.
-	_, err = svc.OIDCCredentialCreate(ctx, &transport.OIDCCredentialCreateRequest{
-		OIDCCredentialRef: transport.OIDCCredentialRef{Scope: "tenant", Name: "claude"},
-		Config:            transport.OIDCCredentialConfig{Template: "anthropic"},
-		Tokens:            &transport.OIDCCredentialTokens{AccessToken: "sk-ant-oat01-x"},
-	})
-	require.NoError(t, err)
-	tok, err := svc.OIDCCredentialGetAccessToken(ctx, &transport.OIDCCredentialRef{Scope: "tenant", Name: "claude"})
-	require.NoError(t, err)
-	assert.Equal(t, "sk-ant-oat01-x", tok.AccessToken)
-
-	require.NoError(t, svc.SealStorePut(ctx, &transport.SealStorePutRequest{Name: "k", Secret: []byte("v")}))
-	got, err := svc.SealStoreGet(ctx, &transport.SealStoreGetRequest{Name: "k"})
-	require.NoError(t, err)
-	assert.Equal(t, []byte("v"), got.Secret)
-
-	caCert, err := svc.GetCACertificate(ctx, &transport.GetCACertificateRequest{})
-	require.NoError(t, err)
-	assert.Contains(t, caCert.Subject, "Compose Test Root")
-
-	status, err := svc.BarrierStatus(ctx)
-	require.NoError(t, err)
-	assert.False(t, status.Sealed, "the host's unsealed barrier is the one served")
-
-	_, err = svc.PasswordStoreStatus(ctx)
-	require.NoError(t, err)
-
-	groups, err := svc.ListCustodianGroups(ctx)
-	require.NoError(t, err)
-	assert.Empty(t, groups.Groups, "custody answers from the host's node clients")
-
-	backups, err := svc.ListBackups(ctx)
-	require.NoError(t, err)
-	assert.Empty(t, backups, "backup answers from the host's node client")
-
-	// The key-version store is wired: a key rotates into version 2.
-	_, err = svc.GenerateKey(ctx, &transport.GenerateKeyRequest{Backend: hostdeps.BackendName, KeyID: "composed", Algorithm: "ecdsa"})
-	require.NoError(t, err)
-	rotated, err := svc.RotateKey(ctx, &transport.RotateKeyRequest{Backend: hostdeps.BackendName, KeyID: "composed"})
-	require.NoError(t, err)
-	assert.Equal(t, uint32(2), rotated.KeyVersion)
-}
-
-// TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons proves a
-// missing dependency never fails composition and is never silent: each
-// feature is off with a *FeatureDisabledError naming what was missing.
-func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T) {
-	svc := hostdeps.NewService(t)
-	st, err := Build(context.Background(), Deps{Service: svc, CredentialStrategy: "barrier", ServeBarrier: true})
-	require.NoError(t, err)
-
-	missing := map[Feature]string{}
-	for _, reason := range st.Disabled {
-		var disabled *FeatureDisabledError
-		require.ErrorAs(t, reason, &disabled, "every reason must be typed: %v", reason)
-		if _, seen := missing[disabled.Feature]; !seen {
-			missing[disabled.Feature] = disabled.Missing
-		}
-	}
-	assert.Equal(t, map[Feature]string{
-		FeaturePasswords:       "storage",
-		FeaturePIN:             "PIN backend",
-		FeaturePlatformStore:   "storage",
-		FeatureCredentials:     "barrier registry",
-		FeatureSSH:             "storage",
-		FeatureCA:              "CA configuration",
-		FeatureTPMPolicies:     "TPM2 backend",
-		FeatureKeyVersions:     "storage",
-		FeatureOIDCCredentials: "barrier registry",
-		FeatureBarrier:         "barrier registry",
-		FeatureCustody:         "custody clients",
-		FeatureInvite:          "storage",
-		FeatureBackup:          "backup client",
-	}, missing)
-
-	assert.Nil(t, st.PasswordStore)
-	assert.Nil(t, st.PlatformStore)
-	assert.Nil(t, st.Credentials)
-	assert.Nil(t, st.SSH)
-	assert.Nil(t, st.CA)
-	assert.Nil(t, st.TPMPolicies)
-	assert.Nil(t, st.KeyVersions)
-	assert.Nil(t, st.Barrier)
-	assert.Nil(t, st.Invite)
-	assert.Nil(t, st.Backup)
-
-	// Wiring an empty composition leaves the service answering "not
-	// configured" for each feature.
-	st.Wire(svc)
-	_, err = svc.SealStoreStatus(platformCtx())
-	assert.ErrorIs(t, err, xkms.ErrNotConfigured)
-	_, err = svc.TPMPolicyList(platformCtx(), &transport.TPMPolicyListRequest{})
-	assert.ErrorIs(t, err, xkms.ErrNotConfigured)
-	_, err = svc.RotateScopeKeys(platformCtx(), &transport.RotateScopeKeysRequest{})
-	assert.ErrorIs(t, err, xkms.ErrNotConfigured, "rotation needs the key-version store")
-	assert.NoError(t, st.Close(), "closing stores without a TPM policy service is a no-op")
-}
-
-// TestBuild_BarrierStaysOffByDefault proves a host's barrier is only served
-// when the host opts in: the registry alone enables tenant password routing
-// but never the barrier routes.
-func TestBuild_BarrierStaysOffByDefault(t *testing.T) {
-	svc := hostdeps.NewService(t)
-	deps := fullDeps(t, svc)
-	deps.ServeBarrier = false
-
-	st, err := Build(context.Background(), deps)
-	require.NoError(t, err)
-	assert.NotNil(t, st.PasswordManager)
-	assert.Nil(t, st.Barrier)
-	assert.Nil(t, st.Custodians)
-
-	st.Wire(svc)
-	_, err = svc.BarrierStatus(platformCtx())
-	assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 }
 
 // TestBuild_DefaultCredentialStrategyIsManual mirrors xkmsd's default.
@@ -297,22 +145,23 @@ func TestBuild_StorageFailureIsABuildErrorPerFeature(t *testing.T) {
 			assert.ErrorIs(t, reason, errStorageDown)
 		}
 	}
-	for _, f := range []Feature{FeaturePasswords, FeaturePlatformStore, FeatureSSH, FeatureCA, FeatureKeyVersions, FeatureInvite} {
+	for _, f := range []Feature{FeaturePasswords, FeaturePlatformStore, FeatureSSH, FeatureCA, FeatureInvite} {
 		assert.True(t, failed[f], "%s must fail on storage", f)
 	}
 	// Features with no storage of their own still compose.
 	assert.NotNil(t, st.Credentials)
-	assert.NotNil(t, st.Barrier)
+	assert.NotNil(t, st.KeyVersions, "key versions persist through DAOs, not storage")
 }
 
-// TestBuildCA_ReloadsPersistedRoot proves a second CA over the same storage
-// loads the persisted root instead of minting a new one (go-xkms#793).
+// TestBuildCA_ReloadsPersistedRoot proves a second CA over the same DAO
+// factory and storage loads the persisted root instead of minting a new one
+// (go-xkms#793).
 func TestBuildCA_ReloadsPersistedRoot(t *testing.T) {
 	svc := hostdeps.NewService(t)
-	open := memoryStorage(t)
 	params := CAParams{
 		Config:          hostdeps.NewCAConfig("Reload Root"),
-		Storage:         open,
+		DAOs:            testutil.NewMemoryDAOFactory(),
+		Storage:         memoryStorage(t),
 		BackendForStore: backendForStore(svc),
 	}
 	first, err := BuildCA(context.Background(), params)
@@ -327,19 +176,43 @@ func TestBuildCA_ReloadsPersistedRoot(t *testing.T) {
 	assert.Equal(t, firstCert.Raw, secondCert.Raw)
 }
 
+// TestBuildCA_StoresCertificatesInTheCADatabase proves the CA keeps its
+// certificates as DAO entities in certstore.DatabaseName: a certificate store
+// opened over the same factory finds the root the CA minted.
+func TestBuildCA_StoresCertificatesInTheCADatabase(t *testing.T) {
+	daos := testutil.NewMemoryDAOFactory()
+	trustedCA, err := BuildCA(context.Background(), CAParams{
+		Config:          hostdeps.NewCAConfig("DAO Root"),
+		DAOs:            daos,
+		Storage:         memoryStorage(t),
+		BackendForStore: backendForStore(hostdeps.NewService(t)),
+	})
+	require.NoError(t, err)
+	root, err := trustedCA.CACertificate()
+	require.NoError(t, err)
+
+	store, err := certstore.New(&certstore.Config{DAOs: daos})
+	require.NoError(t, err)
+	stored, err := store.GetCertificate(certstore.CertificateKey(root))
+	require.NoError(t, err)
+	assert.Equal(t, root.Raw, stored.Raw)
+}
+
 func TestBuildCA_InvalidInput(t *testing.T) {
 	svc := hostdeps.NewService(t)
 	valid := CAParams{
 		Config:          hostdeps.NewCAConfig("Root"),
+		DAOs:            testutil.NewMemoryDAOFactory(),
 		Storage:         memoryStorage(t),
 		BackendForStore: backendForStore(svc),
 	}
 
 	t.Run("nil dependencies", func(t *testing.T) {
 		for name, p := range map[string]CAParams{
-			"config":  {Storage: valid.Storage, BackendForStore: valid.BackendForStore},
-			"storage": {Config: valid.Config, BackendForStore: valid.BackendForStore},
-			"backend": {Config: valid.Config, Storage: valid.Storage},
+			"config":  {DAOs: valid.DAOs, Storage: valid.Storage, BackendForStore: valid.BackendForStore},
+			"daos":    {Config: valid.Config, Storage: valid.Storage, BackendForStore: valid.BackendForStore},
+			"storage": {Config: valid.Config, DAOs: valid.DAOs, BackendForStore: valid.BackendForStore},
+			"backend": {Config: valid.Config, DAOs: valid.DAOs, Storage: valid.Storage},
 		} {
 			_, err := BuildCA(context.Background(), p)
 			var nilDep *NilDependencyError
@@ -367,6 +240,18 @@ func TestBuildCA_InvalidInput(t *testing.T) {
 		assert.Equal(t, "resolve keystore", opErr.Operation)
 	})
 
+	t.Run("CA database not served", func(t *testing.T) {
+		p := valid
+		p.DAOs = dao.NewStoreFactory(nil)
+		_, err := BuildCA(context.Background(), p)
+		var opErr *CAOperationError
+		require.ErrorAs(t, err, &opErr)
+		assert.Equal(t, "create certificate store", opErr.Operation)
+		var unavailable *dao.DatabaseUnavailableError
+		require.ErrorAs(t, err, &unavailable)
+		assert.Equal(t, certstore.DatabaseName, unavailable.Database)
+	})
+
 	t.Run("storage failure", func(t *testing.T) {
 		p := valid
 		p.Storage = failingStorage
@@ -378,6 +263,7 @@ func TestBuildCA_InvalidInput(t *testing.T) {
 
 	t.Run("adopt hook failure", func(t *testing.T) {
 		p := valid
+		p.DAOs = testutil.NewMemoryDAOFactory()
 		p.Storage = memoryStorage(t)
 		p.AdoptCertStore = func(_ certstore.CertStore) error { return errStorageDown }
 		_, err := BuildCA(context.Background(), p)
@@ -428,7 +314,50 @@ func TestBuilders_RejectNilDependencies(t *testing.T) {
 	assert.Contains(t, err.Error(), "TPM2 backend")
 	_, err = BuildTPMPolicyService(TPMPolicyParams{Backend: &tpm2backend.Backend{}})
 	assert.ErrorAs(t, err, &nilDep)
+	assert.Contains(t, err.Error(), "DAO factory")
+	_, err = BuildTPMPolicyService(TPMPolicyParams{Backend: &tpm2backend.Backend{}, DAOs: testutil.NewMemoryDAOFactory()})
+	assert.ErrorAs(t, err, &nilDep)
 	assert.Contains(t, err.Error(), "storage factory")
+}
+
+// TestDatabases_FollowTheSuppliedDependencies proves every root opens the
+// key-version database, which needs nothing else, and is asked to open
+// another feature's database only when it supplies that feature's other
+// dependency — the CA's for a CA configuration, the TPM policy registry's for
+// a TPM2 backend.
+func TestDatabases_FollowTheSuppliedDependencies(t *testing.T) {
+	assert.Equal(t, []string{keyversion.DatabaseName}, Databases(Deps{}))
+	assert.Equal(t, []string{keyversion.DatabaseName, certstore.DatabaseName}, Databases(Deps{CA: hostdeps.NewCAConfig("Root")}))
+	assert.Equal(t, []string{keyversion.DatabaseName, tpmpolicy.DatabaseName}, Databases(Deps{TPMBackend: &tpm2backend.Backend{}}))
+	assert.Equal(t, []string{keyversion.DatabaseName, certstore.DatabaseName, tpmpolicy.DatabaseName},
+		Databases(Deps{CA: hostdeps.NewCAConfig("Root"), TPMBackend: &tpm2backend.Backend{}}))
+}
+
+// TestBuild_CANeedsTheDAOFactory proves a root that supplies a CA
+// configuration but no DAO factory leaves the CA off, saying why.
+func TestBuild_CANeedsTheDAOFactory(t *testing.T) {
+	deps := fullDeps(t, hostdeps.NewService(t))
+	deps.DAOs = nil
+
+	st, err := Build(context.Background(), deps)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	assert.Nil(t, st.CA)
+	assert.Contains(t, reasonsFor(st, FeatureCA), "DAO factory")
+}
+
+// TestBuild_TPMPoliciesNeedTheDAOFactory proves a root that supplies a TPM2
+// backend but no DAO factory leaves the TPM policy service off, saying why.
+func TestBuild_TPMPoliciesNeedTheDAOFactory(t *testing.T) {
+	deps := fullDeps(t, hostdeps.NewService(t))
+	deps.TPMBackend = &tpm2backend.Backend{}
+	deps.DAOs = nil
+
+	st, err := Build(context.Background(), deps)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	assert.Nil(t, st.TPMPolicies)
+	assert.Contains(t, reasonsFor(st, FeatureTPMPolicies), "DAO factory")
 }
 
 func TestBuilders_StorageFailureIsFeatureBuildError(t *testing.T) {
@@ -449,7 +378,7 @@ func TestBuilders_StorageFailureIsFeatureBuildError(t *testing.T) {
 
 	// A backend whose TPM is not a pkg/tpm2 TPM cannot run the TPM policy
 	// service; it is refused before any storage is opened.
-	_, err = BuildTPMPolicyService(TPMPolicyParams{Backend: &tpm2backend.Backend{}, Storage: failingStorage})
+	_, err = BuildTPMPolicyService(TPMPolicyParams{Backend: &tpm2backend.Backend{}, DAOs: testutil.NewMemoryDAOFactory(), Storage: failingStorage})
 	require.ErrorAs(t, err, &buildErr)
 	assert.Equal(t, FeatureTPMPolicies, buildErr.Feature)
 	assert.ErrorIs(t, err, ErrUnsupportedTPM)
@@ -488,64 +417,29 @@ func anyAs[T error](errs []error, target *T) bool {
 	return false
 }
 
-// custodians and shares stand in for a qrdb node's custody clients. Only
-// the listing calls the tests make are implemented; the embedded interfaces
-// panic on anything else, so an unexpected call fails loudly.
-type custodians struct {
-	qrdbtransport.CustodianGroupClient
-}
-
-func (custodians) ListCustodianGroups(context.Context) (*qrdbtransport.ListCustodianGroupsResponse, error) {
-	return &qrdbtransport.ListCustodianGroupsResponse{}, nil
-}
-
-type shares struct {
-	qrdbtransport.ShareClient
-}
-
-func (shares) ListShares(context.Context) (*qrdbtransport.ListSharesResponse, error) {
-	return &qrdbtransport.ListSharesResponse{}, nil
-}
-
-// backupClient stands in for a qrdb node's backup client (go-xkms#728). Only
-// the listing call the tests make is implemented; the embedded interface
-// panics on anything else, so an unexpected call fails loudly.
-type backupClient struct {
-	qrdbtransport.BackupClient
-}
-
-func (backupClient) ListBackups(context.Context) ([]qrdbtransport.BackupInfo, error) {
-	return nil, nil
-}
-
 // TestTPM2Backend_NoneRegistered proves a service without a TPM2 backend
 // yields none, leaving the TPM policy service off in a host composition.
 func TestTPM2Backend_NoneRegistered(t *testing.T) {
 	assert.Nil(t, TPM2Backend(hostdeps.NewService(t)))
 }
 
-// TestBuildKeyVersionStore proves the store is built over the storage its
-// name opens, and that a missing factory and a failing storage are typed
-// errors naming the feature.
+// TestBuildKeyVersionStore proves the store is built over the factory serving
+// its database, and that a missing factory and a factory without the database
+// are typed errors naming the feature.
 func TestBuildKeyVersionStore(t *testing.T) {
-	var opened []string
-	open := func(name string) (storage.Backend, error) {
-		opened = append(opened, name)
-		return storage.New(), nil
-	}
-	store, err := BuildKeyVersionStore(open)
+	store, err := BuildKeyVersionStore(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
 	require.NotNil(t, store)
-	assert.Equal(t, []string{StorageKeyVersions}, opened)
 
 	_, err = BuildKeyVersionStore(nil)
 	var nilDep *NilDependencyError
 	require.ErrorAs(t, err, &nilDep)
 	assert.Equal(t, FeatureKeyVersions, nilDep.Feature)
 
-	_, err = BuildKeyVersionStore(failingStorage)
+	_, err = BuildKeyVersionStore(dao.NewStoreFactory(nil))
 	var buildErr *FeatureBuildError
 	require.ErrorAs(t, err, &buildErr)
 	assert.Equal(t, FeatureKeyVersions, buildErr.Feature)
-	assert.ErrorIs(t, err, errStorageDown)
+	var unavailable *dao.DatabaseUnavailableError
+	assert.ErrorAs(t, err, &unavailable)
 }

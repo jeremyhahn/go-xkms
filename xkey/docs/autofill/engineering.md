@@ -1,6 +1,6 @@
 # Browser Extension AutoFill — Engineering
 
-> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-10-07
 
 See [architecture.md](architecture.md) for the component map and data flow
 before reading this document.
@@ -258,8 +258,8 @@ Emits Wails events `extension:pairing_request` and `extension:paired`/
 `ErrExtensionHostFailed`, `ErrExtensionUnpairFailed`,
 `ErrExtensionPairStatusFailed`. `cmd/xkey/cmd/extension_serve.go` adds a
 long list of headless-startup-specific errors (barrier strategy refusals
-for `pkcs11`/`shamir`/cloud-KMS strategies a headless process cannot drive
-interactively — see the doc comments at each sentinel in that file).
+for a `shamir` strategy, and unseal failures for `pkcs11`/cloud-KMS
+strategies whose backend cannot be built — see the doc comments at each sentinel in that file).
 
 ## Configuration
 

@@ -15,13 +15,11 @@ package xkms
 
 import (
 	"context"
-	"errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
 // TenantServicer defines operations for managing tenants and their barriers.
@@ -30,8 +28,6 @@ type TenantServicer interface {
 	GetTenant(ctx context.Context, tenantID string) (*transport.GetTenantResponse, error)
 	ListTenants(ctx context.Context) (*transport.ListTenantsResponse, error)
 	DeleteTenant(ctx context.Context, tenantID string) error
-	TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error
-	TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error
 }
 
 // CreateTenant provisions a SEALED tenant shell (Phase 1 of the two-phase
@@ -148,150 +144,6 @@ func (s *XKMSService) DeleteTenant(ctx context.Context, tenantID string) error {
 		return ErrTenantServiceNotConfigured
 	}
 	return s.tenantService.DeleteTenant(ctx, tenantID)
-}
-
-// TenantBarrierInit initializes the encryption barrier for a specific tenant
-// (Phase 2 of the two-phase tenant barrier model, §3.6). The tenant admin
-// supplies their OWN credentials in the request; the server NEVER generates a
-// tenant secret. The credentials are interpreted according to req.Strategy:
-//
-//   - "" / "passphrase" / "software": req.Passphrase is required and is used
-//     as the Argon2id passphrase that seals the tenant root key. An empty
-//     passphrase is a hard error (ErrTenantPassphraseRequired); there is no
-//     server-generated fallback.
-//   - "none": the barrier is initialized with empty credentials (no secret).
-//   - "shamir": req.Passphrase is required (credential-mode Shamir splits the
-//     caller's secret into shares). The recovery shares are produced by the
-//     go-qrdb Shamir initialization path; this servicer surfaces no shares
-//     because TenantBarrierInitResponse carries none — callers requiring share
-//     distribution must use the dedicated custodian/share APIs.
-//   - hardware strategies ("tpm2", "pkcs11", cloud KMS): no caller secret is
-//     required; the strategy authenticates against its hardware/KMS backend.
-//
-// The seal strategy is fixed at tenant registration time. If req.Strategy
-// names a strategy that conflicts with the one the tenant barrier was
-// registered with, ErrTenantStrategyConflict is returned.
-//
-// This operation is idempotent: if the tenant barrier is already initialized,
-// it returns nil without error.
-//
-// A tenant-scoped caller may initialize only its own tenant's barrier; any
-// other tenant ID is refused with a *TenantBindingError that reads as
-// not-found (bindTenantTarget).
-//
-// Requires the composed TenantService; returns ErrTenantServiceNotConfigured
-// otherwise.
-func (s *XKMSService) TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error {
-	if req == nil {
-		return ErrNilRequest
-	}
-	if req.TenantID == "" {
-		return ErrTenantIDRequired
-	}
-	if err := bindTenantTarget(ctx, "tenant barrier init", req.TenantID); err != nil {
-		return err
-	}
-	if s.tenantService == nil {
-		return ErrTenantServiceNotConfigured
-	}
-
-	// Delegate to go-qrdb's TenantService, which resolves the requested seal
-	// strategy (passphrase/none/shamir or a hardware/cloud strategy —
-	// tpm2/pkcs11/aws-kms/…) from the injected StrategyRegistry and
-	// initializes the per-tenant barrier with the caller-supplied passphrase.
-	// The server never generates a tenant secret.
-	_, err := s.tenantService.TenantBarrierInitWithStrategy(
-		ctx, req.TenantID, req.Passphrase, req.Threshold, req.Shares,
-		seal.StrategyID(req.Strategy),
-	)
-	if errors.Is(err, seal.ErrAlreadyInitialized) {
-		return nil
-	}
-	return err
-}
-
-// isAlreadyUnsealed reports whether err indicates the tenant barrier was
-// already unsealed — a no-op success for an idempotent unseal. Depending on the
-// seal strategy the composed TenantService may surface either the tenant-scoped
-// sentinel ("tenant barrier is already unsealed") or the generic barrier one
-// ("barrier is already unsealed"), so both are treated as success.
-func isAlreadyUnsealed(err error) bool {
-	return err != nil &&
-		(errors.Is(err, seal.ErrTenantAlreadyUnsealed) || errors.Is(err, seal.ErrAlreadyUnsealed))
-}
-
-// TenantBarrierUnseal unseals the encryption barrier for a specific tenant
-// using the caller-supplied recovery material. The server holds no tenant
-// secret, so it can only unseal with credentials taken from the request:
-//
-//   - req.Key carries the passphrase-derived key for software/passphrase and
-//     hardware strategies (empty for "none").
-//   - req.Share carries a single Shamir recovery share for the shamir strategy.
-//
-// If the tenant barrier is already unsealed, this is a no-op that returns nil.
-//
-// A tenant-scoped caller may unseal only its own tenant's barrier; any other
-// tenant ID is refused with a *TenantBindingError that reads as not-found
-// (bindTenantTarget).
-//
-// Requires the composed TenantService; returns ErrTenantServiceNotConfigured
-// otherwise.
-func (s *XKMSService) TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error {
-	if req == nil {
-		return ErrNilRequest
-	}
-	if req.TenantID == "" {
-		return ErrTenantIDRequired
-	}
-	if err := bindTenantTarget(ctx, "tenant barrier unseal", req.TenantID); err != nil {
-		return err
-	}
-	if s.tenantService == nil {
-		return ErrTenantServiceNotConfigured
-	}
-
-	// A Shamir share is submitted toward the quorum threshold; otherwise the
-	// caller-supplied key material unseals the barrier directly.
-	if len(req.Share) > 0 {
-		_, err := s.tenantService.TenantBarrierUnsealShare(ctx, req.TenantID, string(req.Share))
-		if isAlreadyUnsealed(err) {
-			return nil
-		}
-		return err
-	}
-	if err := s.tenantService.TenantBarrierUnseal(ctx, req.TenantID, req.Key); err != nil {
-		if isAlreadyUnsealed(err) {
-			return nil
-		}
-		return err
-	}
-	return nil
-}
-
-// TenantBarrierStatus reports the current state of a per-tenant barrier
-// (sealed/initialized flags, active seal strategy, hardware-backing, and Shamir
-// quorum parameters). A tenant-scoped caller may read only its own tenant's
-// barrier status; any other tenant ID is refused with a *TenantBindingError
-// that reads as not-found (bindTenantTarget).
-//
-// Requires the composed TenantService; returns ErrTenantServiceNotConfigured
-// otherwise.
-func (s *XKMSService) TenantBarrierStatus(ctx context.Context, tenantID string) (*transport.TenantBarrierStatusResponse, error) {
-	if tenantID == "" {
-		return nil, ErrTenantIDRequired
-	}
-	if err := bindTenantTarget(ctx, "tenant barrier status", tenantID); err != nil {
-		return nil, err
-	}
-	if s.tenantService == nil {
-		return nil, ErrTenantServiceNotConfigured
-	}
-
-	status, err := s.tenantService.TenantBarrierStatus(ctx, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	return tenantBarrierStatusToTransport(status), nil
 }
 
 // UpdateTenantEntitlements updates a tenant's feature entitlements (which

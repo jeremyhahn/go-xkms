@@ -23,3 +23,7 @@ import "errors"
 // wrapped alongside it. No hash is cached afterwards, so VerifyFIDO2Hash
 // reports false until a later PIN operation caches one.
 var ErrFIDO2HashCacheFailed = errors.New("pintpm2: could not cache the FIDO2 PIN hash in locked memory")
+
+// ErrFIDO2HashDestroyFailed is returned when the locked memory holding a
+// cached FIDO2 PIN hash cannot be wiped and released.
+var ErrFIDO2HashDestroyFailed = errors.New("pintpm2: could not wipe the cached FIDO2 PIN hash")

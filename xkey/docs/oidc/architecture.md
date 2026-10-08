@@ -1,6 +1,6 @@
 # OIDC — Architecture
 
-Status: current. Last verified: 2026-09-29.
+Status: current. Last verified: 2026-10-08.
 
 ## Two backends
 
@@ -105,8 +105,8 @@ several stored sessions to update. `openOIDCTokenStore` keeps this
 single-active-session behavior deliberately — extending the CLI to concurrent
 multi-provider sessions is a product decision independent of go-xkms#4 and
 is not made here. `oidcCLITokenStore` is therefore a single Put/Get/Delete
-key, not the issuer-keyed `pkg/oidc.DAOStore`/`MemoryTokenStore` the GUI
-uses; reusing those would have required inventing a synthetic per-CLI issuer
+key, not the issuer-keyed `pkg/oidc.DAOStore` the GUI uses; reusing it
+would have required inventing a synthetic per-CLI issuer
 key with no real meaning.
 
 ## No migration, by design
@@ -129,8 +129,8 @@ temporarily.
 | Condition | Location |
 |---|---|
 | No `--token-store` override, barrier initialized | `<xkey data dir>` via the barrier-backed `xkms.StorageBackend`, key `oidc/tokens.json` |
-| No `--token-store` override, no barrier | `<xkey data dir>/oidc/tokens.json`, plain file |
-| `--token-store <path>` explicitly set | `<path>` exactly, plain file — bypasses barrier auto-detection entirely, matching `xkey oath --store` |
+| No `--token-store` override, no barrier | `<xkey data dir>`, unencrypted go-qrdb file store, key `oidc/tokens.json` |
+| `--token-store <dir>` explicitly set | `<dir>` exactly, unencrypted go-qrdb file store — bypasses barrier auto-detection entirely, matching `xkey oath --store` |
 
 `<xkey data dir>` is the shared `resolveDataDir("")` chain
 (`cmd/xkey/cmd/datadir.go`): `--data-dir` flag, then `XKEY_DATA_DIR`, then
@@ -147,10 +147,10 @@ go-xkms#1325 closes the gap by moving it behind the identical decision:
 | Condition | Location |
 |---|---|
 | No `--session-store` override, barrier initialized | `<xkey data dir>` via the barrier-backed `xkms.StorageBackend`, key `oidc/aws-session.json` |
-| No `--session-store` override, no barrier | `<xkey data dir>/oidc/aws-session.json`, plain file |
-| `--session-store <path>` explicitly set (directly on `xkey oidc aws`, or saved on an AWS provider via `xkey oidc providers add --session-store`) | `<path>` exactly, plain file — bypasses barrier auto-detection entirely |
+| No `--session-store` override, no barrier | `<xkey data dir>`, unencrypted go-qrdb file store, key `oidc/aws-session.json` |
+| `--session-store <dir>` explicitly set (directly on `xkey oidc aws`, or saved on an AWS provider via `xkey oidc providers add --session-store`) | `<dir>` exactly, unencrypted go-qrdb file store — bypasses barrier auto-detection entirely |
 
-`--session-store`'s flag default (`~/.xkey/aws-session.json`) is no longer
+`--session-store`'s flag default (`~/.xkey/aws-session`) is no longer
 where the session itself is written when left at that default; the flag's
 value is still used, always, to derive the default log-file and PID-file
 directories for `--background`/`--auto-refresh` (`getAWSDefaultLogFile`,

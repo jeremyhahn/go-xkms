@@ -84,7 +84,7 @@ func TestNewFIDO2Device_SetPINEmitsAuditRecord(t *testing.T) {
 	var buf bytes.Buffer
 	cfg := seedPINConfig(t, FIDO2StorageTypeMemory, t.TempDir(), "123456")
 
-	device, err := newFIDO2Device(cfg, bufferLogger(&buf))
+	device, err := newFIDO2Device(t.Context(), cfg, bufferLogger(&buf))
 	require.NoError(t, err)
 	defer func() { _ = device.Close() }()
 
@@ -103,7 +103,7 @@ func TestNewFIDO2Device_SetPINEmitsAuditRecord(t *testing.T) {
 func TestNewFIDO2Device_AuditWriteFailureRefusesPINSeed(t *testing.T) {
 	cfg := seedPINConfig(t, FIDO2StorageTypeMemory, t.TempDir(), "")
 
-	device, err := newFIDO2Device(cfg, discardLogger())
+	device, err := newFIDO2Device(t.Context(), cfg, discardLogger())
 	require.NoError(t, err)
 	defer func() { _ = device.Close() }()
 
@@ -136,7 +136,7 @@ func TestNewFIDO2Device_MakeCredentialEmitsAuditRecord(t *testing.T) {
 	var buf bytes.Buffer
 	cfg := seedPINConfig(t, FIDO2StorageTypeMemory, t.TempDir(), "")
 
-	device, err := newFIDO2Device(cfg, bufferLogger(&buf))
+	device, err := newFIDO2Device(t.Context(), cfg, bufferLogger(&buf))
 	require.NoError(t, err)
 	defer func() { _ = device.Close() }()
 
@@ -167,7 +167,7 @@ func TestNewFIDO2Device_MakeCredentialEmitsAuditRecord(t *testing.T) {
 func TestNewFIDO2Device_AuditWriteFailureRefusesCredentialCreation(t *testing.T) {
 	cfg := seedPINConfig(t, FIDO2StorageTypeMemory, t.TempDir(), "")
 
-	device, err := newFIDO2Device(cfg, discardLogger())
+	device, err := newFIDO2Device(t.Context(), cfg, discardLogger())
 	require.NoError(t, err)
 	defer func() { _ = device.Close() }()
 

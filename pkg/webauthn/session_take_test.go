@@ -132,11 +132,12 @@ func newCeremonyFixture(t *testing.T, params ...func(*ServiceParams)) *ceremonyF
 		AllowPublicRegistration: openRegistration(),
 	}
 
+	users, creds := newTestStores(t)
 	sp := ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	}
 	for _, p := range params {
 		p(&sp)

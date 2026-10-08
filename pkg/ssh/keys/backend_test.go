@@ -214,7 +214,7 @@ func TestBackendSigner_Errors(t *testing.T) {
 	p := newFakeProvider()
 
 	// Software key (not backend-backed) must reject BackendSigner.
-	sw, err := Generate(GenerateOptions{Algorithm: AlgorithmEd25519})
+	sw, err := Generate(t.Context(), GenerateOptions{Algorithm: AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestEnvelopeV1BackwardCompat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBackendStore: %v", err)
 	}
-	sw, err := Generate(GenerateOptions{Algorithm: AlgorithmEd25519})
+	sw, err := Generate(t.Context(), GenerateOptions{Algorithm: AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

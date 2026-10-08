@@ -14,9 +14,6 @@
 package unix
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -76,33 +73,3 @@ func TestPbTenantInfoToTransport_WithQuotasAndEntitlements(t *testing.T) {
 }
 
 // --- ClaimShareComplete: served over the HTTP-over-unix-socket bridge ---
-
-func TestClaimShareComplete_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestClaimShareComplete_Connected(t *testing.T) {
-	tr, cleanup := newHTTPOnlyTransport(t)
-	defer cleanup()
-	resp, err := tr.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestClaimShareComplete_ServerError(t *testing.T) {
-	tr := &Transport{
-		config: transport.DefaultConfig(),
-		httpClient: &http.Client{
-			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-				rec := httptest.NewRecorder()
-				rec.WriteHeader(http.StatusInternalServerError)
-				_, _ = rec.WriteString(`{"error":"share not claimable"}`)
-				return rec.Result(), nil
-			}),
-		},
-		connected: true,
-	}
-	_, err := tr.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
-	require.Error(t, err, "a non-2xx status must surface as an error, not a zero-value success")
-}

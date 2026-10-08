@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Build
 
@@ -26,8 +26,17 @@ The exported surface is **the Cryptoki C ABI**, not a Go API:
 
 Go-side logic is `pkg/pkcs11/module` (sessions, objects, mechanisms, crypto,
 errors), `pkg/pkcs11/localseal` (offline at-rest), `pkg/pkcs11/manager` (token
-management), and `pkg/pkcs11state.Store` (`NewStore(backend storage.Backend)`)
-for the remote state plane.
+management), and `pkg/pkcs11state.Store` for the remote state plane.
+
+### `pkg/pkcs11state`
+
+| Name | Contract |
+|---|---|
+| `NewStore(daos *qrdbsdk.DAOFactory) (*Store, error)` | `daos` must serve `DatabaseName` (`"pkcs11state"`); over xkmsd's embedded node the datastore runs every DAO call as the service principal (`datastore.WithCallContext`) |
+| `Put`, `PutIfAbsent`, `CompareAndSwap`, `CompareAndDelete`, `Get`, `Delete`, `List` | each takes `(ctx, tenantID, token, key, ...)`; the guarded three follow `storage.CompareAndSwapper` / `CompareAndDeleter`: an absent record refuses, a nil `expected` matches only a stored empty value |
+| `Record{ID, Name, Scope, Key, Value}` | the `pkcs11_state_records` entity; `Name` is `<tenant>/<token>/<key>` |
+| `ErrNilDAOFactory` | `NewStore` without a factory |
+| `StoreError{Op, Key, Err}` | any store failure; `Op` is `open`, `put`, `put-if-absent`, `compare-and-swap`, `compare-and-delete`, `get`, `delete` or `list`. A failed guarded write's outcome is unknown, so it is never reported as a refusal |
 
 ### Go surface for CGO-free callers
 
@@ -183,8 +192,10 @@ process, whose own FIPS posture governs it.
 ## Persistence
 
 - **Remote mode** — token and object state through `pkg/pkcs11state.Store` over
-  the `PKCS11State*` RPCs, keyed `pkcs11state/<tenant>/<token>/<key>`, with the
-  system scope under `pkcs11state/system/<token>/`.
+  the `PKCS11State*` RPCs: one `pkcs11_state_records` DAO entity per record in
+  the `pkcs11state` go-qrdb database, named `<tenant>/<token>/<key>`, with the
+  system scope under `system/<token>/`. xkmsd opens the database and writes it
+  as the embedded node's service principal.
 - **Offline mode** — key material under `XKMS_PKCS11_LOCAL_KEYDIR`, protected by
   `pkg/pkcs11/localseal` per `XKMS_PKCS11_SEAL_STRATEGY`, rooted at
   `pkcs11/token/root-key`.
@@ -232,12 +243,13 @@ opens the same token shares one counter per PIN (`MaxPINAttempts`,
   (`storage.go:333`): `PutIfAbsent` creates the key, and `CompareAndSwap`
   retries against the value the failed swap observed. Remote tokens reach the
   server's compare-and-swap through `PKCS11StateCAS` (`storage_remote.go:136`,
-  `pkg/pkcs11state/store.go:93`), so the guard holds across hosts.
+  `pkg/pkcs11state/store.go:145`), so the guard holds across hosts.
 - **A local file token's guard holds across processes, not only goroutines**
   (#1157). `StorageTypeFile` opens `pkg/storage/file.FileStorage`, whose
   `Put`, `Delete`, `PutIfAbsent`, `CompareAndSwap` and `CompareAndDelete` each
-  hold an advisory `flock` on a lock file in the token directory
-  (`pkg/storage/file/lock.go`) for the whole guarded read-compare-write.
+  hold an advisory `flock` on the token directory itself
+  (`pkg/storage/file/lock.go`) for the whole guarded read-compare-write, as
+  does opening the store.
   Before this, the wrapped engine's atomicity (`pkg/storage/engine.go`'s
   `engineBackend`, still the in-process guarantee this lock is layered over)
   was a process-local mutex: two module instances pointed at the same file
@@ -300,6 +312,12 @@ not-supported answer, so the behaviour is deliberate. Compliance detail:
   several real OS processes sharing one `StorageTypeFile` token directory,
   each spending failed attempts concurrently, and asserts the durable counter
   is the exact combined total.
+- **Remote state store** — `pkg/pkcs11state/store_test.go` round-trips every
+  operation through a real in-process DAO, survives a reopen over the same
+  store, and races 32 `PutIfAbsent` writers and 16 `CompareAndSwap`
+  incrementers to prove exactly one create and no lost update. It also pins
+  each operation's `StoreError` on a failing store and that every call runs on
+  the bound context.
 - **Tenant isolation of remote state** —
   `pkg/xkms/servicer_pkcs11state_tenant_test.go` drives all seven operations
   through one table and checks four things. A foreign or `system` tenant is

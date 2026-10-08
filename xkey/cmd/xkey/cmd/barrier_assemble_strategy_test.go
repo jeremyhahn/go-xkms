@@ -11,13 +11,12 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// These tests exercise assembleBarrierStrategy's (barrier.go) software
-// branches: the passphrase strategy it can build without any hardware, and
-// the typed errors it returns for a strategy the CLI barrier does not
-// support (pkcs11) or does not recognize at all. The tpm2 and cloud-KMS
-// branches are covered separately (tpm2 needs the in-process simulator;
-// cloud KMS needs provider credentials), so they are intentionally left out
-// here.
+// These tests exercise assembleBarrierStrategy's (barrier.go) branches that
+// need no hardware: the passphrase strategy, the typed error for a pkcs11
+// strategy with no token configured, and the one for a strategy it does not
+// recognize at all. The tpm2 and cloud-KMS branches are covered separately
+// (tpm2 needs the in-process simulator; cloud KMS needs provider
+// credentials), and the configured pkcs11 branch needs a SoftHSM token.
 package cmd
 
 import (
@@ -25,6 +24,8 @@ import (
 	"testing"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 func TestAssembleBarrierStrategy_Passphrase(t *testing.T) {
@@ -40,21 +41,20 @@ func TestAssembleBarrierStrategy_Passphrase(t *testing.T) {
 	}
 }
 
-func TestAssembleBarrierStrategy_PKCS11Unsupported(t *testing.T) {
-	strategy, closer, err := assembleBarrierStrategy(xkms.StrategyPKCS11, t.TempDir())
-	if strategy != nil {
-		t.Errorf("assembleBarrierStrategy(StrategyPKCS11) strategy = %v, want nil", strategy)
-	}
-	if closer != nil {
-		t.Errorf("assembleBarrierStrategy(StrategyPKCS11) closer = %v, want nil", closer)
-	}
+// TestAssembleBarrierStrategy_PKCS11Unconfigured proves a pkcs11 barrier
+// with no token in the xkey config is refused before any TPM or HSM is
+// touched.
+func TestAssembleBarrierStrategy_PKCS11Unconfigured(t *testing.T) {
+	saved := loadedConfig
+	loadedConfig = config.DefaultConfig()
+	t.Cleanup(func() { loadedConfig = saved })
 
-	var barrierErr *BarrierError
-	if !errors.As(err, &barrierErr) {
-		t.Fatalf("assembleBarrierStrategy(StrategyPKCS11) error = %v, want a *BarrierError", err)
+	strategy, closer, err := assembleBarrierStrategy(xkms.StrategyPKCS11, t.TempDir())
+	if strategy != nil || closer != nil {
+		t.Errorf("assembleBarrierStrategy(StrategyPKCS11) = %v, %v, want nil, nil", strategy, closer)
 	}
-	if barrierErr.Operation != "assemble_strategy" {
-		t.Errorf("barrierErr.Operation = %q, want %q", barrierErr.Operation, "assemble_strategy")
+	if !errors.Is(err, config.ErrBarrierPKCS11ConfigInvalid) {
+		t.Fatalf("assembleBarrierStrategy(StrategyPKCS11) error = %v, want ErrBarrierPKCS11ConfigInvalid", err)
 	}
 }
 

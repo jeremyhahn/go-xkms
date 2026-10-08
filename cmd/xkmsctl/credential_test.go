@@ -125,10 +125,10 @@ func TestRunCredentialSubmit_Success(t *testing.T) {
 	defer server.Close()
 
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	globalConfig = &Config{
@@ -137,7 +137,7 @@ func TestRunCredentialSubmit_Success(t *testing.T) {
 		TLSCert:      "/cert.pem",
 		TLSKey:       "/key.pem",
 	}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return server.Client(), nil
 	}
 
@@ -159,10 +159,10 @@ func TestRunCredentialSubmit_JSONOutput(t *testing.T) {
 	defer server.Close()
 
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	globalConfig = &Config{
@@ -171,7 +171,7 @@ func TestRunCredentialSubmit_JSONOutput(t *testing.T) {
 		TLSCert:      "/cert.pem",
 		TLSKey:       "/key.pem",
 	}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return server.Client(), nil
 	}
 
@@ -193,10 +193,10 @@ func TestRunCredentialSubmit_ServerError(t *testing.T) {
 	defer server.Close()
 
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	globalConfig = &Config{
@@ -205,7 +205,7 @@ func TestRunCredentialSubmit_ServerError(t *testing.T) {
 		TLSCert:      "/cert.pem",
 		TLSKey:       "/key.pem",
 	}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return server.Client(), nil
 	}
 
@@ -248,10 +248,10 @@ func TestRunCredentialStrategy_Success(t *testing.T) {
 	defer server.Close()
 
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	globalConfig = &Config{
@@ -260,7 +260,7 @@ func TestRunCredentialStrategy_Success(t *testing.T) {
 		TLSCert:      "/cert.pem",
 		TLSKey:       "/key.pem",
 	}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return server.Client(), nil
 	}
 
@@ -278,10 +278,10 @@ func TestRunCredentialStrategy_JSONOutput(t *testing.T) {
 	defer server.Close()
 
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	globalConfig = &Config{
@@ -290,7 +290,7 @@ func TestRunCredentialStrategy_JSONOutput(t *testing.T) {
 		TLSCert:      "/cert.pem",
 		TLSKey:       "/key.pem",
 	}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return server.Client(), nil
 	}
 
@@ -308,10 +308,10 @@ func TestRunCredentialStrategy_ServerError(t *testing.T) {
 	defer server.Close()
 
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
 	globalConfig = &Config{
@@ -320,7 +320,7 @@ func TestRunCredentialStrategy_ServerError(t *testing.T) {
 		TLSCert:      "/cert.pem",
 		TLSKey:       "/key.pem",
 	}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
+	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
 		return server.Client(), nil
 	}
 
@@ -335,14 +335,14 @@ func TestRunCredentialStrategy_ServerError(t *testing.T) {
 
 func TestRunCredentialSubmit_MTLSRequired(t *testing.T) {
 	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
+	oldFactory := serverHTTPClientFactory
 	defer func() {
 		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
+		serverHTTPClientFactory = oldFactory
 	}()
 
-	// Don't set initHTTPClientFactory so default path is taken
-	initHTTPClientFactory = nil
+	// Don't set serverHTTPClientFactory so default path is taken
+	serverHTTPClientFactory = nil
 
 	globalConfig = &Config{
 		Server:  "https://localhost:8443",

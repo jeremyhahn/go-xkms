@@ -94,7 +94,7 @@ What actually shipped: `xkmsd init` runs the trust-root ceremony
 CA bundle, an SPKI pin, and the first admin's certificate bundle. Multi-admin is
 the M-of-N Security Officer ceremony (`awaiting_init -> enrolling ->
 operational`) with challenge-response certificate and Shamir-share claims. See
-[Bootstrap Authentication](auth/bootstrap.md) for the real flow.
+[Init ceremony](init-ceremony/architecture.md) for the real flow.
 
 ### Phase 10a: Purge InsecureSkipVerify
 - [x] SDK `WithTLSInsecureSkipVerify()` deprecated in favor of `WithSPKIPin`

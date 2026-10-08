@@ -245,8 +245,8 @@ func (b *Backend) hasServicePrincipal() bool {
 // takes the client secret as a plain string — the documented third-party-SDK
 // boundary (go-xkms#610): the plaintext leaves ClientSecret's SecretValue
 // enclave only for the duration of this constructor call.
-func (b *Backend) newClientSecretCredential(credOptions *azidentity.ClientSecretCredentialOptions) (*azidentity.ClientSecretCredential, error) {
-	clientSecret, err := types.SecretValueBytes(b.config.ClientSecret)
+func (b *Backend) newClientSecretCredential(ctx context.Context, credOptions *azidentity.ClientSecretCredentialOptions) (*azidentity.ClientSecretCredential, error) {
+	clientSecret, err := types.SecretValueBytes(ctx, b.config.ClientSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +286,7 @@ func (b *Backend) initClient(ctx context.Context) error {
 		credOptions := &azidentity.ClientSecretCredentialOptions{
 			AdditionallyAllowedTenants: []string{"*"},
 		}
-		cred, err := b.newClientSecretCredential(credOptions)
+		cred, err := b.newClientSecretCredential(ctx, credOptions)
 		if err != nil {
 			return &errs.Wrapped{Msg: "failed to create client secret credential", Err: err}
 		}

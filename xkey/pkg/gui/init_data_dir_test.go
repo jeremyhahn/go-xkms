@@ -83,7 +83,6 @@ func newMinimalApp(t *testing.T) *App {
 	phoneSvc := services.NewPhoneService()
 	trustSvc := services.NewTrustService(nil)
 	oidcSvc := services.NewOIDCService(log)
-	shareSvc := services.NewShareService()
 	sealSvc := services.NewSealService("")
 	pivSvc := services.NewPIVService(nil, "software")
 	teamSvc := services.NewTeamService()
@@ -113,7 +112,6 @@ func newMinimalApp(t *testing.T) *App {
 		tpmService:         tpmSvc,
 		phoneService:       phoneSvc,
 		oidcService:        oidcSvc,
-		shareService:       shareSvc,
 		pivService:         pivSvc,
 		sealService:        sealSvc,
 		auditStore:         auditStore,

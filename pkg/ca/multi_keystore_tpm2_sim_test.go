@@ -110,7 +110,7 @@ func TestCA_TPM2Key_InitAndSign(t *testing.T) {
 	require.True(t, root.IsInitialized())
 
 	// The secondary TPM2 ECDSA key physically exists inside the swtpm.
-	tpmAttrs, err := types.KeyAttributesFromConfig(keyConfig(types.AlgorithmECDSA, types.StoreTPM2))
+	tpmAttrs, err := types.KeyAttributesFromConfig(t.Context(), keyConfig(types.AlgorithmECDSA, types.StoreTPM2))
 	require.NoError(t, err)
 	tpmAttrs.CN = cn
 	tpmAttrs.KeyType = types.KeyTypeCA
@@ -170,7 +170,7 @@ func TestCA_TPM2PrimaryKey_InitAndSign(t *testing.T) {
 	require.True(t, root.IsInitialized())
 
 	// The primary CA key physically lives in the swtpm.
-	tpmAttrs, err := types.KeyAttributesFromConfig(keyConfig(types.AlgorithmECDSA, types.StoreTPM2))
+	tpmAttrs, err := types.KeyAttributesFromConfig(t.Context(), keyConfig(types.AlgorithmECDSA, types.StoreTPM2))
 	require.NoError(t, err)
 	tpmAttrs.CN = cn
 	tpmAttrs.KeyType = types.KeyTypeCA

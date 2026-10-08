@@ -61,14 +61,14 @@ func newCustodyBarrierPair(t *testing.T) (b1, b2 *seal.Barrier) {
 
 	b1, err := seal.NewBarrier(logger, backend, cfg, seal.NewSoftwareStrategy())
 	require.NoError(t, err)
-	creds1, err := seal.CredentialsFor([]byte("test-system-pw"))
+	creds1, err := seal.CredentialsFor(t.Context(), []byte("test-system-pw"))
 	require.NoError(t, err)
 	defer creds1.Secret.Destroy()
 	require.NoError(t, b1.Initialize(context.Background(), creds1))
 
 	b2, err = seal.NewBarrier(logger, backend, cfg, seal.NewSoftwareStrategy())
 	require.NoError(t, err)
-	creds2, err := seal.CredentialsFor([]byte("test-system-pw"))
+	creds2, err := seal.CredentialsFor(t.Context(), []byte("test-system-pw"))
 	require.NoError(t, err)
 	defer creds2.Secret.Destroy()
 	require.NoError(t, b2.Unseal(context.Background(), creds2))

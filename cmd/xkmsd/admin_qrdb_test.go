@@ -13,15 +13,13 @@
 
 package main
 
-// Tests for admin.go's embeddedQRDBService adapter and finalizeAdminModule,
-// both of which need a real *qrdbsdk.Client: go-qrdb's Client has no
+// Tests for admin.go's finalizeAdminModule, which needs a real *qrdbsdk.Client: go-qrdb's Client has no
 // lightweight test constructor (NewClient requires a transport.Transport),
 // so these tests stand up a real *server.Server over an embedded qrdb node
 // rooted at a temp dir -- the same "embedded" transport production selects
 // for a standalone deployment -- rather than faking the client.
 
 import (
-	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -33,7 +31,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	acmeentities "github.com/jeremyhahn/go-xkms/pkg/acme/entities"
-	acmeqrdb "github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	acmestorage "github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	nativeca "github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -135,38 +132,6 @@ func newEmbeddedQRDBServerWithCA(t *testing.T) (*server.Server, *config.Config) 
 		t.Fatal("fixture setup: CA() = nil with a CA identity configured")
 	}
 	return srv, cfg
-}
-
-func TestEmbeddedQRDBService_Config(t *testing.T) {
-	srv, _ := newEmbeddedQRDBServer(t)
-	svc := &embeddedQRDBService{Client: srv.QRDBClient()}
-	cfg := svc.Config()
-	if cfg == nil || cfg.Mode != acmeqrdb.ModeStandalone {
-		t.Fatalf("Config() = %+v, want Mode=%v", cfg, acmeqrdb.ModeStandalone)
-	}
-}
-
-func TestEmbeddedQRDBService_Healthy(t *testing.T) {
-	srv, _ := newEmbeddedQRDBServer(t)
-	svc := &embeddedQRDBService{Client: srv.QRDBClient()}
-	if !svc.Healthy(context.Background()) {
-		t.Fatal("Healthy(ctx) = false for a freshly constructed embedded node, want true")
-	}
-}
-
-// TestEmbeddedQRDBService_Close proves Close is the documented no-op: it
-// must return nil, and, unlike a real Close, must leave the underlying
-// client usable afterward, since its lifecycle belongs to pkg/server
-// (stopQRDBNode), not to this adapter.
-func TestEmbeddedQRDBService_Close(t *testing.T) {
-	srv, _ := newEmbeddedQRDBServer(t)
-	svc := &embeddedQRDBService{Client: srv.QRDBClient()}
-	if err := svc.Close(); err != nil {
-		t.Fatalf("Close() = %v, want nil", err)
-	}
-	if !svc.Healthy(context.Background()) {
-		t.Fatal("client unusable after embeddedQRDBService.Close(), want Close to be a no-op")
-	}
 }
 
 // TestFinalizeAdminModule_Success proves finalizeAdminModule builds and

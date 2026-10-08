@@ -1,6 +1,6 @@
 # Platform Secrets — Architecture
 
-> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-10-07
 
 ## The problem
 
@@ -67,10 +67,12 @@ xkmsd's own platform store is sealed by whichever strategy
 `azurekv`, `vault`, `passphrase`) — a `seal.PlatformSealer` built around a
 single-strategy `types.Sealer`, independent of and parallel to the barrier.
 `credentials.seal_strategy: barrier` is the one value that does NOT go
-through the platform store at all: `credentials.Service` stores that
-credential directly in the barrier instead (see
-[`../init/credentials.md`](../init/credentials.md), not itself NORMATIVE, but
-descriptive of that split). `manual` stores nothing. See
+through the platform store at all: for `barrier` and `manual`,
+`credentials.Service` delegates to go-qrdb's versioned credential service
+(`qrdbsdk.NewVersionedCredentialService`), which stores a `barrier`
+credential directly in the barrier and holds a `manual` one in memory only.
+The platform strategies are the part xkms adds; go-qrdb has no hardware
+credential strategy. See
 [`platform_store.go`'s `initializePlatformStore`](../../pkg/server/platform_store.go)
 for the per-strategy sealer resolution:
 
@@ -85,9 +87,9 @@ for the per-strategy sealer resolution:
 - **`awskms`/`gcpkms`/`azurekv`** authenticate with each cloud SDK's ambient
   credential chain (IAM role, Application Default Credentials,
   `DefaultAzureCredential`) and resolve their symmetric wrapping key through
-  the same `seal_strategies.go` machinery (`sealKeyAttributesFor`,
-  `ensureSealKey`) the barrier's own cloud-KMS strategy uses — the same
-  self-provisioned key, not a second one.
+  `seal_strategies.go` (`sealKeyAttributesFor`, `ensureSealKey`), over the
+  same `seal.EnsureSealKey` the node seal's cloud-KMS strategy provisions
+  through — the same fixed key name, not a second scheme.
 - **`pkcs11`/`vault`** fail closed today (go-xkms#677): the PIN/token is
   only resolvable through the credential service this call itself builds
   storage for.

@@ -19,7 +19,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/jeremyhahn/go-xkms/pkg/api/initgate"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -99,7 +98,7 @@ var publicMethods = map[string]struct{}{
 //   - xkms.*PIV* — pkg/api/grpc/service_piv.go (piv:read/write/delete/use).
 //   - xkms.ca.* and xkms.ca.tcg.* — pkg/api/grpc/service_ca.go and
 //     service_ca_tcg.go (certs:read/generate/revoke).
-//   - barrier.* — pkg/api/grpc/service_barrier_pin.go and
+//   - barrier.* — pkg/api/grpc/service_pin.go and
 //     service_barrier_shamir.go (seal:* plus barrier:unseal-share).
 //   - init.* and credentials.* — pkg/api/rest/routes.go's /init and
 //     /credentials route decorators (ceremony:*, credentials:*).
@@ -114,8 +113,8 @@ var publicMethods = map[string]struct{}{
 //   - xkms.*SOPIN / *UserPIN / getLockoutStatus / resetLockout,
 //     xkms.*CustodianGroup* / addCustodianMember / removeCustodianMember /
 //     distributeShares, xkms.*Tenant* / tenantBarrier*, and xkms.deriveKey —
-//     pkg/api/grpc/service_barrier_pin.go and
-//     service_custodian_share_tenant.go's s.authorize calls (pin:*,
+//     pkg/api/grpc/service_pin.go and
+//     service_tenant.go's s.authorize calls (pin:*,
 //     ceremony:*, tenants:*, tenant_barrier:*), and service.go's DeriveKey
 //     (keys:derive). pkg/api/rest/routes.go's PIN, custodian, and tenant
 //     routes carry the identical pin:*/ceremony:*/tenants:*/tenant_barrier:*
@@ -165,12 +164,12 @@ var methodPermissions = map[string]permission{
 	"xkms.unwrapKeyByID":     {auth.ResourceKeys, auth.ActionUnwrap},
 
 	// Certificate storage.
-	"xkms.saveCert":          {auth.ResourceCerts, auth.ActionGenerate},
+	"xkms.saveCert":          {auth.ResourceCerts, auth.ActionEnroll},
 	"xkms.getCert":           {auth.ResourceCerts, auth.ActionRead},
 	"xkms.deleteCert":        {auth.ResourceCerts, auth.ActionRevoke},
 	"xkms.listCerts":         {auth.ResourceCerts, auth.ActionList},
 	"xkms.certExists":        {auth.ResourceCerts, auth.ActionRead},
-	"xkms.saveCertChain":     {auth.ResourceCerts, auth.ActionGenerate},
+	"xkms.saveCertChain":     {auth.ResourceCerts, auth.ActionEnroll},
 	"xkms.getCertChain":      {auth.ResourceCerts, auth.ActionRead},
 	"xkms.getTLSCertificate": {auth.ResourceCerts, auth.ActionRead},
 
@@ -192,39 +191,25 @@ var methodPermissions = map[string]permission{
 	// Certificate authority.
 	"xkms.ca.bundle":      {auth.ResourceCerts, auth.ActionRead},
 	"xkms.ca.certificate": {auth.ResourceCerts, auth.ActionRead},
-	"xkms.ca.sign-csr":    {auth.ResourceCerts, auth.ActionGenerate},
-	"xkms.ca.issue":       {auth.ResourceCerts, auth.ActionGenerate},
+	"xkms.ca.sign-csr":    {auth.ResourceCerts, auth.ActionIssue},
+	"xkms.ca.issue":       {auth.ResourceCerts, auth.ActionIssue},
 	"xkms.ca.revoke":      {auth.ResourceCerts, auth.ActionRevoke},
 	"xkms.ca.crl":         {auth.ResourceCerts, auth.ActionRead},
 	"xkms.ca.is-revoked":  {auth.ResourceCerts, auth.ActionRead},
 
 	// TCG certificate authority.
-	"xkms.ca.tcg.issue-ek":  {auth.ResourceCerts, auth.ActionGenerate},
-	"xkms.ca.tcg.issue-ak":  {auth.ResourceCerts, auth.ActionGenerate},
-	"xkms.ca.tcg.sign-csr":  {auth.ResourceCerts, auth.ActionGenerate},
-	"xkms.ca.tcg.enroll":    {auth.ResourceCerts, auth.ActionGenerate},
-	"xkms.ca.tcg.issue-lak": {auth.ResourceCerts, auth.ActionGenerate},
+	"xkms.ca.tcg.issue-ek":  {auth.ResourceCerts, auth.ActionIssue},
+	"xkms.ca.tcg.issue-ak":  {auth.ResourceCerts, auth.ActionIssue},
+	"xkms.ca.tcg.sign-csr":  {auth.ResourceCerts, auth.ActionIssue},
+	"xkms.ca.tcg.enroll":    {auth.ResourceCerts, auth.ActionIssue},
+	"xkms.ca.tcg.issue-lak": {auth.ResourceCerts, auth.ActionIssue},
 
 	// Barrier lifecycle.
-	"barrier.initialize":           {auth.ResourceSeal, auth.ActionBootstrap},
-	"barrier.initializeShamir":     {auth.ResourceSeal, auth.ActionInitializeShamir},
-	"barrier.unseal":               {auth.ResourceSeal, auth.ActionUnseal},
-	"barrier.unsealShare":          {auth.ResourceBarrier, auth.ActionUnsealShare},
-	"barrier.unsealShares":         {auth.ResourceSeal, auth.ActionUnseal},
-	"barrier.seal":                 {auth.ResourceSeal, auth.ActionSeal},
-	"barrier.status":               {auth.ResourceSeal, auth.ActionStatus},
-	"barrier.rekey":                {auth.ResourceSeal, auth.ActionRekey},
-	"barrier.generateRecoveryKeys": {auth.ResourceSeal, auth.ActionGenerateRecovery},
-	"barrier.recoverWithKeys":      {auth.ResourceSeal, auth.ActionRecoverWithKeys},
-	"barrier.deleteRecoveryKeys":   {auth.ResourceSeal, auth.ActionGenerateRecovery},
-	"barrier.hasRecoveryKeys":      {auth.ResourceSeal, auth.ActionStatus},
-	"barrier.generateRootToken":    {auth.ResourceSeal, auth.ActionRotateRootKey},
-	"barrier.enableEncryption":     {auth.ResourceSeal, auth.ActionEnableEncryption},
 
 	// Trust bootstrap listener (go-xkms#632).
 	"bootstrap.showKeys": {auth.ResourceBootstrap, auth.ActionRead},
 
-	// PIN management -- pkg/api/grpc/service_barrier_pin.go's
+	// PIN management -- pkg/api/grpc/service_pin.go's
 	// s.authorize(ctx, auth.ResourcePIN, ...) calls (go-xkms#773).
 	"xkms.setSOPIN":         {auth.ResourcePIN, auth.ActionWrite},
 	"xkms.setUserPIN":       {auth.ResourcePIN, auth.ActionWrite},
@@ -239,28 +224,15 @@ var methodPermissions = map[string]permission{
 	// family verbatim (owner ruling 2026-09-30, go-xkms#728). Restore is
 	// gated separately from create/read because it overwrites live shard
 	// state.
-	"xkms.createBackup":  {auth.ResourceBackup, auth.ActionCreate},
-	"xkms.listBackups":   {auth.ResourceBackup, auth.ActionList},
-	"xkms.getBackup":     {auth.ResourceBackup, auth.ActionRead},
-	"xkms.deleteBackup":  {auth.ResourceBackup, auth.ActionDelete},
-	"xkms.restoreBackup": {auth.ResourceBackup, auth.ActionRestore},
-	"xkms.verifyBackup":  {auth.ResourceBackup, auth.ActionVerify},
 
-	// Custodian groups -- pkg/api/grpc/service_custodian_share_tenant.go's
+	// Custodian groups -- pkg/api/grpc/service_tenant.go's
 	// s.authorize(ctx, auth.ResourceCeremony, ...) calls (go-xkms#773). Group
 	// reads carry the ceremony status action; enrolling or revoking a
 	// custodian changes who can contribute an unseal share, so those carry
 	// the dedicated enroll/revoke_custodian actions, exactly as the init
 	// ceremony's own custodian roster does.
-	"xkms.createCustodianGroup":  {auth.ResourceCeremony, auth.ActionEnrollCustodian},
-	"xkms.getCustodianGroup":     {auth.ResourceCeremony, auth.ActionStatus},
-	"xkms.listCustodianGroups":   {auth.ResourceCeremony, auth.ActionStatus},
-	"xkms.deleteCustodianGroup":  {auth.ResourceCeremony, auth.ActionRevokeCustodian},
-	"xkms.addCustodianMember":    {auth.ResourceCeremony, auth.ActionEnrollCustodian},
-	"xkms.removeCustodianMember": {auth.ResourceCeremony, auth.ActionRevokeCustodian},
-	"xkms.distributeShares":      {auth.ResourceCeremony, auth.ActionClaimShareBegin},
 
-	// Tenant administration -- pkg/api/grpc/service_custodian_share_tenant.go's
+	// Tenant administration -- pkg/api/grpc/service_tenant.go's
 	// s.authorize(ctx, auth.ResourceTenants|auth.ResourceTenantBarrier, ...)
 	// calls (go-xkms#773). Tenant metadata CRUD carries tenants:*; the
 	// per-tenant barrier lifecycle is its own resource family, distinct from
@@ -270,9 +242,6 @@ var methodPermissions = map[string]permission{
 	"xkms.getTenant":                {auth.ResourceTenants, auth.ActionRead},
 	"xkms.listTenants":              {auth.ResourceTenants, auth.ActionList},
 	"xkms.deleteTenant":             {auth.ResourceTenants, auth.ActionDelete},
-	"xkms.tenantBarrierInit":        {auth.ResourceTenantBarrier, auth.ActionInit},
-	"xkms.tenantBarrierUnseal":      {auth.ResourceTenantBarrier, auth.ActionUnseal},
-	"xkms.tenantBarrierStatus":      {auth.ResourceTenantBarrier, auth.ActionStatus},
 	"xkms.updateTenantEntitlements": {auth.ResourceTenants, auth.ActionSetEntitlements},
 	"xkms.updateTenantQuotas":       {auth.ResourceTenants, auth.ActionSetQuotas},
 
@@ -284,23 +253,11 @@ var methodPermissions = map[string]permission{
 
 	// Shamir shares. Reads are ceremony status; writes (submit, delete)
 	// move quorum material and carry the barrier's unseal-share action.
-	"xkms.submitShare":              {auth.ResourceBarrier, auth.ActionUnsealShare},
-	"xkms.listShares":               {auth.ResourceCeremony, auth.ActionStatus},
-	"xkms.getShare":                 {auth.ResourceCeremony, auth.ActionStatus},
-	"xkms.deleteShare":              {auth.ResourceBarrier, auth.ActionUnsealShare},
-	"xkms.getShareCollectionStatus": {auth.ResourceCeremony, auth.ActionStatus},
 
 	// Audit read plane. Emission is a side effect of the audited operation;
 	// this is the only reader, gated on the audit resource with a read action.
-	"xkms.queryAudit": {auth.ResourceAudit, auth.ActionRead},
 
 	// Init ceremony.
-	"init.getStatus":          {auth.ResourceCeremony, auth.ActionStatus},
-	"init.claimCertBegin":     {auth.ResourceCeremony, auth.ActionClaimCert},
-	"init.claimCertComplete":  {auth.ResourceCeremony, auth.ActionClaimCert},
-	"init.claimShareBegin":    {auth.ResourceCeremony, auth.ActionClaimShareBegin},
-	"init.claimShareComplete": {auth.ResourceCeremony, auth.ActionClaimShareComplete},
-	"init.signCSR":            {auth.ResourceCeremony, auth.ActionSignCSR},
 
 	// Credential submission.
 	"credentials.submit":   {auth.ResourceCredentials, auth.ActionSubmit},
@@ -431,40 +388,6 @@ var methodPermissions = map[string]permission{
 	"frost.verify":         {auth.ResourceKeys, auth.ActionVerify},
 }
 
-// publicCeremonyMethods is the exact-match allowlist of init ceremony JSON-RPC
-// methods a credential-less officer may invoke. It is derived from the
-// canonical transport-neutral table in pkg/api/initgate — never hand-edited —
-// so the REST, QUIC and MCP exemptions cannot drift apart. init.signCSR is
-// deliberately absent (initgate.Exclusions): it requires the SO PIN and is
-// invoked by an already-enrolled operator, so it stays behind the ordinary
-// permission gate.
-// The two claim-share methods additionally require a client certificate: the
-// handlers derive the caller's thumbprint from the verified mTLS peer chain on
-// the connection context and match it against the officer's enrolment record.
-// What they skip here is *account* authorization, not identity assertion.
-var publicCeremonyMethods = initgate.MCPPublicMethods()
-
-// isPublicCeremonyMethod reports whether method is an init ceremony claim
-// method invoked while the ceremony is still in progress. It fails closed when
-// no XKMS service is wired, when no ceremony service sits behind it, or when
-// the ceremony has reached the operational state.
-func (s *Server) isPublicCeremonyMethod(ctx context.Context, method string) bool {
-	if _, ok := publicCeremonyMethods[method]; !ok {
-		return false
-	}
-	if s.xkmsService == nil {
-		return false
-	}
-
-	status, err := s.xkmsService.GetInitStatus(ctx)
-	if err != nil || status == nil {
-		return false
-	}
-	// The exemption applies only while the ceremony is pre-operational;
-	// initgate.PreOperationalName fails closed on any state it does not name.
-	return initgate.PreOperationalName(status.State)
-}
-
 // frostMethodPrefix identifies the FROST namespace. Its handlers live behind
 // the `frost` build tag, so dispatchability is decided by prefix here: a
 // frost.* method that is missing from methodPermissions is denied rather than
@@ -500,17 +423,6 @@ func (s *Server) authorizeMethod(ctx context.Context, method string) error {
 	}
 
 	if _, public := publicMethods[method]; public {
-		return nil
-	}
-
-	// The init ceremony claim surface is public only while the ceremony has
-	// not reached the operational state -- an officer's first credential is
-	// the certificate those methods hand out, so gating them on an identity
-	// deadlocks M-of-N enrollment. The condition fails closed: an operational
-	// (or unreadable) ceremony falls through to the ordinary permission gate.
-	if s.isPublicCeremonyMethod(ctx, method) {
-		s.logger.DebugContext(ctx, "MCP init ceremony method served without authorization",
-			slog.String("method", method))
 		return nil
 	}
 

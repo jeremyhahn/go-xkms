@@ -114,13 +114,9 @@ export { KeyVersionsClient } from './clients/keyVersions.js';
 export { CertsClient } from './clients/certs.js';
 export { SealClient } from './clients/seal.js';
 export { FrostClient } from './clients/frost.js';
-export { BarrierClient } from './clients/barrier.js';
 export { PinClient } from './clients/pin.js';
 export { PivClient } from './clients/piv.js';
 export { CaClient } from './clients/ca.js';
-export { ClusterClient } from './clients/cluster.js';
-export { CustodianClient } from './clients/custodian.js';
-export { SharesClient } from './clients/shares.js';
 export { TenantsClient } from './clients/tenants.js';
 export { PasswordsClient } from './clients/passwords.js';
 export {
@@ -131,12 +127,9 @@ export {
 } from './clients/oidcCredential.js';
 export { PlatformClient } from './clients/platform.js';
 export { TpmPolicyClient, pcrBranch } from './clients/tpmPolicy.js';
-export { InitClient } from './clients/init.js';
 export { CredentialsClient } from './clients/credentials.js';
 export { UsersClient } from './clients/users.js';
-export { FactorsClient } from './clients/factors.js';
 export { SshClient } from './clients/ssh.js';
-export { AuditClient } from './clients/audit.js';
 
 // ---------------------------------------------------------------------------
 // Wire types (request/response DTOs mirroring the Go json tags)
@@ -150,22 +143,15 @@ export type * from './types/keyVersions.js';
 export type * from './types/certs.js';
 export type * from './types/seal.js';
 export type * from './types/frost.js';
-export type * from './types/barrier.js';
 export type * from './types/pin.js';
 export type * from './types/piv.js';
 export type * from './types/ca.js';
-export type * from './types/cluster.js';
-export type * from './types/custodian.js';
-export type * from './types/shares.js';
 export type * from './types/tenants.js';
 export type * from './types/passwords.js';
 export type * from './types/oidcCredential.js';
 export type * from './types/platform.js';
 export type * from './types/tpmPolicy.js';
-export type * from './types/init.js';
 export type * from './types/credentials.js';
 export type * from './types/users.js';
-export type * from './types/factors.js';
 export type * from './types/auth.js';
 export type * from './types/ssh.js';
-export type * from './types/audit.js';

@@ -22,7 +22,6 @@ package cmd
 // token store makes, and oath_barrier_test.go's coverage for `xkey oath`.
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -50,10 +49,9 @@ func TestOpenAWSSessionStore_NoBarrier_WarnsAndUsesFileStore(t *testing.T) {
 	assert.Contains(t, logged, `store="AWS session"`)
 	assert.Contains(t, logged, "xkey barrier init")
 
-	// The session lands in the historical unencrypted file, readable
-	// without a barrier -- the no-barrier default is unchanged.
-	raw, err := os.ReadFile(filepath.Join(backupTestDataDir(home), "oidc", "aws-session.json"))
-	require.NoError(t, err)
+	// The session lands unencrypted in the data directory's storage,
+	// readable without a barrier -- the no-barrier default is unchanged.
+	raw := readStorageEntry(t, backupTestDataDir(home), awsSessionStoreKey)
 	assert.Contains(t, string(raw), "refresh-1")
 
 	loaded, err := loadAWSSession(cmd, "")
@@ -80,8 +78,7 @@ func TestOpenAWSSessionStore_BarrierInitialized_WritesCiphertextNotPlaintext(t *
 
 	// The raw bytes barrier storage wrote to disk must never contain the
 	// plaintext refresh token or DPoP key.
-	raw, err := os.ReadFile(filepath.Join(dataDir, "oidc", "aws-session.json"))
-	require.NoError(t, err, "the barrier-encrypted AWS session entry must exist on disk")
+	raw := readStorageEntry(t, dataDir, awsSessionStoreKey)
 	assert.NotContains(t, string(raw), "secret-refresh-token")
 	assert.NotContains(t, string(raw), "secret-key-material")
 
@@ -131,7 +128,7 @@ func TestOpenAWSSessionStore_ExplicitSessionStoreFlagBypassesBarrier(t *testing.
 	home := isolatedBackupHome(t)
 	initTestOATHBarrier(t, home, "correct-password")
 
-	store := filepath.Join(t.TempDir(), "aws-session.json")
+	store := filepath.Join(t.TempDir(), "aws-session")
 	cmd, _ := newDetachedOIDCCmd(t, oidcAWSCmd)
 
 	session := AWSStoredSession{Region: "us-east-1", RefreshToken: "explicit-refresh"}
@@ -139,7 +136,8 @@ func TestOpenAWSSessionStore_ExplicitSessionStoreFlagBypassesBarrier(t *testing.
 	// No --barrier-password is supplied; this must still succeed because an
 	// explicit session store path bypasses barrier auto-detection entirely.
 	require.NoError(t, storeAWSSession(cmd, store, session))
-	assert.FileExists(t, store)
+	assert.Contains(t, string(readStorageEntry(t, store, awsSessionStoreKey)), "explicit-refresh",
+		"the explicit store holds the session unencrypted")
 
 	loaded, err := loadAWSSession(cmd, store)
 	require.NoError(t, err)

@@ -110,7 +110,7 @@ func TestXMLParser_Parse_ValidFile(t *testing.T) {
 	}
 
 	p := NewXMLParser()
-	entries, err := p.Parse(filePath, nil)
+	entries, err := p.Parse(t.Context(), filePath, nil)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -199,7 +199,7 @@ func TestXMLParser_Parse_WithTargetFolder(t *testing.T) {
 	opts := &ImportOptions{
 		TargetFolder: "Imported/KeePass",
 	}
-	entries, err := p.Parse(filePath, opts)
+	entries, err := p.Parse(t.Context(), filePath, opts)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -228,7 +228,7 @@ func TestXMLParser_Parse_InvalidXML(t *testing.T) {
 	}
 
 	p := NewXMLParser()
-	_, err := p.Parse(filePath, nil)
+	_, err := p.Parse(t.Context(), filePath, nil)
 	if err == nil {
 		t.Fatal("Parse() expected error for invalid XML")
 	}
@@ -251,7 +251,7 @@ func TestXMLParser_Parse_MissingRootGroup(t *testing.T) {
 	}
 
 	p := NewXMLParser()
-	_, err := p.Parse(filePath, nil)
+	_, err := p.Parse(t.Context(), filePath, nil)
 	if err == nil {
 		t.Fatal("Parse() expected error for missing root group UUID")
 	}
@@ -277,7 +277,7 @@ func TestXMLParser_Parse_EmptyDatabase(t *testing.T) {
 	}
 
 	p := NewXMLParser()
-	_, err := p.Parse(filePath, nil)
+	_, err := p.Parse(t.Context(), filePath, nil)
 	if err != ErrNoEntriesFound {
 		t.Errorf("Parse() error = %v, want %v", err, ErrNoEntriesFound)
 	}
@@ -285,7 +285,7 @@ func TestXMLParser_Parse_EmptyDatabase(t *testing.T) {
 
 func TestXMLParser_Parse_NonexistentFile(t *testing.T) {
 	p := NewXMLParser()
-	_, err := p.Parse("/nonexistent/file.xml", nil)
+	_, err := p.Parse(t.Context(), "/nonexistent/file.xml", nil)
 	if err == nil {
 		t.Fatal("Parse() expected error for nonexistent file")
 	}
@@ -326,7 +326,7 @@ func TestXMLParser_Parse_SkipsEmptyPasswords(t *testing.T) {
 	}
 
 	p := NewXMLParser()
-	entries, err := p.Parse(filePath, nil)
+	entries, err := p.Parse(t.Context(), filePath, nil)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -370,7 +370,7 @@ func TestXMLParser_Parse_NestedGroups(t *testing.T) {
 	}
 
 	p := NewXMLParser()
-	entries, err := p.Parse(filePath, nil)
+	entries, err := p.Parse(t.Context(), filePath, nil)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}

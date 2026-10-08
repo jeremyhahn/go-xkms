@@ -17,7 +17,7 @@
 // returns a Client that issues ssh.keys.*, ssh.knownHosts.*, and
 // ssh.authorizedKeys.* calls as MCP "tools/call" requests, using
 // pkg/mcptool.Client for the connection, TLS/mTLS setup, protocol handshake,
-// tool-call framing, and go-qrdb wire.ErrorEnvelope decoding — the same
+// tool-call framing, and go-qrdb qrdbsdk.MCPErrorEnvelope decoding — the same
 // machinery pkg/api/transport/mcp.Transport uses to reach that server for
 // the rest of the xkms SDK. This package builds on pkg/mcptool rather than
 // on pkg/api/transport/mcp directly because pkg/api/mcp's Server holds an
@@ -39,7 +39,7 @@
 // call (below) reconstructs this package's own typed errors --
 // *NotFoundError, *DuplicateError, *MismatchError, *InvalidRequestError,
 // *NotImplementedError, *AuthError -- from a failed call's
-// *mcptool.RPCError.WireCode, the raw go-qrdb wire.Code classification,
+// *mcptool.RPCError.WireCode, the raw go-qrdb qrdbsdk.MCPCode classification,
 // mirroring how the REST transport's decodeErrorResponse reconstructs them
 // from an HTTP status, and how sdk/go/client/ssh/mcp_status.go's
 // JSONRPCCodeForError classifies the same store errors for the (now
@@ -47,12 +47,12 @@
 // (pkg/api/mcp/errors_ssh.go) delegates to that same shared classify()
 // table (rest_status_dispatch.go) via JSONRPCCodeForError, and
 // pkg/apimodule's keyOpCodeToWire carries JSONRPCCodeNotFound/Duplicate/
-// Mismatch onto wire.CodeNotFound/CodeAlreadyExists/CodeFailedPrecondition
+// Mismatch onto qrdbsdk.MCPCodeNotFound/CodeAlreadyExists/CodeFailedPrecondition
 // respectively (go-xkms#792) -- so a not-found, a duplicate, and a host-key
 // mismatch each reach this client as their own distinct WireCode, not one
 // shared bucket.
 //
-// The one real gap: go-qrdb's wire.ErrorEnvelope carries only Code, Status,
+// The one real gap: go-qrdb's qrdbsdk.MCPErrorEnvelope carries only Code, Status,
 // Message, and Tool (pkg/mcptool, "the accepted wire-contract bridge
 // import" -- this SDK does not own that contract to extend it), where the
 // REST transport's JSON error body also carries Resource/Host/Expected/
@@ -81,7 +81,7 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
-	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	apitransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/mcptool"
@@ -193,7 +193,7 @@ func (c *mcpClient) call(ctx context.Context, method string, params, out interfa
 // (mcp_status.go) in reverse. A non-*RPCError failure (or an *RPCError
 // whose WireCode this switch does not recognize) is returned unchanged.
 //
-// go-qrdb's wire.ErrorEnvelope (pkg/mcptool) carries only Code, Status,
+// go-qrdb's qrdbsdk.MCPErrorEnvelope (pkg/mcptool) carries only Code, Status,
 // Message, and Tool -- there is no room for the Resource/Host/Expected/
 // Received detail the REST transport's richer JSON error body carries, and
 // this SDK does not own that contract to extend it (see pkg/mcptool's doc
@@ -211,24 +211,24 @@ func classifyMCPError(err error) error {
 		return err
 	}
 	switch rpcErr.WireCode {
-	case wire.CodeUnauthenticated:
+	case qrdbsdk.MCPCodeUnauthenticated:
 		return &AuthError{StatusCode: 401, Message: rpcErr.Message}
-	case wire.CodePermissionDenied:
+	case qrdbsdk.MCPCodePermissionDenied:
 		return &AuthError{StatusCode: 403, Message: rpcErr.Message}
-	case wire.CodeUnimplemented:
+	case qrdbsdk.MCPCodeUnimplemented:
 		return &NotImplementedError{Transport: "mcp", Op: rpcErr.Message}
-	case wire.CodeUnavailable:
+	case qrdbsdk.MCPCodeUnavailable:
 		return &ServerError{StatusCode: 503, Message: rpcErr.Message}
-	case wire.CodeNotFound:
+	case qrdbsdk.MCPCodeNotFound:
 		return &NotFoundError{Message: rpcErr.Message}
-	case wire.CodeAlreadyExists:
+	case qrdbsdk.MCPCodeAlreadyExists:
 		return &DuplicateError{Message: rpcErr.Message}
-	case wire.CodeFailedPrecondition:
+	case qrdbsdk.MCPCodeFailedPrecondition:
 		// See the doc comment above: Host/Received are filled in by
 		// mcpKnownHostsClient.Verify from its own parameters, not from the
 		// wire; Expected has no source.
 		return &MismatchError{}
-	case wire.CodeInvalidArgument:
+	case qrdbsdk.MCPCodeInvalidArgument:
 		return &InvalidRequestError{Message: rpcErr.Message}
 	default:
 		return err
@@ -490,7 +490,7 @@ func (k *mcpKnownHostsClient) Remove(ctx context.Context, req RemoveKnownHostReq
 // *MismatchError.
 //
 // classifyMCPError cannot populate *MismatchError's Host/Expected/Received
-// fields from the wire (go-qrdb's wire.ErrorEnvelope has no room for them;
+// fields from the wire (go-qrdb's qrdbsdk.MCPErrorEnvelope has no room for them;
 // see mcp.go's package doc comment), so Verify fills in Host and Received
 // itself here -- it already has both from its own parameters, no server
 // round-trip needed. Expected (the pin's actual stored key) has no

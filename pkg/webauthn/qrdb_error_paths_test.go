@@ -19,86 +19,88 @@ import (
 	"fmt"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
-// errKVFault is a non-not-found KV fault. It must NOT be mapped to the
+// errKVFault is a non-not-found storage fault. It must NOT be mapped to the
 // not-found sentinels, so error wrapping (500-class) is exercised.
 var errKVFault = errors.New("kv: transport failure")
 
-// ----- failing KV wrapper -----
+// ----- failing KV store -----
 
-// faultyKV wraps the in-memory fakeKV and forces faults on selected ops.
-// putErr/getErr/deleteErr are applied to ALL keys when set.
-type faultyKV struct {
-	inner *fakeKV
+// faultyStore wraps go-qrdb's in-process store and forces faults on selected
+// verbs, so the credential store's error paths run through a real DAO.
+type faultyStore struct {
+	atomicKVStore
 
-	putErr    error
-	getErr    error
-	deleteErr error
-
-	// getFaultKeyPrefix, when set, only faults Get for keys with this prefix.
-	getFaultKeyPrefix string
+	putErr    error // Put, PutIfAbsent, CompareAndSwap
+	getErr    error // Get
+	listErr   error // QueryIndex, Scan: the lookups behind GetByUserID
+	deleteErr error // Delete, CompareAndDelete
 }
 
-func (f *faultyKV) Put(ctx context.Context, key string, value []byte, opts ...qrdbtransport.WriteOption) error {
+func (f *faultyStore) Put(ctx context.Context, key string, value []byte) error {
 	if f.putErr != nil {
 		return f.putErr
 	}
-	return f.inner.Put(ctx, key, value, opts...)
+	return f.atomicKVStore.Put(ctx, key, value)
 }
 
-func (f *faultyKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+func (f *faultyStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
 	if f.putErr != nil {
 		return false, f.putErr
 	}
-	return f.inner.PutIfAbsent(ctx, key, value)
+	return f.atomicKVStore.PutIfAbsent(ctx, key, value)
 }
 
-func (f *faultyKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
-	if f.deleteErr != nil {
-		return false, f.deleteErr
-	}
-	return f.inner.CompareAndDelete(ctx, key, expected)
-}
-
-func (f *faultyKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+func (f *faultyStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
 	if f.putErr != nil {
 		return false, f.putErr
 	}
-	return f.inner.CompareAndSwap(ctx, key, expected, next)
+	return f.atomicKVStore.CompareAndSwap(ctx, key, expected, next)
 }
 
-func (f *faultyKV) Get(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) ([]byte, error) {
+func (f *faultyStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if f.getErr != nil {
-		if f.getFaultKeyPrefix == "" || hasPrefix(key, f.getFaultKeyPrefix) {
-			return nil, f.getErr
-		}
+		return nil, f.getErr
 	}
-	return f.inner.Get(ctx, key, opts...)
+	return f.atomicKVStore.Get(ctx, key)
 }
 
-func (f *faultyKV) Delete(ctx context.Context, key string, opts ...qrdbtransport.WriteOption) error {
+func (f *faultyStore) QueryIndex(ctx context.Context, indexName string, value []byte) ([][]byte, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.atomicKVStore.QueryIndex(ctx, indexName, value)
+}
+
+func (f *faultyStore) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	if f.listErr != nil {
+		return f.listErr
+	}
+	return f.atomicKVStore.Scan(ctx, prefix, fn)
+}
+
+func (f *faultyStore) Delete(ctx context.Context, key string) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
-	return f.inner.Delete(ctx, key, opts...)
+	return f.atomicKVStore.Delete(ctx, key)
 }
 
-func (f *faultyKV) Scan(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) (map[string][]byte, error) {
-	return f.inner.Scan(ctx, prefix, opts...)
+func (f *faultyStore) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	if f.deleteErr != nil {
+		return false, f.deleteErr
+	}
+	return f.atomicKVStore.CompareAndDelete(ctx, key, expected)
 }
 
-func (f *faultyKV) List(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) ([]string, error) {
-	return f.inner.List(ctx, prefix, opts...)
-}
-
-func (f *faultyKV) Exists(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) (bool, error) {
-	return f.inner.Exists(ctx, key, opts...)
-}
-
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+// newFaultyStore returns a fault-free wrapper over a fresh in-process store
+// and a DAO factory over it; a test seeds data, then arms a fault.
+func newFaultyStore() (*faultyStore, *qrdbsdk.DAOFactory) {
+	store := &faultyStore{atomicKVStore: qrdbsdk.NewMemoryKVStore()}
+	return store, qrdbsdk.NewDAOFactory(func(uint64) qrdbsdk.KVStore { return store })
 }
 
 // ----- failing user-client wrapper -----
@@ -157,19 +159,19 @@ func (f *faultyUserClient) DisableUser(ctx context.Context, id uint64) error {
 }
 
 func (f *faultyUserClient) RemoveCertBinding(ctx context.Context, userID uint64, thumbprint string) (*qrdbtransport.User, error) {
-	return nil, errors.New("not implemented in fake")
+	return f.inner.RemoveCertBinding(ctx, userID, thumbprint)
 }
 
 func (f *faultyUserClient) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
 	return f.inner.AddCertBinding(ctx, userID, thumbprint, notAfterUnix)
 }
 
-// newFaultyAdapter builds an adapter pair over the faulty wrappers so tests
-// can drive the qrdb store error paths.
-func newFaultyAdapter(t *testing.T, uc qrdbtransport.UserClient, kv qrdbtransport.KVClient) (UserStore, CredentialStore) {
+// newFaultyAdapter builds an adapter pair over uc and factory so tests can
+// drive the qrdb store error paths.
+func newFaultyAdapter(t *testing.T, uc qrdbtransport.UserClient, factory *qrdbsdk.DAOFactory) (UserStore, CredentialStore) {
 	t.Helper()
 	us, cs, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
-		Users: uc, KV: kv, TenantID: "system",
+		Users: uc, DAOFactory: factory, TenantID: "system",
 	})
 	if err != nil {
 		t.Fatalf("adapter: %v", err)
@@ -180,7 +182,7 @@ func newFaultyAdapter(t *testing.T, uc qrdbtransport.UserClient, kv qrdbtranspor
 // ----- Create error paths -----
 
 func TestQRDBAdapter_Create_EmptyEmail(t *testing.T) {
-	us, _, _, _ := newTestAdapter(t)
+	us, _, _ := newTestAdapter(t)
 	_, err := us.Create(context.Background(), "", "Name")
 	var qae *QRDBAdapterConfigError
 	if !errors.As(err, &qae) {
@@ -190,21 +192,21 @@ func TestQRDBAdapter_Create_EmptyEmail(t *testing.T) {
 
 func TestQRDBAdapter_Create_UserClientError(t *testing.T) {
 	uc := &faultyUserClient{inner: newFakeUserClient(), createErr: errKVFault}
-	us, _ := newFaultyAdapter(t, uc, newFakeKV())
+	us, _ := newFaultyAdapter(t, uc, newTestDAOFactory())
 	_, err := us.Create(context.Background(), "a@example.com", "A")
-	if err == nil || errors.Is(err, errKVFault) == false {
+	if !errors.Is(err, errKVFault) {
 		t.Fatalf("expected wrapped create error, got %v", err)
 	}
 }
 
-// Create no longer writes the display name to a side key, so a KV put fault
-// cannot fail it. The name is a field of the qrdb record (#185): this asserts
-// it round-trips through Create, which is the property that replaced the
-// deleted put-error path.
+// The display name is a field of the qrdb record (#185), not a write to a
+// side key: Create succeeds with every datastore write failing, and the name
+// round-trips on the record.
 func TestQRDBAdapter_Create_StoresNameOnTheRecord(t *testing.T) {
 	inner := newFakeUserClient()
-	kv := &faultyKV{inner: newFakeKV(), putErr: errKVFault}
-	us, _ := newFaultyAdapter(t, inner, kv)
+	store, factory := newFaultyStore()
+	store.putErr = errKVFault
+	us, _ := newFaultyAdapter(t, inner, factory)
 
 	u, err := us.Create(context.Background(), "b@example.com", "B")
 	if err != nil {
@@ -217,7 +219,6 @@ func TestQRDBAdapter_Create_StoresNameOnTheRecord(t *testing.T) {
 		t.Fatalf("webauthn name is not the email login key: got %q", got)
 	}
 
-	// And it is on the qrdb record, not beside it.
 	rec, err := inner.GetUserByEmail(context.Background(), "system", "b@example.com")
 	if err != nil {
 		t.Fatalf("record not resolvable by email: %v", err)
@@ -227,21 +228,19 @@ func TestQRDBAdapter_Create_StoresNameOnTheRecord(t *testing.T) {
 	}
 }
 
-// ----- user Save error path -----
+// ----- user Save -----
 
 func TestQRDBAdapter_UserSave_EmptyDisplayName_NoOp(t *testing.T) {
-	us, _, _, _ := newTestAdapter(t)
+	us, _, _ := newTestAdapter(t)
 	user := NewDefaultUser(HandleFromUserID(1), "u@example.com", "")
-	// Empty display name -> early return, never touches KV.
 	if err := us.Save(context.Background(), user); err != nil {
 		t.Fatalf("expected no-op save, got %v", err)
 	}
 }
 
-// Save writes the display name through UpdateUser now, so its failure mode is
-// an update error rather than a KV put error. A KV fault must NOT fail it —
-// that is the observable proof the side-table write is gone.
-func TestQRDBAdapter_UserSave_KVFaultDoesNotAffectIt(t *testing.T) {
+// Save writes the display name through UpdateUser, so a datastore write
+// fault must not fail it.
+func TestQRDBAdapter_UserSave_StoreFaultDoesNotAffectIt(t *testing.T) {
 	ctx := context.Background()
 	inner := newFakeUserClient()
 	seeded, err := inner.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
@@ -250,15 +249,14 @@ func TestQRDBAdapter_UserSave_KVFaultDoesNotAffectIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-
-	kv := &faultyKV{inner: newFakeKV(), putErr: errKVFault}
-	us, _ := newFaultyAdapter(t, inner, kv)
+	store, factory := newFaultyStore()
+	store.putErr = errKVFault
+	us, _ := newFaultyAdapter(t, inner, factory)
 
 	user := NewDefaultUser(HandleFromUserID(seeded.ID), "u@example.com", "Display")
 	if err := us.Save(ctx, user); err != nil {
-		t.Fatalf("Save must not touch KV: %v", err)
+		t.Fatalf("Save must not write to the datastore: %v", err)
 	}
-
 	rec, err := inner.GetUser(ctx, seeded.ID)
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
@@ -268,163 +266,217 @@ func TestQRDBAdapter_UserSave_KVFaultDoesNotAffectIt(t *testing.T) {
 	}
 }
 
-// ----- user Delete error path -----
+// ----- user Delete -----
 
 func TestQRDBAdapter_UserDelete_ClientError(t *testing.T) {
 	uc := &faultyUserClient{inner: newFakeUserClient(), deleteErr: errKVFault}
-	us, _ := newFaultyAdapter(t, uc, newFakeKV())
+	us, _ := newFaultyAdapter(t, uc, newTestDAOFactory())
 	if err := us.Delete(context.Background(), HandleFromUserID(1)); !errors.Is(err, errKVFault) {
 		t.Fatalf("expected delete error, got %v", err)
 	}
 }
 
-// ----- GetByEmail / GetByID underlying error (not a not-found) -----
-
-func TestQRDBAdapter_GetByID_MaterializeError(t *testing.T) {
-	// The user exists, but loading the credential index faults (non-not-found),
-	// exercising the materialize error path through GetByID.
-	inner := newFakeUserClient()
+// TestQRDBAdapter_UserDelete_CredentialLookupErrorPropagates proves Delete
+// reports a failure to find the user's credentials after the record is gone,
+// rather than silently leaving them orphaned.
+func TestQRDBAdapter_UserDelete_CredentialLookupErrorPropagates(t *testing.T) {
 	ctx := context.Background()
-	u, err := inner.CreateUser(ctx, &qrdbtransport.CreateUserRequest{Username: "m@example.com", TenantID: "system"})
+	store, factory := newFaultyStore()
+	us, cs := newFaultyAdapter(t, newFakeUserClient(), factory)
+	user, err := us.Create(ctx, "userdel@example.com", "User Del")
 	if err != nil {
-		t.Fatalf("seed user: %v", err)
+		t.Fatalf("create: %v", err)
 	}
-	kv := &faultyKV{
-		inner:             newFakeKV(),
-		getErr:            errKVFault,
-		getFaultKeyPrefix: userCredSetKey(u.ID),
+	if err := cs.Save(ctx, &Credential{ID: []byte("a"), UserID: user.WebAuthnID()}); err != nil {
+		t.Fatalf("save: %v", err)
 	}
-	us, _ := newFaultyAdapter(t, inner, kv)
-	if _, err := us.GetByID(ctx, HandleFromUserID(u.ID)); !errors.Is(err, errKVFault) {
-		t.Fatalf("expected materialize/cred-index error, got %v", err)
+
+	store.listErr = errKVFault
+	if err := us.Delete(ctx, user.WebAuthnID()); !errors.Is(err, errKVFault) {
+		t.Fatalf("expected credential lookup error, got %v", err)
 	}
 }
 
-// ----- credential Save error paths -----
+// TestQRDBAdapter_UserDelete_CredentialDeleteErrorPropagates proves a failure
+// deleting one of the user's credentials reaches the caller.
+func TestQRDBAdapter_UserDelete_CredentialDeleteErrorPropagates(t *testing.T) {
+	ctx := context.Background()
+	store, factory := newFaultyStore()
+	us, cs := newFaultyAdapter(t, newFakeUserClient(), factory)
+	user, err := us.Create(ctx, "userdel2@example.com", "User Del2")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := cs.Save(ctx, &Credential{ID: []byte("a"), UserID: user.WebAuthnID()}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
 
-func TestQRDBAdapter_CredSave_PutCredentialError(t *testing.T) {
-	kv := &faultyKV{inner: newFakeKV(), putErr: errKVFault}
-	_, cs := newFaultyAdapter(t, newFakeUserClient(), kv)
+	store.deleteErr = errKVFault
+	if err := us.Delete(ctx, user.WebAuthnID()); !errors.Is(err, errKVFault) {
+		t.Fatalf("expected credential delete error, got %v", err)
+	}
+}
+
+// ----- materialize -----
+
+// A credential read failure while materializing a user is returned through
+// both lookups, never answered with a user missing credentials.
+func TestQRDBAdapter_Materialize_CredentialLookupError(t *testing.T) {
+	ctx := context.Background()
+	store, factory := newFaultyStore()
+	us, _ := newFaultyAdapter(t, newFakeUserClient(), factory)
+	user, err := us.Create(ctx, "m@example.com", "M")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	store.listErr = errKVFault
+	if _, err := us.GetByID(ctx, user.WebAuthnID()); !errors.Is(err, errKVFault) {
+		t.Fatalf("GetByID: expected credential lookup error, got %v", err)
+	}
+	if _, err := us.GetByEmail(ctx, "m@example.com"); !errors.Is(err, errKVFault) {
+		t.Fatalf("GetByEmail: expected credential lookup error, got %v", err)
+	}
+}
+
+func TestQRDBAdapter_Materialize_FullHydration(t *testing.T) {
+	ctx := context.Background()
+	us, cs, _ := newTestAdapter(t)
+
+	user, err := us.Create(ctx, "mat@example.com", "Materialize")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	cred := &Credential{ID: []byte("mc"), UserID: user.WebAuthnID(), PublicKey: []byte("pk")}
+	if err := cs.Save(ctx, cred); err != nil {
+		t.Fatalf("save cred: %v", err)
+	}
+
+	got, err := us.GetByID(ctx, user.WebAuthnID())
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.WebAuthnDisplayName() != "Materialize" {
+		t.Fatalf("display name not hydrated: %q", got.WebAuthnDisplayName())
+	}
+	if len(got.WebAuthnCredentials()) != 1 {
+		t.Fatalf("expected 1 hydrated credential, got %d", len(got.WebAuthnCredentials()))
+	}
+}
+
+// ----- credential store write and read faults -----
+
+func TestQRDBAdapter_CredSave_StoreError(t *testing.T) {
+	store, factory := newFaultyStore()
+	store.putErr = errKVFault
+	_, cs := newFaultyAdapter(t, newFakeUserClient(), factory)
 	cred := &Credential{ID: []byte("c"), UserID: HandleFromUserID(1)}
-	if err := cs.Save(context.Background(), cred); !errors.Is(err, errKVFault) {
-		t.Fatalf("expected put-credential error, got %v", err)
+	err := cs.Save(context.Background(), cred)
+	if !errors.Is(err, errKVFault) {
+		t.Fatalf("expected store error, got %v", err)
+	}
+	if errors.Is(err, ErrCredentialAlreadyExists) {
+		t.Fatal("a store fault must not read as a duplicate")
 	}
 }
 
-func TestQRDBAdapter_CredSave_PutIndexError(t *testing.T) {
-	// Putting the credential succeeds, putting the index fails. Fault only the
-	// cred-set index key.
-	kv := &faultyKV{
-		inner: newFakeKV(),
+// A read fault is a failure to answer, never "not found".
+func TestQRDBAdapter_GetByCredentialID_StoreError(t *testing.T) {
+	store, factory := newFaultyStore()
+	_, cs := newFaultyAdapter(t, newFakeUserClient(), factory)
+	if err := cs.Save(context.Background(), &Credential{ID: []byte("c"), UserID: HandleFromUserID(1)}); err != nil {
+		t.Fatalf("save: %v", err)
 	}
-	// Use a custom put that only fails on the index key.
-	idxKV := &indexPutFailKV{faultyKV: kv}
-	_, cs := newFaultyAdapter(t, newFakeUserClient(), idxKV)
-	cred := &Credential{ID: []byte("c"), UserID: HandleFromUserID(1)}
-	if err := cs.Save(context.Background(), cred); !errors.Is(err, errKVFault) {
-		t.Fatalf("expected put-index error, got %v", err)
-	}
-}
 
-// indexPutFailKV fails Put only on the user-cred-set index key, letting the
-// credential blob persist first.
-type indexPutFailKV struct {
-	*faultyKV
-}
-
-func (f *indexPutFailKV) Put(ctx context.Context, key string, value []byte, opts ...qrdbtransport.WriteOption) error {
-	if hasPrefix(key, "__xkms:webauthn/users/") && hasSuffix(key, "/credentials") {
-		return errKVFault
-	}
-	return f.inner.Put(ctx, key, value, opts...)
-}
-
-func hasSuffix(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
-}
-
-// ----- credential GetByCredentialID error paths -----
-
-func TestQRDBAdapter_GetByCredentialID_GetError(t *testing.T) {
-	kv := &faultyKV{
-		inner:             newFakeKV(),
-		getErr:            errKVFault,
-		getFaultKeyPrefix: "__xkms:webauthn/credentials/",
-	}
-	_, cs := newFaultyAdapter(t, newFakeUserClient(), kv)
+	store.getErr = errKVFault
 	_, err := cs.GetByCredentialID(context.Background(), []byte("c"))
 	if !errors.Is(err, errKVFault) {
 		t.Fatalf("expected get error, got %v", err)
 	}
-}
-
-func TestQRDBAdapter_GetByCredentialID_NotFound(t *testing.T) {
-	// fakeKV returns "key not found" which maps to ErrCredentialNotFound.
-	_, cs, _, _ := newTestAdapter(t)
-	_, err := cs.GetByCredentialID(context.Background(), []byte("nope"))
-	if !errors.Is(err, ErrCredentialNotFound) {
-		t.Fatalf("expected ErrCredentialNotFound, got %v", err)
-	}
-}
-
-func TestQRDBAdapter_GetByCredentialID_CorruptBlob(t *testing.T) {
-	kv := newFakeKV()
-	// Store the corrupt blob under the canonical key the lookup will
-	// derive for the raw credential id []byte("c") — credKey segments are
-	// base64url-encoded so binary credential ids round-trip losslessly.
-	_ = kv.Put(context.Background(), credKey(credIDToString([]byte("c"))), []byte("{not-json"))
-	_, cs := newFaultyAdapter(t, newFakeUserClient(), kv)
-	_, err := cs.GetByCredentialID(context.Background(), []byte("c"))
-	if err == nil {
-		t.Fatal("expected decode error for corrupt credential blob")
-	}
 	if errors.Is(err, ErrCredentialNotFound) {
-		t.Fatal("corrupt blob must not be classified as not-found")
+		t.Fatal("a store fault must not be classified as not-found")
 	}
 }
 
-// ----- GetByUserID propagates index error -----
-
-func TestQRDBAdapter_GetByUserID_IndexError(t *testing.T) {
-	kv := &faultyKV{
-		inner:             newFakeKV(),
-		getErr:            errKVFault,
-		getFaultKeyPrefix: userCredSetKey(1),
+func TestQRDBAdapter_GetByUserID_StoreError(t *testing.T) {
+	store, factory := newFaultyStore()
+	store.listErr = errKVFault
+	_, cs := newFaultyAdapter(t, newFakeUserClient(), factory)
+	if _, err := cs.GetByUserID(context.Background(), HandleFromUserID(1)); !errors.Is(err, errKVFault) {
+		t.Fatalf("expected lookup error, got %v", err)
 	}
-	_, cs := newFaultyAdapter(t, newFakeUserClient(), kv)
-	_, err := cs.GetByUserID(context.Background(), HandleFromUserID(1))
-	if !errors.Is(err, errKVFault) {
-		t.Fatalf("expected index error, got %v", err)
-	}
-}
-
-// ----- DeleteByUserID propagates index error -----
-
-func TestQRDBAdapter_DeleteByUserID_IndexError(t *testing.T) {
-	kv := &faultyKV{
-		inner:             newFakeKV(),
-		getErr:            errKVFault,
-		getFaultKeyPrefix: userCredSetKey(1),
-	}
-	_, cs := newFaultyAdapter(t, newFakeUserClient(), kv)
 	if err := cs.DeleteByUserID(context.Background(), HandleFromUserID(1)); !errors.Is(err, errKVFault) {
-		t.Fatalf("expected index error, got %v", err)
+		t.Fatalf("DeleteByUserID: expected lookup error, got %v", err)
 	}
 }
 
-// ----- corrupt index blob -----
+func TestQRDBAdapter_Update_StoreError(t *testing.T) {
+	ctx := context.Background()
+	store, factory := newFaultyStore()
+	_, cs := newFaultyAdapter(t, newFakeUserClient(), factory)
+	cred := &Credential{ID: []byte("u1"), UserID: HandleFromUserID(1), PublicKey: []byte("v1")}
+	if err := cs.Save(ctx, cred); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
 
-func TestQRDBAdapter_ListUserCredIDs_CorruptIndex(t *testing.T) {
-	kv := newFakeKV()
-	_ = kv.Put(context.Background(), userCredSetKey(1), []byte("not-json-array"))
-	_, cs := newFaultyAdapter(t, newFakeUserClient(), kv)
-	_, err := cs.GetByUserID(context.Background(), HandleFromUserID(1))
-	if err == nil {
-		t.Fatal("expected decode error for corrupt cred index")
+	store.putErr = errKVFault
+	cred.PublicKey = []byte("v2")
+	err := cs.Update(ctx, cred)
+	if !errors.Is(err, errKVFault) {
+		t.Fatalf("expected store error on update, got %v", err)
+	}
+	if errors.Is(err, ErrCredentialUpdateConflict) {
+		t.Fatal("a store fault must not read as a lost race")
 	}
 }
 
-// ----- helper predicate coverage -----
+func TestQRDBAdapter_CredDelete_StoreError(t *testing.T) {
+	ctx := context.Background()
+	store, factory := newFaultyStore()
+	_, cs := newFaultyAdapter(t, newFakeUserClient(), factory)
+	if err := cs.Save(ctx, &Credential{ID: []byte("a"), UserID: HandleFromUserID(1)}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	store.deleteErr = errKVFault
+	if err := cs.Delete(ctx, []byte("a")); !errors.Is(err, errKVFault) {
+		t.Fatalf("Delete: expected store error, got %v", err)
+	}
+	if err := cs.DeleteByUserID(ctx, HandleFromUserID(1)); !errors.Is(err, errKVFault) {
+		t.Fatalf("DeleteByUserID: expected store error, got %v", err)
+	}
+}
+
+func TestQRDBAdapter_CredDelete_KeepsPeers(t *testing.T) {
+	ctx := context.Background()
+	us, cs, _ := newTestAdapter(t)
+	user, err := us.Create(ctx, "multi@example.com", "Multi")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	for _, id := range []string{"a", "b", "c"} {
+		if err := cs.Save(ctx, &Credential{ID: []byte(id), UserID: user.WebAuthnID()}); err != nil {
+			t.Fatalf("save %s: %v", id, err)
+		}
+	}
+	if err := cs.Delete(ctx, []byte("b")); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	creds, err := cs.GetByUserID(ctx, user.WebAuthnID())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(creds) != 2 {
+		t.Fatalf("expected 2 remaining creds, got %d", len(creds))
+	}
+	for _, c := range creds {
+		if string(c.ID) == "b" {
+			t.Fatal("deleted credential still found under its user")
+		}
+	}
+}
+
+// ----- not-found classification -----
 
 // TestIsUserNotFound covers the user-record classifier. It is typed and
 // fails closed (#183): the typed not-found of every transport is an
@@ -476,302 +528,5 @@ func TestMapNotFound_NonNotFound(t *testing.T) {
 	}
 	if !errors.Is(err, errKVFault) {
 		t.Fatalf("expected wrapped errKVFault, got %v", err)
-	}
-}
-
-func TestMapNotFoundCred_NonNotFound(t *testing.T) {
-	err := mapNotFoundCred(errKVFault)
-	if errors.Is(err, ErrCredentialNotFound) {
-		t.Fatal("non-not-found must not map to ErrCredentialNotFound")
-	}
-	if !errors.Is(err, errKVFault) {
-		t.Fatalf("expected wrapped errKVFault, got %v", err)
-	}
-}
-
-// ----- materialize hydrates display name + credentials -----
-
-func TestQRDBAdapter_Materialize_FullHydration(t *testing.T) {
-	ctx := context.Background()
-	us, cs, _, _ := newTestAdapter(t)
-
-	user, err := us.Create(ctx, "mat@example.com", "Materialize")
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	cred := &Credential{ID: []byte("mc"), UserID: user.WebAuthnID(), PublicKey: []byte("pk")}
-	if err := cs.Save(ctx, cred); err != nil {
-		t.Fatalf("save cred: %v", err)
-	}
-
-	// GetByID materializes display name + credential set.
-	got, err := us.GetByID(ctx, user.WebAuthnID())
-	if err != nil {
-		t.Fatalf("GetByID: %v", err)
-	}
-	if got.WebAuthnDisplayName() != "Materialize" {
-		t.Fatalf("display name not hydrated: %q", got.WebAuthnDisplayName())
-	}
-	if len(got.WebAuthnCredentials()) != 1 {
-		t.Fatalf("expected 1 hydrated credential, got %d", len(got.WebAuthnCredentials()))
-	}
-}
-
-// materialize skips a credential whose blob vanished from the index (a
-// not-found on the individual credential key is tolerated).
-func TestQRDBAdapter_Materialize_SkipsMissingCredential(t *testing.T) {
-	ctx := context.Background()
-	kv := newFakeKV()
-	uc := newFakeUserClient()
-	u, err := uc.CreateUser(ctx, &qrdbtransport.CreateUserRequest{Username: "skip@example.com", TenantID: "system"})
-	if err != nil {
-		t.Fatalf("seed user: %v", err)
-	}
-	// Index references a credential id that has no stored blob.
-	idxBlob := []byte(`["ghost"]`)
-	_ = kv.Put(ctx, userCredSetKey(u.ID), idxBlob)
-
-	us, _ := newFaultyAdapter(t, uc, kv)
-	got, err := us.GetByID(ctx, HandleFromUserID(u.ID))
-	if err != nil {
-		t.Fatalf("GetByID: %v", err)
-	}
-	if len(got.WebAuthnCredentials()) != 0 {
-		t.Fatalf("expected ghost credential to be skipped, got %d", len(got.WebAuthnCredentials()))
-	}
-}
-
-// ----- Update succeeds, then put fails -----
-
-func TestQRDBAdapter_Update_PutError(t *testing.T) {
-	ctx := context.Background()
-	kv := newFakeKV()
-	// Seed an existing credential so the GetByCredentialID guard passes.
-	cred := &Credential{ID: []byte("u1"), UserID: HandleFromUserID(1), PublicKey: []byte("v1")}
-	_, csSeed := newFaultyAdapter(t, newFakeUserClient(), kv)
-	if err := csSeed.Save(ctx, cred); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	// Now swap in a KV that fails Put but still serves Get from the same map.
-	failKV := &updatePutFailKV{inner: kv}
-	_, cs := newFaultyAdapter(t, newFakeUserClient(), failKV)
-	cred.PublicKey = []byte("v2")
-	if err := cs.Update(ctx, cred); !errors.Is(err, errKVFault) {
-		t.Fatalf("expected put error on update, got %v", err)
-	}
-}
-
-// updatePutFailKV serves Get from a shared fakeKV but always fails every
-// write (Put and the guarded verbs).
-type updatePutFailKV struct {
-	inner *fakeKV
-}
-
-func (f *updatePutFailKV) Put(ctx context.Context, key string, value []byte, opts ...qrdbtransport.WriteOption) error {
-	return errKVFault
-}
-
-func (f *updatePutFailKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
-	return false, errKVFault
-}
-
-func (f *updatePutFailKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
-	return f.inner.CompareAndDelete(ctx, key, expected)
-}
-
-func (f *updatePutFailKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
-	return false, errKVFault
-}
-
-func (f *updatePutFailKV) Get(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) ([]byte, error) {
-	return f.inner.Get(ctx, key, opts...)
-}
-
-func (f *updatePutFailKV) Delete(ctx context.Context, key string, opts ...qrdbtransport.WriteOption) error {
-	return f.inner.Delete(ctx, key, opts...)
-}
-
-func (f *updatePutFailKV) Scan(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) (map[string][]byte, error) {
-	return f.inner.Scan(ctx, prefix, opts...)
-}
-
-func (f *updatePutFailKV) List(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) ([]string, error) {
-	return f.inner.List(ctx, prefix, opts...)
-}
-
-func (f *updatePutFailKV) Exists(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) (bool, error) {
-	return f.inner.Exists(ctx, key, opts...)
-}
-
-// ----- credential Delete rewrites the index when peers remain -----
-
-func TestQRDBAdapter_CredDelete_RewritesIndex(t *testing.T) {
-	ctx := context.Background()
-	us, cs, _, _ := newTestAdapter(t)
-	user, err := us.Create(ctx, "multi@example.com", "Multi")
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	for _, id := range []string{"a", "b", "c"} {
-		if err := cs.Save(ctx, &Credential{ID: []byte(id), UserID: user.WebAuthnID()}); err != nil {
-			t.Fatalf("save %s: %v", id, err)
-		}
-	}
-	// Delete the middle one; the index must be rewritten (not removed).
-	if err := cs.Delete(ctx, []byte("b")); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-	creds, err := cs.GetByUserID(ctx, user.WebAuthnID())
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(creds) != 2 {
-		t.Fatalf("expected 2 remaining creds, got %d", len(creds))
-	}
-	for _, c := range creds {
-		if string(c.ID) == "b" {
-			t.Fatal("deleted credential still present in index")
-		}
-	}
-}
-
-// ----- GetByEmail underlying (non-not-found) error -----
-
-func TestQRDBAdapter_GetByEmail_MaterializeError(t *testing.T) {
-	ctx := context.Background()
-	inner := newFakeUserClient()
-	u, err := inner.CreateUser(ctx, &qrdbtransport.CreateUserRequest{Username: "gbe@example.com", Email: "gbe@example.com", TenantID: "system"})
-	if err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	kv := &faultyKV{
-		inner:             newFakeKV(),
-		getErr:            errKVFault,
-		getFaultKeyPrefix: userCredSetKey(u.ID),
-	}
-	us, _ := newFaultyAdapter(t, inner, kv)
-	if _, err := us.GetByEmail(ctx, "gbe@example.com"); !errors.Is(err, errKVFault) {
-		t.Fatalf("expected materialize error via GetByEmail, got %v", err)
-	}
-}
-
-// ----- discarded-error fixes (#701) -----
-//
-// The four tests below each exercise a call that used to be
-// "_, _ := ..." or "_ = ...": a failure was silently swallowed and the
-// caller went on to persist state built from an empty or partial read.
-// Each now proves the failure is reported instead.
-
-// TestQRDBAdapter_CredSave_ListIndexError proves Save reports a failure to
-// read the existing credential index rather than persisting a rewritten
-// index containing only the new credential, which would have deleted every
-// other credential the user has from the index.
-func TestQRDBAdapter_CredSave_ListIndexError(t *testing.T) {
-	kv := &faultyKV{
-		inner:             newFakeKV(),
-		getErr:            errKVFault,
-		getFaultKeyPrefix: "__xkms:webauthn/users/",
-	}
-	_, cs := newFaultyAdapter(t, newFakeUserClient(), kv)
-	cred := &Credential{ID: []byte("c"), UserID: HandleFromUserID(1)}
-	if err := cs.Save(context.Background(), cred); !errors.Is(err, errKVFault) {
-		t.Fatalf("expected list-index error, got %v", err)
-	}
-}
-
-// TestQRDBAdapter_CredDelete_ListIndexError proves Delete reports a failure
-// to read the existing credential index rather than persisting a rewritten
-// index built from a failed (effectively empty) read, which would have
-// wiped every other credential the user has from the index.
-func TestQRDBAdapter_CredDelete_ListIndexError(t *testing.T) {
-	ctx := context.Background()
-	kv := newFakeKV()
-	uc := newFakeUserClient()
-	us, cs := newFaultyAdapter(t, uc, kv)
-	user, err := us.Create(ctx, "creddel@example.com", "Cred Del")
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if err := cs.Save(ctx, &Credential{ID: []byte("a"), UserID: user.WebAuthnID()}); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-
-	faulty := &faultyKV{inner: kv, getErr: errKVFault, getFaultKeyPrefix: "__xkms:webauthn/users/"}
-	_, faultyCS := newFaultyAdapter(t, uc, faulty)
-
-	if err := faultyCS.Delete(ctx, []byte("a")); !errors.Is(err, errKVFault) {
-		t.Fatalf("expected list-index error, got %v", err)
-	}
-}
-
-// TestQRDBAdapter_UserDelete_ListIndexError proves UserStore.Delete reports
-// a failure to read the credential index after the user record itself is
-// gone, rather than silently leaving every credential blob behind,
-// orphaned and still referencing the deleted user.
-func TestQRDBAdapter_UserDelete_ListIndexError(t *testing.T) {
-	ctx := context.Background()
-	kv := newFakeKV()
-	uc := newFakeUserClient()
-	us, _ := newFaultyAdapter(t, uc, kv)
-	user, err := us.Create(ctx, "userdel@example.com", "User Del")
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	faulty := &faultyKV{inner: kv, getErr: errKVFault, getFaultKeyPrefix: "__xkms:webauthn/users/"}
-	faultyUS, _ := newFaultyAdapter(t, uc, faulty)
-
-	if err := faultyUS.Delete(ctx, user.WebAuthnID()); !errors.Is(err, errKVFault) {
-		t.Fatalf("expected list-index error, got %v", err)
-	}
-}
-
-// TestQRDBAdapter_UserDelete_CredCleanupErrorsPropagate proves a failure to
-// delete an individual orphaned-credential blob during UserStore.Delete's
-// best-effort cleanup is joined into the returned error instead of
-// discarded.
-func TestQRDBAdapter_UserDelete_CredCleanupErrorsPropagate(t *testing.T) {
-	ctx := context.Background()
-	kv := newFakeKV()
-	uc := newFakeUserClient()
-	us, cs := newFaultyAdapter(t, uc, kv)
-	user, err := us.Create(ctx, "userdel2@example.com", "User Del2")
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if err := cs.Save(ctx, &Credential{ID: []byte("a"), UserID: user.WebAuthnID()}); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-
-	faulty := &faultyKV{inner: kv, deleteErr: errKVFault}
-	faultyUS, _ := newFaultyAdapter(t, uc, faulty)
-
-	if err := faultyUS.Delete(ctx, user.WebAuthnID()); !errors.Is(err, errKVFault) {
-		t.Fatalf("expected joined credential-cleanup error, got %v", err)
-	}
-}
-
-// TestQRDBAdapter_DeleteByUserID_CredDeleteErrorsPropagate proves a failure
-// to delete an individual credential blob during DeleteByUserID is joined
-// into the returned error instead of discarded.
-func TestQRDBAdapter_DeleteByUserID_CredDeleteErrorsPropagate(t *testing.T) {
-	ctx := context.Background()
-	kv := newFakeKV()
-	uc := newFakeUserClient()
-	us, cs := newFaultyAdapter(t, uc, kv)
-	user, err := us.Create(ctx, "cleanup@example.com", "Cleanup")
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if err := cs.Save(ctx, &Credential{ID: []byte("a"), UserID: user.WebAuthnID()}); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-
-	faulty := &faultyKV{inner: kv, deleteErr: errKVFault}
-	_, faultyCS := newFaultyAdapter(t, uc, faulty)
-
-	if err := faultyCS.DeleteByUserID(ctx, user.WebAuthnID()); !errors.Is(err, errKVFault) {
-		t.Fatalf("expected joined credential-delete error, got %v", err)
 	}
 }

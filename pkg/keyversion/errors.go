@@ -19,8 +19,8 @@ import (
 )
 
 var (
-	// ErrNilStore is returned by NewStore without a storage backend.
-	ErrNilStore = errors.New("keyversion: storage backend is required")
+	// ErrNilDAOFactory is returned by NewStore without a DAO factory.
+	ErrNilDAOFactory = errors.New("keyversion: a DAO factory is required")
 
 	// ErrNilRecord is returned by Store.Put for a nil record.
 	ErrNilRecord = errors.New("keyversion: record is nil")
@@ -131,7 +131,7 @@ func (e *StoreError) Error() string {
 func (e *StoreError) Unwrap() error { return e.Err }
 
 // InvalidRecordKeyError reports a tenant, backend or key ID that cannot be a
-// single segment of a record's storage key.
+// single segment of a record's name.
 type InvalidRecordKeyError struct {
 	Field string
 	Value string

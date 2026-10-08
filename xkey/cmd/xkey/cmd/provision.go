@@ -380,7 +380,7 @@ func runProvision(cmd *cobra.Command, _ []string) error {
 		}
 		result.SSH = sshKey
 
-		strategy, err := provisionBarrier(dataDir, barrierPassword)
+		strategy, err := provisionBarrier(cmd.Context(), dataDir, barrierPassword)
 		if err != nil {
 			return &ProvisionError{Step: "barrier", Err: err}
 		}
@@ -471,7 +471,7 @@ func provisionSSHKey(cmd *cobra.Command, agent string) (*AgentProvisionSSHKey, e
 // password, exactly as "xkey barrier init" does, minus the interactive
 // confirmation prompt (resolveBarrierPassword's sources are already
 // unambiguous -- there is no second entry to confirm against).
-func provisionBarrier(dataDir, barrierPassword string) (strategy string, err error) {
+func provisionBarrier(ctx context.Context, dataDir, barrierPassword string) (strategy string, err error) {
 	barrier, closer, err := createBarrier(dataDir)
 	if err != nil {
 		return "", err
@@ -487,13 +487,13 @@ func provisionBarrier(dataDir, barrierPassword string) (strategy string, err err
 		}
 	}()
 
-	creds, credErr := xkms.NewCredentials([]byte(barrierPassword))
+	creds, credErr := xkms.NewCredentials(ctx, []byte(barrierPassword))
 	if credErr != nil {
 		return "", credErr
 	}
 	defer creds.Secret.Destroy()
 
-	if err := barrier.Initialize(context.Background(), creds); err != nil {
+	if err := barrier.Initialize(ctx, creds); err != nil {
 		return "", err
 	}
 	return strategyDisplayName(barrier.ActiveStrategy()), nil

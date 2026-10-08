@@ -20,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 const (
@@ -81,10 +83,10 @@ func (p *Provisioner) cacheIdentity(leafChainPEM, anchorPEM []byte) error {
 	if err := os.MkdirAll(p.opts.DataDir, 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(p.opts.DataDir, nodeCertFile), leafChainPEM, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(filepath.Join(p.opts.DataDir, nodeCertFile), leafChainPEM, 0o600); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(p.opts.DataDir, anchorCertFile), anchorPEM, 0o600)
+	return fsutil.WriteFileAtomic(filepath.Join(p.opts.DataDir, anchorCertFile), anchorPEM, 0o600)
 }
 
 // parseChainPEM decodes a PEM chain into the leaf (first certificate) and

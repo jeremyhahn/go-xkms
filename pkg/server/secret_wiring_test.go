@@ -74,7 +74,7 @@ func TestBuildSecretRegistry_WithCredentialService(t *testing.T) {
 	sv, err := reg.Resolve(context.Background(), "credential://"+credName)
 	require.NoError(t, err)
 	var got string
-	require.NoError(t, sv.WithBytes(func(b []byte) error {
+	require.NoError(t, sv.WithBytes(t.Context(), func(b []byte) error {
 		got = string(b)
 		return nil
 	}))
@@ -119,15 +119,15 @@ func TestResolveConfigSecrets_UnconfiguredFieldsAreNoOps(t *testing.T) {
 
 	require.NoError(t, s.resolveConfigSecrets())
 
-	got, err := types.SecretValueBytes(cfg.Backends.PKCS11.Pin)
+	got, err := types.SecretValueBytes(t.Context(), cfg.Backends.PKCS11.Pin)
 	require.NoError(t, err)
 	assert.Nil(t, got, "an unconfigured field must resolve to nil, not an error")
 
-	got, err = types.SecretValueBytes(cfg.RNG.PKCS11.PIN)
+	got, err = types.SecretValueBytes(t.Context(), cfg.RNG.PKCS11.PIN)
 	require.NoError(t, err)
 	assert.Nil(t, got)
 
-	got, err = types.SecretValueBytes(cfg.Backends.Vault.Token)
+	got, err = types.SecretValueBytes(t.Context(), cfg.Backends.Vault.Token)
 	require.NoError(t, err)
 	assert.Nil(t, got)
 }
@@ -175,17 +175,17 @@ func TestResolveConfigSecrets_ResolvesReferenceAcrossConfig(t *testing.T) {
 	s := &Server{ctx: context.Background(), config: cfg, credentialService: svc}
 	require.NoError(t, s.resolveConfigSecrets())
 
-	got, err := types.SecretValueBytes(cfg.Backends.Vault.Token)
+	got, err := types.SecretValueBytes(t.Context(), cfg.Backends.Vault.Token)
 	require.NoError(t, err)
 	assert.Equal(t, credValue, string(got))
 
 	// The unconfigured fields elsewhere in the same config are unaffected by
 	// the reference resolved next to them.
-	got, err = types.SecretValueBytes(cfg.Backends.PKCS11.Pin)
+	got, err = types.SecretValueBytes(t.Context(), cfg.Backends.PKCS11.Pin)
 	require.NoError(t, err)
 	assert.Nil(t, got)
 
-	got, err = types.SecretValueBytes(cfg.RNG.PKCS11.PIN)
+	got, err = types.SecretValueBytes(t.Context(), cfg.RNG.PKCS11.PIN)
 	require.NoError(t, err)
 	assert.Nil(t, got)
 }
@@ -259,7 +259,7 @@ func TestBackendCredentials_ResolveViaCredentialReference(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := types.SecretValueBytes(tc.sv)
+			got, err := types.SecretValueBytes(t.Context(), tc.sv)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, string(got))
 		})

@@ -127,25 +127,25 @@ func frostShareAttrs() *client.KeyAttributes {
 // keyed by its path relative to that directory.
 func secretsDirFiles(t *testing.T, cfg *Config) map[string][]byte {
 	t.Helper()
-	files := map[string][]byte{}
-	root := filepath.Join(cfg.KeyDir, "frost", "secrets")
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		files[filepath.ToSlash(rel)] = data
-		return nil
-	})
+	// The file engine stores records under hashed names, so the records are
+	// read back through the store itself, keyed by their logical names.
+	store, err := client.NewFileStorageBackend(filepath.Join(cfg.KeyDir, "frost", "secrets"))
 	if err != nil {
-		t.Fatalf("WalkDir(%s): %v", root, err)
+		t.Fatalf("open secrets store: %v", err)
+	}
+	defer closeQuietly(store)
+
+	keys, err := store.List(t.Context(), "")
+	if err != nil {
+		t.Fatalf("list secrets store: %v", err)
+	}
+	files := make(map[string][]byte, len(keys))
+	for _, key := range keys {
+		data, err := store.Get(t.Context(), key)
+		if err != nil {
+			t.Fatalf("read %s: %v", key, err)
+		}
+		files[key] = data
 	}
 	return files
 }

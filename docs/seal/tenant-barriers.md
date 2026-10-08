@@ -47,7 +47,7 @@ The diagram above shows **prefix isolation** — the lightest mode, where tenant
 
 ## Isolation modes & hardware-backed composition
 
-Per-tenant lifecycle (isolation, entitlements, quotas, key-management mode) is owned by go-qrdb's `TenantService`. go-xkms composes its hardware seal strategies on top so a per-tenant barrier can be sealed by dedicated hardware. The server wires this in `initializeBarrierRegistry`; the `XKMSService` tenant servicer delegates to it.
+Per-tenant lifecycle (isolation, entitlements, quotas, key-management mode) is owned by go-qrdb's `TenantService`. go-xkms composes its hardware seal strategies on top so a per-tenant barrier can be sealed by dedicated hardware. The strategy reaches the node through `embeddednode.NodeSealOptions` (`sdk.WithStrategyRegistry`); the server adopts the node's `BarrierRegistry()` and tenant service, and the `XKMSService` tenant servicer delegates to it.
 
 ### Isolation modes
 

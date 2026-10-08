@@ -28,8 +28,7 @@ import (
 // tenantState tracks a single tenant plus the unseal state of its per-tenant
 // barrier, reproducing the lifecycle the SDK TenantService client exercises.
 type tenantState struct {
-	info     transport.TenantInfo
-	unsealed bool
+	info transport.TenantInfo
 }
 
 // tenantFakeServer is a compact, in-memory implementation of the tenant and
@@ -113,63 +112,8 @@ func (s *tenantFakeServer) deleteTenant(t *testing.T) http.HandlerFunc {
 	}
 }
 
-func (s *tenantFakeServer) barrierInit(t *testing.T) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ts, ok := s.tenants[chi.URLParam(r, "tenantID")]
-		if !ok {
-			writeErr(t, w, http.StatusNotFound, "tenant not found")
-			return
-		}
-
-		var req transport.TenantBarrierInitRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeErr(t, w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-
-		// The software (passphrase) strategy auto-unseals on initialization.
-		ts.unsealed = true
-		writeJSON(t, w, http.StatusOK, map[string]bool{"initialized": true})
-	}
-}
-
-func (s *tenantFakeServer) barrierUnseal(t *testing.T) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ts, ok := s.tenants[chi.URLParam(r, "tenantID")]
-		if !ok {
-			writeErr(t, w, http.StatusNotFound, "tenant not found")
-			return
-		}
-
-		var req transport.TenantBarrierUnsealRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeErr(t, w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-
-		if ts.unsealed {
-			writeErr(t, w, http.StatusConflict, "barrier already unsealed")
-			return
-		}
-
-		ts.unsealed = true
-		writeJSON(t, w, http.StatusOK, map[string]bool{"unsealed": true})
-	}
-}
-
-func (s *tenantFakeServer) barrierStatus(t *testing.T) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ts, ok := s.tenants[chi.URLParam(r, "tenantID")]
-		if !ok {
-			writeErr(t, w, http.StatusNotFound, "tenant not found")
-			return
-		}
-		writeJSON(t, w, http.StatusOK, map[string]bool{"unsealed": ts.unsealed})
-	}
-}
-
-// router builds the chi router exposing the tenant and per-tenant-barrier HTTP
-// API plus the /health endpoint required by Transport.Connect().
+// router builds the chi router exposing the tenant HTTP API plus the /health
+// endpoint required by Transport.Connect().
 func (s *tenantFakeServer) router(t *testing.T) http.Handler {
 	r := chi.NewRouter()
 
@@ -182,9 +126,6 @@ func (s *tenantFakeServer) router(t *testing.T) http.Handler {
 		r.Get("/", s.listTenants(t))
 		r.Get("/{tenantID}", s.getTenant(t))
 		r.Delete("/{tenantID}", s.deleteTenant(t))
-		r.Get("/{tenantID}/barrier/status", s.barrierStatus(t))
-		r.Post("/{tenantID}/barrier/init", s.barrierInit(t))
-		r.Post("/{tenantID}/barrier/unseal", s.barrierUnseal(t))
 	})
 
 	return r
@@ -370,83 +311,6 @@ func TestTransport_DeleteTenant_NotFound(t *testing.T) {
 	tr, _ := newTenantTestTransport(t)
 
 	err := tr.DeleteTenant(context.Background(), "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent tenant")
-	}
-}
-
-func TestTransport_TenantBarrierInit_Success(t *testing.T) {
-	tr, _ := newTenantTestTransport(t)
-	ctx := context.Background()
-
-	_, err := tr.CreateTenant(ctx, &transport.CreateTenantRequest{
-		ID:   "init-tenant",
-		Name: "Init Tenant",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = tr.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
-		TenantID:  "init-tenant",
-		Threshold: 2,
-		Shares:    3,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestTransport_TenantBarrierInit_NotFound(t *testing.T) {
-	tr, _ := newTenantTestTransport(t)
-
-	err := tr.TenantBarrierInit(context.Background(), &transport.TenantBarrierInitRequest{
-		TenantID:  "nonexistent",
-		Threshold: 2,
-		Shares:    3,
-	})
-	if err == nil {
-		t.Fatal("expected error for nonexistent tenant")
-	}
-}
-
-func TestTransport_TenantBarrierUnseal_AlreadyUnsealed(t *testing.T) {
-	tr, _ := newTenantTestTransport(t)
-	ctx := context.Background()
-
-	_, err := tr.CreateTenant(ctx, &transport.CreateTenantRequest{
-		ID:   "unseal-tenant",
-		Name: "Unseal Tenant",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Initialize the tenant barrier (software strategy auto-unseals)
-	err = tr.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
-		TenantID: "unseal-tenant",
-	})
-	if err != nil {
-		t.Fatalf("barrier init failed: %v", err)
-	}
-
-	// Unseal on an already-unsealed barrier should return an error
-	err = tr.TenantBarrierUnseal(ctx, &transport.TenantBarrierUnsealRequest{
-		TenantID: "unseal-tenant",
-		Key:      []byte("test-key"),
-	})
-	if err == nil {
-		t.Fatal("expected error when unsealing already-unsealed barrier")
-	}
-}
-
-func TestTransport_TenantBarrierUnseal_NotFound(t *testing.T) {
-	tr, _ := newTenantTestTransport(t)
-
-	err := tr.TenantBarrierUnseal(context.Background(), &transport.TenantBarrierUnsealRequest{
-		TenantID: "nonexistent",
-		Key:      []byte("test-key"),
-	})
 	if err == nil {
 		t.Fatal("expected error for nonexistent tenant")
 	}

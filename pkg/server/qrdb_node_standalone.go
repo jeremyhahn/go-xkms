@@ -19,23 +19,23 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
-	"github.com/jeremyhahn/go-xkms/pkg/daemon"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 )
 
 // ErrClusterRequiresRaftBuild is returned when cluster.enabled is set but xkms
 // was built without the raft build tag. Clustering pulls in the Raft transport
 // and is compiled in only with `-tags raft`.
-var ErrClusterRequiresRaftBuild = daemon.ErrClusterRequiresRaftBuild
+var ErrClusterRequiresRaftBuild = embeddednode.ErrClusterRequiresRaftBuild
 
 // newQRDBNode hosts a standalone (single-node) qrdb engine through the shared
-// pkg/daemon node builder — the single node-construction path for the stack.
+// pkg/embeddednode node builder — the single node-construction path for the stack.
 // This is the default build; the clustered path lives in qrdb_node_cluster.go
-// under `-tags raft`. If cluster.enabled is set in this build, pkg/daemon
+// under `-tags raft`. If cluster.enabled is set in this build, pkg/embeddednode
 // fails loudly rather than silently running unclustered.
 func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbsdk.ServerOption, nodeOpts []qrdbnode.NodeOption) (*qrdbnode.Node, error) {
-	res, err := daemon.NewNode(s.ctx, &daemon.Options{
+	res, err := embeddednode.NewNode(s.ctx, &embeddednode.NodeOptions{
 		QRDB:          qcfg,
-		Cluster:       daemon.ClusterOptions{Enabled: s.config.Cluster.Enabled},
+		Cluster:       embeddednode.ClusterOptions{Enabled: s.config.Cluster.Enabled},
 		StoragePath:   s.config.Datastore.Path,
 		Logger:        s.logger,
 		ServerOptions: serverOpts,

@@ -1000,12 +1000,8 @@ For client/server deployments, go-xkms uses a secure bootstrap workflow that est
 ```
 1. Server first boot    -->  Prints setup token + SPKI pin
 2. Admin registers      -->  xkey auth register --server URL --spki-pin PIN
-3. Custodian group      -->  xkmsctl custodian create --name "Ops" --threshold 3 --total 5
-4. Members added        -->  xkmsctl custodian add-member --group-id G --user-id U
-5. Shares distributed   -->  xkmsctl custodian distribute --group-id G
-6. Custodians receive   -->  xkey share receive --server URL
-7. Barrier unsealed     -->  xkey share unseal --server URL --group-id G  (x3)
-8. Client cert enrolled -->  xkey cert request --server URL --cn "user@example.com"
+3. Barrier unsealed     -->  by the server's seal strategy (go-qrdb owns the barrier)
+4. Client cert enrolled -->  xkey cert request --server URL --cn "user@example.com"
 ```
 
 ### Step 1: Server First Boot
@@ -1026,30 +1022,11 @@ The first admin registers using the SPKI pin for trust-on-first-use:
 xkey auth register --server https://kms.example.com:8443 --spki-pin e5f6a7b8...
 ```
 
-### Step 3: Custodian Setup and Share Distribution
+### Step 3: Barrier Unsealing
 
-Create a custodian group and distribute Shamir shares:
+The barrier, including Shamir custodian quorums, belongs to go-qrdb. xkms has no `custodian` or `share` verb; the server unseals through its configured seal strategy.
 
-```bash
-xkmsctl custodian create --name "Production Ops" --threshold 3 --total 5
-xkmsctl custodian add-member --group-id G --user-id user-1
-xkmsctl custodian add-member --group-id G --user-id user-2
-# ... add remaining members
-xkmsctl custodian distribute --group-id G
-```
-
-### Step 4: Barrier Unsealing
-
-Each custodian receives their share and submits it to unseal the barrier:
-
-```bash
-xkey share receive --server grpc://kms.example.com:9090
-xkey share unseal --server grpc://kms.example.com:9090 --group-id G
-```
-
-Once the threshold is reached, the barrier is unsealed and key operations resume.
-
-### Step 5: Client Certificate Enrollment
+### Step 4: Client Certificate Enrollment
 
 With the barrier unsealed, enroll a client certificate for mTLS:
 

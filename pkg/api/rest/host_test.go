@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
@@ -44,6 +45,20 @@ func newFakeQRDBClient(t *testing.T) (*qrdbsdk.Client, *testutil.QRDBFakeTranspo
 	client, ft, err := testutil.NewQRDBFakeClient()
 	require.NoError(t, err)
 	return client, ft
+}
+
+// buildTestWebAuthnService builds the relying party the way the composition
+// roots do, over a fake qrdb client and an in-process DAO factory.
+func buildTestWebAuthnService(t *testing.T, cfg *webauthn.Config) *webauthn.Service {
+	t.Helper()
+	client, _ := newFakeQRDBClient(t)
+	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
+		Config:     cfg,
+		QRDBClient: client,
+		DAOFactory: testutil.NewMemoryDAOFactory(),
+	})
+	require.NoError(t, err)
+	return svc
 }
 
 // ---------------------------------------------------------------------------
@@ -162,12 +177,22 @@ func TestBuildWebAuthnService_NilQRDBClient(t *testing.T) {
 	assert.ErrorIs(t, err, ErrWebAuthnQRDBClientRequired)
 }
 
+func TestBuildWebAuthnService_NilDAOFactory(t *testing.T) {
+	client, _ := newFakeQRDBClient(t)
+	cfg := WebAuthnConfigFromXKMS(&config.WebAuthnConfig{RPID: "example.com"})
+	_, err := BuildWebAuthnService(WebAuthnServiceParams{Config: cfg, QRDBClient: client})
+	var buildErr *WebAuthnServiceBuildError
+	require.ErrorAs(t, err, &buildErr)
+	assert.ErrorIs(t, err, ErrWebAuthnDAOFactoryRequired)
+}
+
 func TestBuildWebAuthnService_Success(t *testing.T) {
 	client, _ := newFakeQRDBClient(t)
 	cfg := WebAuthnConfigFromXKMS(&config.WebAuthnConfig{RPID: "example.com"})
 	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
 		Config:     cfg,
 		QRDBClient: client,
+		DAOFactory: testutil.NewMemoryDAOFactory(),
 		TenantID:   "system",
 	})
 	require.NoError(t, err)
@@ -257,6 +282,7 @@ func TestNewHostServer_WebAuthnServesRealCeremony(t *testing.T) {
 	srv, err := NewHostServer(context.Background(), &HostConfig{
 		XKMSService: svc,
 		QRDBClient:  client,
+		DAOFactory:  testutil.NewMemoryDAOFactory(),
 		WebAuthn:    waCfg,
 	})
 	require.NoError(t, err)

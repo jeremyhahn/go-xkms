@@ -47,20 +47,27 @@ import (
     webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 )
 
-// Create stores (use database-backed stores for production)
-userStore := webauthn.NewMemoryUserStore()
-sessionStore := webauthn.NewMemorySessionStore()
-credStore := webauthn.NewMemoryCredentialStore()
-
-// Create WebAuthn configuration
-cfg := webauthn.Config{
-    RPID:          "example.com",
-    RPDisplayName: "Example Application",
-    RPOrigins:     []string{"https://example.com"},
+// Users are go-qrdb's; credentials are go-qrdb DAO entities on the
+// datastore's DAO factory. Sessions are short-lived and held in memory.
+users, creds, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
+    Users:      qrdbClient.Users(),
+    DAOFactory: daoFactory,
+    TenantID:   "system",
+})
+if err != nil {
+    log.Fatal(err)
 }
 
-// Create service
-service, err := webauthn.NewService(cfg, userStore, sessionStore, credStore)
+service, err := webauthn.NewService(webauthn.ServiceParams{
+    Config: &webauthn.Config{
+        RPID:          "example.com",
+        RPDisplayName: "Example Application",
+        RPOrigins:     []string{"https://example.com"},
+    },
+    UserStore:       users,
+    SessionStore:    webauthn.NewMemorySessionStore(),
+    CredentialStore: creds,
+})
 if err != nil {
     log.Fatal(err)
 }
@@ -135,18 +142,9 @@ type CredentialStore interface {
 
 ## Testing
 
-Use the provided memory stores for unit testing:
-
-```go
-userStore := webauthn.NewMemoryUserStore()
-sessionStore := webauthn.NewMemorySessionStore()
-credStore := webauthn.NewMemoryCredentialStore()
-
-// After tests
-userStore.Clear()
-sessionStore.Clear()
-credStore.Clear()
-```
+Tests run the production stores on a real in-process DAO factory over a
+memory store (`testutil.NewMemoryDAOFactory()`) and go-qrdb's in-process user
+client, so there is no separate test-only user or credential store.
 
 ## Session TTL
 

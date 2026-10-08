@@ -29,10 +29,12 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -73,9 +75,15 @@ func (e *BuildError) Error() string {
 // Unwrap returns the underlying failure.
 func (e *BuildError) Unwrap() error { return e.Err }
 
-// localScope is the tenant every local operation acts on: a client owns one
-// TPM and keeps all of its objects in the system scope.
-const localScope = ""
+const (
+	// localScope is the tenant every local operation acts on: a client owns
+	// one TPM and keeps all of its objects in the system scope.
+	localScope = ""
+
+	// registryDir is the directory under DataDir whose store holds the
+	// policy registry's database (tpmpolicy.DatabaseName).
+	registryDir = "tpm-policies"
+)
 
 // Params are the dependencies of the TPM policy service a client runs
 // in-process over its own TPM.
@@ -157,17 +165,27 @@ func Open(p Params) (*Policies, error) {
 		return nil, &BuildError{Err: err}
 	}
 	l := &Policies{lockFn: p.Lock}
+	open := func(name string) (storage.Backend, error) {
+		store, openErr := p.OpenStore(filepath.Join(p.DataDir, name))
+		if openErr != nil {
+			return nil, openErr
+		}
+		l.stores = append(l.stores, store)
+		return store, nil
+	}
+	registry, err := open(registryDir)
+	if err != nil {
+		return nil, &BuildError{Err: err}
+	}
+	registryKV, err := kvadapter.New(registry)
+	if err != nil {
+		return nil, &BuildError{Err: errors.Join(err, l.closeStores())}
+	}
 	svc, err := compose.BuildTPMPolicyService(compose.TPMPolicyParams{
 		Backend: backend,
-		Storage: func(name string) (storage.Backend, error) {
-			store, openErr := p.OpenStore(filepath.Join(p.DataDir, name))
-			if openErr != nil {
-				return nil, openErr
-			}
-			l.stores = append(l.stores, store)
-			return store, nil
-		},
-		Logger: logger,
+		DAOs:    dao.NewStoreFactory(registryKV),
+		Storage: open,
+		Logger:  logger,
 	})
 	if err != nil {
 		return nil, &BuildError{Err: errors.Join(err, l.closeStores())}

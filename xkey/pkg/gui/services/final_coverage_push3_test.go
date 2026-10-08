@@ -104,7 +104,7 @@ func fcp5NewExplorer(t *testing.T, opts ...func(*ExplorerConfig)) *APIExplorerSe
 
 func TestFCP5_ListAvailableTokens_OIDCWithEmail(t *testing.T) {
 	oidcSvc := NewOIDCService(slog.Default())
-	oidcTokenStore := oidc.NewMemoryTokenStore()
+	oidcTokenStore := newTestOIDCTokenStore(t)
 	oidcSvc.tokenStore = oidcTokenStore
 	oidcSvc.providers["test-provider"] = &OIDCProviderEntry{
 		Name:   "test-provider",
@@ -137,7 +137,7 @@ func TestFCP5_ListAvailableTokens_OIDCWithEmail(t *testing.T) {
 
 func TestFCP5_ListAvailableTokens_OIDCNoAccessToken(t *testing.T) {
 	oidcSvc := NewOIDCService(slog.Default())
-	oidcTokenStore := oidc.NewMemoryTokenStore()
+	oidcTokenStore := newTestOIDCTokenStore(t)
 	oidcSvc.tokenStore = oidcTokenStore
 	oidcSvc.providers["empty-provider"] = &OIDCProviderEntry{
 		Name:   "empty-provider",
@@ -161,7 +161,7 @@ func TestFCP5_ListAvailableTokens_OIDCNoAccessToken(t *testing.T) {
 
 func TestFCP5_ListAvailableTokens_OIDCDuplicate(t *testing.T) {
 	oidcSvc := NewOIDCService(slog.Default())
-	oidcTokenStore := oidc.NewMemoryTokenStore()
+	oidcTokenStore := newTestOIDCTokenStore(t)
 	oidcSvc.tokenStore = oidcTokenStore
 	oidcSvc.providers["dup-provider"] = &OIDCProviderEntry{
 		Name:   "dup-provider",

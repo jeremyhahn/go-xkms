@@ -68,7 +68,7 @@ func (e *errCollectionRouteHasParameter) Error() string {
 
 // collectionRoutePattern finds the exact Pattern specs registers for method
 // against the collection resource identified by base (no trailing slash,
-// e.g. "/api/v1/custodian/groups"). It is the one place the parity test
+// e.g. "/api/v1/users"). It is the one place the parity test
 // below derives an expected path from the route table instead of
 // duplicating a literal string that could drift out of sync with
 // routes.go.
@@ -89,9 +89,9 @@ func collectionRoutePattern(specs []restapi.RouteSpec, method, base string) (str
 }
 
 func TestCollectionRoutePattern_Found(t *testing.T) {
-	pattern, err := collectionRoutePattern(restapi.Routes(), http.MethodPost, "/api/v1/custodian/groups")
+	pattern, err := collectionRoutePattern(restapi.Routes(), http.MethodPost, "/api/v1/users")
 	require.NoError(t, err)
-	assert.Equal(t, "/api/v1/custodian/groups/", pattern)
+	assert.Equal(t, "/api/v1/users/", pattern)
 }
 
 func TestCollectionRoutePattern_NotFound(t *testing.T) {
@@ -169,24 +169,6 @@ type collectionRouteCase struct {
 
 var collectionRouteCases = []collectionRouteCase{
 	{
-		name:   "CreateCustodianGroup",
-		method: http.MethodPost,
-		base:   "/api/v1/custodian/groups",
-		call: func(ctx context.Context, tr *Transport) error {
-			_, err := tr.CreateCustodianGroup(ctx, &transport.CreateCustodianGroupRequest{})
-			return err
-		},
-	},
-	{
-		name:   "ListCustodianGroups",
-		method: http.MethodGet,
-		base:   "/api/v1/custodian/groups",
-		call: func(ctx context.Context, tr *Transport) error {
-			_, err := tr.ListCustodianGroups(ctx)
-			return err
-		},
-	},
-	{
 		name:   "PasswordAdd",
 		method: http.MethodPost,
 		base:   "/api/v1/passwords",
@@ -201,24 +183,6 @@ var collectionRouteCases = []collectionRouteCase{
 		base:   "/api/v1/passwords",
 		call: func(ctx context.Context, tr *Transport) error {
 			_, err := tr.PasswordList(ctx, nil)
-			return err
-		},
-	},
-	{
-		name:   "ListShares",
-		method: http.MethodGet,
-		base:   "/api/v1/shares",
-		call: func(ctx context.Context, tr *Transport) error {
-			_, err := tr.ListShares(ctx)
-			return err
-		},
-	},
-	{
-		name:   "QueryAudit",
-		method: http.MethodGet,
-		base:   "/api/v1/audit",
-		call: func(ctx context.Context, tr *Transport) error {
-			_, err := tr.QueryAudit(ctx, &transport.AuditFilter{})
 			return err
 		},
 	},
@@ -320,7 +284,7 @@ func TestTransport_CollectionRootRoutes_MatchRegisteredPaths(t *testing.T) {
 // #1087 fixed -- instead of tolerating both the way chi's own redirect did
 // in production.
 func TestNewCollectionRootServer_RejectsMismatchedPath(t *testing.T) {
-	registered := mustCollectionRoutePattern(t, http.MethodPost, "/api/v1/custodian/groups")
+	registered := mustCollectionRoutePattern(t, http.MethodPost, "/api/v1/users")
 	require.True(t, strings.HasSuffix(registered, "/"), "test fixture assumes the registered collection route carries a trailing slash")
 
 	tr, seen := newCollectionRootServer(t, http.MethodPost, registered)

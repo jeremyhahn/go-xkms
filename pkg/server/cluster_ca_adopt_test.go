@@ -25,7 +25,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
 )
 
@@ -125,16 +125,15 @@ func TestAdoptStagedClusterCACerts_MalformedCertificateFailsClosed(t *testing.T)
 	require.Error(t, err)
 }
 
-// newInMemoryCertStoreForAdopt builds an in-memory CertStore, matching the
-// production wiring in initializeCA (storage.NewCertAdapter over the
-// configured storage backend), so these tests exercise the real
-// certstore.CertStore.StoreCertificate/GetCertificate path.
+// newInMemoryCertStoreForAdopt builds a CertStore over an in-memory DAO
+// factory serving the CA's database, matching the production wiring in
+// initializeCA (the datastore's factory for certstore.DatabaseName), so these
+// tests exercise the real certstore.CertStore.StoreCertificate/GetCertificate
+// path.
 func newInMemoryCertStoreForAdopt(t *testing.T) certstore.CertStore {
 	t.Helper()
-	memBackend, err := storage.NewMemoryBackend()
-	require.NoError(t, err)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(memBackend),
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	require.NoError(t, err)
 	return cs

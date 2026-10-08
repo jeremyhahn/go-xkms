@@ -21,9 +21,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/require"
@@ -148,19 +150,16 @@ func TestInitializeCA_QRDB_CorruptPersistedCertificateFailsClosed(t *testing.T) 
 	require.NoError(t, s1.Shutdown())
 
 	// Reopen the same qrdb data directory out-of-band and damage the
-	// persisted root certificate record in place -- modeling bit rot or a
-	// truncated write, not a missing key.
-	corrupt := &Server{
-		config: &config.Config{
-			Datastore: config.DatastoreConfig{Path: filepath.Join(dataDir, "storage")},
-		},
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-	require.NoError(t, corrupt.initializeQRDBStorage())
-	caView, err := corrupt.createStorage("ca")
+	// persisted certificate records in the CA database in place -- modeling
+	// bit rot or a truncated write, not a missing key.
+	ctx := context.Background()
+	corrupt, records := openCADatabaseOutOfBand(t, dataDir)
+	keys, err := records.List(ctx, "")
 	require.NoError(t, err)
-	require.NoError(t, caView.Put(context.Background(),
-		storage.CertPath("793 Repro Root CA"), []byte("not a certificate")))
+	require.NotEmpty(t, keys, "the first start must have persisted the root certificate")
+	for _, key := range keys {
+		require.NoError(t, records.Put(ctx, key, []byte("not a certificate")))
+	}
 	require.NoError(t, corrupt.closeQRDBStorage())
 
 	xkms.Reset()
@@ -176,17 +175,28 @@ func TestInitializeCA_QRDB_CorruptPersistedCertificateFailsClosed(t *testing.T) 
 	// The damaged certificate must never have been silently discarded and
 	// replaced: re-reading it out-of-band still returns the same broken
 	// bytes, not a freshly minted certificate.
-	readBack := &Server{
+	readBack, records := openCADatabaseOutOfBand(t, dataDir)
+	defer func() { _ = readBack.closeQRDBStorage() }()
+	for _, key := range keys {
+		raw, err := records.Get(ctx, key)
+		require.NoError(t, err)
+		require.Equal(t, []byte("not a certificate"), raw, "the damaged record must be left untouched, not overwritten by a new Init")
+	}
+}
+
+// openCADatabaseOutOfBand opens the shared datastore under dataDir the way
+// a stopped server's would be opened, and returns the server holding it and
+// the raw records of the CA's certificate database.
+func openCADatabaseOutOfBand(t *testing.T, dataDir string) (*Server, qrdbsdk.KVStore) {
+	t.Helper()
+	s := &Server{
 		config: &config.Config{
 			Datastore: config.DatastoreConfig{Path: filepath.Join(dataDir, "storage")},
 		},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	require.NoError(t, readBack.initializeQRDBStorage())
-	defer func() { _ = readBack.closeQRDBStorage() }()
-	caView2, err := readBack.createStorage("ca")
+	require.NoError(t, s.initializeQRDBStorage())
+	records, err := s.datastore.DatabaseKVStore(context.Background(), certstore.DatabaseName)
 	require.NoError(t, err)
-	raw, err := caView2.Get(context.Background(), storage.CertPath("793 Repro Root CA"))
-	require.NoError(t, err)
-	require.Equal(t, []byte("not a certificate"), raw, "the damaged record must be left untouched, not overwritten by a new Init")
+	return s, records
 }

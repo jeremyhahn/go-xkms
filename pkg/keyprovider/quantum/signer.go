@@ -113,7 +113,7 @@ func (k *MLDSAPrivateKey) ExportSecretKey() []byte {
 	if k.seed == nil {
 		return nil
 	}
-	buf, err := k.seed.Open()
+	buf, err := k.seed.Open(context.Background())
 	if err != nil {
 		return nil
 	}
@@ -245,7 +245,7 @@ func (k *MLKEMPrivateKey) ExportSecretKey() []byte {
 	if k.seed == nil {
 		return nil
 	}
-	buf, err := k.seed.Open()
+	buf, err := k.seed.Open(context.Background())
 	if err != nil {
 		return nil
 	}

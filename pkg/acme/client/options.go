@@ -17,10 +17,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/auth"
 	acmecommon "github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	xkmsauth "github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -29,11 +29,12 @@ import (
 // Option configures a TrustedCA instance.
 type Option func(*TrustedCA) error
 
-// WithQRDB sets the QRDB service for storage operations.
-// This is required for multi-tenant mode.
-func WithQRDB(svc qrdb.Service) Option {
+// WithQRDB sets the go-qrdb client -- typically a datastore's Client() --
+// the tenant-aware admin service delegates tenant roles, users, and CA
+// records to. This is required for multi-tenant mode.
+func WithQRDB(client admin.QRDBClient) Option {
 	return func(tca *TrustedCA) error {
-		tca.qrdbService = svc
+		tca.qrdbClient = client
 		return nil
 	}
 }
@@ -91,7 +92,7 @@ func WithVersion(version string) Option {
 	}
 }
 
-// WithMultiTenant enables multi-tenant mode. This requires a QRDB instance
+// WithMultiTenant enables multi-tenant mode. This requires a go-qrdb client
 // to be configured with WithQRDB; New returns ErrMissingQRDB otherwise. It
 // is the only switch for multi-tenancy on a standalone TrustedCA -- there is
 // no config-file equivalent, matching xkmsd's embedded ACME server, which

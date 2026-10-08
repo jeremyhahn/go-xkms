@@ -14,6 +14,7 @@
 package importtoken
 
 import (
+	"context"
 	"crypto/rsa"
 	"errors"
 
@@ -50,11 +51,11 @@ func (e *Entry) Destroy() {
 // with algorithm -- using e's sealed RSA private key. It is a thin
 // convenience wrapper around the package-level Unwrap, supplying e.Key and
 // e.Algorithm as the sealed key and the algorithm it was issued for.
-func (e *Entry) Unwrap(algorithm backend.WrappingAlgorithm, wrapped []byte) ([]byte, error) {
+func (e *Entry) Unwrap(ctx context.Context, algorithm backend.WrappingAlgorithm, wrapped []byte) ([]byte, error) {
 	if e == nil {
 		return nil, &UnavailableError{}
 	}
-	return Unwrap(e.Key, e.Algorithm, algorithm, wrapped)
+	return Unwrap(ctx, e.Key, e.Algorithm, algorithm, wrapped)
 }
 
 // Unwrap opens sealed's enclave and decrypts wrapped using algorithm, the
@@ -80,13 +81,13 @@ func (e *Entry) Unwrap(algorithm backend.WrappingAlgorithm, wrapped []byte) ([]b
 // reported through the same *errs.Wrapped shape, so a caller cannot
 // distinguish "malformed ciphertext" from "enclave already destroyed" from
 // the error alone.
-func Unwrap(sealed *SealedRSAKey, issued, algorithm backend.WrappingAlgorithm, wrapped []byte) ([]byte, error) {
+func Unwrap(ctx context.Context, sealed *SealedRSAKey, issued, algorithm backend.WrappingAlgorithm, wrapped []byte) ([]byte, error) {
 	if issued != algorithm {
 		return nil, &AlgorithmMismatchError{Issued: issued, Requested: algorithm}
 	}
 
 	var unwrapped []byte
-	useErr := sealed.Use(func(privateKey *rsa.PrivateKey) error {
+	useErr := sealed.Use(ctx, func(privateKey *rsa.PrivateKey) error {
 		var unwrapErr error
 		switch algorithm {
 		case backend.WrappingAlgorithmRSAES_OAEP_SHA_1, backend.WrappingAlgorithmRSAES_OAEP_SHA_256:

@@ -429,6 +429,6 @@ Hook context provides:
 ## See Also
 
 - [go-xkms Documentation](https://github.com/jeremyhahn/go-xkms)
-- [QRDB Documentation](qrdb/README.md)
+- [Datastore](../datastore/architecture.md)
 - [RFC 8555 - ACME Protocol](https://tools.ietf.org/html/rfc8555)
 - [TCG TPM 2.0 Keys for Device Identity](https://trustedcomputinggroup.org/resource/tcg-tpm-2-0-keys-for-device-identity-and-attestation/)

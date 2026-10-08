@@ -18,8 +18,8 @@ or `--host`, both forms are accepted.
 
 `--seal-passphrase` was removed (go-xkms#653): there is no config-, flag-, or
 env-sourced boot-time barrier secret any more, matching go-qrdb's own
-`SealConfig`. Unseal a software-strategy barrier with `xkmsctl barrier
-unseal` (or `unseal-shares`) after every restart, or configure a hardware
+`SealConfig`. Unseal a software-strategy barrier through go-qrdb's own barrier
+surface after every restart, or configure a hardware
 seal strategy (`barrier.strategy: "tpm2"`/`"pkcs11"`) for unattended
 auto-unseal.
 

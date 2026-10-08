@@ -40,7 +40,7 @@ func TestCSVParser_Parse_ValidFile(t *testing.T) {
 	}
 
 	p := NewCSVParser()
-	entries, err := p.Parse(filePath, nil)
+	entries, err := p.Parse(t.Context(), filePath, nil)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -98,7 +98,7 @@ func TestCSVParser_Parse_WithTargetFolder(t *testing.T) {
 	opts := &ImportOptions{
 		TargetFolder: "Imported/KeePass",
 	}
-	entries, err := p.Parse(filePath, opts)
+	entries, err := p.Parse(t.Context(), filePath, opts)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -130,7 +130,7 @@ func TestCSVParser_Parse_AlternativeColumnNames(t *testing.T) {
 	}
 
 	p := NewCSVParser()
-	entries, err := p.Parse(filePath, nil)
+	entries, err := p.Parse(t.Context(), filePath, nil)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -165,7 +165,7 @@ func TestCSVParser_Parse_MissingPasswordColumn(t *testing.T) {
 	}
 
 	p := NewCSVParser()
-	_, err := p.Parse(filePath, nil)
+	_, err := p.Parse(t.Context(), filePath, nil)
 	if err == nil {
 		t.Fatal("Parse() expected error for missing password column")
 	}
@@ -182,7 +182,7 @@ func TestCSVParser_Parse_MissingIdentifierColumn(t *testing.T) {
 	}
 
 	p := NewCSVParser()
-	_, err := p.Parse(filePath, nil)
+	_, err := p.Parse(t.Context(), filePath, nil)
 	if err == nil {
 		t.Fatal("Parse() expected error for missing title/username column")
 	}
@@ -198,7 +198,7 @@ func TestCSVParser_Parse_EmptyFile(t *testing.T) {
 	}
 
 	p := NewCSVParser()
-	_, err := p.Parse(filePath, nil)
+	_, err := p.Parse(t.Context(), filePath, nil)
 	if err != ErrNoEntriesFound {
 		t.Errorf("Parse() error = %v, want %v", err, ErrNoEntriesFound)
 	}
@@ -206,7 +206,7 @@ func TestCSVParser_Parse_EmptyFile(t *testing.T) {
 
 func TestCSVParser_Parse_NonexistentFile(t *testing.T) {
 	p := NewCSVParser()
-	_, err := p.Parse("/nonexistent/file.csv", nil)
+	_, err := p.Parse(t.Context(), "/nonexistent/file.csv", nil)
 	if err == nil {
 		t.Fatal("Parse() expected error for nonexistent file")
 	}
@@ -224,7 +224,7 @@ func TestCSVParser_Parse_Timestamps(t *testing.T) {
 	}
 
 	p := NewCSVParser()
-	entries, err := p.Parse(filePath, nil)
+	entries, err := p.Parse(t.Context(), filePath, nil)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -258,7 +258,7 @@ func TestCSVParser_Parse_SkipsEmptyPasswords(t *testing.T) {
 	}
 
 	p := NewCSVParser()
-	entries, err := p.Parse(filePath, nil)
+	entries, err := p.Parse(t.Context(), filePath, nil)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}

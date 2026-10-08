@@ -96,8 +96,13 @@ func (a *CAAdapter) SignCSR(ctx context.Context, csrPEM []byte, opts *qrdbsdk.Si
 	})
 }
 
-// CACertificate returns the CA's own certificate.
-func (a *CAAdapter) CACertificate() (*x509.Certificate, error) {
+// CACertificate returns the CA's own certificate. The xkms CA holds its
+// certificate in memory, so ctx only refuses a caller that has already given
+// up.
+func (a *CAAdapter) CACertificate(ctx context.Context) (*x509.Certificate, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return a.ca.CACertificate()
 }
 

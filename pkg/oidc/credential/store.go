@@ -82,7 +82,7 @@ func (r *registryBarriers) Barrier(tenantID string) (Backend, error) {
 }
 
 func (r *registryBarriers) Tenants() []string {
-	tenants := r.registry.Inner().ListTenants()
+	tenants := r.registry.ListTenants()
 	out := make([]string, 0, len(tenants)+1)
 	out = append(out, scope.SystemTenant)
 	for _, t := range tenants {

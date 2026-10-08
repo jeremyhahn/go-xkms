@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
@@ -42,8 +44,9 @@ type Service struct {
 	locks      *locker
 	httpClient *http.Client
 	logger     *slog.Logger
-	audit      audit.Logger
+	audit      qrdbsdk.NodeAuditLogger
 	now        func() time.Time
+	leaseCtx   CallContext
 
 	subMu  sync.RWMutex
 	subs   map[uint64]func(Event)
@@ -67,6 +70,20 @@ func WithLeases(leases Leases) Option {
 	return func(s *Service) { s.locks = newLocker(leases, s.logger) }
 }
 
+// CallContext derives the context a call into go-qrdb runs on from the
+// caller's. An embedded node's Node.ServiceContext is one: it binds the
+// node's service principal.
+type CallContext func(ctx context.Context) (context.Context, error)
+
+// WithLeaseContext runs every lease call -- acquire, renew, release -- on the
+// context bind derives from the caller's. The leases are the service's own
+// coordination, not a caller's request, so over an embedded node the host
+// passes Node.ServiceContext. Provider requests and barrier access keep the
+// caller's context.
+func WithLeaseContext(bind CallContext) Option {
+	return func(s *Service) { s.leaseCtx = bind }
+}
+
 // WithHTTPClient sets the client used for provider requests.
 func WithHTTPClient(c *http.Client) Option { return func(s *Service) { s.httpClient = c } }
 
@@ -74,7 +91,7 @@ func WithHTTPClient(c *http.Client) Option { return func(s *Service) { s.httpCli
 func WithLogger(l *slog.Logger) Option { return func(s *Service) { s.logger = l } }
 
 // WithAudit records every credential event in the audit log.
-func WithAudit(l audit.Logger) Option { return func(s *Service) { s.audit = l } }
+func WithAudit(l qrdbsdk.NodeAuditLogger) Option { return func(s *Service) { s.audit = l } }
 
 // WithClock sets the clock (tests).
 func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = now } }
@@ -98,6 +115,7 @@ func New(barriers Barriers, opts ...Option) (*Service, error) {
 		s.locks = newLocker(nil, s.logger)
 	}
 	s.locks.logger = s.logger
+	s.locks.bind = s.leaseCtx
 	return s, nil
 }
 
@@ -142,7 +160,7 @@ func (s *Service) emit(ctx context.Context, typ EventType, ref Ref, reason strin
 	if reason != "" {
 		details["reason"] = reason
 	}
-	if err := s.audit.Log(ctx, &audit.Event{
+	if err := audit.Emit(ctx, s.audit, &audit.Event{
 		Timestamp:  ev.Time,
 		Subject:    "xkms",
 		Action:     string(typ),

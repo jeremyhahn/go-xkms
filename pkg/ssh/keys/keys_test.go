@@ -62,7 +62,7 @@ func generateEncryptedPEM(t *testing.T, passphrase []byte) []byte {
 }
 
 func TestGenerate_Ed25519(t *testing.T) {
-	key, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestGenerate_Ed25519(t *testing.T) {
 // (2048). We do NOT test the default 4096 in unit tests — it takes
 // seconds — but we do verify the floor works.
 func TestGenerate_RSA_MinimumBits(t *testing.T) {
-	key, err := keys.Generate(keys.GenerateOptions{
+	key, err := keys.Generate(t.Context(), keys.GenerateOptions{
 		Algorithm: keys.AlgorithmRSA,
 		RSABits:   2048,
 	})
@@ -100,7 +100,7 @@ func TestGenerate_RSA_MinimumBits(t *testing.T) {
 }
 
 func TestGenerate_RSA_UnderMinimum(t *testing.T) {
-	_, err := keys.Generate(keys.GenerateOptions{
+	_, err := keys.Generate(t.Context(), keys.GenerateOptions{
 		Algorithm: keys.AlgorithmRSA,
 		RSABits:   1024,
 	})
@@ -111,7 +111,7 @@ func TestGenerate_RSA_UnderMinimum(t *testing.T) {
 }
 
 func TestGenerate_ECDSA_P256(t *testing.T) {
-	key, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmECDSAP256})
+	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmECDSAP256})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestGenerate_ECDSA_P256(t *testing.T) {
 }
 
 func TestGenerate_ECDSA_P384(t *testing.T) {
-	key, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmECDSAP384})
+	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmECDSAP384})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestGenerate_ECDSA_P384(t *testing.T) {
 }
 
 func TestGenerate_ECDSA_P521(t *testing.T) {
-	key, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmECDSAP521})
+	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmECDSAP521})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestGenerate_ECDSA_P521(t *testing.T) {
 }
 
 func TestGenerate_UnsupportedAlgorithm(t *testing.T) {
-	_, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.Algorithm("dsa-1024")})
+	_, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.Algorithm("dsa-1024")})
 	var uaErr *keys.UnsupportedAlgorithmError
 	if !errors.As(err, &uaErr) {
 		t.Fatalf("expected UnsupportedAlgorithmError, got %T", err)
@@ -152,7 +152,7 @@ func TestGenerate_UnsupportedAlgorithm(t *testing.T) {
 }
 
 func TestGenerate_EmptyAlgorithm(t *testing.T) {
-	_, err := keys.Generate(keys.GenerateOptions{})
+	_, err := keys.Generate(t.Context(), keys.GenerateOptions{})
 	var uaErr *keys.UnsupportedAlgorithmError
 	if !errors.As(err, &uaErr) {
 		t.Fatalf("expected UnsupportedAlgorithmError, got %T", err)
@@ -257,7 +257,7 @@ func TestParsePEM_Garbage(t *testing.T) {
 }
 
 func TestSigner_RoundTrip(t *testing.T) {
-	key, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestSigner_RepeatedCalls(t *testing.T) {
 	// Each Sign() re-opens the Secret; confirm that two back-to-back
 	// signs both succeed and the second isn't broken by the first's
 	// Buffer destroy.
-	key, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestSigner_NilKey(t *testing.T) {
 }
 
 func TestFingerprint(t *testing.T) {
-	key, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestKey_ID(t *testing.T) {
 }
 
 func TestKey_DestroyIdempotent(t *testing.T) {
-	key, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestBackendStore_RoundTrip(t *testing.T) {
 		t.Fatalf("NewBackendStore: %v", err)
 	}
 
-	key, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519, Comment: "hello"})
+	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519, Comment: "hello"})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestBackendStore_DeleteExisting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBackendStore: %v", err)
 	}
-	key, _ := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	key, _ := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	key.Scope = scope.User
 	key.Owner = "alice"
 	key.Name = "laptop"
@@ -481,7 +481,7 @@ func TestBackendStore_List(t *testing.T) {
 
 	// Populate: two user keys for alice, one for bob, one tenant key.
 	populate := func(sc scope.Scope, owner, name string) {
-		k, _ := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+		k, _ := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 		k.Scope = sc
 		k.Owner = owner
 		k.Name = name
@@ -561,7 +561,7 @@ func TestBackendStore_PutNoMaterial(t *testing.T) {
 // TestSignerWithClose_HappyPath asserts the persistent signer produces
 // valid signatures and the closer is idempotent.
 func TestSignerWithClose_HappyPath(t *testing.T) {
-	key, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

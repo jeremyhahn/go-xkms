@@ -30,15 +30,13 @@ const (
 	RoleUser Role = "user"
 	// RoleAuditor can only view audit logs and key metadata.
 	RoleAuditor Role = "auditor"
-	// RoleCustodian participates in key ceremonies and manages key shares.
-	RoleCustodian Role = "custodian"
 )
 
 // IsValidRole reports whether r is one of the canonical qrdb role names the
 // CLI is allowed to assign.
 func IsValidRole(r Role) bool {
 	switch r {
-	case RoleSO, RoleAdmin, RoleOperator, RoleUser, RoleAuditor, RoleCustodian:
+	case RoleSO, RoleAdmin, RoleOperator, RoleUser, RoleAuditor:
 		return true
 	default:
 		return false

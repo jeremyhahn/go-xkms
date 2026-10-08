@@ -191,7 +191,8 @@ env:
   # the head, which is exactly what an unpinned toolchain lets happen.
   #
   # Go 1.27.0 was adopted repo-wide in #560 (module toolchains, CI, and this
-  # pin all moved together; the Dockerfiles followed to close out #36). Bump
+  # pin all moved together; the Dockerfiles followed to close out #36), and
+  # moved to 1.27.1 with go-qrdb v0.46.0-alpha, whose go.mod declares it. Bump
   # the patch version here as 1.27.x releases ship; re-run the swiss/pebble
   # compatibility check above before ever bumping the minor version again.
   GO_VERSION: '1.27.1'
@@ -221,6 +222,10 @@ env:
   # the old install was blocking the 1.27 wave from the runner it was already
   # fixed on. This does NOT bump GO_VERSION -- that is the wave's decision
   # (company task #121), and it is now unblocked rather than made.
+  #
+  # golangci-lint v2.13.2 -> v2.14.0 and govulncheck v1.7.0 -> v1.8.0 follow the
+  # runner image, which now ships those versions (go-quicraft made the same
+  # move in v0.20). The tree lints clean on both.
   GOLANGCI_LINT_VERSION: 'v2.14.0'
   GOSEC_VERSION: 'v2.29.0'
   GOVULNCHECK_VERSION: 'v1.8.0'
@@ -1424,9 +1429,11 @@ jobs:
       # etc. were deleted in favor of pkg/xkms/servicer_cluster*.go); this
       # command used to also cover ./pkg/cluster/... but that path no longer
       # exists, so `go test` fails at the setup stage on every run regardless
-      # of tag set. pkg/xkms/... already covers the raft-gated test surface.
+      # of tag set. pkg/embeddednode/... is the single node builder: its
+      # node_cluster.go / node_standalone.go pair is the raft boolean swap, so
+      # each leg of this matrix tests a different half of it.
       - name: Test clustering packages (tags="${{ matrix.tags }}")
-        run: go test -tags "${{ matrix.tags }}" ./pkg/config/... ./pkg/xkms/... -count=1
+        run: go test -tags "${{ matrix.tags }}" ./pkg/config/... ./pkg/xkms/... ./pkg/embeddednode/... -count=1
 
   # Job 5c: Architecture gates — enforce the layering the campaign established.
   # xkmsctl and xkey must depend only on sdk/go (never go-xkms/pkg/* internals),

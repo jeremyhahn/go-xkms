@@ -20,10 +20,10 @@
 #     "acme: resolve qrdb client for admin authorization" once that
 #     requirement landed -- storage.backend "qrdb" is what publishes it.
 #  2. storage.backend "qrdb" flips the qrdb node's OWN barrier on
-#     (pkg/server/embedded_node.go ResolveNodeSeal / BarrierConfig.NodeFlipWired).
+#     (pkg/embeddednode/embedded_node.go ResolveNodeSeal).
 #     An earlier version of this file paired that with barrier.strategy
 #     "passphrase", which does NOT auto-unseal at construction (only "none"
-#     and a provisioned "tpm2" do), so xkmsd blocked boot behind a pre-boot
+#     and the hardware and cloud strategies do), so xkmsd blocked boot behind a pre-boot
 #     "sealed-window" listener until an operator ran `xkmsctl barrier
 #     unseal` against it -- and pkg/server/sealed_window.go refuses to even
 #     open that listener on a non-loopback Server.Host (0.0.0.0 here):
@@ -33,10 +33,8 @@
 #       window: qrdb node: sealed-window listener refused to bind
 #       \"0.0.0.0\": while the barrier is sealed ..."
 #
-#     barrier.strategy "none" auto-unseals unattended at construction
-#     (pkg/config/config.go's BarrierConfig.NodeFlipWired lists it alongside
-#     passphrase/shamir/tpm2, so it still counts as the qrdb node's own
-#     barrier for the ComplianceGaps gate), so serveSealedWindow is a
+#     barrier.strategy "none" auto-unseals unattended at construction, so
+#     serveSealedWindow is a
 #     documented no-op and boot never blocks on it -- exactly
 #     test/integration/acmeadmin/xkmsd.yaml's barrier.strategy comment.
 #

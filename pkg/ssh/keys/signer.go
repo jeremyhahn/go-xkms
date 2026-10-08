@@ -81,7 +81,7 @@ func (k *Key) SignerWithClose() (ssh.Signer, func(), error) {
 		return nil, nil, &NilInputError{Field: "key.PublicKey"}
 	}
 
-	buf, err := k.Material.Open()
+	buf, err := k.Material.Open(context.Background())
 	if err != nil {
 		return nil, nil, &KeyMaterialError{Op: "open secret for persistent signer", Err: err}
 	}
@@ -172,7 +172,7 @@ func (s *enclaveSigner) PublicKey() ssh.PublicKey {
 // internal state, which is outside our control. Callers that need
 // stronger guarantees should use the HSM or PKCS#11 backend.
 func (s *enclaveSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
-	buf, err := s.key.Material.Open()
+	buf, err := s.key.Material.Open(context.Background())
 	if err != nil {
 		return nil, &KeyMaterialError{Op: "open secret for sign", Err: err}
 	}
@@ -191,7 +191,7 @@ func (s *enclaveSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error
 // transient signer, and forwards to that signer's algorithm-aware Sign when
 // available (falling back to the default algorithm otherwise).
 func (s *enclaveSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
-	buf, err := s.key.Material.Open()
+	buf, err := s.key.Material.Open(context.Background())
 	if err != nil {
 		return nil, &KeyMaterialError{Op: "open secret for sign", Err: err}
 	}

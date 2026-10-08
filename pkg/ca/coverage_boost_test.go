@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -60,10 +61,8 @@ func setupTestCAWithRealIntermediate(t *testing.T) *CA {
 	})
 	require.NoError(t, err)
 
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: certAdapter,
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	require.NoError(t, err)
 
@@ -185,9 +184,7 @@ func TestCA_IntermediateCA_WithSANSAndExtensions(t *testing.T) {
 	backend, err := xkms.New(&xkms.BackendConfig{Backend: swBackend, CertStorage: certStorage})
 	require.NoError(t, err)
 
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
-	cs, err := certstore.New(&certstore.Config{CertStorage: certAdapter})
+	cs, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	config := DefaultMultiIdentityCAConfigWithIntermediate()
@@ -257,9 +254,7 @@ func TestCA_Load_NilRootIdentity(t *testing.T) {
 }
 
 func TestCA_Load_RootCertNotFound(t *testing.T) {
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
-	cs, err := certstore.New(&certstore.Config{CertStorage: certAdapter})
+	cs, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	keyStorage := storage.NewMemory()
@@ -640,7 +635,7 @@ func TestCA_GetOrGenerateCAKey_ExistingKey(t *testing.T) {
 	rootIdentity := ca.config.RootIdentity()
 	require.NotNil(t, rootIdentity)
 
-	attrs, err := ca.getCAKeyAttributes(rootIdentity)
+	attrs, err := ca.getCAKeyAttributes(t.Context(), rootIdentity)
 	require.NoError(t, err)
 
 	key, err := ca.getOrGenerateCAKey(context.Background(), attrs)
@@ -675,7 +670,7 @@ func TestCA_GetOrGenerateCAKey_UnsupportedAlgorithm(t *testing.T) {
 
 func TestCA_GetCAKeyAttributes_NilIdentity(t *testing.T) {
 	ca := setupTestCA(t)
-	_, err := ca.getCAKeyAttributes(nil)
+	_, err := ca.getCAKeyAttributes(t.Context(), nil)
 	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
@@ -684,7 +679,7 @@ func TestCA_GetCAKeyAttributes_SetsKeyTypeCA(t *testing.T) {
 	identity := &Identity{Subject: Subject{CommonName: "test"}, Keys: DefaultKeyConfig()}
 	identity.Keys[0].KeyType = ""
 
-	attrs, err := ca.getCAKeyAttributes(identity)
+	attrs, err := ca.getCAKeyAttributes(t.Context(), identity)
 	require.NoError(t, err)
 	assert.Equal(t, types.KeyTypeCA, attrs.KeyType)
 }
@@ -851,9 +846,7 @@ func TestCA_Init_RootWithSANSAndExtensions(t *testing.T) {
 	backend, err := xkms.New(&xkms.BackendConfig{Backend: swBackend, CertStorage: certStorage})
 	require.NoError(t, err)
 
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
-	cs, err := certstore.New(&certstore.Config{CertStorage: certAdapter})
+	cs, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	config := DefaultMultiIdentityCAConfig()
@@ -927,9 +920,7 @@ func TestNew_Success(t *testing.T) {
 	backend, err := xkms.New(&xkms.BackendConfig{Backend: swBackend, CertStorage: certStorage})
 	require.NoError(t, err)
 
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
-	cs, err := certstore.New(&certstore.Config{CertStorage: certAdapter})
+	cs, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	params := &Params{
@@ -962,9 +953,7 @@ func TestNew_WithCustomSerialGenAndProfiles(t *testing.T) {
 	backend, err := xkms.New(&xkms.BackendConfig{Backend: swBackend, CertStorage: certStorage})
 	require.NoError(t, err)
 
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
-	cs, err := certstore.New(&certstore.Config{CertStorage: certAdapter})
+	cs, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	customSerialGen := NewSerialGenerator(NewMemoryStorage())

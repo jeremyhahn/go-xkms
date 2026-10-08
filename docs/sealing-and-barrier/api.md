@@ -1,6 +1,6 @@
 # Sealing and Barrier — API
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-02 (#1227, #1228, #1244)
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-08 (#1227, #1228, #1244)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -10,68 +10,22 @@ Barrier routes are `RouteAuthPermission` under `/api/v1/barrier`, gated on the
 in the repo, because these operations control whether any key in the system is
 usable.
 
-## Barrier capability matrix
+## The barrier verbs are go-qrdb's
 
-| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC | MCP | Embedded (`BarrierService.`) | Permission |
-|---|---|---|---|---|---|---|
-| Initialize | `POST /api/v1/barrier/initialize` | `BarrierInitialize` | same as REST | `barrier.initialize` | `BarrierInitialize` | `seal:bootstrap` |
-| Unseal | `POST /api/v1/barrier/unseal` | `BarrierUnseal` | same as REST | `barrier.unseal` | `BarrierUnseal` | `seal:unseal` |
-| Seal | `POST /api/v1/barrier/seal` | `BarrierSeal` | same as REST | `barrier.seal` | `BarrierSeal` | `seal:seal` |
-| Status | `GET /api/v1/barrier/status` | `BarrierStatus` | same as REST | `barrier.status` | `BarrierStatus` | `seal:status` |
-| Initialize Shamir | `POST /api/v1/barrier/shamir/initialize` | `BarrierInitializeShamir` | same as REST | `barrier.initializeShamir` | `BarrierInitializeShamir` | `seal:initialize-shamir` |
-| Unseal with one share | `POST /api/v1/barrier/shamir/unseal-share` | `BarrierUnsealShare` | same as REST | `barrier.unsealShare` | `BarrierUnsealWithShare` | `barrier:unseal-share` |
-| Unseal with shares | `POST /api/v1/barrier/shamir/unseal-shares` | `BarrierUnsealShares` | same as REST | `barrier.unsealShares` | `BarrierUnsealWithShares` | `seal:unseal` |
-| Rekey | `POST /api/v1/barrier/rekey` | `BarrierRekey` | same as REST | `barrier.rekey` | `BarrierRekey` | `seal:rekey` |
-| Generate recovery keys | `POST /api/v1/barrier/recovery/generate` | `BarrierGenerateRecoveryKeys` | same as REST | `barrier.generateRecoveryKeys` | `BarrierGenerateRecoveryKeys` | `seal:generate-recovery` |
-| Recover with keys | `POST /api/v1/barrier/recovery/recover` | `BarrierRecoverWithKeys` | same as REST | `barrier.recoverWithKeys` | `BarrierRecoverWithKeys` | `seal:recover-with-keys` |
-| Delete recovery keys | `DELETE /api/v1/barrier/recovery/keys` | `BarrierDeleteRecoveryKeys` | same as REST | `barrier.deleteRecoveryKeys` | `BarrierDeleteRecoveryKeys` | `seal:generate-recovery` |
-| Has recovery keys | **MISSING — docs/13** | `BarrierHasRecoveryKeys` | **MISSING — docs/13** | `barrier.hasRecoveryKeys` | `BarrierHasRecoveryKeys` | — |
-| Generate root token | `POST /api/v1/barrier/recovery/root-token` | `BarrierGenerateRootToken` | same as REST | `barrier.generateRootToken` | `BarrierGenerateRootToken` | `seal:rotate-root-key` |
-| Enable encryption | `POST /api/v1/barrier/enable-encryption` | `BarrierEnableEncryption` | same as REST | `barrier.enableEncryption` | `BarrierEnableEncryption` | `seal:enable-encryption` |
+xkms does not re-expose the barrier on any transport (no initialize, unseal,
+seal, status, rekey, recovery, Shamir or enable-encryption route, RPC or MCP
+method). The barrier is the embedded go-qrdb node's; operate it through
+go-qrdb's own surface. xkms contributes the hardware and cloud seal strategies
+the node's registry resolves (see [`engineering.md`](engineering.md)).
 
-**The barrier is the best-covered feature on MCP** — fourteen methods, the full
-set. Contrast PIN (zero) and WebAuthn (zero).
-
-The one gap is `BarrierHasRecoveryKeys`, which has a gRPC RPC and an MCP method
-but no REST route. That is an inconsistency rather than a design decision:
-`DELETE /api/v1/barrier/recovery/keys` exists, so a REST caller can destroy
-recovery keys but cannot ask whether any exist.
-
-### The system barrier is platform-scoped
-
-Every row above except enable-encryption operates the **system** barrier,
-which protects every tenant. Each is refused to a tenant-scoped caller -- a
-tenant-local Admin whose self-scoped `seal:*` / `barrier:*` grants pass the
-RBAC gate included -- with the answer a missing tenant gets (go-xkms#1227):
-
-| Transport | Answer | Mapping site |
-|---|---|---|
-| REST / QUIC | `404`, the unknown-tenant message | `pkg/api/rest/handlers_barrier_pin.go:504` |
-| gRPC / Unix | `codes.NotFound` | `pkg/api/apierrors/tables.go:147` |
-| MCP | `JSONRPCCodeNotFound` | `pkg/api/apierrors/tables.go:147` |
-| ACME admin plane (`/admin/barrier/*`) | `403`, the admin gate's own denial body (the admin plane's platform-only convention) | `pkg/acme/admin/barrier_handlers.go:279` |
-
-The refusal is raised in `XKMSService` (`pkg/xkms/servicer_barrier.go:89,117,
-128,139,170,205,236,253,278,300,314,325,342`), and every transport reaches
-the barrier only through it: REST `pkg/api/rest/handlers_barrier_pin.go`,
-`handlers_barrier_shamir.go`; gRPC/Unix `pkg/api/grpc/service_barrier_pin.go`,
-`service_barrier_shamir.go`; MCP `pkg/api/mcp/handlers_barrier_shamir.go`;
-the ACME admin plane's `/admin/barrier/*` routes through `SystemBarrier`
-(`pkg/acme/admin/barrier_service.go:199`), which xkmsd satisfies with the
-server's `XKMSService` (`cmd/xkmsd/admin.go:186-194`, go-xkms#1244). The
-admin plane translates the refusal into its `*PlatformScopeError`
-(`pkg/acme/admin/barrier_service.go:245`) and answers it `403`, as it
-answers its other platform-only routes (tenant creation, the audit trail);
-see [`../acme-issuance/api.md`](../acme-issuance/api.md#admin-api-tenant-binding-responses).
-Before this change gRPC and MCP held their own barrier reference that
-production never set, so their barrier methods answered "not configured";
-they now serve the service's barrier. A service with no barrier composed
-answers `503` / `Unavailable` / `ErrCodeServiceUnavailable`.
-
-**Enable encryption keeps its tenant binding** (`pkg/xkms/servicer_barrier.go:384`):
-a tenant may migrate its own barrier; naming another tenant or the system
-barrier (empty `tenant_id`) is refused as not-found. The per-tenant barrier
-operations (`TenantBarrier*`, below) keep theirs.
+The node seal's pre-barrier secrets — the PKCS#11 token PIN
+(`platform/pkcs11-pin`) and the Vault token (`platform/vault-token`) — have no
+transport surface either. They are sealed by `xkmsd seal-pkcs11-pin` and
+`xkmsd seal-vault-token` on the host, released only inside the booting
+process, and never sent over the wire. The SDK surface is embedded only: `sdk/go` `OpenPreseal`, `PresealStore`, `PresealPKCS11PIN`,
+`PresealNotFoundError`, `PresealRefusedError`,
+`BuildPKCS11StrategyWithSealedPIN`, `PKCS11StrategyBuildError` and
+`ErrPKCS11StrategyNotCompiledIn` (`sdk/go/preseal.go`).
 
 ## Data-level sealing
 
@@ -144,17 +98,11 @@ an unseal failure maps to is unchanged; the error text begins
 ## TPM policies
 
 Named TPM policies that TPM2 keys and sealed objects are bound to
-(`pkg/tpmpolicy`) replaced the PCR snapshot store (`pkg/seal/policy`,
+(`pkg/tpm2/policy`) replaced the PCR snapshot store (`pkg/seal/policy`,
 `/api/v1/policies/*`, `Policy*`, `policy.*`), which bound nothing. The
 surface, its tenancy and its error mapping are in
 [`../tpm-policies/api.md`](../tpm-policies/api.md). A TPM2 seal names its
 policy in `SealRequest.TPMPolicy` on every transport.
-
-## Tenant barriers
-
-Per-tenant barrier operations live under the tenant routes and are documented in
-[`../multi-tenancy/api.md`](../multi-tenancy/api.md): `TenantBarrierInit`,
-`TenantBarrierUnseal`, `TenantBarrierStatus`.
 
 ## Request and response schemas
 
@@ -179,11 +127,7 @@ There is no "list shares" operation and there will not be one.
 | strategy hardware or provider unreachable | 503 | `Unavailable` | error object |
 | sealed-blob format version unknown | 500 | `Internal` | error object |
 | RBAC denial | 403 | `PermissionDenied` | error object |
-| tenant-scoped caller (platform scope) | 404 (403 on the ACME admin plane's `/admin/barrier/*`) | `NotFound` | `JSONRPCCodeNotFound` |
 | no barrier composed on the service | 503 | `Unavailable` | `ErrCodeServiceUnavailable` |
-
-`GET /api/v1/barrier/status` returning "sealed" is **200, not an error**. A
-client that treats a sealed barrier as a transport failure will retry forever.
 
 ## Pagination
 
@@ -191,7 +135,7 @@ Not applicable.
 
 ## Versioning and deprecation
 
-`/api/v1/barrier/*`, gRPC package `xkmsv1`. Nothing deprecated.
+gRPC package `xkmsv1`. Nothing deprecated.
 
 The real versioning surface here is not the wire but the blob:
 `sealedRootKeyVersion` in `pkg/seal/strategy.go` governs the `SealedRootKey`

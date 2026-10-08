@@ -66,16 +66,6 @@ var (
 	// HMAC error) is reachable with errors.Is.
 	ErrServePolicyRefused = errors.New("extension serve: sealed enterprise policy could not be verified")
 
-	// ErrServePKCS11StrategyUnavailable indicates the barrier's root key was
-	// sealed with the pkcs11 strategy. Unsealing it headlessly needs the
-	// token PIN from somewhere a human is not present to type it; the
-	// intended source is a PIN sealed to the TPM under the platform PCR
-	// policy and auto-unsealed the same way barrier TPM2 auto-unseal works
-	// (go-xkms#677), but that pre-barrier secret store does not exist yet.
-	// The strategy is refused here rather than left to fail deep inside a
-	// PKCS#11 login attempt with no PIN.
-	ErrServePKCS11StrategyUnavailable = errors.New("extension serve: pkcs11 barrier strategy needs a TPM-sealed PIN store that does not exist yet; unseal interactively with 'xkey barrier unseal'")
-
 	// ErrServeShamirStrategyUnavailable indicates the barrier's root key was
 	// sealed with the shamir strategy, which reassembles the root key from
 	// an M-of-N quorum of operator-held shares. A headless process has no
@@ -195,7 +185,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 
 	// Track TPM and cloud KMS backend closers for deferred cleanup.
 	var tpmCloser io.Closer
-	var cloudKMSCloser io.Closer
+	var strategyCloser io.Closer
 
 	// 5. Initialize stores: barrier-encrypted or plain.
 	if noBarrier {
@@ -276,7 +266,18 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				}
 
 			case xkms.StrategyPKCS11:
-				return ErrServePKCS11StrategyUnavailable
+				// The token PIN is released from the pre-barrier secret
+				// store `xkey barrier init --strategy pkcs11` sealed it into,
+				// under the TPM's platform PCR policy, so no human types it.
+				tpmDevice, _ := cmd.Flags().GetString("tpm-device")
+				tpmSimulator, _ := cmd.Flags().GetBool("tpm-simulator")
+				closer, err := unsealWithExternalStrategy(barrierSvc, strategy, func() (xkms.SealingStrategy, io.Closer, error) {
+					return buildPKCS11BarrierStrategy(context.Background(), dataDir, tpmDevice, tpmSimulator)
+				})
+				if err != nil {
+					return err
+				}
+				strategyCloser = closer
 
 			case xkms.StrategyShamir:
 				return ErrServeShamirStrategyUnavailable
@@ -286,22 +287,14 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				// secret: the backend (built from the xkey config persisted
 				// by `xkey barrier init`) is the same one that sealed the
 				// root key, and BuildCloudKMSStrategy resolves its wrapping
-				// key deterministically by CN (go-xkms#757). Build it once
-				// and inject it so assembleStrategy does not need its own
-				// cloud backend wiring, mirroring how the tpm2 case above
-				// injects a sealer via SetTPMSealerFunc.
-				cloudStrategy, cloudCloser, buildErr := buildCloudKMSBarrierStrategy(context.Background(), strategy, dataDir)
-				if buildErr != nil {
-					return &SentinelCauseError{Sentinel: ErrServeBarrierUnsealFailed, Cause: buildErr}
-				}
-				cloudKMSCloser = cloudCloser
-				barrierSvc.SetCloudKMSStrategyFunc(func(_ string) (xkms.SealingStrategy, error) {
-					return cloudStrategy, nil
+				// key deterministically by CN (go-xkms#757).
+				closer, err := unsealWithExternalStrategy(barrierSvc, strategy, func() (xkms.SealingStrategy, io.Closer, error) {
+					return buildCloudKMSBarrierStrategy(context.Background(), strategy, dataDir)
 				})
-
-				if err := barrierSvc.Unseal("", string(strategy)); err != nil {
-					return &SentinelCauseError{Sentinel: ErrServeBarrierUnsealFailed, Cause: err}
+				if err != nil {
+					return err
 				}
+				strategyCloser = closer
 
 			default:
 				return &DetailError{Err: ErrServeStrategyUnsupported, Detail: fmt.Sprintf(": %s", strategy)}
@@ -311,7 +304,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 		logger.Info("barrier unsealed successfully")
 	}
 
-	// Ensure TPM and cloud KMS backend resources are released on exit.
+	// Ensure TPM and barrier strategy backend resources are released on exit.
 	if tpmCloser != nil {
 		defer func() {
 			if closeErr := tpmCloser.Close(); closeErr != nil {
@@ -319,10 +312,10 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 			}
 		}()
 	}
-	if cloudKMSCloser != nil {
+	if strategyCloser != nil {
 		defer func() {
-			if closeErr := cloudKMSCloser.Close(); closeErr != nil {
-				logger.Warn("failed to close cloud KMS backend", slog.String("error", closeErr.Error()))
+			if closeErr := strategyCloser.Close(); closeErr != nil {
+				logger.Warn("failed to close the barrier strategy backend", slog.String("error", closeErr.Error()))
 			}
 		}()
 	}
@@ -889,8 +882,7 @@ func (h *headlessHandler) HandleUnlock(pin string) (*ipc.UnlockResult, error) {
 // command to initialize only the required sealer backend rather than probing
 // all available hardware.
 func readBarrierStrategy(dataDir string) (xkms.StrategyID, error) {
-	rootKeyPath := filepath.Join(dataDir, "barrier", "root_key")
-	data, err := os.ReadFile(rootKeyPath)
+	data, err := loadBarrierRootKey(dataDir)
 	if err != nil {
 		return "", &WrappedError{Msg: "read root key", Err: err}
 	}
@@ -941,6 +933,27 @@ func resolveTPMDevice(device string) string {
 // barrier_auto_unseal.go) both need the full xkms.TrustedPlatformModule,
 // not just the narrower Sealer method set, so they share this rather than
 // each probing the TPM independently.
+// unsealWithExternalStrategy builds the strategy that sealed the barrier's
+// root key -- one the barrier service cannot assemble itself (pkcs11 or a
+// cloud KMS) -- injects it and unseals with it. The returned closer releases
+// the strategy's backend.
+func unsealWithExternalStrategy(barrierSvc *services.BarrierService, id xkms.StrategyID, build func() (xkms.SealingStrategy, io.Closer, error)) (io.Closer, error) {
+	strategy, closer, err := build()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrServeBarrierUnsealFailed, Cause: err}
+	}
+	barrierSvc.SetExternalStrategyFunc(func(_ string) (xkms.SealingStrategy, error) {
+		return strategy, nil
+	})
+	if err := barrierSvc.Unseal("", string(id)); err != nil {
+		if closer != nil {
+			err = errors.Join(err, closer.Close())
+		}
+		return nil, &SentinelCauseError{Sentinel: ErrServeBarrierUnsealFailed, Cause: err}
+	}
+	return closer, nil
+}
+
 func probeTPMModule(logger *slog.Logger, dataDir, device string, useSimulator bool) (xkms.TrustedPlatformModule, io.Closer) {
 	tpm, closer, err := openTPMModule(logger, dataDir, device, useSimulator)
 	if err != nil {

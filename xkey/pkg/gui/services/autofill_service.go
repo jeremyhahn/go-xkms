@@ -29,6 +29,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
@@ -956,7 +957,7 @@ func (s *AutoFillService) saveRegistration(pubKeyCOSE []byte) {
 		return
 	}
 
-	if err := os.WriteFile(filepath.Join(s.registrationDir, registrationFile), data, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(filepath.Join(s.registrationDir, registrationFile), data, 0600); err != nil {
 		s.log.Error("failed to write autofill registration", "error", err)
 	}
 }

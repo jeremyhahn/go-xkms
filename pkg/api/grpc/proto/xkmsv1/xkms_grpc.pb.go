@@ -91,20 +91,6 @@ const (
 	KeystoreService_SignTCGCSR_FullMethodName                   = "/xkms.v1.KeystoreService/SignTCGCSR"
 	KeystoreService_EnrollDevice_FullMethodName                 = "/xkms.v1.KeystoreService/EnrollDevice"
 	KeystoreService_IssueLAKCertificate_FullMethodName          = "/xkms.v1.KeystoreService/IssueLAKCertificate"
-	KeystoreService_BarrierInitialize_FullMethodName            = "/xkms.v1.KeystoreService/BarrierInitialize"
-	KeystoreService_BarrierUnseal_FullMethodName                = "/xkms.v1.KeystoreService/BarrierUnseal"
-	KeystoreService_BarrierSeal_FullMethodName                  = "/xkms.v1.KeystoreService/BarrierSeal"
-	KeystoreService_BarrierStatus_FullMethodName                = "/xkms.v1.KeystoreService/BarrierStatus"
-	KeystoreService_BarrierInitializeShamir_FullMethodName      = "/xkms.v1.KeystoreService/BarrierInitializeShamir"
-	KeystoreService_BarrierUnsealShare_FullMethodName           = "/xkms.v1.KeystoreService/BarrierUnsealShare"
-	KeystoreService_BarrierUnsealShares_FullMethodName          = "/xkms.v1.KeystoreService/BarrierUnsealShares"
-	KeystoreService_BarrierRekey_FullMethodName                 = "/xkms.v1.KeystoreService/BarrierRekey"
-	KeystoreService_BarrierGenerateRecoveryKeys_FullMethodName  = "/xkms.v1.KeystoreService/BarrierGenerateRecoveryKeys"
-	KeystoreService_BarrierRecoverWithKeys_FullMethodName       = "/xkms.v1.KeystoreService/BarrierRecoverWithKeys"
-	KeystoreService_BarrierDeleteRecoveryKeys_FullMethodName    = "/xkms.v1.KeystoreService/BarrierDeleteRecoveryKeys"
-	KeystoreService_BarrierHasRecoveryKeys_FullMethodName       = "/xkms.v1.KeystoreService/BarrierHasRecoveryKeys"
-	KeystoreService_BarrierGenerateRootToken_FullMethodName     = "/xkms.v1.KeystoreService/BarrierGenerateRootToken"
-	KeystoreService_BarrierEnableEncryption_FullMethodName      = "/xkms.v1.KeystoreService/BarrierEnableEncryption"
 	KeystoreService_BootstrapListenerKeys_FullMethodName        = "/xkms.v1.KeystoreService/BootstrapListenerKeys"
 	KeystoreService_SetSOPIN_FullMethodName                     = "/xkms.v1.KeystoreService/SetSOPIN"
 	KeystoreService_SetUserPIN_FullMethodName                   = "/xkms.v1.KeystoreService/SetUserPIN"
@@ -122,32 +108,11 @@ const (
 	KeystoreService_ImportPIVCertificate_FullMethodName         = "/xkms.v1.KeystoreService/ImportPIVCertificate"
 	KeystoreService_ExportPIVCertificate_FullMethodName         = "/xkms.v1.KeystoreService/ExportPIVCertificate"
 	KeystoreService_GeneratePIVCSR_FullMethodName               = "/xkms.v1.KeystoreService/GeneratePIVCSR"
-	KeystoreService_CreateBackup_FullMethodName                 = "/xkms.v1.KeystoreService/CreateBackup"
-	KeystoreService_ListBackups_FullMethodName                  = "/xkms.v1.KeystoreService/ListBackups"
-	KeystoreService_GetBackup_FullMethodName                    = "/xkms.v1.KeystoreService/GetBackup"
-	KeystoreService_DeleteBackup_FullMethodName                 = "/xkms.v1.KeystoreService/DeleteBackup"
-	KeystoreService_RestoreBackup_FullMethodName                = "/xkms.v1.KeystoreService/RestoreBackup"
-	KeystoreService_VerifyBackup_FullMethodName                 = "/xkms.v1.KeystoreService/VerifyBackup"
-	KeystoreService_CreateCustodianGroup_FullMethodName         = "/xkms.v1.KeystoreService/CreateCustodianGroup"
-	KeystoreService_GetCustodianGroup_FullMethodName            = "/xkms.v1.KeystoreService/GetCustodianGroup"
-	KeystoreService_ListCustodianGroups_FullMethodName          = "/xkms.v1.KeystoreService/ListCustodianGroups"
-	KeystoreService_DeleteCustodianGroup_FullMethodName         = "/xkms.v1.KeystoreService/DeleteCustodianGroup"
-	KeystoreService_AddCustodianMember_FullMethodName           = "/xkms.v1.KeystoreService/AddCustodianMember"
-	KeystoreService_RemoveCustodianMember_FullMethodName        = "/xkms.v1.KeystoreService/RemoveCustodianMember"
-	KeystoreService_DistributeShares_FullMethodName             = "/xkms.v1.KeystoreService/DistributeShares"
 	KeystoreService_Algorithms_FullMethodName                   = "/xkms.v1.KeystoreService/Algorithms"
-	KeystoreService_SubmitShare_FullMethodName                  = "/xkms.v1.KeystoreService/SubmitShare"
-	KeystoreService_ListShares_FullMethodName                   = "/xkms.v1.KeystoreService/ListShares"
-	KeystoreService_GetShare_FullMethodName                     = "/xkms.v1.KeystoreService/GetShare"
-	KeystoreService_DeleteShare_FullMethodName                  = "/xkms.v1.KeystoreService/DeleteShare"
-	KeystoreService_GetShareCollectionStatus_FullMethodName     = "/xkms.v1.KeystoreService/GetShareCollectionStatus"
 	KeystoreService_CreateTenant_FullMethodName                 = "/xkms.v1.KeystoreService/CreateTenant"
 	KeystoreService_GetTenant_FullMethodName                    = "/xkms.v1.KeystoreService/GetTenant"
 	KeystoreService_ListTenants_FullMethodName                  = "/xkms.v1.KeystoreService/ListTenants"
 	KeystoreService_DeleteTenant_FullMethodName                 = "/xkms.v1.KeystoreService/DeleteTenant"
-	KeystoreService_TenantBarrierInit_FullMethodName            = "/xkms.v1.KeystoreService/TenantBarrierInit"
-	KeystoreService_TenantBarrierUnseal_FullMethodName          = "/xkms.v1.KeystoreService/TenantBarrierUnseal"
-	KeystoreService_TenantBarrierStatus_FullMethodName          = "/xkms.v1.KeystoreService/TenantBarrierStatus"
 	KeystoreService_UpdateTenantEntitlements_FullMethodName     = "/xkms.v1.KeystoreService/UpdateTenantEntitlements"
 	KeystoreService_UpdateTenantQuotas_FullMethodName           = "/xkms.v1.KeystoreService/UpdateTenantQuotas"
 	KeystoreService_PasswordAdd_FullMethodName                  = "/xkms.v1.KeystoreService/PasswordAdd"
@@ -233,7 +198,6 @@ const (
 	KeystoreService_SSHAddAuthorizedKey_FullMethodName          = "/xkms.v1.KeystoreService/SSHAddAuthorizedKey"
 	KeystoreService_SSHListAuthorizedKeys_FullMethodName        = "/xkms.v1.KeystoreService/SSHListAuthorizedKeys"
 	KeystoreService_SSHRemoveAuthorizedKey_FullMethodName       = "/xkms.v1.KeystoreService/SSHRemoveAuthorizedKey"
-	KeystoreService_QueryAudit_FullMethodName                   = "/xkms.v1.KeystoreService/QueryAudit"
 )
 
 // KeystoreServiceClient is the client API for KeystoreService service.
@@ -410,46 +374,6 @@ type KeystoreServiceClient interface {
 	// WebAuthn Level 2 section 8.3.1 profile, after verifying the LAK's
 	// TPM2_Certify evidence against the device's IAK certificate (go-xkms#715).
 	IssueLAKCertificate(ctx context.Context, in *IssueLAKCertificateRequest, opts ...grpc.CallOption) (*IssueLAKCertificateResponse, error)
-	// BarrierInitialize generates a root key, seals it with the best available
-	// strategy, and transitions the barrier to unsealed state. Must be called
-	// exactly once for a new barrier.
-	BarrierInitialize(ctx context.Context, in *BarrierInitializeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// BarrierUnseal loads and unseals the root key, deriving the data encryption
-	// key to enable storage operations.
-	BarrierUnseal(ctx context.Context, in *BarrierUnsealRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// BarrierSeal transitions the barrier to sealed state and zeros the DEK.
-	// All subsequent storage operations will fail until Unseal is called again.
-	BarrierSeal(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// BarrierStatus returns the current state of the barrier including whether
-	// it is sealed, which strategy is active, and hardware backing status.
-	BarrierStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BarrierStatusResponse, error)
-	// BarrierInitializeShamir generates a root key and splits it into Shamir
-	// shares. In direct mode (StrategyShamir), the root key IS the secret.
-	// In credential mode, the credential password is split into shares.
-	BarrierInitializeShamir(ctx context.Context, in *BarrierInitializeShamirRequest, opts ...grpc.CallOption) (*BarrierShamirInitResponse, error)
-	// BarrierUnsealShare submits a single share for quorum-based unsealing.
-	// When enough shares reach the threshold, the barrier auto-unseals.
-	BarrierUnsealShare(ctx context.Context, in *BarrierUnsealShareRequest, opts ...grpc.CallOption) (*BarrierQuorumProgressResponse, error)
-	// BarrierUnsealShares performs stateless batch unsealing with all shares.
-	BarrierUnsealShares(ctx context.Context, in *BarrierUnsealSharesRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// BarrierRekey generates new Shamir shares for the existing root key.
-	BarrierRekey(ctx context.Context, in *BarrierRekeyRequest, opts ...grpc.CallOption) (*BarrierShamirInitResponse, error)
-	// BarrierGenerateRecoveryKeys generates an independent set of recovery
-	// shares from the current DEK for disaster recovery.
-	BarrierGenerateRecoveryKeys(ctx context.Context, in *BarrierGenerateRecoveryKeysRequest, opts ...grpc.CallOption) (*BarrierRecoveryKeysResponse, error)
-	// BarrierRecoverWithKeys reconstructs the DEK from recovery shares.
-	BarrierRecoverWithKeys(ctx context.Context, in *BarrierRecoverWithKeysRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// BarrierDeleteRecoveryKeys removes recovery key metadata from storage.
-	BarrierDeleteRecoveryKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// BarrierHasRecoveryKeys reports whether recovery keys have been generated.
-	BarrierHasRecoveryKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BarrierHasRecoveryKeysResponse, error)
-	// BarrierGenerateRootToken generates a one-time root token by proving
-	// knowledge of the master key through Shamir share reconstruction.
-	BarrierGenerateRootToken(ctx context.Context, in *BarrierGenerateRootTokenRequest, opts ...grpc.CallOption) (*BarrierRootTokenResponse, error)
-	// BarrierEnableEncryption migrates a previously-unencrypted barrier to a
-	// keyed strategy in place. The migration runs asynchronously; the response
-	// acknowledges the start and clients poll BarrierStatus for completion.
-	BarrierEnableEncryption(ctx context.Context, in *BarrierEnableEncryptionRequest, opts ...grpc.CallOption) (*BarrierEnableEncryptionResponse, error)
 	// BootstrapListenerKeys reports the running trust-bootstrap listener's
 	// public static keys, for an administrator to distribute to first-contact
 	// clients. Only public material is ever returned.
@@ -488,48 +412,10 @@ type KeystoreServiceClient interface {
 	ExportPIVCertificate(ctx context.Context, in *GetPIVCertificateRequest, opts ...grpc.CallOption) (*GetPIVCertificateResponse, error)
 	// GeneratePIVCSR generates a certificate signing request for a PIV slot key.
 	GeneratePIVCSR(ctx context.Context, in *GeneratePIVCSRRequest, opts ...grpc.CallOption) (*GeneratePIVCSRResponse, error)
-	// CreateBackup initiates a new backup with the specified options.
-	CreateBackup(ctx context.Context, in *BackupRequest, opts ...grpc.CallOption) (*BackupInfo, error)
-	// ListBackups returns metadata for all available backups.
-	ListBackups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListBackupsResponse, error)
-	// GetBackup returns metadata for a specific backup by ID.
-	GetBackup(ctx context.Context, in *GetBackupRequest, opts ...grpc.CallOption) (*BackupInfo, error)
-	// DeleteBackup removes a backup by ID.
-	DeleteBackup(ctx context.Context, in *DeleteBackupRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// RestoreBackup restores data from a backup, overwriting live shard state.
-	RestoreBackup(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*RestoreResult, error)
-	// VerifyBackup verifies the integrity of a backup by computing and
-	// comparing checksums.
-	VerifyBackup(ctx context.Context, in *VerifyBackupRequest, opts ...grpc.CallOption) (*VerifyResult, error)
-	// CreateCustodianGroup creates a new custodian group for Shamir threshold ceremonies.
-	CreateCustodianGroup(ctx context.Context, in *CreateCustodianGroupRequest, opts ...grpc.CallOption) (*CreateCustodianGroupResponse, error)
-	// GetCustodianGroup retrieves a custodian group by ID.
-	GetCustodianGroup(ctx context.Context, in *GetCustodianGroupRequest, opts ...grpc.CallOption) (*GetCustodianGroupResponse, error)
-	// ListCustodianGroups returns all custodian groups.
-	ListCustodianGroups(ctx context.Context, in *ListCustodianGroupsRequest, opts ...grpc.CallOption) (*ListCustodianGroupsResponse, error)
-	// DeleteCustodianGroup deletes a custodian group.
-	DeleteCustodianGroup(ctx context.Context, in *DeleteCustodianGroupRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// AddCustodianMember adds a member to a custodian group.
-	AddCustodianMember(ctx context.Context, in *AddCustodianMemberRequest, opts ...grpc.CallOption) (*AddCustodianMemberResponse, error)
-	// RemoveCustodianMember removes a member from a custodian group.
-	RemoveCustodianMember(ctx context.Context, in *RemoveCustodianMemberRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// DistributeShares triggers share distribution for a custodian group.
-	DistributeShares(ctx context.Context, in *DistributeSharesRequest, opts ...grpc.CallOption) (*DistributeSharesResponse, error)
 	// Algorithms reports the cryptographic algorithms this build supports and
 	// which backends provide each one. Public discovery: it reflects compiled-in
 	// capability only and reads no state.
 	Algorithms(ctx context.Context, in *AlgorithmsRequest, opts ...grpc.CallOption) (*AlgorithmsResponse, error)
-	// SubmitShare submits a Shamir share for storage.
-	SubmitShare(ctx context.Context, in *SubmitShareRequest, opts ...grpc.CallOption) (*SubmitShareResponse, error)
-	// ListShares returns all stored shares.
-	ListShares(ctx context.Context, in *ListSharesRequest, opts ...grpc.CallOption) (*ListSharesResponse, error)
-	// GetShare returns a single stored share. Sensitive share material is
-	// never included in the response.
-	GetShare(ctx context.Context, in *GetShareRequest, opts ...grpc.CallOption) (*ShareInfo, error)
-	// DeleteShare removes a single stored share.
-	DeleteShare(ctx context.Context, in *DeleteShareRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// GetShareCollectionStatus returns the share collection status for a group.
-	GetShareCollectionStatus(ctx context.Context, in *GetShareCollectionStatusRequest, opts ...grpc.CallOption) (*ShareCollectionStatusResponse, error)
 	// CreateTenant creates a new tenant.
 	CreateTenant(ctx context.Context, in *CreateTenantRequest, opts ...grpc.CallOption) (*CreateTenantResponse, error)
 	// GetTenant retrieves a tenant by ID.
@@ -538,12 +424,6 @@ type KeystoreServiceClient interface {
 	ListTenants(ctx context.Context, in *ListTenantsRequest, opts ...grpc.CallOption) (*ListTenantsResponse, error)
 	// DeleteTenant deletes a tenant.
 	DeleteTenant(ctx context.Context, in *DeleteTenantRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// TenantBarrierInit initializes the barrier for a tenant.
-	TenantBarrierInit(ctx context.Context, in *TenantBarrierInitRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// TenantBarrierUnseal unseals the barrier for a tenant.
-	TenantBarrierUnseal(ctx context.Context, in *TenantBarrierUnsealRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// TenantBarrierStatus reports the current state of a per-tenant barrier.
-	TenantBarrierStatus(ctx context.Context, in *TenantBarrierStatusRequest, opts ...grpc.CallOption) (*TenantBarrierStatusResponse, error)
 	// UpdateTenantEntitlements updates a tenant's feature entitlements. Plan
 	// management: gated on tenants:set_entitlements, never tenants:update, and
 	// admitted only for a cross-tenant (system) identity.
@@ -725,11 +605,6 @@ type KeystoreServiceClient interface {
 	SSHListAuthorizedKeys(ctx context.Context, in *SSHListAuthorizedKeysRequest, opts ...grpc.CallOption) (*SSHListAuthorizedKeysResponse, error)
 	// SSHRemoveAuthorizedKey removes an authorized_keys entry.
 	SSHRemoveAuthorizedKey(ctx context.Context, in *SSHAuthorizedKeyRef, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// QueryAudit returns one page of audit events from the tamper-evident
-	// chain owned by the embedded qrdb node. There is deliberately no emit
-	// RPC: events are written server-side as a side effect of the audited
-	// operation, never on a caller's request.
-	QueryAudit(ctx context.Context, in *QueryAuditRequest, opts ...grpc.CallOption) (*QueryAuditResponse, error)
 }
 
 type keystoreServiceClient struct {
@@ -1420,146 +1295,6 @@ func (c *keystoreServiceClient) IssueLAKCertificate(ctx context.Context, in *Iss
 	return out, nil
 }
 
-func (c *keystoreServiceClient) BarrierInitialize(ctx context.Context, in *BarrierInitializeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierInitialize_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierUnseal(ctx context.Context, in *BarrierUnsealRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierUnseal_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierSeal(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierSeal_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BarrierStatusResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BarrierStatusResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierStatus_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierInitializeShamir(ctx context.Context, in *BarrierInitializeShamirRequest, opts ...grpc.CallOption) (*BarrierShamirInitResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BarrierShamirInitResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierInitializeShamir_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierUnsealShare(ctx context.Context, in *BarrierUnsealShareRequest, opts ...grpc.CallOption) (*BarrierQuorumProgressResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BarrierQuorumProgressResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierUnsealShare_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierUnsealShares(ctx context.Context, in *BarrierUnsealSharesRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierUnsealShares_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierRekey(ctx context.Context, in *BarrierRekeyRequest, opts ...grpc.CallOption) (*BarrierShamirInitResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BarrierShamirInitResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierRekey_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierGenerateRecoveryKeys(ctx context.Context, in *BarrierGenerateRecoveryKeysRequest, opts ...grpc.CallOption) (*BarrierRecoveryKeysResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BarrierRecoveryKeysResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierGenerateRecoveryKeys_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierRecoverWithKeys(ctx context.Context, in *BarrierRecoverWithKeysRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierRecoverWithKeys_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierDeleteRecoveryKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierDeleteRecoveryKeys_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierHasRecoveryKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BarrierHasRecoveryKeysResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BarrierHasRecoveryKeysResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierHasRecoveryKeys_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierGenerateRootToken(ctx context.Context, in *BarrierGenerateRootTokenRequest, opts ...grpc.CallOption) (*BarrierRootTokenResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BarrierRootTokenResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierGenerateRootToken_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) BarrierEnableEncryption(ctx context.Context, in *BarrierEnableEncryptionRequest, opts ...grpc.CallOption) (*BarrierEnableEncryptionResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BarrierEnableEncryptionResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_BarrierEnableEncryption_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *keystoreServiceClient) BootstrapListenerKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BootstrapListenerKeysResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BootstrapListenerKeysResponse)
@@ -1730,190 +1465,10 @@ func (c *keystoreServiceClient) GeneratePIVCSR(ctx context.Context, in *Generate
 	return out, nil
 }
 
-func (c *keystoreServiceClient) CreateBackup(ctx context.Context, in *BackupRequest, opts ...grpc.CallOption) (*BackupInfo, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BackupInfo)
-	err := c.cc.Invoke(ctx, KeystoreService_CreateBackup_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) ListBackups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListBackupsResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListBackupsResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_ListBackups_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) GetBackup(ctx context.Context, in *GetBackupRequest, opts ...grpc.CallOption) (*BackupInfo, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BackupInfo)
-	err := c.cc.Invoke(ctx, KeystoreService_GetBackup_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) DeleteBackup(ctx context.Context, in *DeleteBackupRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, KeystoreService_DeleteBackup_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) RestoreBackup(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*RestoreResult, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(RestoreResult)
-	err := c.cc.Invoke(ctx, KeystoreService_RestoreBackup_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) VerifyBackup(ctx context.Context, in *VerifyBackupRequest, opts ...grpc.CallOption) (*VerifyResult, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(VerifyResult)
-	err := c.cc.Invoke(ctx, KeystoreService_VerifyBackup_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) CreateCustodianGroup(ctx context.Context, in *CreateCustodianGroupRequest, opts ...grpc.CallOption) (*CreateCustodianGroupResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CreateCustodianGroupResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_CreateCustodianGroup_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) GetCustodianGroup(ctx context.Context, in *GetCustodianGroupRequest, opts ...grpc.CallOption) (*GetCustodianGroupResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetCustodianGroupResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_GetCustodianGroup_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) ListCustodianGroups(ctx context.Context, in *ListCustodianGroupsRequest, opts ...grpc.CallOption) (*ListCustodianGroupsResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListCustodianGroupsResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_ListCustodianGroups_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) DeleteCustodianGroup(ctx context.Context, in *DeleteCustodianGroupRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, KeystoreService_DeleteCustodianGroup_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) AddCustodianMember(ctx context.Context, in *AddCustodianMemberRequest, opts ...grpc.CallOption) (*AddCustodianMemberResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(AddCustodianMemberResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_AddCustodianMember_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) RemoveCustodianMember(ctx context.Context, in *RemoveCustodianMemberRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, KeystoreService_RemoveCustodianMember_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) DistributeShares(ctx context.Context, in *DistributeSharesRequest, opts ...grpc.CallOption) (*DistributeSharesResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DistributeSharesResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_DistributeShares_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *keystoreServiceClient) Algorithms(ctx context.Context, in *AlgorithmsRequest, opts ...grpc.CallOption) (*AlgorithmsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AlgorithmsResponse)
 	err := c.cc.Invoke(ctx, KeystoreService_Algorithms_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) SubmitShare(ctx context.Context, in *SubmitShareRequest, opts ...grpc.CallOption) (*SubmitShareResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SubmitShareResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_SubmitShare_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) ListShares(ctx context.Context, in *ListSharesRequest, opts ...grpc.CallOption) (*ListSharesResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListSharesResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_ListShares_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) GetShare(ctx context.Context, in *GetShareRequest, opts ...grpc.CallOption) (*ShareInfo, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ShareInfo)
-	err := c.cc.Invoke(ctx, KeystoreService_GetShare_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) DeleteShare(ctx context.Context, in *DeleteShareRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, KeystoreService_DeleteShare_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) GetShareCollectionStatus(ctx context.Context, in *GetShareCollectionStatusRequest, opts ...grpc.CallOption) (*ShareCollectionStatusResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ShareCollectionStatusResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_GetShareCollectionStatus_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1954,36 +1509,6 @@ func (c *keystoreServiceClient) DeleteTenant(ctx context.Context, in *DeleteTena
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, KeystoreService_DeleteTenant_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) TenantBarrierInit(ctx context.Context, in *TenantBarrierInitRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, KeystoreService_TenantBarrierInit_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) TenantBarrierUnseal(ctx context.Context, in *TenantBarrierUnsealRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, KeystoreService_TenantBarrierUnseal_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) TenantBarrierStatus(ctx context.Context, in *TenantBarrierStatusRequest, opts ...grpc.CallOption) (*TenantBarrierStatusResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TenantBarrierStatusResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_TenantBarrierStatus_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -2840,16 +2365,6 @@ func (c *keystoreServiceClient) SSHRemoveAuthorizedKey(ctx context.Context, in *
 	return out, nil
 }
 
-func (c *keystoreServiceClient) QueryAudit(ctx context.Context, in *QueryAuditRequest, opts ...grpc.CallOption) (*QueryAuditResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(QueryAuditResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_QueryAudit_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // KeystoreServiceServer is the server API for KeystoreService service.
 // All implementations must embed UnimplementedKeystoreServiceServer
 // for forward compatibility.
@@ -3024,46 +2539,6 @@ type KeystoreServiceServer interface {
 	// WebAuthn Level 2 section 8.3.1 profile, after verifying the LAK's
 	// TPM2_Certify evidence against the device's IAK certificate (go-xkms#715).
 	IssueLAKCertificate(context.Context, *IssueLAKCertificateRequest) (*IssueLAKCertificateResponse, error)
-	// BarrierInitialize generates a root key, seals it with the best available
-	// strategy, and transitions the barrier to unsealed state. Must be called
-	// exactly once for a new barrier.
-	BarrierInitialize(context.Context, *BarrierInitializeRequest) (*emptypb.Empty, error)
-	// BarrierUnseal loads and unseals the root key, deriving the data encryption
-	// key to enable storage operations.
-	BarrierUnseal(context.Context, *BarrierUnsealRequest) (*emptypb.Empty, error)
-	// BarrierSeal transitions the barrier to sealed state and zeros the DEK.
-	// All subsequent storage operations will fail until Unseal is called again.
-	BarrierSeal(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
-	// BarrierStatus returns the current state of the barrier including whether
-	// it is sealed, which strategy is active, and hardware backing status.
-	BarrierStatus(context.Context, *emptypb.Empty) (*BarrierStatusResponse, error)
-	// BarrierInitializeShamir generates a root key and splits it into Shamir
-	// shares. In direct mode (StrategyShamir), the root key IS the secret.
-	// In credential mode, the credential password is split into shares.
-	BarrierInitializeShamir(context.Context, *BarrierInitializeShamirRequest) (*BarrierShamirInitResponse, error)
-	// BarrierUnsealShare submits a single share for quorum-based unsealing.
-	// When enough shares reach the threshold, the barrier auto-unseals.
-	BarrierUnsealShare(context.Context, *BarrierUnsealShareRequest) (*BarrierQuorumProgressResponse, error)
-	// BarrierUnsealShares performs stateless batch unsealing with all shares.
-	BarrierUnsealShares(context.Context, *BarrierUnsealSharesRequest) (*emptypb.Empty, error)
-	// BarrierRekey generates new Shamir shares for the existing root key.
-	BarrierRekey(context.Context, *BarrierRekeyRequest) (*BarrierShamirInitResponse, error)
-	// BarrierGenerateRecoveryKeys generates an independent set of recovery
-	// shares from the current DEK for disaster recovery.
-	BarrierGenerateRecoveryKeys(context.Context, *BarrierGenerateRecoveryKeysRequest) (*BarrierRecoveryKeysResponse, error)
-	// BarrierRecoverWithKeys reconstructs the DEK from recovery shares.
-	BarrierRecoverWithKeys(context.Context, *BarrierRecoverWithKeysRequest) (*emptypb.Empty, error)
-	// BarrierDeleteRecoveryKeys removes recovery key metadata from storage.
-	BarrierDeleteRecoveryKeys(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
-	// BarrierHasRecoveryKeys reports whether recovery keys have been generated.
-	BarrierHasRecoveryKeys(context.Context, *emptypb.Empty) (*BarrierHasRecoveryKeysResponse, error)
-	// BarrierGenerateRootToken generates a one-time root token by proving
-	// knowledge of the master key through Shamir share reconstruction.
-	BarrierGenerateRootToken(context.Context, *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error)
-	// BarrierEnableEncryption migrates a previously-unencrypted barrier to a
-	// keyed strategy in place. The migration runs asynchronously; the response
-	// acknowledges the start and clients poll BarrierStatus for completion.
-	BarrierEnableEncryption(context.Context, *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error)
 	// BootstrapListenerKeys reports the running trust-bootstrap listener's
 	// public static keys, for an administrator to distribute to first-contact
 	// clients. Only public material is ever returned.
@@ -3102,48 +2577,10 @@ type KeystoreServiceServer interface {
 	ExportPIVCertificate(context.Context, *GetPIVCertificateRequest) (*GetPIVCertificateResponse, error)
 	// GeneratePIVCSR generates a certificate signing request for a PIV slot key.
 	GeneratePIVCSR(context.Context, *GeneratePIVCSRRequest) (*GeneratePIVCSRResponse, error)
-	// CreateBackup initiates a new backup with the specified options.
-	CreateBackup(context.Context, *BackupRequest) (*BackupInfo, error)
-	// ListBackups returns metadata for all available backups.
-	ListBackups(context.Context, *emptypb.Empty) (*ListBackupsResponse, error)
-	// GetBackup returns metadata for a specific backup by ID.
-	GetBackup(context.Context, *GetBackupRequest) (*BackupInfo, error)
-	// DeleteBackup removes a backup by ID.
-	DeleteBackup(context.Context, *DeleteBackupRequest) (*emptypb.Empty, error)
-	// RestoreBackup restores data from a backup, overwriting live shard state.
-	RestoreBackup(context.Context, *RestoreRequest) (*RestoreResult, error)
-	// VerifyBackup verifies the integrity of a backup by computing and
-	// comparing checksums.
-	VerifyBackup(context.Context, *VerifyBackupRequest) (*VerifyResult, error)
-	// CreateCustodianGroup creates a new custodian group for Shamir threshold ceremonies.
-	CreateCustodianGroup(context.Context, *CreateCustodianGroupRequest) (*CreateCustodianGroupResponse, error)
-	// GetCustodianGroup retrieves a custodian group by ID.
-	GetCustodianGroup(context.Context, *GetCustodianGroupRequest) (*GetCustodianGroupResponse, error)
-	// ListCustodianGroups returns all custodian groups.
-	ListCustodianGroups(context.Context, *ListCustodianGroupsRequest) (*ListCustodianGroupsResponse, error)
-	// DeleteCustodianGroup deletes a custodian group.
-	DeleteCustodianGroup(context.Context, *DeleteCustodianGroupRequest) (*emptypb.Empty, error)
-	// AddCustodianMember adds a member to a custodian group.
-	AddCustodianMember(context.Context, *AddCustodianMemberRequest) (*AddCustodianMemberResponse, error)
-	// RemoveCustodianMember removes a member from a custodian group.
-	RemoveCustodianMember(context.Context, *RemoveCustodianMemberRequest) (*emptypb.Empty, error)
-	// DistributeShares triggers share distribution for a custodian group.
-	DistributeShares(context.Context, *DistributeSharesRequest) (*DistributeSharesResponse, error)
 	// Algorithms reports the cryptographic algorithms this build supports and
 	// which backends provide each one. Public discovery: it reflects compiled-in
 	// capability only and reads no state.
 	Algorithms(context.Context, *AlgorithmsRequest) (*AlgorithmsResponse, error)
-	// SubmitShare submits a Shamir share for storage.
-	SubmitShare(context.Context, *SubmitShareRequest) (*SubmitShareResponse, error)
-	// ListShares returns all stored shares.
-	ListShares(context.Context, *ListSharesRequest) (*ListSharesResponse, error)
-	// GetShare returns a single stored share. Sensitive share material is
-	// never included in the response.
-	GetShare(context.Context, *GetShareRequest) (*ShareInfo, error)
-	// DeleteShare removes a single stored share.
-	DeleteShare(context.Context, *DeleteShareRequest) (*emptypb.Empty, error)
-	// GetShareCollectionStatus returns the share collection status for a group.
-	GetShareCollectionStatus(context.Context, *GetShareCollectionStatusRequest) (*ShareCollectionStatusResponse, error)
 	// CreateTenant creates a new tenant.
 	CreateTenant(context.Context, *CreateTenantRequest) (*CreateTenantResponse, error)
 	// GetTenant retrieves a tenant by ID.
@@ -3152,12 +2589,6 @@ type KeystoreServiceServer interface {
 	ListTenants(context.Context, *ListTenantsRequest) (*ListTenantsResponse, error)
 	// DeleteTenant deletes a tenant.
 	DeleteTenant(context.Context, *DeleteTenantRequest) (*emptypb.Empty, error)
-	// TenantBarrierInit initializes the barrier for a tenant.
-	TenantBarrierInit(context.Context, *TenantBarrierInitRequest) (*emptypb.Empty, error)
-	// TenantBarrierUnseal unseals the barrier for a tenant.
-	TenantBarrierUnseal(context.Context, *TenantBarrierUnsealRequest) (*emptypb.Empty, error)
-	// TenantBarrierStatus reports the current state of a per-tenant barrier.
-	TenantBarrierStatus(context.Context, *TenantBarrierStatusRequest) (*TenantBarrierStatusResponse, error)
 	// UpdateTenantEntitlements updates a tenant's feature entitlements. Plan
 	// management: gated on tenants:set_entitlements, never tenants:update, and
 	// admitted only for a cross-tenant (system) identity.
@@ -3339,11 +2770,6 @@ type KeystoreServiceServer interface {
 	SSHListAuthorizedKeys(context.Context, *SSHListAuthorizedKeysRequest) (*SSHListAuthorizedKeysResponse, error)
 	// SSHRemoveAuthorizedKey removes an authorized_keys entry.
 	SSHRemoveAuthorizedKey(context.Context, *SSHAuthorizedKeyRef) (*emptypb.Empty, error)
-	// QueryAudit returns one page of audit events from the tamper-evident
-	// chain owned by the embedded qrdb node. There is deliberately no emit
-	// RPC: events are written server-side as a side effect of the audited
-	// operation, never on a caller's request.
-	QueryAudit(context.Context, *QueryAuditRequest) (*QueryAuditResponse, error)
 	mustEmbedUnimplementedKeystoreServiceServer()
 }
 
@@ -3558,48 +2984,6 @@ func (UnimplementedKeystoreServiceServer) EnrollDevice(context.Context, *EnrollD
 func (UnimplementedKeystoreServiceServer) IssueLAKCertificate(context.Context, *IssueLAKCertificateRequest) (*IssueLAKCertificateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method IssueLAKCertificate not implemented")
 }
-func (UnimplementedKeystoreServiceServer) BarrierInitialize(context.Context, *BarrierInitializeRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierInitialize not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierUnseal(context.Context, *BarrierUnsealRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierUnseal not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierSeal(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierSeal not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierStatus(context.Context, *emptypb.Empty) (*BarrierStatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierStatus not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierInitializeShamir(context.Context, *BarrierInitializeShamirRequest) (*BarrierShamirInitResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierInitializeShamir not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierUnsealShare(context.Context, *BarrierUnsealShareRequest) (*BarrierQuorumProgressResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierUnsealShare not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierUnsealShares(context.Context, *BarrierUnsealSharesRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierUnsealShares not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierRekey(context.Context, *BarrierRekeyRequest) (*BarrierShamirInitResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierRekey not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierGenerateRecoveryKeys(context.Context, *BarrierGenerateRecoveryKeysRequest) (*BarrierRecoveryKeysResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierGenerateRecoveryKeys not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierRecoverWithKeys(context.Context, *BarrierRecoverWithKeysRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierRecoverWithKeys not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierDeleteRecoveryKeys(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierDeleteRecoveryKeys not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierHasRecoveryKeys(context.Context, *emptypb.Empty) (*BarrierHasRecoveryKeysResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierHasRecoveryKeys not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierGenerateRootToken(context.Context, *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierGenerateRootToken not implemented")
-}
-func (UnimplementedKeystoreServiceServer) BarrierEnableEncryption(context.Context, *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BarrierEnableEncryption not implemented")
-}
 func (UnimplementedKeystoreServiceServer) BootstrapListenerKeys(context.Context, *emptypb.Empty) (*BootstrapListenerKeysResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BootstrapListenerKeys not implemented")
 }
@@ -3651,62 +3035,8 @@ func (UnimplementedKeystoreServiceServer) ExportPIVCertificate(context.Context, 
 func (UnimplementedKeystoreServiceServer) GeneratePIVCSR(context.Context, *GeneratePIVCSRRequest) (*GeneratePIVCSRResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GeneratePIVCSR not implemented")
 }
-func (UnimplementedKeystoreServiceServer) CreateBackup(context.Context, *BackupRequest) (*BackupInfo, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreateBackup not implemented")
-}
-func (UnimplementedKeystoreServiceServer) ListBackups(context.Context, *emptypb.Empty) (*ListBackupsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListBackups not implemented")
-}
-func (UnimplementedKeystoreServiceServer) GetBackup(context.Context, *GetBackupRequest) (*BackupInfo, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetBackup not implemented")
-}
-func (UnimplementedKeystoreServiceServer) DeleteBackup(context.Context, *DeleteBackupRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteBackup not implemented")
-}
-func (UnimplementedKeystoreServiceServer) RestoreBackup(context.Context, *RestoreRequest) (*RestoreResult, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RestoreBackup not implemented")
-}
-func (UnimplementedKeystoreServiceServer) VerifyBackup(context.Context, *VerifyBackupRequest) (*VerifyResult, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method VerifyBackup not implemented")
-}
-func (UnimplementedKeystoreServiceServer) CreateCustodianGroup(context.Context, *CreateCustodianGroupRequest) (*CreateCustodianGroupResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreateCustodianGroup not implemented")
-}
-func (UnimplementedKeystoreServiceServer) GetCustodianGroup(context.Context, *GetCustodianGroupRequest) (*GetCustodianGroupResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetCustodianGroup not implemented")
-}
-func (UnimplementedKeystoreServiceServer) ListCustodianGroups(context.Context, *ListCustodianGroupsRequest) (*ListCustodianGroupsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListCustodianGroups not implemented")
-}
-func (UnimplementedKeystoreServiceServer) DeleteCustodianGroup(context.Context, *DeleteCustodianGroupRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteCustodianGroup not implemented")
-}
-func (UnimplementedKeystoreServiceServer) AddCustodianMember(context.Context, *AddCustodianMemberRequest) (*AddCustodianMemberResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AddCustodianMember not implemented")
-}
-func (UnimplementedKeystoreServiceServer) RemoveCustodianMember(context.Context, *RemoveCustodianMemberRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RemoveCustodianMember not implemented")
-}
-func (UnimplementedKeystoreServiceServer) DistributeShares(context.Context, *DistributeSharesRequest) (*DistributeSharesResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DistributeShares not implemented")
-}
 func (UnimplementedKeystoreServiceServer) Algorithms(context.Context, *AlgorithmsRequest) (*AlgorithmsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Algorithms not implemented")
-}
-func (UnimplementedKeystoreServiceServer) SubmitShare(context.Context, *SubmitShareRequest) (*SubmitShareResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SubmitShare not implemented")
-}
-func (UnimplementedKeystoreServiceServer) ListShares(context.Context, *ListSharesRequest) (*ListSharesResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListShares not implemented")
-}
-func (UnimplementedKeystoreServiceServer) GetShare(context.Context, *GetShareRequest) (*ShareInfo, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetShare not implemented")
-}
-func (UnimplementedKeystoreServiceServer) DeleteShare(context.Context, *DeleteShareRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteShare not implemented")
-}
-func (UnimplementedKeystoreServiceServer) GetShareCollectionStatus(context.Context, *GetShareCollectionStatusRequest) (*ShareCollectionStatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetShareCollectionStatus not implemented")
 }
 func (UnimplementedKeystoreServiceServer) CreateTenant(context.Context, *CreateTenantRequest) (*CreateTenantResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateTenant not implemented")
@@ -3719,15 +3049,6 @@ func (UnimplementedKeystoreServiceServer) ListTenants(context.Context, *ListTena
 }
 func (UnimplementedKeystoreServiceServer) DeleteTenant(context.Context, *DeleteTenantRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteTenant not implemented")
-}
-func (UnimplementedKeystoreServiceServer) TenantBarrierInit(context.Context, *TenantBarrierInitRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method TenantBarrierInit not implemented")
-}
-func (UnimplementedKeystoreServiceServer) TenantBarrierUnseal(context.Context, *TenantBarrierUnsealRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method TenantBarrierUnseal not implemented")
-}
-func (UnimplementedKeystoreServiceServer) TenantBarrierStatus(context.Context, *TenantBarrierStatusRequest) (*TenantBarrierStatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method TenantBarrierStatus not implemented")
 }
 func (UnimplementedKeystoreServiceServer) UpdateTenantEntitlements(context.Context, *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateTenantEntitlements not implemented")
@@ -3983,9 +3304,6 @@ func (UnimplementedKeystoreServiceServer) SSHListAuthorizedKeys(context.Context,
 }
 func (UnimplementedKeystoreServiceServer) SSHRemoveAuthorizedKey(context.Context, *SSHAuthorizedKeyRef) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SSHRemoveAuthorizedKey not implemented")
-}
-func (UnimplementedKeystoreServiceServer) QueryAudit(context.Context, *QueryAuditRequest) (*QueryAuditResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method QueryAudit not implemented")
 }
 func (UnimplementedKeystoreServiceServer) mustEmbedUnimplementedKeystoreServiceServer() {}
 func (UnimplementedKeystoreServiceServer) testEmbeddedByValue()                         {}
@@ -5232,258 +4550,6 @@ func _KeystoreService_IssueLAKCertificate_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
-func _KeystoreService_BarrierInitialize_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierInitializeRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierInitialize(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierInitialize_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierInitialize(ctx, req.(*BarrierInitializeRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierUnseal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierUnsealRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierUnseal(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierUnseal_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierUnseal(ctx, req.(*BarrierUnsealRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierSeal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierSeal(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierSeal_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierSeal(ctx, req.(*emptypb.Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierStatus(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierStatus_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierStatus(ctx, req.(*emptypb.Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierInitializeShamir_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierInitializeShamirRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierInitializeShamir(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierInitializeShamir_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierInitializeShamir(ctx, req.(*BarrierInitializeShamirRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierUnsealShare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierUnsealShareRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierUnsealShare(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierUnsealShare_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierUnsealShare(ctx, req.(*BarrierUnsealShareRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierUnsealShares_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierUnsealSharesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierUnsealShares(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierUnsealShares_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierUnsealShares(ctx, req.(*BarrierUnsealSharesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierRekey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierRekeyRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierRekey(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierRekey_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierRekey(ctx, req.(*BarrierRekeyRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierGenerateRecoveryKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierGenerateRecoveryKeysRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierGenerateRecoveryKeys(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierGenerateRecoveryKeys_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierGenerateRecoveryKeys(ctx, req.(*BarrierGenerateRecoveryKeysRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierRecoverWithKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierRecoverWithKeysRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierRecoverWithKeys(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierRecoverWithKeys_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierRecoverWithKeys(ctx, req.(*BarrierRecoverWithKeysRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierDeleteRecoveryKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierDeleteRecoveryKeys(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierDeleteRecoveryKeys_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierDeleteRecoveryKeys(ctx, req.(*emptypb.Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierHasRecoveryKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierHasRecoveryKeys(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierHasRecoveryKeys_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierHasRecoveryKeys(ctx, req.(*emptypb.Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierGenerateRootToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierGenerateRootTokenRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierGenerateRootToken(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierGenerateRootToken_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierGenerateRootToken(ctx, req.(*BarrierGenerateRootTokenRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_BarrierEnableEncryption_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierEnableEncryptionRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).BarrierEnableEncryption(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_BarrierEnableEncryption_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).BarrierEnableEncryption(ctx, req.(*BarrierEnableEncryptionRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _KeystoreService_BootstrapListenerKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -5790,240 +4856,6 @@ func _KeystoreService_GeneratePIVCSR_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
-func _KeystoreService_CreateBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BackupRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).CreateBackup(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_CreateBackup_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).CreateBackup(ctx, req.(*BackupRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_ListBackups_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).ListBackups(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_ListBackups_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).ListBackups(ctx, req.(*emptypb.Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_GetBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetBackupRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).GetBackup(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_GetBackup_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).GetBackup(ctx, req.(*GetBackupRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_DeleteBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeleteBackupRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).DeleteBackup(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_DeleteBackup_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).DeleteBackup(ctx, req.(*DeleteBackupRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_RestoreBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RestoreRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).RestoreBackup(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_RestoreBackup_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).RestoreBackup(ctx, req.(*RestoreRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_VerifyBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(VerifyBackupRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).VerifyBackup(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_VerifyBackup_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).VerifyBackup(ctx, req.(*VerifyBackupRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_CreateCustodianGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreateCustodianGroupRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).CreateCustodianGroup(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_CreateCustodianGroup_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).CreateCustodianGroup(ctx, req.(*CreateCustodianGroupRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_GetCustodianGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetCustodianGroupRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).GetCustodianGroup(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_GetCustodianGroup_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).GetCustodianGroup(ctx, req.(*GetCustodianGroupRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_ListCustodianGroups_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListCustodianGroupsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).ListCustodianGroups(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_ListCustodianGroups_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).ListCustodianGroups(ctx, req.(*ListCustodianGroupsRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_DeleteCustodianGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeleteCustodianGroupRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).DeleteCustodianGroup(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_DeleteCustodianGroup_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).DeleteCustodianGroup(ctx, req.(*DeleteCustodianGroupRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_AddCustodianMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AddCustodianMemberRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).AddCustodianMember(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_AddCustodianMember_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).AddCustodianMember(ctx, req.(*AddCustodianMemberRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_RemoveCustodianMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RemoveCustodianMemberRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).RemoveCustodianMember(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_RemoveCustodianMember_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).RemoveCustodianMember(ctx, req.(*RemoveCustodianMemberRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_DistributeShares_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DistributeSharesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).DistributeShares(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_DistributeShares_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).DistributeShares(ctx, req.(*DistributeSharesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _KeystoreService_Algorithms_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AlgorithmsRequest)
 	if err := dec(in); err != nil {
@@ -6038,96 +4870,6 @@ func _KeystoreService_Algorithms_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(KeystoreServiceServer).Algorithms(ctx, req.(*AlgorithmsRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_SubmitShare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SubmitShareRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).SubmitShare(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_SubmitShare_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).SubmitShare(ctx, req.(*SubmitShareRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_ListShares_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListSharesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).ListShares(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_ListShares_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).ListShares(ctx, req.(*ListSharesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_GetShare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetShareRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).GetShare(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_GetShare_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).GetShare(ctx, req.(*GetShareRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_DeleteShare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeleteShareRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).DeleteShare(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_DeleteShare_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).DeleteShare(ctx, req.(*DeleteShareRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_GetShareCollectionStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetShareCollectionStatusRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).GetShareCollectionStatus(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_GetShareCollectionStatus_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).GetShareCollectionStatus(ctx, req.(*GetShareCollectionStatusRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -6200,60 +4942,6 @@ func _KeystoreService_DeleteTenant_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(KeystoreServiceServer).DeleteTenant(ctx, req.(*DeleteTenantRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_TenantBarrierInit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TenantBarrierInitRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).TenantBarrierInit(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_TenantBarrierInit_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).TenantBarrierInit(ctx, req.(*TenantBarrierInitRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_TenantBarrierUnseal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TenantBarrierUnsealRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).TenantBarrierUnseal(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_TenantBarrierUnseal_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).TenantBarrierUnseal(ctx, req.(*TenantBarrierUnsealRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_TenantBarrierStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TenantBarrierStatusRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).TenantBarrierStatus(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_TenantBarrierStatus_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).TenantBarrierStatus(ctx, req.(*TenantBarrierStatusRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -7788,24 +6476,6 @@ func _KeystoreService_SSHRemoveAuthorizedKey_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
-func _KeystoreService_QueryAudit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryAuditRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).QueryAudit(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_QueryAudit_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).QueryAudit(ctx, req.(*QueryAuditRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // KeystoreService_ServiceDesc is the grpc.ServiceDesc for KeystoreService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -8086,62 +6756,6 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _KeystoreService_IssueLAKCertificate_Handler,
 		},
 		{
-			MethodName: "BarrierInitialize",
-			Handler:    _KeystoreService_BarrierInitialize_Handler,
-		},
-		{
-			MethodName: "BarrierUnseal",
-			Handler:    _KeystoreService_BarrierUnseal_Handler,
-		},
-		{
-			MethodName: "BarrierSeal",
-			Handler:    _KeystoreService_BarrierSeal_Handler,
-		},
-		{
-			MethodName: "BarrierStatus",
-			Handler:    _KeystoreService_BarrierStatus_Handler,
-		},
-		{
-			MethodName: "BarrierInitializeShamir",
-			Handler:    _KeystoreService_BarrierInitializeShamir_Handler,
-		},
-		{
-			MethodName: "BarrierUnsealShare",
-			Handler:    _KeystoreService_BarrierUnsealShare_Handler,
-		},
-		{
-			MethodName: "BarrierUnsealShares",
-			Handler:    _KeystoreService_BarrierUnsealShares_Handler,
-		},
-		{
-			MethodName: "BarrierRekey",
-			Handler:    _KeystoreService_BarrierRekey_Handler,
-		},
-		{
-			MethodName: "BarrierGenerateRecoveryKeys",
-			Handler:    _KeystoreService_BarrierGenerateRecoveryKeys_Handler,
-		},
-		{
-			MethodName: "BarrierRecoverWithKeys",
-			Handler:    _KeystoreService_BarrierRecoverWithKeys_Handler,
-		},
-		{
-			MethodName: "BarrierDeleteRecoveryKeys",
-			Handler:    _KeystoreService_BarrierDeleteRecoveryKeys_Handler,
-		},
-		{
-			MethodName: "BarrierHasRecoveryKeys",
-			Handler:    _KeystoreService_BarrierHasRecoveryKeys_Handler,
-		},
-		{
-			MethodName: "BarrierGenerateRootToken",
-			Handler:    _KeystoreService_BarrierGenerateRootToken_Handler,
-		},
-		{
-			MethodName: "BarrierEnableEncryption",
-			Handler:    _KeystoreService_BarrierEnableEncryption_Handler,
-		},
-		{
 			MethodName: "BootstrapListenerKeys",
 			Handler:    _KeystoreService_BootstrapListenerKeys_Handler,
 		},
@@ -8210,80 +6824,8 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _KeystoreService_GeneratePIVCSR_Handler,
 		},
 		{
-			MethodName: "CreateBackup",
-			Handler:    _KeystoreService_CreateBackup_Handler,
-		},
-		{
-			MethodName: "ListBackups",
-			Handler:    _KeystoreService_ListBackups_Handler,
-		},
-		{
-			MethodName: "GetBackup",
-			Handler:    _KeystoreService_GetBackup_Handler,
-		},
-		{
-			MethodName: "DeleteBackup",
-			Handler:    _KeystoreService_DeleteBackup_Handler,
-		},
-		{
-			MethodName: "RestoreBackup",
-			Handler:    _KeystoreService_RestoreBackup_Handler,
-		},
-		{
-			MethodName: "VerifyBackup",
-			Handler:    _KeystoreService_VerifyBackup_Handler,
-		},
-		{
-			MethodName: "CreateCustodianGroup",
-			Handler:    _KeystoreService_CreateCustodianGroup_Handler,
-		},
-		{
-			MethodName: "GetCustodianGroup",
-			Handler:    _KeystoreService_GetCustodianGroup_Handler,
-		},
-		{
-			MethodName: "ListCustodianGroups",
-			Handler:    _KeystoreService_ListCustodianGroups_Handler,
-		},
-		{
-			MethodName: "DeleteCustodianGroup",
-			Handler:    _KeystoreService_DeleteCustodianGroup_Handler,
-		},
-		{
-			MethodName: "AddCustodianMember",
-			Handler:    _KeystoreService_AddCustodianMember_Handler,
-		},
-		{
-			MethodName: "RemoveCustodianMember",
-			Handler:    _KeystoreService_RemoveCustodianMember_Handler,
-		},
-		{
-			MethodName: "DistributeShares",
-			Handler:    _KeystoreService_DistributeShares_Handler,
-		},
-		{
 			MethodName: "Algorithms",
 			Handler:    _KeystoreService_Algorithms_Handler,
-		},
-		{
-			MethodName: "SubmitShare",
-			Handler:    _KeystoreService_SubmitShare_Handler,
-		},
-		{
-			MethodName: "ListShares",
-			Handler:    _KeystoreService_ListShares_Handler,
-		},
-		{
-			MethodName: "GetShare",
-			Handler:    _KeystoreService_GetShare_Handler,
-		},
-		{
-			MethodName: "DeleteShare",
-			Handler:    _KeystoreService_DeleteShare_Handler,
-		},
-		{
-			MethodName: "GetShareCollectionStatus",
-			Handler:    _KeystoreService_GetShareCollectionStatus_Handler,
 		},
 		{
 			MethodName: "CreateTenant",
@@ -8300,18 +6842,6 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteTenant",
 			Handler:    _KeystoreService_DeleteTenant_Handler,
-		},
-		{
-			MethodName: "TenantBarrierInit",
-			Handler:    _KeystoreService_TenantBarrierInit_Handler,
-		},
-		{
-			MethodName: "TenantBarrierUnseal",
-			Handler:    _KeystoreService_TenantBarrierUnseal_Handler,
-		},
-		{
-			MethodName: "TenantBarrierStatus",
-			Handler:    _KeystoreService_TenantBarrierStatus_Handler,
 		},
 		{
 			MethodName: "UpdateTenantEntitlements",
@@ -8652,10 +7182,6 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SSHRemoveAuthorizedKey",
 			Handler:    _KeystoreService_SSHRemoveAuthorizedKey_Handler,
-		},
-		{
-			MethodName: "QueryAudit",
-			Handler:    _KeystoreService_QueryAudit_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

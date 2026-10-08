@@ -29,9 +29,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
-	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/pkg/audit/audittest"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
@@ -511,11 +510,11 @@ func TestInitializeAuthentication_CompositeWebAuthnNoJWT_NoFile(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — buildHardwareSealStrategy with non-sealer provider
+// Test fake — a key provider with no sealing capability
 // ============================================================================
 
 // nonSealerProvider is a types.KeyProvider that intentionally does NOT
-// implement types.Sealer, triggering the error branch in buildHardwareSealStrategy.
+// implement types.Sealer; tests embed it to build partial providers.
 type nonSealerProvider struct{}
 
 func (n *nonSealerProvider) Type() types.BackendType          { return "test" }
@@ -541,19 +540,6 @@ func (n *nonSealerProvider) Close() error                                       
 
 // Compile-time check that nonSealerProvider implements types.KeyProvider.
 var _ types.KeyProvider = (*nonSealerProvider)(nil)
-
-// TestBuildHardwareSealStrategy_ProviderNotSealer verifies the typed error when
-// the provider does not implement types.Sealer.
-func TestBuildHardwareSealStrategy_ProviderNotSealer(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{})
-	_, err := s.buildHardwareSealStrategy(
-		"pkcs11", types.StorePKCS11, &nonSealerProvider{},
-	)
-	require.Error(t, err)
-	var stratErr *ErrSealStrategyBuild
-	assert.True(t, errors.As(err, &stratErr))
-	assert.Equal(t, "pkcs11", stratErr.Strategy)
-}
 
 // ============================================================================
 // Tests — Reload with logging unchanged (no-op inner branch)
@@ -613,45 +599,6 @@ func TestInitializePasswordStore_Success(t *testing.T) {
 
 	require.NoError(t, s.initializePasswordStore())
 	assert.NotNil(t, s.passwordStore)
-}
-
-// ============================================================================
-// Tests — clusterClientAdapter (unit tests on the adapter struct itself)
-// ============================================================================
-
-// TestAPIEndpointsToStrings_Advertised verifies that a replica's advertised
-// protocol-keyed endpoints survive translation into the wire map.
-func TestAPIEndpointsToStrings_Advertised(t *testing.T) {
-	out := apiEndpointsToStrings(map[qrdbsdk.APIProtocol]string{
-		qrdbsdk.APIProtocolREST: "10.0.0.2:8443",
-		qrdbsdk.APIProtocolGRPC: "10.0.0.2:9443",
-	})
-
-	assert.Equal(t, map[string]string{
-		"rest": "10.0.0.2:8443",
-		"grpc": "10.0.0.2:9443",
-	}, out)
-}
-
-// TestAPIEndpointsToStrings_NotAdvertised verifies the backward-compatible
-// degrade path: a replica that advertises nothing must translate to a nil map,
-// which consumers read as "unknown", not to an empty map, which would read as
-// "serves no protocols".
-func TestAPIEndpointsToStrings_NotAdvertised(t *testing.T) {
-	assert.Nil(t, apiEndpointsToStrings(nil))
-	assert.Nil(t, apiEndpointsToStrings(map[qrdbsdk.APIProtocol]string{}))
-}
-
-// ============================================================================
-// Tests — initializeBarrierRegistry with nil barrier (skip path)
-// ============================================================================
-
-func TestInitializeBarrierRegistry_NilBarrier(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{})
-	s.barrier = nil
-	err := s.initializeBarrierRegistry()
-	require.NoError(t, err)
-	assert.Nil(t, s.barrierRegistry)
 }
 
 // ============================================================================
@@ -791,33 +738,6 @@ func TestWaitForClusterLeader_ContextCancelled(t *testing.T) {
 	// qrdbClient is nil, and document it as an infrastructure boundary.
 	t.Log("waitForClusterLeader requires a live qrdb cluster client; cancelled-ctx path is an infrastructure boundary")
 	_ = s
-}
-
-// ============================================================================
-// Tests — buildHardwareSealStrategies with hardware id in preference order
-// but no matching keyProvider (skip path already covered), plus with a
-// software duplicate entry deduplication.
-// ============================================================================
-
-// TestBuildHardwareSealStrategies_SoftwareOnlyInOrder verifies that listing
-// "software" in the preference order (non-hardware ID) is skipped as expected.
-func TestBuildHardwareSealStrategies_SoftwareOnlyInOrder(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Barrier.Enabled = true
-	// "pkcs11" is not NodeFlipWired, so this deployment keeps xkms's own
-	// (non-node) barrier -- buildHardwareSealStrategies, the function this
-	// test exercises -- instead of adopting the qrdb node's barrier.
-	cfg.Barrier.Strategy = "pkcs11"
-	cfg.Barrier.PreferenceOrder = []string{"software"}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	assert.NotNil(t, server.Barrier())
 }
 
 // ============================================================================
@@ -1660,20 +1580,6 @@ func TestCreateCompositeAuthenticator_MTLSWithTLS(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — initializeBarrier disabled path (already in New via createMinimalConfig
-// which has Barrier.Enabled=false; test the disabled branch directly)
-// ============================================================================
-
-func TestInitializeBarrier_Disabled(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Barrier: config.BarrierConfig{Enabled: false},
-	})
-	err := s.initializeBarrier()
-	require.NoError(t, err)
-	assert.Nil(t, s.barrier)
-}
-
-// ============================================================================
 // Tests — Reload with changed logging (exercises reloadLogging change branch)
 // ============================================================================
 
@@ -1700,41 +1606,8 @@ func TestServer_Reload_ChangedLogging(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — sealStoreType and sealKeyAttributesFor
+// Tests — sealKeyAttributesFor
 // ============================================================================
-
-func TestSealStoreType_KnownStrategies(t *testing.T) {
-	tests := []struct {
-		id        seal.StrategyID
-		wantStore types.StoreType
-		wantHW    bool
-	}{
-		{seal.StrategyTPM2, types.StoreTPM2, true},
-		{seal.StrategyPKCS11, types.StorePKCS11, true},
-		{seal.StrategyAWSKMS, types.StoreAWSKMS, true},
-		{seal.StrategyGCPKMS, types.StoreGCPKMS, true},
-		{seal.StrategyAzureKV, types.StoreAzureKV, true},
-		{seal.StrategyVault, types.StoreVault, true},
-	}
-	for _, tc := range tests {
-		t.Run(string(tc.id), func(t *testing.T) {
-			store, hw := sealStoreType(tc.id)
-			assert.Equal(t, tc.wantStore, store)
-			assert.Equal(t, tc.wantHW, hw)
-		})
-	}
-}
-
-func TestSealStoreType_SoftwareFallsThrough(t *testing.T) {
-	_, hw := sealStoreType("software")
-	assert.False(t, hw)
-
-	_, hw2 := sealStoreType("passphrase")
-	assert.False(t, hw2)
-
-	_, hw3 := sealStoreType("shamir")
-	assert.False(t, hw3)
-}
 
 func TestSealKeyAttributesFor_Fields(t *testing.T) {
 	attrs := sealKeyAttributesFor(types.StoreTPM2)
@@ -1742,41 +1615,6 @@ func TestSealKeyAttributesFor_Fields(t *testing.T) {
 	assert.Equal(t, types.StoreTPM2, attrs.StoreType)
 	assert.Equal(t, types.KeyTypeEncryption, attrs.KeyType)
 	assert.Equal(t, types.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
-}
-
-// ============================================================================
-// Tests — buildHardwareSealStrategy TPM2 path via sealer-implementing provider
-// ============================================================================
-
-// tpm2SealerProvider implements types.KeyProvider AND types.Sealer but is not
-// a real TPM2 — used to exercise the TPM2-path dispatch in buildHardwareSealStrategy.
-type tpm2SealerProvider struct {
-	nonSealerProvider
-}
-
-func (p *tpm2SealerProvider) Seal(_ context.Context, _ []byte, _ *types.SealOptions) (*types.SealedData, error) {
-	return nil, nil
-}
-
-func (p *tpm2SealerProvider) Unseal(_ context.Context, _ *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
-	return nil, nil
-}
-
-func (p *tpm2SealerProvider) CanSeal() bool { return true }
-
-// Compile-time check that tpm2SealerProvider satisfies types.Sealer.
-var _ types.Sealer = (*tpm2SealerProvider)(nil)
-
-// TestBuildHardwareSealStrategy_TPM2Path verifies that when the provider
-// implements types.Sealer and the strategy is TPM2, NewTPM2Strategy is called
-// (and returns a non-nil strategy).
-func TestBuildHardwareSealStrategy_TPM2Path(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{})
-	strategy, err := s.buildHardwareSealStrategy(
-		seal.StrategyTPM2, types.StoreTPM2, &tpm2SealerProvider{},
-	)
-	require.NoError(t, err)
-	assert.NotNil(t, strategy)
 }
 
 // ============================================================================
@@ -2060,6 +1898,7 @@ func TestInitializeCA_BackendNotAvailable(t *testing.T) {
 	// No backends registered — resolving the CA keystore will fail.
 	s.backends = map[string]xkms.Backend{}
 	s.ctx = context.Background()
+	openInMemoryDatastore(t, s)
 
 	err := s.initializeCA()
 	require.Error(t, err)
@@ -2184,54 +2023,25 @@ func TestInitializeWebAuthnService_BadRPID(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — initializeBarrierRegistry with live barrier (non-nil)
+// Tests — the node's tenant service reaches the XKMS service
 // ============================================================================
 
-// TestInitializeBarrierRegistry_WithBarrier exercises the happy path where a
-// barrier is present and a registry is created.
-func TestInitializeBarrierRegistry_WithBarrier(t *testing.T) {
+// TestNew_InjectsTheNodeTenantService verifies that the full server boot
+// adopts the node's go-qrdb TenantService and injects it into the XKMS
+// service, so the entitlement-gated isolation + hardware-strategy seam is
+// live without any additional wiring.
+func TestNew_InjectsTheNodeTenantService(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	cfg := createMinimalConfig(t)
-	cfg.Barrier.Enabled = true
-	// "pkcs11" is not NodeFlipWired, so this deployment keeps xkms's own
-	// (non-node) barrier and registry -- s.barrier/s.barrierRegistry, the
-	// fields this test asserts on -- instead of adopting the qrdb node's,
-	// which leaves both nil (see server.go's nodeSealEnabled doc comment).
-	cfg.Barrier.Strategy = "pkcs11"
-	cfg.Barrier.PreferenceOrder = []string{"software"}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	assert.NotNil(t, server.barrier)
-	assert.NotNil(t, server.barrierRegistry)
-}
-
-// TestInitializeBarrierRegistry_WiresTenantServiceAndVolumePool verifies that
-// the full server boot composes go-qrdb's TenantService over the barrier
-// registry and provisions the volume pool (rooted under Storage.Path), so the
-// entitlement-gated isolation + hardware-strategy seam is live without any
-// additional wiring.
-func TestInitializeBarrierRegistry_WiresTenantServiceAndVolumePool(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Barrier.Enabled = true
-	// See TestInitializeBarrierRegistry_WithBarrier: keeps xkms's own
-	// tenantService/volumePool construction instead of the node-flip.
-	cfg.Barrier.Strategy = "pkcs11"
-	cfg.Barrier.PreferenceOrder = []string{"software"}
+	cfg := qrdbBarrierConfig(t)
+	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
 
 	server, err := New(cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
 	assert.NotNil(t, server.tenantService, "TenantService must be composed over the barrier registry")
-	assert.NotNil(t, server.volumePool, "volume pool must be provisioned from Storage.Path for dedicated-isolation tenants")
 	assert.Same(t, server.tenantService, server.xkmsService.TenantService(),
 		"the composed TenantService must be injected into the XKMS service")
 }
@@ -2331,66 +2141,6 @@ func TestInitializeBackends_PKCS8Enabled(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — buildHardwareSealStrategies with hardware strategy but no backend
-// ============================================================================
-
-// TestBuildHardwareSealStrategies_MissingBackendSkipped verifies that a
-// hardware strategy listed in PreferenceOrder but without a corresponding
-// backend is silently skipped (soft fallback) and only the software strategy
-// is returned.
-func TestBuildHardwareSealStrategies_MissingBackendSkipped(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Barrier: config.BarrierConfig{
-			Enabled:         true,
-			PreferenceOrder: []string{"pkcs11"}, // hardware strategy, no backend
-		},
-	})
-	s.keyProviders = map[string]types.KeyProvider{} // no pkcs11 backend
-
-	strategies, err := s.buildHardwareSealStrategies()
-	require.NoError(t, err)
-	// Only the software baseline is returned.
-	assert.Len(t, strategies, 1)
-}
-
-// TestBuildHardwareSealStrategies_BuildStrategyError verifies that when
-// buildHardwareSealStrategy returns an error (provider registered but doesn't
-// implement Sealer), buildHardwareSealStrategies propagates it.
-func TestBuildHardwareSealStrategies_BuildStrategyError(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Barrier: config.BarrierConfig{
-			PreferenceOrder: []string{"pkcs11"},
-		},
-	})
-	// Register a provider for "pkcs11" that doesn't implement Sealer →
-	// buildHardwareSealStrategy will return ErrSealStrategyBuild.
-	s.keyProviders = map[string]types.KeyProvider{
-		"pkcs11": &nonSealerProvider{},
-	}
-
-	_, err := s.buildHardwareSealStrategies()
-	require.Error(t, err)
-	var stratErr *ErrSealStrategyBuild
-	assert.True(t, errors.As(err, &stratErr))
-}
-
-// TestBuildHardwareSealStrategies_DuplicateSkipped verifies that duplicate
-// strategy IDs in PreferenceOrder are de-duplicated.
-func TestBuildHardwareSealStrategies_DuplicateSkipped(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Barrier: config.BarrierConfig{
-			PreferenceOrder: []string{"software", "software"},
-		},
-	})
-	s.keyProviders = map[string]types.KeyProvider{}
-
-	strategies, err := s.buildHardwareSealStrategies()
-	require.NoError(t, err)
-	// Only the software baseline is appended; duplicates are skipped.
-	assert.Len(t, strategies, 1)
-}
-
-// ============================================================================
 // Tests — Server.Barrier() and BarrierRegistry() accessors
 // ============================================================================
 
@@ -2468,12 +2218,11 @@ func TestServer_StartMetrics_BindError(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — buildHardwareSealStrategy PKCS11 path (ensureSealKey returns key-not-found
-// → GenerateSymmetricKey succeeds)
+// Tests — a sealer that is also a symmetric key provider, for ensureSealKey
 // ============================================================================
 
 // pkcs11SealerSymProvider implements both types.Sealer and types.SymmetricKeyProvider
-// so buildHardwareSealStrategy can proceed past ensureSealKey for the PKCS11 path.
+// so ensureSealKey can provision through it.
 // GetSymmetricKey returns ErrKeyNotFound on the first call (triggers provisioning),
 // GenerateSymmetricKey succeeds.
 type pkcs11SealerSymProvider struct {
@@ -2509,46 +2258,6 @@ func (p *pkcs11SealerSymProvider) SymmetricEncrypter(_ context.Context, _ *types
 
 var _ types.Sealer = (*pkcs11SealerSymProvider)(nil)
 var _ types.SymmetricKeyProvider = (*pkcs11SealerSymProvider)(nil)
-
-// TestBuildHardwareSealStrategy_PKCS11Path verifies that when the provider
-// implements both types.Sealer and types.SymmetricKeyProvider, the PKCS11 path
-// succeeds and returns a non-nil strategy.
-func TestBuildHardwareSealStrategy_PKCS11Path(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{})
-	prov := &pkcs11SealerSymProvider{}
-	strategy, err := s.buildHardwareSealStrategy(
-		seal.StrategyPKCS11, types.StorePKCS11, prov,
-	)
-	require.NoError(t, err)
-	assert.NotNil(t, strategy)
-	assert.True(t, prov.genKeyDone, "GenerateSymmetricKey should have been called")
-}
-
-// TestBuildHardwareSealStrategy_CloudKMSPath verifies the CloudKMS dispatch path.
-func TestBuildHardwareSealStrategy_CloudKMSPath(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{})
-	prov := &pkcs11SealerSymProvider{}
-	strategy, err := s.buildHardwareSealStrategy(
-		seal.StrategyAWSKMS, types.StoreAWSKMS, prov,
-	)
-	require.NoError(t, err)
-	assert.NotNil(t, strategy)
-}
-
-// TestBuildHardwareSealStrategy_EnsureSealKeyError verifies that ensureSealKey
-// failure wraps into ErrSealStrategyBuild.
-func TestBuildHardwareSealStrategy_EnsureSealKeyError(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{})
-	prov := &pkcs11SealerSymProvider{
-		getKeyErr: errors.New("hardware error"), // not ErrKeyNotFound → ensureSealKey returns error
-	}
-	_, err := s.buildHardwareSealStrategy(
-		seal.StrategyPKCS11, types.StorePKCS11, prov,
-	)
-	require.Error(t, err)
-	var stratErr *ErrSealStrategyBuild
-	assert.True(t, errors.As(err, &stratErr))
-}
 
 // ============================================================================
 // Tests — ensureSealKey branches
@@ -2663,7 +2372,7 @@ func TestEnsureSealKey_GenerateKeyAlreadyExists(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — New() with barrier registry (xkms service wiring with barrier)
+// Tests — New() with the node's barrier registry and a PIN manager
 // ============================================================================
 
 // TestNew_WithBarrierAndPIN verifies that New() succeeds when barrier and PIN
@@ -2673,13 +2382,8 @@ func TestNew_WithBarrierAndPIN(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	cfg := createMinimalConfig(t)
-	cfg.Barrier.Enabled = true
-	// "pkcs11" is not NodeFlipWired, so this deployment keeps xkms's own
-	// (non-node) barrier -- s.barrier/s.barrierRegistry, asserted below --
-	// instead of adopting the qrdb node's, which leaves both nil.
-	cfg.Barrier.Strategy = "pkcs11"
-	cfg.Barrier.PreferenceOrder = []string{"software"}
+	cfg := qrdbBarrierConfig(t)
+	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
 	cfg.PIN.Enabled = true
 	cfg.PIN.Strategy = "software"
 
@@ -2893,34 +2597,6 @@ func TestServer_CloseBackends_ProviderCloseError(t *testing.T) {
 	s.closeBackends()
 	// Error was logged; prov.closeErr is non-nil — provider was called.
 	assert.NotNil(t, prov.closeErr)
-}
-
-// ============================================================================
-// Tests — buildHardwareSealStrategies duplicate hardware strategy is de-duped
-// ============================================================================
-
-// TestBuildHardwareSealStrategies_DuplicateHardwareSkipped verifies that when
-// the same hardware strategy appears twice in PreferenceOrder and its provider
-// implements types.Sealer, only one strategy is appended (the seen-map dedup).
-func TestBuildHardwareSealStrategies_DuplicateHardwareSkipped(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Barrier: config.BarrierConfig{
-			PreferenceOrder: []string{
-				string(seal.StrategyTPM2),
-				string(seal.StrategyTPM2), // duplicate
-			},
-		},
-	})
-	// Register a TPM2-compatible (Sealer-implementing) provider under the
-	// "tpm2" key so both preference-order lookups succeed.
-	s.keyProviders = map[string]types.KeyProvider{
-		string(seal.StrategyTPM2): &tpm2SealerProvider{},
-	}
-
-	strategies, err := s.buildHardwareSealStrategies()
-	require.NoError(t, err)
-	// Expected: 1 hardware (TPM2) + 1 software baseline = 2 total.
-	assert.Len(t, strategies, 2, "duplicate TPM2 entry must be de-duped")
 }
 
 // ============================================================================
@@ -3290,12 +2966,10 @@ func TestInitializeCA_NewFromConfigFails(t *testing.T) {
 			},
 		},
 	})
-	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
-	// give this test a real one so initializeCA reaches its own
+	// newMinimalServer bypasses New(), so the shared datastore is never
+	// opened; give this test a real one so initializeCA reaches its own
 	// config-parsing failure instead of failing earlier on storage.
-	var qerr error
-	s.qrdbStorage, qerr = storage.NewMemoryBackend()
-	require.NoError(t, qerr)
+	openInMemoryDatastore(t, s)
 	// Provide a software backend so the keystoreType lookup succeeds.
 	s.backends = map[string]xkms.Backend{"software": &minimalBackend{}}
 	s.ctx = context.Background()
@@ -3774,17 +3448,7 @@ func TestEnsureSealKey_GenerateKeyError(t *testing.T) {
 // Tests — Shutdown with erroring audit logger (lines 2364-2366)
 // ============================================================================
 
-// errAuditLogger is an audit.Logger whose Close returns a configured error.
-type errAuditLogger struct {
-	closeErr error
-}
-
-func (e *errAuditLogger) Log(_ context.Context, _ *audit.Event) error { return nil }
-func (e *errAuditLogger) Close() error                                { return e.closeErr }
-
-var _ audit.Logger = (*errAuditLogger)(nil)
-
-// TestShutdown_AuditLoggerCloseError verifies that when auditLogger.Close()
+// TestShutdown_AuditLoggerCloseError verifies that when ownedAuditLogger.Close()
 // returns an error during Shutdown, the error is logged but Shutdown still
 // returns nil (non-fatal cleanup path).
 func TestShutdown_AuditLoggerCloseError(t *testing.T) {
@@ -3802,7 +3466,7 @@ func TestShutdown_AuditLoggerCloseError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Inject an audit logger whose Close() returns an error.
-	server.auditLogger = &errAuditLogger{closeErr: errors.New("audit close failed")}
+	server.ownedAuditLogger = &audittest.Failing{CloseErr: errors.New("audit close failed")}
 
 	// Shutdown must complete without panicking and must return nil.
 	shutErr := server.Shutdown()
@@ -3874,6 +3538,7 @@ func TestInitializeCA_BackendNotAvailableCustomType(t *testing.T) {
 	// Register only "software"; the CA wants "custom-hsm-backend".
 	s.backends = map[string]xkms.Backend{"software": &minimalBackend{}}
 	s.ctx = context.Background()
+	openInMemoryDatastore(t, s)
 
 	err := s.initializeCA()
 	require.Error(t, err)
@@ -5047,48 +4712,6 @@ func TestStart_CABundlerInstanceError(t *testing.T) {
 // Tests — startREST TLS build error, deterministic free-port variant
 //         (server.go lines 1777-1779)
 // ============================================================================
-
-// ============================================================================
-// Tests — initializeBarrier hardware seal strategy build error
-//         (server.go line 984-986)
-// ============================================================================
-
-// nonSealerKeyProvider satisfies types.KeyProvider at compile time via
-// embedding but does NOT implement types.Sealer. buildHardwareSealStrategy
-// checks `provider.(types.Sealer)` and returns ErrSealStrategyBuild when the
-// assertion fails.
-type nonSealerKeyProvider struct {
-	types.KeyProvider
-}
-
-// TestInitializeBarrier_SealStrategyBuildError exercises the path where
-// buildHardwareSealStrategies returns an error because the configured
-// provider does not implement types.Sealer.  The error is wrapped in
-// ErrServiceInit("barrier") at line 984-986.
-func TestInitializeBarrier_SealStrategyBuildError(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Datastore: config.DatastoreConfig{Engine: "memory"},
-		Barrier: config.BarrierConfig{
-			Enabled:         true,
-			PreferenceOrder: []string{string(seal.StrategyPKCS11)},
-		},
-	})
-	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
-	// give this test a real one so initializeBarrier reaches its own
-	// seal-strategy build failure instead of failing earlier on storage.
-	var qerr error
-	s.qrdbStorage, qerr = storage.NewMemoryBackend()
-	require.NoError(t, qerr)
-	// Register a provider for pkcs11 that does NOT implement types.Sealer.
-	s.keyProviders = map[string]types.KeyProvider{
-		string(seal.StrategyPKCS11): &nonSealerKeyProvider{},
-	}
-
-	err := s.initializeBarrier()
-	require.Error(t, err)
-	var svcInit *ErrServiceInit
-	assert.True(t, errors.As(err, &svcInit), "expected *ErrServiceInit, got: %T %v", err, err)
-}
 
 // TestServer_StartREST_TLSBuildError_FreePort is a variant of
 // TestServer_StartREST_TLSBuildError that uses a dynamically allocated port to

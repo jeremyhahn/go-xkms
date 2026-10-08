@@ -150,45 +150,15 @@ func (s *errServer) CanSeal(context.Context, *pb.CanSealRequest) (*pb.CanSealRes
 func (s *errServer) AttestKey(context.Context, *pb.AttestKeyRequest) (*pb.AttestKeyResponse, error) {
 	return nil, status.Error(codes.Internal, "fail")
 }
-func (s *errServer) BarrierInitialize(context.Context, *pb.BarrierInitializeRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) BarrierUnseal(context.Context, *pb.BarrierUnsealRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
+
 func (s *errServer) BarrierSeal(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Internal, "fail")
 }
-func (s *errServer) BarrierStatus(context.Context, *emptypb.Empty) (*pb.BarrierStatusResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) BarrierInitializeShamir(context.Context, *pb.BarrierInitializeShamirRequest) (*pb.BarrierShamirInitResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) BarrierUnsealShare(context.Context, *pb.BarrierUnsealShareRequest) (*pb.BarrierQuorumProgressResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) BarrierUnsealShares(context.Context, *pb.BarrierUnsealSharesRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) BarrierRekey(context.Context, *pb.BarrierRekeyRequest) (*pb.BarrierShamirInitResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) BarrierGenerateRecoveryKeys(context.Context, *pb.BarrierGenerateRecoveryKeysRequest) (*pb.BarrierRecoveryKeysResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) BarrierEnableEncryption(context.Context, *pb.BarrierEnableEncryptionRequest) (*pb.BarrierEnableEncryptionResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) BarrierRecoverWithKeys(context.Context, *pb.BarrierRecoverWithKeysRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
+
 func (s *errServer) BarrierDeleteRecoveryKeys(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Internal, "fail")
 }
-func (s *errServer) BarrierGenerateRootToken(context.Context, *pb.BarrierGenerateRootTokenRequest) (*pb.BarrierRootTokenResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
+
 func (s *errServer) SetSOPIN(context.Context, *pb.SetSOPINRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Internal, "fail")
 }
@@ -270,36 +240,7 @@ func (s *errServer) GeneratePIVKey(context.Context, *pb.GeneratePIVKeyRequest) (
 func (s *errServer) GeneratePIVCSR(context.Context, *pb.GeneratePIVCSRRequest) (*pb.GeneratePIVCSRResponse, error) {
 	return nil, status.Error(codes.Internal, "fail")
 }
-func (s *errServer) CreateCustodianGroup(context.Context, *pb.CreateCustodianGroupRequest) (*pb.CreateCustodianGroupResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) GetCustodianGroup(context.Context, *pb.GetCustodianGroupRequest) (*pb.GetCustodianGroupResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) ListCustodianGroups(context.Context, *pb.ListCustodianGroupsRequest) (*pb.ListCustodianGroupsResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) DeleteCustodianGroup(context.Context, *pb.DeleteCustodianGroupRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) AddCustodianMember(context.Context, *pb.AddCustodianMemberRequest) (*pb.AddCustodianMemberResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) RemoveCustodianMember(context.Context, *pb.RemoveCustodianMemberRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) DistributeShares(context.Context, *pb.DistributeSharesRequest) (*pb.DistributeSharesResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) SubmitShare(context.Context, *pb.SubmitShareRequest) (*pb.SubmitShareResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) ListShares(context.Context, *pb.ListSharesRequest) (*pb.ListSharesResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) GetShareCollectionStatus(context.Context, *pb.GetShareCollectionStatusRequest) (*pb.ShareCollectionStatusResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
+
 func (s *errServer) CreateTenant(context.Context, *pb.CreateTenantRequest) (*pb.CreateTenantResponse, error) {
 	return nil, status.Error(codes.Internal, "fail")
 }
@@ -312,12 +253,7 @@ func (s *errServer) ListTenants(context.Context, *pb.ListTenantsRequest) (*pb.Li
 func (s *errServer) DeleteTenant(context.Context, *pb.DeleteTenantRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Internal, "fail")
 }
-func (s *errServer) TenantBarrierInit(context.Context, *pb.TenantBarrierInitRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) TenantBarrierUnseal(context.Context, *pb.TenantBarrierUnsealRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
+
 func (s *errServer) PasswordAdd(context.Context, *pb.PasswordAddRequest) (*pb.PasswordAddResponse, error) {
 	return nil, status.Error(codes.Internal, "fail")
 }
@@ -779,34 +715,6 @@ func TestAttestKey_ServerErr(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestBarrierInitialize_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	err := tr.BarrierInitialize(context.Background(), &transport.BarrierInitializeRequest{})
-	require.Error(t, err)
-}
-
-func TestBarrierUnseal_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	err := tr.BarrierUnseal(context.Background(), &transport.BarrierUnsealRequest{})
-	require.Error(t, err)
-}
-
-func TestBarrierSeal_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	err := tr.BarrierSeal(context.Background())
-	require.Error(t, err)
-}
-
-func TestBarrierStatus_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.BarrierStatus(context.Background())
-	require.Error(t, err)
-}
-
 func TestIssueEKCertificate_ServerErr(t *testing.T) {
 	tr, cleanup := newErrTransport(t)
 	defer cleanup()
@@ -1003,76 +911,6 @@ func TestIsRevoked_ServerErr(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestCreateCustodianGroup_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.CreateCustodianGroup(context.Background(), &transport.CreateCustodianGroupRequest{})
-	require.Error(t, err)
-}
-
-func TestGetCustodianGroup_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.GetCustodianGroup(context.Background(), "g1")
-	require.Error(t, err)
-}
-
-func TestListCustodianGroups_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.ListCustodianGroups(context.Background())
-	require.Error(t, err)
-}
-
-func TestDeleteCustodianGroup_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	err := tr.DeleteCustodianGroup(context.Background(), "g1")
-	require.Error(t, err)
-}
-
-func TestAddCustodianMember_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.AddCustodianMember(context.Background(), &transport.AddCustodianMemberRequest{})
-	require.Error(t, err)
-}
-
-func TestRemoveCustodianMember_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	err := tr.RemoveCustodianMember(context.Background(), &transport.RemoveCustodianMemberRequest{})
-	require.Error(t, err)
-}
-
-func TestDistributeShares_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.DistributeShares(context.Background(), &transport.DistributeSharesRequest{})
-	require.Error(t, err)
-}
-
-func TestSubmitShare_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.SubmitShare(context.Background(), &transport.SubmitShareRequest{})
-	require.Error(t, err)
-}
-
-func TestListShares_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.ListShares(context.Background())
-	require.Error(t, err)
-}
-
-func TestGetShareCollectionStatus_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.GetShareCollectionStatus(context.Background(), "g1")
-	require.Error(t, err)
-}
-
 func TestCreateTenant_ServerErr(t *testing.T) {
 	tr, cleanup := newErrTransport(t)
 	defer cleanup()
@@ -1101,61 +939,7 @@ func TestDeleteTenant_ServerErr(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestTenantBarrierInit_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	err := tr.TenantBarrierInit(context.Background(), &transport.TenantBarrierInitRequest{})
-	require.Error(t, err)
-}
-
-func TestTenantBarrierUnseal_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	err := tr.TenantBarrierUnseal(context.Background(), &transport.TenantBarrierUnsealRequest{})
-	require.Error(t, err)
-}
-
 // --- REST-only method tests (HTTP) ---
-
-func TestGetInitStatus_Connected(t *testing.T) {
-	tr, cleanup := newHTTPOnlyTransport(t)
-	defer cleanup()
-	resp, err := tr.GetInitStatus(context.Background())
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestClaimCertBegin_Connected(t *testing.T) {
-	tr, cleanup := newHTTPOnlyTransport(t)
-	defer cleanup()
-	resp, err := tr.ClaimCertBegin(context.Background(), &transport.ClaimCertBeginRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestClaimCertComplete_Connected(t *testing.T) {
-	tr, cleanup := newHTTPOnlyTransport(t)
-	defer cleanup()
-	resp, err := tr.ClaimCertComplete(context.Background(), &transport.ClaimCertCompleteRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestClaimShareBegin_Connected(t *testing.T) {
-	tr, cleanup := newHTTPOnlyTransport(t)
-	defer cleanup()
-	resp, err := tr.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestSignCSRInit_Connected(t *testing.T) {
-	tr, cleanup := newHTTPOnlyTransport(t)
-	defer cleanup()
-	resp, err := tr.SignCSRInit(context.Background(), &transport.SignCSRInitRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
 
 func TestSubmitCredential_Connected(t *testing.T) {
 	tr, cleanup := newHTTPOnlyTransport(t)

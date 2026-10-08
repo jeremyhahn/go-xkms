@@ -15,6 +15,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -246,7 +247,7 @@ func NewPKCS11TLSConfig(cfg *PKCS11TLSConfig) (*tls.Config, func(), error) {
 	// The PIN leaves the Secret once, as a []byte held under one borrow and
 	// wiped on every path. Module.Login, InitToken and InitPIN all take the
 	// PIN as []byte, so it never becomes a string.
-	pinBuf, err := cfg.PIN.Open()
+	pinBuf, err := cfg.PIN.Open(context.Background())
 	if err != nil {
 		return nil, nil, err
 	}

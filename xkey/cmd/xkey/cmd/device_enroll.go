@@ -34,6 +34,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
 )
 
@@ -260,7 +261,7 @@ func runDeviceEnroll(cmd *cobra.Command, args []string) error {
 		{certPath, certPEM, 0644},
 		{caPath, caPEM, 0644},
 	} {
-		if err := os.WriteFile(artifact.path, artifact.data, artifact.mode); err != nil {
+		if err := fsutil.WriteFileAtomic(artifact.path, artifact.data, artifact.mode); err != nil {
 			return &SentinelCauseError{Sentinel: ErrAgentCertWriteFailed, Cause: err}
 		}
 	}

@@ -16,36 +16,19 @@ package credential
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/pkg/audit/audittest"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 )
 
-// recordingAudit captures audit events.
-type recordingAudit struct {
-	mu     sync.Mutex
-	events []*audit.Event
-	err    error
-}
-
-func (r *recordingAudit) Log(_ context.Context, ev *audit.Event) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, ev)
-	return r.err
-}
-
-func (r *recordingAudit) Close() error { return nil }
-
 func TestEventsReachAuditAndStopAfterUnsubscribe(t *testing.T) {
-	rec := &recordingAudit{}
+	rec := &audittest.Recorder{}
 	e := newEnv(t, WithAudit(rec), WithLogger(discardLogger()))
 	ctx := context.Background()
 	alice := user(tenantA, "alice")
@@ -61,16 +44,15 @@ func TestEventsReachAuditAndStopAfterUnsubscribe(t *testing.T) {
 
 	require.Len(t, got, 1, "an unsubscribed function gets no more events")
 	assert.Equal(t, EventRefreshed, got[0].Type)
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	require.Len(t, rec.events, 2)
-	assert.Equal(t, string(EventRefreshed), rec.events[0].Action)
-	assert.Equal(t, "oidc_credential", rec.events[0].Resource)
-	assert.Equal(t, tenantA, rec.events[0].Details["tenant"])
+	events := rec.Events()
+	require.Len(t, events, 2)
+	assert.Equal(t, string(EventRefreshed), events[0].Action)
+	assert.Equal(t, "oidc_credential", events[0].Resource)
+	assert.Equal(t, tenantA, events[0].Details["tenant"])
 }
 
 func TestAuditFailureDoesNotFailRefresh(t *testing.T) {
-	e := newEnv(t, WithAudit(&recordingAudit{err: errors.New("audit down")}), WithLogger(discardLogger()))
+	e := newEnv(t, WithAudit(&audittest.Failing{Err: errors.New("audit down")}), WithLogger(discardLogger()))
 	alice := user(tenantA, "alice")
 	e.importDue(t, alice, shared("codex"))
 	_, err := e.svc.GetAccessToken(context.Background(), alice, shared("codex"))

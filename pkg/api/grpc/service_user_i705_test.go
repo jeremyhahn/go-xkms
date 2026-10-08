@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -213,7 +214,7 @@ func newUserGRPCService(t *testing.T) (*Service, *grpcFakeUserClient) {
 	// CreateUser mints an invitation for every account created with an
 	// email login key (go-xkms#1294 part B); wire the real qrdb invite
 	// store over an in-memory KV store so that path is reachable here.
-	inviteStore, err := qrdbsdk.NewTenantInviteStore(grpcSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	inviteStore, err := invitetest.New(grpcSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
 	require.NoError(t, err)
 	xkmsSvc.SetInviteStore(inviteStore)
 	return NewService(nil, nil, xkmsSvc), users

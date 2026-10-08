@@ -57,12 +57,7 @@ func (f *securityFixture) enrollBrowserAccount(t *testing.T, email string) (*pkg
 // setStanding rewrites the standing of the account email names.
 func (f *securityFixture) setStanding(t *testing.T, email string, state qrdbsdk.Lifecycle, methods []string) {
 	t.Helper()
-	user, err := f.users.GetByEmail(context.Background(), email)
-	require.NoError(t, err)
-	du, ok := user.(*pkgwebauthn.DefaultUser)
-	require.True(t, ok)
-	du.SetLifecycle(state)
-	du.SetAuthMethods(methods)
+	f.stores.SetStanding(t, email, state, methods)
 }
 
 // beginBrowserLogin runs POST /login/begin for email.

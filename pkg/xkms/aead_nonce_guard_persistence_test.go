@@ -24,7 +24,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/aeadnonce"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +40,7 @@ func attachPersistentStore(t *testing.T) *aeadnonce.Store {
 	guard, err := aead.SharedAEADNonceGuard()
 	require.NoError(t, err)
 
-	store, err := aeadnonce.NewStore(storage.NewMemory())
+	store, err := aeadnonce.NewStore(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
 
 	guard.SetPersistentStore(store)
@@ -119,8 +119,7 @@ func TestEncryptGeneratedNonceRoundTripsThroughDecryptWithPersistence(t *testing
 // TestEncryptAdmitsExactlyOneOfConcurrentSameNonceCallsWithPersistence is the
 // race TestEncryptAdmitsExactlyOneOfConcurrentSameNonceCalls already covers
 // for the in-memory tracker alone, repeated with a PersistentNonceStore
-// attached: every claim now also round-trips through storage.Backend's
-// PutIfAbsent, and exactly one caller must still win.
+// attached: every claim now also round-trips through the claim DAO's\n// SaveIfAbsent, and exactly one caller must still win.
 func TestEncryptAdmitsExactlyOneOfConcurrentSameNonceCallsWithPersistence(t *testing.T) {
 	if fips140.Enforced() {
 		requireCallerNonceEncryptRefusedUnderFIPS(t)

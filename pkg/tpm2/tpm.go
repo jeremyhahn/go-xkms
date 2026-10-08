@@ -17,7 +17,6 @@ import (
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -36,7 +35,6 @@ import (
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/linuxudstpm"
 	tcptpm "github.com/google/go-tpm/tpm2/transport/tcp"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpmdev"
@@ -208,8 +206,6 @@ type TrustedPlatformModule interface {
 	// For primary keys, recreates with same template (deterministic key material)
 	// and new auth, then evicts and re-persists at the same handle.
 	ChangeAuth(handle tpm2.TPMHandle, currentAuth, newAuth []byte) error
-	SecretFromShares(shares []string) (string, error)
-	ShareSecret(secret []byte, shares int) ([]string, error)
 	SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error)
 	// State classifies the TPM's current provisioning progress: TPMA_PERMANENT
 	// hierarchy-auth bits, which configured persistent handles exist, and
@@ -2467,71 +2463,6 @@ func CalculateName(algID tpm2.TPMAlgID, publicArea []byte) ([]byte, error) {
 	copy(name[2:], hash) // Copy the hash into the name after the Algorithm ID
 
 	return name, nil
-}
-
-// ShareSecret splits a secret into N shares using Shamir's Secret Sharing.
-// The threshold is set to 2/3 of total shares (minimum 2).
-// Each share is returned as a JSON-serialized string.
-func (tpm *TPM2) ShareSecret(secret []byte, shares int) ([]string, error) {
-	if shares < 2 {
-		return nil, &errs.Message{Msg: fmt.Sprintf("shares must be at least 2, got %d", shares)}
-	}
-
-	// Calculate threshold as 2/3 of total shares, minimum 2
-	threshold := (shares * 2) / 3
-	if threshold < 2 {
-		threshold = 2
-	}
-
-	// Split the secret using Shamir's Secret Sharing
-	//nolint:staticcheck // SA1019: the replacement (shamir.SplitProtected) is
-	// not re-exported through go-qrdb/sdk/go, and reaching go-quicraft directly
-	// would breach the SDK boundary this project locks. Filed upstream for a
-	// re-export; the shares this produces are unchanged in the meantime.
-	shareObjs, err := qrdbsdk.ShamirSplit(secret, threshold, shares)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to split secret", Err: err}
-	}
-
-	// Convert Share objects to JSON strings
-	result := make([]string, len(shareObjs))
-	for i, share := range shareObjs {
-		jsonBytes, err := json.Marshal(share)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to marshal share %d", i), Err: err}
-		}
-		result[i] = string(jsonBytes)
-	}
-
-	return result, nil
-}
-
-// SecretFromShares reconstructs a secret from Shamir shares.
-// Each share must be a JSON-serialized Share object.
-func (tpm *TPM2) SecretFromShares(shares []string) (string, error) {
-	if len(shares) == 0 {
-		return "", &errs.Message{Msg: "no shares provided"}
-	}
-
-	// Convert JSON strings back to Share objects
-	shareObjs := make([]*qrdbsdk.ShamirShare, len(shares))
-	for i, shareStr := range shares {
-		var share qrdbsdk.ShamirShare
-		if err := json.Unmarshal([]byte(shareStr), &share); err != nil {
-			return "", &errs.Wrapped{Msg: fmt.Sprintf("failed to unmarshal share %d", i), Err: err}
-		}
-		shareObjs[i] = &share
-	}
-
-	// Combine the shares to reconstruct the secret
-	//nolint:staticcheck // SA1019: see ShamirSplit above -- the protected
-	// replacement is not re-exported through the SDK yet.
-	secret, err := qrdbsdk.ShamirCombine(shareObjs)
-	if err != nil {
-		return "", &errs.Wrapped{Msg: "failed to combine shares", Err: err}
-	}
-
-	return string(secret), nil
 }
 
 // closeConn closes conn, a transport NewTPM2 opened, when it is not nil.

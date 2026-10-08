@@ -198,53 +198,6 @@ type SealService interface {
 	CanSeal(ctx context.Context, backend string) (*CanSealResponse, error)
 }
 
-// BarrierService manages the cryptographic barrier.
-type BarrierService interface {
-	// BarrierInitialize initializes the barrier with a single master key.
-	BarrierInitialize(ctx context.Context, req *BarrierInitializeRequest) error
-
-	// BarrierUnseal unseals the barrier using the master key.
-	BarrierUnseal(ctx context.Context, req *BarrierUnsealRequest) error
-
-	// BarrierSeal seals the barrier, preventing further data access until unsealed.
-	BarrierSeal(ctx context.Context) error
-
-	// BarrierStatus returns the current state of the cryptographic barrier.
-	BarrierStatus(ctx context.Context) (*BarrierStatusResponse, error)
-
-	// BarrierInitializeShamir initializes the barrier using Shamir secret sharing.
-	BarrierInitializeShamir(ctx context.Context, req *BarrierInitializeShamirRequest) (*BarrierInitializeShamirResponse, error)
-
-	// BarrierUnsealWithShare submits a single Shamir share toward the unseal threshold.
-	BarrierUnsealWithShare(ctx context.Context, req *BarrierUnsealShareRequest) (*BarrierUnsealShareResponse, error)
-
-	// BarrierUnsealWithShares submits multiple Shamir shares to unseal in a single request.
-	BarrierUnsealWithShares(ctx context.Context, req *BarrierUnsealSharesRequest) error
-
-	// BarrierRekey generates new Shamir shares, replacing the existing ones.
-	BarrierRekey(ctx context.Context, req *BarrierRekeyRequest) (*BarrierRekeyResponse, error)
-
-	// BarrierGenerateRecoveryKeys generates recovery keys for disaster recovery.
-	BarrierGenerateRecoveryKeys(ctx context.Context, req *BarrierGenerateRecoveryKeysRequest) (*BarrierRecoveryKeysResponse, error)
-
-	// BarrierRecoverWithKeys unseals the barrier using recovery keys.
-	BarrierRecoverWithKeys(ctx context.Context, req *BarrierRecoverWithKeysRequest) error
-
-	// BarrierDeleteRecoveryKeys deletes all stored recovery keys.
-	BarrierDeleteRecoveryKeys(ctx context.Context) error
-
-	// BarrierHasRecoveryKeys checks whether recovery keys have been generated.
-	BarrierHasRecoveryKeys(ctx context.Context) (*BarrierHasRecoveryKeysResponse, error)
-
-	// BarrierGenerateRootToken generates a new root token using Shamir shares.
-	BarrierGenerateRootToken(ctx context.Context, req *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error)
-
-	// BarrierEnableEncryption migrates a previously-unencrypted barrier to a
-	// keyed strategy in place. The migration runs asynchronously; the response
-	// acknowledges the start and clients poll BarrierStatus for completion.
-	BarrierEnableEncryption(ctx context.Context, req *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error)
-}
-
 // BootstrapService reports the running trust-bootstrap listener's public
 // static keys (go-xkms#632).
 type BootstrapService interface {
@@ -536,32 +489,6 @@ type TPMPolicyService interface {
 	TenantVTPMStop(ctx context.Context, tenantID string) (*TenantVTPMStatusResponse, error)
 }
 
-// InitCeremonyService handles init ceremony operations.
-type InitCeremonyService interface {
-	// GetInitStatus returns the current init ceremony state.
-	GetInitStatus(ctx context.Context) (*InitStatusResponse, error)
-
-	// ClaimCertBegin begins the certificate claim process for an officer.
-	ClaimCertBegin(ctx context.Context, req *ClaimCertBeginRequest) (*ClaimCertBeginResponse, error)
-
-	// ClaimCertComplete completes the certificate claim by verifying the officer's signature.
-	ClaimCertComplete(ctx context.Context, req *ClaimCertCompleteRequest) (*ClaimCertCompleteResponse, error)
-
-	// ClaimShareBegin starts the Shamir share claim handshake for the named
-	// officer. The caller must present an mTLS client certificate matching the
-	// officer's enrolment record; the server derives the thumbprint from the
-	// verified peer chain, never from the request body.
-	ClaimShareBegin(ctx context.Context, req *ClaimShareBeginRequest) (*ClaimShareBeginResponse, error)
-
-	// ClaimShareComplete completes the Shamir share claim handshake by
-	// submitting a signature over the challenge nonce. The share is released
-	// exactly once.
-	ClaimShareComplete(ctx context.Context, req *ClaimShareCompleteRequest) (*ClaimShareCompleteResponse, error)
-
-	// SignCSRInit signs a CSR during initialization with SO authorization.
-	SignCSRInit(ctx context.Context, req *SignCSRInitRequest) (*SignCSRInitResponse, error)
-}
-
 // CredentialManagementService handles credential management operations.
 type CredentialManagementService interface {
 	// SubmitCredential submits a credential for manual mode.
@@ -569,87 +496,6 @@ type CredentialManagementService interface {
 
 	// GetCredentialStrategy returns the configured credential strategy.
 	GetCredentialStrategy(ctx context.Context) (*CredentialStrategyResponse, error)
-}
-
-// BackupService provides whole-node backup and restore operations over the
-// embedded go-qrdb node's shard-snapshot capability (owner ruling
-// 2026-09-30, go-xkms#728).
-type BackupService interface {
-	// CreateBackup initiates a new backup with the specified options.
-	CreateBackup(ctx context.Context, req *BackupRequest) (*BackupInfo, error)
-
-	// ListBackups returns metadata for all available backups.
-	ListBackups(ctx context.Context) ([]BackupInfo, error)
-
-	// GetBackup returns metadata for a specific backup by ID.
-	GetBackup(ctx context.Context, id string) (*BackupInfo, error)
-
-	// DeleteBackup removes a backup by ID.
-	DeleteBackup(ctx context.Context, id string) error
-
-	// RestoreBackup restores data from a backup.
-	RestoreBackup(ctx context.Context, req *RestoreRequest) (*RestoreResult, error)
-
-	// VerifyBackup verifies the integrity of a backup by computing and
-	// comparing checksums.
-	VerifyBackup(ctx context.Context, id string) (*VerifyResult, error)
-}
-
-// CustodianGroupService handles custodian group management for Shamir
-// secret sharing ceremonies.
-type CustodianGroupService interface {
-	// CreateCustodianGroup creates a new custodian group.
-	CreateCustodianGroup(ctx context.Context, req *CreateCustodianGroupRequest) (*CreateCustodianGroupResponse, error)
-
-	// GetCustodianGroup retrieves a custodian group by ID.
-	GetCustodianGroup(ctx context.Context, groupID string) (*GetCustodianGroupResponse, error)
-
-	// ListCustodianGroups lists all custodian groups.
-	ListCustodianGroups(ctx context.Context) (*ListCustodianGroupsResponse, error)
-
-	// DeleteCustodianGroup deletes a custodian group.
-	DeleteCustodianGroup(ctx context.Context, groupID string) error
-
-	// AddCustodianMember adds a member to a custodian group.
-	AddCustodianMember(ctx context.Context, req *AddCustodianMemberRequest) (*AddCustodianMemberResponse, error)
-
-	// RemoveCustodianMember removes a member from a custodian group.
-	RemoveCustodianMember(ctx context.Context, req *RemoveCustodianMemberRequest) error
-
-	// DistributeShares distributes Shamir shares to custodian group members.
-	DistributeShares(ctx context.Context, req *DistributeSharesRequest) (*DistributeSharesResponse, error)
-}
-
-// AuditService reads the tamper-evident audit chain owned by the embedded
-// qrdb node. There is deliberately no emit method: audit events are written
-// by the server as a side effect of the audited operation, never on a
-// caller's request, so a client cannot forge a record.
-type AuditService interface {
-	// QueryAudit returns one page of audit events matching the filter. Pass
-	// AuditPage.Next back as AuditFilter.Cursor to continue; an empty Next
-	// means the last page.
-	QueryAudit(ctx context.Context, filter *AuditFilter) (*AuditPage, error)
-}
-
-// ShareService handles Shamir share submission and status tracking.
-type ShareService interface {
-	// SubmitShare submits a received Shamir share back to the server.
-	SubmitShare(ctx context.Context, req *SubmitShareRequest) (*SubmitShareResponse, error)
-
-	// ListShares lists shares available for the authenticated user.
-	ListShares(ctx context.Context) (*ListSharesResponse, error)
-
-	// GetShare returns a single share addressed by the triple
-	// (serverURL, groupID, shareIndex). Sensitive share material is never
-	// included in the response — only the share's metadata.
-	GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*ShareInfo, error)
-
-	// DeleteShare removes a single share addressed by the triple
-	// (serverURL, groupID, shareIndex).
-	DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error
-
-	// GetShareCollectionStatus returns the collection status for a group.
-	GetShareCollectionStatus(ctx context.Context, groupID string) (*ShareCollectionStatus, error)
 }
 
 // TenantService handles multi-tenant management and per-tenant barriers.
@@ -665,15 +511,6 @@ type TenantService interface {
 
 	// DeleteTenant deletes a tenant.
 	DeleteTenant(ctx context.Context, tenantID string) error
-
-	// TenantBarrierInit initializes a per-tenant barrier.
-	TenantBarrierInit(ctx context.Context, req *TenantBarrierInitRequest) error
-
-	// TenantBarrierUnseal unseals a per-tenant barrier.
-	TenantBarrierUnseal(ctx context.Context, req *TenantBarrierUnsealRequest) error
-
-	// TenantBarrierStatus reports the current state of a per-tenant barrier.
-	TenantBarrierStatus(ctx context.Context, tenantID string) (*TenantBarrierStatusResponse, error)
 
 	// UpdateTenantEntitlements updates a tenant's feature entitlements.
 	UpdateTenantEntitlements(ctx context.Context, req *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error)
@@ -729,7 +566,6 @@ type Client interface {
 	CryptoService
 	CertService
 	SealService
-	BarrierService
 	PIVService
 	FIDO2Service
 	CAService
@@ -740,15 +576,10 @@ type Client interface {
 	SealStoreService
 	TPMPolicyService
 	OIDCCredentialService
-	CustodianGroupService
-	ShareService
 	TenantService
-	InitCeremonyService
 	CredentialManagementService
-	AuditService
 	BootstrapService
 	InviteService
-	BackupService
 }
 
 // InviteService redeems administrator-issued account-activation

@@ -29,6 +29,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -661,7 +662,7 @@ func (s *TrustService) ExportBrowserTrustBundle(bundlePath string) (int, error) 
 		return 0, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleExport, Cause: err}
 	}
 
-	if err := os.WriteFile(bundlePath, pemData, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(bundlePath, pemData, 0o600); err != nil {
 		return 0, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleExport, Cause: err}
 	}
 
@@ -681,7 +682,7 @@ func (s *TrustService) ExportBrowserTrustBundle(bundlePath string) (int, error) 
 		return count, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleManifestWrite, Cause: marshalErr}
 	}
 	manifestPath := filepath.Join(dir, browserBundleManifestFile)
-	if err := os.WriteFile(manifestPath, manifestData, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(manifestPath, manifestData, 0o600); err != nil {
 		return count, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleManifestWrite, Cause: err}
 	}
 

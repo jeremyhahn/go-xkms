@@ -16,6 +16,8 @@ package handlers
 import (
 	"net/http"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/degradation"
 )
@@ -101,9 +103,12 @@ func (s *RestService) serveCachedWhenOpen(
 // well as any a caller registered for the CT submitter or KMS signer; a
 // bounded summary of the per-target breaker groups (http-01/dns-01
 // validation targets, see TargetGroups); and whether the directory and
-// CA-bundle endpoints are currently degraded.
+// CA-bundle endpoints are currently degraded. It also carries the readiness
+// checks of the go-qrdb SDK health checker the server was built with
+// (Params.Health).
 type HealthStatus struct {
-	// Healthy is false when any named breaker (Breakers) is open. A
+	// Healthy is false when any named breaker (Breakers) is open or any
+	// readiness check (Checks) is unhealthy. A
 	// per-target breaker group's Open count does NOT affect Healthy: one
 	// account's failing validation target is expected, isolated behavior
 	// (that isolation is the point of TargetGroups -- see
@@ -117,6 +122,11 @@ type HealthStatus struct {
 	// "ct_submitter" when wired), keyed by name. Empty when Params.Breakers
 	// was nil. This does NOT include per-target breakers -- see TargetGroups.
 	Breakers map[string]CircuitBreakerStatus `json:"breakers,omitempty"`
+
+	// Checks reports every readiness check registered on Params.Health --
+	// the datastore ACME state persists in, when the composing binary
+	// registered it. Empty when Params.Health was nil.
+	Checks []qrdbsdk.HealthCheckResult `json:"checks,omitempty"`
 
 	// TargetGroups reports a bounded summary of every per-target breaker
 	// group on the shared Manager, keyed by group name ("http01", "dns01").
@@ -147,13 +157,21 @@ type DegradationStatus struct {
 }
 
 // HealthHandler implements RestServicer. It reports circuit breaker state
-// for every breaker on Params.Breakers and whether the directory/CA-bundle
-// endpoints are currently degraded. Non-RFC 8555; no authentication, no
-// dependency calls -- this reads breaker state only.
+// for every breaker on Params.Breakers, whether the directory/CA-bundle
+// endpoints are currently degraded, and the readiness checks of the go-qrdb
+// SDK health checker on Params.Health. Non-RFC 8555; no authentication. The
+// only dependency calls are the registered readiness checks.
 //
 // GET /acme/health
 func (s *RestService) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	status := HealthStatus{Healthy: true}
+
+	if s.health != nil {
+		status.Checks = s.health.Ready(r.Context())
+		if qrdbsdk.AggregateHealthCheckStatus(status.Checks) == qrdbsdk.HealthCheckStatusUnhealthy {
+			status.Healthy = false
+		}
+	}
 
 	if s.breakers != nil {
 		status.Breakers = make(map[string]CircuitBreakerStatus)

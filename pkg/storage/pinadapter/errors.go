@@ -54,3 +54,20 @@ func (e *PutError) Error() string {
 func (e *PutError) Unwrap() error {
 	return e.Err
 }
+
+// DeleteError wraps a storage backend Delete operation failure that is not
+// a not-found condition (deleting an absent key succeeds).
+type DeleteError struct {
+	Key string
+	Err error
+}
+
+// Error returns a human-readable description of the delete failure.
+func (e *DeleteError) Error() string {
+	return "pinadapter: delete " + e.Key + ": " + e.Err.Error()
+}
+
+// Unwrap returns the underlying error so errors.Is / errors.As work.
+func (e *DeleteError) Unwrap() error {
+	return e.Err
+}

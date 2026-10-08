@@ -509,7 +509,7 @@ func runFIDO2(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	// Create and run the virtual FIDO2 device
-	device, err := newFIDO2Device(cfg, logger)
+	device, err := newFIDO2Device(ctx, cfg, logger)
 	if err != nil {
 		logger.Error("failed to create virtual FIDO2 device",
 			slog.Any("error", err),
@@ -665,12 +665,13 @@ func resolveFIDO2SetPINSecret() *secure.Secret {
 // sealing failure is logged and treated as "no PIN provided" rather than
 // propagated. In practice this path is unreachable: the underlying
 // memguard allocator panics the whole process on allocation failure before
-// NewSecret could return an error here.
+// NewSecret could return an error here. For the same reason (no
+// *cobra.Command) the PIN is sealed under a background context.
 func fido2PINSecret(s string) *secure.Secret {
 	if s == "" {
 		return nil
 	}
-	secret, err := secure.NewSecret([]byte(s))
+	secret, err := secure.NewSecret(context.Background(), []byte(s))
 	if err != nil {
 		slog.Default().Error("fido2: failed to seal --set-pin-stdin into protected memory", "error", err)
 		return nil
@@ -763,7 +764,7 @@ type fido2Device struct {
 }
 
 // newFIDO2Device creates a new virtual FIDO2 device with the given configuration.
-func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error) {
+func newFIDO2Device(ctx context.Context, cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error) {
 	if cfg == nil {
 		cfg = &FIDO2Config{
 			StorageType:         FIDO2StorageTypeMemory,
@@ -874,7 +875,7 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 	// overwrite a PIN a persistent store already holds; the old testing
 	// helper silently replaced it and reset the retry counter (#377).
 	if cfg.EnablePIN && cfg.PIN != nil {
-		pinBuf, openErr := cfg.PIN.Open()
+		pinBuf, openErr := cfg.PIN.Open(ctx)
 		if openErr != nil {
 			return nil, errors.Join(ErrFIDO2PINSetFailed, openErr, auth.Close())
 		}

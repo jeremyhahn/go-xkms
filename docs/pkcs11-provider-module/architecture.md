@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — Architecture
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## The problem
 
@@ -111,18 +111,25 @@ The node-local, sign-only server a consumer's remote-mode module connects to is
 
 ### Remote token-store layout
 
-Records are keyed `pkcs11state/<tenant>/<token>/<key>`. The system scope (no
-tenant identity) is stored under the system tenant's ID,
-`pkcs11state/system/<token>/`. It used to occupy an empty segment
-(`pkcs11state//<token>/`). File storage normalizes that path, so `List` returned
-keys the scope prefix no longer stripped: a module loaded none of its objects,
-and the next key it created reused handle 1 and overwrote an existing one. For
-the same reason the service refuses a token label of `.` or `..`
+Each record is one go-qrdb DAO entity (`pkcs11state.Record`,
+`pkg/pkcs11state/entity.go:20`) of type `pkcs11_state_records` in the
+`pkcs11state` database. Its name, `<tenant>/<token>/<key>`, is the natural key
+the entity ID is hashed from (`pkg/pkcs11state/store.go:73-92`). The system
+scope (no tenant identity) is stored under the system tenant's ID,
+`system/<token>/`. `List` reads the entity type page by page and keeps the
+records of the requested scope and prefix; the go-qrdb SDK cannot register an
+index on a context-bound DAO yet, so it is a scan, not an index lookup.
+`PutIfAbsent`, `CompareAndSwap` and `CompareAndDelete` are the DAO's
+`SaveIfAbsent`, `CompareAndSwap` and `DeleteIfMatch`: one guarded store
+operation each, never a read followed by an unguarded write.
+
+The service still refuses a token label of `.` or `..`
 (`ErrPKCS11StateTokenDotSegment`) and a key or list prefix carrying a `.` or
 `..` segment, an empty interior segment or a leading `/`
-(`ErrPKCS11StateKeyPath`): a normalizing store would resolve those outside the
-token's namespace. This is a pre-release layout change with no migration;
-existing system-scope remote tokens are re-provisioned.
+(`ErrPKCS11StateKeyPath`), so a record name always reads as exactly one
+tenant, token and key. This is a pre-release layout change with no migration:
+records written under the old `pkcs11state/` storage prefix are not read, and
+existing remote tokens are re-provisioned.
 
 ## Trust boundaries
 
@@ -137,10 +144,11 @@ existing system-scope remote tokens are re-provisioned.
   and the reason: it consumes go-qrdb's barrier. A local sealer would be a
   second, unreviewed barrier implementation.
 - **Remote state is confined to the caller's tenant by the server, not by
-  the request.** xkmsd keeps every tenant's token state in one shared store,
-  built over the ordinary `createStorage` seam (`pkg/server/server.go:1851`).
-  It is not behind a tenant barrier. Records are keyed
-  `pkcs11state/<tenant>/<token>/<key>` (`pkg/pkcs11state/store.go:62`), and
+  the request.** xkmsd keeps every tenant's token state in one shared
+  `pkcs11state` database, opened and written as the embedded node's service
+  principal (`initializePKCS11StateStore`, `pkg/server/server.go:1674-1678`).
+  It is not behind a tenant barrier. Records are named
+  `<tenant>/<token>/<key>` (`pkg/pkcs11state/store.go:81-92`), and
   the service fills the tenant segment from the authenticated identity
   (`XKMSService.pkcs11StateScope`, `pkg/xkms/servicer_pkcs11state.go:79`,
   reusing `scopedTenantIDFromContext`). A request's `tenant_id` is only a

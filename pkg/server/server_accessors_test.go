@@ -26,6 +26,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -168,6 +170,24 @@ func TestEscrowRegistry_NilByDefault(t *testing.T) {
 func TestQRDBClient_NilBeforeNodeConstruction(t *testing.T) {
 	s := newMinimalServer(t, createMinimalConfig(t))
 	require.Nil(t, s.QRDBClient())
+}
+
+func TestDatastore_NilBeforeInitialization(t *testing.T) {
+	s := newMinimalServer(t, createMinimalConfig(t))
+	require.Nil(t, s.Datastore())
+}
+
+func TestDatastore_ReturnsTheSharedDatastore(t *testing.T) {
+	s := newMinimalServer(t, createMinimalConfig(t))
+	cfg := &config.Config{
+		Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()},
+	}
+	ds, err := datastore.Open(context.Background(), cfg, s.logger)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, ds.Close()) })
+
+	s.datastore = ds
+	require.Same(t, ds, s.Datastore())
 }
 
 // TestTenantService_NilWithoutNodeFlip proves TenantService reports nil when

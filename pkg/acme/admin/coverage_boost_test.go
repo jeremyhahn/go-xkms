@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -217,7 +216,7 @@ func TestCoverageBoost_ParsePEMCertificate_InvalidCertBytes(t *testing.T) {
 
 func TestCoverageBoost_GenerateKeyPair_RSA(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	priv, pub, err := service.generateKeyPair(x509.RSA)
@@ -228,7 +227,7 @@ func TestCoverageBoost_GenerateKeyPair_RSA(t *testing.T) {
 
 func TestCoverageBoost_GenerateKeyPair_ECDSA(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	priv, pub, err := service.generateKeyPair(x509.ECDSA)
@@ -239,7 +238,7 @@ func TestCoverageBoost_GenerateKeyPair_ECDSA(t *testing.T) {
 
 func TestCoverageBoost_GenerateKeyPair_Ed25519(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	priv, pub, err := service.generateKeyPair(x509.Ed25519)
@@ -250,7 +249,7 @@ func TestCoverageBoost_GenerateKeyPair_Ed25519(t *testing.T) {
 
 func TestCoverageBoost_GenerateKeyPair_Unsupported(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	_, _, err := service.generateKeyPair(x509.DSA)
@@ -312,7 +311,7 @@ func TestCoverageBoost_GetTenantSigningCA_NoEntry(t *testing.T) {
 
 func TestCoverageBoost_GetTenantSigningCA_WithDefaultIntCA(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	// Create a test key pair for the intermediate CA
@@ -339,7 +338,7 @@ func TestCoverageBoost_GetTenantSigningCA_WithDefaultIntCA(t *testing.T) {
 
 func TestCoverageBoost_GetTenantSigningCA_FallbackToRootCA(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -363,7 +362,7 @@ func TestCoverageBoost_GetTenantSigningCA_FallbackToRootCA(t *testing.T) {
 
 func TestCoverageBoost_GetTenantSigningCA_FallbackFirstAvailableIntCA(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -447,7 +446,7 @@ func TestCoverageBoost_GetTenant_NoTenantService(t *testing.T) {
 
 func TestCoverageBoost_StoreKeyAndCert_NoKeystore(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -479,7 +478,7 @@ func TestCoverageBoost_StoreKeyAndCert_NoQRDB(t *testing.T) {
 
 func TestCoverageBoost_UpdateTenantIntermediateCAStatus_Validation(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	tests := []struct {
@@ -505,7 +504,7 @@ func TestCoverageBoost_UpdateTenantIntermediateCAStatus_Validation(t *testing.T)
 
 func TestCoverageBoost_UpdateTenantIntermediateCAStatus_NoEntry(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	err := service.UpdateTenantIntermediateCAStatus(context.Background(), "nonexistent", "ca-1", "active")
@@ -515,7 +514,7 @@ func TestCoverageBoost_UpdateTenantIntermediateCAStatus_NoEntry(t *testing.T) {
 
 func TestCoverageBoost_UpdateTenantIntermediateCAStatus_IntCANotFound(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	service.mu.Lock()
@@ -529,45 +528,9 @@ func TestCoverageBoost_UpdateTenantIntermediateCAStatus_IntCANotFound(t *testing
 	assert.Equal(t, ErrTenantIntCANotFound, err)
 }
 
-func TestCoverageBoost_UpdateTenantIntermediateCAStatus_Suspend(t *testing.T) {
-	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
-	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
-	service.SetTenantService(newFakeTenantServicer())
-
-	// Create tenant first so tenantDAO can find it
-	_, err := service.CreateTenant(context.Background(), CreateTenantRequest{
-		ID:   "tenant-suspend",
-		Name: "Suspend Test",
-	})
-	require.NoError(t, err)
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	service.mu.Lock()
-	service.tenantCAs["tenant-suspend"] = &tenantCAEntry{
-		intermediateCAs: map[string]*tenantIntermediateCAEntry{
-			"int-1": {cert: makeTestCert(t, "Int CA"), signer: key},
-		},
-		defaultIntCA: "int-1",
-	}
-	service.mu.Unlock()
-
-	// Suspend the CA - should clear signer and default
-	err = service.UpdateTenantIntermediateCAStatus(context.Background(), "tenant-suspend", "int-1", "suspended")
-	require.NoError(t, err)
-
-	service.mu.RLock()
-	entry := service.tenantCAs["tenant-suspend"]
-	assert.Nil(t, entry.intermediateCAs["int-1"].signer)
-	assert.Empty(t, entry.defaultIntCA)
-	service.mu.RUnlock()
-}
-
 func TestCoverageBoost_UpdateTenantIntermediateCAStatus_Revoke(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -612,7 +575,7 @@ func TestCoverageBoost_GetTenantCAStatus_NoEntry_NoGlobalCA(t *testing.T) {
 
 func TestCoverageBoost_GetTenantCAStatus_WithRootAndIntermediateCAs(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

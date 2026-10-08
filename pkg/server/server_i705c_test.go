@@ -24,9 +24,10 @@ import (
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -185,19 +186,38 @@ func TestInitializeEscrow_EnabledWithAgentBuildsRegistry(t *testing.T) {
 // ============================================================================
 
 // TestInitializePKCS11StateStore_Success proves the happy path: the state
-// store is built and retained.
+// store is built over the embedded datastore and its records round-trip as
+// the service principal.
 func TestInitializePKCS11StateStore_Success(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Datastore: config.DatastoreConfig{Engine: "memory"},
-	})
-	// newMinimalServer bypasses New(), so s.qrdbStorage is never built;
-	// give this test a real one.
-	var err error
-	s.qrdbStorage, err = storage.NewMemoryBackend()
-	require.NoError(t, err)
+	s := newAEADNonceTestServer(t)
 
 	require.NoError(t, s.initializePKCS11StateStore())
-	assert.NotNil(t, s.pkcs11StateStore)
+	require.NotNil(t, s.pkcs11StateStore)
+
+	ctx := context.Background()
+	require.NoError(t, s.pkcs11StateStore.Put(ctx, "", "tok0", "pkcs11/tokens/0", []byte("state")))
+	got, found, err := s.pkcs11StateStore.Get(ctx, "", "tok0", "pkcs11/tokens/0")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, []byte("state"), got)
+}
+
+// TestInitializePKCS11StateStore_StorageCreateFails proves a datastore that
+// cannot open the pkcs11state database fails initialization with a typed
+// *ErrStorageCreate and retains no store.
+func TestInitializePKCS11StateStore_StorageCreateFails(t *testing.T) {
+	client, _, err := testutil.NewQRDBFakeClient()
+	require.NoError(t, err)
+	ds, err := datastore.New(client, config.DatastoreConfig{})
+	require.NoError(t, err)
+	s := newMinimalServer(t, &config.Config{})
+	s.ctx = context.Background()
+	s.datastore = ds
+
+	err = s.initializePKCS11StateStore()
+	var storageErr *ErrStorageCreate
+	require.ErrorAs(t, err, &storageErr)
+	assert.Nil(t, s.pkcs11StateStore)
 }
 
 // TestBootstrapKeys_DestroyNilReceiverIsSafe proves destroy is safe to call

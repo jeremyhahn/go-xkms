@@ -13,12 +13,12 @@
 
 // Package trustedca provides the main entry point for the Trusted CA library.
 // It integrates ACME server functionality with multi-tenant support, using
-// QRDB for storage, and QRDB for authentication.
+// go-qrdb for storage, and go-qrdb for authentication.
 //
 // Usage:
 //
 //	tca, err := trustedca.New(
-//	    trustedca.WithQRDB(qrdbService),
+//	    trustedca.WithQRDB(datastore.Client()),
 //	    trustedca.WithAuthClient(authClient),
 //	    trustedca.WithConfig(config),
 //	    trustedca.WithMultiTenant(),
@@ -43,7 +43,6 @@ import (
 	acmecommon "github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
@@ -69,7 +68,7 @@ var (
 	ErrAlreadyStarted = errors.New("trustedca: already started")
 	ErrMissingCA      = errors.New("trustedca: certificate authority is required")
 	ErrMissingStorage = errors.New("trustedca: storage factory is required")
-	ErrMissingQRDB    = errors.New("trustedca: QRDB service is required for multi-tenant mode")
+	ErrMissingQRDB    = errors.New("trustedca: qrdb client is required for multi-tenant mode")
 )
 
 // TrustedCA is the main entry point for the Trusted CA library.
@@ -86,7 +85,7 @@ type TrustedCA struct {
 	// Core components
 	ca             ca.TCGCA
 	storageFactory storage.Factory
-	qrdbService    qrdb.Service
+	qrdbClient     admin.QRDBClient
 	authClient     auth.Client
 	authorizer     *xkmsauth.Authorizer
 	kmsService     kms.KMSService
@@ -176,7 +175,7 @@ func (tca *TrustedCA) validate() error {
 	if tca.storageFactory == nil {
 		return ErrMissingStorage
 	}
-	if tca.multiTenant && tca.qrdbService == nil {
+	if tca.multiTenant && tca.qrdbClient == nil {
 		return ErrMissingQRDB
 	}
 	return nil
@@ -192,12 +191,12 @@ func (tca *TrustedCA) initialize() error {
 	}
 
 	// Set up admin service
-	if tca.multiTenant && tca.qrdbService != nil {
-		// Multi-tenant mode with QRDB
+	if tca.multiTenant && tca.qrdbClient != nil {
+		// Multi-tenant mode with go-qrdb
 		tenantAwareAdminSvc, err := admin.NewTenantAwareAdminService(
 			tca.ca,
 			tca.storageFactory,
-			tca.qrdbService,
+			tca.qrdbClient,
 			tca.logger,
 			tca.version,
 		)
@@ -224,9 +223,9 @@ func (tca *TrustedCA) CA() ca.TCGCA {
 	return tca.ca
 }
 
-// QRDBService returns the QRDB service if configured.
-func (tca *TrustedCA) QRDBService() qrdb.Service {
-	return tca.qrdbService
+// QRDBClient returns the go-qrdb client if configured.
+func (tca *TrustedCA) QRDBClient() admin.QRDBClient {
+	return tca.qrdbClient
 }
 
 // AdminService returns the admin service.

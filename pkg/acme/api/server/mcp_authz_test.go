@@ -67,8 +67,8 @@ type mcpAuthzCase struct {
 }
 
 var mcpAuthzCases = []mcpAuthzCase{
-	{"admin.getStatus", auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
-	{"admin.getStats", auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
+	{"admin.getStatus", auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, unprivilegedRole},
+	{"admin.getStats", auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, unprivilegedRole},
 
 	{"admin.listCertificates", auth.ResourceCerts, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
 	{"admin.getCertificate", auth.ResourceCerts, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},

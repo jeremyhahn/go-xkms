@@ -17,24 +17,28 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // newPKCS11StateHandlersForTest wires the handlers to a real XKMSService over
-// an in-memory store, so the handler test exercises the same decode → service
-// → store path production does.
-func newPKCS11StateHandlersForTest(t *testing.T, backend storage.Backend) (*PKCS11StateHandlers, *xkms.XKMSService) {
+// a store whose pkcs11state database is kv, so the handler test exercises the
+// same decode → service → store path production does.
+func newPKCS11StateHandlersForTest(t *testing.T, kv qrdbsdk.KVStore) (*PKCS11StateHandlers, *xkms.XKMSService) {
 	t.Helper()
-	store, err := pkcs11state.NewStore(backend)
+	daos := dao.NewStoreFactory(kv)
+	store, err := pkcs11state.NewStore(daos)
 	require.NoError(t, err)
 	svc := &xkms.XKMSService{}
 	svc.SetPKCS11StateStore(store)
@@ -50,7 +54,7 @@ func postPKCS11StateCAD(t *testing.T, h *PKCS11StateHandlers, body []byte) *http
 }
 
 func TestPKCS11StateCADHandler_ReleasesOnlyTheObservedValue(t *testing.T) {
-	h, svc := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, svc := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	ctx := context.Background()
 	_, err := svc.PKCS11StatePut(ctx, &transport.PKCS11StatePutRequest{
 		Token: "tok0", Key: "pkcs11/markers/claim", Value: []byte("holder-A"),
@@ -78,7 +82,7 @@ func TestPKCS11StateCADHandler_ReleasesOnlyTheObservedValue(t *testing.T) {
 }
 
 func TestPKCS11StateCADHandler_RejectsBadInput(t *testing.T) {
-	h, _ := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, _ := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 
 	rec := postPKCS11StateCAD(t, h, []byte("{not json"))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
@@ -99,15 +103,22 @@ func TestPKCS11StateCADHandler_RejectsBadInput(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
-// noGuardedDeleteBackend hides every optional capability of the backend it
-// wraps, so the store's refusal to emulate the guard reaches the wire as an
-// error rather than a plausible-looking deleted=false.
-type noGuardedDeleteBackend struct {
-	storage.Backend
+// errGuardedDeleteFailed is the store fault failingDeleteKV injects; its text
+// must never reach the wire.
+var errGuardedDeleteFailed = errors.New("guarded delete failed: replica unreachable")
+
+// failingDeleteKV fails every guarded delete, so a store fault reaches the
+// wire as an error rather than a plausible-looking deleted=false.
+type failingDeleteKV struct {
+	*qrdbsdk.MemoryKVStore
 }
 
-func TestPKCS11StateCADHandler_UnsupportedBackendIsAnError(t *testing.T) {
-	h, svc := newPKCS11StateHandlersForTest(t, noGuardedDeleteBackend{Backend: storage.NewMemory()})
+func (failingDeleteKV) CompareAndDelete(context.Context, string, []byte) (bool, error) {
+	return false, errGuardedDeleteFailed
+}
+
+func TestPKCS11StateCADHandler_StoreFaultIsAnError(t *testing.T) {
+	h, svc := newPKCS11StateHandlersForTest(t, failingDeleteKV{MemoryKVStore: qrdbsdk.NewMemoryKVStore()})
 	_, err := svc.PKCS11StatePut(context.Background(), &transport.PKCS11StatePutRequest{
 		Token: "tok0", Key: "pkcs11/markers/claim", Value: []byte("holder-A"),
 	})
@@ -118,5 +129,5 @@ func TestPKCS11StateCADHandler_UnsupportedBackendIsAnError(t *testing.T) {
 	rec := postPKCS11StateCAD(t, h, body)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.Contains(t, rec.Body.String(), ErrInternalError.Error())
-	assert.NotContains(t, rec.Body.String(), pkcs11state.ErrCompareAndDeleteUnsupported.Error())
+	assert.NotContains(t, rec.Body.String(), errGuardedDeleteFailed.Error())
 }

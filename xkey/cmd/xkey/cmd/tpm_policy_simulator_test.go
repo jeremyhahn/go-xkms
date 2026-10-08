@@ -92,7 +92,14 @@ func TestTPMPolicyCommands_LocalModeLifecycle(t *testing.T) {
 }
 
 func TestTPMPolicyAutoUnseal_LocalSealsTheBarrierCredential(t *testing.T) {
+	// The barrier is initialized first: its go-qrdb file engine claims the
+	// data directory before the TPM key store writes beneath it.
 	dataDir := t.TempDir()
+	barrier := services.NewBarrierService(dataDir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	barrier.SetDataDir(dataDir)
+	require.NoError(t, barrier.Initialize("barrier password", string(xkms.StrategyPassphrase)))
+	require.NoError(t, barrier.Seal())
+
 	session, logger := localSimTPMPolicies(t, dataDir)
 	withTPMPolicyFlags(t, "23", "sha256", true, false)
 
@@ -103,11 +110,7 @@ func TestTPMPolicyAutoUnseal_LocalSealsTheBarrierCredential(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "Auto-unseal:  yes")
 
-	// The TPM releases it to a barrier sealed with that password.
-	barrier := services.NewBarrierService(dataDir, logger)
-	barrier.SetDataDir(dataDir)
-	require.NoError(t, barrier.Initialize("barrier password", string(xkms.StrategyPassphrase)))
-	require.NoError(t, barrier.Seal())
+	// The TPM releases it to the barrier sealed with that password.
 	auto := services.NewBarrierAutoUnsealService(services.WithBarrierAutoUnsealLocal(session.Policies),
 		services.WithBarrierAutoUnsealBarrier(barrier), services.WithBarrierAutoUnsealLogger(logger))
 	ok, err := auto.TryAutoUnseal(context.Background(), string(xkms.StrategyPassphrase))

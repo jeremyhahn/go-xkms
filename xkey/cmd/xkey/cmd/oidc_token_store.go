@@ -32,7 +32,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -327,17 +326,17 @@ func (s *oidcCLITokenStore) Clear() (existed bool, err error) {
 // resolveSecretStoreBackend already logs.
 //
 // An explicit --token-store value (cmd.Flags().Changed("token-store"))
-// always resolves to a plain file at that exact path, matching how `xkey
-// oath`'s --store override bypasses barrier auto-detection: the operator
-// asked for a specific file, so the barrier decision does not apply.
+// always resolves to an unencrypted go-qrdb file store rooted at that
+// directory, matching how `xkey oath`'s --store override bypasses barrier
+// auto-detection: the operator asked for a specific store, so the barrier
+// decision does not apply.
 func openOIDCTokenStore(cmd *cobra.Command, storeFlagPath string) (*oidcCLITokenStore, error) {
 	if cmd.Flags().Changed("token-store") {
-		path := expandPath(storeFlagPath)
-		backend, err := xkms.NewFileStorageBackend(filepath.Dir(path))
+		backend, err := xkms.NewFileStorageBackend(expandPath(storeFlagPath))
 		if err != nil {
 			return nil, &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
 		}
-		return &oidcCLITokenStore{backend: backend, key: filepath.Base(path)}, nil
+		return &oidcCLITokenStore{backend: backend, key: oidcCLITokenStoreKey}, nil
 	}
 
 	dataDir, err := resolveDataDir("")

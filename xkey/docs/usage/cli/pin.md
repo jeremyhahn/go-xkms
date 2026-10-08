@@ -247,12 +247,10 @@ xkmsctl pin verify --type user
 xkmsctl pin status
 ```
 
-### Daily Verification and Barrier Unseal
+### Daily Verification
 
 ```bash
-# The user PIN is typically used to unseal the barrier
 xkmsctl pin verify
-xkmsctl barrier unseal
 ```
 
 ### Lockout Recovery
@@ -356,5 +354,4 @@ and go-xkms#307 for what actually governs a PIN across `xkey`'s subsystems.
 
 ## See Also
 
-- [Barrier Commands](barrier.md)
 - [Configuration Reference](../../configuration/README.md)

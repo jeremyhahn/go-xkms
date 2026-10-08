@@ -46,6 +46,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -478,9 +479,8 @@ func newTestCA(t *testing.T) (ca.TCGCA, func()) {
 	require.NoError(t, err)
 
 	// Build an in-memory CertStore for the CA.
-	certAdapter := xkmssdk.NewStorageCertAdapter(certStorageBackend)
 	certStore, err := xkmssdk.NewCertStore(&xkmssdk.CertStoreConfig{
-		CertStorage: certAdapter,
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	require.NoError(t, err)
 

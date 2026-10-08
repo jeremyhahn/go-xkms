@@ -97,7 +97,7 @@ func TestKeyAttributesFromConfigResolved_NilRegistry(t *testing.T) {
 		Password:     &SecretValue{Raw: "direct-password"},
 	}
 
-	attrsDirect, err := KeyAttributesFromConfig(cfg)
+	attrsDirect, err := KeyAttributesFromConfig(t.Context(), cfg)
 	require.NoError(t, err)
 
 	attrsResolved, err := KeyAttributesFromConfigResolved(context.Background(), cfg, nil)

@@ -16,6 +16,8 @@ package signserver_test
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,8 +43,13 @@ func TestServerThroughTheSDK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stateStorage, err := xkms.NewFileStorageBackend(filepath.Join(dir, "state"))
+	ds, err := xkms.OpenDatastore(context.Background(), xkms.DatastoreConfig{Engine: "memory", Path: filepath.Join(dir, "state")},
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ds.Close() })
+	if _, err := ds.DatabaseKVStore(context.Background(), signserver.StateDatabase); err != nil {
 		t.Fatal(err)
 	}
 	provider, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{KeyStorage: keyStorage})
@@ -55,11 +62,11 @@ func TestServerThroughTheSDK(t *testing.T) {
 	}
 
 	srv, err := signserver.New(context.Background(), signserver.Config{
-		SocketPath:   filepath.Join(dir, "sock"),
-		AllowedUIDs:  []uint32{uint32(os.Geteuid())},
-		Backends:     map[string]xkms.ServiceBackend{"software": backend},
-		StateStorage: stateStorage,
-		Slots:        []signserver.Slot{{Token: "ike", Keys: []string{"vtep"}}},
+		SocketPath:  filepath.Join(dir, "sock"),
+		AllowedUIDs: []uint32{uint32(os.Geteuid())},
+		Backends:    map[string]xkms.ServiceBackend{"software": backend},
+		StateDAOs:   ds.DAOFactory(),
+		Slots:       []signserver.Slot{{Token: "ike", Keys: []string{"vtep"}}},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

@@ -151,9 +151,13 @@ func (c *CloudKMSStrategy) UnsealRootKey(
 		return nil, ErrCorruptRootKey
 	}
 
-	return c.sealer.Unseal(ctx, &sd, &types.UnsealOptions{
+	rootKey, err := c.sealer.Unseal(ctx, &sd, &types.UnsealOptions{
 		KeyAttributes: c.keyAttrs,
 	})
+	if err != nil {
+		return nil, &RootKeyUnsealError{Strategy: c.id, Err: err}
+	}
+	return rootKey, nil
 }
 
 // BarrierEncryptor returns a SymmetricEncrypter for barrier data operations.

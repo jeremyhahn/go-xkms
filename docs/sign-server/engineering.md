@@ -1,6 +1,6 @@
 # Sign Server — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `sign-server` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `sign-server` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Exported surface — `pkg/signserver`
 
@@ -12,7 +12,9 @@
 | `(*Server).CreateKey(ctx, KeyRequest) (*Key, error)` | create a named key, idempotently, and admit it for signing |
 | `(*Server).Refresh(ctx) error` | rebuild the signing allowlist from the token records |
 | `(*Server).SocketPath() string` | the bound path |
-| `Config` | `SocketPath`, `SocketMode`, `AllowedUIDs`, `AllowedGIDs`, `Backends`, `DefaultBackend`, `StateStorage`, `Slots`, `Logger` |
+| `Config` | `SocketPath`, `SocketMode`, `AllowedUIDs`, `AllowedGIDs`, `Backends`, `DefaultBackend`, `StateDAOs`, `Slots`, `Logger` |
+| `Config.StateDAOs` | a `*qrdbsdk.DAOFactory` serving `StateDatabase`; the token records are `pkcs11state` DAO entities in it |
+| `StateDatabase` | `"pkcs11state"`, the go-qrdb database the embedder opens on its datastore before `New` |
 | `Slot{Token, Keys}` | token label and the `CKA_LABEL`s it may sign with |
 | `KeyRequest{Token, Label, ID, Curve, Backend, UserPIN, SOPIN}` | the key to create; `Label` must be one of the slot's `Keys` |
 | `Key` | alias of `module.ProvisionedKeyPair` (`Label`, `ID`, `KeyID`, `Backend`, `Curve`, `PublicKey`, `Created`) |
@@ -34,7 +36,8 @@ Configuration (`New`): `ErrSocketPathRequired`, `ErrNoAllowedPeers`,
 `ErrBackendsRequired`, `ErrStateStorageRequired`, `ErrSlotsRequired`,
 `ErrSlotTokenRequired`, `ErrSlotDuplicate`, `ErrSlotKeysRequired`, and the key
 service's own (`xkms.ErrDefaultBackendNotFound` for a named default that is not
-configured).
+configured). A `StateDAOs` that does not serve `StateDatabase` fails `New` as
+`Error{Op: "open token store"}`.
 
 Requests: `ErrUnknownSlot`, `ErrKeyNotNamed` (`CreateKey`), and, returned to a
 peer as gRPC `PermissionDenied`, `ErrKeyNotAdmitted`, `ErrTokenWriteDenied`,
@@ -61,12 +64,20 @@ PIN).
 ## Configuration example
 
 ```go
+ds, err := xkms.OpenDatastore(ctx, xkms.DatastoreConfig{Path: "<install-dir>/state"}, logger)
+if err != nil {
+	return err
+}
+defer ds.Close()
+if _, err := ds.DatabaseKVStore(ctx, signserver.StateDatabase); err != nil {
+	return err
+}
 srv, err := signserver.New(ctx, signserver.Config{
 	SocketPath:     "/run/<daemon>/ike.sock",
 	AllowedUIDs:    []uint32{ikeUID},
 	Backends:       map[string]xkms.ServiceBackend{"tpm2": tpmBackend},
 	DefaultBackend: "tpm2",
-	StateStorage:   tokenStore, // durable, private to the daemon
+	StateDAOs:      ds.DAOFactory(), // durable, private to the daemon
 	Slots:          []signserver.Slot{{Token: "ike", Keys: []string{"vtep-ike"}}},
 })
 if err != nil {
@@ -83,7 +94,7 @@ go srv.Serve()
 ## Test strategy
 
 `pkg/signserver/server_test.go` runs a real server on a unix socket with a
-software backend and a file-backed token store:
+software backend and a token store over an in-process DAO:
 
 - `TestRemoteModuleSignsThroughSignServer` — a remote-mode module on the
   allowlisted uid logs in, finds each key by `CKA_LABEL` and by `CKA_ID`, signs
@@ -97,7 +108,8 @@ software backend and a file-backed token store:
   succeed.
 - `TestCreateKey`, `TestCreateKeyOnUninitializedTokenNeedsSOPIN` — idempotency,
   conflicts, curve and PIN refusals.
-- `TestNewValidatesConfig`, `TestServeReportsBindFailure`,
+- `TestNewValidatesConfig`, `TestNewRefusesAStateFactoryWithoutTheDatabase`,
+  `TestServeReportsBindFailure`,
   `TestRefreshHonoursCancellation`, policy and error-message tests.
 
 The `pkg/api/unix` tests cover the exclusive policy and the interceptor hook;

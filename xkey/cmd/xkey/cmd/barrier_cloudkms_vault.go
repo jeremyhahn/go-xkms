@@ -50,7 +50,7 @@ func buildVaultBarrierStrategy(ctx context.Context, dataDir string) (xkms.Sealin
 
 	// The backend config takes the token as a string, so the byte copy only
 	// bridges to that conversion and is wiped on the way out.
-	token, err := xkms.SecretValueBytes(vaultCfg.Token)
+	token, err := xkms.SecretValueBytes(ctx, vaultCfg.Token)
 	if err != nil {
 		return nil, nil, &BarrierError{Operation: "resolve_credentials", Err: err}
 	}

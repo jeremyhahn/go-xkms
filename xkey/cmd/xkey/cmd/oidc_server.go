@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/cobra"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -317,7 +318,7 @@ func runOIDCServerToken(cmd *cobra.Command) error {
 			if err != nil {
 				return err
 			}
-			if err := os.WriteFile(codexOut, data, 0o600); err != nil {
+			if err := fsutil.WriteFileAtomic(codexOut, data, 0o600); err != nil {
 				return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
 			}
 			writeLine(out, "codex auth.json written to "+codexOut)

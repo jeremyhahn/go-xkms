@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -578,17 +579,24 @@ func TestLoadToken_NotFound(t *testing.T) {
 
 func TestLoadToken_EmptyStore(t *testing.T) {
 	tmpDir := t.TempDir()
-	storePath := filepath.Join(tmpDir, "tokens.json")
+	storePath := filepath.Join(tmpDir, "tokens")
 	cmd := oidcExplicitStoreCmd(t, storePath)
 
 	// Write an empty JSON object: go-xkms#4 replaced the old {"tokens":[]}
 	// envelope with one object per store, so the analogous "nothing here"
 	// case is a zero-value object rather than an empty list.
-	if err := os.WriteFile(storePath, []byte("{}"), 0600); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
+	backend, err := xkms.NewFileStorageBackend(storePath)
+	if err != nil {
+		t.Fatalf("failed to open test store: %v", err)
+	}
+	if err := backend.Put(t.Context(), oidcCLITokenStoreKey, []byte("{}")); err != nil {
+		t.Fatalf("failed to write test entry: %v", err)
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatalf("failed to close test store: %v", err)
 	}
 
-	_, err := loadToken(cmd, storePath)
+	_, err = loadToken(cmd, storePath)
 	if err != ErrOIDCNoTokensFound {
 		t.Errorf("loadToken error = %v, want %v", err, ErrOIDCNoTokensFound)
 	}
@@ -763,7 +771,7 @@ func TestGetConfigPath(t *testing.T) {
 
 func TestOIDCTokenStore_FilePermissions(t *testing.T) {
 	tmpDir := t.TempDir()
-	storePath := filepath.Join(tmpDir, "tokens.json")
+	storePath := filepath.Join(tmpDir, "tokens")
 	cmd := oidcExplicitStoreCmd(t, storePath)
 
 	token := &OIDCStoredToken{Provider: "https://example.com"}
@@ -777,15 +785,22 @@ func TestOIDCTokenStore_FilePermissions(t *testing.T) {
 		t.Fatalf("storeToken failed: %v", err)
 	}
 
-	// Check file permissions
-	info, err := os.Stat(storePath)
+	// Every file in the token store must be owner-only.
+	err = filepath.WalkDir(storePath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if mode := info.Mode().Perm(); mode != 0600 {
+			t.Errorf("%s permissions = %o, want %o", path, mode, 0600)
+		}
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("failed to stat token store: %v", err)
-	}
-
-	mode := info.Mode().Perm()
-	if mode != 0600 {
-		t.Errorf("token store permissions = %o, want %o", mode, 0600)
+		t.Fatalf("failed to walk token store: %v", err)
 	}
 }
 
@@ -1319,7 +1334,7 @@ func TestDiscoverOIDCProvider_InvalidJSON(t *testing.T) {
 
 func TestStoreToken_CreatesDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
-	storePath := filepath.Join(tmpDir, "subdir", "nested", "tokens.json")
+	storePath := filepath.Join(tmpDir, "subdir", "nested", "tokens")
 	cmd := oidcExplicitStoreCmd(t, storePath)
 
 	token := &OIDCStoredToken{Provider: "https://example.com"}
@@ -1333,9 +1348,8 @@ func TestStoreToken_CreatesDirectory(t *testing.T) {
 		t.Fatalf("storeToken failed: %v", err)
 	}
 
-	// Verify directory was created
-	dir := filepath.Dir(storePath)
-	info, err := os.Stat(dir)
+	// Verify the store directory was created
+	info, err := os.Stat(storePath)
 	if err != nil {
 		t.Fatalf("failed to stat directory: %v", err)
 	}

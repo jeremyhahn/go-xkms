@@ -33,6 +33,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
@@ -199,7 +200,7 @@ func setupServiceWithUserClients(t *testing.T) (*XKMSService, *mockUserClient, *
 	roles := &mockRoleClient{}
 	svc.SetUserClients(users, roles)
 
-	inviteStore, err := qrdbsdk.NewTenantInviteStore(singleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	inviteStore, err := invitetest.New(singleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
 	require.NoError(t, err)
 	svc.SetInviteStore(inviteStore)
 
@@ -478,7 +479,7 @@ func TestCreateUser_RollsBackOnInviteMintFailure(t *testing.T) {
 	// The service's invite store is real (setupServiceWithUserClients wires
 	// it); force a mint failure the way an exhausted tenant store would, by
 	// replacing it with one whose backing KVStore is nil.
-	brokenStore, err := qrdbsdk.NewTenantInviteStore(singleStoreResolver{store: nil})
+	brokenStore, err := invitetest.New(singleStoreResolver{store: nil})
 	require.NoError(t, err)
 	svc.SetInviteStore(brokenStore)
 

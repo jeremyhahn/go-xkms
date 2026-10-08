@@ -416,12 +416,3 @@ func TestAWSCredentialsHandler_writeCredentialsFileErrors(t *testing.T) {
 		}
 	})
 }
-
-func TestSyncDir(t *testing.T) {
-	if err := syncDir(t.TempDir()); err != nil {
-		t.Errorf("syncDir() error = %v, want nil", err)
-	}
-	if err := syncDir(filepath.Join(t.TempDir(), "absent")); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("syncDir(absent) error = %v, want os.ErrNotExist", err)
-	}
-}

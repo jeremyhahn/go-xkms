@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 )
 
 // TestKeyVersions_TPM2TenantKeyRotatesUnderItsPolicy drives a key rotation

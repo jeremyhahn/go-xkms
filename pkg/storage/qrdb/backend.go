@@ -48,12 +48,36 @@ type Backend struct {
 	// claims nothing: a capability claim that defaults to "yes" is the defect
 	// this field exists to report.
 	guardedWrites bool
+
+	// bind derives the context every call into the client runs on; nil runs
+	// it on the caller's context (WithCallContext).
+	bind CallContext
+}
+
+// CallContext derives the context a call into go-qrdb runs on from the
+// caller's. An embedded node's Node.ServiceContext is one: it binds the
+// node's service principal.
+type CallContext func(ctx context.Context) (context.Context, error)
+
+// Option configures a Backend built by NewBackend.
+type Option func(*Backend)
+
+// WithCallContext runs every call the backend makes into its client on the
+// context bind derives from the caller's. xkms's storage is xkms's own
+// persistence, so over an embedded node the server passes Node.ServiceContext:
+// its storage then runs as the node's service principal, as it runs as xkms's
+// own client certificate over a remote datastore. A bind error fails the call
+// before it reaches the client.
+func WithCallContext(bind CallContext) Option {
+	return func(b *Backend) {
+		b.bind = bind
+	}
 }
 
 // NewBackend creates a new QRDB storage backend that delegates all
 // operations to the given KVClient. The backend does not own the client;
 // callers are responsible for managing the client lifecycle.
-func NewBackend(client transport.KVClient) *Backend {
+func NewBackend(client transport.KVClient, opts ...Option) *Backend {
 	// A caller-supplied client is taken at the only signal that exists before
 	// a write: whether it can carry a guarded write at all, either through the
 	// SDK's native guarded-write capability or through a transaction. That is
@@ -64,7 +88,19 @@ func NewBackend(client transport.KVClient) *Backend {
 	// TransactionClient (#125) — so this is an OR, not an AND.
 	_, guarded := client.(transport.GuardedKVClient)
 	_, transactional := client.(transport.TransactionClient)
-	return &Backend{client: client, guardedWrites: guarded || transactional}
+	b := &Backend{client: client, guardedWrites: guarded || transactional}
+	for _, opt := range opts {
+		opt(b)
+	}
+	return b
+}
+
+// callContext returns the context a call into the client runs on.
+func (b *Backend) callContext(ctx context.Context) (context.Context, error) {
+	if b.bind == nil {
+		return ctx, nil
+	}
+	return b.bind(ctx)
 }
 
 // newOwnedBackend creates a backend that owns the client lifecycle.
@@ -109,6 +145,10 @@ func SetNotFoundError(err error) {
 // Get retrieves the value for the given key from the QRDB cluster.
 // Returns ErrNotFound when the key does not exist.
 func (b *Backend) Get(ctx context.Context, key string) ([]byte, error) {
+	ctx, err := b.callContext(ctx)
+	if err != nil {
+		return nil, &BackendError{Op: "get", Key: key, Err: err}
+	}
 	value, err := b.client.Get(ctx, key, followerRead)
 	if err != nil {
 		var knf *transport.KeyNotFoundError
@@ -122,6 +162,10 @@ func (b *Backend) Get(ctx context.Context, key string) ([]byte, error) {
 
 // Put stores a key-value pair in the QRDB cluster through Raft consensus.
 func (b *Backend) Put(ctx context.Context, key string, value []byte) error {
+	ctx, err := b.callContext(ctx)
+	if err != nil {
+		return &BackendError{Op: "put", Key: key, Err: err}
+	}
 	if err := b.client.Put(ctx, key, value); err != nil {
 		return &BackendError{Op: "put", Key: key, Err: err}
 	}
@@ -131,7 +175,11 @@ func (b *Backend) Put(ctx context.Context, key string, value []byte) error {
 // Delete removes the key from the QRDB cluster. QRDB delete is
 // idempotent, so a missing key is not treated as an error.
 func (b *Backend) Delete(ctx context.Context, key string) error {
-	err := b.client.Delete(ctx, key)
+	ctx, err := b.callContext(ctx)
+	if err != nil {
+		return &BackendError{Op: "delete", Key: key, Err: err}
+	}
+	err = b.client.Delete(ctx, key)
 	if err != nil {
 		// QRDB delete is idempotent; ignore key-not-found.
 		var knf *transport.KeyNotFoundError
@@ -146,6 +194,10 @@ func (b *Backend) Delete(ctx context.Context, key string) error {
 // List returns all keys matching the given prefix from the QRDB cluster.
 // An empty prefix returns all keys.
 func (b *Backend) List(ctx context.Context, prefix string) ([]string, error) {
+	ctx, err := b.callContext(ctx)
+	if err != nil {
+		return nil, &BackendError{Op: "list", Key: prefix, Err: err}
+	}
 	keys, err := b.client.List(ctx, prefix, followerRead)
 	if err != nil {
 		return nil, &BackendError{Op: "list", Key: prefix, Err: err}
@@ -157,6 +209,10 @@ func (b *Backend) List(ctx context.Context, prefix string) ([]string, error) {
 // QRDB cluster. An empty prefix visits all pairs. Return a non-nil error
 // from fn to stop iteration early.
 func (b *Backend) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	ctx, err := b.callContext(ctx)
+	if err != nil {
+		return &BackendError{Op: "scan", Key: prefix, Err: err}
+	}
 	pairs, err := b.client.Scan(ctx, prefix, followerRead)
 	if err != nil {
 		return &BackendError{Op: "scan", Key: prefix, Err: err}
@@ -172,6 +228,10 @@ func (b *Backend) Scan(ctx context.Context, prefix string, fn func(key string, v
 // Exists checks whether the given key exists in the QRDB cluster.
 // Delegates directly to the client's Exists method.
 func (b *Backend) Exists(ctx context.Context, key string) (bool, error) {
+	ctx, err := b.callContext(ctx)
+	if err != nil {
+		return false, &BackendError{Op: "exists", Key: key, Err: err}
+	}
 	exists, err := b.client.Exists(ctx, key, followerRead)
 	if err != nil {
 		return false, &BackendError{Op: "exists", Key: key, Err: err}

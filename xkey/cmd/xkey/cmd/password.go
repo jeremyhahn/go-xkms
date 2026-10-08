@@ -544,7 +544,7 @@ func runPasswordList(cmd *cobra.Command, args []string) error {
 		}
 		if showPasswords {
 			_, _ = fmt.Fprint(out, "  Password:   ")
-			writePasswordValue(out, entry.Password)
+			writePasswordValue(cmd.Context(), out, entry.Password)
 			_, _ = fmt.Fprintln(out)
 		} else {
 			_, _ = fmt.Fprintf(out, "  Password:   ********\n")
@@ -590,11 +590,11 @@ type passwordListEntry struct {
 // open or read the secret writes a bracketed marker instead of leaving the
 // "Password:" label with nothing after it, which would otherwise be
 // indistinguishable from a genuinely empty stored password.
-func writePasswordValue(w io.Writer, secret *secure.Secret) {
+func writePasswordValue(ctx context.Context, w io.Writer, secret *secure.Secret) {
 	if secret == nil {
 		return
 	}
-	buf, err := secret.Open()
+	buf, err := secret.Open(ctx)
 	if err != nil {
 		_, _ = fmt.Fprintf(w, "<error: %v>", err)
 		return
@@ -683,7 +683,7 @@ func readPasswordListFromDisk(cmd *cobra.Command) (_ []passwordListEntry, _ stri
 			UpdatedAt: pw.UpdatedAt.Format(passwordTimeLayout),
 		}
 		if pw.Password != "" {
-			secret, secretErr := secure.NewSecret([]byte(pw.Password))
+			secret, secretErr := secure.NewSecret(cmd.Context(), []byte(pw.Password))
 			if secretErr != nil {
 				return nil, storePath, &SentinelCauseError{Sentinel: ErrPasswordListFailed, Cause: secretErr}
 			}

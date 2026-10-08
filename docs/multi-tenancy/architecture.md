@@ -1,6 +1,6 @@
 # Multi-Tenancy — Architecture
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-04
 
 ## The problem
 
@@ -45,8 +45,8 @@ Rejected alternatives:
 
 The mode that changes the security story. With `barrier` isolation a tenant has
 its own root key, initialized and unsealed independently
-(`TenantBarrierInit`, `TenantBarrierUnseal`, `TenantBarrierStatus`), using any
-of the same strategies as the system barrier — `passphrase`, `none`, `shamir`,
+(operated through go-qrdb's own barrier surface; xkms exposes no tenant-barrier
+verb), using any of the same strategies as the system barrier — `passphrase`, `none`, `shamir`,
 `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault`.
 
 The consequence worth understanding: **a tenant's data is unavailable until that
@@ -82,12 +82,13 @@ itself:
   scope (`ScopeSelf`, `ScopeTenantOnly`, `ScopeCross`) decides which tenant an
   identity may exercise it in; the object scope then decides which objects in
   that tenant it reaches. See [`../rbac/architecture.md`](../rbac/architecture.md#permission-tenancy-scopes).
-- **The platform store stays system scope.** The sealed platform store and
-  its blob store (`SealStore*` on `XKMSService`, `pkg/sealblobstore`;
-  [`../platform-secrets/`](../platform-secrets/architecture.md)) hold the
-  platform's own secrets. They have no tenant or user scope: every call is
+- **The platform store stays system scope.** The sealed platform store
+  (`SealStore*` on `XKMSService`, served by `seal.SealedPlatformStore`, which
+  `compose.BuildPlatformStore` builds over a `sealedstorage` view;
+  [`../platform-secrets/`](../platform-secrets/architecture.md)) holds the
+  platform's own secrets. It has no tenant or user scope: every call is
   refused to a tenant-scoped caller (`requirePlatformScope`), so only
-  system-tenant callers reach them.
+  system-tenant callers reach it.
 
 ## Component boundaries
 

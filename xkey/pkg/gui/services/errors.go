@@ -441,8 +441,8 @@ var (
 	//
 	// Every other transport already classifies this as data loss: gRPC maps
 	// seal.ErrCorruptRootKey to codes.DataLoss
-	// (pkg/api/grpc/service_barrier_pin.go:53) and REST to 500
-	// (pkg/api/rest/handlers_barrier_pin.go:499). Reporting it here as an
+	// (pkg/api/grpc/service_pin.go:53) and REST to 500
+	// (pkg/api/rest/handlers_pin.go:499). Reporting it here as an
 	// invalid PIN both contradicts them and hides storage corruption behind
 	// credential retries.
 	ErrAppLockStorageCorrupt = errors.New("app_lock: encrypted storage is corrupt - the PIN was not checked")

@@ -334,9 +334,8 @@ logging:
 There is no config-sourced boot-time barrier secret: a software strategy
 (passphrase/shamir) never auto-unseals from configuration, matching
 go-qrdb's own `SealConfig`, which carries no such field either. `xkmsd init`
-provisions the barrier; after every restart an operator supplies the
-passphrase or Shamir quorum via `xkmsctl barrier unseal` (or
-`unseal-shares`) or the equivalent API call. For unattended auto-unseal,
+provisions the barrier; after every restart an operator unseals the node
+through go-qrdb's own barrier surface (xkms does not re-expose it). For unattended auto-unseal,
 configure a hardware seal strategy instead (`barrier.strategy: "tpm2"` or
 `"pkcs11"`).
 

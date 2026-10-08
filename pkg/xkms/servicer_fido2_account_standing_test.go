@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -37,6 +38,7 @@ type sdkStandingFixture struct {
 	authenticator *webauthn.MockAuthenticator
 	userID        []byte
 	email         string
+	stores        *webauthntest.Stores
 }
 
 func newSDKStandingFixture(t *testing.T) *sdkStandingFixture {
@@ -44,22 +46,17 @@ func newSDKStandingFixture(t *testing.T) *sdkStandingFixture {
 	setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
-	waSvc := newConfiguredWebAuthnService(t)
+	waSvc, stores := newConfiguredWebAuthnServiceAndStores(t)
 	svc.SetWebAuthn(waSvc)
 
 	const email = "member@example.com"
 	authenticator, userID := registerCredentialForLogin(t, svc, waSvc, email, "Member", "example.com", "https://example.com")
-	return &sdkStandingFixture{svc: svc, waSvc: waSvc, authenticator: authenticator, userID: userID, email: email}
+	return &sdkStandingFixture{svc: svc, waSvc: waSvc, authenticator: authenticator, userID: userID, email: email, stores: stores}
 }
 
 func (f *sdkStandingFixture) setStanding(t *testing.T, state qrdbsdk.Lifecycle, methods []string) {
 	t.Helper()
-	user, err := f.waSvc.GetUserByEmail(context.Background(), f.email)
-	require.NoError(t, err)
-	du, ok := user.(*webauthn.DefaultUser)
-	require.True(t, ok)
-	du.SetLifecycle(state)
-	du.SetAuthMethods(methods)
+	f.stores.SetStanding(t, f.email, state, methods)
 }
 
 func (f *sdkStandingFixture) begin(t *testing.T, email string) *transport.BeginAuthenticationResponse {
@@ -149,7 +146,7 @@ func TestSDKBeginRegistration_InactiveZeroCredentialAccountRefused(t *testing.T)
 	setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
-	waSvc := newConfiguredWebAuthnService(t)
+	waSvc, stores := newConfiguredWebAuthnServiceAndStores(t)
 	svc.SetWebAuthn(waSvc)
 	ctx := context.Background()
 
@@ -157,11 +154,7 @@ func TestSDKBeginRegistration_InactiveZeroCredentialAccountRefused(t *testing.T)
 	// enrolling a passkey: the zero-credential onboarding state.
 	_, err = svc.BeginRegistration(ctx, &transport.BeginRegistrationRequest{Email: "provisioned@example.com"})
 	require.NoError(t, err)
-	user, err := waSvc.GetUserByEmail(ctx, "provisioned@example.com")
-	require.NoError(t, err)
-	du, ok := user.(*webauthn.DefaultUser)
-	require.True(t, ok)
-	du.SetLifecycle(qrdbsdk.LifecyclePending)
+	stores.SetStanding(t, "provisioned@example.com", qrdbsdk.LifecyclePending, nil)
 
 	_, err = svc.BeginRegistration(ctx, &transport.BeginRegistrationRequest{Email: "provisioned@example.com"})
 	require.ErrorIs(t, err, webauthn.ErrRegistrationRefused)

@@ -19,7 +19,7 @@ import (
 
 // Escrow request/response types are aliases of the pkg/escrow domain types,
 // which already carry the correct JSON tags and Validate() methods —
-// mirroring how types_custodian.go aliases qrdb's own transport types
+// mirroring how types_tenant.go aliases qrdb's own transport types
 // instead of re-declaring them.
 type (
 	EscrowRequest   = escrow.EscrowRequest

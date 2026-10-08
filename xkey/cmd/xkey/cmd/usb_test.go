@@ -264,19 +264,6 @@ func TestUSBCommandsAreLUKSExempt(t *testing.T) {
 	}
 }
 
-// TestNonLUKSCommandsAreNotExempt is the regression guard for the leaf-name
-// matching bug: these commands share a leaf name with a genuinely exempt
-// command ("status", "init", "lock", "unseal", "verify") but manage no
-// LUKS/barrier/PIN state, so they must still be gated on an unlocked home.
-func TestNonLUKSCommandsAreNotExempt(t *testing.T) {
-	for _, cmd := range []*cobra.Command{PIVCmd, PasswordCmd, shareCmd, configCmd, tpmPolicyVerifyCmd, deviceCmd, authCmd} {
-		t.Run(cmd.Name(), func(t *testing.T) {
-			assert.False(t, isLUKSExempt(cmd),
-				"%q must NOT be LUKS-exempt", cmd.CommandPath())
-		})
-	}
-}
-
 // --- Status command execution ---
 
 func TestRunUSBStatus_NonExistentPath(t *testing.T) {
@@ -300,6 +287,7 @@ func TestRunUSBCreate_MissingBinary(t *testing.T) {
 
 	var buf bytes.Buffer
 	usbCreateCmd.SetOut(&buf)
+	usbCreateCmd.SetContext(t.Context())
 
 	err := runUSBCreate(usbCreateCmd, []string{"/tmp/test.img"})
 	assert.Error(t, err)

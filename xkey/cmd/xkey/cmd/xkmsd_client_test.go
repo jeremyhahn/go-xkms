@@ -855,15 +855,3 @@ func TestResolveXKMSdEndpoint_ExpiredLoginFails(t *testing.T) {
 	assert.ErrorIs(t, err, ErrAuthTokenLoadFailed)
 	assert.ErrorIs(t, err, tokenstore.ErrTokenExpired)
 }
-
-func TestDefaultShareClientFactory_UsesStoredLogin(t *testing.T) {
-	isolateXKMSdEndpoint(t)
-	target := newLoginTarget(t, "{}")
-	t.Setenv(envXKMSdTLSCA, target.caFile)
-	storeLogin(t, &tokenstore.TokenEntry{
-		ServerURL: target.srv.URL, ServerID: target.id(), Token: "old.jwt", ExpiresAt: time.Now().Add(-time.Minute),
-	})
-
-	_, err := defaultShareClientFactory(target.srv.URL)
-	assert.ErrorIs(t, err, tokenstore.ErrTokenExpired, "the share client resolves the same stored login")
-}

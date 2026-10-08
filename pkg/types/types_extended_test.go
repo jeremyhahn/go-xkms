@@ -521,7 +521,7 @@ func TestKeyAttributesFromConfig_RSA(t *testing.T) {
 		KeyType:            KeyTypeStringTLS,
 	}
 
-	attrs, err := KeyAttributesFromConfig(config)
+	attrs, err := KeyAttributesFromConfig(t.Context(), config)
 	require.NoError(t, err)
 	assert.Equal(t, "test-key", attrs.CN)
 	assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
@@ -536,7 +536,7 @@ func TestKeyAttributesFromConfig_RSADefaultKeySize(t *testing.T) {
 		KeyAlgorithm: AlgorithmRSA,
 	}
 
-	attrs, err := KeyAttributesFromConfig(config)
+	attrs, err := KeyAttributesFromConfig(t.Context(), config)
 	require.NoError(t, err)
 	assert.NotNil(t, attrs.RSAAttributes)
 	assert.Equal(t, 2048, attrs.RSAAttributes.KeySize)
@@ -549,7 +549,7 @@ func TestKeyAttributesFromConfig_ECDSA(t *testing.T) {
 		ECCConfig:    &ECCConfig{Curve: CurveP384},
 	}
 
-	attrs, err := KeyAttributesFromConfig(config)
+	attrs, err := KeyAttributesFromConfig(t.Context(), config)
 	require.NoError(t, err)
 	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 	assert.NotNil(t, attrs.ECCAttributes)
@@ -562,14 +562,14 @@ func TestKeyAttributesFromConfig_ECDSADefaultCurve(t *testing.T) {
 		KeyAlgorithm: AlgorithmECDSA,
 	}
 
-	attrs, err := KeyAttributesFromConfig(config)
+	attrs, err := KeyAttributesFromConfig(t.Context(), config)
 	require.NoError(t, err)
 	assert.NotNil(t, attrs.ECCAttributes)
 	assert.Equal(t, elliptic.P256().Params().Name, attrs.ECCAttributes.Curve.Params().Name)
 }
 
 func TestKeyAttributesFromConfig_NilConfig(t *testing.T) {
-	_, err := KeyAttributesFromConfig(nil)
+	_, err := KeyAttributesFromConfig(t.Context(), nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "config is nil")
 }
@@ -579,7 +579,7 @@ func TestKeyAttributesFromConfig_InvalidAlgorithm(t *testing.T) {
 		KeyAlgorithm: "INVALID",
 	}
 
-	_, err := KeyAttributesFromConfig(config)
+	_, err := KeyAttributesFromConfig(t.Context(), config)
 	assert.Error(t, err)
 }
 
@@ -590,7 +590,7 @@ func TestKeyAttributesFromConfig_InvalidSignatureAlgorithm(t *testing.T) {
 	}
 
 	// Should not fail, just use UnknownSignatureAlgorithm
-	attrs, err := KeyAttributesFromConfig(config)
+	attrs, err := KeyAttributesFromConfig(t.Context(), config)
 	require.NoError(t, err)
 	assert.Equal(t, x509.UnknownSignatureAlgorithm, attrs.SignatureAlgorithm)
 }
@@ -604,7 +604,7 @@ func TestKeyAttributesFromConfig_CustomBackendName(t *testing.T) {
 		StoreType:    "pkcs8-ca2", // Custom backend name
 	}
 
-	attrs, err := KeyAttributesFromConfig(config)
+	attrs, err := KeyAttributesFromConfig(t.Context(), config)
 	require.NoError(t, err)
 	assert.Equal(t, StoreType("pkcs8-ca2"), attrs.StoreType)
 }
@@ -616,7 +616,7 @@ func TestKeyAttributesFromConfig_EmptyStoreTypeDefaultsToSoftware(t *testing.T) 
 		StoreType:    "", // Empty should default to software
 	}
 
-	attrs, err := KeyAttributesFromConfig(config)
+	attrs, err := KeyAttributesFromConfig(t.Context(), config)
 	require.NoError(t, err)
 	assert.Equal(t, StoreSoftware, attrs.StoreType)
 }
@@ -628,7 +628,7 @@ func TestKeyAttributesFromConfig_StandardStoreType(t *testing.T) {
 		StoreType:    StoreSoftware,
 	}
 
-	attrs, err := KeyAttributesFromConfig(config)
+	attrs, err := KeyAttributesFromConfig(t.Context(), config)
 	require.NoError(t, err)
 	assert.Equal(t, StoreSoftware, attrs.StoreType)
 }
@@ -1063,7 +1063,7 @@ func TestKeyAttributesFromConfig_PasswordWired(t *testing.T) {
 		Password:     &SecretValue{Raw: "at-rest-passphrase"},
 	}
 
-	attrs, err := KeyAttributesFromConfig(config)
+	attrs, err := KeyAttributesFromConfig(t.Context(), config)
 	require.NoError(t, err)
 	assert.NotNil(t, attrs.Password, "Password must not be nil when KeyConfig.Password is set")
 	assert.Equal(t, "at-rest-passphrase", string(attrs.Password.Bytes()))
@@ -1082,7 +1082,7 @@ func TestKeyAttributesFromConfig_EmptyPasswordLeavesNil(t *testing.T) {
 		// Password left zero-valued — must NOT create a Password object
 	}
 
-	attrs, err := KeyAttributesFromConfig(config)
+	attrs, err := KeyAttributesFromConfig(t.Context(), config)
 	require.NoError(t, err)
 	assert.Nil(t, attrs.Password, "Password must be nil when KeyConfig.Password is empty")
 }

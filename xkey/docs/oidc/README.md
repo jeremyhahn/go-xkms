@@ -124,7 +124,7 @@ xkey oidc aws [flags]
 | `--credentials-file` | `~/.aws/credentials` | Path to AWS credentials file |
 | `--exec` | | Execute script after login |
 | `--auto-refresh` | `0` | Auto-refresh interval in seconds |
-| `--session-store` | `~/.config/xkey/aws-session.json` | Path to session store |
+| `--session-store` | `~/.xkey/aws-session` | Directory of an unencrypted AWS session store (bypasses the barrier when set) |
 | `--background` | `false` | Run auto-refresh in background |
 | `--log-file` | (auto-generated) | Log file for background refresh |
 | `--callback-host` | `oidc.callback_host` (`localhost`) | Host the local callback listener binds; AWS redirects to `127.0.0.1`, so only `localhost`, `127.0.0.1` or `""` can serve it |
@@ -333,7 +333,7 @@ Direct AWS Console authentication using DPoP.
 - `--credentials-file` - AWS credentials file (default: `~/.aws/credentials`)
 - `--output` - Output mode (default: `aws-credentials`)
 - `--cross-device` - Enable cross-device authentication
-- `--session-store` - Session storage path
+- `--session-store` - Session store directory
 
 ### Adding Providers
 
@@ -477,7 +477,7 @@ xkey oidc login [flags]
 | `--callback-host` | `oidc.callback_host` (`localhost`) | Host the local callback listener binds; `localhost` is both loopback families |
 | `--callback-port` | `oidc.callback_port` (`8085`) | Port of the default redirect URL |
 | `--scopes` | `openid,profile,email` | Scopes to request |
-| `--token-store` | `~/.config/xkey/tokens.json` | Path to token store |
+| `--token-store` | `~/.xkey/tokens` | Directory of an unencrypted token store (bypasses the barrier when set) |
 | `--no-browser` | `false` | Print URL instead of opening browser |
 | `--exec` | | Execute script after login |
 | `--auto-refresh` | `0` | Auto-refresh interval in seconds |
@@ -513,7 +513,7 @@ xkey oidc token [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--token-store` | `~/.config/xkey/tokens.json` | Path to token store |
+| `--token-store` | `~/.xkey/tokens` | Directory of an unencrypted token store (bypasses the barrier when set) |
 | `--show-full` | `false` | Show full token values |
 
 ### oidc refresh
@@ -526,7 +526,7 @@ xkey oidc refresh [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--token-store` | `~/.config/xkey/tokens.json` | Path to token store |
+| `--token-store` | `~/.xkey/tokens` | Directory of an unencrypted token store (bypasses the barrier when set) |
 | `--provider` | | Use a saved provider's manual endpoints and token encoding; required to refresh a provider added with manual endpoints |
 
 Without `--provider`, refresh re-discovers the issuer's endpoints from its
@@ -638,7 +638,7 @@ xkey oidc providers add [flags]
 | `--credentials-file` | `~/.aws/credentials` | AWS credentials file path |
 | `--output`, `-o` | `aws-credentials` | Output mode |
 | `--cross-device` | `false` | Enable cross-device authentication |
-| `--session-store` | `~/.config/xkey/aws-session.json` | Session store path |
+| `--session-store` | `~/.xkey/aws-session` | Session store directory |
 
 ### oidc providers remove
 
@@ -855,8 +855,8 @@ together skips discovery for that provider from then on, on both `login` and
 
 Stores the DPoP private key and refresh token for AWS credential refresh.
 Barrier-encrypted when `xkey barrier init` has been run, an unencrypted file
-under the xkey data directory with one warning otherwise, or an exact plain
-file when `--session-store` is explicitly set (directly, or saved on the
+under the xkey data directory with one warning otherwise, or an unencrypted
+store in exactly the directory `--session-store` names when it is explicitly set (directly, or saved on the
 provider). See [architecture.md](architecture.md#where-the-store-lives) and
 [cli.md](cli.md#xkey-oidc-aws) for the full decision.
 

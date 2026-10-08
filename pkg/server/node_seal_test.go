@@ -89,12 +89,33 @@ func TestNodeSealFlip_NoneStrategyAutoUnseal(t *testing.T) {
 	assert.True(t, server.nodeSealEnabled, "the node-seal flip should engage for qrdb + barrier + strategy none")
 	require.NotNil(t, server.Barrier(), "the adopted node barrier must be non-nil")
 	assert.False(t, server.Barrier().IsSealed(), "strategy none auto-unseals unattended")
+	require.NotNil(t, server.BarrierRegistry(), "the node's barrier registry is adopted")
+	assert.Same(t, server.Barrier(), server.BarrierRegistry().SystemBarrier(),
+		"the registry's system barrier is the one barrier")
+	assert.NotNil(t, server.tenantService, "the node's tenant service is adopted")
+}
+
+// TestNodeSeal_NoBarrierWithoutTheNodeSeal verifies that with the barrier
+// disabled the server holds no barrier, registry or tenant service of its
+// own: the node's barrier is the only one there ever is.
+func TestNodeSeal_NoBarrierWithoutTheNodeSeal(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	server, err := New(qrdbBarrierConfig(t))
+	require.NoError(t, err)
+	defer func() { _ = server.Shutdown() }()
+
+	assert.False(t, server.nodeSealEnabled)
+	assert.Nil(t, server.Barrier())
+	assert.Nil(t, server.BarrierRegistry())
+	assert.Nil(t, server.tenantService)
 }
 
 // TestNodeSealFlip_PassphraseEngagesFlipAndBlocksForOperator verifies the
 // qrdb-aligned two-phase boot (go-xkms#653 approved item 2): "passphrase"
-// IS wired to the qrdb node's own barrier (BarrierConfig.NodeFlipWired), so
-// the flip engages, but there is no config-sourced secret to auto-unseal
+// seals the qrdb node's own barrier, so the flip engages, but there is no
+// config-sourced secret to auto-unseal
 // with — go-qrdb's own node seal subsystem leaves the node sealed and
 // Server.New blocks inside initializeQRDBStorage on the sealed-window
 // listener (mirroring cmd/qrdbd's initSealSubsystem -> awaitUnseal) until an
@@ -142,7 +163,7 @@ func TestNodeSealFlip_PassphraseEngagesFlipAndBlocksForOperator(t *testing.T) {
 
 // TestResolveNodeSeal_DisabledForRemoteDatastore verifies the flip never
 // engages for a remote datastore (no local node to flip), even with the
-// barrier enabled and a strategy NodeFlipWired covers. This is checked
+// barrier enabled. This is checked
 // directly against ResolveNodeSeal, not a full New(): a "remote" datastore
 // dials an external qrdb cluster, which this unit test has none of, and the
 // flip decision itself never needs one -- datastoreModeIsStandalone short-

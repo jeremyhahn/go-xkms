@@ -607,9 +607,7 @@ func TestResolveBackupSources_BarrierEncryptedRefused(t *testing.T) {
 	home := isolatedBackupHome(t)
 	dataDir := backupTestDataDir(home)
 
-	rootKey := filepath.Join(dataDir, defaultBarrierRootKeyPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(rootKey), 0700))
-	require.NoError(t, os.WriteFile(rootKey, []byte("sealed"), 0600))
+	writeBarrierRootKey(t, dataDir, []byte("sealed"))
 
 	_, err := resolveBackupSources(backupCreateCmd, backupStorePaths{}, true)
 	require.Error(t, err)
@@ -620,9 +618,7 @@ func TestResolveBackupSources_ExplicitPathsBypassBarrierCheck(t *testing.T) {
 	home := isolatedBackupHome(t)
 	dataDir := backupTestDataDir(home)
 
-	rootKey := filepath.Join(dataDir, defaultBarrierRootKeyPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(rootKey), 0700))
-	require.NoError(t, os.WriteFile(rootKey, []byte("sealed"), 0600))
+	writeBarrierRootKey(t, dataDir, []byte("sealed"))
 
 	dir := t.TempDir()
 	sources, err := resolveBackupSources(backupCreateCmd, backupStorePaths{

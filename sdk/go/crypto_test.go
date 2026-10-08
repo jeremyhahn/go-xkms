@@ -584,45 +584,7 @@ func (n *noopClient) Unseal(context.Context, *transport.UnsealRequest) (*transpo
 func (n *noopClient) CanSeal(context.Context, string) (*transport.CanSealResponse, error) {
 	return nil, nil
 }
-func (n *noopClient) BarrierInitialize(context.Context, *transport.BarrierInitializeRequest) error {
-	return nil
-}
-func (n *noopClient) BarrierUnseal(context.Context, *transport.BarrierUnsealRequest) error {
-	return nil
-}
-func (n *noopClient) BarrierSeal(context.Context) error { return nil }
-func (n *noopClient) BarrierStatus(context.Context) (*transport.BarrierStatusResponse, error) {
-	return nil, nil
-}
 func (n *noopClient) BootstrapListenerKeys(context.Context) (*transport.BootstrapListenerKeysResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) BarrierInitializeShamir(context.Context, *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) BarrierUnsealWithShare(context.Context, *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) BarrierUnsealWithShares(context.Context, *transport.BarrierUnsealSharesRequest) error {
-	return nil
-}
-func (n *noopClient) BarrierRekey(context.Context, *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) BarrierGenerateRecoveryKeys(context.Context, *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) BarrierEnableEncryption(context.Context, *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) BarrierRecoverWithKeys(context.Context, *transport.BarrierRecoverWithKeysRequest) error {
-	return nil
-}
-func (n *noopClient) BarrierDeleteRecoveryKeys(context.Context) error { return nil }
-func (n *noopClient) BarrierHasRecoveryKeys(context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) BarrierGenerateRootToken(context.Context, *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
 	return nil, nil
 }
 func (n *noopClient) ListPIVSlots(context.Context, *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {
@@ -921,55 +883,6 @@ func (n *noopClient) TenantVTPMStop(context.Context, string) (*transport.TenantV
 	return nil, nil
 }
 
-func (n *noopClient) CreateBackup(context.Context, *transport.BackupRequest) (*transport.BackupInfo, error) {
-	return nil, nil
-}
-func (n *noopClient) ListBackups(context.Context) ([]transport.BackupInfo, error) { return nil, nil }
-func (n *noopClient) GetBackup(context.Context, string) (*transport.BackupInfo, error) {
-	return nil, nil
-}
-func (n *noopClient) DeleteBackup(context.Context, string) error { return nil }
-func (n *noopClient) RestoreBackup(context.Context, *transport.RestoreRequest) (*transport.RestoreResult, error) {
-	return nil, nil
-}
-func (n *noopClient) VerifyBackup(context.Context, string) (*transport.VerifyResult, error) {
-	return nil, nil
-}
-
-func (n *noopClient) CreateCustodianGroup(context.Context, *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) GetCustodianGroup(context.Context, string) (*transport.GetCustodianGroupResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) ListCustodianGroups(context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) DeleteCustodianGroup(context.Context, string) error { return nil }
-func (n *noopClient) AddCustodianMember(context.Context, *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) RemoveCustodianMember(context.Context, *transport.RemoveCustodianMemberRequest) error {
-	return nil
-}
-func (n *noopClient) DistributeShares(context.Context, *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) SubmitShare(context.Context, *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) ListShares(context.Context) (*transport.ListSharesResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) GetShare(context.Context, string, string, int) (*transport.ShareInfo, error) {
-	return nil, nil
-}
-func (n *noopClient) DeleteShare(context.Context, string, string, int) error {
-	return nil
-}
-func (n *noopClient) GetShareCollectionStatus(context.Context, string) (*transport.ShareCollectionStatus, error) {
-	return nil, nil
-}
 func (n *noopClient) CreateTenant(context.Context, *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
 	return nil, nil
 }
@@ -980,37 +893,10 @@ func (n *noopClient) ListTenants(context.Context) (*transport.ListTenantsRespons
 	return nil, nil
 }
 func (n *noopClient) DeleteTenant(context.Context, string) error { return nil }
-func (n *noopClient) TenantBarrierInit(context.Context, *transport.TenantBarrierInitRequest) error {
-	return nil
-}
-func (n *noopClient) TenantBarrierUnseal(context.Context, *transport.TenantBarrierUnsealRequest) error {
-	return nil
-}
-func (n *noopClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
-	return nil, nil
-}
 func (n *noopClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
 	return nil, nil
 }
 func (n *noopClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) GetInitStatus(context.Context) (*transport.InitStatusResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) ClaimCertBegin(context.Context, *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) ClaimCertComplete(context.Context, *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) ClaimShareBegin(context.Context, *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) ClaimShareComplete(context.Context, *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) SignCSRInit(context.Context, *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
 	return nil, nil
 }
 func (n *noopClient) SubmitCredential(context.Context, *transport.CredentialSubmitRequest) (*transport.CredentialSubmitResponse, error) {
@@ -1049,10 +935,6 @@ func (n *noopClient) BindUserCert(context.Context, string, string, int64) error 
 }
 
 func (n *noopClient) ListUserCredentials(context.Context, string) (*transport.ListUserCredentialsResponse, error) {
-	return nil, nil
-}
-
-func (n *noopClient) QueryAudit(context.Context, *transport.AuditFilter) (*transport.AuditPage, error) {
 	return nil, nil
 }
 

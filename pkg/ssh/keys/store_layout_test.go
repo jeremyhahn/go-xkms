@@ -41,7 +41,7 @@ func newLayoutStore(t *testing.T) (*keys.BackendStore, storage.Backend) {
 // putKey generates a software ed25519 key at (sc, owner, name) and stores it.
 func putKey(t *testing.T, store keys.Store, sc scope.Scope, owner, name string) error {
 	t.Helper()
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestBackendStore_List_FiltersByKind(t *testing.T) {
 }
 
 func TestBackendStore_Put_OwnerCheckStorageErrors(t *testing.T) {
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}

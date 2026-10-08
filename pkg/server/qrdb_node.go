@@ -27,7 +27,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/webui"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -38,15 +37,10 @@ import (
 // its single core: the node is the one database and the source of identity,
 // bootstrap, and clustering.
 //
-// There is exactly ONE barrier in the system, never two. When the barrier
-// strategy is one BarrierConfig.NodeFlipWired reports true for ("none",
-// "passphrase", "shamir", "tpm2"), the node's own seal subsystem is enabled
-// and IS that barrier — xkms adopts it (initEmbeddedQRDBNode) rather than
-// building a second one. Otherwise the node's own seal stays disabled and
-// xkms's own StorageBarrier (initializeBarrier, layered over the node's KV,
-// with xkms's hardware seal strategies built from already-initialized
-// backends) is the barrier instead. Enabling both would be exactly the
-// duplication this unification removes.
+// There is exactly ONE barrier in the system: the node's own. Whenever the
+// barrier is enabled the node's seal subsystem is enabled and IS that
+// barrier, sealed by the strategy resolveNodeSeal resolved; xkms adopts it
+// (initEmbeddedQRDBNode) and never builds a second one.
 //
 // Standalone hosting maps:
 //   - Datastore.Path   -> Raft.DataDir (local engine root)
@@ -56,12 +50,7 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 	// Storage.VolumePools) comes from the shared, Server-independent builder
 	// so this deployment's config resolves the SAME shape xkmsd init resolves
 	// from the same *config.Config -- see embedded_node.go.
-	qcfg := embeddednode.EmbeddedNodeStorageConfig(s.config, embeddednode.ResolvedNodeSeal{
-		Enabled:  s.nodeSealEnabled,
-		Strategy: s.nodeSealStrategy,
-		TPM:      s.nodeSealTPM,
-		Close:    s.nodeSealClose,
-	})
+	qcfg := embeddednode.EmbeddedNodeStorageConfig(s.config, s.nodeSeal())
 
 	// Unified API server: network serving runs exclusively on the node's
 	// own multi-protocol server, which takes xkmsd's REST/gRPC/Unix/MCP
@@ -130,9 +119,8 @@ func (s *Server) newQRDBAuditSink() (qrdbsdk.NodeAuditLogger, error) {
 // its SDK client on s.qrdbClient; the server owns both lifecycles and tears
 // them down in Shutdown via stopQRDBNode.
 //
-// The node's own seal is disabled (see buildXKMSQRDBConfig): xkms's barrier —
-// qrdb's StorageBarrier implementation with xkms hardware seal strategies — is
-// the single barrier, layered over this node's KV by initializeBarrier. The
+// The node's barrier is the single barrier (see buildXKMSQRDBConfig), sealed
+// by the injected hardware or cloud strategy when there is one. The
 // hardware auth-factor registry is initialized here and injected into the node
 // via WithFactorRegistry so the node's unified AuthFactorService can verify
 // hardware factor challenges during custodian enrollment and Shamir unseal
@@ -248,25 +236,16 @@ func (s *Server) initEmbeddedQRDBNode() error {
 		serverOpts = append(serverOpts, qrdbsdk.WithModule(mod))
 	}
 
-	// Node-barrier flip: feed the resolved seal material so the node builds and
-	// auto-unseals its own barrier (encrypting the data-plane KV), and owns the
-	// barrier registry + tenant service. Mirrors go-quicbaas's embedded-node
-	// seal wiring so both products drive the identical shared mechanism.
-	if s.nodeSealEnabled {
-		if s.nodeSealStrategy != nil {
-			nodeOpts = append(nodeOpts, qrdbnode.WithSealStrategy(s.nodeSealStrategy))
-			// The per-tenant StrategyRegistry lets a tenant barrier be sealed
-			// with the same hardware strategy the system barrier uses.
-			if hwReg, regErr := seal.NewHardwareStrategyRegistry(s.nodeSealStrategy); regErr == nil {
-				serverOpts = append(serverOpts, qrdbsdk.WithStrategyRegistry(hwReg))
-			} else {
-				s.logger.Warn("node barrier: could not build hardware strategy registry", "error", regErr)
-			}
-		}
-		// Enable per-tenant isolation on the node so it builds the volume pool +
-		// tenant service and restores dedicated-isolation tenants itself.
-		nodeOpts = append(nodeOpts, qrdbnode.WithTenantIsolation())
+	// The node's barrier is the one barrier: inject the resolved seal so the
+	// node builds and auto-unseals it (encrypting the data-plane KV) and owns
+	// the barrier registry and tenant service -- the same options
+	// embeddednode.OpenEmbeddedNode injects for every other embedder.
+	sealNodeOpts, sealServerOpts, err := embeddednode.NodeSealOptions(s.nodeSeal())
+	if err != nil {
+		return &QRDBNodeError{Stage: "node seal options", Err: err}
 	}
+	nodeOpts = append(nodeOpts, sealNodeOpts...)
+	serverOpts = append(serverOpts, sealServerOpts...)
 
 	// newQRDBNode is build-tag specific: the default (!raft) build hosts a
 	// standalone node; the -tags raft build hosts a clustered node when
@@ -290,9 +269,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	// so this runs unconditionally without a redundant IsSealed guard.
 	//
 	// What follows adopts the node's barrier + registry + tenant service as
-	// xkms's own, replacing the hand-rolled barrier subsystem
-	// (initializeBarrier / initializeBarrierRegistry / buildVolumePool skip
-	// themselves when nodeSealEnabled). serveSealedWindow only returns nil
+	// xkms's own: there is no other barrier. serveSealedWindow only returns nil
 	// once the barrier itself reports unsealed and the pending boot has
 	// completed, so a still-sealed node here means that post-unseal
 	// completion left the barrier state ambiguous — fail closed rather than
@@ -305,9 +282,9 @@ func (s *Server) initEmbeddedQRDBNode() error {
 			return &QRDBNodeError{Stage: "node barrier auto-unseal", Err: &embeddednode.NodeSealError{
 				Reason: "barrier did not auto-unseal with the supplied credentials (check the TPM PCR state)"}}
 		}
-		if inner := node.BarrierRegistry(); inner != nil {
-			s.barrier = inner.SystemBarrier()
-			s.barrierRegistry = seal.WrapBarrierRegistry(inner, s.barrier)
+		if registry := node.BarrierRegistry(); registry != nil {
+			s.barrierRegistry = registry
+			s.barrier = registry.SystemBarrier()
 		}
 		if svcNode := node.Services(); svcNode != nil {
 			s.tenantService = svcNode.Tenant
@@ -325,15 +302,6 @@ func (s *Server) initEmbeddedQRDBNode() error {
 		if err := s.waitForClusterLeader(); err != nil {
 			return err
 		}
-	}
-
-	// Publish this node's client-facing API endpoints so peers can redirect a
-	// client to it when it leads. Advertisement is not required to serve, so a
-	// failure degrades the cluster to leader hints without an API address
-	// rather than preventing startup.
-	if err := s.startClusterAdvertiser(); err != nil {
-		s.logger.Warn("cluster: failed to advertise this node's API endpoints; "+
-			"clients will not be redirected to it when it leads", "error", err)
 	}
 
 	// First-boot deliberately does NOT run here. The node and its unsealed
@@ -383,12 +351,6 @@ func (s *Server) stopQRDBNode() error {
 	node := s.qrdbNode
 	if node == nil {
 		return nil
-	}
-	// Deregister before the node closes so the registry entry goes away while
-	// the KV that holds it is still writable; peers then stop redirecting
-	// clients here immediately instead of waiting for the lease to expire.
-	if err := s.stopClusterAdvertiser(); err != nil {
-		s.logger.Warn("cluster: failed to withdraw this node's advertisement", "error", err)
 	}
 	sink := s.qrdbAuditSink
 	s.qrdbNode = nil

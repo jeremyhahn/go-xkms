@@ -1213,17 +1213,6 @@ func TestGrpcPageRequest_EdgeCases(t *testing.T) {
 
 // ===================== BarrierSeal when not initialized =====================
 
-func TestBarrierSeal_NotInitializedPath(t *testing.T) {
-	setupBarrier(t)
-	svc := newPlatformTestService()
-	ctx := context.Background()
-
-	// Barrier is not initialized, sealing should still work (idempotent seal)
-	resp, err := svc.BarrierSeal(ctx, &emptypb.Empty{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
 // ===================== Verify RSA with invalid signature =====================
 
 func TestVerify_RSA_InvalidSignature(t *testing.T) {
@@ -3059,60 +3048,6 @@ func TestUnseal_NoBackendsAvailable(t *testing.T) {
 
 // ===================== Authorization deny tests for barrier shamir methods =====================
 
-func TestAuthzDeny_BarrierShamirMethods(t *testing.T) {
-	setupBarrier(t)
-	svc := newDeniedService()
-	ctx := deniedCtx()
-
-	tests := []struct {
-		name string
-		fn   func() error
-	}{
-		{"BarrierInitializeShamir", func() error {
-			_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{Secret: "s"})
-			return err
-		}},
-		{"BarrierUnsealShare", func() error {
-			_, err := svc.BarrierUnsealShare(ctx, &pb.BarrierUnsealShareRequest{Share: "share-data"})
-			return err
-		}},
-		{"BarrierUnsealShares", func() error {
-			_, err := svc.BarrierUnsealShares(ctx, &pb.BarrierUnsealSharesRequest{})
-			return err
-		}},
-		{"BarrierRekey", func() error {
-			_, err := svc.BarrierRekey(ctx, &pb.BarrierRekeyRequest{})
-			return err
-		}},
-		{"BarrierGenerateRecoveryKeys", func() error {
-			_, err := svc.BarrierGenerateRecoveryKeys(ctx, &pb.BarrierGenerateRecoveryKeysRequest{})
-			return err
-		}},
-		{"BarrierRecoverWithKeys", func() error {
-			_, err := svc.BarrierRecoverWithKeys(ctx, &pb.BarrierRecoverWithKeysRequest{})
-			return err
-		}},
-		{"BarrierDeleteRecoveryKeys", func() error {
-			_, err := svc.BarrierDeleteRecoveryKeys(ctx, &emptypb.Empty{})
-			return err
-		}},
-		{"BarrierGenerateRootToken", func() error {
-			_, err := svc.BarrierGenerateRootToken(ctx, &pb.BarrierGenerateRootTokenRequest{})
-			return err
-		}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.fn()
-			require.Error(t, err)
-			st, ok := status.FromError(err)
-			require.True(t, ok, "expected gRPC status error for %s", tt.name)
-			assert.Equal(t, codes.PermissionDenied, st.Code(), "expected PermissionDenied for %s", tt.name)
-		})
-	}
-}
-
 // ===================== Authorization deny for barrier PIN methods =====================
 
 func TestAuthzDeny_PINMethods(t *testing.T) {
@@ -3539,23 +3474,6 @@ func TestImportKey_UnsupportedTypeWithRealBackend(t *testing.T) {
 }
 
 // ===================== BarrierStatus with InitializedAt =====================
-
-func TestBarrierStatus_WithInitializedAt(t *testing.T) {
-	setupBarrier(t)
-	svc := newPlatformTestService()
-	ctx := context.Background()
-
-	// Initialize to set InitializedAt
-	_, err := svc.BarrierInitialize(ctx, &pb.BarrierInitializeRequest{
-		Secret: "test-secret-123456",
-	})
-	require.NoError(t, err)
-
-	resp, err := svc.BarrierStatus(ctx, &emptypb.Empty{})
-	require.NoError(t, err)
-	assert.False(t, resp.Sealed)
-	// InitializedAt may be empty depending on barrier implementation
-}
 
 // ===================== DeriveKeyECDH with ECDSA key (backend supports it) =====================
 

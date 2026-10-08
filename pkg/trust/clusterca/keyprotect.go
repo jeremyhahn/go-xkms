@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -120,7 +121,7 @@ func (k *KeyProtection) Resolve(ctx context.Context) (types.Password, bool, erro
 
 	case KeyProtectPassphrase:
 		logger.Info("cluster CA keystore protected by operator passphrase")
-		pw, err := passwordFromSecret(k.Passphrase)
+		pw, err := passwordFromSecret(ctx, k.Passphrase)
 		if err != nil {
 			return nil, false, err
 		}
@@ -205,7 +206,7 @@ func (k *KeyProtection) resolveSealed(ctx context.Context) (types.Password, erro
 	if err := os.MkdirAll(k.DataDir, 0o700); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(blobPath, blob, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(blobPath, blob, 0o600); err != nil {
 		return nil, err
 	}
 	return types.NewPassword(secret)
@@ -217,11 +218,11 @@ func (k *KeyProtection) resolveSealed(ctx context.Context) (types.Password, erro
 // (KeyProtection.Passphrase never set) still resolves to a usable,
 // passwordless Password rather than an error, matching the pre-enclave
 // behaviour of NewPasswordFromString("").
-func passwordFromSecret(sec *secure.Secret) (types.Password, error) {
+func passwordFromSecret(ctx context.Context, sec *secure.Secret) (types.Password, error) {
 	if sec == nil {
 		return types.NewPassword(nil)
 	}
-	buf, err := sec.Open()
+	buf, err := sec.Open(ctx)
 	if err != nil {
 		return nil, err
 	}

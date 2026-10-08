@@ -20,12 +20,14 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func newTestService(t *testing.T) *webauthn.Service {
+	stores := webauthntest.NewStores(t)
 	svc, err := webauthn.NewService(webauthn.ServiceParams{
 		Config: &webauthn.Config{
 			RPID:                    "example.com",
@@ -33,9 +35,9 @@ func newTestService(t *testing.T) *webauthn.Service {
 			RPOrigins:               []string{"https://example.com"},
 			AllowPublicRegistration: openRegistration(),
 		},
-		UserStore:       webauthn.NewMemoryUserStore(),
+		UserStore:       stores.Users,
 		SessionStore:    webauthn.NewMemorySessionStore(),
-		CredentialStore: webauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err)
 	return svc

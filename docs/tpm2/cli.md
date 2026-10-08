@@ -10,7 +10,7 @@ feature is using it, by selecting it as the backend or strategy:
 | put a key in the TPM | `xkmsctl --backend tpm2 key generate …` | [`../key-management/cli.md`](../key-management/cli.md) |
 | attest a TPM-resident key | `xkmsctl key attest <id> --backend tpm2` | [`../key-management/cli.md`](../key-management/cli.md) |
 | seal data to platform state | `xkmsctl seal <data> --backend tpm2 --tpm-policy platform` | [`../sealing-and-barrier/cli.md`](../sealing-and-barrier/cli.md) |
-| protect the barrier with the TPM | `xkmsctl barrier init --barrier-strategy tpm2` | [`../sealing-and-barrier/cli.md`](../sealing-and-barrier/cli.md) |
+| protect the barrier with the TPM | configure the go-qrdb seal strategy `tpm2` (no `xkmsctl barrier` verb) | [`../sealing-and-barrier/architecture.md`](../sealing-and-barrier/architecture.md) |
 | manage the TPM-backed PIN | `xkmsctl pin …` | [`../pin-management/cli.md`](../pin-management/cli.md) |
 | store PIV certificates in NV | `xkmsctl piv …` (server configured `tpm2`) | [`../piv-smartcard/cli.md`](../piv-smartcard/cli.md) |
 | enroll a device by its TPM | `trusted-acme-client device enroll` | [`../acme-issuance/cli.md`](../acme-issuance/cli.md) |

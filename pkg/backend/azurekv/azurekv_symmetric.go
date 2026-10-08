@@ -214,7 +214,7 @@ func (b *Backend) initSecretsClient(ctx context.Context) error {
 		credOptions := &azidentity.ClientSecretCredentialOptions{
 			AdditionallyAllowedTenants: []string{"*"},
 		}
-		cred, credErr := b.newClientSecretCredential(credOptions)
+		cred, credErr := b.newClientSecretCredential(ctx, credOptions)
 		if credErr != nil {
 			return &errs.Wrapped{Msg: "failed to create client secret credential", Err: credErr}
 		}

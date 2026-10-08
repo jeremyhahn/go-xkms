@@ -77,12 +77,12 @@ func injectKeystorePassword(ctx context.Context, protection *KeyProtection, caCo
 	for i := range caConfig.Identity {
 		id := &caConfig.Identity[i]
 		for j := range id.Keys {
-			if id.Keys[j].Password, err = types.NewLiteralSecretValue(pwBytes); err != nil {
+			if id.Keys[j].Password, err = types.NewLiteralSecretValue(ctx, pwBytes); err != nil {
 				return err
 			}
 		}
 		if id.Keystores != nil && id.Keystores.Software != nil {
-			if id.Keystores.Software.Password, err = types.NewLiteralSecretValue(pwBytes); err != nil {
+			if id.Keystores.Software.Password, err = types.NewLiteralSecretValue(ctx, pwBytes); err != nil {
 				return err
 			}
 		}

@@ -30,7 +30,7 @@ server surface.
 | FROST threshold keys | `/api/v1/frost/*` | `frost` | FROST (list/generate/delete/verify) |
 | Audit log | `/api/v1/audit` | `audit query` | Audit (filter + cursor paging) |
 | Users | `/api/v1/users/*` | `user`, `admin` | Users |
-| Auth factors (N-factor) | `/api/v1/factors/*` | `auth factor` | Auth Factors (list/enroll/relabel/revoke per user) |
+| Auth factors (N-factor) | none — go-qrdb `UserAuthFactorService` | `auth factor` | CLI-only |
 | Tenants | `/tenants/*` | `tenant` | Tenants |
 | Custodians | `/custodian/groups/*` | `custodian` | Custodians |
 | Shares | `/shares/*` | `share` (submit/list/get/delete/status) | Shares |
@@ -38,7 +38,7 @@ server surface.
 | Platform secrets | `/platform/secrets/*` | `platform` | Platform Secrets |
 | Init / ceremony | `/init/*`, `/credentials/*` | `init`, `credential` (submit/list/strategy) | Init & Ceremony (status) |
 | Security Officer enrolment | `/init/officer/*`, `/init/enroll-external-officer` | `init officer register\|status`, `init enroll-external-officer` | CLI-only (mTLS-bound) |
-| Cluster | `/cluster/*` (mutations deny) | `cluster` | Cluster (read-only) |
+| Cluster | none — go-qrdb `AdminService` | `cluster` | Dashboard card (clustered / standalone) |
 | WebAuthn login/enroll | `/api/v1/webauthn/*` | `user register/login` (USB) | Login (browser passkey) |
 | Auth session | `/api/v1/auth/*` | `auth login` | Login / topbar logout |
 
@@ -74,7 +74,7 @@ leaves the vault.
 
 ## The audit plane is read-only everywhere
 
-`GET /api/v1/audit` (and `xkmsctl audit query`, and the Audit screen) read the
+`GET /api/v1/audit` (and the Audit screen) read the
 tamper-evident, HMAC-chained log owned by the embedded qrdb node. There is no
 write endpoint on any transport, by design: the server appends a record as a
 side effect of the operation being audited, never on a caller's request, so a
@@ -97,8 +97,9 @@ generation returns one package per participant containing that participant's
 secret share; the console masks those until explicitly revealed and discards
 them on reload.
 
-## Cluster mutations
+## Cluster and auth factors belong to go-qrdb
 
-`POST/DELETE /cluster/members` fail closed over REST by design; membership
-changes go through the Raft admin plane via `xkmsctl cluster add/remove`. The
-console shows cluster status and members read-only.
+Cluster status, membership and per-user auth factors are go-qrdb's
+`AdminService` and `UserAuthFactorService`, registered on xkmsd's gRPC server
+and Unix socket. xkms does not re-host them over REST, so the console has no
+page for them: use `xkmsctl cluster` and `xkmsctl auth factor`.

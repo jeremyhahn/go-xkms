@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"net"
@@ -38,7 +39,8 @@ import (
 	acmecommon "github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/test/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -116,9 +118,18 @@ func getTwoDifferentPorts(t *testing.T) (int, int) {
 // Ensure mockKMSService implements kms.KMSService
 var _ kms.KMSService = (*mockKMSService)(nil)
 
-// newMockQRDBService creates a qrdb.Service backed by in-memory storage for testing.
-func newMockQRDBService() qrdb.Service {
-	return qrdb.NewTestService()
+// newTestQRDB opens a standalone, memory-engine datastore -- a real
+// in-process go-qrdb node -- and returns its client. The datastore closes
+// when the test ends.
+func newTestQRDB(t testing.TB) admin.QRDBClient {
+	t.Helper()
+	cfg := &config.Config{
+		Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()},
+	}
+	ds, err := datastore.Open(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
+	return ds.Client()
 }
 
 // mockKMSService implements kms.KMSService for testing
@@ -364,14 +375,14 @@ func TestNew_SingleTenant(t *testing.T) {
 	assert.NotNil(t, tca.CA())
 	assert.NotNil(t, tca.AdminService())
 	assert.Nil(t, tca.TenantService()) // Single-tenant doesn't have TenantService
-	assert.Nil(t, tca.QRDBService())
+	assert.Nil(t, tca.QRDBClient())
 }
 
 func TestNew_MultiTenant(t *testing.T) {
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
-		WithQRDB(newMockQRDBService()),
+		WithQRDB(newTestQRDB(t)),
 		WithMultiTenant(),
 		WithConfig(validConfig()),
 	)
@@ -383,7 +394,7 @@ func TestNew_MultiTenant(t *testing.T) {
 	assert.NotNil(t, tca.CA())
 	assert.NotNil(t, tca.AdminService())
 	assert.NotNil(t, tca.TenantService()) // Multi-tenant has TenantService
-	assert.NotNil(t, tca.QRDBService())
+	assert.NotNil(t, tca.QRDBClient())
 }
 
 func TestNew_WithLogger(t *testing.T) {
@@ -532,7 +543,7 @@ func TestTrustedCA_Shutdown_WithAuthProvider(t *testing.T) {
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
-		WithQRDB(newMockQRDBService()),
+		WithQRDB(newTestQRDB(t)),
 		WithMultiTenant(),
 		WithConfig(validConfig()),
 	)
@@ -587,7 +598,7 @@ func TestErrors(t *testing.T) {
 	assert.Equal(t, "trustedca: already started", ErrAlreadyStarted.Error())
 	assert.Equal(t, "trustedca: certificate authority is required", ErrMissingCA.Error())
 	assert.Equal(t, "trustedca: storage factory is required", ErrMissingStorage.Error())
-	assert.Equal(t, "trustedca: QRDB service is required for multi-tenant mode", ErrMissingQRDB.Error())
+	assert.Equal(t, "trustedca: qrdb client is required for multi-tenant mode", ErrMissingQRDB.Error())
 }
 
 func TestVersion(t *testing.T) {
@@ -618,7 +629,7 @@ func TestTrustedCA_IsInitialized_Concurrent(t *testing.T) {
 
 func TestTrustedCA_MultipleOptions(t *testing.T) {
 	logger := slog.Default()
-	db := newMockQRDBService()
+	db := newTestQRDB(t)
 	cfg := validConfig()
 	cfg.ACME.HTTPSAddr = ":7070"
 
@@ -656,8 +667,8 @@ func TestTrustedCA_CA_ReturnsInjectedCA(t *testing.T) {
 	assert.Equal(t, mockCA, tca.CA())
 }
 
-func TestTrustedCA_QRDBService_ReturnsInjectedService(t *testing.T) {
-	db := newMockQRDBService()
+func TestTrustedCA_QRDBClient_ReturnsInjectedClient(t *testing.T) {
+	db := newTestQRDB(t)
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
@@ -668,11 +679,11 @@ func TestTrustedCA_QRDBService_ReturnsInjectedService(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify the same QRDB service is returned
-	assert.Equal(t, db, tca.QRDBService())
+	assert.Equal(t, db, tca.QRDBClient())
 }
 
 func TestWithQRDB_WithoutMultiTenant(t *testing.T) {
-	db := newMockQRDBService()
+	db := newTestQRDB(t)
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
@@ -684,7 +695,7 @@ func TestWithQRDB_WithoutMultiTenant(t *testing.T) {
 	require.NotNil(t, tca)
 
 	// QRDB is set but multi-tenant is not enabled
-	assert.NotNil(t, tca.QRDBService())
+	assert.NotNil(t, tca.QRDBClient())
 	assert.False(t, tca.IsMultiTenant())
 	// In non-multi-tenant mode, admin service is regular, not tenant-aware
 	assert.Nil(t, tca.TenantService())
@@ -743,12 +754,12 @@ func TestConfigTypes(t *testing.T) {
 // Test options individually
 func TestOptions(t *testing.T) {
 	t.Run("WithQRDB", func(t *testing.T) {
-		db := newMockQRDBService()
+		db := newTestQRDB(t)
 		tca := &TrustedCA{}
 		opt := WithQRDB(db)
 		err := opt(tca)
 		require.NoError(t, err)
-		assert.Equal(t, db, tca.qrdbService)
+		assert.Equal(t, db, tca.qrdbClient)
 	})
 
 	t.Run("WithCA", func(t *testing.T) {
@@ -912,7 +923,7 @@ func TestTrustedCA_Serve_MultiTenantWithAdmin(t *testing.T) {
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
-		WithQRDB(newMockQRDBService()),
+		WithQRDB(newTestQRDB(t)),
 		WithMultiTenant(),
 		WithConfig(cfg),
 	)
@@ -1272,12 +1283,12 @@ func TestTrustedCA_Serve_QRDBWithoutMultiTenant(t *testing.T) {
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
-		WithQRDB(newMockQRDBService()),
+		WithQRDB(newTestQRDB(t)),
 		WithConfig(cfg),
 	)
 	require.NoError(t, err)
 
-	assert.NotNil(t, tca.QRDBService())
+	assert.NotNil(t, tca.QRDBClient())
 	assert.False(t, tca.IsMultiTenant())
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1939,7 +1950,7 @@ func TestTrustedCA_Serve_MultiTenantRateLimiterMiddlewareInvoked(t *testing.T) {
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
-		WithQRDB(newMockQRDBService()),
+		WithQRDB(newTestQRDB(t)),
 		WithMultiTenant(),
 		WithTenantRateLimit(1000, time.Minute),
 		WithConfig(cfg),

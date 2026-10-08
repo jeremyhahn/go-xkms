@@ -16,59 +16,13 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// TestServiceUnavailable exercises the nil xkmsService error path for all handlers
-// that depend on the injected XKMS service.
-func TestServiceUnavailable(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	// Simulate a not-initialized service by nilling the injected field directly.
-	// xkms.Reset() no longer affects s.xkmsService since DI is now constructor-based.
-	server.xkmsService = nil
-
-	ctx := context.Background()
-	emptyParams, _ := json.Marshal(map[string]string{})
-	req := &JSONRPCRequest{JSONRPC: "2.0", Params: emptyParams, ID: 1}
-
-	handlers := []struct {
-		name string
-		fn   func(context.Context, *JSONRPCRequest) (interface{}, error)
-	}{
-		{"handleGetCABundle", server.handleGetCABundle},
-		{"handleGetCACertificate", server.handleGetCACertificate},
-		{"handleSignCSR", server.handleSignCSR},
-		{"handleIssueCertificate", server.handleIssueCertificate},
-		{"handleRevokeCertificate", server.handleRevokeCertificate},
-		{"handleGenerateCRL", server.handleGenerateCRL},
-		{"handleIsRevoked", server.handleIsRevoked},
-		{"handleIssueEKCertificate", server.handleIssueEKCertificate},
-		{"handleIssueAKCertificate", server.handleIssueAKCertificate},
-		{"handleSignTCGCSR", server.handleSignTCGCSR},
-		{"handleEnrollDevice", server.handleEnrollDevice},
-		{"handleGetInitStatus", server.handleGetInitStatus},
-		{"handleClaimCertBegin", server.handleClaimCertBegin},
-		{"handleClaimCertComplete", server.handleClaimCertComplete},
-		{"handleClaimShareBegin", server.handleClaimShareBegin},
-		{"handleClaimShareComplete", server.handleClaimShareComplete},
-	}
-
-	for _, h := range handlers {
-		t.Run(h.name, func(t *testing.T) {
-			_, err := h.fn(ctx, req)
-			assert.ErrorIs(t, err, ErrXKMSServiceUnavailable)
-		})
-	}
-}
 
 // TestPIV_InvalidParams exercises the invalid JSON error path for PIV handlers.
 func TestPIV_InvalidParams(t *testing.T) {
@@ -271,30 +225,4 @@ func TestHandlers_HandleListCerts_EmptyStore(t *testing.T) {
 	listResult, ok := result.(ListCertsResult)
 	require.True(t, ok)
 	assert.Empty(t, listResult.KeyIDs)
-}
-
-// TestInitCredentials_InvalidParams exercises invalid JSON error paths.
-func TestInitCredentials_InvalidParams(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupXKMS()
-
-	ctx := context.Background()
-	badReq := &JSONRPCRequest{JSONRPC: "2.0", Params: json.RawMessage(`{bad`), ID: 1}
-
-	handlers := []struct {
-		name string
-		fn   func(context.Context, *JSONRPCRequest) (interface{}, error)
-	}{
-		{"handleClaimCertBegin", server.handleClaimCertBegin},
-		{"handleClaimCertComplete", server.handleClaimCertComplete},
-		{"handleClaimShareBegin", server.handleClaimShareBegin},
-		{"handleClaimShareComplete", server.handleClaimShareComplete},
-	}
-
-	for _, h := range handlers {
-		t.Run(h.name, func(t *testing.T) {
-			_, err := h.fn(ctx, badReq)
-			assert.Error(t, err)
-		})
-	}
 }

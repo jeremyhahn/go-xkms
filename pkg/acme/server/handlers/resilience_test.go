@@ -16,14 +16,21 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/degradation"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -289,4 +296,48 @@ func TestHealthHandler_ReportsTargetGroupsWithoutAffectingHealthy(t *testing.T) 
 	assert.Equal(t, 1, group.Open)
 	assert.Equal(t, 1, group.Closed)
 	assert.Contains(t, group.TopOpen, "bad.example.com")
+}
+
+// TestHealthHandler_ReportsDatastoreHealthThroughSDK verifies that
+// HealthHandler reports the go-qrdb SDK readiness checks on Params.Health:
+// the datastore check on a real in-process node reports healthy (200), and
+// once the datastore closes the same check reports unhealthy (503).
+func TestHealthHandler_ReportsDatastoreHealthThroughSDK(t *testing.T) {
+	cfg := &config.Config{
+		Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()},
+	}
+	ds, err := datastore.Open(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	health := qrdbsdk.NewHealthChecker()
+	health.RegisterCheck(datastore.HealthCheckName, ds.HealthCheck)
+
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+	service.health = health
+
+	req := httptest.NewRequest(http.MethodGet, "/acme/health", nil)
+	w := httptest.NewRecorder()
+	service.HealthHandler(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var healthy HealthStatus
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &healthy))
+	assert.True(t, healthy.Healthy)
+	require.Len(t, healthy.Checks, 1)
+	assert.Equal(t, datastore.HealthCheckName, healthy.Checks[0].Name)
+	assert.Equal(t, qrdbsdk.HealthCheckStatusHealthy, healthy.Checks[0].Status)
+
+	require.NoError(t, ds.Close())
+
+	req = httptest.NewRequest(http.MethodGet, "/acme/health", nil)
+	w = httptest.NewRecorder()
+	service.HealthHandler(w, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+
+	var unhealthy HealthStatus
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &unhealthy))
+	assert.False(t, unhealthy.Healthy)
+	require.Len(t, unhealthy.Checks, 1)
+	assert.Equal(t, qrdbsdk.HealthCheckStatusUnhealthy, unhealthy.Checks[0].Status)
 }

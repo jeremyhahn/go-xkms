@@ -100,7 +100,10 @@ func (s *StaticPasswordService) RestorePasswords(filePath string, encrypted bool
 func (s *StaticPasswordService) SaveBackupFileAs() (string, error)
 func (s *StaticPasswordService) OpenBackupFileDialog() (string, error)
 
-// Import (KeePass KDBX / CSV / XML, GUI-only; xkey/pkg/pwimport)
+// Import (KeePass KDBX / CSV / XML, GUI-only; xkey/pkg/pwimport). The
+// package's Parser.Parse, Importer.Import, Importer.Preview and
+// ParsedEntry.ToStaticPassword take a context.Context as their first
+// argument, because each password is sealed into protected memory under it.
 func (s *StaticPasswordService) OpenImportFileDialog() (string, error)
 func (s *StaticPasswordService) PreviewImport(params ImportParams) (*ImportPreviewResult, error)
 func (s *StaticPasswordService) ImportPasswords(params ImportParams) (*ImportResult, error)

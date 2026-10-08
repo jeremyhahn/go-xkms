@@ -26,6 +26,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
@@ -791,7 +792,7 @@ func (s *KeyService) EncryptFile(source, backend, keyID, inputPath, outputPath, 
 	default:
 		output = []byte(ciphertextB64)
 	}
-	if err := os.WriteFile(outputPath, output, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(outputPath, output, 0600); err != nil {
 		return ErrFileWriteFailed
 	}
 	return nil
@@ -824,7 +825,7 @@ func (s *KeyService) DecryptFile(source, backend, keyID, inputPath, outputPath, 
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(outputPath, plaintext, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(outputPath, plaintext, 0600); err != nil {
 		return ErrFileWriteFailed
 	}
 	return nil
@@ -854,7 +855,7 @@ func (s *KeyService) SignFile(source, backend, keyID, algorithm, inputPath, outp
 	default:
 		output = []byte(sigB64)
 	}
-	if err := os.WriteFile(outputPath, output, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(outputPath, output, 0600); err != nil {
 		return ErrFileWriteFailed
 	}
 	return nil

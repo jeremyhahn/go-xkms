@@ -23,12 +23,23 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // ============================================================================
 // Tests — initializeAEADNonceStore / detachAEADNonceStore
 // ============================================================================
+
+// newAEADNonceTestServer returns a server over a real embedded datastore,
+// closed when the test ends.
+func newAEADNonceTestServer(t *testing.T) *Server {
+	t.Helper()
+	s := newQRDBTestServer(t)
+	s.ctx = context.Background()
+	t.Cleanup(func() { _ = s.closeQRDBStorage() })
+	return s
+}
 
 // TestInitializeAEADNonceStore_Success proves the happy path: the store is
 // built and attached to the process-wide guard, so a claim the guard's
@@ -36,10 +47,7 @@ import (
 // deferred unconditionally so this test cannot leave the shared guard
 // pointed at a backend a later test in this binary never built.
 func TestInitializeAEADNonceStore_Success(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Datastore: config.DatastoreConfig{Engine: "memory"},
-	})
-	s.qrdbStorage = storage.NewMemory()
+	s := newAEADNonceTestServer(t)
 
 	require.NoError(t, s.initializeAEADNonceStore())
 	t.Cleanup(s.detachAEADNonceStore)
@@ -61,31 +69,34 @@ func TestInitializeAEADNonceStore_Success(t *testing.T) {
 	assert.True(t, errors.Is(err, aead.ErrNonceReuse), "got %v", err)
 }
 
-// TestInitializeAEADNonceStore_StorageCreateFails proves that when
-// createStorage cannot build a view (no datastore has been opened, so there is
-// nothing to prefix; go-xkms#1345) initialization fails with a typed
-// *ErrStorageCreate and attaches nothing to the shared guard.
+// TestInitializeAEADNonceStore_StorageCreateFails proves that when the
+// datastore cannot open the aeadnonce database (here, a transport with no
+// database plane) initialization fails with a typed *ErrStorageCreate and
+// attaches nothing to the shared guard.
 func TestInitializeAEADNonceStore_StorageCreateFails(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Datastore: config.DatastoreConfig{Engine: "memory"},
-	})
+	client, _, err := testutil.NewQRDBFakeClient()
+	require.NoError(t, err)
+	ds, err := datastore.New(client, config.DatastoreConfig{})
+	require.NoError(t, err)
+	s := newMinimalServer(t, &config.Config{})
+	s.ctx = context.Background()
+	s.datastore = ds
 
-	err := s.initializeAEADNonceStore()
+	err = s.initializeAEADNonceStore()
 	require.Error(t, err)
 	assert.False(t, s.aeadNonceStoreAttached)
 
 	var storageErr *ErrStorageCreate
 	require.ErrorAs(t, err, &storageErr)
+	var scopeErr *datastore.ErrDatabaseScope
+	assert.ErrorAs(t, err, &scopeErr)
 }
 
 // TestDetachAEADNonceStore_RemovesTheAttachedStore proves detach really
 // detaches: after it runs, a pair the store held is reachable again, because
 // nothing is left consulting it.
 func TestDetachAEADNonceStore_RemovesTheAttachedStore(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Datastore: config.DatastoreConfig{Engine: "memory"},
-	})
-	s.qrdbStorage = storage.NewMemory()
+	s := newAEADNonceTestServer(t)
 	require.NoError(t, s.initializeAEADNonceStore())
 
 	guard, err := aead.SharedAEADNonceGuard()
@@ -109,10 +120,7 @@ func TestDetachAEADNonceStore_RemovesTheAttachedStore(t *testing.T) {
 // shutdown()'s any-error-path callers produce) is a no-op rather than a
 // panic or a redundant guard mutation.
 func TestDetachAEADNonceStore_IsIdempotent(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Datastore: config.DatastoreConfig{Engine: "memory"},
-	})
-	s.qrdbStorage = storage.NewMemory()
+	s := newAEADNonceTestServer(t)
 	require.NoError(t, s.initializeAEADNonceStore())
 
 	s.detachAEADNonceStore()
@@ -126,10 +134,7 @@ func TestDetachAEADNonceStore_IsIdempotent(t *testing.T) {
 // or it failed) can still call detach safely -- shutdown() calls it
 // unconditionally on every path.
 func TestDetachAEADNonceStore_NoopWhenNeverAttached(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Datastore: config.DatastoreConfig{Engine: "memory"},
-	})
-	s.qrdbStorage = storage.NewMemory()
+	s := newMinimalServer(t, &config.Config{})
 	assert.NotPanics(t, s.detachAEADNonceStore)
 	assert.False(t, s.aeadNonceStoreAttached)
 }

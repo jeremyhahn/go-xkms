@@ -156,8 +156,8 @@ The existing `startup()` method calls `StartServices(ctx)` so desktop mode is un
 - **`pkg/webauthn/service.go`** — Complete WebAuthn service with `BeginRegistration`, `FinishRegistration`, `BeginLogin`, `FinishLogin`
 - **`pkg/webauthn/http/handler.go`** — 5 HTTP handlers ready to mount (begin/finish registration, begin/finish login, status)
 - **`pkg/webauthn/http/routes.go`** — `MountStdlib(mux, prefix, handler)` for stdlib `http.ServeMux`
-- **`pkg/webauthn/memory_stores.go`** — In-memory `UserStore`, `SessionStore`, `CredentialStore` (thread-safe, with TTL)
-- **`pkg/api/rest/webauthn_stores.go`** — `NewWebAuthnStores()` convenience wrapper with cleanup routines
+- **`pkg/webauthn/qrdb_userstore.go`** — `NewQRDBUserStoreAdapter`: go-qrdb users plus the DAO-entity `CredentialStore` on an injected DAO factory
+- **`pkg/webauthn/session_store.go`** — In-memory `SessionStore` (thread-safe, with TTL; swept by `SweepSessions`)
 - **`pkg/webauthn/config.go`** — Config with RPID, origins, timeouts, user verification preference
 - **`pkg/webauthn/jwt_generator.go`** — JWT token generation on successful login
 
@@ -301,4 +301,4 @@ Phases 1, 2, 3, and 7 can be developed in parallel.
 - `pkg/webauthn/service.go` — WebAuthn ceremony service (reuse as-is for browser auth)
 - `pkg/webauthn/http/handler.go` — WebAuthn HTTP handlers (mount via `MountStdlib`)
 - `pkg/webauthn/http/routes.go` — `MountStdlib()` for stdlib mux integration
-- `pkg/api/rest/webauthn_stores.go` — `NewWebAuthnStores()` convenience wrapper (reuse as-is)
+- `pkg/webauthn/qrdb_userstore.go` — `NewQRDBUserStoreAdapter()` user and credential stores (reuse as-is)

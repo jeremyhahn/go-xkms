@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -258,8 +259,13 @@ func TestServer_InitializeAuditLogger_NoQRDBClientUsesChainedFile(t *testing.T) 
 	require.NoError(t, server.initializeAuditLogger())
 
 	require.NotNil(t, server.auditLogger)
-	_, ok := server.auditLogger.(*audit.ChainedFileLogger)
-	assert.True(t, ok, "a server with no qrdb client must audit to the local chained file")
+	assert.Same(t, server.auditLogger, server.ownedAuditLogger,
+		"a server with no qrdb client owns a local go-qrdb file logger")
+	require.NoError(t, audit.Emit(context.Background(), server.auditLogger,
+		&audit.Event{Subject: "alice", Action: "seal"}))
+	page, err := server.auditLogger.Query(context.Background(), qrdbsdk.NodeAuditFilter{Actor: "alice"})
+	require.NoError(t, err)
+	assert.Len(t, page.Events, 1)
 }
 
 // TestServer_InitializeAuditLogger_EnabledMissingPathNoLongerErrors verifies
@@ -282,51 +288,6 @@ func TestServer_InitializeAuditLogger_EnabledMissingPathNoLongerErrors(t *testin
 	defer func() { _ = server.Shutdown() }()
 
 	assert.NotNil(t, server.auditLogger)
-}
-
-// ============================================================================
-// Tests — initializeBarrier
-// ============================================================================
-
-func TestServer_InitializeBarrier_Enabled(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Barrier.Enabled = true
-	// "pkcs11" is not NodeFlipWired, so this deployment keeps xkms's own
-	// (non-node) barrier -- initializeBarrier, the function this test
-	// exercises -- instead of adopting the qrdb node's barrier, which would
-	// skip initializeBarrier entirely and block boot on an operator unseal
-	// for the flip-wired default ("passphrase").
-	cfg.Barrier.Strategy = "pkcs11"
-	cfg.Barrier.RootKeyPath = "barrier/root-key"
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	assert.NotNil(t, server.Barrier())
-	assert.NotNil(t, server.BarrierRegistry())
-}
-
-func TestServer_InitializeBarrier_WithPreferenceOrder(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Barrier.Enabled = true
-	// See TestServer_InitializeBarrier_Enabled: keeps xkms's own barrier
-	// (PreferenceOrder-driven) instead of the node-flip.
-	cfg.Barrier.Strategy = "pkcs11"
-	cfg.Barrier.RootKeyPath = ""
-	cfg.Barrier.PreferenceOrder = []string{"software"}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	assert.NotNil(t, server.Barrier())
 }
 
 // ============================================================================

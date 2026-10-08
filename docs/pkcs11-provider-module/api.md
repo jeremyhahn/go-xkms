@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — API
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 Transport shapes for the rest of the repo:
 [`../key-management/api.md`](../key-management/api.md).
@@ -63,6 +63,7 @@ way:
 | `token` empty | 400 | `InvalidArgument` | `ErrPKCS11StateTokenRequired` |
 | `token` contains `/` | 400 | `InvalidArgument` | `ErrPKCS11StateTokenSeparator` |
 | state store not enabled | 500 | `Internal` | `ErrPKCS11StateStoreUnavailable` |
+| state store failure | 500 | `Internal` | `*pkcs11state.StoreError`; its cause is logged, never returned |
 
 The mapping is `xkms.IsPKCS11StateRequestError`
 (`pkg/xkms/servicer_pkcs11state.go:53`), consulted by
@@ -105,8 +106,8 @@ is empty (`ErrPKCS11StateTokenRequired`), contains `/`
 (`ErrPKCS11StateTokenDotSegment`); when the key or list prefix has a `.` or `..`
 segment, an empty interior segment or a leading `/` (`ErrPKCS11StateKeyPath`);
 or when a supplied `tenant_id` is not the caller's
-(`ErrPKCS11StateTenantMismatch`). A system-scope caller's records live under
-`pkcs11state/system/<token>/`.
+(`ErrPKCS11StateTenantMismatch`). A system-scope caller's records are named
+`system/<token>/<key>` in the `pkcs11state` database.
 
 The sign server serves a subset of these RPCs on its socket; see
 [`../sign-server/api.md`](../sign-server/api.md). Key provisioning

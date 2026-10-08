@@ -163,7 +163,7 @@ func (s *BackendStore) Put(ctx context.Context, key *Key) error {
 	// the encrypted-at-rest form the backend chooses (plain on-disk JSON if
 	// backed by memory; wrapped if backed by an envelope-encrypting store).
 	// We do not wrap here — that lives one level up in the service wiring.
-	buf, err := key.Material.Open()
+	buf, err := key.Material.Open(ctx)
 	if err != nil {
 		return &KeyMaterialError{Op: "open secret for put", Err: err}
 	}
@@ -195,7 +195,7 @@ func (s *BackendStore) Get(ctx context.Context, sc scope.Scope, owner, name stri
 	if err != nil {
 		return nil, err
 	}
-	return envelopeToKey(env)
+	return envelopeToKey(ctx, env)
 }
 
 // Delete removes the key from the backend. A tenant-scoped key is read
@@ -322,7 +322,7 @@ func notFound(sc scope.Scope, owner, name string) error {
 
 // envelopeToKey decodes an envelope and reconstructs the full *Key,
 // including sealing the PEM into a new Secret.
-func envelopeToKey(env *storedEnvelope) (*Key, error) {
+func envelopeToKey(ctx context.Context, env *storedEnvelope) (*Key, error) {
 	defer env.wipe()
 	sc, err := scope.Parse(env.Scope)
 	if err != nil {
@@ -357,7 +357,7 @@ func envelopeToKey(env *storedEnvelope) (*Key, error) {
 	}
 	// NewSecret takes ownership of the envelope's PEM bytes and wipes them
 	// on every path, so the envelope holds no plaintext afterwards.
-	material, merr := secure.NewSecret(env.MaterialPEM)
+	material, merr := secure.NewSecret(ctx, env.MaterialPEM)
 	env.MaterialPEM = nil
 	if merr != nil {
 		return nil, &KeyMaterialError{Op: "seal envelope pem", Err: merr}

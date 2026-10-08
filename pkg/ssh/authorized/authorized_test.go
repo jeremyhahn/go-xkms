@@ -31,7 +31,7 @@ import (
 // requested algorithm. Tests close the key via defer.
 func generateKey(t *testing.T, algo keys.Algorithm) *keys.Key {
 	t.Helper()
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: algo, Comment: "test@host"})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: algo, Comment: "test@host"})
 	if err != nil {
 		t.Fatalf("generate %s: %v", algo, err)
 	}
@@ -55,7 +55,7 @@ func TestEmitParseRoundtrip_Algorithms(t *testing.T) {
 			var k *keys.Key
 			if tc.algo == keys.AlgorithmRSA {
 				var err error
-				k, err = keys.Generate(keys.GenerateOptions{
+				k, err = keys.Generate(t.Context(), keys.GenerateOptions{
 					Algorithm: keys.AlgorithmRSA,
 					RSABits:   2048,
 					Comment:   "test@host",

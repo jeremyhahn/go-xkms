@@ -59,6 +59,10 @@ import (
 // operation exists to close, and a plausible-looking deleted=true would be a
 // lie about a guard that never ran.
 func (b *Backend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	ctx, err := b.callContext(ctx)
+	if err != nil {
+		return false, &BackendError{Op: "compare-and-delete", Key: key, Err: err}
+	}
 	// A client can implement GuardedKVClient and still be unable to perform the
 	// operation: the capability is a property of the TRANSPORT, while executing
 	// it is a property of the server's state machine. The embedded transport is

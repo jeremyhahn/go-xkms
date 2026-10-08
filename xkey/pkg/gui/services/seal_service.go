@@ -33,6 +33,7 @@ import (
 	"golang.org/x/crypto/argon2"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -1103,7 +1104,7 @@ func (s *SealService) saveBlob(blob *sealedBlobStorage) error {
 	}
 
 	path := s.blobPath(blob.ID)
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(path, data, 0600); err != nil {
 		return ErrSealStorageFailed
 	}
 

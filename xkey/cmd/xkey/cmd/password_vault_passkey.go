@@ -201,7 +201,7 @@ func resolveVaultPasskeyPIN(cmd *cobra.Command) (*secure.Secret, error) {
 		return nil, ErrPasswordPasskeyPINRequired
 	}
 	defer enclave.Wipe(pin)
-	secret, err := secure.NewSecret(pin)
+	secret, err := secure.NewSecret(cmd.Context(), pin)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrWebAuthnPINSealFailed, Cause: err}
 	}

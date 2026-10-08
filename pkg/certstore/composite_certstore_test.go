@@ -25,58 +25,94 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // ========================================================================
 // Additional Edge Case Tests for 90%+ Coverage
 // ========================================================================
 
-// mockFailingCertStorage simulates storage failures
-type mockFailingCertStorage struct {
-	*mockCertStorage
-	failSave  bool
-	failClose bool
+// errStoreDown is the failure failingStore reports.
+var errStoreDown = errors.New("store down")
+
+// failingStore is a go-qrdb store whose reads and writes fail.
+type failingStore struct{ qrdbsdk.KVStore }
+
+func (failingStore) Put(context.Context, string, []byte) error { return errStoreDown }
+
+func (failingStore) Get(context.Context, string) ([]byte, error) { return nil, errStoreDown }
+
+func (failingStore) Delete(context.Context, string) error { return errStoreDown }
+
+func (failingStore) Scan(context.Context, string, func(string, []byte) error) error {
+	return errStoreDown
 }
 
-func (m *mockFailingCertStorage) SaveCert(ctx context.Context, id string, cert *x509.Certificate) error {
-	if m.failSave {
-		return errors.New("simulated save failure")
-	}
-	return m.mockCertStorage.SaveCert(ctx, id, cert)
-}
+func (failingStore) List(context.Context, string) ([]string, error) { return nil, errStoreDown }
 
-func (m *mockFailingCertStorage) Close() error {
-	if m.failClose {
-		return errors.New("simulated close failure")
-	}
-	return m.mockCertStorage.Close()
-}
+func (failingStore) Exists(context.Context, string) (bool, error) { return false, errStoreDown }
 
-// TestStoreCertificate_SaveError tests error handling when underlying storage fails
-func TestStoreCertificate_SaveError(t *testing.T) {
-	storage := &mockFailingCertStorage{
-		mockCertStorage: newMockCertStorage(),
-		failSave:        true,
-	}
-	cs, err := New(&Config{CertStorage: storage})
+// TestStore_ReportsStoreFailures proves a failure of the store behind the
+// DAOs is a *StoreError naming the operation, never a not-found.
+func TestStore_ReportsStoreFailures(t *testing.T) {
+	cs, err := New(&Config{DAOs: dao.NewStoreFactory(failingStore{qrdbsdk.NewMemoryKVStore()})})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
+	tests := map[string]struct {
+		op  string
+		run func() error
+	}{
+		"store":     {"put", func() error { return cs.StoreCertificate(cert) }},
+		"get":       {"get", func() error { _, err := cs.GetCertificate("test.example.com"); return err }},
+		"delete":    {"get", func() error { return cs.DeleteCertificate("test.example.com") }},
+		"list":      {"list", func() error { _, err := cs.ListCertificates(); return err }},
+		"chain":     {"put", func() error { return cs.StoreCertificateChain([]*x509.Certificate{cert}) }},
+		"get chain": {"get", func() error { _, err := cs.GetCertificateChain("test.example.com"); return err }},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			err := tt.run()
+			var storeErr *StoreError
+			require.ErrorAs(t, err, &storeErr)
+			assert.Equal(t, tt.op, storeErr.Op)
+			assert.False(t, errors.Is(err, ErrCertNotFound))
+		})
+	}
+}
 
-	err = cs.StoreCertificate(cert)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to store certificate")
+// TestClose_LeavesFactoryOpen proves Close ends only this store: the
+// factory belongs to the composition root, and a new store over it still
+// finds what the closed one stored.
+func TestClose_LeavesFactoryOpen(t *testing.T) {
+	daos := testutil.NewMemoryDAOFactory()
+	cs, err := New(&Config{DAOs: daos})
+	require.NoError(t, err)
+	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
+	require.NoError(t, cs.StoreCertificate(cert))
+	require.NoError(t, cs.Close())
+
+	_, err = cs.GetCertificate("test.example.com")
+	assert.ErrorIs(t, err, ErrStorageClosed)
+
+	reopened, err := New(&Config{DAOs: daos})
+	require.NoError(t, err)
+	got, err := reopened.GetCertificate("test.example.com")
+	require.NoError(t, err)
+	assert.Equal(t, cert.Raw, got.Raw)
 }
 
 // TestStoreCRL_EmptyIssuer tests StoreCRL error path for invalid issuer
 // Note: This test creates a mock CRL directly to bypass x509.CreateRevocationList
 // which automatically fills in the Issuer field from the signing certificate
 func TestStoreCRL_EmptyIssuer(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -96,8 +132,7 @@ func TestStoreCRL_EmptyIssuer(t *testing.T) {
 // TestIsRevoked_LegacyRevokedCertificates tests CRL support for Go <1.21
 // (RevokedCertificates field, replaced by RevokedCertificateEntries in Go 1.21+)
 func TestIsRevoked_LegacyRevokedCertificates(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -132,70 +167,13 @@ func TestIsRevoked_LegacyRevokedCertificates(t *testing.T) {
 	assert.True(t, revoked)
 }
 
-// TestListCertificates_GetCertError tests ListCertificates when GetCert fails
-func TestListCertificates_GetCertError(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
-	require.NoError(t, err)
-	defer func() { _ = cs.Close() }()
-
-	cert1, _ := generateTestCert(t, "test1.example.com", false, nil, nil)
-	cert2, _ := generateTestCert(t, "test2.example.com", false, nil, nil)
-
-	err = cs.StoreCertificate(cert1)
-	require.NoError(t, err)
-	err = cs.StoreCertificate(cert2)
-	require.NoError(t, err)
-
-	// Corrupt one certificate in storage
-	storage.certs["test1.example.com"] = nil
-
-	// ListCertificates should skip the corrupted cert
-	certs, err := cs.ListCertificates()
-	assert.NoError(t, err)
-	// Should only return test2 since test1 is nil
-	assert.Len(t, certs, 1)
-	if len(certs) == 1 {
-		assert.Equal(t, "test2.example.com", certs[0].Subject.CommonName)
-	}
-}
-
-// TestListCertificates_ListError tests error from storage.ListCerts
-func TestListCertificates_ListError(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
-	require.NoError(t, err)
-
-	// Close storage to cause error
-	_ = storage.Close()
-
-	_, err = cs.ListCertificates()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to list certificates")
-}
-
-// TestClose_StorageError tests error handling when storage.Close fails
-func TestClose_StorageError(t *testing.T) {
-	storage := &mockFailingCertStorage{
-		mockCertStorage: newMockCertStorage(),
-		failClose:       true,
-	}
-	cs, err := New(&Config{CertStorage: storage})
-	require.NoError(t, err)
-
-	err = cs.Close()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to close storage")
-}
-
 // TestVerifyCertificate_WithDNSName tests verification with DNSName option
 func TestVerifyCertificate_WithDNSName(t *testing.T) {
-	storage := newMockCertStorage()
 	verifyOpts := &x509.VerifyOptions{
 		DNSName: "test.example.com",
 	}
 	cs, err := New(&Config{
-		CertStorage:   storage,
+		DAOs:          testutil.NewMemoryDAOFactory(),
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
@@ -216,8 +194,7 @@ func TestVerifyCertificate_WithDNSName(t *testing.T) {
 
 // TestConcurrentCRLOperations tests concurrent CRL access
 func TestConcurrentCRLOperations(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -267,8 +244,7 @@ func TestConcurrentCRLOperations(t *testing.T) {
 
 // TestConcurrentChainOperations tests concurrent chain access
 func TestConcurrentChainOperations(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -296,7 +272,6 @@ func TestConcurrentChainOperations(t *testing.T) {
 
 // TestNew_WithCustomVerifyOptions tests initialization with custom verify options
 func TestNew_WithCustomVerifyOptions(t *testing.T) {
-	storage := newMockCertStorage()
 
 	intermediates := x509.NewCertPool()
 	verifyOpts := &x509.VerifyOptions{
@@ -307,7 +282,7 @@ func TestNew_WithCustomVerifyOptions(t *testing.T) {
 	}
 
 	cs, err := New(&Config{
-		CertStorage:   storage,
+		DAOs:          testutil.NewMemoryDAOFactory(),
 		VerifyOptions: verifyOpts,
 		AllowRevoked:  true,
 	})
@@ -320,8 +295,7 @@ func TestNew_WithCustomVerifyOptions(t *testing.T) {
 
 // TestStoreCertificateChain_NilCertAtIndex tests chain with nil cert at specific index
 func TestStoreCertificateChain_NilCertAtIndex(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -338,8 +312,7 @@ func TestStoreCertificateChain_NilCertAtIndex(t *testing.T) {
 
 // TestGetCertificate_AfterDelete tests GetCertificate after deletion
 func TestGetCertificate_AfterDelete(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -363,8 +336,7 @@ func TestGetCertificate_AfterDelete(t *testing.T) {
 
 // TestConcurrentReadWrite tests concurrent reads and writes
 func TestConcurrentReadWrite(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -414,7 +386,6 @@ func TestConcurrentReadWrite(t *testing.T) {
 
 // TestVerifyCertificate_AllOptions tests verification with all options set
 func TestVerifyCertificate_AllOptions(t *testing.T) {
-	storage := newMockCertStorage()
 
 	// Create a certificate chain
 	rootCert, rootKey := generateTestCert(t, "root.example.com", true, nil, nil)
@@ -429,7 +400,7 @@ func TestVerifyCertificate_AllOptions(t *testing.T) {
 	}
 
 	cs, err := New(&Config{
-		CertStorage:   storage,
+		DAOs:          testutil.NewMemoryDAOFactory(),
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
@@ -446,8 +417,7 @@ func TestVerifyCertificate_AllOptions(t *testing.T) {
 
 // TestMultipleCRLsForDifferentIssuers tests storing and retrieving multiple CRLs
 func TestMultipleCRLsForDifferentIssuers(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -500,9 +470,8 @@ func TestStoreCertificate_CheckRevocationFailure(t *testing.T) {
 	// This test verifies the error path when isRevokedLocked returns an error
 	// In the current implementation, isRevokedLocked only returns errors for invalid certs,
 	// but we test the error handling path
-	storage := newMockCertStorage()
 	cs, err := New(&Config{
-		CertStorage:  storage,
+		DAOs:         testutil.NewMemoryDAOFactory(),
 		AllowRevoked: false,
 	})
 	require.NoError(t, err)
@@ -517,9 +486,8 @@ func TestStoreCertificate_CheckRevocationFailure(t *testing.T) {
 
 // TestNew_DefaultVerifyOptions tests that default verify options are created
 func TestNew_DefaultVerifyOptions(t *testing.T) {
-	storage := newMockCertStorage()
 	cs, err := New(&Config{
-		CertStorage: storage,
+		DAOs: testutil.NewMemoryDAOFactory(),
 		// VerifyOptions intentionally nil to test defaults
 	})
 	require.NoError(t, err)
@@ -530,8 +498,7 @@ func TestNew_DefaultVerifyOptions(t *testing.T) {
 
 // TestIsRevoked_CertWithRevokedCertificateEntries tests the new RevokedCertificateEntries field
 func TestIsRevoked_CertWithRevokedCertificateEntries(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 
@@ -570,8 +537,7 @@ func TestIsRevoked_CertWithRevokedCertificateEntries(t *testing.T) {
 
 // TestClose_ClearsCache tests that Close clears the CRL cache
 func TestClose_ClearsCache(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
@@ -608,8 +574,7 @@ func TestClose_ClearsCache(t *testing.T) {
 
 // TestStressTest performs a stress test with many concurrent operations
 func TestStressTest(t *testing.T) {
-	storage := newMockCertStorage()
-	cs, err := New(&Config{CertStorage: storage})
+	cs, err := New(&Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
 

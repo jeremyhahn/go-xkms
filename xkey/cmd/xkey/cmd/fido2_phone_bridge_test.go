@@ -122,18 +122,6 @@ func (b *baseSDKClient) Algorithms(ctx context.Context) (*transport.AlgorithmsRe
 	return nil, errNotImplemented
 }
 
-func (b *baseSDKClient) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
-	return nil, errNotImplemented
-}
-
 func (b *baseSDKClient) GetBackend(ctx context.Context, backendID string) (*transport.BackendInfo, error) {
 	return nil, errNotImplemented
 }
@@ -418,63 +406,7 @@ func (b *baseSDKClient) GeneratePIVCSR(ctx context.Context, req *transport.Gener
 
 // Barrier operations
 
-func (b *baseSDKClient) BarrierInitialize(ctx context.Context, req *transport.BarrierInitializeRequest) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierUnseal(ctx context.Context, req *transport.BarrierUnsealRequest) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierSeal(ctx context.Context) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
-	return nil, errNotImplemented
-}
-
 func (b *baseSDKClient) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierRekey(_ context.Context, _ *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierEnableEncryption(_ context.Context, _ *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierGenerateRecoveryKeys(_ context.Context, _ *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierRecoverWithKeys(_ context.Context, _ *transport.BarrierRecoverWithKeysRequest) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierDeleteRecoveryKeys(_ context.Context) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierHasRecoveryKeys(_ context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierGenerateRootToken(_ context.Context, _ *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
 	return nil, errNotImplemented
 }
 
@@ -618,73 +550,9 @@ func (b *baseSDKClient) RevokeEscrow(_ context.Context, _ string) error {
 
 // Backup operations (go-xkms#728)
 
-func (b *baseSDKClient) CreateBackup(_ context.Context, _ *transport.BackupRequest) (*transport.BackupInfo, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) ListBackups(_ context.Context) ([]transport.BackupInfo, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) GetBackup(_ context.Context, _ string) (*transport.BackupInfo, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) DeleteBackup(_ context.Context, _ string) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) RestoreBackup(_ context.Context, _ *transport.RestoreRequest) (*transport.RestoreResult, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) VerifyBackup(_ context.Context, _ string) (*transport.VerifyResult, error) {
-	return nil, errNotImplemented
-}
-
 // Policy operations
 
-func (b *baseSDKClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) GetCustodianGroup(_ context.Context, _ string) (*transport.GetCustodianGroupResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) ListCustodianGroups(_ context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) DeleteCustodianGroup(_ context.Context, _ string) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) AddCustodianMember(_ context.Context, _ *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) RemoveCustodianMember(_ context.Context, _ *transport.RemoveCustodianMemberRequest) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) DistributeShares(_ context.Context, _ *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	return nil, errNotImplemented
-}
-
 // Share operations
-
-func (b *baseSDKClient) SubmitShare(_ context.Context, _ *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) ListShares(_ context.Context) (*transport.ListSharesResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) GetShareCollectionStatus(_ context.Context, _ string) (*transport.ShareCollectionStatus, error) {
-	return nil, errNotImplemented
-}
 
 // Tenant operations
 
@@ -704,18 +572,6 @@ func (b *baseSDKClient) DeleteTenant(_ context.Context, _ string) error {
 	return errNotImplemented
 }
 
-func (b *baseSDKClient) TenantBarrierInit(_ context.Context, _ *transport.TenantBarrierInitRequest) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) TenantBarrierUnseal(_ context.Context, _ *transport.TenantBarrierUnsealRequest) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
-	return nil, errNotImplemented
-}
-
 func (b *baseSDKClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
 	return nil, errNotImplemented
 }
@@ -725,30 +581,6 @@ func (b *baseSDKClient) UpdateTenantQuotas(_ context.Context, _ *transport.Updat
 }
 
 // Init ceremony operations
-
-func (b *baseSDKClient) GetInitStatus(_ context.Context) (*transport.InitStatusResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) ClaimCertBegin(_ context.Context, _ *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) ClaimCertComplete(_ context.Context, _ *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) ClaimShareBegin(_ context.Context, _ *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) ClaimShareComplete(_ context.Context, _ *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) SignCSRInit(_ context.Context, _ *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
-	return nil, errNotImplemented
-}
 
 // Credential management operations
 

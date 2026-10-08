@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -61,7 +60,7 @@ type Service struct {
 	creds       CredentialStore
 	jwtGen      JWTGenerator // optional
 	logger      *slog.Logger
-	auditLogger audit.Logger // optional
+	auditLogger qrdbsdk.NodeAuditLogger // optional
 	configured  bool
 
 	// decoyKey keys the decoy login ceremonies (decoy.go). It is drawn
@@ -94,7 +93,7 @@ type ServiceParams struct {
 	// AuditLogger receives the service's security audit events (a login
 	// with a possibly cloned credential, see CloneWarningAuditAction). Nil
 	// records none; the warning is still logged through Logger.
-	AuditLogger audit.Logger
+	AuditLogger qrdbsdk.NodeAuditLogger
 }
 
 // NewService creates a new WebAuthn service with the provided dependencies.

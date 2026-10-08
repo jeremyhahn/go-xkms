@@ -61,7 +61,7 @@ func newTestBarrier(t *testing.T) *seal.Barrier {
 		seal.NewSoftwareStrategy(),
 	)
 	require.NoError(t, err)
-	creds, err := seal.CredentialsFor([]byte("test-system-pw"))
+	creds, err := seal.CredentialsFor(t.Context(), []byte("test-system-pw"))
 	require.NoError(t, err)
 	defer creds.Secret.Destroy()
 	err = barrier.Initialize(context.Background(), creds)
@@ -82,9 +82,9 @@ func newTestRegistry(t *testing.T) *seal.BarrierRegistry {
 // and returns the BarrierRegistry. The tenant barrier is unsealed.
 func registerAndInitTenant(t *testing.T, reg *seal.BarrierRegistry, tenantID string) {
 	t.Helper()
-	_, err := reg.RegisterTenant(tenantID)
+	_, err := reg.RegisterTenantDefault(tenantID)
 	require.NoError(t, err)
-	creds, err := seal.CredentialsFor([]byte("pw-" + tenantID))
+	creds, err := seal.CredentialsFor(t.Context(), []byte("pw-"+tenantID))
 	require.NoError(t, err)
 	defer creds.Secret.Destroy()
 	err = reg.InitializeTenant(context.Background(), tenantID, creds)
@@ -174,7 +174,7 @@ func pass(t *testing.T, userID string) VaultCredential {
 // testSecret seals b into a *secure.Secret for a test fixture.
 func testSecret(t *testing.T, b []byte) *secure.Secret {
 	t.Helper()
-	secret, err := secure.NewSecret(b)
+	secret, err := secure.NewSecret(t.Context(), b)
 	require.NoError(t, err)
 	return secret
 }
@@ -367,7 +367,7 @@ func TestUserSessions_SealingEndsThem(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, locked)
 
-	creds, err := seal.CredentialsFor([]byte("pw-tenant-a"))
+	creds, err := seal.CredentialsFor(t.Context(), []byte("pw-tenant-a"))
 	require.NoError(t, err)
 	defer creds.Secret.Destroy()
 	require.NoError(t, reg.UnsealTenant(context.Background(), "tenant-a", creds))

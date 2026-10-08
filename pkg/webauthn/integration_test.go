@@ -68,11 +68,12 @@ func TestIntegration_FullRegistrationFlow(t *testing.T) {
 		AllowPublicRegistration: openRegistration(),
 	}
 
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 
@@ -125,9 +126,9 @@ func TestIntegration_FullRegistrationFlow(t *testing.T) {
 	assert.Equal(t, "Test User", user.DisplayName())
 
 	// Verify credential was stored
-	creds, err := svc.GetCredentials(ctx, user.WebAuthnID())
+	stored, err := svc.GetCredentials(ctx, user.WebAuthnID())
 	require.NoError(t, err)
-	assert.Len(t, creds, 1)
+	assert.Len(t, stored, 1)
 
 	// Verify user is now registered
 	registered, err := svc.IsRegistered(ctx, user.WebAuthnID())
@@ -148,11 +149,12 @@ func TestIntegration_FullLoginFlow(t *testing.T) {
 		AllowPublicRegistration: openRegistration(),
 	}
 
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 
@@ -239,11 +241,12 @@ func TestIntegration_DiscoverableCredentialFlow(t *testing.T) {
 		ResidentKeyRequirement:  "preferred",
 	}
 
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 
@@ -313,11 +316,12 @@ func TestIntegration_MultipleCredentials(t *testing.T) {
 		AllowPublicRegistration: openRegistration(),
 	}
 
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 
@@ -371,9 +375,9 @@ func TestIntegration_MultipleCredentials(t *testing.T) {
 	authenticator2.AddCredential(credential2)
 
 	// Verify user has two credentials
-	creds, err := svc.GetCredentials(ctx, user.WebAuthnID())
+	stored, err := svc.GetCredentials(ctx, user.WebAuthnID())
 	require.NoError(t, err)
-	assert.Len(t, creds, 2)
+	assert.Len(t, stored, 2)
 
 	// Login with first authenticator
 	loginOptions, loginSessionID, err := svc.BeginLogin(ctx, user.WebAuthnID())
@@ -414,11 +418,12 @@ func TestIntegration_SignCountValidation(t *testing.T) {
 		AllowPublicRegistration: openRegistration(),
 	}
 
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 
@@ -443,8 +448,8 @@ func TestIntegration_SignCountValidation(t *testing.T) {
 	authenticator.AddCredential(credential)
 
 	// Get initial sign count (should be 0 after registration)
-	creds, _ := svc.GetCredentials(ctx, user.WebAuthnID())
-	initialSignCount := creds[0].Authenticator.SignCount
+	stored, _ := svc.GetCredentials(ctx, user.WebAuthnID())
+	initialSignCount := stored[0].Authenticator.SignCount
 	assert.Equal(t, uint32(0), initialSignCount, "Initial sign count should be 0")
 
 	// Login multiple times - the virtual authenticator increments Counter on each CreateAssertionResponse
@@ -464,8 +469,8 @@ func TestIntegration_SignCountValidation(t *testing.T) {
 	}
 
 	// Verify sign count increased to match our logins
-	creds, _ = svc.GetCredentials(ctx, user.WebAuthnID())
-	finalSignCount := creds[0].Authenticator.SignCount
+	stored, _ = svc.GetCredentials(ctx, user.WebAuthnID())
+	finalSignCount := stored[0].Authenticator.SignCount
 	assert.Equal(t, uint32(numLogins), finalSignCount, "Sign count should match number of logins")
 }
 
@@ -483,11 +488,12 @@ func TestIntegration_WithJWTGenerator(t *testing.T) {
 	// Custom JWT generator
 	jwtGen := &testJWTGenerator{prefix: "test-jwt-"}
 
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 		JWTGenerator:    jwtGen,
 	})
 	require.NoError(t, err)
@@ -555,11 +561,12 @@ func TestIntegration_UserIdentifiedLogin_PopulatesAllowCredentials(t *testing.T)
 		RPOrigins:               []string{"https://example.com"},
 		AllowPublicRegistration: openRegistration(),
 	}
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 

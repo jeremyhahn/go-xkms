@@ -19,6 +19,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // Deployer writes issued certificates and private keys to filesystem paths
@@ -82,13 +84,13 @@ func (d *Deployer) Deploy(ctx context.Context, certPEM []byte, keyPEM []byte, cf
 	}
 
 	// Write certificate PEM (public data, world-readable)
-	if err := os.WriteFile(cfg.CertPath, certPEM, 0644); err != nil { // #nosec G306 - certificate PEM is public data, world-readable
+	if err := fsutil.WriteFileAtomic(cfg.CertPath, certPEM, 0644); err != nil { // #nosec G306 - certificate PEM is public data, world-readable
 		return ErrDeployFailed{CertName: cfg.CertPath, Err: err}
 	}
 	d.logger.Info("certificate deployed", slog.String("path", cfg.CertPath))
 
 	// Write private key PEM (restricted permissions)
-	if err := os.WriteFile(cfg.KeyPath, keyPEM, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(cfg.KeyPath, keyPEM, 0600); err != nil {
 		return ErrDeployFailed{CertName: cfg.KeyPath, Err: err}
 	}
 	d.logger.Info("private key deployed", slog.String("path", cfg.KeyPath))

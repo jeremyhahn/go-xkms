@@ -397,41 +397,6 @@ func TestDoRawRequest_ServerErrorStatus(t *testing.T) {
 
 // --- REST-method error paths (HTTP server returns 500) ---
 
-func TestGetInitStatus_HTTPError(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.GetInitStatus(context.Background())
-	require.Error(t, err)
-}
-
-func TestClaimCertBegin_HTTPError(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.ClaimCertBegin(context.Background(), &transport.ClaimCertBeginRequest{})
-	require.Error(t, err)
-}
-
-func TestClaimCertComplete_HTTPError(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.ClaimCertComplete(context.Background(), &transport.ClaimCertCompleteRequest{})
-	require.Error(t, err)
-}
-
-func TestClaimShareBegin_HTTPError(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
-	require.Error(t, err)
-}
-
-func TestSignCSRInit_HTTPError(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.SignCSRInit(context.Background(), &transport.SignCSRInitRequest{})
-	require.Error(t, err)
-}
-
 func TestSubmitCredential_HTTPError(t *testing.T) {
 	tr, cleanup := newErrTransport(t)
 	defer cleanup()

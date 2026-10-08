@@ -72,6 +72,15 @@ var (
 	// is the only store BuildWebAuthnService knows how to wire.
 	ErrWebAuthnQRDBClientRequired = errors.New("rest: webauthn service requires a non-nil qrdb client")
 
+	// ErrWebAuthnDAOFactoryRequired is returned by BuildWebAuthnService when
+	// WebAuthnServiceParams carries a nil DAOFactory: credentials are DAO
+	// entities, so there is nowhere to persist a passkey without one.
+	ErrWebAuthnDAOFactoryRequired = errors.New("rest: webauthn service requires a non-nil DAO factory")
+
+	// ErrWebAuthnServiceRequired is returned by NewServer when WebAuthnConfig
+	// is set without the pre-built WebAuthnService the composition root owns.
+	ErrWebAuthnServiceRequired = errors.New("rest: webauthn config requires a pre-built webauthn service")
+
 	// ErrWebAuthnCredentialStoreDecoratorNil is returned by
 	// BuildWebAuthnService when a configured
 	// WebAuthnServiceParams.CredentialStoreDecorator returns nil. A nil

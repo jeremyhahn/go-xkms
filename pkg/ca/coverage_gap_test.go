@@ -69,7 +69,7 @@ func TestPrivateKey_Success(t *testing.T) {
 	ca := setupTestCA(t)
 	rootIdentity := ca.config.RootIdentity()
 	require.NotNil(t, rootIdentity)
-	attrs, err := ca.getCAKeyAttributes(rootIdentity)
+	attrs, err := ca.getCAKeyAttributes(t.Context(), rootIdentity)
 	require.NoError(t, err)
 	key, err := ca.PrivateKey(context.Background(), attrs)
 	require.NoError(t, err)
@@ -90,7 +90,7 @@ func TestPubKey_Success(t *testing.T) {
 	ca := setupTestCA(t)
 	rootIdentity := ca.config.RootIdentity()
 	require.NotNil(t, rootIdentity)
-	attrs, err := ca.getCAKeyAttributes(rootIdentity)
+	attrs, err := ca.getCAKeyAttributes(t.Context(), rootIdentity)
 	require.NoError(t, err)
 	pub, err := ca.PubKey(context.Background(), attrs)
 	require.NoError(t, err)
@@ -692,7 +692,7 @@ func TestTLSConfigWithOptions_ClientMode(t *testing.T) {
 	require.NoError(t, err)
 
 	rootIdentity := ca.config.RootIdentity()
-	attrs, err := ca.getCAKeyAttributes(rootIdentity)
+	attrs, err := ca.getCAKeyAttributes(t.Context(), rootIdentity)
 	require.NoError(t, err)
 	attrs.CN = issued.Certificate.Subject.CommonName
 

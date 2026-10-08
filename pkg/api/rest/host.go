@@ -32,8 +32,6 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
-	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -346,12 +344,13 @@ type WebAuthnServiceParams struct {
 	// Config is the relying-party configuration. Required.
 	Config *webauthn.Config
 
-	// QRDBClient persists WebAuthn users and credentials on the qrdb
-	// identity plane -- the single source of identity for the stack.
-	// Required: a host composes the module because it embeds qrdb, so the
-	// datastore-backed fallback xkmsd uses for non-qrdb storage modes does
-	// not apply here.
+	// QRDBClient owns WebAuthn users on the qrdb identity plane -- the
+	// single source of identity for the stack. Required.
 	QRDBClient *qrdbsdk.Client
+
+	// DAOFactory builds the DAO the relying party persists credentials
+	// through. Required.
+	DAOFactory *qrdbsdk.DAOFactory
 
 	// TenantID scopes qrdb-backed WebAuthn user creation and lookup.
 	// Defaults to DefaultWebAuthnTenant.
@@ -372,7 +371,7 @@ type WebAuthnServiceParams struct {
 
 	// AuditLogger receives the relying party's security audit events
 	// (webauthn.CloneWarningAuditAction). Nil records none.
-	AuditLogger audit.Logger
+	AuditLogger qrdbsdk.NodeAuditLogger
 }
 
 // WebAuthnServiceBuildError reports a WebAuthn service construction failure
@@ -404,6 +403,9 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 	if p.QRDBClient == nil {
 		return nil, &WebAuthnServiceBuildError{Err: ErrWebAuthnQRDBClientRequired}
 	}
+	if p.DAOFactory == nil {
+		return nil, &WebAuthnServiceBuildError{Err: ErrWebAuthnDAOFactoryRequired}
+	}
 	logger := p.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -414,9 +416,9 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 	}
 
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:    p.QRDBClient.Users(),
-		KV:       p.QRDBClient.KV(),
-		TenantID: tenantID,
+		Users:      p.QRDBClient.Users(),
+		DAOFactory: p.DAOFactory,
+		TenantID:   tenantID,
 	})
 	if err != nil {
 		return nil, &WebAuthnServiceBuildError{Err: err}
@@ -628,8 +630,13 @@ type HostConfig struct {
 	// back to an in-memory store.
 	QRDBClient *qrdbsdk.Client
 
+	// DAOFactory builds the DAOs the WebAuthn relying party persists
+	// credentials through. The composition root supplies it from the host's
+	// datastore; nil leaves the WebAuthn routes unmounted.
+	DAOFactory *qrdbsdk.DAOFactory
+
 	// WebAuthn enables the WebAuthn ceremony routes when non-nil. Requires
-	// QRDBClient; without one the routes stay unmounted.
+	// QRDBClient and DAOFactory; without them the routes stay unmounted.
 	WebAuthn *webauthn.Config
 
 	// WebAuthnTenantID scopes qrdb-backed WebAuthn user creation and
@@ -658,14 +665,6 @@ type HostConfig struct {
 	// answering "not configured".
 	SSHClient sdkssh.Client
 
-	// ServeBarrier mounts the custodian and share handlers; it requires
-	// QRDBClient, and an XKMSService wired with that node's custodian and
-	// share clients (pkg/compose Stores.Wire does). The barrier routes
-	// themselves serve whatever barrier the XKMSService was wired with. Off
-	// by default: a host that owns its barrier keeps these surfaces to
-	// itself.
-	ServeBarrier bool
-
 	// Logger receives construction and request diagnostics. Nil selects
 	// slog.Default().
 	Logger *slog.Logger
@@ -693,10 +692,9 @@ func (e *HostXKMSServiceRequiredError) Error() string {
 // exactly like xkmsd's own composition (pkg/server buildRESTConfig /
 // initializeTokenIssuer / initializeWebAuthnService) via the shared
 // Build* functions above. The Password Manager and SSH surfaces serve the
-// stores in hc; the CA surface serves when the XKMSService carries a CA;
-// the custodian and share surfaces serve only with hc.ServeBarrier. The
-// init ceremony and tenant-management surfaces stay xkmsd-only -- their
-// RouteEnabled predicates gate on nil.
+// stores in hc; the CA surface serves when the XKMSService carries a CA.
+// The tenant-management surface stays xkmsd-only -- its RouteEnabled
+// predicate gates on nil.
 //
 // A construction failure here means the host gave NewHostServer nothing it
 // could authenticate callers with (no signing backend and no qrdb client) or
@@ -787,12 +785,6 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 		cfg.CA = hc.XKMSService
 	}
 
-	// The XKMSService carries the node's custodian and share clients
-	// (pkg/compose Stores.Wire); these flags mount the REST handlers that
-	// reach them.
-	cfg.CustodianEnabled = hc.ServeBarrier && hc.QRDBClient != nil
-	cfg.ShareEnabled = cfg.CustodianEnabled
-
 	if hc.QRDBClient != nil {
 		cfg.AuthUserStore = auth.NewQRDBUserStore(hc.QRDBClient.Users())
 
@@ -804,6 +796,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 			svc, waErr := BuildWebAuthnService(WebAuthnServiceParams{
 				Config:                   hc.WebAuthn,
 				QRDBClient:               hc.QRDBClient,
+				DAOFactory:               hc.DAOFactory,
 				TenantID:                 tenantID,
 				TokenIssuer:              cfg.TokenIssuer,
 				CredentialStoreDecorator: hc.WebAuthnCredentialStoreDecorator,
@@ -814,9 +807,6 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 			} else {
 				cfg.WebAuthnConfig = hc.WebAuthn
 				cfg.WebAuthnService = svc
-				cfg.WebAuthnUsers = hc.QRDBClient.Users()
-				cfg.WebAuthnKV = hc.QRDBClient.KV()
-				cfg.WebAuthnTenantID = tenantID
 				// Share the relying-party service into the XKMSService so
 				// the SDK ceremony lane (/api/v1/webauthn/sdk/* ->
 				// XKMSService.BeginRegistration et al.) resolves the SAME

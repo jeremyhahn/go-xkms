@@ -14,6 +14,7 @@
 package pwimport
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -37,7 +38,7 @@ func (p *KDBXParser) Format() string {
 }
 
 // Parse reads and parses a KDBX file.
-func (p *KDBXParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry, error) {
+func (p *KDBXParser) Parse(ctx context.Context, filePath string, opts *ImportOptions) ([]*ParsedEntry, error) {
 	if opts == nil || opts.Password == "" {
 		return nil, ErrPasswordRequired
 	}
@@ -65,7 +66,7 @@ func (p *KDBXParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry
 	// Parse root group and all subgroups.
 	if db.Content != nil && db.Content.Root != nil {
 		for i := range db.Content.Root.Groups {
-			if err := p.parseGroup(&db.Content.Root.Groups[i], "", opts, &entries); err != nil {
+			if err := p.parseGroup(ctx, &db.Content.Root.Groups[i], "", opts, &entries); err != nil {
 				return nil, err
 			}
 		}
@@ -79,7 +80,7 @@ func (p *KDBXParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry
 }
 
 // parseGroup recursively parses a group and its subgroups.
-func (p *KDBXParser) parseGroup(group *gokeepasslib.Group, parentPath string, opts *ImportOptions, entries *[]*ParsedEntry) error {
+func (p *KDBXParser) parseGroup(ctx context.Context, group *gokeepasslib.Group, parentPath string, opts *ImportOptions, entries *[]*ParsedEntry) error {
 	// Build current path.
 	currentPath := parentPath
 	if group.Name != "" && group.Name != "Root" {
@@ -92,7 +93,7 @@ func (p *KDBXParser) parseGroup(group *gokeepasslib.Group, parentPath string, op
 
 	// Parse entries in this group.
 	for i := range group.Entries {
-		entry, err := p.parseEntry(&group.Entries[i], currentPath, opts)
+		entry, err := p.parseEntry(ctx, &group.Entries[i], currentPath, opts)
 		if err != nil {
 			return err
 		}
@@ -103,7 +104,7 @@ func (p *KDBXParser) parseGroup(group *gokeepasslib.Group, parentPath string, op
 
 	// Recursively parse subgroups.
 	for i := range group.Groups {
-		if err := p.parseGroup(&group.Groups[i], currentPath, opts, entries); err != nil {
+		if err := p.parseGroup(ctx, &group.Groups[i], currentPath, opts, entries); err != nil {
 			return err
 		}
 	}
@@ -112,13 +113,13 @@ func (p *KDBXParser) parseGroup(group *gokeepasslib.Group, parentPath string, op
 }
 
 // parseEntry converts a gokeepasslib entry to a ParsedEntry.
-func (p *KDBXParser) parseEntry(entry *gokeepasslib.Entry, folderPath string, opts *ImportOptions) (*ParsedEntry, error) {
+func (p *KDBXParser) parseEntry(ctx context.Context, entry *gokeepasslib.Entry, folderPath string, opts *ImportOptions) (*ParsedEntry, error) {
 	password := p.getValue(entry, "Password")
 	if password == "" {
 		return nil, nil // Skip entries without passwords
 	}
 
-	passwordSecret, err := newParsedPassword(password)
+	passwordSecret, err := newParsedPassword(ctx, password)
 	if err != nil {
 		return nil, err
 	}

@@ -37,7 +37,7 @@ func testSecret(t *testing.T, s string) *secure.Secret {
 	if s == "" {
 		return nil
 	}
-	secret, err := secure.NewSecret([]byte(s))
+	secret, err := secure.NewSecret(t.Context(), []byte(s))
 	require.NoError(t, err)
 	return secret
 }

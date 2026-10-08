@@ -21,7 +21,6 @@ You reach the TPM by choosing it:
 ```
 xkmsctl --backend tpm2 key generate node-key --key-algorithm ecdsa --curve P-256
 xkmsctl seal "secret" --backend tpm2 --tpm-policy platform
-xkmsctl barrier init --barrier-strategy tpm2 --user-pin -
 xkmsctl key attest node-key --backend tpm2 --output evidence.json
 ```
 

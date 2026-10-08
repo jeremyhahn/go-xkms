@@ -23,6 +23,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 const (
@@ -327,54 +329,11 @@ func formatCredentialsFile(sections map[string]map[string]string) []byte {
 	return []byte(b.String())
 }
 
-// writeCredentialsFile replaces the credentials file atomically: the content
-// is written to a temporary file in the same directory with mode 0600,
-// fsynced, renamed over path, and the directory is fsynced so the rename is
-// durable. A failure before the rename leaves the existing file untouched.
+// writeCredentialsFile replaces the credentials file atomically with mode
+// awsCredentialsFileMode. A failure before the rename leaves the existing file
+// untouched.
 func (h *AWSCredentialsHandler) writeCredentialsFile(path string, sections map[string]map[string]string) error {
-	dir := filepath.Dir(path)
-	tempFile, err := os.CreateTemp(dir, ".aws-credentials-*")
-	if err != nil {
-		return err
-	}
-	tempPath := tempFile.Name()
-
-	if err := writeAndClose(tempFile, formatCredentialsFile(sections)); err != nil {
-		return errors.Join(err, os.Remove(tempPath))
-	}
-
-	if err := os.Rename(tempPath, path); err != nil {
-		return errors.Join(err, os.Remove(tempPath))
-	}
-
-	return syncDir(dir)
-}
-
-// writeAndClose restricts f to awsCredentialsFileMode, writes data, fsyncs
-// and closes f. f is closed on every path.
-func writeAndClose(f *os.File, data []byte) error {
-	if err := f.Chmod(awsCredentialsFileMode); err != nil {
-		return errors.Join(err, f.Close())
-	}
-	if _, err := f.Write(data); err != nil {
-		return errors.Join(err, f.Close())
-	}
-	if err := f.Sync(); err != nil {
-		return errors.Join(err, f.Close())
-	}
-	return f.Close()
-}
-
-// syncDir fsyncs the directory at path so a rename within it is durable.
-func syncDir(path string) error {
-	d, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	if err := d.Sync(); err != nil {
-		return errors.Join(err, d.Close())
-	}
-	return d.Close()
+	return fsutil.WriteFileAtomic(path, formatCredentialsFile(sections), awsCredentialsFileMode)
 }
 
 // expandPath expands ~ to the home directory.

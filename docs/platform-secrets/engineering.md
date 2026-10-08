@@ -1,6 +1,6 @@
 # Platform Secrets — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1226)
+> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-10-07
 
 ## Exported surface — `pkg/seal`
 
@@ -113,8 +113,9 @@ is the composition root: `credentials.seal_strategy` (config) selects one
 `types.Sealer` (`pkg/server/platform_store.go`'s `buildPlatformSealer`),
 composed into a single-strategy `seal.PlatformSealer` and wrapped in
 `pkg/storage/sealed.New` over `s.createStorage("platform-store")`. `manual`
-and `barrier` skip building it (`manual` stores nothing; `barrier` is stored
-directly in the qrdb barrier by `credentials.Service`, not here).
+and `barrier` skip building it: `credentials.Service` hands both to go-qrdb's
+versioned credential service (`manual` stores nothing at rest; `barrier` is
+stored directly in the qrdb barrier, not here).
 
 - **`tpm2`** reuses a shared TPM open (the node-seal flip's, or the general
   tpm2 backend's — never opens the device/simulator a second time) and
@@ -127,8 +128,8 @@ directly in the qrdb barrier by `credentials.Service`, not here).
 - **`awskms`/`gcpkms`/`azurekv`** authenticate with ambient credentials (IAM
   role, Application Default Credentials, `DefaultAzureCredential`) and
   resolve their symmetric wrapping key through `sealKeyAttributesFor`/
-  `ensureSealKey` (`seal_strategies.go`, shared with the barrier's own
-  cloud-KMS strategy), wrapped in `fixedKeyAttrsSealer` since
+  `ensureSealKey` (`seal_strategies.go`, over `seal.EnsureSealKey`, which
+  the node seal's cloud-KMS strategy also provisions through), wrapped in `fixedKeyAttrsSealer` since
   `sealed.Backend` cannot carry `opts.KeyAttributes` through to `Unseal`.
 - **`pkcs11`/`vault`** fail closed: their secret is only resolvable through
   the credential service this call builds the storage for (go-xkms#677).

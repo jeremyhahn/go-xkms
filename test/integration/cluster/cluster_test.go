@@ -571,10 +571,10 @@ func TestCluster_WriteReplication(t *testing.T) {
 				"stalled write: %d vs node%d=%d", leaderID, nodeIdx, lid)
 		}
 
-		code, body, merr := get(ctx, u+"/api/v1/cluster/members")
-		if merr != nil || code != http.StatusOK {
+		peers, perr := fetchPeers(ctx, u)
+		if perr != nil || len(peers.Shards) == 0 || len(peers.Shards[0].Peers) == 0 {
 			t.Fatalf("degradation not graceful: node%d (%s) membership unavailable "+
-				"after a stalled write: err=%v code=%d body=%s", nodeIdx, u, merr, code, body)
+				"after a stalled write: err=%v peers=%+v", nodeIdx, u, perr, peers)
 		}
 		t.Logf("node%d control-plane intact through the write stall (leader=%d)", nodeIdx, leaderID)
 	}

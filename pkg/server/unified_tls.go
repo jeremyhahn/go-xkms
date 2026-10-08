@@ -29,6 +29,8 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // unifiedTLSProvider serves the unified API server's certificate through a
@@ -294,10 +296,10 @@ func (s *Server) ensureBootstrapCert() (*tls.Certificate, error) {
 				slog.Any("error", &ErrTLSCertOp{Operation: "create bootstrap TLS certificate directory", Err: err}))
 		} else {
 			var certErr, keyErr error
-			if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+			if err := fsutil.WriteFileAtomic(certPath, certPEM, 0o600); err != nil {
 				certErr = &ErrTLSCertOp{Operation: "persist bootstrap TLS certificate", Err: err}
 			}
-			if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+			if err := fsutil.WriteFileAtomic(keyPath, keyPEM, 0o600); err != nil {
 				keyErr = &ErrTLSCertOp{Operation: "persist bootstrap TLS key", Err: err}
 			}
 			if writeErr := errors.Join(certErr, keyErr); writeErr != nil {

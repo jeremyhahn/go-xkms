@@ -231,25 +231,9 @@ func ContentTypeMiddleware(next http.Handler) http.Handler {
 }
 
 // AuthenticationMiddleware authenticates HTTP requests.
-//
-// The single exemption is the init ceremony claim surface: while the ceremony
-// has not yet reached the operational state, the exact paths named by
-// publicCeremonyPaths are served without an identity assertion because the
-// officer's first credential is the certificate those routes hand out. See
-// middleware_init_public.go for the full rationale and the fail-closed
-// conditions.
 func (s *Server) AuthenticationMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if s.isPublicCeremonyRequest(r) {
-				s.logger.Debug("Serving init ceremony route without authentication",
-					slog.String("method", r.Method),
-					slog.String("path", r.URL.Path),
-					slog.String("remote_addr", r.RemoteAddr))
-				next.ServeHTTP(w, r)
-				return
-			}
-
 			// Authenticate the request
 			identity, err := s.authenticator.AuthenticateHTTP(r)
 			if err != nil {

@@ -28,7 +28,7 @@ a terminal" and "an escrowed key" exists yet.
 ## Once the permission question is resolved
 
 The expected shape, matching the existing `xkmsctl` command groups
-(`xkmsctl custodian …`, `xkmsctl barrier …`):
+(`xkmsctl key …`, `xkmsctl seal …`):
 
 ```
 xkmsctl escrow submit   --key-id <id> --wrapped-key <path> --algorithm AES-KW [--purpose backup] [--tenant <id>]

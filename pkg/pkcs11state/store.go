@@ -14,158 +14,223 @@
 // Package pkcs11state is the server-side store for the PKCS#11 module's durable
 // token and object state when a module runs with StorageType "remote".
 //
-// It is a thin, namespacing wrapper over a storage.Backend — the same pattern
-// pkg/staticpw uses for passwords — so it inherits the backend's atomic
-// PutIfAbsent and whatever at-rest protection the backend has. xkmsd builds ONE
-// store over one backend for every tenant (pkg/server createStorage); it is not
-// behind a tenant barrier, so tenants are separated only by the key prefix, and
-// the caller must supply a tenant it has derived from the authenticated identity,
+// Each record is one go-qrdb DAO entity (Record) in the DatabaseName database.
+// xkmsd builds ONE store for every tenant (pkg/server); it is not behind a
+// tenant barrier, so tenants are separated only by the record name, and the
+// caller must supply a tenant it has derived from the authenticated identity,
 // never one taken from a request. The values are opaque: the module serialises
 // its own PersistentTokenState / PersistentObject records and this store keeps
 // them verbatim, so the server never has to track the module's record schema.
 package pkcs11state
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 )
 
-// keyPrefix namespaces every record this package writes so it cannot collide
-// with other consumers of the same backend.
-const keyPrefix = "pkcs11state/"
+const (
+	// DatabaseName is the go-qrdb database module records live in. A
+	// composition root opens it on the datastore before calling NewStore.
+	DatabaseName = "pkcs11state"
 
-// ErrNilBackend is returned when a Store is constructed without a backend.
-var ErrNilBackend = errors.New("pkcs11state: storage backend is required")
+	// entityType is the DAO entity type of a module record.
+	entityType = "pkcs11_state_records"
+
+	// listPageSize is how many records List reads per page.
+	listPageSize = 256
+)
 
 // Store persists opaque PKCS#11 module state records, namespaced by tenant and
-// token, on a storage.Backend.
+// token, through a go-qrdb DAO.
 type Store struct {
-	backend storage.Backend
+	records qrdbsdk.GenericDAO[*Record]
 }
 
-// NewStore wraps a storage.Backend. The store adds only key namespacing on top:
-// it does not scope or encrypt per tenant, so isolation between tenants rests on
+// NewStore returns a Store whose DAO daos builds over DatabaseName. The store
+// does not scope or encrypt per tenant, so isolation between tenants rests on
 // the caller passing the authenticated tenant to every method.
-func NewStore(backend storage.Backend) (*Store, error) {
-	if backend == nil {
-		return nil, ErrNilBackend
+func NewStore(daos *qrdbsdk.DAOFactory) (*Store, error) {
+	if daos == nil {
+		return nil, ErrNilDAOFactory
 	}
-	return &Store{backend: backend}, nil
+	records, err := newRecordDAO(daos)
+	if err != nil {
+		return nil, &StoreError{Op: "open", Key: DatabaseName, Err: err}
+	}
+	return &Store{records: records}, nil
 }
 
-// storageKey builds the backend key for a (tenant, token, key) triple.
-func storageKey(tenantID, token, key string) string {
-	return scopePrefix(tenantID, token) + key
+// newRecordDAO builds the record DAO: entity IDs derive from Name.
+func newRecordDAO(daos *qrdbsdk.DAOFactory) (qrdbsdk.GenericDAO[*Record], error) {
+	return dao.New(daos, DatabaseName, entityType, newRecord,
+		qrdbsdk.WithIDGenerator(qrdbsdk.NewCryptoFieldHashGenerator("Name")))
 }
 
-// scopePrefix builds the backend key prefix for a (tenant, token) namespace,
-// used to translate a List within a token back to namespace-relative keys.
-//
-// An empty tenant is the system scope and is stored under the system tenant's
-// own ID, the scope the service already treats it as. It used to occupy an
-// empty path segment ("pkcs11state//<token>/"), which a path-normalizing
-// backend such as file storage collapses: List then returned keys the scope
-// prefix no longer stripped, a remote-mode module loaded none of its objects,
-// and the next key it created reused handle 1 and overwrote an existing one.
-func scopePrefix(tenantID, token string) string {
+// scopeName returns the name of a (tenant, token) namespace. An empty tenant
+// is the system scope and is stored under the system tenant's own ID, the
+// scope the service already treats it as.
+func scopeName(tenantID, token string) string {
 	if tenantID == "" {
 		tenantID = qrdbsdk.SystemTenantID
 	}
-	return keyPrefix + tenantID + "/" + token + "/"
+	return tenantID + "/" + token + "/"
+}
+
+// newRecordFor returns the record of key in the (tenant, token) namespace.
+func newRecordFor(tenantID, token, key string, value []byte) *Record {
+	scope := scopeName(tenantID, token)
+	return &Record{Name: scope + key, Scope: scope, Key: key, Value: value}
+}
+
+// load returns the stored record named name; found reports whether one
+// exists.
+func (s *Store) load(ctx context.Context, name string) (rec *Record, found bool, err error) {
+	rec, err = s.records.GetByNaturalKey(ctx, name)
+	if qrdbsdk.IsDAONotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return rec, true, nil
 }
 
 // Put stores a record, overwriting any existing value.
 func (s *Store) Put(ctx context.Context, tenantID, token, key string, value []byte) error {
-	return s.backend.Put(ctx, storageKey(tenantID, token, key), value)
+	rec := newRecordFor(tenantID, token, key, value)
+	if err := s.records.Save(ctx, rec); err != nil {
+		return &StoreError{Op: "put", Key: rec.Name, Err: err}
+	}
+	return nil
 }
 
 // PutIfAbsent atomically stores a record only if the key does not already
 // exist, returning whether the write happened.
 func (s *Store) PutIfAbsent(ctx context.Context, tenantID, token, key string, value []byte) (bool, error) {
-	return s.backend.PutIfAbsent(ctx, storageKey(tenantID, token, key), value)
+	rec := newRecordFor(tenantID, token, key, value)
+	stored, err := s.records.SaveIfAbsent(ctx, rec)
+	if err != nil {
+		return false, &StoreError{Op: "put-if-absent", Key: rec.Name, Err: err}
+	}
+	return stored, nil
 }
 
-// ErrCompareAndSwapUnsupported is returned when CompareAndSwap is requested but
-// the underlying backend does not implement storage.CompareAndSwapper (e.g. a
-// backend with no linearizable value-CAS). Remote-mode deployments back this
-// store with the embedded qrdb node, which does support it.
-var ErrCompareAndSwapUnsupported = errors.New("pkcs11state: backend does not support compare-and-swap")
-
-// CompareAndSwap atomically stores newValue at the record only if the current
-// value equals expected (or, when expected is nil, only if the key is absent),
-// returning the current value when it does not swap. It backs the multi-client
-// lockout-counter update: several clients sharing one remote token increment the
-// same failed-attempt counter, and only a value-CAS keeps those read-modify-write
-// updates from clobbering each other. The guarantee is exactly the backend's —
-// linearizable across nodes when backed by the qrdb node (see pkg/storage/qrdb).
+// CompareAndSwap atomically stores newValue at the record only while its
+// current value equals expected, returning the current value when it does not
+// swap. It follows storage.CompareAndSwapper's contract: an absent record
+// refuses whatever expected is, and a nil expected matches a stored empty
+// value only. It backs the multi-client lockout-counter update: several
+// clients sharing one remote token increment the same failed-attempt counter,
+// and only a value-CAS keeps those read-modify-write updates from clobbering
+// each other. The swap is the DAO's CompareAndSwap against the record just
+// read, one guarded store operation, so a concurrent writer between the read
+// and the write makes it refuse rather than be overwritten.
 func (s *Store) CompareAndSwap(ctx context.Context, tenantID, token, key string, expected, newValue []byte) (swapped bool, current []byte, err error) {
-	cas, ok := s.backend.(storage.CompareAndSwapper)
-	if !ok {
-		return false, nil, ErrCompareAndSwapUnsupported
+	next := newRecordFor(tenantID, token, key, newValue)
+	stored, found, err := s.load(ctx, next.Name)
+	if err != nil {
+		return false, nil, &StoreError{Op: "compare-and-swap", Key: next.Name, Err: err}
 	}
-	return cas.CompareAndSwap(ctx, storageKey(tenantID, token, key), expected, newValue)
+	if !found {
+		return false, nil, nil
+	}
+	if !bytes.Equal(stored.Value, expected) {
+		return false, stored.Value, nil
+	}
+	next.ID = stored.ID
+	swapped, err = s.records.CompareAndSwap(ctx, stored, next)
+	if err != nil {
+		return false, nil, &StoreError{Op: "compare-and-swap", Key: next.Name, Err: err}
+	}
+	if swapped {
+		return true, nil, nil
+	}
+	// A concurrent writer changed the record after it was read: report what
+	// is there now so the caller can recompute against it.
+	stored, found, err = s.load(ctx, next.Name)
+	if err != nil {
+		return false, nil, &StoreError{Op: "compare-and-swap", Key: next.Name, Err: err}
+	}
+	if !found {
+		return false, nil, nil
+	}
+	return false, stored.Value, nil
 }
 
-// ErrCompareAndDeleteUnsupported is returned when CompareAndDelete is requested
-// but the underlying backend does not implement storage.CompareAndDeleter.
-// Remote-mode deployments back this store with the embedded qrdb node, which
-// evaluates the guard inside the cluster.
-var ErrCompareAndDeleteUnsupported = errors.New("pkcs11state: backend does not support compare-and-delete")
-
-// CompareAndDelete atomically removes the record only if its current value
-// equals expected, reporting whether this call removed it. An absent key or a
-// different value is an ordinary refusal (false, nil), not an error, exactly
-// as storage.CompareAndDeleter specifies; a nil expected matches a stored empty
-// value only. It is the guarded release that pairs with PutIfAbsent's guarded
-// create for clients sharing one remote token, and the guarantee is the
-// backend's: linearizable across nodes when backed by the qrdb node.
+// CompareAndDelete atomically removes the record only while its current value
+// equals expected, reporting whether this call removed it. An absent record or
+// a different value is an ordinary refusal (false, nil), not an error, exactly
+// as storage.CompareAndDeleter specifies; a nil expected matches a stored
+// empty value only. It is the guarded release that pairs with PutIfAbsent's
+// guarded create for clients sharing one remote token. The delete is the
+// DAO's DeleteIfMatch against the record just read, one guarded store
+// operation.
 func (s *Store) CompareAndDelete(ctx context.Context, tenantID, token, key string, expected []byte) (deleted bool, err error) {
-	cad, ok := s.backend.(storage.CompareAndDeleter)
-	if !ok {
-		return false, ErrCompareAndDeleteUnsupported
+	name := newRecordFor(tenantID, token, key, nil).Name
+	stored, found, err := s.load(ctx, name)
+	if err != nil {
+		return false, &StoreError{Op: "compare-and-delete", Key: name, Err: err}
 	}
-	return cad.CompareAndDelete(ctx, storageKey(tenantID, token, key), expected)
+	if !found || !bytes.Equal(stored.Value, expected) {
+		return false, nil
+	}
+	deleted, err = s.records.DeleteIfMatch(ctx, stored)
+	if err != nil {
+		return false, &StoreError{Op: "compare-and-delete", Key: name, Err: err}
+	}
+	return deleted, nil
 }
 
 // Get retrieves a record. found distinguishes an absent key from a present
 // empty value, which the module relies on to tell "no persisted state" from
 // "state that is legitimately empty".
 func (s *Store) Get(ctx context.Context, tenantID, token, key string) (value []byte, found bool, err error) {
-	value, err = s.backend.Get(ctx, storageKey(tenantID, token, key))
-	if errors.Is(err, storage.ErrNotFound) {
+	name := newRecordFor(tenantID, token, key, nil).Name
+	stored, found, err := s.load(ctx, name)
+	if err != nil {
+		return nil, false, &StoreError{Op: "get", Key: name, Err: err}
+	}
+	if !found {
 		return nil, false, nil
 	}
-	if err != nil {
-		return nil, false, err
-	}
-	return value, true, nil
+	return stored.Value, true, nil
 }
 
 // Delete removes a record. A missing key is not an error, so a caller can
 // delete idempotently.
 func (s *Store) Delete(ctx context.Context, tenantID, token, key string) error {
-	err := s.backend.Delete(ctx, storageKey(tenantID, token, key))
-	if errors.Is(err, storage.ErrNotFound) {
-		return nil
+	name := newRecordFor(tenantID, token, key, nil).Name
+	stored, found, err := s.load(ctx, name)
+	if err == nil && found {
+		err = s.records.Delete(ctx, stored)
 	}
-	return err
+	if err != nil {
+		return &StoreError{Op: "delete", Key: name, Err: err}
+	}
+	return nil
 }
 
 // List returns the namespace-relative keys under a prefix within a token's
 // namespace. An empty prefix lists every key for the token.
 func (s *Store) List(ctx context.Context, tenantID, token, prefix string) ([]string, error) {
-	scope := scopePrefix(tenantID, token)
-	full, err := s.backend.List(ctx, scope+prefix)
+	scope := scopeName(tenantID, token)
+	keys := []string{}
+	query := qrdbsdk.PageQuery{Page: 1, PageSize: listPageSize, SortOrder: qrdbsdk.DAOSortAscending}
+	err := s.records.ForEachPage(ctx, query, func(page qrdbsdk.PageResult[*Record]) error {
+		for _, rec := range page.Entities {
+			if rec.Scope == scope && strings.HasPrefix(rec.Key, prefix) {
+				keys = append(keys, rec.Key)
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, err
+		return nil, &StoreError{Op: "list", Key: scope, Err: err}
 	}
-	rel := make([]string, 0, len(full))
-	for _, k := range full {
-		rel = append(rel, strings.TrimPrefix(k, scope))
-	}
-	return rel, nil
+	return keys, nil
 }

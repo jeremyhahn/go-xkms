@@ -139,15 +139,6 @@ func TestSeal_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestBarrierStatus_NotConnected(t *testing.T) {
-	cfg := transport.DefaultConfig()
-	cfg.Address = "/tmp/test.sock"
-	tr, err := NewWithConfig(cfg)
-	require.NoError(t, err)
-	_, err = tr.BarrierStatus(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 func TestBootstrapListenerKeys_NotConnected(t *testing.T) {
 	cfg := transport.DefaultConfig()
 	cfg.Address = "/tmp/test.sock"

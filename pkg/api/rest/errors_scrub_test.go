@@ -156,7 +156,6 @@ func TestWriteError_StatusClassification(t *testing.T) {
 		{"conflict keeps text", storage.ErrAlreadyExists, http.StatusConflict, storage.ErrAlreadyExists.Error()},
 		{"unprocessable keeps text", ErrInvalidRequest, http.StatusUnprocessableEntity, ErrInvalidRequest.Error()},
 		{"not implemented keeps text", ErrSealingNotSupported, http.StatusNotImplemented, ErrSealingNotSupported.Error()},
-		{"service unavailable keeps text", ErrBarrierNotConfigured, http.StatusServiceUnavailable, ErrBarrierNotConfigured.Error()},
 		{"internal withheld", errScrubMarker, http.StatusInternalServerError, ErrInternalError.Error()},
 		{"bad gateway withheld", errScrubMarker, http.StatusBadGateway, ErrInternalError.Error()},
 		{"gateway timeout withheld", errScrubMarker, http.StatusGatewayTimeout, ErrInternalError.Error()},

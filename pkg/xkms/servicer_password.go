@@ -354,7 +354,7 @@ func (s *XKMSService) PasswordStoreUnlock(ctx context.Context, req *transport.Pa
 	if err != nil {
 		return err
 	}
-	cred, err := vaultCredential(req.PasswordVaultCredential)
+	cred, err := vaultCredential(ctx, req.PasswordVaultCredential)
 	if err != nil {
 		return err
 	}

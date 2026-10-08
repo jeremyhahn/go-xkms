@@ -113,6 +113,18 @@ func (m *mockTenantDAOSimple) SaveWithCondition(_ context.Context, _ *entities.T
 	panic("not implemented")
 }
 
+func (m *mockTenantDAOSimple) GetByNaturalKey(_ context.Context, _ string) (*entities.Tenant, error) {
+	panic("not implemented")
+}
+
+func (m *mockTenantDAOSimple) CompareAndSwap(_ context.Context, _, _ *entities.Tenant) (bool, error) {
+	panic("not implemented")
+}
+
+func (m *mockTenantDAOSimple) DeleteIfMatch(_ context.Context, _ *entities.Tenant) (bool, error) {
+	panic("not implemented")
+}
+
 func (m *mockTenantDAOSimple) SaveIfAbsent(_ context.Context, _ *entities.Tenant) (bool, error) {
 	panic("not implemented")
 }

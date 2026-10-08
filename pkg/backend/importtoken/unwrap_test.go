@@ -63,14 +63,14 @@ func TestUnwrap_RoundTrip(t *testing.T) {
 	for _, algorithm := range allWrappingAlgorithms {
 		t.Run(string(algorithm), func(t *testing.T) {
 			priv := generateTestRSAKey(t)
-			sealed, err := NewSealedRSAKey(priv)
+			sealed, err := NewSealedRSAKey(t.Context(), priv)
 			require.NoError(t, err)
 			defer sealed.Destroy()
 
 			keyMaterial := []byte("0123456789abcdef0123456789abcdef")
 			wrapped := wrapForAlgorithm(t, algorithm, &priv.PublicKey, keyMaterial)
 
-			unwrapped, err := Unwrap(sealed, algorithm, algorithm, wrapped)
+			unwrapped, err := Unwrap(t.Context(), sealed, algorithm, algorithm, wrapped)
 			require.NoError(t, err)
 			assert.Equal(t, keyMaterial, unwrapped)
 		})
@@ -84,11 +84,11 @@ func TestUnwrap_RoundTrip(t *testing.T) {
 // check was skipped.
 func TestUnwrap_AlgorithmMismatchRefused(t *testing.T) {
 	priv := generateTestRSAKey(t)
-	sealed, err := NewSealedRSAKey(priv)
+	sealed, err := NewSealedRSAKey(t.Context(), priv)
 	require.NoError(t, err)
 	defer sealed.Destroy()
 
-	_, err = Unwrap(sealed, backend.WrappingAlgorithmRSAES_OAEP_SHA_256, backend.WrappingAlgorithmRSAES_OAEP_SHA_1, []byte("not a valid ciphertext"))
+	_, err = Unwrap(t.Context(), sealed, backend.WrappingAlgorithmRSAES_OAEP_SHA_256, backend.WrappingAlgorithmRSAES_OAEP_SHA_1, []byte("not a valid ciphertext"))
 	require.Error(t, err)
 
 	var mismatch *AlgorithmMismatchError
@@ -105,11 +105,11 @@ func TestUnwrap_BadCiphertextUniformError(t *testing.T) {
 	for _, algorithm := range allWrappingAlgorithms {
 		t.Run(string(algorithm), func(t *testing.T) {
 			priv := generateTestRSAKey(t)
-			sealed, err := NewSealedRSAKey(priv)
+			sealed, err := NewSealedRSAKey(t.Context(), priv)
 			require.NoError(t, err)
 			defer sealed.Destroy()
 
-			_, err = Unwrap(sealed, algorithm, algorithm, []byte("not a valid ciphertext"))
+			_, err = Unwrap(t.Context(), sealed, algorithm, algorithm, []byte("not a valid ciphertext"))
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "failed to unwrap key")
 		})
@@ -125,12 +125,12 @@ func TestUnwrap_NonRSAEnclaveReportsInvalidKeyType(t *testing.T) {
 	require.NoError(t, err)
 	der, err := x509.MarshalPKCS8PrivateKey(ecdsaKey)
 	require.NoError(t, err)
-	secret, err := secure.NewSecret(der)
+	secret, err := secure.NewSecret(t.Context(), der)
 	require.NoError(t, err)
 	sealed := NewSealedRSAKeyFromSecret(secret, nil)
 	defer sealed.Destroy()
 
-	_, err = Unwrap(sealed, backend.WrappingAlgorithmRSAES_OAEP_SHA_256, backend.WrappingAlgorithmRSAES_OAEP_SHA_256, []byte("irrelevant"))
+	_, err = Unwrap(t.Context(), sealed, backend.WrappingAlgorithmRSAES_OAEP_SHA_256, backend.WrappingAlgorithmRSAES_OAEP_SHA_256, []byte("irrelevant"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "wrapping key is not RSA")
 	assert.True(t, errors.Is(err, backend.ErrInvalidKeyType))
@@ -140,7 +140,7 @@ func TestUnwrap_NonRSAEnclaveReportsInvalidKeyType(t *testing.T) {
 // receiver rather than panicking.
 func TestEntry_Unwrap_NilReceiver(t *testing.T) {
 	var entry *Entry
-	_, err := entry.Unwrap(backend.WrappingAlgorithmRSAES_OAEP_SHA_256, []byte("irrelevant"))
+	_, err := entry.Unwrap(t.Context(), backend.WrappingAlgorithmRSAES_OAEP_SHA_256, []byte("irrelevant"))
 	require.Error(t, err)
 	var unavailable *UnavailableError
 	assert.True(t, errors.As(err, &unavailable))
@@ -150,7 +150,7 @@ func TestEntry_Unwrap_NilReceiver(t *testing.T) {
 // its own Key and Algorithm.
 func TestEntry_Unwrap_RoundTrip(t *testing.T) {
 	priv := generateTestRSAKey(t)
-	sealed, err := NewSealedRSAKey(priv)
+	sealed, err := NewSealedRSAKey(t.Context(), priv)
 	require.NoError(t, err)
 	entry := &Entry{Key: sealed, Algorithm: backend.WrappingAlgorithmRSAES_OAEP_SHA_256}
 	defer entry.Destroy()
@@ -158,7 +158,7 @@ func TestEntry_Unwrap_RoundTrip(t *testing.T) {
 	keyMaterial := []byte("0123456789abcdef0123456789abcdef")
 	wrapped := wrapForAlgorithm(t, backend.WrappingAlgorithmRSAES_OAEP_SHA_256, &priv.PublicKey, keyMaterial)
 
-	unwrapped, err := entry.Unwrap(backend.WrappingAlgorithmRSAES_OAEP_SHA_256, wrapped)
+	unwrapped, err := entry.Unwrap(t.Context(), backend.WrappingAlgorithmRSAES_OAEP_SHA_256, wrapped)
 	require.NoError(t, err)
 	assert.Equal(t, keyMaterial, unwrapped)
 }

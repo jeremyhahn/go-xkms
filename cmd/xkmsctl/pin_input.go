@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -77,7 +78,7 @@ func addPINFlags(cmd *cobra.Command) {
 // state — an authenticator with no PIN configured needs none — so the
 // ceremony rejects a missing PIN itself (see ceremonyFailure) rather than
 // having this resolver decide for it.
-func resolvePINInput(cmd *cobra.Command) (*secure.Secret, error) {
+func resolvePINInput(ctx context.Context, cmd *cobra.Command) (*secure.Secret, error) {
 	fromStdin, err := cmd.Flags().GetBool(pinFlagStdin)
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrPINInputFlagsMissing, Err: err}
@@ -91,11 +92,11 @@ func resolvePINInput(cmd *cobra.Command) (*secure.Secret, error) {
 		if pin == "" {
 			return nil, ErrPINInputStdinEmpty
 		}
-		return sealPIN(pin)
+		return sealPIN(ctx, pin)
 	}
 
 	if pin := os.Getenv(pinEnvVar); pin != "" {
-		return sealPIN(pin)
+		return sealPIN(ctx, pin)
 	}
 
 	pin, err := cmd.Flags().GetString(pinFlagValue)
@@ -105,15 +106,15 @@ func resolvePINInput(cmd *cobra.Command) (*secure.Secret, error) {
 	if pin == "" {
 		return nil, nil
 	}
-	return sealPIN(pin)
+	return sealPIN(ctx, pin)
 }
 
 // sealPIN seals a resolved PIN value into protected memory for
 // resolvePINInput. It exists as a single chokepoint so the plaintext PIN
 // string, however it was resolved, is copied into a *secure.Secret and
 // never held in a struct afterward.
-func sealPIN(pin string) (*secure.Secret, error) {
-	secret, err := secure.NewSecret([]byte(pin))
+func sealPIN(ctx context.Context, pin string) (*secure.Secret, error) {
+	secret, err := secure.NewSecret(ctx, []byte(pin))
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrPINInputSealFailed, Err: err}
 	}

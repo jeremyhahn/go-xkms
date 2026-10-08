@@ -154,13 +154,6 @@ func TestSeal_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestBarrierStatus_NotConnected(t *testing.T) {
-	tr, err := NewWithConfig(nil)
-	require.NoError(t, err)
-	_, err = tr.BarrierStatus(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 func TestBootstrapListenerKeys_NotConnected(t *testing.T) {
 	tr, err := NewWithConfig(nil)
 	require.NoError(t, err)

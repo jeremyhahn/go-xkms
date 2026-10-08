@@ -14,6 +14,7 @@
 package pwimport
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/xml"
@@ -114,7 +115,7 @@ func (p *XMLParser) Format() string {
 }
 
 // Parse reads and parses an XML file.
-func (p *XMLParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry, error) {
+func (p *XMLParser) Parse(ctx context.Context, filePath string, opts *ImportOptions) ([]*ParsedEntry, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrInvalidFile, Cause: err}
@@ -131,7 +132,7 @@ func (p *XMLParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry,
 	}
 
 	entries := make([]*ParsedEntry, 0)
-	if err := p.parseGroup(&kpFile.Root.Group, "", opts, &entries); err != nil {
+	if err := p.parseGroup(ctx, &kpFile.Root.Group, "", opts, &entries); err != nil {
 		return nil, err
 	}
 
@@ -143,7 +144,7 @@ func (p *XMLParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry,
 }
 
 // parseGroup recursively parses a group and its subgroups.
-func (p *XMLParser) parseGroup(group *keePassGroup, parentPath string, opts *ImportOptions, entries *[]*ParsedEntry) error {
+func (p *XMLParser) parseGroup(ctx context.Context, group *keePassGroup, parentPath string, opts *ImportOptions, entries *[]*ParsedEntry) error {
 	// Build current path.
 	currentPath := parentPath
 	if group.Name != "" && group.Name != "Root" {
@@ -156,7 +157,7 @@ func (p *XMLParser) parseGroup(group *keePassGroup, parentPath string, opts *Imp
 
 	// Parse entries in this group.
 	for i := range group.Entries {
-		entry, err := p.parseEntry(&group.Entries[i], currentPath, opts)
+		entry, err := p.parseEntry(ctx, &group.Entries[i], currentPath, opts)
 		if err != nil {
 			return err
 		}
@@ -167,7 +168,7 @@ func (p *XMLParser) parseGroup(group *keePassGroup, parentPath string, opts *Imp
 
 	// Recursively parse subgroups.
 	for i := range group.Groups {
-		if err := p.parseGroup(&group.Groups[i], currentPath, opts, entries); err != nil {
+		if err := p.parseGroup(ctx, &group.Groups[i], currentPath, opts, entries); err != nil {
 			return err
 		}
 	}
@@ -176,7 +177,7 @@ func (p *XMLParser) parseGroup(group *keePassGroup, parentPath string, opts *Imp
 }
 
 // parseEntry converts a KeePass entry to a ParsedEntry.
-func (p *XMLParser) parseEntry(entry *keePassEntry, folderPath string, opts *ImportOptions) (*ParsedEntry, error) {
+func (p *XMLParser) parseEntry(ctx context.Context, entry *keePassEntry, folderPath string, opts *ImportOptions) (*ParsedEntry, error) {
 	// Build string map for easy access.
 	stringMap := make(map[string]string)
 	for _, s := range entry.Strings {
@@ -188,7 +189,7 @@ func (p *XMLParser) parseEntry(entry *keePassEntry, folderPath string, opts *Imp
 		return nil, nil // Skip entries without passwords
 	}
 
-	passwordSecret, err := newParsedPassword(password)
+	passwordSecret, err := newParsedPassword(ctx, password)
 	if err != nil {
 		return nil, err
 	}

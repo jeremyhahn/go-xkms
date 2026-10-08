@@ -29,6 +29,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
@@ -641,15 +642,8 @@ func TestHeadlessHandler_PairingNotifyCodeAndCompleted(t *testing.T) {
 
 func TestReadBarrierStrategy_Software(t *testing.T) {
 	dataDir := t.TempDir()
-	barrierDir := filepath.Join(dataDir, "barrier")
-	if err := os.MkdirAll(barrierDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-
 	rootKey := `{"version":1,"strategy":"passphrase","salt":"AAAA","nonce":"BBBB","ciphertext":"CCCC","created_at":"2026-01-01T00:00:00Z"}`
-	if err := os.WriteFile(filepath.Join(barrierDir, "root_key"), []byte(rootKey), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeBarrierRootKey(t, dataDir, []byte(rootKey))
 
 	strategy, err := readBarrierStrategy(dataDir)
 	if err != nil {
@@ -662,15 +656,8 @@ func TestReadBarrierStrategy_Software(t *testing.T) {
 
 func TestReadBarrierStrategy_TPM2(t *testing.T) {
 	dataDir := t.TempDir()
-	barrierDir := filepath.Join(dataDir, "barrier")
-	if err := os.MkdirAll(barrierDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-
 	rootKey := `{"version":1,"strategy":"tpm2","sealed_data":{"backend":"tpm2"},"created_at":"2026-01-01T00:00:00Z"}`
-	if err := os.WriteFile(filepath.Join(barrierDir, "root_key"), []byte(rootKey), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeBarrierRootKey(t, dataDir, []byte(rootKey))
 
 	strategy, err := readBarrierStrategy(dataDir)
 	if err != nil {
@@ -683,15 +670,8 @@ func TestReadBarrierStrategy_TPM2(t *testing.T) {
 
 func TestReadBarrierStrategy_CloudKMS(t *testing.T) {
 	dataDir := t.TempDir()
-	barrierDir := filepath.Join(dataDir, "barrier")
-	if err := os.MkdirAll(barrierDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-
 	rootKey := `{"version":1,"strategy":"awskms","sealed_data":{"backend":"awskms"},"created_at":"2026-01-01T00:00:00Z"}`
-	if err := os.WriteFile(filepath.Join(barrierDir, "root_key"), []byte(rootKey), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeBarrierRootKey(t, dataDir, []byte(rootKey))
 
 	strategy, err := readBarrierStrategy(dataDir)
 	if err != nil {
@@ -712,14 +692,7 @@ func TestReadBarrierStrategy_FileNotFound(t *testing.T) {
 
 func TestReadBarrierStrategy_InvalidJSON(t *testing.T) {
 	dataDir := t.TempDir()
-	barrierDir := filepath.Join(dataDir, "barrier")
-	if err := os.MkdirAll(barrierDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := os.WriteFile(filepath.Join(barrierDir, "root_key"), []byte("not json"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeBarrierRootKey(t, dataDir, []byte("not json"))
 
 	_, err := readBarrierStrategy(dataDir)
 	if err == nil {
@@ -729,15 +702,8 @@ func TestReadBarrierStrategy_InvalidJSON(t *testing.T) {
 
 func TestReadBarrierStrategy_MissingStrategyField(t *testing.T) {
 	dataDir := t.TempDir()
-	barrierDir := filepath.Join(dataDir, "barrier")
-	if err := os.MkdirAll(barrierDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-
 	rootKey := `{"version":1,"created_at":"2026-01-01T00:00:00Z"}`
-	if err := os.WriteFile(filepath.Join(barrierDir, "root_key"), []byte(rootKey), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeBarrierRootKey(t, dataDir, []byte(rootKey))
 
 	_, err := readBarrierStrategy(dataDir)
 	if err == nil {
@@ -754,7 +720,6 @@ func TestServeErrors_AreDistinct(t *testing.T) {
 		ErrServeStrategyUnsupported,
 		ErrServeTPMOpenFailed,
 		ErrServeAuthenticatorInitFailed,
-		ErrServePKCS11StrategyUnavailable,
 		ErrServeShamirStrategyUnavailable,
 	}
 	seen := make(map[string]bool, len(errs))
@@ -772,21 +737,18 @@ func TestServeErrors_AreDistinct(t *testing.T) {
 // runExtensionServe's strategy dispatch is reached without a real seal.
 func writeSealedRootKey(t *testing.T, dataDir, strategy string) {
 	t.Helper()
-	barrierDir := filepath.Join(dataDir, "barrier")
-	if err := os.MkdirAll(barrierDir, 0700); err != nil {
-		t.Fatal(err)
-	}
 	rootKey := `{"version":1,"strategy":"` + strategy + `","sealed_data":{},"created_at":"2026-01-01T00:00:00Z"}`
-	if err := os.WriteFile(filepath.Join(barrierDir, "root_key"), []byte(rootKey), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeBarrierRootKey(t, dataDir, []byte(rootKey))
 }
 
-// TestExtensionServe_PKCS11Strategy_Refused proves headless mode refuses a
-// barrier sealed with the pkcs11 strategy with a typed error rather than
-// hanging or failing deep inside an HSM login with no PIN.
-func TestExtensionServe_PKCS11Strategy_Refused(t *testing.T) {
+// TestExtensionServe_PKCS11Strategy_UnconfiguredFailsClosed proves headless
+// mode refuses a pkcs11-sealed barrier whose token the xkey config does not
+// name, with a typed error, before any PKCS#11 login is attempted.
+func TestExtensionServe_PKCS11Strategy_UnconfiguredFailsClosed(t *testing.T) {
 	tmpDir := t.TempDir()
+	saved := loadedConfig
+	loadedConfig = config.DefaultConfig()
+	t.Cleanup(func() { loadedConfig = saved })
 	xhome.SetRoot(tmpDir)
 	defer xhome.ResetRoot()
 
@@ -804,8 +766,8 @@ func TestExtensionServe_PKCS11Strategy_Refused(t *testing.T) {
 	cmd.Flags().Bool("no-pairing", false, "")
 
 	err := cmd.Execute()
-	if !errors.Is(err, ErrServePKCS11StrategyUnavailable) {
-		t.Fatalf("expected ErrServePKCS11StrategyUnavailable, got %v", err)
+	if !errors.Is(err, ErrServeBarrierUnsealFailed) || !errors.Is(err, config.ErrBarrierPKCS11ConfigInvalid) {
+		t.Fatalf("expected ErrServeBarrierUnsealFailed from ErrBarrierPKCS11ConfigInvalid, got %v", err)
 	}
 }
 
@@ -936,15 +898,14 @@ func TestInitHeadlessAuthenticator_Success(t *testing.T) {
 	}
 
 	// initHeadlessAuthenticator wires the authenticator's persistent storage
-	// to the supplied backend under the "fido2/xkey/" key prefix. The on-disk
-	// directory is created lazily on first write, so persist a record through
-	// the prefixed key and verify it lands under <dataDir>/fido2/xkey/.
+	// to the supplied backend under the "fido2/xkey/" key prefix, so persist a
+	// record through the prefixed key and verify a fresh handle on dataDir
+	// reads it back.
 	if err := backend.Put(context.Background(), "fido2/xkey/probe", []byte("ok")); err != nil {
 		t.Fatalf("failed to write probe credential: %v", err)
 	}
-	credPath := filepath.Join(dataDir, "fido2", "xkey", "probe")
-	if _, err := os.Stat(credPath); err != nil {
-		t.Fatalf("credential not persisted under fido2/xkey prefix: %v", err)
+	if got := readStorageEntry(t, dataDir, "fido2/xkey/probe"); string(got) != "ok" {
+		t.Fatalf("probe credential = %q, want %q", got, "ok")
 	}
 }
 

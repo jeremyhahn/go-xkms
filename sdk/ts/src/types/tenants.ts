@@ -49,32 +49,6 @@ export interface ListTenantsResponse {
   pagination: PageResponse;
 }
 
-/** Mirrors pkg/api/rest/handlers_tenant.go tenantBarrierStatusResponse. */
-export interface TenantBarrierStatusResponse {
-  tenant_id: string;
-  sealed: boolean;
-  strategy?: string;
-  hardware_backed: boolean;
-  /** Present when the servicer path reports full status (qrdb transport shape). */
-  initialized?: boolean;
-  shamir_threshold?: number;
-  shamir_total?: number;
-}
-
-/** Mirrors pkg/api/rest/handlers_tenant.go tenantBarrierInitRequest. */
-export interface TenantBarrierInitRequest {
-  passphrase?: string;
-  strategy?: string;
-  threshold?: number;
-  shares?: number;
-}
-
-/** Mirrors pkg/api/rest/handlers_tenant.go tenantBarrierUnsealRequest. */
-export interface TenantBarrierUnsealRequest {
-  share?: Base64;
-  key?: Base64;
-}
-
 /** Mirrors go-qrdb/sdk/go/transport tenant_types.go TenantQuotas. */
 export interface TenantQuotas {
   max_databases: number;

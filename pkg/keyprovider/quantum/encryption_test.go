@@ -1015,7 +1015,7 @@ func TestLoadMLDSAKey_BadSeedSize(t *testing.T) {
 		Algorithm: "ML-DSA-44",
 		Seed:      []byte("too-short"),
 	}
-	_, err := qb.loadMLDSAKey(meta)
+	_, err := qb.loadMLDSAKey(t.Context(), meta)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid ML-DSA seed size")
 }
@@ -1026,7 +1026,7 @@ func TestLoadMLDSAKey_UnsupportedAlgorithm(t *testing.T) {
 		Algorithm: "ML-DSA-999",
 		Seed:      make([]byte, mldsaSeedSize),
 	}
-	_, err := qb.loadMLDSAKey(meta)
+	_, err := qb.loadMLDSAKey(t.Context(), meta)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnsupportedAlgorithm)
 }
@@ -1039,7 +1039,7 @@ func TestLoadMLKEMKey_UnsupportedAlgorithm(t *testing.T) {
 		Algorithm: "ML-KEM-999",
 		Seed:      make([]byte, 64),
 	}
-	_, err := qb.loadMLKEMKey(meta, "test-id")
+	_, err := qb.loadMLKEMKey(t.Context(), meta, "test-id")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnsupportedAlgorithm)
 }
@@ -1052,7 +1052,7 @@ func TestLoadMLKEMKey_BadSeedSize(t *testing.T) {
 		Algorithm: "ML-KEM-768",
 		Seed:      make([]byte, 10),
 	}
-	_, err := qb.loadMLKEMKey(meta, "test-bad-seed")
+	_, err := qb.loadMLKEMKey(t.Context(), meta, "test-bad-seed")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to reconstruct ML-KEM key from seed")
 }

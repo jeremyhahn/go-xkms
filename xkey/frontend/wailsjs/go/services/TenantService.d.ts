@@ -4,10 +4,6 @@ import {services} from '../models';
 import {transport} from '../models';
 import {context} from '../models';
 
-export function BarrierInit(arg1:string,arg2:number,arg3:number):Promise<void>;
-
-export function BarrierUnseal(arg1:string,arg2:Array<number>,arg3:Array<number>):Promise<void>;
-
 export function CreateTenant(arg1:string):Promise<services.TenantInfo>;
 
 export function DeleteTenant(arg1:string):Promise<void>;

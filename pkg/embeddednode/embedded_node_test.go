@@ -184,9 +184,9 @@ func TestErrDatastorePathRequired_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "datastore.path")
 }
 
-// TestResolveNodeSeal_DisabledForRemoteDatastore verifies the flip never
-// engages for a remote datastore (no local node to flip), even with the
-// barrier enabled and a strategy NodeFlipWired covers.
+// TestResolveNodeSeal_DisabledForRemoteDatastore verifies the node seal never
+// engages for a remote datastore (no local node to seal), even with the
+// barrier enabled.
 func TestResolveNodeSeal_DisabledForRemoteDatastore(t *testing.T) {
 	cfg := &config.Config{
 		Datastore: config.DatastoreConfig{

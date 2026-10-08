@@ -15,7 +15,7 @@ import (
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -27,7 +27,7 @@ import (
 // --- Error type tests ---
 
 func TestRPCError_Error(t *testing.T) {
-	e := &RPCError{Code: -32600, WireCode: wire.CodeInvalidArgument, Message: "invalid request"}
+	e := &RPCError{Code: -32600, WireCode: qrdbsdk.MCPCodeInvalidArgument, Message: "invalid request"}
 	got := e.Error()
 	assert.Contains(t, got, "-32600")
 	assert.Contains(t, got, "invalid request")
@@ -136,11 +136,7 @@ func TestResolveMethod_ExactMatch(t *testing.T) {
 		{"/api/v1/seal", "xkms.seal"},
 		{"/api/v1/unseal", "xkms.unseal"},
 		{"/api/v1/ca/bundle", "xkms.ca.bundle"},
-		{"/v1/barrier/initialize", "barrier.initialize"},
-		{"/v1/barrier/status", "barrier.status"},
-		{"/api/v1/init/status", "init.getStatus"},
 		{"/api/v1/credentials/submit", "credentials.submit"},
-		{"/api/v1/shares/submit", "xkms.submitShare"},
 		{"/api/v1/tenants", "xkms.listTenants"},
 	}
 	for _, tt := range tests {
@@ -166,10 +162,7 @@ func TestResolveMethod_DynamicPatterns(t *testing.T) {
 		{"/api/v1/certs/software/test-key", "xkms.getCert"},
 		{"/api/v1/backends/software", "xkms.getBackend"},
 		{"/api/v1/users/admin", "xkms.getUser"},
-		{"/api/v1/custodian/groups/g1", "xkms.getCustodianGroup"},
-		{"/api/v1/custodian/groups/g1/distribute", "xkms.distributeShares"},
 		{"/api/v1/tenants/t1", "xkms.getTenant"},
-		{"/api/v1/tenants/t1/barrier/init", "xkms.tenantBarrierInit"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
@@ -331,14 +324,14 @@ type jsonrpcRequest struct {
 // jsonrpcResponse is what a mock tool handler returns: exactly one of
 // Result (success) or ErrorText (a failing tool result's text content)
 // should be set. When ErrorText is set alongside a non-zero Envelope, the
-// result also carries go-qrdb's wire.ErrorEnvelope in StructuredContent,
+// result also carries go-qrdb's qrdbsdk.MCPErrorEnvelope in StructuredContent,
 // exercising classifyToolError's coded path; ErrorText alone (Envelope left
-// at its zero value, wire.CodeOK) produces an UNCODED tool failure, exercising
+// at its zero value, qrdbsdk.MCPCodeOK) produces an UNCODED tool failure, exercising
 // the *EnvelopeMissingError protocol-error path go-xkms#797 added.
 type jsonrpcResponse struct {
 	Result    json.RawMessage
 	ErrorText string
-	Envelope  wire.Code
+	Envelope  qrdbsdk.MCPCode
 	// EmptyError forces a tool error result with no content and no envelope
 	// at all, exercising classifyToolError's *EnvelopeMissingError fallback
 	// message.
@@ -355,29 +348,9 @@ type jsonrpcResponse struct {
 var mockToolMethods = []string{
 	"test",
 	"health",
-	"barrier.deleteRecoveryKeys",
-	"barrier.enableEncryption",
-	"barrier.generateRecoveryKeys",
-	"barrier.generateRootToken",
-	"barrier.hasRecoveryKeys",
-	"barrier.initialize",
-	"barrier.initializeShamir",
-	"barrier.recoverWithKeys",
-	"barrier.rekey",
-	"barrier.seal",
-	"barrier.status",
-	"barrier.unseal",
-	"barrier.unsealShare",
-	"barrier.unsealShares",
 	"bootstrap.showKeys",
 	"credentials.strategy",
 	"credentials.submit",
-	"init.claimCertBegin",
-	"init.claimCertComplete",
-	"init.claimShareBegin",
-	"init.claimShareComplete",
-	"init.getStatus",
-	"init.signCSR",
 	"password.add",
 	"password.delete",
 	"password.generate",
@@ -388,7 +361,6 @@ var mockToolMethods = []string{
 	"password.status",
 	"password.unlock",
 	"password.update",
-	"xkms.addCustodianMember",
 	"xkms.algorithms",
 	"xkms.asymmetricEncrypt",
 	"xkms.attestKey",
@@ -408,18 +380,14 @@ var mockToolMethods = []string{
 	"xkms.changeSOPIN",
 	"xkms.changeUserPIN",
 	"xkms.copyKey",
-	"xkms.createCustodianGroup",
 	"xkms.createTenant",
 	"xkms.decrypt",
 	"xkms.deleteCert",
-	"xkms.deleteCustodianGroup",
 	"xkms.deleteKey",
 	"xkms.deletePIVCertificate",
-	"xkms.deleteShare",
 	"xkms.deleteTenant",
 	"xkms.deriveKey",
 	"xkms.deriveKeyECDH",
-	"xkms.distributeShares",
 	"xkms.encrypt",
 	"xkms.exportKey",
 	"xkms.exportKeyMaterial",
@@ -430,23 +398,18 @@ var mockToolMethods = []string{
 	"xkms.getBackend",
 	"xkms.getCert",
 	"xkms.getCertChain",
-	"xkms.getCustodianGroup",
 	"xkms.getImportParameters",
 	"xkms.getKey",
 	"xkms.getLockoutStatus",
 	"xkms.getPIVCertificate",
-	"xkms.getShare",
-	"xkms.getShareCollectionStatus",
 	"xkms.getTenant",
 	"xkms.getTLSCertificate",
 	"xkms.importKey",
 	"xkms.importPIVCertificate",
 	"xkms.listBackends",
 	"xkms.listCerts",
-	"xkms.listCustodianGroups",
 	"xkms.listKeys",
 	"xkms.listPIVSlots",
-	"xkms.listShares",
 	"xkms.listTenants",
 	"tpm.policy.create",
 	"tpm.policy.get",
@@ -473,8 +436,6 @@ var mockToolMethods = []string{
 	"oidc.credential.token",
 	"oidc.credential.device.start",
 	"oidc.credential.device.poll",
-	"xkms.queryAudit",
-	"xkms.removeCustodianMember",
 	"xkms.resetLockout",
 	"xkms.rotateKey",
 	"xkms.listKeyVersions",
@@ -497,10 +458,6 @@ var mockToolMethods = []string{
 	"xkms.setUserPIN",
 	"xkms.sign",
 	"xkms.storePIVCertificate",
-	"xkms.submitShare",
-	"xkms.tenantBarrierInit",
-	"xkms.tenantBarrierStatus",
-	"xkms.tenantBarrierUnseal",
 	"user.bindCert",
 	"user.create",
 	"user.delete",
@@ -543,9 +500,9 @@ func startMockServer(t *testing.T, handler func(req jsonrpcRequest) jsonrpcRespo
 			switch {
 			case resp.EmptyError:
 				return &mcp.CallToolResult{IsError: true}, nil
-			case resp.ErrorText != "" && resp.Envelope != wire.CodeOK:
+			case resp.ErrorText != "" && resp.Envelope != qrdbsdk.MCPCodeOK:
 				res := mcp.NewToolResultError(resp.ErrorText)
-				res.StructuredContent = wire.NewErrorEnvelope(xkmsmcp.ToolName(method), resp.Envelope, resp.ErrorText)
+				res.StructuredContent = qrdbsdk.NewMCPErrorEnvelope(xkmsmcp.ToolName(method), resp.Envelope, resp.ErrorText)
 				return res, nil
 			case resp.ErrorText != "":
 				return mcp.NewToolResultError(resp.ErrorText), nil
@@ -599,7 +556,7 @@ func TestRpcCall_RPCError(t *testing.T) {
 		}
 		return jsonrpcResponse{
 			ErrorText: "invalid request",
-			Envelope:  wire.CodeInvalidArgument,
+			Envelope:  qrdbsdk.MCPCodeInvalidArgument,
 		}
 	})
 	defer cleanup()

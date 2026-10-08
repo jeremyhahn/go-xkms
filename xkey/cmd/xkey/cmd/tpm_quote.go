@@ -20,10 +20,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -246,7 +246,7 @@ func writeQuoteToFile(out io.Writer, result *QuoteResult, eventLog []byte) error
 	}
 
 	// Write to file
-	if err := os.WriteFile(quoteOutputFile, data, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(quoteOutputFile, data, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 

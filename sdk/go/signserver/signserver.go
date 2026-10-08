@@ -89,6 +89,10 @@ var (
 // DefaultSocketMode is the socket file mode when Config.SocketMode is zero.
 const DefaultSocketMode = pkgsignserver.DefaultSocketMode
 
+// StateDatabase is the go-qrdb database Config.StateDAOs serves: open it on
+// the datastore before passing the datastore's DAOFactory().
+const StateDatabase = pkgsignserver.StateDatabase
+
 // Sentinel errors, matched with errors.Is.
 var (
 	ErrSocketPathRequired   = pkgsignserver.ErrSocketPathRequired

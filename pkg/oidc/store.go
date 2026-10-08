@@ -13,22 +13,16 @@
 
 package oidc
 
-import (
-	"sort"
-	"strings"
-	"sync"
-)
+import "strings"
 
 // TokenStore defines the interface for persistent token storage.
 //
-// The GUI's production implementations are DAOStore (dao_store.go, a
-// go-qrdb DAO/entity-backed store -- barrier-encrypted when its KVStore is
-// adapted from a barrier backend) and MemoryTokenStore below (no-barrier
-// fallback, go-xkms#1203): there is no file-backed implementation in this
-// package. A key compiled into the binary gives a file on disk no real
-// confidentiality, so no in-between "encrypted with a fixed key" option
-// exists here for a caller to reach for -- with a barrier, use DAOStore;
-// without one, tokens stay in memory only.
+// DAOStore (dao_store.go) is the one implementation: tokens are go-qrdb
+// entities on the DAO factory the composition root injects. There is no
+// file-backed store. A key compiled into the binary gives a file on disk no
+// real confidentiality, so tokens are encrypted at rest only by the store
+// behind the factory -- the go-qrdb barrier -- and a host without one hands
+// in a factory over a memory store, so its tokens never touch disk.
 type TokenStore interface {
 	// Save stores tokens for the given issuer.
 	Save(issuer string, tokens *TokenResponse) error
@@ -49,120 +43,4 @@ type TokenStore interface {
 // normalizeIssuer normalizes an issuer URL for consistent storage.
 func normalizeIssuer(issuer string) string {
 	return strings.TrimSuffix(strings.ToLower(issuer), "/")
-}
-
-// MemoryTokenStore implements TokenStore using in-memory storage.
-type MemoryTokenStore struct {
-	mu     sync.RWMutex
-	tokens map[string]*TokenResponse
-	closed bool
-}
-
-// NewMemoryTokenStore creates a new in-memory token store.
-func NewMemoryTokenStore() *MemoryTokenStore {
-	return &MemoryTokenStore{
-		tokens: make(map[string]*TokenResponse),
-	}
-}
-
-// Save stores tokens for the given issuer.
-func (s *MemoryTokenStore) Save(issuer string, tokens *TokenResponse) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return ErrStoreClosed
-	}
-
-	if issuer == "" {
-		return ErrInvalidIssuer
-	}
-
-	if tokens == nil {
-		return ErrTokenNotFound
-	}
-
-	issuer = normalizeIssuer(issuer)
-	s.tokens[issuer] = tokens
-	return nil
-}
-
-// Load retrieves tokens for the given issuer.
-func (s *MemoryTokenStore) Load(issuer string) (*TokenResponse, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.closed {
-		return nil, ErrStoreClosed
-	}
-
-	if issuer == "" {
-		return nil, ErrInvalidIssuer
-	}
-
-	issuer = normalizeIssuer(issuer)
-	tokens, exists := s.tokens[issuer]
-	if !exists {
-		return nil, ErrTokenNotFound
-	}
-
-	return tokens, nil
-}
-
-// Delete removes tokens for the given issuer.
-func (s *MemoryTokenStore) Delete(issuer string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return ErrStoreClosed
-	}
-
-	if issuer == "" {
-		return ErrInvalidIssuer
-	}
-
-	issuer = normalizeIssuer(issuer)
-	if _, exists := s.tokens[issuer]; !exists {
-		return ErrTokenNotFound
-	}
-
-	delete(s.tokens, issuer)
-	return nil
-}
-
-// List returns all issuers with stored tokens.
-func (s *MemoryTokenStore) List() ([]string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.closed {
-		return nil, ErrStoreClosed
-	}
-
-	issuers := make([]string, 0, len(s.tokens))
-	for issuer := range s.tokens {
-		issuers = append(issuers, issuer)
-	}
-
-	sort.Strings(issuers)
-	return issuers, nil
-}
-
-// Close closes the store.
-func (s *MemoryTokenStore) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return nil
-	}
-
-	s.closed = true
-	for k := range s.tokens {
-		delete(s.tokens, k)
-	}
-	s.tokens = nil
-
-	return nil
 }

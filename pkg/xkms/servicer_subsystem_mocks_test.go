@@ -6,10 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"time"
-
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -204,88 +201,4 @@ func (m *mockPlatformStore) List(ctx context.Context) ([]string, error) {
 
 func (m *mockPlatformStore) Reseal(ctx context.Context, name string) error {
 	return nil
-}
-
-// fakeShareClient implements qrdbtransport.ShareClient for testing. It mirrors
-// the behaviour of the embedded go-qrdb node's share client by storing
-// submitted shares in memory.
-type fakeShareClient struct {
-	shares    []qrdbtransport.ShareInfo
-	threshold int
-	total     int
-	err       error
-}
-
-func newFakeShareClient() *fakeShareClient {
-	return &fakeShareClient{}
-}
-
-func (f *fakeShareClient) SubmitShare(ctx context.Context, req *qrdbtransport.SubmitShareRequest) (*qrdbtransport.SubmitShareResponse, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	f.shares = append(f.shares, qrdbtransport.ShareInfo{
-		ServerURL:  req.ServerURL,
-		GroupID:    req.GroupID,
-		GroupName:  req.GroupName,
-		ShareIndex: req.ShareIndex,
-		ShareData:  req.ShareData,
-		Purpose:    req.Purpose,
-		ReceivedAt: time.Now().UTC(),
-		TenantID:   req.TenantID,
-	})
-	return &qrdbtransport.SubmitShareResponse{Accepted: true}, nil
-}
-
-func (f *fakeShareClient) ListShares(ctx context.Context) (*qrdbtransport.ListSharesResponse, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	return &qrdbtransport.ListSharesResponse{Shares: f.shares}, nil
-}
-
-func (f *fakeShareClient) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*qrdbtransport.ShareInfo, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	for i := range f.shares {
-		s := f.shares[i]
-		if s.ServerURL == serverURL && s.GroupID == groupID && s.ShareIndex == shareIndex {
-			return &s, nil
-		}
-	}
-	return nil, qrdbsdk.ErrCeremonyShareNotFound
-}
-
-func (f *fakeShareClient) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
-	if f.err != nil {
-		return f.err
-	}
-	for i := range f.shares {
-		s := f.shares[i]
-		if s.ServerURL == serverURL && s.GroupID == groupID && s.ShareIndex == shareIndex {
-			f.shares = append(f.shares[:i], f.shares[i+1:]...)
-			return nil
-		}
-	}
-	return qrdbsdk.ErrCeremonyShareNotFound
-}
-
-func (f *fakeShareClient) GetShareCollectionStatus(ctx context.Context, groupID string) (*qrdbtransport.ShareCollectionStatus, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	collected := 0
-	for i := range f.shares {
-		if f.shares[i].GroupID == groupID {
-			collected++
-		}
-	}
-	return &qrdbtransport.ShareCollectionStatus{
-		GroupID:   groupID,
-		Threshold: f.threshold,
-		Total:     f.total,
-		Collected: collected,
-		Ready:     f.threshold > 0 && collected >= f.threshold,
-	}, nil
 }

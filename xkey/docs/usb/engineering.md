@@ -62,7 +62,7 @@ wrap ConfigFS/FunctionFS filesystem failures with the operation and cause.
 |---|---|---|
 | `usb.ImageConfig` | type | `Path string`, `SizeBytes int64`, `Passphrase *secure.Secret`, `Binaries []string` |
 | `usb.ImageStatus` | type | `Path`, `IsBlockDevice`, `TotalSize`, `FAT32Size`, `LUKSSize`, `LUKSMounted`, `Binaries` |
-| `usb.CreateImage(cfg ImageConfig) error` | func | refuses `SizeBytes < MinImageSize` for a file target; ignored for a block device |
+| `usb.CreateImage(ctx context.Context, cfg ImageConfig) error` | func | refuses `SizeBytes < MinImageSize` for a file target; ignored for a block device |
 | `usb.Status(path) (*ImageStatus, error)` | func | — |
 | `usb.UpdateBinaries(path string, binaries []string) error` | func | — |
 | `usb.DetectUSBDevices() ([]USBDevice, error)` | func | scans for removable block devices |
@@ -75,7 +75,8 @@ wrap ConfigFS/FunctionFS filesystem failures with the operation and cause.
 
 `ImageConfig.Passphrase` is `*secure.Secret`
 (`github.com/jeremyhahn/go-xkms/sdk/go/secure`) — held in protected memory,
-**not** a plain `string`; `CreateImage` rejects a `nil` passphrase.
+**not** a plain `string`; `CreateImage` rejects a `nil` passphrase. It takes
+the caller's `context.Context` first and opens the passphrase under it.
 
 ## Errors — disk images (`xkey/pkg/usb/errors.go`)
 

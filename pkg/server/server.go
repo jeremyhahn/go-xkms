@@ -50,7 +50,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/api/unix"
-	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
@@ -59,11 +58,11 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/kmip" // registers the "kmip" escrow agent factory
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
 	"github.com/jeremyhahn/go-xkms/pkg/factor"
-	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
@@ -74,7 +73,7 @@ import (
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	clustercapkg "github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -252,31 +251,28 @@ type Server struct {
 	rbacAuthorizer *auth.Authorizer
 
 	// Audit logging
-	auditLogger audit.Logger
+	auditLogger qrdbsdk.NodeAuditLogger
+	// ownedAuditLogger is the file sink opened when no node is hosted; nil
+	// when auditLogger is the node's sink.
+	ownedAuditLogger qrdbsdk.NodeAuditLogger
 
-	// Barrier (seal/unseal)
+	// barrier is the qrdb node's system barrier, adopted at node
+	// construction (initEmbeddedQRDBNode); nil without a node seal.
 	barrier *seal.Barrier
 
-	// sealStrategies holds the sealing strategies composed for the system
-	// barrier (hardware/cloud strategies from the preference order plus the
-	// software baseline). They are captured at barrier init so the barrier
-	// registry can build a hardware-backed StrategyRegistry from the same
-	// instances for per-tenant barrier sealing.
-	sealStrategies []seal.SealingStrategy
-
-	// Barrier registry (multi-tenant)
+	// barrierRegistry is the node's per-tenant barrier registry; nil without
+	// a node seal.
 	barrierRegistry *seal.BarrierRegistry
 
-	// nodeSealEnabled indicates the qrdb node's OWN barrier is used (the flip):
-	// Datastore.Mode=="standalone" && Barrier.Enabled && auto-unseal creds present.
-	// When true, the node encrypts its data-plane KV (encfs), auto-unseals at
-	// construction, and s.barrier/s.barrierRegistry/s.tenantService come from
-	// the node — xkms's own barrier/registry construction is skipped. When
-	// false, everything behaves exactly as before (xkms's own barrier).
+	// nodeSealEnabled indicates the qrdb node's barrier is engaged:
+	// Datastore.Mode=="standalone" && Barrier.Enabled. When true, the node
+	// encrypts its data-plane KV (encfs) and s.barrier/s.barrierRegistry/
+	// s.tenantService come from the node. When false there is no barrier in
+	// this process (none configured, or a remote datastore's barrier).
 	nodeSealEnabled bool
 
-	// nodeSealStrategy is the resolved hardware SealingStrategy fed to the node
-	// barrier (nil for passphrase mode).
+	// nodeSealStrategy is the resolved hardware or cloud SealingStrategy fed
+	// to the node barrier (nil for the strategies go-qrdb builds itself).
 	nodeSealStrategy seal.SealingStrategy
 
 	// nodeSealTPM is the single open TPM backend produced by the seal autodetect;
@@ -296,15 +292,8 @@ type Server struct {
 	// cluster ACME enrollment provisioned the cluster mTLS.
 	clusterCAKeyStrategy clustercapkg.ClusterCAKeyStrategy
 
-	// volumePool backs dedicated-isolation (barrier/volume/raft) tenants with
-	// per-tenant Pebble storage drawn from the configured pool. It is nil when
-	// no volume pools are declared, in which case dedicated-isolation tenant
-	// registration falls back to the system store. The server owns its
-	// lifecycle and closes it during Shutdown.
-	volumePool *seal.VolumePoolSubsystem
-
-	// tenantService is go-qrdb's canonical TenantService composed on top of the
-	// barrier registry with xkms hardware seal strategies injected. It owns the
+	// tenantService is the node's go-qrdb TenantService, built over the
+	// node's barrier registry with the node seal strategy injected. It owns the
 	// entitlement-gated isolation modes, system-managed auto-unseal, quotas, and
 	// volume/raft tenant lifecycle; the xkms tenant servicer delegates to it.
 	tenantService qrdbsdk.ServiceTenantServicer
@@ -396,17 +385,18 @@ type Server struct {
 	// (pkg/escrow). Nil when config.Escrow is nil or disabled.
 	escrowRegistry *escrow.Registry
 
-	// Ceremony service for init ceremony
-	ceremonyService *initialize.CeremonyService
-
 	// Factor registry for hardware auth factors (PIV, PKCS#11, FIDO2, mTLS)
 	factorRegistry *qrdbsdk.AuthFactorRegistry
 
-	// qrdbStorage is the single shared qrdb-backed storage backend used when
-	// the configured storage backend is "qrdb". All per-subdir storage views
-	// are key-prefixed views over this one backend (see createStorage). It is
-	// nil for non-qrdb backends and is the sole owner of the qrdb lifecycle:
-	// only the server closes it, during Shutdown.
+	// datastore is the shared datastore: the go-qrdb client every subsystem
+	// stores through and the DAO factory features persist through. In remote
+	// mode it owns the dialed client; in standalone mode it borrows the
+	// embedded node's client, whose lifecycle stopQRDBNode owns.
+	datastore *datastore.Datastore
+
+	// qrdbStorage is the storage backend over the datastore's client. All
+	// per-subdir storage views are key-prefixed views over this one backend
+	// (see createStorage). Only the server closes it, during Shutdown.
 	qrdbStorage storage.Backend
 
 	// qrdbNode is the in-process qrdb engine that xkms hosts as its single
@@ -438,12 +428,6 @@ type Server struct {
 	// It backs Client().Audit(); the server owns its lifecycle and closes it
 	// during Shutdown. It is nil for non-embedded (remote) qrdb deployments.
 	qrdbAuditSink qrdbsdk.NodeAuditLogger
-
-	// clusterAdvertiser publishes this node's Raft address and client-facing
-	// API endpoints into the cluster registry and keeps the lease alive, so a
-	// peer can turn a leader replica ID into a dialable API address. It is nil
-	// on a standalone node and on a node with no advertisable host.
-	clusterAdvertiser *qrdbsdk.NodeAdvertiser
 
 	// uiAssets is the compiled web UI filesystem (rooted at the vite dist
 	// output) served by the REST transport. It is installed by the
@@ -661,15 +645,15 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 
 	// Initialize the shared qrdb storage backend (when configured). This must
 	// happen before initializeBackends, because per-subdir storage views are
-	// key-prefixed views over this single shared backend. For a
-	// NodeFlipWired barrier strategy this is also where Server.New blocks:
-	// initEmbeddedQRDBNode builds the node's own seal subsystem and, when it
+	// key-prefixed views over this single shared backend. With the barrier
+	// enabled this is also where Server.New blocks: initEmbeddedQRDBNode
+	// builds the node's own seal subsystem and, when it
 	// cannot auto-unseal unattended ("passphrase"/"shamir"), serves the
 	// sealed-window listener and waits for an operator to complete
 	// `xkmsctl barrier unseal`/`unseal-shares` — go-qrdb's own
 	// cmd/qrdbd pattern (initSealSubsystem -> awaitUnseal), driven here
 	// entirely through go-qrdb/sdk/go. By the time this call returns, the
-	// barrier (s.barrier, for the flip case) is unsealed and adopted.
+	// node's barrier (s.barrier) is unsealed and adopted.
 	if err := s.initializeQRDBStorage(); err != nil {
 		cancel()
 		return nil, &ErrServiceInit{Service: "qrdb storage", Err: err}
@@ -686,10 +670,8 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		}
 	}
 
-	// Initialize platform store. Runs after unseal (the node-flip case above
-	// is already unsealed and adopted by this point; a non-flip barrier, if
-	// any, unseals later in initializeBarrier and the platform store does not
-	// depend on it). Builds a sealer from credentials.seal_strategy and skips
+	// Initialize platform store. Runs after the node's barrier is unsealed
+	// and adopted above. Builds a sealer from credentials.seal_strategy and skips
 	// only for "manual" (nothing stored) and "barrier" (the credential
 	// service stores directly in s.barrier instead) -- see initializePlatformStore.
 	if err := s.initializePlatformStore(); err != nil {
@@ -772,20 +754,6 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		cancel()
 		s.closeBackends()
 		return nil, &ErrServiceInit{Service: "authorization", Err: err}
-	}
-
-	// Initialize barrier (seal/unseal)
-	if err := s.initializeBarrier(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "barrier", Err: err}
-	}
-
-	// Initialize barrier registry
-	if err := s.initializeBarrierRegistry(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "barrier registry", Err: err}
 	}
 
 	// Initialize PIN manager
@@ -919,41 +887,14 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.escrowRegistry != nil {
 			svc.SetEscrowRegistry(s.escrowRegistry)
 		}
-		// UserAuthFactors returns nil when the transport predates the
-		// user-side surface, so the servicer stays unconfigured rather than
-		// holding a typed-nil client that would panic on first call.
-		if s.qrdbClient != nil {
-			if factors := s.qrdbClient.UserAuthFactors(); factors != nil {
-				svc.SetUserAuthFactorClient(factors)
-			}
-		}
-		// The audit client is wired read-only: the servicer exposes QueryAudit
-		// and nothing else, so the viewer can read the chain while emission
-		// stays with pkg/audit's Logger.
-		if s.qrdbClient != nil {
-			if auditClient := s.qrdbClient.Audit(); auditClient != nil {
-				svc.SetAuditClient(auditClient)
-			}
-		}
-		// Wire the read-only cluster surface. Only attach the live qrdb
-		// cluster client when clustering is enabled; a standalone node leaves
-		// the reader nil and the servicer reports single-node status. The
-		// shard and this node's replica id come from operator cluster config.
+		// Wire leader-endpoint resolution for not-leader redirects. Only
+		// attach the live qrdb cluster client when clustering is enabled; a
+		// standalone node leaves it nil and has no redirect target. The shard
+		// comes from operator cluster config.
 		if s.qrdbClient != nil && s.config.Cluster.Enabled {
-			svc.SetClusterClient(
-				&clusterClientAdapter{cluster: s.qrdbClient.Cluster()},
-				s.config.Cluster.ShardID,
-				s.config.Cluster.NodeID,
-			)
+			svc.SetClusterClient(&clusterClientAdapter{cluster: s.qrdbClient.Cluster()}, s.config.Cluster.ShardID)
 		} else {
-			svc.SetClusterClient(nil, s.config.Cluster.ShardID, s.config.Cluster.NodeID)
-		}
-		// Wire the embedded qrdb node as the encryption-migration provider so
-		// BarrierEnableEncryption can migrate an unencrypted barrier to a keyed
-		// strategy in place. The node satisfies xkms.EncryptionMigrator (its
-		// EnableEncryption parameter types are the qrdb SDK aliases).
-		if s.qrdbNode != nil {
-			svc.SetEncryptionMigrator(s.qrdbNode)
+			svc.SetClusterClient(nil, s.config.Cluster.ShardID)
 		}
 		if s.tenantService != nil {
 			svc.SetTenantService(s.tenantService)
@@ -969,9 +910,6 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 				return nil, inviteErr
 			}
 			svc.SetInviteConfig(inviteCfg)
-		}
-		if s.ceremonyService != nil {
-			svc.SetCeremonyService(initialize.NewCeremonyAdapter(s.ceremonyService))
 		}
 		// Wire the hardware-attestation trust anchors. Without them,
 		// attestation-gated CSR signing fails closed, so a broken anchor
@@ -1033,13 +971,6 @@ func (s *Server) composedStores() *compose.Stores {
 		TPMPolicies:     s.tpmPolicies,
 		KeyVersions:     s.keyVersions,
 		OIDCCredentials: s.oidcCredentials,
-		Barrier:         s.barrier,
-	}
-	// xkmsd serves share custody over its own node whenever it has one.
-	if s.qrdbClient != nil {
-		stores.Custodians = s.qrdbClient.CustodianGroups()
-		stores.Shares = s.qrdbClient.Shares()
-		stores.Backup = s.qrdbClient.Backup()
 	}
 	if invite, err := compose.BuildInviteStore(s.createStorage); err != nil {
 		s.logger.Warn("Invite store is off", "error", err)
@@ -1522,75 +1453,36 @@ func (s *Server) deriveCompositeAuthenticator() (auth.Authenticator, error) {
 // shared between the REST browser ceremony and the SDK ceremony. It is a no-op
 // when WebAuthn is not enabled (webauthnConfig is nil).
 //
-// When xkms hosts or dials the qrdb engine, users and credentials are
-// persisted on the qrdb node — the single source of identity — via
-// rest.BuildWebAuthnService, the construction path shared with a host's
+// Users live on the qrdb identity plane and credentials are DAO entities
+// built from the datastore's DAO factory, in every datastore mode, through
+// rest.BuildWebAuthnService -- the construction path shared with a host's
 // self-built WebAuthn surface (pkg/api/rest NewHostServer / pkg/apimodule),
-// so xkmsd and a host configure WebAuthn identically. Otherwise (no qrdb
-// identity plane) they are persisted in the configured datastore
-// (BackendUserStore / BackendCredentialStore) so registrations survive
-// restarts in every storage mode — a construction path a host has no
-// equivalent for, since composing the module implies embedding qrdb.
-// Sessions are always ephemeral and live in memory.
+// so xkmsd and a host configure WebAuthn identically. Sessions are always
+// ephemeral and live in memory.
 func (s *Server) initializeWebAuthnService() error {
 	if s.webauthnConfig == nil {
 		return nil
 	}
+	if s.datastore == nil {
+		return &ErrServiceInit{Service: "webauthn service", Err: ErrWebAuthnNoDatastore}
+	}
 
 	s.logger.Info("Initializing WebAuthn service...")
 
-	if s.qrdbClient != nil {
-		svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
-			Config:      s.webauthnConfig,
-			QRDBClient:  s.qrdbClient,
-			TenantID:    webAuthnSystemTenant,
-			TokenIssuer: s.tokenIssuer,
-			Logger:      s.logger,
-			AuditLogger: s.auditLogger,
-		})
-		if err != nil {
-			return &ErrServiceInit{Service: "webauthn service", Err: err}
-		}
-		s.webauthnService = svc
-		s.logger.Info("WebAuthn service initialized", "rp_id", s.webauthnConfig.RPID, "store", "qrdb")
-		return nil
-	}
-
-	// No qrdb identity plane (non-qrdb storage mode): persist WebAuthn
-	// users and credentials in the configured datastore so registrations
-	// survive restarts. Sessions remain in-memory (short-lived challenge
-	// state); a cluster-safe session store is a clustering concern.
-	waStore, err := s.createStorage("webauthn")
-	if err != nil {
-		return &ErrServiceInit{Service: "webauthn store", Err: err}
-	}
-
-	params := webauthn.ServiceParams{
-		Config:          s.webauthnConfig,
-		UserStore:       webauthn.NewBackendUserStore(waStore),
-		SessionStore:    webauthn.NewMemorySessionStore(),
-		CredentialStore: webauthn.NewBackendCredentialStore(waStore),
-		Logger:          s.logger,
-		AuditLogger:     s.auditLogger,
-	}
-
-	// Wire the session-token issuer so ceremony completion mints verifiable
-	// access/refresh JWTs. Without it the library falls back to an unsigned
-	// base64 user ID, which no authenticator accepts — a login flow that
-	// cannot actually log anyone in.
-	if s.tokenIssuer != nil {
-		params.JWTGenerator = rest.NewWebAuthnTokenAdapter(s.tokenIssuer, webAuthnSystemTenant)
-	} else {
-		s.logger.Warn("WebAuthn service has no token issuer: ceremony tokens will not authenticate API requests")
-	}
-
-	svc, err := webauthn.NewService(params)
+	svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
+		Config:      s.webauthnConfig,
+		QRDBClient:  s.datastore.Client(),
+		DAOFactory:  s.datastore.DAOFactory(),
+		TenantID:    webAuthnSystemTenant,
+		TokenIssuer: s.tokenIssuer,
+		Logger:      s.logger,
+		AuditLogger: s.auditLogger,
+	})
 	if err != nil {
 		return &ErrServiceInit{Service: "webauthn service", Err: err}
 	}
-
 	s.webauthnService = svc
-	s.logger.Info("WebAuthn service initialized", "rp_id", s.webauthnConfig.RPID, "store", "datastore")
+	s.logger.Info("WebAuthn service initialized", "rp_id", s.webauthnConfig.RPID)
 	return nil
 }
 
@@ -1635,26 +1527,30 @@ func (s *Server) initializeAuthorization() error {
 func (s *Server) initializeAuditLogger() error {
 	s.logger.Info("Initializing audit logger...")
 
-	if s.qrdbClient != nil {
-		s.auditLogger = audit.NewQRDBLogger(s.qrdbClient.Audit())
+	// The hosted node's audit sink is go-qrdb's own logger; the node owns
+	// its lifecycle (stopQRDBNode).
+	if s.qrdbAuditSink != nil {
+		s.auditLogger = s.qrdbAuditSink
 		s.logger.Info("Audit logging routed to qrdb chained subsystem")
 		return nil
 	}
 
-	// No qrdb client (non-qrdb storage backend): audit still lands on a
-	// tamper-evident chain — a local chained file with the identical record
-	// shape — never a silent no-op. A deployment with no storage path at
-	// all has nowhere durable to write; that is a configuration with no
-	// audit story and the file sink is rooted in the CWD as a last resort.
+	// No hosted node (non-qrdb storage backend): audit still lands on a
+	// tamper-evident chain — go-qrdb's file logger, the same record shape —
+	// never a silent no-op. A deployment with no storage path at all has
+	// nowhere durable to write; that is a configuration with no audit story
+	// and the file sink is rooted in the CWD as a last resort. The server
+	// owns this sink and closes it in shutdown.
 	auditPath := "audit-events.ndjson"
 	if s.config.Datastore.Path != "" {
 		auditPath = filepath.Join(s.config.Datastore.Path, "audit-events.ndjson")
 	}
-	chained, err := audit.NewChainedFileLogger(auditPath)
+	chained, err := qrdbsdk.NewAuditFileLogger(auditPath)
 	if err != nil {
 		return &ErrServiceInit{Service: "chained file audit logger", Err: err}
 	}
 	s.auditLogger = chained
+	s.ownedAuditLogger = chained
 	s.logger.Info("Audit logging routed to local chained file", "path", auditPath)
 
 	return nil
@@ -1686,188 +1582,17 @@ func (s *Server) qrdbUserStore() *auth.QRDBUserStore {
 	return auth.NewQRDBUserStore(s.qrdbClient.Users())
 }
 
-// initializeBarrier creates and configures the barrier (seal/unseal) subsystem.
-// The barrier wraps storage with transparent AES-256-GCM encryption.
-func (s *Server) initializeBarrier() error {
-	if s.nodeSealEnabled {
-		// The node's own barrier was adopted at node construction
-		// (initEmbeddedQRDBNode) — s.barrier already points at it. Skip the
-		// hand-rolled construction so there is a single barrier.
-		s.logger.Info("Barrier: using the adopted qrdb node barrier")
-		return nil
-	}
-	if !s.config.Barrier.Enabled {
-		s.logger.Info("Barrier disabled")
-		return nil
-	}
-
-	s.logger.Info("Initializing barrier...")
-
-	// Create barrier storage backend
-	barrierStorage, err := s.createStorage("barrier")
-	if err != nil {
-		return &ErrStorageCreate{Resource: "barrier storage", Err: err}
-	}
-
-	// Build sealing strategies. Hardware/cloud strategies whose backend was
-	// configured in the preference order are composed from the already-
-	// initialized backends; software is always appended as the baseline.
-	strategies, err := s.buildHardwareSealStrategies()
-	if err != nil {
-		return &ErrServiceInit{Service: "barrier", Err: err}
-	}
-	// Retain the composed strategies so the barrier registry can build a
-	// hardware-backed StrategyRegistry from the same instances for per-tenant
-	// barrier sealing (see initializeBarrierRegistry).
-	s.sealStrategies = strategies
-
-	// Determine root key path
-	rootKeyPath := s.config.Barrier.RootKeyPath
-	if rootKeyPath == "" {
-		rootKeyPath = "barrier/root-key"
-	}
-
-	// Build preference order
-	var prefOrder []seal.StrategyID
-	for _, id := range s.config.Barrier.PreferenceOrder {
-		prefOrder = append(prefOrder, seal.StrategyID(id))
-	}
-
-	barrierConfig := seal.BarrierConfig{
-		RootKeyPath:     rootKeyPath,
-		PreferenceOrder: prefOrder,
-		AuditLogger:     s.auditLogger,
-	}
-
-	barrier, err := seal.NewBarrier(s.logger, barrierStorage, barrierConfig, strategies...)
-	if err != nil {
-		return &ErrServiceInit{Service: "barrier", Err: err}
-	}
-
-	s.barrier = barrier
-	s.logger.Info("Barrier initialized", "root_key_path", rootKeyPath)
-
-	return nil
-}
-
-// initializeBarrierRegistry creates the barrier registry for multi-tenant
-// isolation and composes go-qrdb's TenantService on top of it with xkms
-// hardware seal strategies injected. The registry owns the per-tenant barrier
-// lifecycle; the TenantService adds entitlement-gated isolation modes
-// (prefix/barrier/volume/raft), system-managed auto-unseal, quotas, and the
-// strategy-by-name resolution that lets a tenant barrier be sealed by a TPM,
-// PKCS#11 token, or cloud KMS.
-func (s *Server) initializeBarrierRegistry() error {
-	if s.nodeSealEnabled {
-		// The node's own barrier registry + tenant service were adopted at node
-		// construction. Nothing to build here.
-		s.logger.Info("Barrier registry: using the adopted qrdb node registry + tenant service")
-		return nil
-	}
-	if s.barrier == nil {
-		s.logger.Info("Barrier registry skipped (no barrier)")
-		return nil
-	}
-
-	// Build the volume-pool subsystem so dedicated-isolation tenants
-	// (barrier/volume/raft) can draw a durable per-tenant Pebble path. When no
-	// data directory is configured (in-memory deployments) the pool is nil and
-	// only prefix-isolated tenants are available.
-	pool, err := s.buildVolumePool()
-	if err != nil {
-		return &ErrServiceInit{Service: "barrier registry", Err: err}
-	}
-
-	var regOpts []seal.BarrierRegistryOption
-	if pool != nil {
-		s.volumePool = pool
-		regOpts = append(regOpts,
-			seal.WithVolumePool(pool.Manager, pool.StateStore, pool.DefaultPoolName),
-			seal.WithPerTenantRegistry(pool.PerTenantRegistry),
-		)
-	}
-
-	registry, err := seal.NewBarrierRegistry(s.barrier, regOpts...)
-	if err != nil {
-		return &ErrServiceInit{Service: "barrier registry", Err: err}
-	}
-	s.barrierRegistry = registry
-
-	// Compose go-qrdb's TenantService on top of the registry. The hardware
-	// StrategyRegistry built from the system barrier's strategies lets a
-	// per-tenant barrier be initialized with an explicit hardware/cloud strategy
-	// (TenantBarrierInitWithStrategy). xkms operates its own tenants as the
-	// trust anchor, so the operator default entitlements permit every isolation
-	// mode; downstream multi-tenant billing planes (quicbaas) tighten these per
-	// plan via UpdateEntitlements.
-	tenantSvc, err := seal.NewHardwareTenantService(
-		s.barrier, registry, s.logger, s.sealStrategies,
-		qrdbsdk.WithTenantDefaultEntitlements(xkmsDefaultEntitlements()),
-	)
-	if err != nil {
-		return &ErrServiceInit{Service: "tenant service", Err: err}
-	}
-	s.tenantService = tenantSvc
-
-	// Re-register dedicated-isolation tenants from their persisted pool
-	// assignments and unseal system-managed (auto-unseal) barriers credential-
-	// free. A nil pool short-circuits inside RestoreVolumeTenants.
-	if err := registry.RestoreVolumeTenants(context.Background()); err != nil {
-		s.logger.Warn("RestoreVolumeTenants failed; some tenant barriers may be deferred",
-			"error", err.Error())
-	}
-
-	s.logger.Info("Barrier registry initialized", "volume_pool", pool != nil)
-
-	return nil
-}
-
-// buildVolumePool provisions a single default volume pool rooted under the
-// configured storage path so dedicated-isolation tenants get durable per-tenant
-// Pebble storage. It returns (nil, nil) when no storage path is configured
-// (in-memory deployments), in which case only prefix-isolated tenants are
-// available. The pool name "default" matches the name RegisterTenantPooled
-// draws from.
-func (s *Server) buildVolumePool() (*seal.VolumePoolSubsystem, error) {
-	if s.config.Datastore.Path == "" {
-		return nil, nil
-	}
-	dataDir := s.config.Datastore.Path
-	poolRoot := filepath.Join(dataDir, "tenant-volumes")
-	pools := []qrdbsdk.DaemonVolumePoolConfig{{
-		Name:  "default",
-		Paths: []string{poolRoot},
-	}}
-	return seal.BuildVolumePoolSubsystem(dataDir, pools, s.logger, s.config.Cluster.Enabled)
-}
-
-// xkmsDefaultEntitlements returns the operator default entitlements for xkms's
-// own tenants. xkms is the trust anchor that operates its tenants directly
-// (there is no untrusted billing plane inside xkms itself), so every isolation
-// mode and the system-managed auto-unseal key-management mode are permitted by
-// default. Consumers that expose tenants to untrusted callers tighten these per
-// plan via UpdateEntitlements.
-func xkmsDefaultEntitlements() *qrdbsdk.Entitlements {
-	return &qrdbsdk.Entitlements{
-		AllowedIsolationModes: []string{
-			string(qrdbsdk.TenantIsolationPrefix),
-			string(qrdbsdk.TenantIsolationBarrier),
-			string(qrdbsdk.TenantIsolationVolume),
-			string(qrdbsdk.TenantIsolationRaft),
-		},
-		AllowDedicatedRaft:        true,
-		AllowVolumeStorage:        true,
-		AllowSystemManagedBarrier: true,
-		AllowDedicatedWAL:         true,
-	}
-}
-
 // initializeKeyVersionStore builds the key-version record store through
 // compose.BuildKeyVersionStore -- the path an embedding host's module takes
-// -- under the server's configured storage. Every key's rotations are
-// recorded in it, so it is always built.
+// -- over its database on the server's datastore, whose calls run as the
+// embedded node's service principal. Every key's rotations are recorded in
+// it, so it is always built.
 func (s *Server) initializeKeyVersionStore() error {
-	store, err := compose.BuildKeyVersionStore(s.createStorage)
+	daos, err := s.daoFactory(keyversion.DatabaseName)
+	if err != nil {
+		return err
+	}
+	store, err := compose.BuildKeyVersionStore(daos)
 	if err != nil {
 		return &ErrStorageCreate{Resource: "key version storage", Err: err}
 	}
@@ -1900,19 +1625,19 @@ func (s *Server) initializePasswordStore() error {
 }
 
 // initializePKCS11StateStore builds the store that persists a remote-mode
-// PKCS#11 module's token and object state. It uses the same createStorage seam
-// every other server subsystem does, so the records inherit the configured
-// storage backend's durability and at-rest protection. It is ONE store shared
-// by every tenant: it is not behind any tenant's barrier, and records are
-// separated only by the pkcs11state/<tenant>/<token>/ key prefix, whose tenant
-// segment the service derives from the authenticated identity
-// (XKMSService.pkcs11StateScope), never from the request.
+// PKCS#11 module's token and object state, in the pkcs11state database of the
+// configured datastore, ensured and written as the embedded node's service
+// principal. It is ONE store shared by every tenant: it is not behind any
+// tenant's barrier, and records are separated only by their
+// <tenant>/<token>/<key> name, whose tenant segment the service derives from
+// the authenticated identity (XKMSService.pkcs11StateScope), never from the
+// request.
 func (s *Server) initializePKCS11StateStore() error {
-	backend, err := s.createStorage("pkcs11state")
+	daos, err := s.daoFactory(pkcs11state.DatabaseName)
 	if err != nil {
 		return &ErrStorageCreate{Resource: "pkcs11 state storage", Err: err}
 	}
-	store, err := pkcs11state.NewStore(backend)
+	store, err := pkcs11state.NewStore(daos)
 	if err != nil {
 		return &ErrStorageCreate{Resource: "pkcs11 state storage", Err: err}
 	}
@@ -1929,16 +1654,16 @@ func (s *Server) initializePKCS11StateStore() error {
 // ClaimAEADNonce/ClaimGeneratedAEADNonce), reached equally by a request that
 // arrives through XKMSService and one that holds a Backend directly
 // (sdk/go, xkey). Without it a claim is in-memory only and a restart
-// forgets every one it made, which is the gap go-xkms#1201 reported. It
-// uses the same createStorage seam every other durable subsystem does, so
-// the claims inherit the configured storage backend's durability and, when
-// that backend is the embedded qrdb node, its cluster-wide replication.
+// forgets every one it made, which is the gap go-xkms#1201 reported. The
+// claims live in the aeadnonce database of the configured datastore, ensured
+// and written as the embedded node's service principal, so every node sharing
+// the datastore sees every claim.
 func (s *Server) initializeAEADNonceStore() error {
-	backend, err := s.createStorage("aeadnonce")
+	daos, err := s.daoFactory(aeadnonce.DatabaseName)
 	if err != nil {
 		return &ErrStorageCreate{Resource: "AEAD nonce guard storage", Err: err}
 	}
-	store, err := aeadnonce.NewStore(backend)
+	store, err := aeadnonce.NewStore(daos)
 	if err != nil {
 		return &ErrStorageCreate{Resource: "AEAD nonce guard storage", Err: err}
 	}
@@ -2081,11 +1806,6 @@ func (s *Server) PlatformStore() seal.PlatformStore {
 // SetCA sets the Certificate Authority for CA-backed TLS and certificate operations.
 func (s *Server) SetCA(trustedCA ca.TrustedCA) {
 	s.ca = trustedCA
-}
-
-// SetCeremonyService sets the init ceremony service.
-func (s *Server) SetCeremonyService(svc *initialize.CeremonyService) {
-	s.ceremonyService = svc
 }
 
 // SetCredentialService sets the credential management service.
@@ -2350,13 +2070,19 @@ func (s *Server) initializeCA() error {
 	// Server.resolveConfigSecrets.
 	//
 	// compose.BuildCA is the construction path an embedding host's CA takes
-	// too: it opens the certificate, serial and revocation stores, loads the
-	// persisted hierarchy, and initializes one only when no root was ever
+	// too: it keeps the certificates as DAO entities in the CA's database
+	// (certstore.DatabaseName), opens the serial and revocation stores, loads
+	// the persisted hierarchy, and initializes one only when no root was ever
 	// persisted. The cluster ACME first-node provisioner may have pre-staged
 	// CA certificates (pkg/trust/clusterca); adopting them before the load
 	// keeps it from initializing a second root.
+	daos, err := s.daoFactory(certstore.DatabaseName)
+	if err != nil {
+		return &ErrCAInit{Operation: "open CA database", Err: err}
+	}
 	trustedCA, err := compose.BuildCA(s.ctx, compose.CAParams{
 		Config:          s.config.CA,
+		DAOs:            daos,
 		Storage:         s.caStorage,
 		BackendForStore: backendForStore,
 		AuditLogger:     s.auditLogger,
@@ -2394,9 +2120,8 @@ func (s *Server) initializeCA() error {
 	return nil
 }
 
-// caStorage opens the CA's named store (certificates, serials,
-// revocations) for compose.BuildCA, reporting a failure as the storage
-// error it is.
+// caStorage opens the CA's named store (serials, revocations) for
+// compose.BuildCA, reporting a failure as the storage error it is.
 func (s *Server) caStorage(name string) (storage.Backend, error) {
 	backend, err := s.createStorage(name)
 	if err != nil {
@@ -2907,21 +2632,18 @@ func (s *Server) ModuleRESTServer() *rest.Server {
 // (pkg/apimodule), so both surfaces are built from identical wiring.
 func (s *Server) buildRESTConfig() (*rest.Config, error) {
 	restConfig := &rest.Config{
-		Host:             s.config.Server.Host,
-		Port:             s.config.Server.RESTPort,
-		Backends:         s.backends,
-		Version:          getBuildVersion(),
-		Authenticator:    s.liveAuthenticator,
-		EnableRBAC:       s.config.Auth.EnableRBAC,
-		RBACAuthorizer:   s.rbacAuthorizer,
-		AuditLogger:      s.auditLogger,
-		PasswordStore:    s.passwordStore,
-		BarrierRegistry:  s.barrierRegistry,
-		CustodianEnabled: s.qrdbClient != nil,
-		ShareEnabled:     s.qrdbClient != nil,
-		CeremonyService:  s.ceremonyService,
-		XKMSService:      s.xkmsService,
-		SSHClient:        s.ensureSSHClient(),
+		Host:            s.config.Server.Host,
+		Port:            s.config.Server.RESTPort,
+		Backends:        s.backends,
+		Version:         getBuildVersion(),
+		Authenticator:   s.liveAuthenticator,
+		EnableRBAC:      s.config.Auth.EnableRBAC,
+		RBACAuthorizer:  s.rbacAuthorizer,
+		AuditLogger:     s.auditLogger,
+		PasswordStore:   s.passwordStore,
+		BarrierRegistry: s.barrierRegistry,
+		XKMSService:     s.xkmsService,
+		SSHClient:       s.ensureSSHClient(),
 	}
 
 	// Embedded web UI: serve the compiled SPA (installed via SetUIAssets)
@@ -3012,13 +2734,6 @@ func (s *Server) buildRESTConfig() (*rest.Config, error) {
 				}
 			}
 		}
-	}
-
-	// When xkms hosts/dials the qrdb engine, persist WebAuthn users and
-	// credentials on qrdb — the single source of identity.
-	if s.qrdbClient != nil {
-		restConfig.WebAuthnUsers = s.qrdbClient.Users()
-		restConfig.WebAuthnKV = s.qrdbClient.KV()
 	}
 
 	// Pass the XKMSService as CA servicer. The XKMSService wraps the raw CA
@@ -3624,7 +3339,7 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 		// from the configured backend. Private key management is handled by the CA.
 		identity := s.config.CA.Identity[s.config.CA.SelectedCA]
 		keystoreType := identity.GetStoreType()
-		attrs, tlsErr := types.KeyAttributesFromConfig(identity.Keys[0])
+		attrs, tlsErr := types.KeyAttributesFromConfig(s.ctx, identity.Keys[0])
 		if tlsErr == nil {
 			attrs.CN = s.config.TLS.ServerCN
 			attrs.StoreType = keystoreType
@@ -3896,9 +3611,10 @@ func (s *Server) shutdown() error {
 		incomplete = append(incomplete, "server goroutines")
 	}
 
-	// Close audit logger
-	if s.auditLogger != nil {
-		if err := s.auditLogger.Close(); err != nil {
+	// Close the audit sink this server opened; the node's own sink is closed
+	// with the node.
+	if s.ownedAuditLogger != nil {
+		if err := s.ownedAuditLogger.Close(); err != nil {
 			s.logger.Error("Failed to close audit logger", slog.Any("error", err))
 		}
 	}

@@ -43,6 +43,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -68,7 +69,7 @@ func buildTestKeyStore(t *testing.T) (xkms.Backend, certstore.CertStore) {
 	})
 	require.NoError(t, err)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(storage.NewMemory()),
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	require.NoError(t, err)
 	return ks, cs

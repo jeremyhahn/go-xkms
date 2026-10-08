@@ -233,7 +233,7 @@ func TestImportDataError_Message(t *testing.T) {
 // string, for asserting on test fixtures only.
 func openSecretString(t *testing.T, secret *secure.Secret) string {
 	t.Helper()
-	buf, err := secret.Open()
+	buf, err := secret.Open(t.Context())
 	require.NoError(t, err)
 	defer buf.Destroy()
 	return string(buf.Bytes())
@@ -244,6 +244,7 @@ func TestReadUSBPassphrase_RejectsMismatchedPipedLines(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetContext(t.Context())
 
 	_, err := readUSBPassphrase(cmd)
 	require.Error(t, err)
@@ -259,6 +260,7 @@ func TestReadUSBPassphrase_AcceptsMatchingPipedLines(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetContext(t.Context())
 
 	got, err := readUSBPassphrase(cmd)
 	require.NoError(t, err)

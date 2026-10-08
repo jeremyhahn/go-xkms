@@ -991,69 +991,6 @@ func TestSetHierarchyAuth_NilTransportError(t *testing.T) {
 }
 
 // ===========================================
-// Secret Sharing Tests
-// ===========================================
-
-func TestShareSecret_MinimumShares(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Test with minimum shares
-	secret := []byte("test-secret")
-	shares, err := tpm.ShareSecret(secret, 2)
-	require.NoError(t, err)
-	assert.Len(t, shares, 2)
-}
-
-func TestShareSecret_InsufficientShares(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Test with less than 2 shares
-	secret := []byte("test-secret")
-	_, err := tpm.ShareSecret(secret, 1)
-	assert.NotNil(t, err)
-}
-
-func TestSecretFromShares_EmptySharesError(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Test with empty shares
-	_, err := tpm.SecretFromShares([]string{})
-	assert.NotNil(t, err)
-}
-
-func TestSecretFromShares_InvalidJSONError(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Test with invalid JSON
-	_, err := tpm.SecretFromShares([]string{"invalid-json"})
-	assert.NotNil(t, err)
-}
-
-func TestShareAndRecoverSecret_FullRecovery(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	secret := "my-super-secret"
-	shares, err := tpm.ShareSecret([]byte(secret), 3)
-	require.NoError(t, err)
-	assert.Len(t, shares, 3)
-
-	// Recover with all shares
-	recovered, err := tpm.SecretFromShares(shares)
-	require.NoError(t, err)
-	assert.Equal(t, secret, recovered)
-
-	// Recover with threshold (2 out of 3)
-	recovered, err = tpm.SecretFromShares(shares[:2])
-	require.NoError(t, err)
-	assert.Equal(t, secret, recovered)
-}
-
-// ===========================================
 // EKCertificate Tests (from coverage_tpm_test.go)
 // ===========================================
 
@@ -1394,24 +1331,6 @@ func TestSetHierarchyAuth_CovTPM(t *testing.T) {
 	err := tpm.SetHierarchyAuth(nil, nil, nil)
 	// May succeed or fail depending on TPM state
 	_ = err
-}
-
-// TestShareSecret_CovTPM tests ShareSecret and SecretFromShares
-func TestShareSecret_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	secret := []byte("my-super-secret-key-material")
-
-	// Share the secret into 5 parts (threshold 3)
-	shares, err := tpm.ShareSecret(secret, 5)
-	require.NoError(t, err)
-	assert.Len(t, shares, 5)
-
-	// Recover with 3 shares
-	recoveredSecret, err := tpm.SecretFromShares(shares[:3])
-	require.NoError(t, err)
-	assert.NotEmpty(t, recoveredSecret)
 }
 
 // TestDevice_CovTPM tests the Device method

@@ -44,7 +44,9 @@ var (
 // terminating it; only main (via runProcess) turns the returned code into a
 // process exit.
 var subcommands = map[string]func([]string) int{
-	"init": runInit,
+	"init":             runInit,
+	"seal-pkcs11-pin":  pkcs11PINSecret.run,
+	"seal-vault-token": vaultTokenSecret.run,
 }
 
 func main() {
@@ -71,7 +73,7 @@ func main() {
 // tests in the same package were still using (go-xkms#1153).
 func runProcess() int {
 	defer func() {
-		if count, err := enclave.WipeAll(); err != nil {
+		if count, err := enclave.WipeAll(context.Background()); err != nil {
 			fmt.Fprintf(os.Stderr, "xkmsd: enclave.WipeAll: %d still held, %v\n", count, err)
 		}
 	}()

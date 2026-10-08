@@ -25,9 +25,10 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -40,7 +41,7 @@ import (
 // tested over the simulator. The service is closed when the test ends.
 func NewOffline(t *testing.T) (*tpmpolicy.Service, *tpmpolicy.Registry) {
 	t.Helper()
-	registry, err := tpmpolicy.NewRegistry(storage.NewMemory())
+	registry, err := tpmpolicy.NewRegistry(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tpm := &pkgtpm2.TPM2{}

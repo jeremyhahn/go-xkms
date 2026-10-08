@@ -29,7 +29,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/mcptool"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -42,7 +42,7 @@ import (
 // production (pkg/apimodule.RegisterMCP registers one tool per
 // xkmsmcp.ModuleMethods() entry, dispatching to pkg/api/mcp.Server.
 // InvokeMethod, whose SSH errors pass through mapSSHError onto a real
-// go-qrdb wire.ErrorEnvelope). sdkssh.NewMCP reaches this exact tool-call
+// go-qrdb qrdbsdk.MCPErrorEnvelope). sdkssh.NewMCP reaches this exact tool-call
 // framing through pkg/mcptool, so this fixture is the same shape as
 // pkg/mcptool's own client_test.go newTestServer / pkg/api/transport/mcp's
 // startMockServer.
@@ -83,10 +83,10 @@ type mcpCall struct {
 
 // mcpHandler produces the JSON-RPC-shaped result for a method. A non-empty
 // message makes the server answer with a tool-level error instead; when
-// code is non-zero (not wire.CodeOK) the error also carries a go-qrdb
-// wire.ErrorEnvelope, exactly as the real server's mapSSHError-backed
+// code is non-zero (not qrdbsdk.MCPCodeOK) the error also carries a go-qrdb
+// qrdbsdk.MCPErrorEnvelope, exactly as the real server's mapSSHError-backed
 // dispatch does.
-type mcpHandler func(params json.RawMessage) (result interface{}, message string, code wire.Code)
+type mcpHandler func(params json.RawMessage) (result interface{}, message string, code qrdbsdk.MCPCode)
 
 type fakeMCPServer struct {
 	t          *testing.T
@@ -113,8 +113,8 @@ func newFakeMCPServer(t *testing.T) *fakeMCPServer {
 		rawResponse: map[string]string{},
 	}
 	// Health always succeeds unless a test overrides it.
-	s.handlers["health"] = func(json.RawMessage) (interface{}, string, wire.Code) {
-		return map[string]string{"status": "ok"}, "", wire.CodeOK
+	s.handlers["health"] = func(json.RawMessage) (interface{}, string, qrdbsdk.MCPCode) {
+		return map[string]string{"status": "ok"}, "", qrdbsdk.MCPCodeOK
 	}
 
 	mcpSrv := mcpserver.NewMCPServer("xkms-ssh-test", "1.0.0")
@@ -138,21 +138,21 @@ func newFakeMCPServer(t *testing.T) *fakeMCPServer {
 			}
 			if !hasHandler {
 				res := mcpgo.NewToolResultError("method not found: " + method)
-				res.StructuredContent = wire.NewErrorEnvelope(mcptool.ToolName(method), wire.CodeUnimplemented, "method not found: "+method)
+				res.StructuredContent = qrdbsdk.NewMCPErrorEnvelope(mcptool.ToolName(method), qrdbsdk.MCPCodeUnimplemented, "method not found: "+method)
 				return res, nil
 			}
 			result, message, code := handler(params)
 			if message != "" {
 				res := mcpgo.NewToolResultError(message)
-				if code != wire.CodeOK {
-					res.StructuredContent = wire.NewErrorEnvelope(mcptool.ToolName(method), code, message)
+				if code != qrdbsdk.MCPCodeOK {
+					res.StructuredContent = qrdbsdk.NewMCPErrorEnvelope(mcptool.ToolName(method), code, message)
 				}
 				return res, nil
 			}
 			body, err := json.Marshal(result)
 			if err != nil {
 				res := mcpgo.NewToolResultError(err.Error())
-				res.StructuredContent = wire.NewErrorEnvelope(mcptool.ToolName(method), wire.CodeInternal, err.Error())
+				res.StructuredContent = qrdbsdk.NewMCPErrorEnvelope(mcptool.ToolName(method), qrdbsdk.MCPCodeInternal, err.Error())
 				return res, nil
 			}
 			return mcpgo.NewToolResultText(string(body)), nil
@@ -183,20 +183,20 @@ func (s *fakeMCPServer) handle(method string, fn mcpHandler) {
 }
 
 func (s *fakeMCPServer) ok(method string, result interface{}) {
-	s.handle(method, func(json.RawMessage) (interface{}, string, wire.Code) { return result, "", wire.CodeOK })
+	s.handle(method, func(json.RawMessage) (interface{}, string, qrdbsdk.MCPCode) { return result, "", qrdbsdk.MCPCodeOK })
 }
 
 // fail registers method to answer with a coded tool error, exactly as the
 // real server's mapSSHError-backed dispatch classifies an SSH failure.
-func (s *fakeMCPServer) fail(method string, code wire.Code, message string) {
-	s.handle(method, func(json.RawMessage) (interface{}, string, wire.Code) { return nil, message, code })
+func (s *fakeMCPServer) fail(method string, code qrdbsdk.MCPCode, message string) {
+	s.handle(method, func(json.RawMessage) (interface{}, string, qrdbsdk.MCPCode) { return nil, message, code })
 }
 
 // failUncoded registers method to answer with a tool error carrying no
 // go-qrdb wire envelope at all — a response that did not come from the
 // real server's classification contract.
 func (s *fakeMCPServer) failUncoded(method string, message string) {
-	s.handle(method, func(json.RawMessage) (interface{}, string, wire.Code) { return nil, message, wire.CodeOK })
+	s.handle(method, func(json.RawMessage) (interface{}, string, qrdbsdk.MCPCode) { return nil, message, qrdbsdk.MCPCodeOK })
 }
 
 // lastCall returns the most recent recorded call for method.
@@ -308,7 +308,7 @@ func TestNewMCP_HealthCheckPerformed(t *testing.T) {
 
 func TestNewMCP_HealthCheckFailureIsFatal(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("health", wire.CodeUnavailable, "not ready")
+	srv.fail("health", qrdbsdk.MCPCodeUnavailable, "not ready")
 
 	_, err := sdkssh.NewMCP(sdkssh.MCPOptions{Addr: srv.addr()})
 	if err == nil {
@@ -367,7 +367,7 @@ func TestMCPClose_Idempotent(t *testing.T) {
 
 func TestMCP_ServerErrorBecomesProtocolError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.keys.get", wire.CodeInvalidArgument, "key not found")
+	srv.fail("ssh.keys.get", qrdbsdk.MCPCodeInvalidArgument, "key not found")
 	client := newMCPFixture(t, srv)
 
 	_, err := client.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"})
@@ -375,7 +375,7 @@ func TestMCP_ServerErrorBecomesProtocolError(t *testing.T) {
 	if !errors.As(err, &protoErr) {
 		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
 	}
-	// wire.CodeInvalidArgument reconstitutes as *InvalidRequestError, the
+	// qrdbsdk.MCPCodeInvalidArgument reconstitutes as *InvalidRequestError, the
 	// bucket a not-found/duplicate/mismatch/validation failure all share --
 	// see mcp.go's package doc comment.
 	var invalidErr *sdkssh.InvalidRequestError
@@ -390,12 +390,12 @@ func TestMCP_ServerErrorBecomesProtocolError(t *testing.T) {
 // TestMCP_NotFoundCodeBecomesNotFoundError proves a store NotFound error
 // (issue #769: "keys-store errors fall through to Internal") reconstructs as
 // *NotFoundError instead of the generic *ProtocolError every SSH store error
-// used to collapse into. go-qrdb's wire.ErrorEnvelope carries only Code and
+// used to collapse into. go-qrdb's qrdbsdk.MCPErrorEnvelope carries only Code and
 // Message (no Resource field -- see mcp.go's package doc comment), so
 // Resource stays empty; Message survives intact.
 func TestMCP_NotFoundCodeBecomesNotFoundError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.keys.get", wire.CodeNotFound, "ssh/keys: key not found: ghost")
+	srv.fail("ssh.keys.get", qrdbsdk.MCPCodeNotFound, "ssh/keys: key not found: ghost")
 	client := newMCPFixture(t, srv)
 
 	_, err := client.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"})
@@ -412,7 +412,7 @@ func TestMCP_NotFoundCodeBecomesNotFoundError(t *testing.T) {
 // authorized_keys "Add called twice" case, which REST reports as 409.
 func TestMCP_DuplicateCodeBecomesDuplicateError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.knownHosts.add", wire.CodeAlreadyExists, "pin already exists")
+	srv.fail("ssh.knownHosts.add", qrdbsdk.MCPCodeAlreadyExists, "pin already exists")
 	client := newMCPFixture(t, srv)
 
 	err := client.KnownHosts().Add(context.Background(), sdkssh.AddKnownHostRequest{
@@ -436,7 +436,7 @@ func TestMCP_DuplicateCodeBecomesDuplicateError(t *testing.T) {
 func TestMCP_MismatchCodeBecomesMismatchError(t *testing.T) {
 	_, sshPub := testPublicKeyLine(t)
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.knownHosts.verify", wire.CodeFailedPrecondition, "host key mismatch for git.example.com")
+	srv.fail("ssh.knownHosts.verify", qrdbsdk.MCPCodeFailedPrecondition, "host key mismatch for git.example.com")
 	client := newMCPFixture(t, srv)
 
 	err := client.KnownHosts().Verify(context.Background(), "user", "alice", "git.example.com", sshPub)
@@ -461,7 +461,7 @@ func TestMCP_MismatchCodeBecomesMismatchError(t *testing.T) {
 // synthesize additional internal detail the server never sent.
 func TestMCP_UnknownCodeStaysProtocolErrorNotLeaked(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.keys.get", wire.Code(-32099), "opaque failure")
+	srv.fail("ssh.keys.get", qrdbsdk.MCPCode(-32099), "opaque failure")
 	client := newMCPFixture(t, srv)
 
 	_, err := client.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"})
@@ -567,52 +567,52 @@ func TestMCP_ServerUnreachableMidSessionBecomesProtocolError(t *testing.T) {
 func TestMCP_WireCodeClassification(t *testing.T) {
 	tests := []struct {
 		name string
-		code wire.Code
+		code qrdbsdk.MCPCode
 		want func(*testing.T, error)
 	}{
-		{"unauthenticated", wire.CodeUnauthenticated, func(t *testing.T, err error) {
+		{"unauthenticated", qrdbsdk.MCPCodeUnauthenticated, func(t *testing.T, err error) {
 			var authErr *sdkssh.AuthError
 			if !errors.As(err, &authErr) || authErr.StatusCode != 401 {
 				t.Fatalf("expected *AuthError{StatusCode:401}, got %#v", err)
 			}
 		}},
-		{"permission denied", wire.CodePermissionDenied, func(t *testing.T, err error) {
+		{"permission denied", qrdbsdk.MCPCodePermissionDenied, func(t *testing.T, err error) {
 			var authErr *sdkssh.AuthError
 			if !errors.As(err, &authErr) || authErr.StatusCode != 403 {
 				t.Fatalf("expected *AuthError{StatusCode:403}, got %#v", err)
 			}
 		}},
-		{"unimplemented", wire.CodeUnimplemented, func(t *testing.T, err error) {
+		{"unimplemented", qrdbsdk.MCPCodeUnimplemented, func(t *testing.T, err error) {
 			var niErr *sdkssh.NotImplementedError
 			if !errors.As(err, &niErr) || niErr.Transport != "mcp" {
 				t.Fatalf("expected *NotImplementedError{Transport:\"mcp\"}, got %#v", err)
 			}
 		}},
-		{"unavailable", wire.CodeUnavailable, func(t *testing.T, err error) {
+		{"unavailable", qrdbsdk.MCPCodeUnavailable, func(t *testing.T, err error) {
 			var srvErr *sdkssh.ServerError
 			if !errors.As(err, &srvErr) || srvErr.StatusCode != 503 {
 				t.Fatalf("expected *ServerError{StatusCode:503}, got %#v", err)
 			}
 		}},
-		{"not found (forward compatibility)", wire.CodeNotFound, func(t *testing.T, err error) {
+		{"not found (forward compatibility)", qrdbsdk.MCPCodeNotFound, func(t *testing.T, err error) {
 			var nfErr *sdkssh.NotFoundError
 			if !errors.As(err, &nfErr) {
 				t.Fatalf("expected *NotFoundError, got %#v", err)
 			}
 		}},
-		{"already exists (forward compatibility)", wire.CodeAlreadyExists, func(t *testing.T, err error) {
+		{"already exists (forward compatibility)", qrdbsdk.MCPCodeAlreadyExists, func(t *testing.T, err error) {
 			var dupErr *sdkssh.DuplicateError
 			if !errors.As(err, &dupErr) {
 				t.Fatalf("expected *DuplicateError, got %#v", err)
 			}
 		}},
-		{"invalid argument", wire.CodeInvalidArgument, func(t *testing.T, err error) {
+		{"invalid argument", qrdbsdk.MCPCodeInvalidArgument, func(t *testing.T, err error) {
 			var invErr *sdkssh.InvalidRequestError
 			if !errors.As(err, &invErr) {
 				t.Fatalf("expected *InvalidRequestError, got %#v", err)
 			}
 		}},
-		{"internal falls back to RPCError", wire.CodeInternal, func(t *testing.T, err error) {
+		{"internal falls back to RPCError", qrdbsdk.MCPCodeInternal, func(t *testing.T, err error) {
 			var rpcErr *mcptool.RPCError
 			if !errors.As(err, &rpcErr) {
 				t.Fatalf("expected *mcptool.RPCError, got %#v", err)
@@ -676,7 +676,7 @@ func TestMCPKeys_GenerateMethodAndParams(t *testing.T) {
 
 func TestMCPKeys_GenerateError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.keys.generate", wire.CodeInvalidArgument, "unsupported algorithm")
+	srv.fail("ssh.keys.generate", qrdbsdk.MCPCodeInvalidArgument, "unsupported algorithm")
 	client := newMCPFixture(t, srv)
 
 	if _, err := client.Keys().Generate(context.Background(), sdkssh.GenerateRequest{Algorithm: "rot13"}); err == nil {
@@ -828,7 +828,7 @@ func TestMCPKeys_DeleteAndExport(t *testing.T) {
 
 func TestMCPKeys_DeleteError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.keys.delete", wire.CodeInvalidArgument, "no such key")
+	srv.fail("ssh.keys.delete", qrdbsdk.MCPCodeInvalidArgument, "no such key")
 	client := newMCPFixture(t, srv)
 
 	if err := client.Keys().Delete(context.Background(), sdkssh.DeleteKeyRequest{Name: "ghost"}); err == nil {
@@ -895,7 +895,7 @@ func TestMCPKeys_SignerUnparsablePublicKey(t *testing.T) {
 
 func TestMCPKeys_SignerExportFailure(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.keys.export", wire.CodeInvalidArgument, "no key")
+	srv.fail("ssh.keys.export", qrdbsdk.MCPCodeInvalidArgument, "no key")
 	client := newMCPFixture(t, srv)
 
 	if _, err := client.Keys().Signer(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"}); err == nil {
@@ -907,7 +907,7 @@ func TestMCPSigner_SignServerError(t *testing.T) {
 	line, _ := testPublicKeyLine(t)
 	srv := newFakeMCPServer(t)
 	srv.ok("ssh.keys.export", map[string]interface{}{"line": line})
-	srv.fail("ssh.keys.sign", wire.CodeInternal, "hardware locked")
+	srv.fail("ssh.keys.sign", qrdbsdk.MCPCodeInternal, "hardware locked")
 	client := newMCPFixture(t, srv)
 
 	signer, err := client.Keys().Signer(context.Background(), sdkssh.GetKeyRequest{Name: "laptop"})
@@ -964,7 +964,7 @@ func TestMCPKnownHosts_AddListRemove(t *testing.T) {
 
 func TestMCPKnownHosts_ListError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.knownHosts.list", wire.CodeInternal, "store offline")
+	srv.fail("ssh.knownHosts.list", qrdbsdk.MCPCodeInternal, "store offline")
 	client := newMCPFixture(t, srv)
 
 	if _, err := client.KnownHosts().List(context.Background(), sdkssh.ListKnownHostsRequest{}); err == nil {
@@ -1019,7 +1019,7 @@ func TestMCPKnownHosts_VerifyRejectsNilKey(t *testing.T) {
 func TestMCPKnownHosts_VerifyServerRejectionPropagates(t *testing.T) {
 	_, sshPub := testPublicKeyLine(t)
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.knownHosts.verify", wire.CodeInvalidArgument, "host key mismatch")
+	srv.fail("ssh.knownHosts.verify", qrdbsdk.MCPCodeInvalidArgument, "host key mismatch")
 	client := newMCPFixture(t, srv)
 
 	err := client.KnownHosts().Verify(context.Background(), "user", "alice", "git.example.com", sshPub)
@@ -1108,7 +1108,7 @@ func TestMCPAuthorizedKeys_AddGetListRemove(t *testing.T) {
 
 func TestMCPAuthorizedKeys_GetNotFound(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.authorizedKeys.get", wire.CodeInvalidArgument, "no entry")
+	srv.fail("ssh.authorizedKeys.get", qrdbsdk.MCPCodeInvalidArgument, "no entry")
 	client := newMCPFixture(t, srv)
 
 	if _, err := client.AuthorizedKeys().Get(context.Background(), "service", "svc", "ghost"); err == nil {
@@ -1118,7 +1118,7 @@ func TestMCPAuthorizedKeys_GetNotFound(t *testing.T) {
 
 func TestMCPAuthorizedKeys_ListError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.authorizedKeys.list", wire.CodeInternal, "store offline")
+	srv.fail("ssh.authorizedKeys.list", qrdbsdk.MCPCodeInternal, "store offline")
 	client := newMCPFixture(t, srv)
 
 	if _, err := client.AuthorizedKeys().List(context.Background(), sdkssh.ListAuthorizedKeysRequest{}); err == nil {
@@ -1128,7 +1128,7 @@ func TestMCPAuthorizedKeys_ListError(t *testing.T) {
 
 func TestMCPAuthorizedKeys_RemoveError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.authorizedKeys.remove", wire.CodeInvalidArgument, "no entry")
+	srv.fail("ssh.authorizedKeys.remove", qrdbsdk.MCPCodeInvalidArgument, "no entry")
 	client := newMCPFixture(t, srv)
 
 	if err := client.AuthorizedKeys().Remove(context.Background(), "service", "svc", "ghost"); err == nil {
@@ -1158,7 +1158,7 @@ func TestMCPAuthorizedKeys_Emit(t *testing.T) {
 
 func TestMCPAuthorizedKeys_EmitError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.authorizedKeys.emit", wire.CodeInvalidArgument, "unparsable public key")
+	srv.fail("ssh.authorizedKeys.emit", qrdbsdk.MCPCodeInvalidArgument, "unparsable public key")
 	client := newMCPFixture(t, srv)
 
 	line, err := client.AuthorizedKeys().Emit(context.Background(), sdkssh.EmitRequest{PublicKey: "junk"})
@@ -1209,7 +1209,7 @@ func TestMCPAuthorizedKeys_VerifyRejectsNilKey(t *testing.T) {
 func TestMCPAuthorizedKeys_VerifyRejectionPropagates(t *testing.T) {
 	_, sshPub := testPublicKeyLine(t)
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.authorizedKeys.verify", wire.CodeInvalidArgument, "key not authorized")
+	srv.fail("ssh.authorizedKeys.verify", qrdbsdk.MCPCodeInvalidArgument, "key not authorized")
 	client := newMCPFixture(t, srv)
 
 	entry, err := client.AuthorizedKeys().Verify(context.Background(), "service", "svc", sshPub)
@@ -1245,7 +1245,7 @@ func TestMCPConsole_Unsupported(t *testing.T) {
 // mcp_dial_test.go for the genuine end-to-end dial/handshake coverage over a
 // server wired to a real embedded client). Session.Dial resolves the
 // remote-signer proxy through ssh.keys.export before it ever reaches the
-// target host. The fake server answers that call with a wire.CodeUnimplemented
+// target host. The fake server answers that call with a qrdbsdk.MCPCodeUnimplemented
 // envelope for the unregistered method, which the client decodes into a
 // typed *NotImplementedError (go-xkms#769) naming ssh.keys.export: the
 // signer lookup failed, not Dial.

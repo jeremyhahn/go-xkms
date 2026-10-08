@@ -1152,11 +1152,11 @@ func TestCredentialsConfig_YAMLParsing(t *testing.T) {
 		expectedStrategy string
 	}{
 		{
-			// "barrier" is only satisfiable when this deployment's barrier IS
-			// the qrdb node's own (CredentialsBarrierStrategySupported): the
-			// embedded transport, barrier.enabled, and a NodeFlipWired
-			// strategy. See TestValidate_CredentialsBarrierStrategy for the
-			// refusal cases.
+			// "barrier" is only satisfiable when this deployment hosts the
+			// qrdb node whose barrier holds the credentials
+			// (CredentialsBarrierStrategySupported): a standalone datastore
+			// and barrier.enabled. See TestValidate_CredentialsBarrierStrategy
+			// for the refusal cases.
 			name: "seal_strategy set to barrier",
 			yaml: `
 server:
@@ -1375,12 +1375,12 @@ func TestCredentialsBarrierStrategySupported(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "strategy not node-flip-wired (pkcs11)",
+			name: "cloud-KMS strategy seals the node barrier too (awskms)",
 			cfg: Config{
 				Datastore: DatastoreConfig{},
-				Barrier:   BarrierConfig{Enabled: true, Strategy: "pkcs11"},
+				Barrier:   BarrierConfig{Enabled: true, Strategy: "awskms"},
 			},
-			want: false,
+			want: true,
 		},
 	}
 

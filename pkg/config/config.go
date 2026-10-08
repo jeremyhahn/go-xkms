@@ -257,32 +257,6 @@ func (b BarrierConfig) IsHardwareSealStrategy() bool {
 	}
 }
 
-// NodeFlipWired reports whether the configured strategy can be driven
-// through the qrdb node's OWN barrier (pkg/server's "flip") — go-qrdb's
-// node-embedded seal subsystem (sdk/go/node's buildNodeSealSubsystem)
-// natively handles "none", "passphrase" (deferred) and "shamir" from
-// SealConfig alone, and xkms additionally wires "tpm2" by injecting a
-// pre-built hardware SealingStrategy built directly from
-// Backends.TPM2 (pkg/server/node_seal.go's resolveNodeSeal). The
-// remaining hardware/cloud strategies (pkcs11, awskms, gcpkms, azurekv,
-// vault) are not wired through the flip: each needs credentials that are
-// only resolvable once the credential service exists, which — for a
-// strategy that would also need to seal the very barrier that credential
-// service sits behind — is a cycle (pkcs11), or needs cloud-KMS wiring
-// that has not been scoped (the rest). A strategy this reports false for
-// falls back to xkms's own (non-node) barrier: the qrdb node's own data
-// plane is NOT encrypted in that case, only whatever the fallback barrier
-// separately protects — see resolveNodeSeal and Config.ComplianceGaps,
-// which both consult this so the two stay in lock-step by construction.
-func (b BarrierConfig) NodeFlipWired() bool {
-	switch b.SealStrategy() {
-	case "none", "passphrase", "shamir", "tpm2":
-		return true
-	default:
-		return false
-	}
-}
-
 // PINConfig configures the PIN management subsystem.
 type PINConfig struct {
 	Enabled         bool   `yaml:"enabled"`
@@ -299,44 +273,27 @@ type CredentialsConfig struct {
 	// Valid values: manual, barrier, tpm2, pkcs11, awskms, gcpkms, azurekv, vault, passphrase.
 	// "manual" (default): credentials NOT stored -- operator enters at each startup.
 	//
-	// "barrier" requires CredentialsBarrierStrategySupported(): the credential
-	// service is constructed, and resolves every backend's credential:// secret
-	// (pkg/server's resolveConfigSecrets), before the general (non-node) xkms
-	// barrier can exist -- that barrier's own hardware seal strategies are built
-	// from already-initialized backends (buildHardwareSealStrategies), which is
-	// the exact set "barrier" would need to unseal first. Only the qrdb node's
-	// OWN barrier (Datastore.Mode=="standalone", with a strategy
-	// BarrierConfig.NodeFlipWired reports true for) is built independently of
-	// backend initialization and is therefore available in time. Every other
-	// configuration is refused at Validate() with a typed error rather than
-	// failing deep inside Server.New (go-xkms#812).
+	// "barrier" requires CredentialsBarrierStrategySupported(): credentials
+	// are stored behind the barrier of the embedded qrdb node, the only
+	// barrier there is. A remote datastore's barrier lives on the remote node
+	// and a disabled barrier seals nothing, so either is refused at Validate()
+	// with a typed error rather than failing deep inside Server.New
+	// (go-xkms#812).
 	SealStrategy string `yaml:"seal_strategy" json:"seal_strategy"`
 }
 
 // CredentialsBarrierStrategySupported reports whether
-// Credentials.SealStrategy "barrier" can be satisfied by this configuration.
-//
-// The credential service is constructed, and resolves every backend's
-// credential:// secret, before the general (non-node) xkms barrier can exist
-// -- initializeBarrier builds that barrier's hardware seal strategies from
-// ALREADY-INITIALIZED backends, the same backends whose own credentials a
-// "barrier" strategy would need the barrier to unseal first. That is a
-// structural cycle, not an ordering bug.
-//
-// The one barrier that IS available before backend initialization is the
-// qrdb node's own (the "flip", see pkg/server/node_seal.go's resolveNodeSeal
-// and BarrierConfig.NodeFlipWired): it is built directly from
-// Backends.TPM2/SealConfig, never from already-initialized backends, and is
-// adopted before the credential service is constructed. That requires
-// Datastore.Mode=="standalone" (a remote/clustered qrdb deployment dials out
-// instead of hosting the node that would adopt the barrier), Barrier.Enabled,
-// and a strategy NodeFlipWired reports true for.
+// Credentials.SealStrategy "barrier" can be satisfied by this configuration:
+// the barrier must be the embedded qrdb node's own, which requires
+// Datastore.Mode=="standalone" (a remote deployment dials out instead of
+// hosting the node) and Barrier.Enabled. Every barrier strategy qualifies:
+// the node resolves its seal before the credential service exists.
 func (c *Config) CredentialsBarrierStrategySupported() bool {
 	mode := strings.ToLower(strings.TrimSpace(c.Datastore.Mode))
 	if mode != "" && mode != "standalone" {
 		return false
 	}
-	return c.Barrier.Enabled && c.Barrier.NodeFlipWired()
+	return c.Barrier.Enabled
 }
 
 // DefaultServerHost is the defaults-layer value of server.host: the empty
@@ -758,8 +715,8 @@ type DatastoreConfig struct {
 	// here uses Engine. This is not a new storage knob outside go-qrdb: the
 	// one go-qrdb node (one barrier, one RBAC plane, one Raft cluster) still
 	// hosts every database, and Name/Backend mirror go-qrdb's own
-	// per-database config fields exactly (pkg/datastore.DatabaseKVStore
-	// passes Backend straight through to go-qrdb's Database client via
+	// per-database config fields exactly (pkg/datastore's
+	// Datastore.DatabaseKVStore passes Backend straight through to go-qrdb's Database client via
 	// CreateDatabase) -- there is no xkms-invented database configuration
 	// language, only a per-name override of the one thing go-qrdb itself
 	// lets a database choose independently of the datastore's default
@@ -812,24 +769,6 @@ type ClusterConfig struct {
 
 	// ListenAddress is the Raft bind address. Defaults to RaftAddress.
 	ListenAddress string `yaml:"listen_address"`
-
-	// AdvertiseHost is the host or IP that clients should use to reach THIS
-	// node's xkms APIs. It is published into the cluster registry alongside the
-	// ports of the enabled protocols, so a client that has been told "you are
-	// talking to a follower, the leader is replica N" can turn N into an
-	// address it can actually dial.
-	//
-	// It is distinct from Server.Host, which is a bind address and is commonly
-	// a wildcard that no remote client can dial. When AdvertiseHost is unset the
-	// node falls back to the host portion of RaftAddress, which is by definition
-	// an address peers already use to reach this node. Deployments where the
-	// API and Raft planes are reached over different addresses (NAT, split
-	// networking) must set it explicitly.
-	//
-	// When neither AdvertiseHost nor a concrete RaftAddress host is available,
-	// the node advertises nothing rather than an address no client can dial;
-	// clients then see no endpoint and fall back to the leader hint alone.
-	AdvertiseHost string `yaml:"advertise_host"`
 
 	// Peers lists the initial cluster members as comma-separated
 	// "nodeID=address" pairs (e.g., "1=10.0.0.1:63001,2=10.0.0.2:63001").
@@ -940,9 +879,6 @@ type RaftEnrollmentConfig struct {
 	// contained to a single interface must not have it quietly opened on every
 	// interface, and only this configuration layer knows which containment the
 	// operator asked for.
-	//
-	// It is NOT Cluster.AdvertiseHost, which is the address CLIENTS dial and is
-	// deliberately not a bind address.
 	AdvertiseNoiseHost string `yaml:"advertise_noise_host"`
 
 	// Bootstrap configures how a JOINING node fetches the cluster CA bundle from
@@ -1425,25 +1361,8 @@ type DANEBootstrapConfig struct {
 // embedded and test callers can construct whatever posture they need.
 func (c *Config) ComplianceGaps() []string {
 	var gaps []string
-	datastoreMode := strings.ToLower(strings.TrimSpace(c.Datastore.Mode))
 	if !c.Barrier.Enabled {
 		gaps = append(gaps, "encryption-at-rest disabled (barrier.enabled=false): data is stored in plaintext")
-	} else if (datastoreMode == "" || datastoreMode == "standalone") && c.barrierLeavesKeysPlaintext() {
-		// On an embedded qrdb node the barrier encrypts the data plane (and
-		// thus the crypto backends' key stores) whenever the strategy is
-		// wired through the node's own barrier (BarrierConfig.NodeFlipWired:
-		// none, passphrase, shamir, tpm2) — "none" and a provisioned tpm2
-		// auto-unseal unattended; "passphrase"/"shamir" encrypt exactly the
-		// same way, they just block boot behind the sealed-window listener
-		// until an operator drives `xkmsctl barrier unseal` (or
-		// `unseal-shares`) — genuinely encrypted-then-gated, not plaintext.
-		// A strategy NOT wired through the flip (pkcs11, awskms, gcpkms,
-		// azurekv, vault) falls back to xkms's own (non-node) barrier, which
-		// does not protect the qrdb node's own data plane at all: that is
-		// the actual plaintext case this gap reports.
-		gaps = append(gaps, "barrier strategy \""+c.Barrier.SealStrategy()+
-			"\" is not wired to the qrdb node's own barrier: the embedded data plane — including backend "+
-			"key stores — would be stored in plaintext. Use \"none\", \"passphrase\", \"shamir\" or \"tpm2\"")
 	}
 	if !c.TLS.Enabled {
 		gaps = append(gaps, "TLS disabled (tls.enabled=false): traffic is sent in cleartext")
@@ -1545,19 +1464,6 @@ func (c *Config) ComplianceGaps() []string {
 		}
 	}
 	return gaps
-}
-
-// barrierLeavesKeysPlaintext reports whether the configured barrier would
-// leave the qrdb node's data plane unencrypted: true exactly when the
-// strategy is NOT wired through the node's own barrier
-// (BarrierConfig.NodeFlipWired is false — pkcs11, awskms, gcpkms, azurekv,
-// vault today). "none", "passphrase", "shamir" and "tpm2" are all wired: the
-// node's own barrier genuinely encrypts the data plane for every one of
-// them, whether it auto-unseals unattended ("none", a provisioned "tpm2")
-// or requires an operator to complete the sealed-window ceremony
-// ("passphrase", "shamir") — gated access to encrypted data, not plaintext.
-func (c *Config) barrierLeavesKeysPlaintext() bool {
-	return !c.Barrier.NodeFlipWired()
 }
 
 // Validate checks if the configuration is valid
@@ -1676,21 +1582,13 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	// credentials.seal_strategy "barrier" is refused unless this deployment's
-	// barrier IS the qrdb node's own (see CredentialsBarrierStrategySupported):
-	// every other configuration builds the general xkms barrier from
-	// already-initialized backends, which is a structural cycle against a
-	// credential service that must resolve those same backends' credentials
-	// first (go-xkms#812).
+	// credentials.seal_strategy "barrier" is refused unless this deployment
+	// hosts the qrdb node whose barrier would hold the credentials (see
+	// CredentialsBarrierStrategySupported, go-xkms#812).
 	if strings.EqualFold(c.Credentials.SealStrategy, "barrier") && !c.CredentialsBarrierStrategySupported() {
-		return &errs.Message{Msg: "credentials.seal_strategy \"barrier\" requires an embedded qrdb-hosted " +
-			"barrier: datastore.mode \"standalone\" (or unset), " +
-			"barrier.enabled true, and a barrier.strategy the node barrier supports (none, passphrase, " +
-			"shamir, or tpm2) -- got datastore.mode " + fmt.Sprintf("%q", c.Datastore.Mode) +
-			", barrier.enabled " + fmt.Sprintf("%t", c.Barrier.Enabled) +
-			", barrier.strategy " + fmt.Sprintf("%q", c.Barrier.SealStrategy()) +
-			". The credential service resolves backend credentials before the general xkms barrier " +
-			"exists, so a barrier-backed credential store in any other configuration cannot unseal in time"}
+		return &errs.Message{Msg: "credentials.seal_strategy \"barrier\" requires the embedded qrdb node's " +
+			"barrier: datastore.mode \"standalone\" (or unset) and barrier.enabled true -- got datastore.mode " +
+			fmt.Sprintf("%q", c.Datastore.Mode) + ", barrier.enabled " + fmt.Sprintf("%t", c.Barrier.Enabled)}
 	}
 
 	// Validate at least one protocol is enabled (Unix socket counts as a protocol)

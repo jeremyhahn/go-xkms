@@ -154,7 +154,7 @@ func TestBarrierOverXKMSBackend_CompareAndSwap(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 	barrier, err := NewBarrier(testLogger(), base, BarrierConfig{RootKeyPath: "test/root-key"}, NewSoftwareStrategy())
 	require.NoError(t, err)
-	creds := MustCredentials([]byte("swap-test-passphrase"))
+	creds := MustCredentials(t.Context(), []byte("swap-test-passphrase"))
 	defer creds.Secret.Destroy()
 	require.NoError(t, barrier.Initialize(ctx, creds))
 
@@ -199,7 +199,7 @@ func TestBarrierBackend_CompareAndDeleteContract(t *testing.T) {
 				RootKeyPath: "test/root-key",
 			}, NewSoftwareStrategy())
 			require.NoError(t, err)
-			creds, err := CredentialsFor([]byte("test-password"))
+			creds, err := CredentialsFor(t.Context(), []byte("test-password"))
 			require.NoError(t, err)
 			defer creds.Secret.Destroy()
 			initAndUnsealBarrier(t, barrier, creds)
@@ -220,7 +220,7 @@ func TestBarrierBackend_CompareAndDeleteTranslatesOnlyTheAbsentSentinel(t *testi
 		RootKeyPath: "test/root-key",
 	}, NewSoftwareStrategy())
 	require.NoError(t, err)
-	creds, err := CredentialsFor([]byte("test-password"))
+	creds, err := CredentialsFor(t.Context(), []byte("test-password"))
 	require.NoError(t, err)
 	defer creds.Secret.Destroy()
 	initAndUnsealBarrier(t, barrier, creds)

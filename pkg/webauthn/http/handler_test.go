@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	pkgwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,6 +43,7 @@ func openRegistration() *bool {
 }
 
 func newTestHandler(t *testing.T) *Handler {
+	stores := webauthntest.NewStores(t)
 	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
 		Config: &pkgwebauthn.Config{
 			RPID:                    "example.com",
@@ -49,9 +51,9 @@ func newTestHandler(t *testing.T) *Handler {
 			RPOrigins:               []string{"https://example.com"},
 			AllowPublicRegistration: openRegistration(),
 		},
-		UserStore:       pkgwebauthn.NewMemoryUserStore(),
+		UserStore:       stores.Users,
 		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
-		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err)
 	return NewHandler(svc)
@@ -861,9 +863,9 @@ func (e *errorCredentialStore) GetByUserID(ctx context.Context, userID []byte) (
 // TestHandler_BeginRegistration_ServiceError tests BeginRegistration when the service returns an error.
 func TestHandler_BeginRegistration_ServiceError(t *testing.T) {
 	// Create a handler with an error-returning user store
-	baseUserStore := pkgwebauthn.NewMemoryUserStore()
+	stores := webauthntest.NewStores(t)
 	errStore := &errorUserStore{
-		UserStore:     baseUserStore,
+		UserStore:     stores.Users,
 		getByEmailErr: errors.New("database connection failed"),
 	}
 
@@ -875,7 +877,7 @@ func TestHandler_BeginRegistration_ServiceError(t *testing.T) {
 		},
 		UserStore:       errStore,
 		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
-		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err)
 	h := NewHandler(svc)
@@ -963,14 +965,14 @@ func TestHandler_FinishLogin_SessionNotFoundError(t *testing.T) {
 // GetUserByEmail returns a non-user-not-found error.
 func TestHandler_BeginLogin_GetUserByEmailServiceError(t *testing.T) {
 	// First create a user in a real store
-	baseUserStore := pkgwebauthn.NewMemoryUserStore()
+	stores := webauthntest.NewStores(t)
 	ctx := context.Background()
-	_, createErr := baseUserStore.Create(ctx, "error@example.com", "Error User")
+	_, createErr := stores.Users.Create(ctx, "error@example.com", "Error User")
 	require.NoError(t, createErr)
 
 	// Now wrap with error store that returns errors for GetByEmail
 	errStore := &errorUserStore{
-		UserStore:     baseUserStore,
+		UserStore:     stores.Users,
 		getByEmailErr: errors.New("database connection failed"),
 	}
 
@@ -982,7 +984,7 @@ func TestHandler_BeginLogin_GetUserByEmailServiceError(t *testing.T) {
 		},
 		UserStore:       errStore,
 		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
-		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err)
 	h := NewHandler(svc)
@@ -1007,9 +1009,9 @@ func TestHandler_BeginLogin_GetUserByEmailServiceError(t *testing.T) {
 // the service BeginLogin call itself fails.
 func TestHandler_BeginLogin_BeginLoginServiceError(t *testing.T) {
 	// Create a credential store that returns errors
-	baseCredStore := pkgwebauthn.NewMemoryCredentialStore()
+	stores := webauthntest.NewStores(t)
 	errStore := &errorCredentialStore{
-		CredentialStore: baseCredStore,
+		CredentialStore: stores.Credentials,
 		getByUserIDErr:  errors.New("database connection failed"),
 	}
 
@@ -1019,7 +1021,7 @@ func TestHandler_BeginLogin_BeginLoginServiceError(t *testing.T) {
 			RPDisplayName: "Example",
 			RPOrigins:     []string{"https://example.com"},
 		},
-		UserStore:       pkgwebauthn.NewMemoryUserStore(),
+		UserStore:       stores.Users,
 		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
 		CredentialStore: errStore,
 	})

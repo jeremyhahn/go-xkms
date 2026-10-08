@@ -9,8 +9,7 @@ no mode in which the console is served in the clear.
 ### Production
 
 ```sh
-xkmsctl init            # provisions CA + admin mTLS + an encrypted barrier
-xkmsd -c /etc/xkms/xkmsd.yaml
+xkmsd -c /etc/xkms/xkmsd.yaml   # config provisions CA + mTLS + an encrypted barrier
 ```
 
 Then browse to `https://<host>:8443/ui/`. Sign in with a passkey (enroll one
@@ -35,7 +34,7 @@ required by FedRAMP / PCI-DSS / HIPAA. It logs the exact gaps and exits, so
 the UI never comes up.
 
 A refusal means the configuration genuinely opts out of a control — the fix is
-to turn that control on (or run `xkmsctl init` to provision it), not to force
+to turn that control on in the configuration, not to force
 past the gate. The gaps are named precisely in the error, e.g.:
 
 ```

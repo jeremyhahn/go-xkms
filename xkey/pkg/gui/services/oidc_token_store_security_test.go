@@ -86,17 +86,17 @@ func TestOIDCService_SetDataDir_NoBarrier_WarnsOnce(t *testing.T) {
 	assert.Equal(t, 1, bytes.Count([]byte(got), []byte("OIDC tokens are kept in memory only")))
 }
 
-// TestOIDCService_SetDataDir_NoBarrier_UsesMemoryTokenStore proves the token
-// store SetDataDir installs is the package's MemoryTokenStore, not a
-// FileTokenStore of any kind (encrypted or otherwise).
-func TestOIDCService_SetDataDir_NoBarrier_UsesMemoryTokenStore(t *testing.T) {
+// TestOIDCService_SetDataDir_NoBarrier_UsesDAOStore proves the token store
+// SetDataDir installs is the package's DAOStore over an in-memory factory,
+// not a FileTokenStore of any kind (encrypted or otherwise).
+func TestOIDCService_SetDataDir_NoBarrier_UsesDAOStore(t *testing.T) {
 	dir := t.TempDir()
 
 	svc := NewOIDCService(nil)
 	svc.SetDataDir(dir)
 
-	_, ok := svc.tokenStore.(*oidc.MemoryTokenStore)
-	assert.True(t, ok, "no-barrier fallback must use oidc.MemoryTokenStore, got %T", svc.tokenStore)
+	_, ok := svc.tokenStore.(*oidc.DAOStore)
+	assert.True(t, ok, "no-barrier fallback must use oidc.DAOStore, got %T", svc.tokenStore)
 }
 
 // TestOIDCService_SetBackend_TokenRoundTrip proves the barrier-backed path

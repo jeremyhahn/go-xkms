@@ -120,9 +120,7 @@ func TestResolveOATHBackupStore_BarrierInitialized_UsesBackendStore(t *testing.T
 		Period:    30,
 	}, "JBSWY3DPEHPK3PXP")))
 
-	credFile := filepath.Join(dataDir, "oath", "resolve-test.json")
-	raw, err := os.ReadFile(credFile)
-	require.NoError(t, err)
+	raw := readStorageEntry(t, dataDir, "oath/resolve-test.json")
 	assert.NotContains(t, string(raw), "JBSWY3DPEHPK3PXP")
 }
 

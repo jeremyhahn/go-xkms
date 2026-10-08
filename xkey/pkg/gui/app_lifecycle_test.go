@@ -86,7 +86,6 @@ func newLifecycleApp(t *testing.T) *App {
 		tpmService:         services.NewTPMService(),
 		phoneService:       services.NewPhoneService(),
 		oidcService:        services.NewOIDCService(log),
-		shareService:       services.NewShareService(),
 		pivService:         services.NewPIVService(nil, "software"),
 		sealService:        services.NewSealService(""),
 		auditStore:         auditStore,

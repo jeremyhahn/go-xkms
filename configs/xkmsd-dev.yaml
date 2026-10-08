@@ -41,9 +41,8 @@ auth:
 # (matching go-qrdb's own SealConfig): a software strategy never auto-unseals
 # from configuration. This file's storage backend is "file" (below), so the
 # qrdb node-barrier auto-unseal gate does not apply to it either way; the
-# daemon boots with xkms's own barrier sealed, and `xkmsctl barrier init` /
-# `xkmsctl barrier unseal` provision and unseal it, exactly as a real
-# deployment does.
+# daemon boots with the node barrier sealed, and go-qrdb's own barrier
+# surface provisions and unseals it, exactly as a real deployment does.
 barrier:
   enabled: true
   strategy: "passphrase"

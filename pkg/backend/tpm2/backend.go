@@ -36,8 +36,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 

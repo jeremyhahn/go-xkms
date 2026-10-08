@@ -59,6 +59,10 @@ var ErrTransactionsUnsupported = errors.New("qrdb: client does not support compa
 // stored=false. This gives linearizable cross-node key-ID uniqueness — the
 // guarantee an in-process lock cannot provide.
 func (b *Backend) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	ctx, err := b.callContext(ctx)
+	if err != nil {
+		return false, &BackendError{Op: "put-if-absent", Key: key, Err: err}
+	}
 	// A client can implement GuardedKVClient and still be unable to perform
 	// the operation: the capability is a property of the TRANSPORT, while
 	// executing it is a property of the server's state machine. So a

@@ -86,9 +86,6 @@ type TenantService interface {
 type TenantAwareService interface {
 	Service
 	TenantService
-
-	// BarrierSvc returns the barrier service for seal/unseal operations.
-	BarrierSvc() BarrierService
 }
 
 // Ensure AdminService implements Service interface

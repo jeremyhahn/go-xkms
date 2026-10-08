@@ -421,10 +421,6 @@ func (m *mockTPMForPKS) SealKey(_ *types.KeyAttributes, _ store.KeyBackend, _ bo
 func (m *mockTPMForPKS) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
 	return nil, nil
 }
-func (m *mockTPMForPKS) SecretFromShares(_ []string) (string, error) { return "", nil }
-func (m *mockTPMForPKS) ShareSecret(_ []byte, _ int) ([]string, error) {
-	return nil, nil
-}
 func (m *mockTPMForPKS) SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 	return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, nil
 }

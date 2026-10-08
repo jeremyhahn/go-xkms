@@ -85,10 +85,10 @@ func TestNewBarrier_NilBaseIsAcceptedUpstream(t *testing.T) {
 	assert.NotNil(t, b)
 }
 
-// RegisterTenantWithConfig must reach the POOLED path for a nil backend. With
-// no pool attached that surfaces as a configuration error -- the honest answer
-// -- rather than a tenant built over a nil backend that breaks later.
-func TestRegisterTenantWithConfig_NilBaseReachesThePooledPath(t *testing.T) {
+// A guarded nil backend must reach the registry's POOLED path. With no pool
+// attached that surfaces as a configuration error -- the honest answer --
+// rather than a tenant built over a nil backend that breaks later.
+func TestGuardStorage_NilBaseReachesThePooledPath(t *testing.T) {
 	base := storage.NewMemory()
 	t.Cleanup(func() { _ = base.Close() })
 
@@ -96,7 +96,7 @@ func TestRegisterTenantWithConfig_NilBaseReachesThePooledPath(t *testing.T) {
 		RootKeyPath: "test/root-key",
 	}, NewSoftwareStrategy())
 	require.NoError(t, err)
-	creds, err := CredentialsFor([]byte("test-password"))
+	creds, err := CredentialsFor(t.Context(), []byte("test-password"))
 	require.NoError(t, err)
 	defer creds.Secret.Destroy()
 	initAndUnsealBarrier(t, system, creds)
@@ -105,7 +105,7 @@ func TestRegisterTenantWithConfig_NilBaseReachesThePooledPath(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = registry.Close() })
 
-	tb, err := registry.RegisterTenantWithConfig("tenant-pooled", nil, BarrierConfig{
+	tb, err := registry.RegisterTenant(t.Context(), "tenant-pooled", guardStorage(nil), qrdbsdk.BarrierConfig{
 		RootKeyPath: "test/root-key",
 	}, NewSoftwareStrategy())
 

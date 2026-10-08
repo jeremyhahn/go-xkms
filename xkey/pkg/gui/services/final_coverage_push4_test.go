@@ -296,7 +296,7 @@ func TestFCP6_ListAvailableTokens_ExpiredToken(t *testing.T) {
 
 func TestFCP6_ListAvailableTokens_OIDCNameOnly(t *testing.T) {
 	oidcSvc := NewOIDCService(slog.Default())
-	oidcSvc.SetTokenStore(oidc.NewMemoryTokenStore())
+	oidcSvc.SetTokenStore(newTestOIDCTokenStore(t))
 
 	entry := &OIDCProviderEntry{
 		Name:     "test-provider",
@@ -334,7 +334,7 @@ func TestFCP6_ListAvailableTokens_OIDCNameOnly(t *testing.T) {
 
 func TestFCP6_OIDCService_Close_WithTokenStore(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	err := svc.Close()
 	assert.NoError(t, err)
 }
@@ -371,7 +371,7 @@ func TestFCP6_OIDCService_SetBackend_Success(t *testing.T) {
 
 func TestFCP6_OIDCService_GetRawTokenResponse_Success(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 
 	entry := &OIDCProviderEntry{
 		Name:     "test-raw",
@@ -408,7 +408,7 @@ func TestFCP6_OIDCService_GetRawTokenResponse_NilTokenStore(t *testing.T) {
 
 func TestFCP6_OIDCService_GetRawTokenResponse_NotFound(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.providers["test-p"] = &OIDCProviderEntry{
 		Name:     "test-p",
 		Issuer:   "https://p.example.com",
@@ -584,7 +584,7 @@ func TestFCP6_OIDCService_ExecuteScript_NoProvider(t *testing.T) {
 
 func TestFCP6_OIDCService_ExecuteScript_Success(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.providers["test-exec"] = &OIDCProviderEntry{
 		Name:     "test-exec",
 		Issuer:   "https://exec.example.com",
@@ -600,7 +600,7 @@ func TestFCP6_OIDCService_ExecuteScript_Success(t *testing.T) {
 
 func TestFCP6_OIDCService_ExecuteScript_NonZeroExit(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.providers["test-exec"] = &OIDCProviderEntry{
 		Name:     "test-exec",
 		Issuer:   "https://exec.example.com",
@@ -633,7 +633,7 @@ func TestFCP6_OIDCService_ExecuteProgram_NoProvider(t *testing.T) {
 
 func TestFCP6_OIDCService_ExecuteProgram_NotFound(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.providers["test-prog"] = &OIDCProviderEntry{
 		Name:     "test-prog",
 		Issuer:   "https://prog.example.com",
@@ -666,7 +666,7 @@ func TestFCP6_OIDCService_ExecuteScriptFile_FileNotFound(t *testing.T) {
 
 func TestFCP6_OIDCService_ExecuteScriptFile_Success(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.providers["test-sf"] = &OIDCProviderEntry{
 		Name:     "test-sf",
 		Issuer:   "https://sf.example.com",
@@ -743,7 +743,7 @@ func TestFCP6_OIDCService_SaveProviders_ToFile_EmptyDataDir(t *testing.T) {
 
 func TestFCP6_OIDCService_GetAccessToken_NestedJSON(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.providers["nested-prov"] = &OIDCProviderEntry{
 		Name:     "nested-prov",
 		Issuer:   "https://nested.example.com",
@@ -790,7 +790,7 @@ func TestFCP6_OIDCService_RefreshToken_NilTokenStore(t *testing.T) {
 
 func TestFCP6_OIDCService_RefreshToken_NoRefreshToken(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.providers["test-p"] = &OIDCProviderEntry{
 		Name: "test-p", Issuer: "https://norefresh.com", ClientID: "c",
 	}
@@ -1151,7 +1151,7 @@ func TestFCP6_OIDCService_TokenResponseToInfo_Expired(t *testing.T) {
 
 func TestFCP6_OIDCService_GetTokenInfo_Success(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.providers["test-info"] = &OIDCProviderEntry{
 		Name:     "test-info",
 		Issuer:   "https://info.example.com",
@@ -1181,7 +1181,7 @@ func TestFCP6_OIDCService_GetTokenInfo_NoProvider(t *testing.T) {
 
 func TestFCP6_OIDCService_GetAllTokens_WithEntries(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 
 	svc.providers["prov-a"] = &OIDCProviderEntry{
 		Name: "prov-a", Issuer: "https://a.com", ClientID: "c",

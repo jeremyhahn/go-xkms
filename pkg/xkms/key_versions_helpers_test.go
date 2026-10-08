@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // wireKeyVersionStore installs an in-memory key-version store on the
@@ -28,7 +28,7 @@ func wireKeyVersionStore(t *testing.T) *keyversion.Store {
 	t.Helper()
 	svc, err := Get()
 	require.NoError(t, err)
-	store, err := keyversion.NewStore(storage.New())
+	store, err := keyversion.NewStore(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
 	svc.SetKeyVersionStore(store)
 	return store

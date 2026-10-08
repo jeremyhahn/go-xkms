@@ -58,8 +58,8 @@ See [running.md](running.md). The console is always served over TLS with a
 certificate minted by the embedded CA. `xkmsd` **refuses to start without a
 secure configuration** by design (FedRAMP / PCI-DSS / HIPAA); if it refuses,
 the log names the exact control that is switched off. Both
-`configs/xkmsd-local.yaml` and an `xkmsctl init`-provisioned deployment start
-with no extra flags.
+`configs/xkmsd-local.yaml` and a securely configured deployment start with no
+extra flags.
 
 ## Feature parity
 

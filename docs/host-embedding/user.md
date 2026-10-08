@@ -1,6 +1,6 @@
 # Host Embedding — User Guide
 
-> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-04
 
 For a developer embedding go-xkms in a daemon that hosts a go-qrdb node.
 
@@ -34,13 +34,10 @@ for _, reason := range module.HostStores().Disabled {
 }
 ```
 
-## Keep or share the barrier
+## The barrier stays yours
 
-By default the module leaves `/api/v1/barrier/*`, `/api/v1/custodian/*`,
-`/api/v1/shares/*` and `/api/v1/init/*` unregistered, so your daemon can serve
-its own barrier on those paths. To let xkms serve them over your node's
-barrier instead, add `xkmssdk.WithServiceModuleBarrierRoutes()` together with
-the barrier registry and qrdb client options.
+xkms serves no barrier, custodian, share or init routes; your daemon keeps
+those paths and operates its own go-qrdb barrier.
 
 ## Tenant passwords
 

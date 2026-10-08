@@ -25,7 +25,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -59,7 +58,7 @@ func testTenantRegistry(t *testing.T) (*seal.BarrierRegistry, *xkms.XKMSService)
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	creds := seal.MustCredentials([]byte("test-password"))
+	creds := seal.MustCredentials(t.Context(), []byte("test-password"))
 	defer creds.Secret.Destroy()
 	err = barrier.Initialize(ctx, creds)
 	require.NoError(t, err)
@@ -102,9 +101,6 @@ func setupTenantTestHandlers(t *testing.T) (*TenantHandlers, *chi.Mux) {
 		r.Get("/", handlers.ListTenantsHandler)
 		r.Get("/{tenantID}", handlers.GetTenantHandler)
 		r.Delete("/{tenantID}", handlers.DeleteTenantHandler)
-		r.Get("/{tenantID}/barrier/status", handlers.TenantBarrierStatusHandler)
-		r.Post("/{tenantID}/barrier/init", handlers.TenantBarrierInitHandler)
-		r.Post("/{tenantID}/barrier/unseal", handlers.TenantBarrierUnsealHandler)
 		r.Put("/{tenantID}/entitlements", handlers.UpdateTenantEntitlementsHandler)
 		r.Put("/{tenantID}/quotas", handlers.UpdateTenantQuotasHandler)
 	})
@@ -320,117 +316,6 @@ func TestDeleteTenantHandler_NotFound(t *testing.T) {
 }
 
 // --- TenantBarrierStatusHandler tests ---
-
-func TestTenantBarrierStatusHandler_Success(t *testing.T) {
-	_, router := setupTenantTestHandlers(t)
-
-	rec := createTenantViaAPI(t, router, "status-tenant", "Status Tenant")
-	require.Equal(t, http.StatusCreated, rec.Code)
-
-	req := httptest.NewRequest(http.MethodGet, "/tenants/status-tenant/barrier/status", nil)
-	rec = httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	var resp transport.TenantBarrierStatusResponse
-	err := json.NewDecoder(rec.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Equal(t, "status-tenant", resp.TenantID)
-	// Newly registered tenant barrier starts sealed (independent DEK,
-	// not yet initialized).
-	assert.True(t, resp.Sealed)
-}
-
-func TestTenantBarrierStatusHandler_NotFound(t *testing.T) {
-	_, router := setupTenantTestHandlers(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/tenants/nonexistent/barrier/status", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusNotFound, rec.Code)
-
-	var errResp ErrorResponse
-	err := json.NewDecoder(rec.Body).Decode(&errResp)
-	require.NoError(t, err)
-	assert.Contains(t, errResp.Error, "tenant: not found")
-}
-
-// --- TenantBarrierInitHandler tests ---
-//
-// TestTenantBarrierInitHandler_Success is intentionally absent here:
-// initializing a tenant's barrier provisions go-qrdb's pooled per-tenant
-// storage (WithVolumePool / WithPerTenantRegistry), which needs real
-// Pebble-backed pool infrastructure this in-memory unit test fixture
-// deliberately does not stand up. The success path is covered against a
-// fake TenantServicer in pkg/xkms/servicer_tenant_delegation_test.go
-// (TestTenantBarrierInit_DelegatesWithStrategy); this file covers the
-// not-found and invalid-body guards below.
-
-func TestTenantBarrierInitHandler_NotFound(t *testing.T) {
-	_, router := setupTenantTestHandlers(t)
-
-	body, err := json.Marshal(tenantBarrierInitRequest{Passphrase: "tenant-admin-pw"})
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/tenants/nonexistent/barrier/init", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusNotFound, rec.Code)
-}
-
-func TestTenantBarrierInitHandler_InvalidBody(t *testing.T) {
-	_, router := setupTenantTestHandlers(t)
-
-	rec := createTenantViaAPI(t, router, "init-bad-body", "Init Bad Body")
-	require.Equal(t, http.StatusCreated, rec.Code)
-
-	req := httptest.NewRequest(http.MethodPost, "/tenants/init-bad-body/barrier/init", bytes.NewReader([]byte("not-json")))
-	req.Header.Set("Content-Type", "application/json")
-	rec = httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// --- TenantBarrierUnsealHandler tests ---
-//
-// TestTenantBarrierUnsealHandler_Success is intentionally absent here for the
-// same reason as TenantBarrierInit's: it depends on a prior successful
-// barrier init, which needs go-qrdb's pooled per-tenant storage. That success
-// path is covered against a fake TenantServicer in
-// pkg/xkms/servicer_tenant_delegation_test.go
-// (TestTenantBarrierUnseal_DelegatesKeyAndShare); this file covers the
-// not-found guard below.
-
-func TestTenantBarrierUnsealHandler_NotFound(t *testing.T) {
-	_, router := setupTenantTestHandlers(t)
-
-	body, err := json.Marshal(tenantBarrierUnsealRequest{Key: []byte("test-key")})
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/tenants/nonexistent/barrier/unseal", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusNotFound, rec.Code)
-}
-
-func TestTenantBarrierUnsealHandler_InvalidBody(t *testing.T) {
-	_, router := setupTenantTestHandlers(t)
-
-	rec := createTenantViaAPI(t, router, "unseal-bad-body", "Unseal Bad Body")
-	require.Equal(t, http.StatusCreated, rec.Code)
-
-	req := httptest.NewRequest(http.MethodPost, "/tenants/unseal-bad-body/barrier/unseal", bytes.NewReader([]byte("not-json")))
-	req.Header.Set("Content-Type", "application/json")
-	rec = httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
 
 // --- Construction-time typed error tests ---
 //
@@ -785,89 +670,6 @@ func TestDeleteTenantHandler_TenantFiltering(t *testing.T) {
 	// behavior this test exists to cover is exercised above regardless of
 	// caller role, since XKMSService's tenant binding answers 404 before
 	// deletion is attempted.
-}
-
-// TestTenantBarrierStatusHandler_TenantFiltering tests tenant-scoped access for barrier status.
-func TestTenantBarrierStatusHandler_TenantFiltering(t *testing.T) {
-	t.Run("tenant user gets 404 for other tenant barrier status", func(t *testing.T) {
-		_, router := setupTenantTestHandlers(t)
-
-		rec := createTenantViaAPI(t, router, "tenant-b", "Tenant B")
-		require.Equal(t, http.StatusCreated, rec.Code)
-
-		req := httptest.NewRequest(http.MethodGet, "/tenants/tenant-b/barrier/status", nil)
-		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		rec = httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusNotFound, rec.Code)
-	})
-
-	t.Run("SO can view any tenant barrier status", func(t *testing.T) {
-		_, router := setupTenantTestHandlers(t)
-
-		rec := createTenantViaAPI(t, router, "tenant-b", "Tenant B")
-		require.Equal(t, http.StatusCreated, rec.Code)
-
-		req := httptest.NewRequest(http.MethodGet, "/tenants/tenant-b/barrier/status", nil)
-		identity := &auth.Identity{Subject: "so-admin", TenantID: ""}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		rec = httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-	})
-}
-
-// TestTenantBarrierInitHandler_TenantFiltering tests tenant-scoped access for barrier init.
-func TestTenantBarrierInitHandler_TenantFiltering(t *testing.T) {
-	t.Run("tenant user gets 404 for other tenant barrier init", func(t *testing.T) {
-		_, router := setupTenantTestHandlers(t)
-
-		rec := createTenantViaAPI(t, router, "tenant-b", "Tenant B")
-		require.Equal(t, http.StatusCreated, rec.Code)
-
-		body, err := json.Marshal(tenantBarrierInitRequest{Threshold: 2, Shares: 3})
-		require.NoError(t, err)
-		req := httptest.NewRequest(http.MethodPost, "/tenants/tenant-b/barrier/init", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		rec = httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusNotFound, rec.Code)
-	})
-}
-
-// TestTenantBarrierUnsealHandler_TenantFiltering tests tenant-scoped access for barrier unseal.
-func TestTenantBarrierUnsealHandler_TenantFiltering(t *testing.T) {
-	t.Run("tenant user gets 404 for other tenant barrier unseal", func(t *testing.T) {
-		_, router := setupTenantTestHandlers(t)
-
-		rec := createTenantViaAPI(t, router, "tenant-b", "Tenant B")
-		require.Equal(t, http.StatusCreated, rec.Code)
-
-		body, err := json.Marshal(tenantBarrierUnsealRequest{Key: []byte("test-key")})
-		require.NoError(t, err)
-		req := httptest.NewRequest(http.MethodPost, "/tenants/tenant-b/barrier/unseal", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		rec = httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusNotFound, rec.Code)
-	})
 }
 
 // serveAs routes one request through router carrying identity and returns

@@ -187,10 +187,11 @@ func TestTPMSealer_SSRK_Seal_Success(t *testing.T) {
 	defer res.Passphrase.Destroy()
 
 	require.Equal(t, TPMTokenType, res.Token.Type)
-	require.Equal(t, "sha256", res.Token.TPM2PCRBank)
-	require.Equal(t, []int{7}, res.Token.TPM2PCRs)
-	require.Equal(t, uint64(0x81000001), res.Token.TPM2KeyHandle)
-	require.NotEmpty(t, res.Token.TPM2PolicyHash)
+	members := mustReadTPMTokenMembers(t, res.Token)
+	require.Equal(t, "sha256", members.PCRBank)
+	require.Equal(t, []int{7}, members.PCRs)
+	require.Equal(t, uint64(0x81000001), members.KeyHandle)
+	require.NotEmpty(t, members.PolicyHash)
 	require.Equal(t, 32, res.Passphrase.Size())
 }
 
@@ -225,7 +226,8 @@ func TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy(t *testing.T) {
 	require.NoError(t, err)
 	defer res.Passphrase.Destroy()
 
-	publicBlob, privateBlob, err := DecodeTPMSealBlobs(res.Token.TPM2Blob)
+	members := mustReadTPMTokenMembers(t, res.Token)
+	publicBlob, privateBlob, err := DecodeTPMSealBlobs(members.Blob)
 	require.NoError(t, err)
 
 	ssrkAttrs, err := tpm.SSRKAttributes()
@@ -252,7 +254,7 @@ func TestTPMSealer_SSRK_SealedObjectEnforcesPCRPolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, public.ObjectAttributes.UserWithAuth,
 		"a PCR-gated object must answer only a policy session")
-	require.Equal(t, res.Token.TPM2PolicyHash, base64.StdEncoding.EncodeToString(public.AuthPolicy.Buffer))
+	require.Equal(t, members.PolicyHash, base64.StdEncoding.EncodeToString(public.AuthPolicy.Buffer))
 
 	_, err = (libtpm2.Unseal{
 		ItemHandle: libtpm2.AuthHandle{

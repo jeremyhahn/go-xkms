@@ -247,67 +247,12 @@ func (s *mockKeystoreServer) AttestKey(_ context.Context, _ *pb.AttestKeyRequest
 	return &pb.AttestKeyResponse{AttestationData: []byte("attestation-data"), Format: "tpm2"}, nil
 }
 
-func (s *mockKeystoreServer) BarrierInitialize(_ context.Context, _ *pb.BarrierInitializeRequest) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (s *mockKeystoreServer) BarrierUnseal(_ context.Context, _ *pb.BarrierUnsealRequest) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
 func (s *mockKeystoreServer) BarrierSeal(_ context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (s *mockKeystoreServer) BarrierStatus(_ context.Context, _ *emptypb.Empty) (*pb.BarrierStatusResponse, error) {
-	return &pb.BarrierStatusResponse{Sealed: false, InitializedAt: "2024-01-01T00:00:00Z"}, nil
-}
-
-func (s *mockKeystoreServer) BarrierInitializeShamir(_ context.Context, _ *pb.BarrierInitializeShamirRequest) (*pb.BarrierShamirInitResponse, error) {
-	return &pb.BarrierShamirInitResponse{Threshold: 2, TotalShares: 3, ShareCount: 3}, nil
-}
-
-func (s *mockKeystoreServer) BarrierUnsealShare(_ context.Context, _ *pb.BarrierUnsealShareRequest) (*pb.BarrierQuorumProgressResponse, error) {
-	return &pb.BarrierQuorumProgressResponse{Required: 2, Submitted: 1, Complete: false}, nil
-}
-
-func (s *mockKeystoreServer) BarrierUnsealShares(_ context.Context, _ *pb.BarrierUnsealSharesRequest) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (s *mockKeystoreServer) BarrierRekey(_ context.Context, _ *pb.BarrierRekeyRequest) (*pb.BarrierShamirInitResponse, error) {
-	return &pb.BarrierShamirInitResponse{Threshold: 2, TotalShares: 2, ShareCount: 2}, nil
-}
-
-func (s *mockKeystoreServer) BarrierGenerateRecoveryKeys(_ context.Context, _ *pb.BarrierGenerateRecoveryKeysRequest) (*pb.BarrierRecoveryKeysResponse, error) {
-	return &pb.BarrierRecoveryKeysResponse{Threshold: 2, TotalShares: 2, ShareCount: 2}, nil
-}
-
-func (s *mockKeystoreServer) BarrierEnableEncryption(_ context.Context, req *pb.BarrierEnableEncryptionRequest) (*pb.BarrierEnableEncryptionResponse, error) {
-	scope := "system"
-	if req.GetTenantId() != "" {
-		scope = "tenant"
-	}
-	return &pb.BarrierEnableEncryptionResponse{Status: "started", Scope: scope}, nil
-}
-
-func (s *mockKeystoreServer) BarrierRecoverWithKeys(_ context.Context, _ *pb.BarrierRecoverWithKeysRequest) (*emptypb.Empty, error) {
 	return &emptypb.Empty{}, nil
 }
 
 func (s *mockKeystoreServer) BarrierDeleteRecoveryKeys(_ context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
 	return &emptypb.Empty{}, nil
-}
-
-func (s *mockKeystoreServer) BarrierHasRecoveryKeys(_ context.Context, _ *emptypb.Empty) (*pb.BarrierHasRecoveryKeysResponse, error) {
-	return &pb.BarrierHasRecoveryKeysResponse{HasKeys: true}, nil
-}
-
-func (s *mockKeystoreServer) BarrierGenerateRootToken(_ context.Context, _ *pb.BarrierGenerateRootTokenRequest) (*pb.BarrierRootTokenResponse, error) {
-	return &pb.BarrierRootTokenResponse{
-		Token:     "root-token-123",
-		CreatedAt: time.Now().Format(time.RFC3339),
-	}, nil
 }
 
 func (s *mockKeystoreServer) SetSOPIN(_ context.Context, _ *pb.SetSOPINRequest) (*emptypb.Empty, error) {
@@ -429,69 +374,6 @@ func (s *mockKeystoreServer) GeneratePIVKey(_ context.Context, _ *pb.GeneratePIV
 	}, nil
 }
 
-func (s *mockKeystoreServer) CreateCustodianGroup(_ context.Context, _ *pb.CreateCustodianGroupRequest) (*pb.CreateCustodianGroupResponse, error) {
-	return &pb.CreateCustodianGroupResponse{
-		Group: &pb.CustodianGroup{
-			Id: "group-1", Name: "test-group", Description: "test", Threshold: 2,
-			CreatedAt: time.Now().Format(time.RFC3339), UpdatedAt: time.Now().Format(time.RFC3339),
-		},
-	}, nil
-}
-
-func (s *mockKeystoreServer) GetCustodianGroup(_ context.Context, _ *pb.GetCustodianGroupRequest) (*pb.GetCustodianGroupResponse, error) {
-	return &pb.GetCustodianGroupResponse{
-		Group: &pb.CustodianGroup{
-			Id: "group-1", Name: "test-group", Description: "test", Threshold: 2,
-			CreatedAt: time.Now().Format(time.RFC3339), UpdatedAt: time.Now().Format(time.RFC3339),
-		},
-	}, nil
-}
-
-func (s *mockKeystoreServer) ListCustodianGroups(_ context.Context, _ *pb.ListCustodianGroupsRequest) (*pb.ListCustodianGroupsResponse, error) {
-	return &pb.ListCustodianGroupsResponse{
-		Groups: []*pb.CustodianGroup{
-			{
-				Id: "group-1", Name: "test-group", Description: "test", Threshold: 2,
-				CreatedAt: time.Now().Format(time.RFC3339), UpdatedAt: time.Now().Format(time.RFC3339),
-			},
-		},
-	}, nil
-}
-
-func (s *mockKeystoreServer) DeleteCustodianGroup(_ context.Context, _ *pb.DeleteCustodianGroupRequest) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (s *mockKeystoreServer) AddCustodianMember(_ context.Context, _ *pb.AddCustodianMemberRequest) (*pb.AddCustodianMemberResponse, error) {
-	return &pb.AddCustodianMemberResponse{
-		Member: &pb.CustodianMember{UserId: "user-1", Name: "alice", Role: "officer"},
-	}, nil
-}
-
-func (s *mockKeystoreServer) RemoveCustodianMember(_ context.Context, _ *pb.RemoveCustodianMemberRequest) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (s *mockKeystoreServer) DistributeShares(_ context.Context, _ *pb.DistributeSharesRequest) (*pb.DistributeSharesResponse, error) {
-	return &pb.DistributeSharesResponse{Distributed: 3}, nil
-}
-
-func (s *mockKeystoreServer) SubmitShare(_ context.Context, _ *pb.SubmitShareRequest) (*pb.SubmitShareResponse, error) {
-	return &pb.SubmitShareResponse{Id: "share-1", Message: "accepted"}, nil
-}
-
-func (s *mockKeystoreServer) ListShares(_ context.Context, _ *pb.ListSharesRequest) (*pb.ListSharesResponse, error) {
-	return &pb.ListSharesResponse{
-		Shares: []*pb.ShareInfo{
-			{GroupId: "group-1", GroupName: "test-group", ShareIndex: 0, ServerUrl: "https://localhost"},
-		},
-	}, nil
-}
-
-func (s *mockKeystoreServer) GetShareCollectionStatus(_ context.Context, _ *pb.GetShareCollectionStatusRequest) (*pb.ShareCollectionStatusResponse, error) {
-	return &pb.ShareCollectionStatusResponse{GroupId: "group-1", Collected: 1, Required: 2, Complete: false}, nil
-}
-
 func (s *mockKeystoreServer) CreateTenant(_ context.Context, _ *pb.CreateTenantRequest) (*pb.CreateTenantResponse, error) {
 	return &pb.CreateTenantResponse{
 		Tenant: &pb.TenantInfo{
@@ -522,14 +404,6 @@ func (s *mockKeystoreServer) ListTenants(_ context.Context, _ *pb.ListTenantsReq
 }
 
 func (s *mockKeystoreServer) DeleteTenant(_ context.Context, _ *pb.DeleteTenantRequest) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (s *mockKeystoreServer) TenantBarrierInit(_ context.Context, _ *pb.TenantBarrierInitRequest) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (s *mockKeystoreServer) TenantBarrierUnseal(_ context.Context, _ *pb.TenantBarrierUnsealRequest) (*emptypb.Empty, error) {
 	return &emptypb.Empty{}, nil
 }
 
@@ -1038,111 +912,6 @@ func TestAttestKey_Connected(t *testing.T) {
 	assert.NotEmpty(t, resp.AttestationData)
 }
 
-func TestBarrierInitialize_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.BarrierInitialize(context.Background(), &transport.BarrierInitializeRequest{}))
-}
-
-func TestBarrierUnseal_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.BarrierUnseal(context.Background(), &transport.BarrierUnsealRequest{}))
-}
-
-func TestBarrierSeal_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.BarrierSeal(context.Background()))
-}
-
-func TestBarrierStatus_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.BarrierStatus(context.Background())
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.InitializedAt)
-	assert.False(t, resp.Sealed)
-}
-
-func TestBarrierInitializeShamir_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.BarrierInitializeShamir(context.Background(), &transport.BarrierInitializeShamirRequest{Threshold: 2, TotalShares: 3})
-	require.NoError(t, err)
-	assert.Equal(t, 2, resp.Threshold)
-	assert.Equal(t, 3, resp.TotalShares)
-	assert.Equal(t, 3, resp.ShareCount)
-}
-
-func TestBarrierUnsealWithShare_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.BarrierUnsealWithShare(context.Background(), &transport.BarrierUnsealShareRequest{Share: "share-1"})
-	require.NoError(t, err)
-	assert.Equal(t, 1, resp.Submitted)
-}
-
-func TestBarrierUnsealWithShares_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.BarrierUnsealWithShares(context.Background(), &transport.BarrierUnsealSharesRequest{Shares: []string{"s1", "s2"}}))
-}
-
-func TestBarrierRekey_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.BarrierRekey(context.Background(), &transport.BarrierRekeyRequest{Threshold: 2, Total: 3})
-	require.NoError(t, err)
-	assert.Equal(t, 2, resp.Threshold)
-	assert.Equal(t, 2, resp.ShareCount)
-}
-
-func TestBarrierGenerateRecoveryKeys_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.BarrierGenerateRecoveryKeys(context.Background(), &transport.BarrierGenerateRecoveryKeysRequest{Total: 2})
-	require.NoError(t, err)
-	assert.Equal(t, 2, resp.Threshold)
-	assert.Equal(t, 2, resp.TotalShares)
-	assert.Equal(t, 2, resp.ShareCount)
-}
-
-func TestBarrierRecoverWithKeys_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.BarrierRecoverWithKeys(context.Background(), &transport.BarrierRecoverWithKeysRequest{Keys: []string{"r1"}}))
-}
-
-func TestBarrierDeleteRecoveryKeys_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.BarrierDeleteRecoveryKeys(context.Background()))
-}
-
-func TestBarrierHasRecoveryKeys_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.BarrierHasRecoveryKeys(context.Background())
-	require.NoError(t, err)
-	assert.True(t, resp.HasKeys)
-}
-
-func TestBarrierGenerateRootToken_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.BarrierGenerateRootToken(context.Background(), &transport.BarrierGenerateRootTokenRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, "root-token-123", resp.Token)
-}
-
 func TestSetSOPIN_Connected(t *testing.T) {
 	tr, cleanup := newBufconnTransport(t)
 	defer cleanup()
@@ -1311,90 +1080,6 @@ func TestExportPIVCertificate_Connected(t *testing.T) {
 	assert.NotEmpty(t, resp.Certificate)
 }
 
-func TestCreateCustodianGroup_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.CreateCustodianGroup(context.Background(), &transport.CreateCustodianGroupRequest{Name: "test-group", Threshold: 2})
-	require.NoError(t, err)
-	assert.Equal(t, "group-1", resp.Group.ID)
-}
-
-func TestGetCustodianGroup_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.GetCustodianGroup(context.Background(), "group-1")
-	require.NoError(t, err)
-	assert.Equal(t, "group-1", resp.Group.ID)
-}
-
-func TestListCustodianGroups_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.ListCustodianGroups(context.Background())
-	require.NoError(t, err)
-	require.Len(t, resp.Groups, 1)
-}
-
-func TestDeleteCustodianGroup_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.DeleteCustodianGroup(context.Background(), "group-1"))
-}
-
-func TestAddCustodianMember_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.AddCustodianMember(context.Background(), &transport.AddCustodianMemberRequest{GroupID: "group-1", UserID: "user-1"})
-	require.NoError(t, err)
-	assert.Equal(t, "user-1", resp.Member.UserID)
-}
-
-func TestRemoveCustodianMember_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.RemoveCustodianMember(context.Background(), &transport.RemoveCustodianMemberRequest{GroupID: "g1", UserID: "u1"}))
-}
-
-func TestDistributeShares_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.DistributeShares(context.Background(), &transport.DistributeSharesRequest{GroupID: "group-1"})
-	require.NoError(t, err)
-	assert.Equal(t, 3, resp.Distributed)
-}
-
-func TestSubmitShare_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.SubmitShare(context.Background(), &transport.SubmitShareRequest{GroupID: "group-1", ShareData: []byte("share-data")})
-	require.NoError(t, err)
-	assert.True(t, resp.Accepted)
-}
-
-func TestListShares_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.ListShares(context.Background())
-	require.NoError(t, err)
-	require.Len(t, resp.Shares, 1)
-}
-
-func TestGetShareCollectionStatus_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.GetShareCollectionStatus(context.Background(), "group-1")
-	require.NoError(t, err)
-	assert.Equal(t, "group-1", resp.GroupID)
-}
-
 func TestCreateTenant_Connected(t *testing.T) {
 	tr, cleanup := newBufconnTransport(t)
 	defer cleanup()
@@ -1426,18 +1111,6 @@ func TestDeleteTenant_Connected(t *testing.T) {
 	tr, cleanup := newBufconnTransport(t)
 	defer cleanup()
 	require.NoError(t, tr.DeleteTenant(context.Background(), "tenant-1"))
-}
-
-func TestTenantBarrierInit_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.TenantBarrierInit(context.Background(), &transport.TenantBarrierInitRequest{TenantID: "t1"}))
-}
-
-func TestTenantBarrierUnseal_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.TenantBarrierUnseal(context.Background(), &transport.TenantBarrierUnsealRequest{TenantID: "t1"}))
 }
 
 func TestPasswordAdd_Connected(t *testing.T) {
@@ -1585,21 +1258,6 @@ func TestRegistration_RPCWired(t *testing.T) {
 }
 
 // --- Helper function tests ---
-
-func TestPbCustodianGroupToTransport_Nil(t *testing.T) {
-	assert.Empty(t, pbCustodianGroupToTransport(nil).ID)
-}
-
-func TestPbCustodianGroupToTransport_WithMembers(t *testing.T) {
-	g := &pb.CustodianGroup{
-		Id: "g-1", Name: "test", Description: "desc", Threshold: 2,
-		Members:   []*pb.CustodianMember{{UserId: "u-1", Name: "alice", Role: "officer"}},
-		CreatedAt: time.Now().Format(time.RFC3339), UpdatedAt: time.Now().Format(time.RFC3339),
-	}
-	result := pbCustodianGroupToTransport(g)
-	assert.Equal(t, "g-1", result.ID)
-	require.Len(t, result.Members, 1)
-}
 
 func TestPbTenantInfoToTransport_Nil(t *testing.T) {
 	assert.Empty(t, pbTenantInfoToTransport(nil).ID)

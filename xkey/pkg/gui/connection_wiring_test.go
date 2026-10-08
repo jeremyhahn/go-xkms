@@ -39,7 +39,6 @@ type connectedClient struct {
 func newConnectionWiringApp() *App {
 	return &App{
 		pivService:         services.NewPIVService(nil, "software"),
-		custodianService:   services.NewCustodianService(),
 		tenantService:      services.NewTenantService(),
 		certificateService: services.NewCertificateService(),
 		tpmPolicyService:   services.NewTPMPolicyService(),

@@ -105,7 +105,7 @@ func (p *PlatformSealer) Unseal(
 
 	sealer, found := p.sealers[id]
 	if !found {
-		if auditErr := emitAudit(p.config.AuditLogger, p.logger, "unseal", "platform_sealer", string(id),
+		if auditErr := emitAudit(p.config.AuditLogger, "unseal", "platform_sealer", string(id),
 			"deny", map[string]string{"error": ErrStrategyNotFound.Error()}); auditErr != nil {
 			return nil, auditErr
 		}
@@ -115,14 +115,14 @@ func (p *PlatformSealer) Unseal(
 
 	plaintext, err := sealer.Unseal(ctx, sealed, opts)
 	if err != nil {
-		if auditErr := emitAudit(p.config.AuditLogger, p.logger, "unseal", "platform_sealer", string(id),
+		if auditErr := emitAudit(p.config.AuditLogger, "unseal", "platform_sealer", string(id),
 			"deny", map[string]string{"error": err.Error()}); auditErr != nil {
 			return nil, auditErr
 		}
 		return nil, err
 	}
 
-	if auditErr := emitAudit(p.config.AuditLogger, p.logger, "unseal", "platform_sealer", string(id),
+	if auditErr := emitAudit(p.config.AuditLogger, "unseal", "platform_sealer", string(id),
 		"allow", nil); auditErr != nil {
 		return nil, auditErr
 	}
@@ -189,7 +189,7 @@ func (p *PlatformSealer) sealWith(
 
 	sealed, err := sealer.Seal(ctx, data, opts)
 	if err != nil {
-		if auditErr := emitAudit(p.config.AuditLogger, p.logger, "seal", "platform_sealer", string(id),
+		if auditErr := emitAudit(p.config.AuditLogger, "seal", "platform_sealer", string(id),
 			"deny", map[string]string{"error": err.Error()}); auditErr != nil {
 			return nil, auditErr
 		}
@@ -202,7 +202,7 @@ func (p *PlatformSealer) sealWith(
 	}
 	sealed.Metadata[strategyMetadataKey] = []byte(id)
 
-	if auditErr := emitAudit(p.config.AuditLogger, p.logger, "seal", "platform_sealer", string(id),
+	if auditErr := emitAudit(p.config.AuditLogger, "seal", "platform_sealer", string(id),
 		"allow", nil); auditErr != nil {
 		return nil, auditErr
 	}

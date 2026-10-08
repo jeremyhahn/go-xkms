@@ -1,6 +1,6 @@
 # ACME Issuance — API
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ACME is different from every other feature in this repo: **its wire format is
 defined by RFC 8555, not by us.** The six-transport rule applies to go-xkms's
@@ -33,8 +33,15 @@ clients only ever hard-code the directory URL.
 | CA bundle | `GET /acme/ca-bundle` | public |
 | Health | `GET /acme/health` | public |
 
-`GET /acme/health` (non-RFC 8555) reports circuit breaker and
-graceful-degradation status. The response has two breaker sections:
+`GET /acme/health` (non-RFC 8555) reports datastore readiness, circuit
+breaker and graceful-degradation status.
+
+- `checks` — the readiness checks run through the go-qrdb SDK health
+  checker. xkmsd registers one, named `datastore`, for the datastore ACME
+  state persists in. Each entry carries `name`, `status` (`healthy`,
+  `unhealthy`, `degraded`), `message`, `latency` and, on failure, `error`.
+
+The response then has two breaker sections:
 
 - `breakers` — every *named* breaker registered on the server's
   `circuitbreaker.Manager` (`storage`, `kms`, `ct_submitter` when wired),
@@ -47,7 +54,8 @@ graceful-degradation status. The response has two breaker sections:
   names). This never grows with the number of distinct validation targets a
   group has tracked, unlike `breakers`.
 
-`healthy` (and the 200/503 status) reflects only `breakers`: an open
+`healthy` (and the 200/503 status) reflects only `checks` and `breakers`: an
+unhealthy datastore check or an open named breaker answers 503. An open
 per-target breaker in `target_groups` means one validation target is
 failing, which is expected, isolated behavior, not evidence the server
 itself is unhealthy. `degradation` additionally reports whether `GET
@@ -235,7 +243,7 @@ CSP to protect against.
 
 Separately from the RFC surface, the ACME server's **administration** is
 reachable through `pkg/acme/admin` (accounts, certificates, EAB, tenants,
-roles, users, CA status/stats, policy, barrier). That plane is not RFC 8555
+roles, users, CA status/stats, policy). That plane is not RFC 8555
 and is not documented as if it were; it follows the repo's normal
 authenticated-API conventions. The SDK surface is `sdk/go/acme/client/admin`;
 the CLI surface is `xkmsctl acme` ([`cli.md`](cli.md#xkmsctl-acme-admin)).
@@ -250,7 +258,7 @@ route's permission, is answered `403` (`cmd/xkmsd/admin.go:200-209`; see
 ### Admin API response contract
 
 Every admin operation — tenants, tenant CA hierarchy, EAB, roles, users,
-certificates, accounts, orders, status/stats, audit, algorithms, barrier —
+certificates, accounts, orders, status/stats, audit, algorithms —
 follows one contract, with no success/error envelope: a single-resource
 operation's success body is the resource itself; a paginated list operation's
 success body is `{items, total, page, per_page}`; a mutation with nothing
@@ -278,7 +286,6 @@ reach.
 | a role or user of another tenant under its own `{id}` (every caller, the platform included) | `404`, `Role not found` / `User not found` | `NotFound` | `tenantRole` / `tenantUser`, `pkg/acme/admin/tenant_service.go:1598`, `:1705` |
 | `GET /api/v1/tenants` | `200`, its own tenant only | same | `pkg/acme/admin/tenant_service.go:547` |
 | `POST /api/v1/tenants`, `GET /admin/audit` | `403`, the gate's own `Access denied: insufficient permissions` body | `PermissionDenied` | `requirePlatformScope`, `pkg/acme/admin/tenant_binding.go:113` |
-| every `/admin/barrier/*` route (status, initialize, seal, unseal, `shamir/initialize`, `shamir/unseal-share`, rekey, `recovery/generate`, `recovery/recover`, `recovery/status`, `root-token`), whatever `seal:*` / `barrier:*` grants it holds (go-xkms#1244) | `403`, the gate's own `Access denied: insufficient permissions` body; the barrier is not touched | not exposed (REST only) | the XKMSService's `requirePlatformScope`, `pkg/xkms/tenant_binding.go:88`, reached through `SystemBarrier`, `pkg/acme/admin/barrier_service.go:199`; answered by `writeBarrierError`, `pkg/acme/admin/barrier_handlers.go:279` |
 | `/admin/certificates*`, `/admin/accounts*`, `/admin/orders*`, `/admin/stats` | only its tenant's accounts and the certificates their orders were issued; anything else is `404` on get/revoke/disable, absent from lists | `NotFound` / absent | `pkg/acme/admin/service.go:551-694` |
 
 gRPC maps these through `convertAdminErrorToGRPC`

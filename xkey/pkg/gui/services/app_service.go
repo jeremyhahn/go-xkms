@@ -18,12 +18,12 @@ package services
 import (
 	"context"
 	"errors"
-	"os"
 	"runtime"
 	"sync/atomic"
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -709,7 +709,7 @@ func (s *AppService) SaveTextFile(suggestedName string, content string) (string,
 	if filePath == "" {
 		return "", nil // user cancelled
 	}
-	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(filePath, []byte(content), 0600); err != nil {
 		return "", err
 	}
 	return filePath, nil
@@ -736,7 +736,7 @@ func (s *AppService) SavePEMFile(suggestedName string, content string) (string, 
 	if filePath == "" {
 		return "", nil // user cancelled
 	}
-	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(filePath, []byte(content), 0600); err != nil {
 		return "", err
 	}
 	return filePath, nil

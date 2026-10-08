@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -29,7 +28,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/daemon"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	xkmsserver "github.com/jeremyhahn/go-xkms/pkg/server"
@@ -56,17 +56,13 @@ var (
 	// cannot be constructed.
 	ErrCACertStoreCreateFailed = errors.New("init: failed to create CA certificate store")
 
-	// ErrCAProfileRegistrationFailed is returned when a ceremony-required
-	// certificate profile cannot be registered with the CA's profile registry.
-	ErrCAProfileRegistrationFailed = errors.New("init: failed to register CA profile")
-
 	// ErrCAConstructFailed is returned when ca.NewCA rejects the params
 	// (typically because an identity field is missing or invalid).
 	ErrCAConstructFailed = errors.New("init: failed to construct CA")
 
-	// ErrCeremonyInitFailed is returned when CeremonyService.Initialize
-	// rejects the request (CSR validation, share splitting, cert issuance).
-	ErrCeremonyInitFailed = errors.New("init: ceremony initialization failed")
+	// ErrCABundleReadFailed is returned when the CA's bundle or certificate
+	// cannot be read to derive the public artifacts.
+	ErrCABundleReadFailed = errors.New("init: failed to read the CA bundle")
 
 	// ErrCABundleWriteFailed is returned when the CA bundle cannot be
 	// persisted to the data directory.
@@ -107,8 +103,8 @@ const caCommonName = "xkmsd Root CA"
 // the issued certificates; the trust decision is bound to the SPKI pin.
 const defaultCAOrganization = "xkms"
 
-// ceremonyEnv bundles the runtime dependencies the ceremony-execution
-// phase of `xkmsd init` needs. Constructed once by runInit and passed
+// ceremonyEnv bundles the runtime dependencies the bootstrap phase of
+// `xkmsd init` needs. Constructed once by runInit and passed
 // through so the helpers can be exercised in unit tests without going
 // through os.Exit.
 type ceremonyEnv struct {
@@ -181,29 +177,37 @@ const adminUsername = "administrator"
 // systemTenantID scopes the bootstrap administrator.
 const systemTenantID = "system"
 
-// executeCeremony constructs a software-backed CA, runs the ceremony
-// against it, and persists the public artifacts (CA bundle, SPKI pin). The CA's signing key and certificate live in the same
-// in-memory storage tier the rest of `xkmsd init` already uses — this
-// command remains a one-shot bootstrap that emits the durable artifacts
-// the operator needs while keeping any sealed material ephemeral by
-// design (operators bring up the running server with `xkmsd run` against
-// the artifacts written here).
+// bootstrapResult is the public outcome of the bootstrap: the CA bundle and
+// SPKI pin first-contact clients verify against.
+type bootstrapResult struct {
+	// CABundlePEM is the PEM-encoded CA bundle.
+	CABundlePEM []byte
+
+	// SPKIPin is the hex-encoded SHA-256 of the CA certificate's
+	// SubjectPublicKeyInfo.
+	SPKIPin string
+}
+
+// executeBootstrap constructs a software-backed CA, persists its public
+// artifacts (CA bundle, SPKI pin), and bootstraps the durable node's
+// administrator against it. The CA's signing key and certificate live in the
+// same in-memory storage tier the rest of `xkmsd init` uses -- this command
+// remains a one-shot bootstrap that emits the durable artifacts the operator
+// needs while keeping any sealed material ephemeral by design (operators
+// bring up the running server with `xkmsd run` against the artifacts written
+// here).
 //
-// On success the helper returns the InitResult so callers can summarize
-// the ceremony outcome.
-func executeCeremony(
-	ctx context.Context,
-	cs *initialize.CeremonyService,
-	env *ceremonyEnv,
-) (*initialize.InitResult, error) {
-	caInstance, err := newCeremonyCA(ctx, env)
+// On success the helper returns the bootstrapResult so callers can summarize
+// the outcome.
+func executeBootstrap(ctx context.Context, env *ceremonyEnv) (*bootstrapResult, error) {
+	caInstance, err := newBootstrapCA(ctx, env, dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore()))
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := cs.Initialize(ctx, caInstance)
+	result, err := caArtifacts(caInstance)
 	if err != nil {
-		return nil, &WrappedError{Sentinel: ErrCeremonyInitFailed, Err: err}
+		return nil, err
 	}
 
 	if err := persistCABundle(env.dataDir, result); err != nil {
@@ -213,18 +217,27 @@ func executeCeremony(
 		return nil, err
 	}
 
-	// Single-admin mode transitions straight to operational, so admin login
-	// factors are enrolled here; M-of-N mode enrolls asynchronously as each
-	// officer claims their certificate and share. The SO identity is
-	// CSR-based; the server never holds officer private keys, so there is no
-	// credential bundle to write.
-	if result.State == initialize.StateOperational {
-		if err := bootstrapDurableAdmin(ctx, caInstance, env); err != nil {
-			return nil, err
-		}
+	// The SO identity is CSR-based; the server never holds holder private
+	// keys, so there is no credential bundle to write.
+	if err := bootstrapDurableAdmin(ctx, caInstance, env); err != nil {
+		return nil, err
 	}
 
 	return result, nil
+}
+
+// caArtifacts reads the CA's public bundle and certificate and derives the
+// SPKI pin from the latter.
+func caArtifacts(caInstance initialize.CeremonyCA) (*bootstrapResult, error) {
+	bundle, err := caInstance.CABundle()
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrCABundleReadFailed, Err: err}
+	}
+	cert, err := caInstance.CACertificate()
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrCABundleReadFailed, Err: err}
+	}
+	return &bootstrapResult{CABundlePEM: bundle, SPKIPin: initialize.SPKIPin(cert)}, nil
 }
 
 // bootstrapDurableAdmin opens the durable qrdb node `xkmsd run` will later
@@ -259,7 +272,7 @@ func bootstrapDurableAdmin(ctx context.Context, caInstance initialize.CeremonyCA
 
 	trustDomain := env.nodeCfg.Cluster.RaftEnrollment.TrustDomain
 	if trustDomain == "" {
-		trustDomain = daemon.DefaultTrustDomain
+		trustDomain = embeddednode.DefaultTrustDomain
 	}
 	fbResult, err := xkmsserver.RunFirstBoot(ctx, node, xkmsserver.FirstBootParams{
 		CA:          caInstance,
@@ -290,18 +303,19 @@ func bootstrapDurableAdmin(ctx context.Context, caInstance initialize.CeremonyCA
 	return enrollAdminFactors(ctx, env)
 }
 
-// newCeremonyCA builds a fully initialized software-backed TrustedCA
+// newBootstrapCA builds a fully initialized software-backed TrustedCA
 // suitable for one-shot use during the `xkmsd init` ceremony. The CA
 // uses ECDSA P-256 signing keys — the same default the production
-// MultiIdentityCAConfig ships with — and stores everything in fresh
-// in-memory backends so the helper is safe to run repeatedly and in
-// parallel from unit tests. The profile registry is pre-populated with
+// MultiIdentityCAConfig ships with — keeps its keys in fresh in-memory
+// backends, and stores its certificates as DAO entities in the
+// certstore.DatabaseName database daos serves, so the helper is safe to run
+// repeatedly and in parallel from unit tests. The profile registry is pre-populated with
 // the ceremony-specific role profiles qrdb's CeremonyService relies on
 // (custodian for M-of-N share enrollment, security-officer /
 // administrator / operator / user / auditor for SignCSRInit) so the
 // upstream ceremony can call SignCSR with these profile names without
 // the default xkms registry returning ErrProfileNotFound.
-func newCeremonyCA(ctx context.Context, env *ceremonyEnv) (initialize.CeremonyCA, error) {
+func newBootstrapCA(ctx context.Context, env *ceremonyEnv, daos *qrdbsdk.DAOFactory) (initialize.CeremonyCA, error) {
 	keyStorage := storage.NewMemory()
 	swBackend, err := software.NewBackend(&software.Config{KeyStorage: keyStorage})
 	if err != nil {
@@ -316,16 +330,9 @@ func newCeremonyCA(ctx context.Context, env *ceremonyEnv) (initialize.CeremonyCA
 		return nil, &WrappedError{Sentinel: ErrCAKeystoreCreateFailed, Err: err}
 	}
 
-	certStore, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(storage.NewMemory()),
-	})
+	certStore, err := certstore.New(&certstore.Config{DAOs: daos})
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrCACertStoreCreateFailed, Err: err}
-	}
-
-	profiles, err := newCeremonyProfileRegistry()
-	if err != nil {
-		return nil, err
 	}
 
 	identity := ca.Identity{
@@ -350,7 +357,7 @@ func newCeremonyCA(ctx context.Context, env *ceremonyEnv) (initialize.CeremonyCA
 		Identity:        []ca.Identity{identity},
 		KeyStore:        keystore,
 		CertStore:       certStore,
-		Profiles:        profiles,
+		Profiles:        ca.NewDefaultProfileRegistry(),
 		BackendForStore: backendForStore,
 		RevocationStore: storage.NewMemory(),
 	})
@@ -362,93 +369,19 @@ func newCeremonyCA(ctx context.Context, env *ceremonyEnv) (initialize.CeremonyCA
 	return root, nil
 }
 
-// ceremonyProfileSpec describes a profile the upstream ceremony service
-// needs to invoke by name. The set is derived from
-// go-qrdb/pkg/ceremony/types.go (roleProfileMap) plus the literal
-// "custodian" profile referenced by initializeMofN.
-type ceremonyProfileSpec struct {
-	name         string
-	keyUsage     x509.KeyUsage
-	extKeyUsage  []x509.ExtKeyUsage
-	validityDays int
-}
-
-// ceremonyProfileSpecs is the canonical list of role profiles the
-// ceremony issues against. Keeping it as package-level data — rather
-// than threading the qrdb roleProfileMap across the module boundary —
-// keeps the xkms CA self-contained.
-var ceremonyProfileSpecs = []ceremonyProfileSpec{
-	{
-		name:         "custodian",
-		keyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		extKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		validityDays: 365,
-	},
-	{
-		name:         "security-officer",
-		keyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		extKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		validityDays: 365,
-	},
-	{
-		name:         "administrator",
-		keyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		extKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		validityDays: 365,
-	},
-	{
-		name:         "operator",
-		keyUsage:     x509.KeyUsageDigitalSignature,
-		extKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		validityDays: 180,
-	},
-	{
-		name:         "user",
-		keyUsage:     x509.KeyUsageDigitalSignature,
-		extKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		validityDays: 90,
-	},
-	{
-		name:         "auditor",
-		keyUsage:     x509.KeyUsageDigitalSignature,
-		extKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		validityDays: 180,
-	},
-}
-
-// newCeremonyProfileRegistry returns a ProfileRegistry seeded with the
-// xkms built-in profiles plus the ceremony-specific role profiles. The
-// builder is the public surface for adding custom profiles, so the
-// returned registry only differs from the default in the additional
-// names — no behavior of the built-in profiles is changed.
-func newCeremonyProfileRegistry() (ca.ProfileRegistry, error) {
-	registry := ca.NewDefaultProfileRegistry()
-	for _, spec := range ceremonyProfileSpecs {
-		profile := ca.NewProfileBuilder(spec.name).
-			WithKeyUsage(spec.keyUsage).
-			WithExtKeyUsage(spec.extKeyUsage...).
-			WithDefaultValidity(spec.validityDays).
-			Build()
-		if err := registry.Register(spec.name, profile); err != nil {
-			return nil, &WrappedDetailError{Sentinel: ErrCAProfileRegistrationFailed, Detail: spec.name, Err: err}
-		}
-	}
-	return registry, nil
-}
-
 // persistCABundle writes the CA bundle returned by the ceremony to
 // "<dataDir>/ca-bundle.pem". The bundle is the canonical artifact other
 // xkms processes pin against; persisting it here guarantees subsequent
 // `xkmsd run` invocations and remote agents have a stable trust root.
-func persistCABundle(dataDir string, result *initialize.InitResult) error {
-	if len(result.CACertPEM) == 0 {
+func persistCABundle(dataDir string, result *bootstrapResult) error {
+	if len(result.CABundlePEM) == 0 {
 		return nil
 	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return &WrappedError{Sentinel: ErrCABundleWriteFailed, Err: err}
 	}
 	path := filepath.Join(dataDir, "ca-bundle.pem")
-	if err := os.WriteFile(path, result.CACertPEM, 0o644); err != nil { // #nosec G306 -- CA bundle is public material
+	if err := os.WriteFile(path, result.CABundlePEM, 0o644); err != nil { // #nosec G306 -- CA bundle is public material
 		return &WrappedDetailError{Sentinel: ErrCABundleWriteFailed, Detail: path, Err: err}
 	}
 	return nil
@@ -459,7 +392,7 @@ func persistCABundle(dataDir string, result *initialize.InitResult) error {
 // use to verify the CA's identity even when the CA certificate has been
 // rotated under the same key; emitting it as a separate file keeps the
 // post-init operator workflow scriptable.
-func persistSPKIPin(dataDir string, result *initialize.InitResult) error {
+func persistSPKIPin(dataDir string, result *bootstrapResult) error {
 	if result.SPKIPin == "" {
 		return nil
 	}
@@ -490,23 +423,17 @@ func printEnrolledFactors(env *ceremonyEnv) {
 	fmt.Fprintf(os.Stderr, "  Login factors: %s\n", strings.Join(names, ", "))
 }
 
-func printCeremonyOutcome(env *ceremonyEnv, result *initialize.InitResult) {
+func printBootstrapOutcome(env *ceremonyEnv, result *bootstrapResult) {
 	defer printEnrolledFactors(env)
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "=== xkmsd init: Ceremony Outcome ===")
+	fmt.Fprintln(os.Stderr, "=== xkmsd init: Bootstrap Outcome ===")
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "  State:        %s\n", result.State)
 	if result.SPKIPin != "" {
 		fmt.Fprintf(os.Stderr, "  SPKI Pin:     %s\n", result.SPKIPin)
 		fmt.Fprintf(os.Stderr, "  SPKI Pin File: %s\n", filepath.Join(env.dataDir, "spki-pin.txt"))
 	}
-	if len(result.CACertPEM) > 0 {
+	if len(result.CABundlePEM) > 0 {
 		fmt.Fprintf(os.Stderr, "  CA Bundle:    %s\n", filepath.Join(env.dataDir, "ca-bundle.pem"))
-	}
-	if result.State == initialize.StateEnrolling {
-		fmt.Fprintf(os.Stderr, "  Shares:       %d Shamir shares generated; run\n", result.ShareCount)
-		fmt.Fprintln(os.Stderr, "                `xkmsctl init claim-cert` then `xkmsctl init claim-share`")
-		fmt.Fprintln(os.Stderr, "                from each officer host to enroll.")
 	}
 	fmt.Fprintln(os.Stderr)
 }

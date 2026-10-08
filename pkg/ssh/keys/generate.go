@@ -62,7 +62,7 @@ type GenerateOptions struct {
 //   - *UnsupportedAlgorithmError if opts.Algorithm is unrecognized.
 //   - *InvalidKeySizeError if RSABits is outside the supported range.
 //   - *KeyMaterialError if the underlying crypto library fails.
-func Generate(opts GenerateOptions) (*Key, error) {
+func Generate(ctx context.Context, opts GenerateOptions) (*Key, error) {
 	if opts.Algorithm == "" {
 		return nil, &UnsupportedAlgorithmError{Algorithm: "<empty>"}
 	}
@@ -72,7 +72,7 @@ func Generate(opts GenerateOptions) (*Key, error) {
 		return nil, err
 	}
 
-	return keyFromCryptoPrivate(privKey, opts.Algorithm, opts.Comment)
+	return keyFromCryptoPrivate(ctx, privKey, opts.Algorithm, opts.Comment)
 }
 
 // generatePrivateKey is the algorithm dispatcher. It intentionally
@@ -137,7 +137,7 @@ func generatePrivateKey(opts GenerateOptions) (crypto.PrivateKey, error) {
 // keyFromCryptoPrivate marshals a Go private key into OpenSSH PEM
 // form, constructs a public key for metadata, and seals the PEM bytes
 // into a *secure.Secret.
-func keyFromCryptoPrivate(priv crypto.PrivateKey, algo Algorithm, comment string) (*Key, error) {
+func keyFromCryptoPrivate(ctx context.Context, priv crypto.PrivateKey, algo Algorithm, comment string) (*Key, error) {
 	block, err := ssh.MarshalPrivateKey(priv, comment)
 	if err != nil {
 		return nil, &KeyMaterialError{Op: "ssh.MarshalPrivateKey", Err: err}
@@ -147,7 +147,7 @@ func keyFromCryptoPrivate(priv crypto.PrivateKey, algo Algorithm, comment string
 	// pem.EncodeToMemory returns a fresh []byte we fully own. We move
 	// it into a Secret (which wipes it on entry) so the plaintext
 	// never outlives this frame.
-	material, secErr := secure.NewSecret(pemBytes)
+	material, secErr := secure.NewSecret(ctx, pemBytes)
 	if secErr != nil {
 		return nil, &KeyMaterialError{Op: "seal generated pem", Err: secErr}
 	}

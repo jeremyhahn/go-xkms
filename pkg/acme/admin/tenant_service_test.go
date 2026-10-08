@@ -32,7 +32,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -45,11 +44,6 @@ import (
 // ============================================================================
 // Mock Implementations
 // ============================================================================
-
-// newTestQRDB creates a qrdb.Service for testing.
-func newTestQRDB() qrdb.Service {
-	return qrdb.NewTestService()
-}
 
 // ============================================================================
 // Basic Tests
@@ -69,7 +63,7 @@ func TestNewTenantAwareAdminService(t *testing.T) {
 // TestNewTenantAwareAdminService_NonTenantAwareFactorySucceeds verifies that
 // a storageFactory that does not implement storage.TenantAwareFactory is a
 // legitimate configuration, not a misconfiguration to refuse: xkmsd's only
-// production wiring (cmd/xkmsd/acme.go, via objstore.NewFactoryFromKVStore)
+// production wiring (cmd/xkmsd/acme.go, via objstore.NewFactory)
 // constructs exactly this shape today. Construction succeeds with a nil,
 // guarded tenantDAO.
 func TestNewTenantAwareAdminService_NonTenantAwareFactorySucceeds(t *testing.T) {
@@ -112,7 +106,7 @@ func TestNewTenantAwareAdminService_TenantDAOFailure(t *testing.T) {
 
 func TestTenantAwareAdminService_CreateTenant_EmptyID(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -128,7 +122,7 @@ func TestTenantAwareAdminService_CreateTenant_EmptyID(t *testing.T) {
 
 func TestTenantAwareAdminService_CreateTenant_EmptyName(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -142,55 +136,19 @@ func TestTenantAwareAdminService_CreateTenant_EmptyName(t *testing.T) {
 	assert.Contains(t, err.Error(), "tenant name is required")
 }
 
-func TestTenantAwareAdminService_CreateTenant_Success(t *testing.T) {
-	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
-
-	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
-	service.SetTenantService(newFakeTenantServicer())
-
-	req := CreateTenantRequest{
-		ID:   "tenant-success",
-		Name: "Test Tenant",
-	}
-
-	tenant, err := service.CreateTenant(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, tenant)
-
-	// Verify tenant info
-	assert.Equal(t, "tenant-success", tenant.ID)
-	assert.Equal(t, "Test Tenant", tenant.Name)
-	assert.Equal(t, "active", tenant.Status)
-	assert.False(t, tenant.CreatedAt.IsZero())
-	assert.False(t, tenant.UpdatedAt.IsZero())
-}
-
 // ============================================================================
 // GetTenant Tests
 // ============================================================================
 
 func TestTenantAwareAdminService_GetTenant_EmptyID(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	_, err := service.GetTenant(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "tenant ID is required")
-}
-
-func TestTenantAwareAdminService_GetTenant_NotFound(t *testing.T) {
-	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
-
-	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
-	service.SetTenantService(newFakeTenantServicer())
-
-	_, err := service.GetTenant(context.Background(), "nonexistent-tenant")
-	require.Error(t, err)
-	assert.Equal(t, ErrTenantNotFound, err)
 }
 
 func TestTenantAwareAdminService_GetTenant_Success(t *testing.T) {
@@ -211,28 +169,13 @@ func TestTenantAwareAdminService_GetTenant_Success(t *testing.T) {
 	assert.Equal(t, "active", tenant.Status)
 }
 
-func TestTenantAwareAdminService_GetTenant_FallbackNotFound(t *testing.T) {
-	// This test verifies that ErrTenantNotFound is returned for nonexistent
-	// tenants once a qrdb TenantServicer is wired (qrdb is the single tenant
-	// authority; there is no local-only fallback to test here anymore).
-	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
-
-	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
-	service.SetTenantService(newFakeTenantServicer())
-
-	_, err := service.GetTenant(context.Background(), "tenant-123")
-	require.Error(t, err)
-	assert.Equal(t, ErrTenantNotFound, err)
-}
-
 // ============================================================================
 // UpdateTenant Tests
 // ============================================================================
 
 func TestTenantAwareAdminService_UpdateTenant_EmptyID(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -302,36 +245,13 @@ func TestTenantAwareAdminService_UpdateTenant_PartialUpdate(t *testing.T) {
 
 func TestTenantAwareAdminService_DeleteTenant_EmptyID(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	err := service.DeleteTenant(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "tenant ID is required")
-}
-
-func TestTenantAwareAdminService_DeleteTenant_Success(t *testing.T) {
-	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
-
-	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
-	service.SetTenantService(newFakeTenantServicer())
-
-	// Create tenant first
-	_, err := service.CreateTenant(context.Background(), CreateTenantRequest{
-		ID:   "tenant-delete-test",
-		Name: "Delete Test",
-	})
-	require.NoError(t, err)
-
-	// Delete tenant
-	err = service.DeleteTenant(context.Background(), "tenant-delete-test")
-	require.NoError(t, err)
-
-	// Verify tenant is gone
-	_, err = service.GetTenant(context.Background(), "tenant-delete-test")
-	assert.Equal(t, ErrTenantNotFound, err)
 }
 
 func TestTenantAwareAdminService_DeleteTenant_NotFound(t *testing.T) {
@@ -348,7 +268,7 @@ func TestTenantAwareAdminService_DeleteTenant_NotFound(t *testing.T) {
 
 func TestTenantAwareAdminService_UpdateTenantStatus_Validation(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -399,7 +319,7 @@ func TestValidTenantStatuses(t *testing.T) {
 	validStatuses := []string{"active", "suspended", "deleted"}
 
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -418,47 +338,13 @@ func TestValidTenantStatuses(t *testing.T) {
 // ListTenants Tests
 // ============================================================================
 
-func TestTenantAwareAdminService_ListTenants_Defaults(t *testing.T) {
-	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
-
-	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
-	service.SetTenantService(newFakeTenantServicer())
-
-	// Test with defaults (page 0, perPage 0)
-	tenants, pagination, err := service.ListTenants(context.Background(), ListTenantsRequest{})
-
-	assert.NoError(t, err)
-	assert.NotNil(t, tenants)
-	assert.NotNil(t, pagination)
-	assert.Equal(t, 1, pagination.Page)
-	assert.Equal(t, 20, pagination.PerPage)
-}
-
-func TestTenantAwareAdminService_ListTenants_MaxPerPage(t *testing.T) {
-	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
-
-	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
-	service.SetTenantService(newFakeTenantServicer())
-
-	// Test with too high perPage
-	_, pagination, err := service.ListTenants(context.Background(), ListTenantsRequest{
-		Page:    1,
-		PerPage: 200, // Should be capped at 100
-	})
-
-	assert.NoError(t, err)
-	assert.Equal(t, 100, pagination.PerPage)
-}
-
 // ============================================================================
 // storeKeyAndCert Tests
 // ============================================================================
 
 func TestTenantAwareAdminService_StoreKeyAndCert_NoCA(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -502,25 +388,12 @@ func TestTenantAwareAdminService_StoreKeyAndCert_NoKV(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// testServiceNoKV implements qrdb.Service with nil KV for testing
+// testServiceNoKV is a QRDBClient whose subsystem clients are all nil.
 type testServiceNoKV struct{}
 
-func (s *testServiceNoKV) KV() db.KVClient                   { return nil }
-func (s *testServiceNoKV) Admin() db.AdminClient             { return nil }
-func (s *testServiceNoKV) Watch() db.WatchClient             { return nil }
-func (s *testServiceNoKV) Lease() db.LeaseClient             { return nil }
-func (s *testServiceNoKV) Batch() db.BatchClient             { return nil }
-func (s *testServiceNoKV) Transaction() db.TransactionClient { return nil }
-func (s *testServiceNoKV) Index() db.IndexClient             { return nil }
-func (s *testServiceNoKV) Users() db.UserClient              { return nil }
-func (s *testServiceNoKV) Roles() db.RoleClient              { return nil }
-func (s *testServiceNoKV) Certs() db.CertClient              { return nil }
-func (s *testServiceNoKV) Barrier() db.BarrierClient         { return nil }
-func (s *testServiceNoKV) Ceremony() db.CeremonyClient       { return nil }
-func (s *testServiceNoKV) Credentials() db.CredentialClient  { return nil }
-func (s *testServiceNoKV) Config() *qrdb.Config              { return nil }
-func (s *testServiceNoKV) Healthy(ctx context.Context) bool  { return true }
-func (s *testServiceNoKV) Close() error                      { return nil }
+func (s *testServiceNoKV) KV() db.KVClient      { return nil }
+func (s *testServiceNoKV) Users() db.UserClient { return nil }
+func (s *testServiceNoKV) Roles() db.RoleClient { return nil }
 
 // ============================================================================
 // GetTenantSigningCA Tests
@@ -528,7 +401,7 @@ func (s *testServiceNoKV) Close() error                      { return nil }
 
 func TestTenantAwareAdminService_GetTenantSigningCA_WithIntermediateCA(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -556,7 +429,7 @@ func TestTenantAwareAdminService_GetTenantSigningCA_WithIntermediateCA(t *testin
 
 func TestTenantAwareAdminService_GetTenantSigningCA_FallbackToRootCA(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -577,7 +450,7 @@ func TestTenantAwareAdminService_GetTenantSigningCA_FallbackToRootCA(t *testing.
 
 func TestTenantAwareAdminService_GetTenantSigningCA_NoCAConfigured(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -589,7 +462,7 @@ func TestTenantAwareAdminService_GetTenantSigningCA_NoCAConfigured(t *testing.T)
 
 func TestTenantAwareAdminService_GetTenantSigningCA_DefaultIntermediateCA(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -634,7 +507,7 @@ func TestTenantAwareAdminService_GetTenantSigningCA_DefaultIntermediateCA(t *tes
 
 func TestTenantAwareAdminService_GetTenantSigningCA_SuspendedIntermediateCA(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -668,7 +541,7 @@ func TestTenantAwareAdminService_GetTenantSigningCA_SuspendedIntermediateCA(t *t
 
 func TestTenantAwareAdminService_CreateTenantRootCA_EmptyID(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -681,7 +554,7 @@ func TestTenantAwareAdminService_CreateTenantRootCA_EmptyID(t *testing.T) {
 
 func TestTenantAwareAdminService_CreateTenantRootCA_Success(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -704,7 +577,7 @@ func TestTenantAwareAdminService_CreateTenantRootCA_Success(t *testing.T) {
 
 func TestTenantAwareAdminService_CreateTenantRootCA_ECDSA(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -722,7 +595,7 @@ func TestTenantAwareAdminService_CreateTenantRootCA_ECDSA(t *testing.T) {
 
 func TestTenantAwareAdminService_CreateTenantRootCA_Ed25519(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -740,7 +613,7 @@ func TestTenantAwareAdminService_CreateTenantRootCA_Ed25519(t *testing.T) {
 
 func TestTenantAwareAdminService_CreateTenantRootCA_MissingCommonName(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -755,7 +628,7 @@ func TestTenantAwareAdminService_CreateTenantRootCA_MissingCommonName(t *testing
 
 func TestTenantAwareAdminService_CreateTenantRootCA_InvalidAlgorithm(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -770,7 +643,7 @@ func TestTenantAwareAdminService_CreateTenantRootCA_InvalidAlgorithm(t *testing.
 
 func TestTenantAwareAdminService_CreateTenantRootCA_AlreadyExists(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -792,7 +665,7 @@ func TestTenantAwareAdminService_CreateTenantRootCA_AlreadyExists(t *testing.T) 
 
 func TestTenantAwareAdminService_CreateTenantIntermediateCA_EmptyID(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -805,7 +678,7 @@ func TestTenantAwareAdminService_CreateTenantIntermediateCA_EmptyID(t *testing.T
 
 func TestTenantAwareAdminService_CreateTenantIntermediateCA_WithTenantParent(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -834,7 +707,7 @@ func TestTenantAwareAdminService_CreateTenantIntermediateCA_WithTenantParent(t *
 
 func TestTenantAwareAdminService_CreateTenantIntermediateCA_NoTenantRoot(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -856,7 +729,7 @@ func TestTenantAwareAdminService_CreateTenantIntermediateCA_GlobalParentSuccess(
 	testCA := createRootOnlyTestCA(t)
 
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, testCA, nil, qrdbSvc, logger, "1.0.0")
 
 	intCA, err := service.CreateTenantIntermediateCA(context.Background(), "tenant-global-parent", CreateTenantIntermediateCARequest{
@@ -880,7 +753,7 @@ func TestTenantAwareAdminService_CreateTenantIntermediateCA_GlobalParentSuccess(
 // issuing a chain-broken certificate.
 func TestTenantAwareAdminService_CreateTenantIntermediateCA_GlobalParentTrustedRootFailurePropagates(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	uninitializedCA := &ca.CA{}
 	service := mustTenantAwareAdminService(t, uninitializedCA, nil, qrdbSvc, logger, "1.0.0")
 
@@ -903,7 +776,7 @@ func TestTenantAwareAdminService_CreateTenantIntermediateCA_GlobalParentTrustedR
 // ErrCANotConfigured instead of panicking.
 func TestTenantAwareAdminService_CreateTenantIntermediateCA_NilCANotConfigured(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	intCA, err := service.CreateTenantIntermediateCA(context.Background(), "tenant-nil-ca", CreateTenantIntermediateCARequest{
@@ -917,7 +790,7 @@ func TestTenantAwareAdminService_CreateTenantIntermediateCA_NilCANotConfigured(t
 
 func TestTenantAwareAdminService_CreateTenantIntermediateCA_MissingCommonName(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -932,7 +805,7 @@ func TestTenantAwareAdminService_CreateTenantIntermediateCA_MissingCommonName(t 
 
 func TestTenantAwareAdminService_CreateTenantIntermediateCA_SetAsDefault(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -961,7 +834,7 @@ func TestTenantAwareAdminService_CreateTenantIntermediateCA_SetAsDefault(t *test
 
 func TestTenantAwareAdminService_GetTenantIntermediateCA_Validation(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -978,7 +851,7 @@ func TestTenantAwareAdminService_GetTenantIntermediateCA_Validation(t *testing.T
 
 func TestTenantAwareAdminService_GetTenantIntermediateCA_Success(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1006,7 +879,7 @@ func TestTenantAwareAdminService_GetTenantIntermediateCA_Success(t *testing.T) {
 
 func TestTenantAwareAdminService_GetTenantIntermediateCA_NotFound(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1018,7 +891,7 @@ func TestTenantAwareAdminService_GetTenantIntermediateCA_NotFound(t *testing.T) 
 
 func TestTenantAwareAdminService_ListTenantIntermediateCAs_EmptyID(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1029,7 +902,7 @@ func TestTenantAwareAdminService_ListTenantIntermediateCAs_EmptyID(t *testing.T)
 
 func TestTenantAwareAdminService_ListTenantIntermediateCAs_Success(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1062,7 +935,7 @@ func TestTenantAwareAdminService_ListTenantIntermediateCAs_Success(t *testing.T)
 
 func TestTenantAwareAdminService_ListTenantIntermediateCAs_Empty(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1074,7 +947,7 @@ func TestTenantAwareAdminService_ListTenantIntermediateCAs_Empty(t *testing.T) {
 
 func TestTenantAwareAdminService_UpdateTenantIntermediateCAStatus_Validation(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1091,7 +964,7 @@ func TestTenantAwareAdminService_UpdateTenantIntermediateCAStatus_Validation(t *
 
 func TestTenantAwareAdminService_UpdateTenantIntermediateCAStatus_Suspend(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1116,7 +989,7 @@ func TestTenantAwareAdminService_UpdateTenantIntermediateCAStatus_Suspend(t *tes
 
 func TestTenantAwareAdminService_UpdateTenantIntermediateCAStatus_InvalidStatus(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1127,7 +1000,7 @@ func TestTenantAwareAdminService_UpdateTenantIntermediateCAStatus_InvalidStatus(
 
 func TestTenantAwareAdminService_SetTenantDefaultIntermediateCA_Validation(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1144,7 +1017,7 @@ func TestTenantAwareAdminService_SetTenantDefaultIntermediateCA_Validation(t *te
 
 func TestTenantAwareAdminService_SetTenantDefaultIntermediateCA_Success(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1189,7 +1062,7 @@ func TestTenantAwareAdminService_SetTenantDefaultIntermediateCA_Success(t *testi
 
 func TestTenantAwareAdminService_SetTenantDefaultIntermediateCA_NotFound(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1200,7 +1073,7 @@ func TestTenantAwareAdminService_SetTenantDefaultIntermediateCA_NotFound(t *test
 
 func TestTenantAwareAdminService_GetTenantCAStatus_EmptyID(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1211,7 +1084,7 @@ func TestTenantAwareAdminService_GetTenantCAStatus_EmptyID(t *testing.T) {
 
 func TestTenantAwareAdminService_GetTenantCAStatus_Default(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1225,7 +1098,7 @@ func TestTenantAwareAdminService_GetTenantCAStatus_Default(t *testing.T) {
 
 func TestTenantAwareAdminService_GetTenantCAStatus_WithRootCA(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1247,7 +1120,7 @@ func TestTenantAwareAdminService_GetTenantCAStatus_WithRootCA(t *testing.T) {
 
 func TestTenantAwareAdminService_GetTenantCAStatus_FullHierarchy(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1522,6 +1395,18 @@ func (d *mockEABDAO) SaveWithCondition(_ context.Context, _ *entities.ExternalAc
 	panic("not implemented")
 }
 
+func (d *mockEABDAO) GetByNaturalKey(_ context.Context, _ string) (*entities.ExternalAccountBinding, error) {
+	panic("not implemented")
+}
+
+func (d *mockEABDAO) CompareAndSwap(_ context.Context, _, _ *entities.ExternalAccountBinding) (bool, error) {
+	panic("not implemented")
+}
+
+func (d *mockEABDAO) DeleteIfMatch(_ context.Context, _ *entities.ExternalAccountBinding) (bool, error) {
+	panic("not implemented")
+}
+
 func (d *mockEABDAO) SaveIfAbsent(_ context.Context, _ *entities.ExternalAccountBinding) (bool, error) {
 	panic("not implemented")
 }
@@ -1764,7 +1649,7 @@ var _ storage.TenantAwareFactory = (*storageTenantAwareWrapper)(nil)
 
 func TestTenantAwareAdminService_CreateTenantEAB_EmptyID(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1777,7 +1662,7 @@ func TestTenantAwareAdminService_CreateTenantEAB_EmptyID(t *testing.T) {
 
 func TestTenantAwareAdminService_CreateTenantEAB_WithDeviceInfo(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	// Create admin service with mock factory
@@ -1819,7 +1704,7 @@ func TestTenantAwareAdminService_CreateTenantEAB_WithDeviceInfo(t *testing.T) {
 
 func TestTenantAwareAdminService_CreateTenantEAB_InvalidPurpose(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -1842,7 +1727,7 @@ func TestTenantAwareAdminService_CreateTenantEAB_InvalidPurpose(t *testing.T) {
 
 func TestTenantAwareAdminService_CreateTenantEAB_StorageError(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -1869,7 +1754,7 @@ func TestTenantAwareAdminService_CreateTenantEAB_StorageError(t *testing.T) {
 
 func TestTenantAwareAdminService_GetTenantEAB_Validation(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -1886,7 +1771,7 @@ func TestTenantAwareAdminService_GetTenantEAB_Validation(t *testing.T) {
 
 func TestTenantAwareAdminService_GetTenantEAB_Success(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -1915,7 +1800,7 @@ func TestTenantAwareAdminService_GetTenantEAB_Success(t *testing.T) {
 
 func TestTenantAwareAdminService_GetTenantEAB_NotFound(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -1935,7 +1820,7 @@ func TestTenantAwareAdminService_GetTenantEAB_NotFound(t *testing.T) {
 
 func TestTenantAwareAdminService_GetTenantEAB_CrossTenantDenied(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -1962,7 +1847,7 @@ func TestTenantAwareAdminService_GetTenantEAB_CrossTenantDenied(t *testing.T) {
 
 func TestTenantAwareAdminService_GetTenantEAB_StorageError(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -1986,7 +1871,7 @@ func TestTenantAwareAdminService_GetTenantEAB_StorageError(t *testing.T) {
 
 func TestTenantAwareAdminService_DeleteTenantEAB_Validation(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -2003,7 +1888,7 @@ func TestTenantAwareAdminService_DeleteTenantEAB_Validation(t *testing.T) {
 
 func TestTenantAwareAdminService_DeleteTenantEAB_Success(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -2033,7 +1918,7 @@ func TestTenantAwareAdminService_DeleteTenantEAB_Success(t *testing.T) {
 
 func TestTenantAwareAdminService_DeleteTenantEAB_NotFound(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -2052,7 +1937,7 @@ func TestTenantAwareAdminService_DeleteTenantEAB_NotFound(t *testing.T) {
 
 func TestTenantAwareAdminService_DeleteTenantEAB_CrossTenantDenied(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -2078,7 +1963,7 @@ func TestTenantAwareAdminService_DeleteTenantEAB_CrossTenantDenied(t *testing.T)
 
 func TestTenantAwareAdminService_DeleteTenantEAB_StorageError(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -2108,7 +1993,7 @@ func TestTenantAwareAdminService_DeleteTenantEAB_StorageError(t *testing.T) {
 
 func TestTenantAwareAdminService_ListTenantEABs_EmptyID(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -2119,7 +2004,7 @@ func TestTenantAwareAdminService_ListTenantEABs_EmptyID(t *testing.T) {
 
 func TestTenantAwareAdminService_ListTenantEABs_NoStorageFactory(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -2131,7 +2016,7 @@ func TestTenantAwareAdminService_ListTenantEABs_NoStorageFactory(t *testing.T) {
 
 func TestTenantAwareAdminService_ListTenantEABs_Success(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -2161,7 +2046,7 @@ func TestTenantAwareAdminService_ListTenantEABs_Success(t *testing.T) {
 
 func TestTenantAwareAdminService_ListTenantEABs_FilterByStatus(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -2202,7 +2087,7 @@ func TestTenantAwareAdminService_ListTenantEABs_FilterByStatus(t *testing.T) {
 
 func TestTenantAwareAdminService_ListTenantEABs_Pagination(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -2245,7 +2130,7 @@ func TestTenantAwareAdminService_ListTenantEABs_Pagination(t *testing.T) {
 
 func TestTenantAwareAdminService_ListTenantEABs_StorageError(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 	factory := newMockTenantAwareStorageFactory()
 
 	adminSvc := NewAdminService(nil, nil, logger, "1.0.0")
@@ -2322,7 +2207,7 @@ func TestTenantInfo_Fields(t *testing.T) {
 
 func TestTenantAwareAdminService_CreateTenantIntermediateCA_Purpose(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
@@ -2592,7 +2477,7 @@ func TestTenantAwareAdminService_UpdateTenantStatus_NotFoundWithDAO(t *testing.T
 
 func TestTenantAwareAdminService_GetTenantEABDAO_NoStorageFactory(t *testing.T) {
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	// Create service with nil storage factory
 	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
@@ -2619,7 +2504,7 @@ func TestTenantAwareAdminService_GetTenantEABDAO_FallbackToGlobal(t *testing.T) 
 	require.NoError(t, err)
 
 	logger := slog.Default()
-	qrdbSvc := newTestQRDB()
+	qrdbSvc := newTestQRDB(t)
 
 	service := mustTenantAwareAdminService(t, nil, factory, qrdbSvc, logger, "1.0.0")
 

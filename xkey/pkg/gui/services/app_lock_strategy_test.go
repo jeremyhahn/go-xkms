@@ -126,8 +126,8 @@ func TestAppLockUnsealUnavailableIsDistinct(t *testing.T) {
 // condition out of the credential vocabulary.
 //
 // The rest of the stack already classifies ErrCorruptRootKey as data loss:
-// gRPC maps it to codes.DataLoss (pkg/api/grpc/service_barrier_pin.go:53) and
-// REST to 500 (pkg/api/rest/handlers_barrier_pin.go:499). Telling a GUI or
+// gRPC maps it to codes.DataLoss (pkg/api/grpc/service_pin.go:53) and
+// REST to 500 (pkg/api/rest/handlers_pin.go:499). Telling a GUI or
 // headless caller "invalid PIN" for an unparseable root key both contradicts
 // them and hides storage corruption behind retries that cannot repair it.
 func TestUnlockReportsACorruptRootKeyAsStorageCorruption(t *testing.T) {

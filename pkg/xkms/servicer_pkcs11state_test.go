@@ -19,14 +19,14 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func newPKCS11StateService(t *testing.T) *XKMSService {
 	t.Helper()
-	store, err := pkcs11state.NewStore(storage.NewMemory())
+	store, err := pkcs11state.NewStore(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
 	svc := &XKMSService{}
 	svc.SetPKCS11StateStore(store)

@@ -96,16 +96,16 @@ it keeps its own session store (`--session-store`) holding the DPoP private
 key and refresh token, but follows the identical barrier-or-fallback
 behavior described above: barrier-encrypted when `xkey barrier init` has
 been run, an unencrypted file with one warning otherwise, and an explicit
-`--session-store <path>` bypassing the barrier entirely. See
+`--session-store <dir>` bypassing the barrier entirely. See
 [cli.md](cli.md#xkey-oidc-aws).
 
-## Using a specific file instead of the barrier
+## Using a specific directory instead of the barrier
 
 ```bash
-xkey oidc login --provider google --token-store /tmp/scratch-tokens.json
+xkey oidc login --provider google --token-store /tmp/scratch-tokens
 ```
 
-An explicit `--token-store <path>` always writes that exact plain file,
+An explicit `--token-store <dir>` always writes an unencrypted store in that exact directory,
 whether or not a barrier is initialized — useful for a throwaway or
 scripted session you don't want mixed in with your normal one.
 

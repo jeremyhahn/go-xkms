@@ -15,7 +15,6 @@ package rest
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -96,29 +95,6 @@ type RouteSpec struct {
 
 	// Handler binds the route's handler on a constructed server.
 	Handler func(s *Server) http.HandlerFunc
-}
-
-// barrierRoutePrefixes are the route families that operate the system
-// barrier's lifecycle: the barrier itself, the Shamir share custody that
-// unseals it, and the init ceremony that creates it.
-var barrierRoutePrefixes = []string{
-	"/api/v1/barrier/",
-	"/api/v1/custodian/",
-	"/api/v1/shares/",
-	"/api/v1/init/",
-}
-
-// IsBarrierRoute reports whether spec belongs to the barrier route families
-// (barrier, custodian, shares, init ceremony). A host embedding the xkms
-// ServiceModule over its own barrier leaves these families unmounted unless
-// it opts in (pkg/apimodule WithBarrierRoutes).
-func IsBarrierRoute(spec RouteSpec) bool {
-	for _, prefix := range barrierRoutePrefixes {
-		if strings.HasPrefix(spec.Pattern, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 // hostRoutePatterns are the routes a qrdb host's REST server serves itself,
@@ -221,12 +197,12 @@ func Routes() []RouteSpec {
 	perm("POST", "/keys/unwrap-by-id", auth.ResourceKeys, auth.ActionUnwrap, func(s *Server) http.HandlerFunc { return s.handlers.UnwrapKeyByIDHandler })
 
 	// --- Certificates + TLS ---
-	perm("POST", "/certs", auth.ResourceCerts, auth.ActionGenerate, func(s *Server) http.HandlerFunc { return s.handlers.SaveCertHandler })
+	perm("POST", "/certs", auth.ResourceCerts, auth.ActionEnroll, func(s *Server) http.HandlerFunc { return s.handlers.SaveCertHandler })
 	perm("GET", "/certs", auth.ResourceCerts, auth.ActionList, func(s *Server) http.HandlerFunc { return s.handlers.ListCertsHandler })
 	perm("GET", "/certs/{id}", auth.ResourceCerts, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.GetCertHandler })
 	perm("DELETE", "/certs/{id}", auth.ResourceCerts, auth.ActionRevoke, func(s *Server) http.HandlerFunc { return s.handlers.DeleteCertHandler })
 	perm("HEAD", "/certs/{id}", auth.ResourceCerts, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.CertExistsHandler })
-	perm("POST", "/certs/{id}/chain", auth.ResourceCerts, auth.ActionGenerate, func(s *Server) http.HandlerFunc { return s.handlers.SaveCertChainHandler })
+	perm("POST", "/certs/{id}/chain", auth.ResourceCerts, auth.ActionEnroll, func(s *Server) http.HandlerFunc { return s.handlers.SaveCertChainHandler })
 	perm("GET", "/certs/{id}/chain", auth.ResourceCerts, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.GetCertChainHandler })
 	perm("GET", "/tls/{id}", auth.ResourceCerts, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.GetTLSCertificateHandler })
 
@@ -248,22 +224,6 @@ func Routes() []RouteSpec {
 	perm("POST", "/frost/aggregate", auth.ResourceKeys, auth.ActionSign, func(s *Server) http.HandlerFunc { return s.handlers.FrostAggregateHandler })
 	perm("POST", "/frost/verify", auth.ResourceKeys, auth.ActionVerify, func(s *Server) http.HandlerFunc { return s.handlers.FrostVerifyHandler })
 
-	// --- Barrier management. The resource:action pairs mirror the MCP
-	// barrier.* methodPermissions map and the QUIC barrier handlers. ---
-	perm("POST", "/barrier/initialize", auth.ResourceSeal, auth.ActionBootstrap, func(s *Server) http.HandlerFunc { return s.handlers.BarrierInitializeHandler })
-	perm("POST", "/barrier/unseal", auth.ResourceSeal, auth.ActionUnseal, func(s *Server) http.HandlerFunc { return s.handlers.BarrierUnsealHandler })
-	perm("POST", "/barrier/seal", auth.ResourceSeal, auth.ActionSeal, func(s *Server) http.HandlerFunc { return s.handlers.BarrierSealHandler })
-	perm("GET", "/barrier/status", auth.ResourceSeal, auth.ActionStatus, func(s *Server) http.HandlerFunc { return s.handlers.BarrierStatusHandler })
-	perm("POST", "/barrier/shamir/initialize", auth.ResourceSeal, auth.ActionInitializeShamir, func(s *Server) http.HandlerFunc { return s.handlers.BarrierInitializeShamirHandler })
-	perm("POST", "/barrier/shamir/unseal-share", auth.ResourceBarrier, auth.ActionUnsealShare, func(s *Server) http.HandlerFunc { return s.handlers.BarrierUnsealShareHandler })
-	perm("POST", "/barrier/shamir/unseal-shares", auth.ResourceSeal, auth.ActionUnseal, func(s *Server) http.HandlerFunc { return s.handlers.BarrierUnsealSharesHandler })
-	perm("POST", "/barrier/rekey", auth.ResourceSeal, auth.ActionRekey, func(s *Server) http.HandlerFunc { return s.handlers.BarrierRekeyHandler })
-	perm("POST", "/barrier/recovery/generate", auth.ResourceSeal, auth.ActionGenerateRecovery, func(s *Server) http.HandlerFunc { return s.handlers.BarrierGenerateRecoveryKeysHandler })
-	perm("POST", "/barrier/recovery/recover", auth.ResourceSeal, auth.ActionRecoverWithKeys, func(s *Server) http.HandlerFunc { return s.handlers.BarrierRecoverWithKeysHandler })
-	perm("DELETE", "/barrier/recovery/keys", auth.ResourceSeal, auth.ActionGenerateRecovery, func(s *Server) http.HandlerFunc { return s.handlers.BarrierDeleteRecoveryKeysHandler })
-	perm("POST", "/barrier/recovery/root-token", auth.ResourceSeal, auth.ActionRotateRootKey, func(s *Server) http.HandlerFunc { return s.handlers.BarrierGenerateRootTokenHandler })
-	perm("POST", "/barrier/enable-encryption", auth.ResourceSeal, auth.ActionEnableEncryption, func(s *Server) http.HandlerFunc { return s.handlers.BarrierEnableEncryptionHandler })
-
 	// --- Trust bootstrap listener (go-xkms#632): the listener's own public
 	// keys, admin-read-only. Distinct from /v1/ca/bootstrap above, which is
 	// the public CA-bundle fetch endpoint. ---
@@ -271,7 +231,7 @@ func Routes() []RouteSpec {
 	permIf("GET", "/bootstrap/keys", auth.ResourceBootstrap, auth.ActionRead, hasBootstrapHandlers, func(s *Server) http.HandlerFunc { return s.bootstrapHandlers.ShowKeysHandler })
 
 	// --- PIN management. Every route carries exactly the pin:* pair
-	// pkg/api/grpc/service_barrier_pin.go authorizes (and the proto's
+	// pkg/api/grpc/service_pin.go authorizes (and the proto's
 	// qrdb.v1.permission option declares) for the same operation: setting,
 	// changing, or resetting a PIN's lockout is pin:write; verifying a PIN
 	// or reading the lockout counters is pin:read. An authenticated session
@@ -311,63 +271,20 @@ func Routes() []RouteSpec {
 	noCA := func(s *Server) bool { return s.caHandlers == nil }
 	permIf("GET", "/ca/bundle", auth.ResourceCerts, auth.ActionRead, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGetCABundle })
 	permIf("GET", "/ca/certificate", auth.ResourceCerts, auth.ActionRead, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGetCACertificate })
-	permIf("POST", "/ca/sign-csr", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleSignCSR })
-	permIf("POST", "/ca/issue", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueCertificate })
+	permIf("POST", "/ca/sign-csr", auth.ResourceCerts, auth.ActionIssue, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleSignCSR })
+	permIf("POST", "/ca/issue", auth.ResourceCerts, auth.ActionIssue, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueCertificate })
 	permIf("POST", "/ca/revoke", auth.ResourceCerts, auth.ActionRevoke, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleRevokeCertificate })
 	permIf("POST", "/ca/crl", auth.ResourceCerts, auth.ActionRead, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGenerateCRL })
 	session("GET", "/ca/crl", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGetCRL })
 	permIf("GET", "/ca/revoked/{serial}", auth.ResourceCerts, auth.ActionRead, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIsRevoked })
-	permIf("POST", "/ca/tcg/ek", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueEKCertificate })
-	permIf("POST", "/ca/tcg/ak", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueAKCertificate })
-	permIf("POST", "/ca/tcg/sign-csr", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleSignTCGCSR })
-	permIf("POST", "/ca/tcg/enroll", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleEnrollDevice })
-	permIf("POST", "/ca/tcg/lak", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueLAKCertificate })
+	permIf("POST", "/ca/tcg/ek", auth.ResourceCerts, auth.ActionIssue, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueEKCertificate })
+	permIf("POST", "/ca/tcg/ak", auth.ResourceCerts, auth.ActionIssue, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueAKCertificate })
+	permIf("POST", "/ca/tcg/sign-csr", auth.ResourceCerts, auth.ActionIssue, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleSignTCGCSR })
+	permIf("POST", "/ca/tcg/enroll", auth.ResourceCerts, auth.ActionIssue, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleEnrollDevice })
+	permIf("POST", "/ca/tcg/lak", auth.ResourceCerts, auth.ActionIssue, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueLAKCertificate })
 	permIf("GET", "/ca/bundle", auth.ResourceCerts, auth.ActionRead, noCA, func(s *Server) http.HandlerFunc { return s.handlers.GetCABundleHandler })
 
-	// --- Custodian groups. The ceremony:* pairs of
-	// pkg/api/grpc/service_custodian_share_tenant.go: reads are
-	// ceremony:status; adding a custodian is ceremony:enroll_custodian and
-	// removing one ceremony:revoke_custodian, because each changes who can
-	// contribute an unseal share; distributing shares is
-	// ceremony:claim_share_begin. ---
-	hasCustodian := func(s *Server) bool { return s.custodianHandlers != nil }
-	permIf("POST", "/custodian/groups/", auth.ResourceCeremony, auth.ActionEnrollCustodian, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.CreateGroupHandler })
-	permIf("GET", "/custodian/groups/", auth.ResourceCeremony, auth.ActionStatus, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.ListGroupsHandler })
-	permIf("GET", "/custodian/groups/{id}", auth.ResourceCeremony, auth.ActionStatus, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.GetGroupHandler })
-	permIf("DELETE", "/custodian/groups/{id}", auth.ResourceCeremony, auth.ActionRevokeCustodian, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.DeleteGroupHandler })
-	permIf("POST", "/custodian/groups/{id}/members", auth.ResourceCeremony, auth.ActionEnrollCustodian, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.AddMemberHandler })
-	permIf("DELETE", "/custodian/groups/{id}/members/{userID}", auth.ResourceCeremony, auth.ActionRevokeCustodian, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.RemoveMemberHandler })
-	permIf("POST", "/custodian/groups/{id}/distribute", auth.ResourceCeremony, auth.ActionClaimShareBegin, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.DistributeSharesHandler })
-
-	// --- Whole-node backup/restore (owner ruling 2026-09-30, go-xkms#728).
-	// Mirrors go-qrdb's own backup:* permission family verbatim
-	// (pkg/permission/constants.go): create/list/get are read-side,
-	// delete is its own grant, and restore is gated separately because it
-	// overwrites live shard state. Always registered -- unlike custodian/
-	// shares, backup is not conditioned on ServeBarrier -- so a standalone
-	// (non-raft) deployment surfaces the qrdb node's own typed
-	// unsupported-operation error rather than a 404 route.
-	perm("POST", "/backups", auth.ResourceBackup, auth.ActionCreate, func(s *Server) http.HandlerFunc { return s.handlers.CreateBackupHandler })
-	perm("GET", "/backups", auth.ResourceBackup, auth.ActionList, func(s *Server) http.HandlerFunc { return s.handlers.ListBackupsHandler })
-	perm("GET", "/backups/{id}", auth.ResourceBackup, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.GetBackupHandler })
-	perm("DELETE", "/backups/{id}", auth.ResourceBackup, auth.ActionDelete, func(s *Server) http.HandlerFunc { return s.handlers.DeleteBackupHandler })
-	perm("POST", "/backups/restore", auth.ResourceBackup, auth.ActionRestore, func(s *Server) http.HandlerFunc { return s.handlers.RestoreBackupHandler })
-	perm("POST", "/backups/{id}/verify", auth.ResourceBackup, auth.ActionVerify, func(s *Server) http.HandlerFunc { return s.handlers.VerifyBackupHandler })
-
-	// --- Shares (Shamir custody). Reads are ceremony:status; submitting
-	// or deleting a share moves quorum material and carries
-	// barrier:unseal-share — the gRPC and MCP pairs for the same calls. ---
-	hasShares := func(s *Server) bool { return s.shareHandlers != nil }
-	permIf("POST", "/shares/submit", auth.ResourceBarrier, auth.ActionUnsealShare, hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.SubmitShareHandler })
-	permIf("GET", "/shares/", auth.ResourceCeremony, auth.ActionStatus, hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.ListSharesHandler })
-	permIf("GET", "/shares/{serverURL}/{groupID}/{shareIndex}", auth.ResourceCeremony, auth.ActionStatus, hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.GetShareHandler })
-	permIf("DELETE", "/shares/{serverURL}/{groupID}/{shareIndex}", auth.ResourceBarrier, auth.ActionUnsealShare, hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.DeleteShareHandler })
-	permIf("GET", "/shares/status/{groupID}", auth.ResourceCeremony, auth.ActionStatus, hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.GetShareCollectionStatusHandler })
-
-	// --- Tenants. Tenant metadata carries tenants:*; the per-tenant
-	// barrier lifecycle is its own tenant_barrier:* family, distinct from
-	// the system barrier's seal:*. Pairs are
-	// pkg/api/grpc/service_custodian_share_tenant.go's. The permission gate
+	// --- Tenants. Tenant metadata carries tenants:*. The permission gate
 	// runs before the handler, so it answers 403 regardless of which
 	// tenantID was named; a caller holding the grant still gets the
 	// cross-tenant 404 from XKMSService's tenant binding
@@ -380,9 +297,6 @@ func Routes() []RouteSpec {
 	permIf("GET", "/tenants/", auth.ResourceTenants, auth.ActionList, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.ListTenantsHandler })
 	permIf("GET", "/tenants/{tenantID}", auth.ResourceTenants, auth.ActionRead, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.GetTenantHandler })
 	permIf("DELETE", "/tenants/{tenantID}", auth.ResourceTenants, auth.ActionDelete, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.DeleteTenantHandler })
-	permIf("GET", "/tenants/{tenantID}/barrier/status", auth.ResourceTenantBarrier, auth.ActionStatus, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.TenantBarrierStatusHandler })
-	permIf("POST", "/tenants/{tenantID}/barrier/init", auth.ResourceTenantBarrier, auth.ActionInit, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.TenantBarrierInitHandler })
-	permIf("POST", "/tenants/{tenantID}/barrier/unseal", auth.ResourceTenantBarrier, auth.ActionUnseal, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.TenantBarrierUnsealHandler })
 	permIf("PUT", "/tenants/{tenantID}/entitlements", auth.ResourceTenants, auth.ActionSetEntitlements, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantEntitlementsHandler })
 	permIf("PUT", "/tenants/{tenantID}/quotas", auth.ResourceTenants, auth.ActionSetQuotas, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantQuotasHandler })
 
@@ -490,27 +404,6 @@ func Routes() []RouteSpec {
 	permIf("POST", "/oidc/credentials/{scope}/{name}/device", auth.ResourceOIDCCredentials, auth.ActionUpdate, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.DeviceStartHandler })
 	permIf("POST", "/oidc/credentials/{scope}/{name}/device/poll", auth.ResourceOIDCCredentials, auth.ActionUpdate, hasOIDCCredentials, func(s *Server) http.HandlerFunc { return s.oidcCredentialHandlers.DevicePollHandler })
 
-	// --- Init ceremony. status and the claim-* halves are reachable
-	// without an account while the ceremony has not reached the
-	// operational state (publicCeremonyPaths in middleware_init_public.go
-	// — a middleware concern, not a table concern); sign-csr and officer
-	// enrolment stay behind authentication and RBAC on every transport.
-	// status and claim-* stay session-authenticated rather than carrying
-	// MCP's ceremony:* pairs: the RequirePermission decorator has no
-	// pre-operational exemption, so gating them here would refuse the
-	// account-less officer the exemption exists for. officer/status has no
-	// counterpart on any other transport. ---
-	hasInit := func(s *Server) bool { return s.initHandlers != nil }
-	session("GET", "/init/status", hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleGetStatus })
-	session("POST", "/init/claim-cert/begin", hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleClaimCertBegin })
-	session("POST", "/init/claim-cert/complete", hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleClaimCertComplete })
-	session("POST", "/init/claim-share/begin", hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleClaimShareBegin })
-	session("POST", "/init/claim-share/complete", hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleClaimShareComplete })
-	permIf("POST", "/init/sign-csr", auth.ResourceCeremony, auth.ActionSignCSR, hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleSignCSRInit })
-	permIf("POST", "/init/officer/register", auth.ResourceCeremony, auth.ActionSignCSR, hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleOfficerRegister })
-	permIf("POST", "/init/enroll-external-officer", auth.ResourceCeremony, auth.ActionSignCSR, hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleEnrollExternalOfficer })
-	session("GET", "/init/officer/status", hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleOfficerStatus })
-
 	// --- Credentials. submit and strategy carry the credentials:* pairs
 	// the MCP credentials.* methods are gated with; neither is on the
 	// pre-operational ceremony allowlist, so gating them never blocks an
@@ -521,39 +414,6 @@ func Routes() []RouteSpec {
 	permIf("POST", "/credentials/submit", auth.ResourceCredentials, auth.ActionSubmit, hasCreds, func(s *Server) http.HandlerFunc { return s.credentialHandlers.HandleSubmit })
 	permIf("GET", "/credentials/strategy", auth.ResourceCredentials, auth.ActionStrategy, hasCreds, func(s *Server) http.HandlerFunc { return s.credentialHandlers.HandleGetStrategy })
 	session("GET", "/credentials/", hasCreds, func(s *Server) http.HandlerFunc { return s.credentialHandlers.HandleList })
-
-	// --- User-side N-factor. Reads are users:read, mutations users:update
-	// — enrolling or revoking a factor changes who can log in. ---
-	hasFactors := func(s *Server) bool { return s.authFactorHandlers != nil }
-	permIf("GET", "/factors/", auth.ResourceUsers, auth.ActionRead, hasFactors, func(s *Server) http.HandlerFunc { return s.authFactorHandlers.ListHandler })
-	permIf("POST", "/factors/", auth.ResourceUsers, auth.ActionUpdate, hasFactors, func(s *Server) http.HandlerFunc { return s.authFactorHandlers.AddHandler })
-	permIf("POST", "/factors/login", auth.ResourceUsers, auth.ActionRead, hasFactors, func(s *Server) http.HandlerFunc { return s.authFactorHandlers.LoginHandler })
-	permIf("GET", "/factors/{factorID}", auth.ResourceUsers, auth.ActionRead, hasFactors, func(s *Server) http.HandlerFunc { return s.authFactorHandlers.GetHandler })
-	permIf("DELETE", "/factors/{factorID}", auth.ResourceUsers, auth.ActionUpdate, hasFactors, func(s *Server) http.HandlerFunc { return s.authFactorHandlers.RemoveHandler })
-	permIf("PATCH", "/factors/{factorID}", auth.ResourceUsers, auth.ActionUpdate, hasFactors, func(s *Server) http.HandlerFunc { return s.authFactorHandlers.RelabelHandler })
-	permIf("POST", "/factors/{factorID}/rotate", auth.ResourceUsers, auth.ActionUpdate, hasFactors, func(s *Server) http.HandlerFunc { return s.authFactorHandlers.RotateHandler })
-
-	// --- Audit chain, read-only: audit:read is its own permission, never
-	// a freebie for anyone already authenticated. ---
-	hasAudit := func(s *Server) bool { return s.auditHandlers != nil }
-	permIf("GET", "/audit/", auth.ResourceAudit, auth.ActionRead, hasAudit, func(s *Server) http.HandlerFunc { return s.auditHandlers.QueryHandler })
-
-	// --- Cluster (go-xkms#847). Raft shard status and membership, backed by
-	// the embedded go-qrdb node's own cluster client
-	// (pkg/xkms/servicer_cluster.go). Status and membership reads never fail
-	// on a standalone node — they report clustered:false and an empty
-	// member list — so both GET routes register unconditionally, matching
-	// clusterHandlers' own unconditional construction in NewServer.
-	// Membership mutation is NOT exposed over REST at all — there is no
-	// POST/DELETE here to stub out. Raft membership changes go through
-	// go-qrdb's own control plane exclusively, via `xkmsctl cluster
-	// add`/`remove` (docs/clustering/api.md, docs/web/parity.md "Cluster
-	// mutations"). Permissions mirror go-qrdb's own AdminService vocabulary
-	// exactly (admin:status, admin:peers — pkg/permission/constants.go),
-	// matching what xkmsd registers on its control-plane gRPC surface
-	// (pkg/server/qrdb_control_plane.go). ---
-	perm("GET", "/cluster/status", auth.ResourceAdmin, auth.ActionStatus, func(s *Server) http.HandlerFunc { return s.clusterHandlers.StatusHandler })
-	perm("GET", "/cluster/members", auth.ResourceAdmin, auth.ActionPeers, func(s *Server) http.HandlerFunc { return s.clusterHandlers.MembersHandler })
 
 	// --- Session endpoints. Exchange endpoints are unauthenticated (they
 	// ARE the authentication); introspection requires a live session. ---

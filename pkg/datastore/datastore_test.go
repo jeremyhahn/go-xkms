@@ -18,13 +18,14 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 )
 
@@ -32,52 +33,81 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// closedTCPAddr binds an ephemeral 127.0.0.1 port, immediately closes it, and
-// returns the address string, so a dial against it fails fast with connection
-// refused instead of timing out against an unroutable address.
-func closedTCPAddr(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	addr := ln.Addr().String()
-	require.NoError(t, ln.Close())
-	return addr
+type note struct {
+	ID   uint64 `json:"id"`
+	Text string `json:"text"`
 }
 
-// TestOpen_StandaloneMemoryEngine proves the in-memory engine works end to
-// end through Open for the SDK/library composition path. Engine "memory"
-// still requires Datastore.Path: go-qrdb roots the node's on-disk state
-// (its vector-storage subsystem in particular) under it regardless of the
-// primary KV engine -- adopted here exactly, not worked around -- so the
-// primary KV data itself is non-durable but the directory is still real.
-func TestOpen_StandaloneMemoryEngine(t *testing.T) {
-	cfg := &config.Config{
+func (n *note) EntityID() uint64      { return n.ID }
+func (n *note) SetEntityID(id uint64) { n.ID = id }
+
+func newNote() *note { return &note{} }
+
+// openTestDatastore opens a standalone, memory-engine datastore for a test
+// and registers its Close with t.Cleanup.
+func openTestDatastore(t *testing.T, cfg *config.Config) *Datastore {
+	t.Helper()
+	ds, err := Open(context.Background(), cfg, testLogger())
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
+	return ds
+}
+
+func memoryConfig(t *testing.T) *config.Config {
+	return &config.Config{
 		Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()},
 	}
+}
 
-	backend, err := Open(context.Background(), cfg, testLogger())
+// saveNote saves a note through a DAO the datastore's factory builds for
+// database and returns its ID, proving the factory reaches a working store.
+func saveNote(t *testing.T, ds *Datastore, database, entityType, text string) uint64 {
+	t.Helper()
+	notes, err := dao.New(ds.DAOFactory(), database, entityType, newNote)
 	require.NoError(t, err)
-	require.NotNil(t, backend)
-	defer func() { _ = backend.Close() }()
+	saved := &note{Text: text}
+	require.NoError(t, notes.Save(t.Context(), saved))
+	return saved.ID
+}
 
-	require.NoError(t, backend.Put(context.Background(), "k", []byte("v")))
-	got, err := backend.Get(context.Background(), "k")
+// loadNote reads a note back through a DAO the datastore's factory builds.
+func loadNote(t *testing.T, ds *Datastore, database, entityType string, id uint64) string {
+	t.Helper()
+	notes, err := dao.New(ds.DAOFactory(), database, entityType, newNote)
+	require.NoError(t, err)
+	got, err := notes.Get(t.Context(), id)
+	require.NoError(t, err)
+	return got.Text
+}
+
+// TestOpen_StandaloneYieldsClientAndDAOFactory proves an embedded datastore
+// hands out a working go-qrdb client and a DAO factory whose DAOs persist
+// through it. Engine "memory" still requires Datastore.Path: go-qrdb roots
+// the node's on-disk state under it regardless of the primary KV engine.
+func TestOpen_StandaloneYieldsClientAndDAOFactory(t *testing.T) {
+	ctx := t.Context()
+	ds := openTestDatastore(t, memoryConfig(t))
+
+	kv := ds.Client().KV()
+	require.NoError(t, kv.Put(ctx, "probe", []byte("v")))
+	got, err := kv.Get(ctx, "probe")
 	require.NoError(t, err)
 	assert.Equal(t, []byte("v"), got)
+
+	id := saveNote(t, ds, "", "notes", "standalone")
+	assert.Equal(t, "standalone", loadNote(t, ds, "", "notes", id))
 }
 
 // TestOpen_StandaloneMissingPath proves Datastore.Path is required for
 // standalone mode regardless of Engine, matching config.Validate's own
-// requirement -- this is the same check for an embedded/programmatic caller
-// that never ran Validate.
+// requirement for a caller that never ran Validate.
 func TestOpen_StandaloneMissingPath(t *testing.T) {
 	cfg := &config.Config{
 		Datastore: config.DatastoreConfig{Engine: "memory"},
 	}
 
-	_, err := Open(context.Background(), cfg, testLogger())
-	require.Error(t, err)
-
+	ds, err := Open(context.Background(), cfg, testLogger())
+	assert.Nil(t, ds)
 	var pathErr *embeddednode.ErrDatastorePathRequired
 	require.ErrorAs(t, err, &pathErr)
 }
@@ -85,124 +115,109 @@ func TestOpen_StandaloneMissingPath(t *testing.T) {
 // TestOpen_StandaloneDefaultModeIsStandalone proves an empty Mode defaults to
 // "standalone", matching config.Validate's own default.
 func TestOpen_StandaloneDefaultModeIsStandalone(t *testing.T) {
-	cfg := &config.Config{
+	ds := openTestDatastore(t, &config.Config{
 		Datastore: config.DatastoreConfig{Path: t.TempDir()},
-	}
+	})
+	assert.NotNil(t, ds.Client())
+	assert.NotNil(t, ds.DAOFactory())
+}
 
-	backend, err := Open(context.Background(), cfg, testLogger())
+// TestHealthCheck_ReportsTheClientsHealth proves HealthCheck answers as a
+// go-qrdb SDK readiness check: healthy on an open node, and unhealthy once
+// the node is closed.
+func TestHealthCheck_ReportsTheClientsHealth(t *testing.T) {
+	ds, err := Open(context.Background(), memoryConfig(t), testLogger())
 	require.NoError(t, err)
-	require.NotNil(t, backend)
-	defer func() { _ = backend.Close() }()
+
+	checker := qrdbsdk.NewHealthChecker()
+	checker.RegisterCheck(HealthCheckName, ds.HealthCheck)
+
+	results := checker.Ready(t.Context())
+	require.Len(t, results, 1)
+	assert.Equal(t, HealthCheckName, results[0].Name)
+	assert.Equal(t, qrdbsdk.HealthCheckStatusHealthy, results[0].Status)
+
+	require.NoError(t, ds.Close())
+	got := ds.HealthCheck(t.Context())
+	assert.Equal(t, qrdbsdk.HealthCheckStatusUnhealthy, got.Status)
 }
 
-// TestOpen_UnsupportedMode proves an unrecognized Datastore.Mode is rejected
-// with a typed error rather than silently defaulting to standalone.
-func TestOpen_UnsupportedMode(t *testing.T) {
-	cfg := &config.Config{
-		Datastore: config.DatastoreConfig{Mode: "carrier-pigeon"},
-	}
-
-	_, err := Open(context.Background(), cfg, testLogger())
-	require.Error(t, err)
-	var modeErr *ErrUnsupportedDatastoreMode
-	require.ErrorAs(t, err, &modeErr)
-}
-
-// TestOpen_RemoteUnsupportedTransport proves a remote mode with an
-// unsupported transport is rejected before any dial is attempted, wrapped as
-// *ErrOpenDatastore.
-func TestOpen_RemoteUnsupportedTransport(t *testing.T) {
-	cfg := &config.Config{
-		Datastore: config.DatastoreConfig{
-			Mode:   "remote",
-			Remote: config.DatastoreRemoteConfig{Transport: "ftp"},
-		},
-	}
-
-	_, err := Open(context.Background(), cfg, testLogger())
-	require.Error(t, err)
-
-	var openErr *ErrOpenDatastore
-	require.ErrorAs(t, err, &openErr)
-	assert.Equal(t, "remote", openErr.Mode)
-
-	var unsupported *ErrUnsupportedStorageBackend
-	require.ErrorAs(t, err, &unsupported)
-}
-
-// TestDialRemote_UnsupportedTransport proves an unsupported transport name is
-// rejected before any dial is attempted.
-func TestDialRemote_UnsupportedTransport(t *testing.T) {
-	_, err := DialRemote(context.Background(), config.DatastoreRemoteConfig{Transport: "carrier-pigeon"})
-	require.Error(t, err)
-	var unsupported *ErrUnsupportedStorageBackend
-	require.ErrorAs(t, err, &unsupported)
-}
-
-// TestDialRemote_ConnectFails proves a REST transport dialed against an
-// address nothing is listening on surfaces the connect failure rather than
-// returning a half-built backend.
-func TestDialRemote_ConnectFails(t *testing.T) {
-	_, err := DialRemote(context.Background(), config.DatastoreRemoteConfig{
-		Transport: "rest",
-		Address:   closedTCPAddr(t),
+// TestOpen_RejectsBadConfig proves Open refuses a missing or malformed
+// configuration with a typed error before building anything.
+func TestOpen_RejectsBadConfig(t *testing.T) {
+	t.Run("nil config", func(t *testing.T) {
+		ds, err := Open(context.Background(), nil, testLogger())
+		assert.Nil(t, ds)
+		assert.ErrorIs(t, err, ErrNilConfig)
 	})
-	require.Error(t, err)
-}
 
-// TestTransportOptions_Empty proves an unconfigured remote (no address, no
-// TLS) yields no transport options.
-func TestTransportOptions_Empty(t *testing.T) {
-	opts := TransportOptions(config.DatastoreRemoteConfig{
-		Address: "",
-		TLS:     config.TLSConfig{Enabled: false},
+	t.Run("unsupported mode", func(t *testing.T) {
+		ds, err := Open(context.Background(), &config.Config{
+			Datastore: config.DatastoreConfig{Mode: "carrier-pigeon"},
+		}, testLogger())
+		assert.Nil(t, ds)
+		var modeErr *ErrUnsupportedDatastoreMode
+		require.ErrorAs(t, err, &modeErr)
+		assert.Equal(t, "carrier-pigeon", modeErr.Mode)
 	})
-	assert.Empty(t, opts)
-}
 
-// TestTransportOptions_WithAddress proves an address alone yields exactly one
-// option.
-func TestTransportOptions_WithAddress(t *testing.T) {
-	opts := TransportOptions(config.DatastoreRemoteConfig{
-		Address: "localhost:63002",
-		TLS:     config.TLSConfig{Enabled: false},
+	t.Run("unsupported remote transport", func(t *testing.T) {
+		ds, err := Open(context.Background(), &config.Config{
+			Datastore: config.DatastoreConfig{
+				Mode:   "remote",
+				Remote: config.DatastoreRemoteConfig{Transport: "ftp"},
+			},
+		}, testLogger())
+		assert.Nil(t, ds)
+		var openErr *ErrOpenDatastore
+		require.ErrorAs(t, err, &openErr)
+		assert.Equal(t, "remote", openErr.Mode)
+		var unsupported *ErrUnsupportedStorageBackend
+		require.ErrorAs(t, err, &unsupported)
 	})
-	assert.Len(t, opts, 1)
 }
 
-// TestTransportOptions_WithAddressAndTLS proves an address plus a complete
-// TLS config yields two options.
-func TestTransportOptions_WithAddressAndTLS(t *testing.T) {
-	opts := TransportOptions(config.DatastoreRemoteConfig{
-		Address: "localhost:63002",
-		TLS: config.TLSConfig{
-			Enabled:  true,
-			CAFile:   "/path/to/ca.pem",
-			CertFile: "/path/to/cert.pem",
-			KeyFile:  "/path/to/key.pem",
-		},
-	})
-	assert.Len(t, opts, 2)
+// TestNew_BorrowsTheClient proves a Datastore built over a caller's client
+// serves the same data and leaves the client open on Close: the caller
+// owns it.
+func TestNew_BorrowsTheClient(t *testing.T) {
+	owner := openTestDatastore(t, memoryConfig(t))
+	id := saveNote(t, owner, "", "notes", "shared")
+
+	borrowed, err := New(owner.Client(), owner.cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "shared", loadNote(t, borrowed, "", "notes", id))
+
+	require.NoError(t, borrowed.Close())
+	assert.Equal(t, "shared", loadNote(t, owner, "", "notes", id),
+		"closing the borrowing datastore must not close the owner's client")
 }
 
-// TestErrUnsupportedStorageBackend_Error exercises the typed error's message.
-func TestErrUnsupportedStorageBackend_Error(t *testing.T) {
-	e := &ErrUnsupportedStorageBackend{Backend: "redis"}
-	assert.Contains(t, e.Error(), "redis")
+func TestNew_RejectsNilClient(t *testing.T) {
+	ds, err := New(nil, config.DatastoreConfig{})
+	assert.Nil(t, ds)
+	assert.ErrorIs(t, err, ErrNilClient)
 }
 
-// TestErrUnsupportedDatastoreMode_Error exercises the typed error's message.
-func TestErrUnsupportedDatastoreMode_Error(t *testing.T) {
-	e := &ErrUnsupportedDatastoreMode{Mode: "teleport"}
-	assert.Contains(t, e.Error(), "teleport")
-}
-
-// TestErrOpenDatastore_ErrorAndUnwrap exercises the typed error's message and
-// Unwrap.
-func TestErrOpenDatastore_ErrorAndUnwrap(t *testing.T) {
+// TestErrorTypes exercises each wrapping error's message and Unwrap.
+func TestErrorTypes(t *testing.T) {
 	cause := errors.New("boom")
-	e := &ErrOpenDatastore{Mode: "standalone", Err: cause}
-	assert.Contains(t, e.Error(), "standalone")
-	assert.Contains(t, e.Error(), "boom")
-	assert.Same(t, cause, e.Unwrap())
+	wrapping := map[string]interface {
+		error
+		Unwrap() error
+	}{
+		"open":   &ErrOpenDatastore{Mode: "standalone", Err: cause},
+		"dial":   &ErrDialRemote{Transport: "rest", Address: "kms.example.com", Err: cause},
+		"ensure": &ErrEnsureDatabase{Name: "oidc", Err: cause},
+		"scope":  &ErrDatabaseScope{Name: "oidc", Err: cause},
+	}
+	for name, err := range wrapping {
+		t.Run(name, func(t *testing.T) {
+			assert.Contains(t, err.Error(), "boom")
+			assert.Same(t, cause, err.Unwrap())
+		})
+	}
+
+	assert.Contains(t, (&ErrUnsupportedStorageBackend{Backend: "redis"}).Error(), "redis")
+	assert.Contains(t, (&ErrUnsupportedDatastoreMode{Mode: "teleport"}).Error(), "teleport")
 }

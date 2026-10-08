@@ -1,6 +1,7 @@
 package tpm2
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
 	"encoding/json"
@@ -135,7 +136,7 @@ var (
 			Serial:       "001",
 			// Manufacturer, Version: empty by default
 			// When empty, SMBIOS/DMI discovery will be used as fallback
-			// Password:           types.NewLiteralSecretValue([]byte(types.DEFAULT_PASSWORD)),
+			// Password:           types.NewLiteralSecretValue(ctx, []byte(types.DEFAULT_PASSWORD)),
 			Pad:                true,
 			PlatformPolicy:     true,
 			RSAConfig:          &store.RSAConfig{KeySize: 2048},
@@ -165,7 +166,7 @@ var (
 		SSRK: &SRKConfig{
 			Debug:  false,
 			Handle: 0x81000001,
-			// HierarchyAuth: types.NewLiteralSecretValue([]byte(types.DEFAULT_PASSWORD)),
+			// HierarchyAuth: types.NewLiteralSecretValue(ctx, []byte(types.DEFAULT_PASSWORD)),
 			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
@@ -500,11 +501,11 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 
 	// Only set Password/HierarchyAuth when non-empty to avoid selecting the
 	// wrong PlatformPolicySession branch on restart (see SRKAttributesFromConfig).
-	ekPassword, err := types.NewPasswordFromSecretValue(config.Password)
+	ekPassword, err := types.NewPasswordFromSecretValue(context.Background(), config.Password)
 	if err != nil {
 		return nil, err
 	}
-	ekHierarchyAuth, err := types.NewPasswordFromSecretValue(config.HierarchyAuth)
+	ekHierarchyAuth, err := types.NewPasswordFromSecretValue(context.Background(), config.HierarchyAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -591,14 +592,14 @@ func SRKAttributesFromConfig(config SRKConfig) (*types.KeyAttributes, error) {
 	// After a restart the user PIN is not available; a non-nil empty Password
 	// would cause CreateSession to choose the password branch with empty auth,
 	// mismatching the SRK's actual UserAuth and producing TPM_RC_BAD_AUTH.
-	srkPassword, err := types.NewPasswordFromSecretValue(config.Password)
+	srkPassword, err := types.NewPasswordFromSecretValue(context.Background(), config.Password)
 	if err != nil {
 		return nil, err
 	}
 
 	// Same guard for HierarchyAuth: leave nil when the config value is empty
 	// so that downstream TPM2_CreatePrimary uses empty auth (TPM default).
-	hierarchyAuth, err := types.NewPasswordFromSecretValue(config.HierarchyAuth)
+	hierarchyAuth, err := types.NewPasswordFromSecretValue(context.Background(), config.HierarchyAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -758,7 +759,7 @@ func LAKAttributesFromConfig(
 		return nil, ErrInvalidHashFunction
 	}
 
-	passwordBytes, err := types.SecretValueBytes(config.Password)
+	passwordBytes, err := types.SecretValueBytes(context.Background(), config.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -1096,7 +1097,7 @@ func platformPolicyName(enabled bool) string {
 // is wiped before returning, since types.NewPassword copies it into its own
 // enclave rather than taking ownership.
 func passwordFromSecretValue(sv *types.SecretValue) (types.Password, error) {
-	plaintext, err := types.SecretValueBytes(sv)
+	plaintext, err := types.SecretValueBytes(context.Background(), sv)
 	if err != nil {
 		return nil, err
 	}

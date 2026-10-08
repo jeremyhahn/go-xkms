@@ -32,6 +32,7 @@ import (
 	xkmstransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	restclient "github.com/jeremyhahn/go-xkms/pkg/api/transport/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	pkgwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -85,11 +86,12 @@ func openRegistrationService(t *testing.T) (*pkgwebauthn.Service, *pkgwebauthn.C
 		RPOrigins:               []string{"https://localhost"},
 		AllowPublicRegistration: &allow,
 	}
+	stores := webauthntest.NewStores(t)
 	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
 		Config:          cfg,
-		UserStore:       pkgwebauthn.NewMemoryUserStore(),
+		UserStore:       stores.Users,
 		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
-		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err)
 	return svc, cfg
@@ -104,11 +106,12 @@ func closedRegistrationService(t *testing.T) (*pkgwebauthn.Service, *pkgwebauthn
 		RPDisplayName: "xkms e2e",
 		RPOrigins:     []string{"https://localhost"},
 	}
+	stores := webauthntest.NewStores(t)
 	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
 		Config:          cfg,
-		UserStore:       pkgwebauthn.NewMemoryUserStore(),
+		UserStore:       stores.Users,
 		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
-		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err)
 	return svc, cfg

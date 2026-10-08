@@ -26,6 +26,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -288,7 +289,7 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) (err error) {
 		return nil
 	}
 
-	if err := os.WriteFile(idevidCSRExportOutput, pemData, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(idevidCSRExportOutput, pemData, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrIDevIDCSRExportFailed, Cause: err}
 	}
 

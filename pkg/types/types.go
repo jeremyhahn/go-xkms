@@ -3664,7 +3664,7 @@ type KeySerializer interface {
 // KeyAttributesFromConfig creates KeyAttributes from a KeyConfig.
 // This is the boundary parser that converts typed config strings to
 // runtime crypto types.
-func KeyAttributesFromConfig(config *KeyConfig) (*KeyAttributes, error) {
+func KeyAttributesFromConfig(ctx context.Context, config *KeyConfig) (*KeyAttributes, error) {
 	if config == nil {
 		return nil, &errs.Message{Msg: "config is nil"}
 	}
@@ -3704,7 +3704,7 @@ func KeyAttributesFromConfig(config *KeyConfig) (*KeyAttributes, error) {
 	// encrypted-at-rest keys. When config.Password carries no material,
 	// attrs.Password stays nil and the pkcs8 backend enforces its
 	// AllowPlaintextKeys policy.
-	pw, err := NewPasswordFromSecretValue(config.Password)
+	pw, err := NewPasswordFromSecretValue(ctx, config.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -3735,7 +3735,7 @@ func KeyAttributesFromConfig(config *KeyConfig) (*KeyAttributes, error) {
 
 	// Parse parent config recursively
 	if config.Parent != nil {
-		parent, err := KeyAttributesFromConfig(config.Parent)
+		parent, err := KeyAttributesFromConfig(ctx, config.Parent)
 		if err != nil {
 			return nil, err
 		}

@@ -168,7 +168,7 @@ func (h *hmacSecretHarness) assert(t *testing.T, version uint64, salts []byte, u
 		Options: fido2.AuthenticatorOptions{UP: true},
 	}
 	if uv {
-		pin, err := secure.NewSecret([]byte(hmacTestPIN))
+		pin, err := secure.NewSecret(t.Context(), []byte(hmacTestPIN))
 		require.NoError(t, err)
 		token, err := h.client.GetPINToken(session, pin)
 		require.NoError(t, err)
@@ -504,7 +504,7 @@ func TestHMACSecret_LeavesClientPINSessionUntouched(t *testing.T) {
 
 	// Establish a protocol 2 clientPin session with a token.
 	pinSession := h.session(t, fido2.PINUVAuthProtocolV2)
-	pin, err := secure.NewSecret([]byte(hmacTestPIN))
+	pin, err := secure.NewSecret(t.Context(), []byte(hmacTestPIN))
 	require.NoError(t, err)
 	_, err = h.client.GetPINToken(pinSession, pin)
 	require.NoError(t, err)

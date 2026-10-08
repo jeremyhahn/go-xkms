@@ -17,9 +17,6 @@ import type {
   CreateTenantRequest,
   ListTenantsResponse,
   SetTenantTPMModeRequest,
-  TenantBarrierInitRequest,
-  TenantBarrierStatusResponse,
-  TenantBarrierUnsealRequest,
   TenantTPMModeResponse,
   TenantVTPMStatusResponse,
   UpdateTenantEntitlementsRequest,
@@ -35,7 +32,7 @@ function tenantPath(id: string, suffix = ''): string {
   return `${BASE}/${encodeURIComponent(id)}${suffix}`;
 }
 
-/** Tenant lifecycle, per-tenant barriers, entitlements, and quotas. */
+/** Tenant lifecycle, entitlements, and quotas. */
 export class TenantsClient {
   constructor(private readonly http: HttpCore) {}
 
@@ -57,27 +54,6 @@ export class TenantsClient {
   /** DELETE /api/v1/tenants/{tenantID} (204). */
   async delete(tenantId: string): Promise<void> {
     await this.http.request<void>('DELETE', tenantPath(tenantId), { parse: 'void' });
-  }
-
-  /** GET /api/v1/tenants/{tenantID}/barrier/status */
-  barrierStatus(tenantId: string): Promise<TenantBarrierStatusResponse> {
-    return this.http.request('GET', tenantPath(tenantId, '/barrier/status'));
-  }
-
-  /** POST /api/v1/tenants/{tenantID}/barrier/init */
-  barrierInit(
-    tenantId: string,
-    req: TenantBarrierInitRequest,
-  ): Promise<TenantBarrierStatusResponse> {
-    return this.http.request('POST', tenantPath(tenantId, '/barrier/init'), { body: req });
-  }
-
-  /** POST /api/v1/tenants/{tenantID}/barrier/unseal */
-  barrierUnseal(
-    tenantId: string,
-    req: TenantBarrierUnsealRequest,
-  ): Promise<TenantBarrierStatusResponse> {
-    return this.http.request('POST', tenantPath(tenantId, '/barrier/unseal'), { body: req });
   }
 
   /** PUT /api/v1/tenants/{tenantID}/entitlements */

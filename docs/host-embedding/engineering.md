@@ -1,6 +1,6 @@
 # Host Embedding — Engineering
 
-> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-02
+> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-04
 
 ## Exported surface
 
@@ -21,13 +21,12 @@
 | Option | SDK name | Enables |
 |---|---|---|
 | `WithQRDBClient(func() *qrdbsdk.Client)` | `WithServiceModuleQRDBClient` | Storage for every store (host KV under `xkms/`); the WebAuthn and mTLS/PIV login plane |
-| `WithBarrierRegistry(func() *qrdbsdk.BarrierRegistry)` | `WithServiceModuleBarrierRegistry` | Per-tenant Password Manager stores; the `barrier` credential strategy; the barrier served by `WithBarrierRoutes` |
+| `WithBarrierRegistry(func() *qrdbsdk.BarrierRegistry)` | `WithServiceModuleBarrierRegistry` | Per-tenant Password Manager stores; the `barrier` credential strategy |
 | `WithPINBackend(qrdbsdk.PINBackend)` | `WithServiceModulePINBackend` | Unlocking a tenant Password Manager session (user PIN); the `/api/v1/pin/*` routes |
 | `WithPlatformSealer(strategy string, types.Sealer)` | `WithServiceModulePlatformSealer` | The platform sealed-secret store (`/api/v1/platform/*`) |
 | `WithCredentialStrategy(string)` | `WithServiceModuleCredentialStrategy` | The credential service's seal strategy (default `manual`) |
 | `WithCA(*ca.MultiIdentityCAConfig)` | `WithServiceModuleCA` (takes `TrustedCAMultiIdentityConfig`) | The CA (`/api/v1/ca/*` and the CA RPCs) |
 | `WithVTPM(*vtpm.Config)` | `WithServiceModuleVTPM` (`TPMVTPMConfig`) | vtpm mode for the TPM policy service, which a self-built module composes whenever its XKMSService has a `tpm2` backend (`/api/v1/tpm/*`) |
-| `WithBarrierRoutes()` | `WithServiceModuleBarrierRoutes` | Registers and serves the barrier, custodian, shares and init route families over the host's barrier and node |
 
 `(*Module).HostStores() *compose.Stores` (SDK: `ServiceModuleHostStores`)
 returns the composition after first use; `Disabled` holds the typed reasons
@@ -63,8 +62,6 @@ tenant barriers are go-qrdb's, and that gate belongs in qrdb's middleware.
 | `ssh` | storage | `no storage was supplied` |
 | `ca` | CA configuration + storage | `no CA configuration was supplied` |
 | `policies` | PCR reader + storage | `no PCR reader was supplied` |
-| `barrier` | `WithBarrierRoutes` + barrier registry | `no barrier registry was supplied` |
-| `custody` | `WithBarrierRoutes` + qrdb client | `no custody clients was supplied` |
 
 ## Invariants
 
@@ -100,7 +97,6 @@ tenant barriers are go-qrdb's, and that gate belongs in qrdb's middleware.
 |---|---|
 | `pkg/apimodule/module_host_stores_test.go` `TestModule_HostMount_EveryStoreAnswers` | Mounted as a host mounts it, the Password Manager, SSH, CA, platform store, policy and credential routes serve real requests, and gRPC sees the same CA |
 | `…MissingDependenciesAreTypedAndOff`, `…NoQRDBClientLeavesStoresOff` | Missing dependencies are typed, logged and answer 501/503, never a silent 404 |
-| `…BarrierRoutes_OffByDefault`, `…ServeTheHostBarrier`, `…WithoutRegistryIsTypedOff` | Barrier families unregistered by default; opt-in serves the host's own unsealed barrier |
 | `pkg/compose/compose_test.go` | Every builder, its nil-input and storage-failure errors, CA reload, SSH backend resolution |
 | `pkg/compose/compose_tpm_sim_test.go` | The TPM policy service composes over a simulator TPM2 backend and answers through the service |
 | `pkg/api/rest/host_stores_test.go` | `NewHostServer` mounts store surfaces exactly from `HostConfig` |

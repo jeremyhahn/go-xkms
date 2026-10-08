@@ -22,12 +22,12 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
 // ErrFirstBootServicesUnavailable is returned by NewFirstBootNode when the
-// constructed node exposes no tenant, user, or role service to seed through.
-var ErrFirstBootServicesUnavailable = errors.New("testutil: qrdb node exposes no tenant, user or role service for first-boot")
+// constructed node exposes no tenant, user, role, or auth-factor service to
+// seed through.
+var ErrFirstBootServicesUnavailable = errors.New("testutil: qrdb node exposes no tenant, user, role or auth-factor service for first-boot")
 
 // FirstBootNode is an in-memory go-qrdb standalone node on which qrdb's own
 // canonical first-boot (qrdbsdk.FirstBootInitialize) has run: the system
@@ -46,8 +46,10 @@ type FirstBootNode struct {
 
 // NewFirstBootNode constructs the node with every network protocol and the
 // seal disabled, runs first-boot, and registers the node's shutdown with
-// t.Cleanup. It never touches the host outside t.TempDir.
-func NewFirstBootNode(t testing.TB) (*FirstBootNode, error) {
+// t.Cleanup. opts reach the node as its server options, so a test can inject
+// the same seams production wires (an audit sink, for one). It never touches
+// the host outside t.TempDir.
+func NewFirstBootNode(t testing.TB, opts ...qrdbsdk.ServerOption) (*FirstBootNode, error) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -61,7 +63,7 @@ func NewFirstBootNode(t testing.TB) (*FirstBootNode, error) {
 	cfg.Protocols.MCP = false
 	cfg.Seal.Enabled = false
 
-	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil)
+	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -89,24 +91,33 @@ func NewFirstBootNode(t testing.TB) (*FirstBootNode, error) {
 
 // ProvisionTenant runs qrdb's canonical control-plane tenant provisioning
 // (qrdbsdk.ProvisionTenant) for tenantID: the tenant record, its own
-// built-in roles, and its admin user, with prefix isolation. No certificate is
-// enrolled and no tenant barrier is initialized. Afterwards RoleID resolves the tenant's
-// roles, which carry identifiers distinct from the system tenant's.
+// built-in roles, and its admin user, with prefix isolation. The admin's
+// certificate enrollment is deferred and no tenant barrier is initialized.
+// Afterwards RoleID resolves the tenant's roles, which carry identifiers
+// distinct from the system tenant's.
 func (n *FirstBootNode) ProvisionTenant(tenantID string) error {
 	svcs := n.node.Services()
 	if svcs == nil {
+		return ErrFirstBootServicesUnavailable
+	}
+	// Deferred enrollment proves the new admin holds no credential yet
+	// through the node's own auth-factor service.
+	factors, ok := svcs.UserAuthFactor.(qrdbsdk.ActiveFactorChecker)
+	if !ok {
 		return ErrFirstBootServicesUnavailable
 	}
 	_, err := qrdbsdk.ProvisionTenant(context.Background(), qrdbsdk.BootstrapTenantProvisionConfig{
 		TenantID: tenantID,
 		// The node runs with the seal disabled, so the tenant shares the
 		// system store under a key prefix rather than owning a barrier.
-		Isolation: qrdbsdk.TenantIsolationPrefix,
+		Isolation:       qrdbsdk.TenantIsolationPrefix,
+		AdminEnrollment: qrdbsdk.BootstrapAdminEnrollDeferred,
 	}, qrdbsdk.BootstrapDependencies{
-		Tenants: svcs.Tenant,
-		Users:   svcs.User,
-		Roles:   svcs.Role,
-		Logger:  n.logger,
+		Tenants:      svcs.Tenant,
+		Users:        svcs.User,
+		Roles:        svcs.Role,
+		AdminFactors: factors,
+		Logger:       n.logger,
 	})
 	return err
 }
@@ -119,14 +130,17 @@ func (n *FirstBootNode) Client() *qrdbsdk.Client {
 }
 
 // RoleID returns the identifier the named built-in role is persisted under in
-// tenantID, read back from the node's role store rather than derived, so it
-// is exactly the value a seeded user record carries in RoleIDs.
+// tenantID, read back from the node's role service rather than derived, so it
+// is exactly the value a seeded user record carries in RoleIDs. It reads the
+// service directly: the client authorizes every call as the identity on its
+// context, and this lookup is the fixture's, not a caller's.
 func (n *FirstBootNode) RoleID(tenantID, roleName string) (string, error) {
+	svcs := n.node.Services()
+	if svcs == nil || svcs.Role == nil {
+		return "", ErrFirstBootServicesUnavailable
+	}
 	ctx := qrdbsdk.ContextWithTenant(context.Background(), tenantID)
-	r, err := n.node.Client().Roles().GetRoleByName(ctx, &qrdbtransport.GetRoleByNameRequest{
-		TenantID: tenantID,
-		Name:     roleName,
-	})
+	r, err := svcs.Role.GetRoleByName(ctx, tenantID, roleName)
 	if err != nil {
 		return "", err
 	}

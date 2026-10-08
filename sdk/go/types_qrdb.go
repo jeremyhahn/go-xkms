@@ -56,14 +56,8 @@ type QRDBInitResult = qrdb.InitResult
 // QRDBChallengeResponse holds the nonce challenge for officer cert claims.
 type QRDBChallengeResponse = qrdb.ChallengeResponse
 
-// QRDBClaimCertResult holds the result of an officer certificate claim.
-type QRDBClaimCertResult = qrdb.ClaimCertResult
-
 // QRDBSignCSRInitResult holds the result of a CSR signing during init.
 type QRDBSignCSRInitResult = qrdb.SignCSRInitResult
-
-// QRDBPendingCert holds a certificate pending officer claim.
-type QRDBPendingCert = qrdb.PendingCert
 
 // QRDBCeremonyCA is the interface the ceremony uses to issue certificates.
 type QRDBCeremonyCA = qrdb.CeremonyCA
@@ -79,9 +73,6 @@ type QRDBIssuedCert = qrdb.IssuedCert
 
 // QRDBCeremonyService manages the initialization ceremony lifecycle.
 type QRDBCeremonyService = qrdb.CeremonyService
-
-// QRDBCredentialServicer persists sealed credentials.
-type QRDBCredentialServicer = qrdb.CredentialServicer
 
 // QRDBThresholdOptions configures HSM threshold initialization.
 type QRDBThresholdOptions = qrdb.ThresholdOptions
@@ -101,24 +92,10 @@ type QRDBThresholdFactory = qrdb.ThresholdFactory
 // QRDBThresholdRegistry manages vendor-specific threshold implementations.
 type QRDBThresholdRegistry = qrdb.ThresholdRegistry
 
-// QRDBCustodianGroupServicer manages custodian groups for Shamir shares.
-type QRDBCustodianGroupServicer = qrdb.CustodianGroupServicer
-
-// QRDBCustodianGroupService is the concrete custodian group service.
-type QRDBCustodianGroupService = qrdb.CustodianGroupService
-
-// QRDBShareServicer manages Shamir share submission and tracking.
-type QRDBShareServicer = qrdb.ShareServicer
-
-// QRDBShareService is the concrete share service.
-type QRDBShareService = qrdb.ShareService
-
 // Ceremony constructors.
 var (
-	QRDBNewCeremonyService       = qrdb.NewCeremonyService
-	QRDBNewThresholdRegistry     = qrdb.NewThresholdRegistry
-	QRDBNewCustodianGroupService = qrdb.NewCustodianGroupService
-	QRDBNewShareService          = qrdb.NewShareService
+	QRDBNewCeremonyService   = qrdb.NewCeremonyService
+	QRDBNewThresholdRegistry = qrdb.NewThresholdRegistry
 )
 
 // ==========================================================================
@@ -132,16 +109,12 @@ var (
 	QRDBErrCeremonyNilLogger                   = qrdb.ErrCeremonyNilLogger
 	QRDBErrCeremonyNilStore                    = qrdb.ErrCeremonyNilStore
 	QRDBErrCeremonyAlreadyInitialized          = qrdb.ErrCeremonyAlreadyInitialized
-	QRDBErrCeremonyNotInEnrollingState         = qrdb.ErrCeremonyNotInEnrollingState
-	QRDBErrCeremonyNotInOperationalState       = qrdb.ErrCeremonyNotInOperationalState
 	QRDBErrCeremonyInvalidSOPIN                = qrdb.ErrCeremonyInvalidSOPIN
 	QRDBErrCeremonyInvalidUserPIN              = qrdb.ErrCeremonyInvalidUserPIN
 	QRDBErrCeremonyInvalidThreshold            = qrdb.ErrCeremonyInvalidThreshold
 	QRDBErrCeremonyNoOfficers                  = qrdb.ErrCeremonyNoOfficers
 	QRDBErrCeremonyInvalidCSR                  = qrdb.ErrCeremonyInvalidCSR
 	QRDBErrCeremonyDuplicateUsername           = qrdb.ErrCeremonyDuplicateUsername
-	QRDBErrCeremonyPendingCertNotFound         = qrdb.ErrCeremonyPendingCertNotFound
-	QRDBErrCeremonyCertAlreadyClaimed          = qrdb.ErrCeremonyCertAlreadyClaimed
 	QRDBErrCeremonyShareAlreadyClaimed         = qrdb.ErrCeremonyShareAlreadyClaimed
 	QRDBErrCeremonyShareNotFound               = qrdb.ErrCeremonyShareNotFound
 	QRDBErrCeremonyChallengeVerificationFailed = qrdb.ErrCeremonyChallengeVerificationFailed
@@ -150,8 +123,6 @@ var (
 	QRDBErrCeremonyVendorNotRegistered         = qrdb.ErrCeremonyVendorNotRegistered
 	QRDBErrCeremonyVendorNotAvailable          = qrdb.ErrCeremonyVendorNotAvailable
 	QRDBErrCeremonyInitFailed                  = qrdb.ErrCeremonyInitFailed
-	QRDBErrCeremonyNotImplemented              = qrdb.ErrCeremonyNotImplemented
-	QRDBErrCeremonySOPINMismatch               = qrdb.ErrCeremonySOPINMismatch
 	QRDBErrCeremonyCANotInitialized            = qrdb.ErrCeremonyCANotInitialized
 	QRDBErrCeremonyMissingCSRPEM               = qrdb.ErrCeremonyMissingCSRPEM
 	QRDBErrCeremonyMissingUsername             = qrdb.ErrCeremonyMissingUsername
@@ -159,32 +130,18 @@ var (
 	QRDBErrCeremonyInvalidRole                 = qrdb.ErrCeremonyInvalidRole
 	QRDBErrCeremonyCSRSigningFailed            = qrdb.ErrCeremonyCSRSigningFailed
 	QRDBErrCeremonyNotInitializedOrEnrolling   = qrdb.ErrCeremonyNotInitializedOrEnrolling
-	QRDBErrCeremonyNilCredentialService        = qrdb.ErrCeremonyNilCredentialService
 	QRDBErrCeremonyChallengeExpired            = qrdb.ErrCeremonyChallengeExpired
 	QRDBErrCeremonyChallengeNotFound           = qrdb.ErrCeremonyChallengeNotFound
-	QRDBErrCeremonyGroupNotFound               = qrdb.ErrCeremonyGroupNotFound
-	QRDBErrCeremonyGroupAlreadyExists          = qrdb.ErrCeremonyGroupAlreadyExists
-	QRDBErrCeremonyGroupFull                   = qrdb.ErrCeremonyGroupFull
-	QRDBErrCeremonyMemberNotFound              = qrdb.ErrCeremonyMemberNotFound
-	QRDBErrCeremonyMemberAlreadyExists         = qrdb.ErrCeremonyMemberAlreadyExists
-	QRDBErrCeremonyEmptyGroupID                = qrdb.ErrCeremonyEmptyGroupID
-	QRDBErrCeremonyShareAlreadySubmitted       = qrdb.ErrCeremonyShareAlreadySubmitted
-	QRDBErrCeremonyEmptyShareData              = qrdb.ErrCeremonyEmptyShareData
-	QRDBErrCeremonyInsufficientMembers         = qrdb.ErrCeremonyInsufficientMembers
-	QRDBErrCeremonyEmptyGroupName              = qrdb.ErrCeremonyEmptyGroupName
-	QRDBErrCeremonyInvalidTotal                = qrdb.ErrCeremonyInvalidTotal
 )
 
 // Ceremony error types.
 type (
-	QRDBCeremonyShamirSplitError  = qrdb.CeremonyShamirSplitError
-	QRDBCeremonyCSRParseError     = qrdb.CeremonyCSRParseError
-	QRDBCeremonyCertEncodeError   = qrdb.CeremonyCertEncodeError
-	QRDBCeremonyShareStoreError   = qrdb.CeremonyShareStoreError
-	QRDBCeremonyCABundleError     = qrdb.CeremonyCABundleError
-	QRDBCeremonySPKIPinError      = qrdb.CeremonySPKIPinError
-	QRDBCeremonyGroupStoreError   = qrdb.CeremonyGroupStoreError
-	QRDBCeremonyShareServiceError = qrdb.CeremonyShareServiceError
+	QRDBCeremonyShamirSplitError = qrdb.CeremonyShamirSplitError
+	QRDBCeremonyCSRParseError    = qrdb.CeremonyCSRParseError
+	QRDBCeremonyCertEncodeError  = qrdb.CeremonyCertEncodeError
+	QRDBCeremonyShareStoreError  = qrdb.CeremonyShareStoreError
+	QRDBCeremonyCABundleError    = qrdb.CeremonyCABundleError
+	QRDBCeremonySPKIPinError     = qrdb.CeremonySPKIPinError
 )
 
 // ==========================================================================
@@ -193,21 +150,6 @@ type (
 
 // QRDBErrorCode classifies database errors into categories.
 type QRDBErrorCode = qrdb.ErrorCode
-
-// QRDBErrorCode constants.
-const (
-	QRDBErrCodeNotFound          = qrdb.ErrCodeNotFound
-	QRDBErrCodeInternal          = qrdb.ErrCodeInternal
-	QRDBErrCodeConflict          = qrdb.ErrCodeConflict
-	QRDBErrCodeTimeout           = qrdb.ErrCodeTimeout
-	QRDBErrCodeUnavailable       = qrdb.ErrCodeUnavailable
-	QRDBErrCodeInvalidInput      = qrdb.ErrCodeInvalidInput
-	QRDBErrCodeAlreadyExists     = qrdb.ErrCodeAlreadyExists
-	QRDBErrCodeResourceExhausted = qrdb.ErrCodeResourceExhausted
-	QRDBErrCodeCanceled          = qrdb.ErrCodeCanceled
-	QRDBErrCodeNotImplemented    = qrdb.ErrCodeNotImplemented
-	QRDBErrCodeCircuitOpen       = qrdb.ErrCodeCircuitOpen
-)
 
 // QRDB structured error types.
 type (
@@ -333,7 +275,6 @@ type (
 // Seal barrier types.
 type (
 	QRDBStorageBarrier      = qrdb.StorageBarrier
-	QRDBBarrier             = qrdb.Barrier
 	QRDBBarrierConfig       = qrdb.BarrierConfig
 	QRDBBarrierStatus       = qrdb.BarrierStatus
 	QRDBBarrierRegistry     = qrdb.BarrierRegistry
@@ -380,7 +321,6 @@ const QRDBDefaultQuorumTTL = qrdb.DefaultQuorumTTL
 // Seal constructors.
 var (
 	QRDBNewStorageBarrier         = qrdb.NewStorageBarrier
-	QRDBNewBarrier                = qrdb.NewBarrier
 	QRDBNewBarrierRegistry        = qrdb.NewBarrierRegistry
 	QRDBNewTenantBarrier          = qrdb.NewTenantBarrier
 	QRDBNewMemoryBackend          = qrdb.NewMemoryBackend
@@ -389,7 +329,6 @@ var (
 	QRDBNewSoftwareStrategy       = qrdb.NewSoftwareStrategy
 	QRDBNewSealStore              = qrdb.NewSealStore
 	QRDBNewStorageAdapter         = qrdb.NewStorageAdapter
-	QRDBNewShamirShareAccumulator = qrdb.NewShamirShareAccumulator
 	QRDBNewInvocationCounter      = qrdb.NewInvocationCounter
 	QRDBNewNonceTracker           = qrdb.NewNonceTracker
 	QRDBNewSoftwareAEADProvider   = qrdb.NewSoftwareAEADProvider
@@ -419,7 +358,6 @@ var (
 	QRDBErrShamirDuplicateShare        = qrdb.ErrShamirDuplicateShare
 	QRDBErrShamirQuorumExpired         = qrdb.ErrShamirQuorumExpired
 	QRDBErrShamirQuorumIncomplete      = qrdb.ErrShamirQuorumIncomplete
-	QRDBErrShamirNoQuorum              = qrdb.ErrShamirNoQuorum
 	QRDBErrShamirCombineFailed         = qrdb.ErrShamirCombineFailed
 	QRDBErrShamirShareNotFound         = qrdb.ErrShamirShareNotFound
 	QRDBErrShamirVerificationFailed    = qrdb.ErrShamirVerificationFailed
@@ -432,7 +370,6 @@ var (
 	QRDBErrSecretNotFound              = qrdb.ErrSecretNotFound
 	QRDBErrInvalidSecretName           = qrdb.ErrInvalidSecretName
 	QRDBErrResealFailed                = qrdb.ErrResealFailed
-	QRDBErrRecoveryKeysNotFound        = qrdb.ErrRecoveryKeysNotFound
 	QRDBErrRootTokenVerificationFailed = qrdb.ErrRootTokenVerificationFailed
 	QRDBErrTenantNotFound              = qrdb.ErrTenantNotFound
 	QRDBErrTenantAlreadyExists         = qrdb.ErrTenantAlreadyExists

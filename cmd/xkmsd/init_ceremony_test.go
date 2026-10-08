@@ -31,11 +31,11 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/server/credentials"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // testNodeConfig returns the *config.Config executeCeremony's single-admin
@@ -58,59 +58,6 @@ func silentLogger() *slog.Logger {
 	}))
 }
 
-// buildCeremonyService constructs a ceremony service backed by in-memory
-// storage and the same software seal strategy `xkmsd init` uses.
-// `officers` may be empty for single-admin mode; supplying it sets the
-// matching Threshold automatically (M-of-M).
-func buildCeremonyService(t *testing.T, officers []initialize.OfficerConfig) *initialize.CeremonyService {
-	t.Helper()
-
-	memBackend := storage.NewMemory()
-	barrier, err := seal.NewBarrier(
-		silentLogger(),
-		memBackend,
-		seal.BarrierConfig{RootKeyPath: "barrier/root-key"},
-		seal.NewSoftwareStrategy(),
-	)
-	if err != nil {
-		t.Fatalf("seal.NewBarrier: %v", err)
-	}
-
-	platformStore, err := seal.NewPlatformStore(memBackend, silentLogger())
-	if err != nil {
-		t.Fatalf("seal.NewPlatformStore: %v", err)
-	}
-
-	credService, err := credentials.New(
-		&credentials.Config{Strategy: credentials.StrategyManual},
-		platformStore,
-		barrier,
-		silentLogger(),
-	)
-	if err != nil {
-		t.Fatalf("credentials.New: %v", err)
-	}
-
-	threshold := 0
-	if len(officers) >= 2 {
-		threshold = len(officers)
-	}
-	cfg := &initialize.CeremonyConfig{
-		SOPin:                  "test-so-pin",
-		UserPin:                "test-user-pin",
-		CredentialSealStrategy: credentials.StrategyManual,
-		Threshold:              threshold,
-		Officers:               officers,
-		Hostname:               "localhost",
-	}
-
-	cs, err := initialize.NewCeremonyService(cfg, barrier, credService, silentLogger())
-	if err != nil {
-		t.Fatalf("initialize.NewCeremonyService: %v", err)
-	}
-	return cs
-}
-
 // generateECDSACSR returns a PEM-encoded ECDSA P-256 CSR with the given CN.
 // Mirrors the helper in the existing init_test.go but lives here so the
 // ceremony tests don't depend on the other test file's ordering.
@@ -129,17 +76,17 @@ func generateECDSACSR(t *testing.T, cn string) []byte {
 }
 
 // =============================================================================
-// newCeremonyCA
+// newBootstrapCA / caArtifacts
 // =============================================================================
 
-func TestNewCeremonyCA_Success(t *testing.T) {
+func TestNewBootstrapCA_Success(t *testing.T) {
 	env := &ceremonyEnv{logger: silentLogger(), hostname: "localhost", dataDir: t.TempDir()}
-	caInstance, err := newCeremonyCA(context.Background(), env)
+	caInstance, err := newBootstrapCA(context.Background(), env, testutil.NewMemoryDAOFactory())
 	if err != nil {
-		t.Fatalf("newCeremonyCA: %v", err)
+		t.Fatalf("newBootstrapCA: %v", err)
 	}
 	if caInstance == nil {
-		t.Fatal("newCeremonyCA returned nil CA")
+		t.Fatal("newBootstrapCA returned nil CA")
 	}
 	if !caInstance.IsInitialized() {
 		t.Error("CA should be initialized")
@@ -164,11 +111,108 @@ func TestNewCeremonyCA_Success(t *testing.T) {
 	}
 }
 
+// TestNewBootstrapCA_StoresCertificateThroughFactory proves the ceremony CA
+// keeps its certificate as a DAO entity in the factory it is given: a
+// certificate store opened over the same factory finds the root.
+func TestNewBootstrapCA_StoresCertificateThroughFactory(t *testing.T) {
+	daos := testutil.NewMemoryDAOFactory()
+	caInstance, err := newBootstrapCA(context.Background(), &ceremonyEnv{logger: silentLogger()}, daos)
+	if err != nil {
+		t.Fatalf("newBootstrapCA: %v", err)
+	}
+	root, err := caInstance.CACertificate()
+	if err != nil {
+		t.Fatalf("CACertificate: %v", err)
+	}
+
+	store, err := certstore.New(&certstore.Config{DAOs: daos})
+	if err != nil {
+		t.Fatalf("certstore.New: %v", err)
+	}
+	stored, err := store.GetCertificate(caCommonName)
+	if err != nil {
+		t.Fatalf("GetCertificate(%q): %v", caCommonName, err)
+	}
+	if !stored.Equal(root) {
+		t.Error("the stored certificate must be the CA's root")
+	}
+}
+
+// TestNewBootstrapCA_CADatabaseNotServed proves a factory with no store for
+// the CA's database fails the ceremony CA with ErrCACertStoreCreateFailed.
+func TestNewBootstrapCA_CADatabaseNotServed(t *testing.T) {
+	_, err := newBootstrapCA(context.Background(), &ceremonyEnv{logger: silentLogger()}, dao.NewStoreFactory(nil))
+	if !errors.Is(err, ErrCACertStoreCreateFailed) {
+		t.Fatalf("expected ErrCACertStoreCreateFailed, got %v", err)
+	}
+	var unavailable *dao.DatabaseUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.Database != certstore.DatabaseName {
+		t.Errorf("expected the CA database %q reported unavailable, got %v", certstore.DatabaseName, err)
+	}
+}
+
+func TestCAArtifacts_DerivesBundleAndPin(t *testing.T) {
+	caInstance, err := newBootstrapCA(context.Background(), &ceremonyEnv{logger: silentLogger()}, testutil.NewMemoryDAOFactory())
+	if err != nil {
+		t.Fatalf("newBootstrapCA: %v", err)
+	}
+	result, err := caArtifacts(caInstance)
+	if err != nil {
+		t.Fatalf("caArtifacts: %v", err)
+	}
+	cert, err := caInstance.CACertificate()
+	if err != nil {
+		t.Fatalf("CACertificate: %v", err)
+	}
+	if want := initialize.SPKIPin(cert); result.SPKIPin != want {
+		t.Errorf("SPKI pin: want %q got %q", want, result.SPKIPin)
+	}
+	if len(result.CABundlePEM) == 0 {
+		t.Error("expected a non-empty CA bundle")
+	}
+}
+
+type failingBundleCA struct {
+	initialize.CeremonyCA
+	bundleErr error
+	certErr   error
+}
+
+func (c failingBundleCA) CABundle() ([]byte, error) {
+	if c.bundleErr != nil {
+		return nil, c.bundleErr
+	}
+	return c.CeremonyCA.CABundle()
+}
+
+func (c failingBundleCA) CACertificate() (*x509.Certificate, error) {
+	if c.certErr != nil {
+		return nil, c.certErr
+	}
+	return c.CeremonyCA.CACertificate()
+}
+
+func TestCAArtifacts_ReadFailures(t *testing.T) {
+	caInstance, err := newBootstrapCA(context.Background(), &ceremonyEnv{logger: silentLogger()}, testutil.NewMemoryDAOFactory())
+	if err != nil {
+		t.Fatalf("newBootstrapCA: %v", err)
+	}
+	boom := errors.New("boom")
+	for name, ca := range map[string]initialize.CeremonyCA{
+		"bundle":      failingBundleCA{CeremonyCA: caInstance, bundleErr: boom},
+		"certificate": failingBundleCA{CeremonyCA: caInstance, certErr: boom},
+	} {
+		if _, err := caArtifacts(ca); !errors.Is(err, ErrCABundleReadFailed) {
+			t.Errorf("%s: expected ErrCABundleReadFailed, got %v", name, err)
+		}
+	}
+}
+
 // =============================================================================
-// executeCeremony — single-admin mode
+// executeBootstrap
 // =============================================================================
 
-func TestExecuteCeremony_SingleAdmin_WritesArtifacts(t *testing.T) {
+func TestExecuteBootstrap_WritesArtifacts(t *testing.T) {
 	dataDir := t.TempDir()
 	env := &ceremonyEnv{
 		logger:   silentLogger(),
@@ -176,107 +220,41 @@ func TestExecuteCeremony_SingleAdmin_WritesArtifacts(t *testing.T) {
 		dataDir:  dataDir,
 		nodeCfg:  testNodeConfig(dataDir),
 	}
-	cs := buildCeremonyService(t, nil)
 
-	result, err := executeCeremony(context.Background(), cs, env)
+	result, err := executeBootstrap(context.Background(), env)
 	if err != nil {
-		t.Fatalf("executeCeremony: %v", err)
-	}
-	if result == nil {
-		t.Fatal("nil result")
-		return
-	}
-	if result.State != initialize.StateOperational {
-		t.Errorf("expected StateOperational, got %s", result.State)
+		t.Fatalf("executeBootstrap: %v", err)
 	}
 	if result.SPKIPin == "" {
 		t.Error("expected non-empty SPKI pin")
 	}
-	if len(result.CACertPEM) == 0 {
-		t.Error("expected non-empty CA cert PEM")
+	if len(result.CABundlePEM) == 0 {
+		t.Error("expected non-empty CA bundle PEM")
 	}
 
 	// CA bundle persisted.
-	caBundlePath := filepath.Join(dataDir, "ca-bundle.pem")
-	caBundle, err := os.ReadFile(caBundlePath)
+	caBundle, err := os.ReadFile(filepath.Join(dataDir, "ca-bundle.pem"))
 	if err != nil {
 		t.Fatalf("read ca-bundle.pem: %v", err)
 	}
-	if string(caBundle) != string(result.CACertPEM) {
+	if string(caBundle) != string(result.CABundlePEM) {
 		t.Error("persisted CA bundle does not match result")
 	}
 
 	// SPKI pin persisted, trailing newline included.
-	pinPath := filepath.Join(dataDir, "spki-pin.txt")
-	pinBytes, err := os.ReadFile(pinPath)
+	pinBytes, err := os.ReadFile(filepath.Join(dataDir, "spki-pin.txt"))
 	if err != nil {
 		t.Fatalf("read spki-pin.txt: %v", err)
 	}
-	want := result.SPKIPin + "\n"
-	if string(pinBytes) != want {
+	if want := result.SPKIPin + "\n"; string(pinBytes) != want {
 		t.Errorf("SPKI pin file mismatch: want %q got %q", want, string(pinBytes))
 	}
 }
 
-// =============================================================================
-// executeCeremony — M-of-N mode
-// =============================================================================
-
-func TestExecuteCeremony_MofN_ReachesEnrolling(t *testing.T) {
-	dataDir := t.TempDir()
-	env := &ceremonyEnv{
-		logger:   silentLogger(),
-		hostname: "node.example.com",
-		dataDir:  dataDir,
-	}
-
-	officers := []initialize.OfficerConfig{
-		{Username: "officer-a", CSRPEM: generateECDSACSR(t, "officer-a")},
-		{Username: "officer-b", CSRPEM: generateECDSACSR(t, "officer-b")},
-	}
-	cs := buildCeremonyService(t, officers)
-
-	result, err := executeCeremony(context.Background(), cs, env)
-	if err != nil {
-		t.Fatalf("executeCeremony: %v", err)
-	}
-	if result.State != initialize.StateEnrolling {
-		t.Errorf("expected StateEnrolling, got %s", result.State)
-	}
-	// CA bundle still persisted.
-	if _, err := os.Stat(filepath.Join(dataDir, "ca-bundle.pem")); err != nil {
-		t.Errorf("ca-bundle.pem should exist: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dataDir, "spki-pin.txt")); err != nil {
-		t.Errorf("spki-pin.txt should exist: %v", err)
-	}
-}
-
-// =============================================================================
-// executeCeremony — error propagation
-// =============================================================================
-
-func TestExecuteCeremony_AlreadyInitialized(t *testing.T) {
-	dataDir := t.TempDir()
-	env := &ceremonyEnv{
-		logger:   silentLogger(),
-		hostname: "localhost",
-		dataDir:  dataDir,
-		nodeCfg:  testNodeConfig(dataDir),
-	}
-	cs := buildCeremonyService(t, nil)
-
-	if _, err := executeCeremony(context.Background(), cs, env); err != nil {
-		t.Fatalf("first executeCeremony: %v", err)
-	}
-	// Second invocation must surface the upstream "already initialized"
-	// error wrapped as ErrCeremonyInitFailed.
-	_, err := executeCeremony(context.Background(), cs, env)
-	if err == nil {
-		t.Fatal("expected error on re-init")
-	}
-	if !errors.Is(err, ErrCeremonyInitFailed) {
-		t.Errorf("expected ErrCeremonyInitFailed, got %v", err)
+func TestExecuteBootstrap_NodeConfigRequired(t *testing.T) {
+	env := &ceremonyEnv{logger: silentLogger(), hostname: "localhost", dataDir: t.TempDir()}
+	if _, err := executeBootstrap(context.Background(), env); !errors.Is(err, ErrNodeConfigRequired) {
+		t.Fatalf("expected ErrNodeConfigRequired, got %v", err)
 	}
 }
 
@@ -286,7 +264,7 @@ func TestExecuteCeremony_AlreadyInitialized(t *testing.T) {
 
 func TestPersistCABundle_Success(t *testing.T) {
 	dir := t.TempDir()
-	result := &initialize.InitResult{CACertPEM: []byte("ca-bytes")}
+	result := &bootstrapResult{CABundlePEM: []byte("ca-bytes")}
 	if err := persistCABundle(dir, result); err != nil {
 		t.Fatalf("persistCABundle: %v", err)
 	}
@@ -301,13 +279,12 @@ func TestPersistCABundle_Success(t *testing.T) {
 
 func TestPersistCABundle_EmptyIsNoop(t *testing.T) {
 	dir := t.TempDir()
-	result := &initialize.InitResult{}
-	if err := persistCABundle(dir, result); err != nil {
+	if err := persistCABundle(dir, &bootstrapResult{}); err != nil {
 		t.Fatalf("persistCABundle: %v", err)
 	}
-	// The file must NOT have been created when CACertPEM is empty.
+	// The file must NOT have been created when the bundle is empty.
 	if _, err := os.Stat(filepath.Join(dir, "ca-bundle.pem")); !os.IsNotExist(err) {
-		t.Errorf("ca-bundle.pem should not exist when CACertPEM is empty; err=%v", err)
+		t.Errorf("ca-bundle.pem should not exist when the bundle is empty; err=%v", err)
 	}
 }
 
@@ -315,8 +292,7 @@ func TestPersistCABundle_BadDataDir(t *testing.T) {
 	// Pointing at an existing file forces MkdirAll to fail because the
 	// path component is not a directory. /dev/null is reliably present on
 	// the test platforms covered by this repo.
-	result := &initialize.InitResult{CACertPEM: []byte("x")}
-	err := persistCABundle("/dev/null/cannot-mkdir", result)
+	err := persistCABundle("/dev/null/cannot-mkdir", &bootstrapResult{CABundlePEM: []byte("x")})
 	if err == nil {
 		t.Fatal("expected error for non-directory data dir")
 	}
@@ -327,8 +303,7 @@ func TestPersistCABundle_BadDataDir(t *testing.T) {
 
 func TestPersistSPKIPin_Success(t *testing.T) {
 	dir := t.TempDir()
-	result := &initialize.InitResult{SPKIPin: "abc123"}
-	if err := persistSPKIPin(dir, result); err != nil {
+	if err := persistSPKIPin(dir, &bootstrapResult{SPKIPin: "abc123"}); err != nil {
 		t.Fatalf("persistSPKIPin: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "spki-pin.txt"))
@@ -342,8 +317,7 @@ func TestPersistSPKIPin_Success(t *testing.T) {
 
 func TestPersistSPKIPin_EmptyIsNoop(t *testing.T) {
 	dir := t.TempDir()
-	result := &initialize.InitResult{}
-	if err := persistSPKIPin(dir, result); err != nil {
+	if err := persistSPKIPin(dir, &bootstrapResult{}); err != nil {
 		t.Fatalf("persistSPKIPin: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "spki-pin.txt")); !os.IsNotExist(err) {
@@ -352,8 +326,7 @@ func TestPersistSPKIPin_EmptyIsNoop(t *testing.T) {
 }
 
 func TestPersistSPKIPin_BadDataDir(t *testing.T) {
-	result := &initialize.InitResult{SPKIPin: "x"}
-	err := persistSPKIPin("/dev/null/cannot-mkdir", result)
+	err := persistSPKIPin("/dev/null/cannot-mkdir", &bootstrapResult{SPKIPin: "x"})
 	if err == nil {
 		t.Fatal("expected error for non-directory data dir")
 	}
@@ -363,10 +336,12 @@ func TestPersistSPKIPin_BadDataDir(t *testing.T) {
 }
 
 // =============================================================================
-// printCeremonyOutcome — smoke coverage
+// printBootstrapOutcome — smoke coverage
 // =============================================================================
 
-func TestPrintCeremonyOutcome_SingleAdmin(t *testing.T) {
+// captureStderr runs fn with os.Stderr redirected and returns what it wrote.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
 	originalStderr := os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -375,75 +350,32 @@ func TestPrintCeremonyOutcome_SingleAdmin(t *testing.T) {
 	os.Stderr = w
 	t.Cleanup(func() { os.Stderr = originalStderr })
 
+	fn()
+	_ = w.Close()
+	os.Stderr = originalStderr
+
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+	return string(got)
+}
+
+func TestPrintBootstrapOutcome_ReportsArtifacts(t *testing.T) {
 	env := &ceremonyEnv{dataDir: "/var/lib/xkms"}
-	result := &initialize.InitResult{
-		State:     initialize.StateOperational,
-		SPKIPin:   "deadbeef",
-		CACertPEM: []byte("ca"),
-	}
-	printCeremonyOutcome(env, result)
-	_ = w.Close()
-	os.Stderr = originalStderr
-
-	got, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("read pipe: %v", err)
-	}
-	out := string(got)
-	for _, want := range []string{"Ceremony Outcome", "deadbeef", "/var/lib/xkms"} {
+	result := &bootstrapResult{SPKIPin: "deadbeef", CABundlePEM: []byte("ca")}
+	out := captureStderr(t, func() { printBootstrapOutcome(env, result) })
+	for _, want := range []string{"Bootstrap Outcome", "deadbeef", "/var/lib/xkms"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected output to contain %q; got:\n%s", want, out)
 		}
 	}
 }
 
-func TestPrintCeremonyOutcome_MofNMentionsClaim(t *testing.T) {
-	originalStderr := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	os.Stderr = w
-	t.Cleanup(func() { os.Stderr = originalStderr })
-
-	env := &ceremonyEnv{dataDir: "/data"}
-	result := &initialize.InitResult{
-		State:      initialize.StateEnrolling,
-		SPKIPin:    "ff",
-		CACertPEM:  []byte("ca"),
-		ShareCount: 3,
-	}
-	printCeremonyOutcome(env, result)
-	_ = w.Close()
-	os.Stderr = originalStderr
-
-	got, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("read pipe: %v", err)
-	}
-	out := string(got)
-	for _, want := range []string{"Shamir shares", "claim-cert", "claim-share"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("expected output to contain %q; got:\n%s", want, out)
-		}
-	}
-}
-
-// TestPrintCeremonyOutcome_ListsEnrolledFactors proves the "Login factors:"
-// summary line (printEnrolledFactors, invoked via printCeremonyOutcome's
-// defer) actually lists every factor the ceremony enrolled -- the branch
-// TestPrintCeremonyOutcome_SingleAdmin and
-// TestPrintCeremonyOutcome_MofNMentionsClaim never reach, since both leave
-// env.enrolledFactors empty.
-func TestPrintCeremonyOutcome_ListsEnrolledFactors(t *testing.T) {
-	originalStderr := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	os.Stderr = w
-	t.Cleanup(func() { os.Stderr = originalStderr })
-
+// TestPrintBootstrapOutcome_ListsEnrolledFactors proves the "Login factors:"
+// summary line (printEnrolledFactors, invoked via printBootstrapOutcome's
+// defer) lists every factor the bootstrap enrolled.
+func TestPrintBootstrapOutcome_ListsEnrolledFactors(t *testing.T) {
 	env := &ceremonyEnv{
 		dataDir: "/var/lib/xkms",
 		enrolledFactors: []qrdbsdk.AdminEnrollmentResult{
@@ -451,16 +383,7 @@ func TestPrintCeremonyOutcome_ListsEnrolledFactors(t *testing.T) {
 			{Factor: "totp"},
 		},
 	}
-	result := &initialize.InitResult{State: initialize.StateOperational}
-	printCeremonyOutcome(env, result)
-	_ = w.Close()
-	os.Stderr = originalStderr
-
-	got, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("read pipe: %v", err)
-	}
-	out := string(got)
+	out := captureStderr(t, func() { printBootstrapOutcome(env, &bootstrapResult{}) })
 	if !strings.Contains(out, "Login factors: passkey, totp") {
 		t.Errorf("expected output to list enrolled factors \"passkey, totp\"; got:\n%s", out)
 	}
@@ -482,7 +405,7 @@ func TestPreflightAdminFactors_NilPlanIsANoOp(t *testing.T) {
 }
 
 // TestPreflightAdminFactors_RefusesAPlanItCannotEnroll proves the whole point
-// of running preflight before the ceremony changes any state: a planned PIV
+// of running preflight before the bootstrap changes any state: a planned PIV
 // factor with no PIV hardware handler configured must be refused up front,
 // costing the operator one retry instead of an initialized barrier behind a
 // half-enrolled administrator.
@@ -500,7 +423,7 @@ func TestPreflightAdminFactors_RefusesAPlanItCannotEnroll(t *testing.T) {
 
 // TestPreflightAdminFactors_AcceptsAPlanItCanEnroll proves the success side:
 // an mTLS-only plan (the baseline, backed by the admin certificate the
-// ceremony already issues) passes preflight with no hardware attached.
+// bootstrap already issues) passes preflight with no hardware attached.
 func TestPreflightAdminFactors_AcceptsAPlanItCanEnroll(t *testing.T) {
 	plan, err := qrdbsdk.NewAdminEnrollmentPlan([]qrdbsdk.AdminFactor{qrdbsdk.FactorMTLS})
 	if err != nil {

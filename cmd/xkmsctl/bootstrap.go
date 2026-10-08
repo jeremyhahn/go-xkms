@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -130,7 +131,7 @@ func runBootstrapShowKeysCmd(cmd *cobra.Command, _ []string) error {
 	cfg := getConfig()
 	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
 
-	cl, cleanup, err := createBarrierClient(cfg)
+	cl, cleanup, err := createSDKClient(cfg)
 	if err != nil {
 		return err
 	}
@@ -272,7 +273,7 @@ func writeCABundle(bundlePEM []byte, outputPath string) error {
 		return nil
 	}
 
-	if err := os.WriteFile(outputPath, bundlePEM, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(outputPath, bundlePEM, 0600); err != nil {
 		return &WrappedDetailError{Sentinel: ErrBootstrapBundleWrite, Detail: outputPath, Err: err}
 	}
 

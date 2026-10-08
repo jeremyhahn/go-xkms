@@ -1,6 +1,6 @@
 # OIDC Credentials — Architecture
 
-> **Status: NORMATIVE** · Feature: `oidc-credentials` · Repo: `go-xkms` · Last verified: 2026-10-02
+> **Status: NORMATIVE** · Feature: `oidc-credentials` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## What it is
 
@@ -17,7 +17,7 @@ records, locking, and scheduler below are unchanged. What did change is
 `pkg/oidc`'s own token *cache* (xkey's local login, and xkmsctl/xkey's own
 process, not this feature's tenant-shared credentials): its persistence
 moved off a raw `storage.Backend` `Put`/`Get` pair onto go-qrdb's DAO/entity
-pattern (`pkg/oidc.DAOStore`, over a `qrdbsdk.KVStore`) — see
+pattern (`pkg/oidc.DAOStore`, on the injected `qrdbsdk.DAOFactory`) — see
 [xkey/docs/oidc](../../xkey/docs/oidc/) and
 [`../datastore/architecture.md`](../datastore/architecture.md)'s
 "Feature-owned databases". `pkg/oidc/credential` (this feature) was not

@@ -73,11 +73,11 @@ var (
 // sealCeremonyPIN seals a resolved PIN string into protected memory for a
 // CeremonyRequest. An empty pin returns nil, the zero value for "no PIN
 // configured" — the ceremony itself decides whether that is acceptable.
-func sealCeremonyPIN(pin string) (*secure.Secret, error) {
+func sealCeremonyPIN(ctx context.Context, pin string) (*secure.Secret, error) {
 	if pin == "" {
 		return nil, nil
 	}
-	secret, err := secure.NewSecret([]byte(pin))
+	secret, err := secure.NewSecret(ctx, []byte(pin))
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrWebAuthnPINSealFailed, Cause: err}
 	}

@@ -34,29 +34,19 @@
 | 🚫 CLI-only by design | ~7 | 8% |
 | **Total** | **~95** | |
 
-## Top 5 Critical Gaps
+## Critical Gaps
 
-### 1. Custodian Group Management (HIGHEST IMPACT)
-`xkey/pkg/gui/services/custodian_service.go` is fully wired (Create, List, Show, Delete, AddMember, RemoveMember, DistributeShares). `xkmsctl custodian` exposes full CLI. **Zero Svelte views consume it.** Enterprise-threshold bootstrap is un-completable by non-CLI operators.
-- Entry point: new `Custodians.svelte` in `AdminApp.svelte` under SECURITY, reuse `TeamManageDialog.svelte` styling.
-- Effort: Medium.
-
-### 2. Share (Shamir) Management
-`xkey/pkg/gui/services/share_service.go` exposes 7 methods (List/Import/Delete/Receive/Submit/Status). `xkey share` + `xkmsctl init claim-share` are CLI-complete. No GUI — custodians can't submit shares through the app.
-- Entry point: new `Shares.svelte` view, or "My Shares" Dashboard card.
-- Effort: Medium.
-
-### 3. Tenant Management + Per-Tenant Barrier
-`xkey/pkg/gui/services/tenant_service.go` with Create/List/Delete/BarrierInit/BarrierUnseal is fully backed. Phase 6 of the xkey plan added per-tenant DEKs and backend-registry tenant context. No Svelte view — multi-tenant architecture is only reachable via `xkmsctl`.
-- Entry point: `Tenants.svelte` inside `AdminApp.svelte`; requires tenant-switch chrome + per-tenant unseal flow.
+### 1. Tenant Management
+`xkey/pkg/gui/services/tenant_service.go` covers Create/List/Delete. Phase 6 of the xkey plan added per-tenant DEKs and backend-registry tenant context. No Svelte view — multi-tenant architecture is only reachable via `xkmsctl`.
+- Entry point: `Tenants.svelte` inside `AdminApp.svelte`.
 - Effort: Large.
 
-### 4. CA Operations (Issue / Sign-CSR / Revoke / CRL)
+### 2. CA Operations (Issue / Sign-CSR / Revoke / CRL)
 `xkey/pkg/gui/services/ca_service.go` has all 7 CA operations wired. `xkey ca *` and `xkmsctl ca *` expose them. Certificates view is read-only; Keys view only signs with existing keys. No way to request/revoke/CRL via GUI.
 - Entry point: expand `Certificates.svelte` with Request/Sign/Revoke/CRL actions + a CA info card.
 - Effort: Medium.
 
-### 5. SSH Key + Agent Management
+### 3. SSH Key + Agent Management
 `xkey ssh *` covers agent start/stop/status, key list/generate/import/delete/export, git-config integration. **No SSH section in GUI and no SSHService binding.** SSH is a daily-use vector; ought to be discoverable.
 - Entry point: new `SSH.svelte` under Applications, OR SSH tab in `Keys.svelte`. Needs new Go `SSHService` Wails binding.
 - Effort: Large.
@@ -113,10 +103,7 @@
 - **tls**: get
 - **admin**: create/list/get/delete/disable/enable/status
 - **user**: register/login/list/get/delete/disable/enable/status/credential-config
-- **barrier**: shares list/verify/delete, rekey, root-token, recovery generate/recover/delete
-- **init**: claim-cert, claim-share, sign-csr
 - **credential**: submit, strategy
-- **custodian**: entire group (see Gap #1 above)
 - **tenant**: entire group (see Gap #3 above)
 - **frost**: entire group (threshold signatures)
 - **migrate**: plan/execute/validate
@@ -145,11 +132,8 @@
 
 **Gaps — xkmsctl command groups with no multi-protocol parity coverage yet:**
 - ❌ admin (user accounts)
-- ❌ barrier (server barrier lifecycle + shares + recovery + rekey + root-token)
 - ❌ bootstrap (auto, noise, dane, spki) — though these are pre-server provisioning
 - ❌ credential (submit, strategy)
-- ❌ custodian (create/list/show/delete/members/distribute)
-- ❌ init (claim-cert, claim-share, sign-csr)
 - ❌ migrate (plan/execute/validate)
 - ❌ pkcs11 (probe, register, list-modules, list-tokens, init-token, connect, disconnect)
 - ❌ piv (server-side PIV cert store — separate from local-xkey PIV)
@@ -163,9 +147,7 @@ Adding these is mechanical: extend `commands.CommandDefinition` lists in `test/i
 - CLI entry: `xkey/cmd/xkey/cmd/root.go`, `cmd/xkmsctl/root.go`
 - GUI nav: `xkey/frontend/src/App.svelte:65-82,395-435`, `xkey/frontend/src/views/AdminApp.svelte:14-39`
 - Unused service bindings (bound to Wails, no Svelte consumer):
-  - `xkey/pkg/gui/services/custodian_service.go`
   - `xkey/pkg/gui/services/tenant_service.go`
-  - `xkey/pkg/gui/services/share_service.go`
   - `xkey/pkg/gui/services/ca_service.go`
   - `xkey/pkg/gui/services/agent_service.go` (partial — `PairAgentDialog` consumes some methods)
 - Playwright suite: `xkey/frontend/tests/e2e/` (33 spec files)

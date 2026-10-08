@@ -1,6 +1,6 @@
 # TPM Policies and TPM Tenancy — Architecture
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 This is the design for named TPM policies that many keys and sealed objects
 share, for a registry that records which keys use which policy, and for
@@ -199,7 +199,7 @@ own replacement.
 1. Create authority `k+1`.
 2. For each policy, write the index with `PolicyAuthorize(authority k+1, policyRef(P))`.
 3. Sign every policy's current approval with `k+1`.
-4. Store the scope record and approvals in one registry batch.
+4. Store the scope record and the approvals in the registry.
 5. Flush and evict authority `k`.
 
 Approvals signed by `k` no longer match any index, so rotation also revokes
@@ -234,8 +234,8 @@ every backend, with interoperability with standard tooling first.
     that version current.
   - A key rotates this way on every backend, including a non-exportable TPM2
     key.
-- **Version records** live in the registry at
-  `{tenant}/key-versions/<backend>/<keyID>`. Each holds the current version
+- **Version records** are go-qrdb DAO entities in the `keyversion`
+  database, named `{tenant}/<backend>/<keyID>`. Each holds the current version
   and, per version, its state (`enabled`, `disabled`, `retired`) and creation
   time. A key without a record is version 1, alone and enabled.
   - `ListKeyVersions`, `Enable/DisableKeyVersion` and
@@ -304,7 +304,7 @@ encrypt response.
   2. Increment the counter to `e+1`.
   3. Re-sign every policy in the scope at `e+1`. Policies other than `P` keep
      their PCR values.
-  4. Store the new approvals in one registry transaction.
+  4. Store the new approvals in the registry.
 - **Revoke** increments the counter and re-signs every policy except the
   revoked one. The revoked policy then has no current approval, so its objects
   answer only to their password branch until the policy is updated again.
@@ -321,22 +321,29 @@ encrypt response.
 
 ## Registry
 
-The registry is stored in the scope's storage, under
-`{tenant}/tpm-policies/shared/`. It opens through the same `compose.StorageFactory`
-seam every other xkms store uses, so xkmsd gets `createStorage("tpm-policies")`
-and an embedding host gets `xkms/tpm-policies/`:
+The registry is three go-qrdb DAO entity types in the database
+`tpmpolicy.DatabaseName` (`tpmpolicy`). The composition root opens that
+database on its datastore and passes the DAO factory serving it
+(`compose.TPMPolicyParams.DAOs`): xkmsd's datastore creates it on the
+configured engine or the remote cluster, an embedding host's datastore does
+the same on the host's client, and xKey's local mode serves it from the store
+in `<data dir>/tpm-policies`.
 
-```
-scope                               the scope record (mode, handles, authority public, counter index, epoch)
-policies/<name>                     the named policy and its current approval
-assignments/by-object/<objectID>    object → policy (name, policyRef, authority Name, authPolicy digest)
-assignments/by-policy/<name>/<id>   policy → objects
-```
+| Entity type | Natural key | Holds |
+|---|---|---|
+| `tpm_scopes` | `<tenant>/` | the scope record (mode, handles, authority public, counter index, epoch) |
+| `tpm_policies` | `<tenant>/<name>` | the named policy and its current approval |
+| `tpm_assignments` | `<tenant>/<objectID>` | object → policy (name, policyRef, authority Name, authPolicy digest) |
 
-- Both assignment directions are written and removed in one batch with the
-  object's own blobs.
-- `DeletePolicy` refuses with `*PolicyInUseError{Policy, Objects}` while
-  `by-policy/<name>/` is non-empty, and lists the object IDs.
+- An entity's ID is the hash of its natural key, so a record is read and
+  replaced by key, and `CreatePolicy` is a create-if-absent that refuses an
+  existing name with `ErrPolicyExists`.
+- Every entity also carries its tenant. Listing filters on it, and the
+  natural key is prefixed with the tenant's root, so one tenant never reads
+  another's records.
+- `DeletePolicy` refuses with `*PolicyInUseError{Policy, Objects}` while an
+  assignment names the policy, and lists the object IDs.
+- A store failure is a `*StoreError{Op, Key, Err}`, never a not-found answer.
 - A policy cannot be updated in a way that changes its selection or bank.
   Doing that means creating a new policy and re-keying, because the `policyRef`
   would still match but the meaning would silently change. `update` re-captures
@@ -348,7 +355,7 @@ assignments/by-policy/<name>/<id>   policy → objects
 ## Tenancy modes
 
 The physical TPM belongs to the system tenant. `tpm.mode` is kept in the
-xkms-owned scope record at `{tenant}/tpm-policies/shared/scope`, and only the
+xkms-owned scope record (the tenant's `tpm_scopes` entity), and only the
 system administrator can set it:
 
 | Mode | Where the tenant's TPM objects live | Isolation |
@@ -413,10 +420,10 @@ inside its own container.
 
 ## xKey parity
 
-xKey uses the same package, `pkg/tpmpolicy`, re-exported through `sdk/go`:
+xKey uses the same package, `pkg/tpm2/policy`, re-exported through `sdk/go`:
 
-- **Local mode:** the `system` scope over xKey's own TPM. The registry is xKey's
-  qrdb KV store under `<dataDir>/tpm-policies`. This replaces
+- **Local mode:** the `system` scope over xKey's own TPM. The registry's
+  database is served from xKey's store under `<dataDir>/tpm-policies`. This replaces
   `xkey/pkg/pcr_policy`, `PlatformPolicyService` and the `platform.policy` file.
 - **Connected mode:** the same service calls go through `transport.Client`
   against the server.

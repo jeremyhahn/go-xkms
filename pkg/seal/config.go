@@ -14,7 +14,7 @@
 package seal
 
 import (
-	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // BarrierConfig configures a Barrier instance.
@@ -30,7 +30,7 @@ type BarrierConfig struct {
 
 	// AuditLogger receives audit events for seal/unseal operations.
 	// If nil, audit logging is disabled.
-	AuditLogger audit.Logger
+	AuditLogger qrdbsdk.NodeAuditLogger
 
 	// Shamir configures optional Shamir secret sharing for barrier operations.
 	// When set, InitializeShamir and UnsealWithShare/UnsealWithShares methods
@@ -47,7 +47,7 @@ type SealerConfig struct {
 
 	// AuditLogger receives audit events for seal/unseal operations.
 	// If nil, audit logging is disabled.
-	AuditLogger audit.Logger
+	AuditLogger qrdbsdk.NodeAuditLogger
 }
 
 // TenantBarrierConfig configures per-tenant barrier behavior.

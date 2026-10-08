@@ -1,6 +1,6 @@
 # Symmetric Encryption & AEAD — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Exported surface — `pkg/keyprovider/symmetric`
 
@@ -206,8 +206,7 @@ recognizes exactly one configuration key, `"key_dir"` (string): empty or
   per-process salt, but `pkg/server`'s `initializeAEADNonceStore` attaches a
   `pkg/aeadnonce.Store` to it at startup, and `KeyNonceGuard.UseContext`
   claims through that store as well as the in-memory tracker. A claim now
-  survives a restart, and — when `Storage.Backend` is `qrdb` — is visible to
-  every node in the cluster. See [`architecture.md`](architecture.md)'s
+  survives a restart and is visible to every node sharing the datastore. See [`architecture.md`](architecture.md)'s
   "Persistence: a durable claim, not process memory alone" for the spec
   citations behind the design and why a caller-supplied nonce is still
   admitted rather than refused outright.

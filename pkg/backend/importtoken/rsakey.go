@@ -14,6 +14,7 @@
 package importtoken
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
 
@@ -39,8 +40,9 @@ type SealedRSAKey struct {
 
 // NewSealedRSAKey marshals priv to PKCS#8 DER and seals it. The DER is
 // wiped once sealed; NewSecret already wipes its input, so the explicit
-// wipe here is defense in depth, not the only protection.
-func NewSealedRSAKey(priv *rsa.PrivateKey) (*SealedRSAKey, error) {
+// wipe here is defense in depth, not the only protection. ctx bounds the wait
+// for the process sealer.
+func NewSealedRSAKey(ctx context.Context, priv *rsa.PrivateKey) (*SealedRSAKey, error) {
 	if priv == nil {
 		return nil, &errs.Message{Msg: "wrapping private key cannot be nil"}
 	}
@@ -48,7 +50,7 @@ func NewSealedRSAKey(priv *rsa.PrivateKey) (*SealedRSAKey, error) {
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to marshal wrapping key", Err: err}
 	}
-	sealed, err := secure.NewSecret(der)
+	sealed, err := secure.NewSecret(ctx, der)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to seal wrapping key", Err: err}
 	}
@@ -83,13 +85,14 @@ func (k *SealedRSAKey) PublicKey() *rsa.PublicKey {
 // that held its DER are destroyed before Use returns, win or lose, so the
 // plaintext private key never outlives this call's stack frame -- the
 // same guarantee the software backend's UnwrapKey has always given its
-// callers, now available to every backend through one code path.
-func (k *SealedRSAKey) Use(fn func(*rsa.PrivateKey) error) error {
+// callers, now available to every backend through one code path. ctx bounds
+// the wait to open the enclave.
+func (k *SealedRSAKey) Use(ctx context.Context, fn func(*rsa.PrivateKey) error) error {
 	if k == nil || k.privateKey == nil {
 		return &UnavailableError{}
 	}
 
-	buf, err := k.privateKey.Open()
+	buf, err := k.privateKey.Open(ctx)
 	if err != nil {
 		return &UnavailableError{Err: err}
 	}

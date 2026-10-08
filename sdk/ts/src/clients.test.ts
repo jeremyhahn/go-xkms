@@ -118,43 +118,24 @@ describe('CertsClient', () => {
   });
 });
 
-describe('SealClient / BarrierClient / PinClient', () => {
-  it('routes seal, barrier lifecycle, and pin endpoints', async () => {
+describe('SealClient / PinClient', () => {
+  it('routes seal and pin endpoints', async () => {
     const fake = newFakeFetch({ body: { can_seal: true, backend: 'tpm2' } });
     const c = make(fake);
     const cap = await c.seal.capability('tpm2');
     expect(cap.can_seal).toBe(true);
     expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/seal/capability?backend=tpm2`);
 
-    fake.respond({
-      body: { sealed: false, strategy: 'passphrase', hardware_backed: false, initialized_at: '' },
-    });
-    await c.barrier.status();
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/barrier/status`);
-
-    fake.respond({ body: { shares: ['s1'], threshold: 2, total_shares: 3 } });
-    const init = await c.barrier.shamirInitialize({ secret: 'x' });
-    expect(init.total_shares).toBe(3);
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/barrier/shamir/initialize`);
-
-    fake.respond({ body: { required: 2, submitted: 1, complete: false } });
-    const prog = await c.barrier.shamirUnsealShare({ share: 's1' });
-    expect(prog.complete).toBe(false);
-
-    fake.respond({ body: { status: 'started', scope: 'system' } });
-    await c.barrier.enableEncryption({ strategy: 'passphrase', passphrase: 'p' });
-    expect(fake.calls[4]?.url).toBe(`${BASE}/api/v1/barrier/enable-encryption`);
-
     fake.respond({ body: { success: true } });
     await c.pin.verifySO({ pin: '1234' });
-    expect(fake.calls[5]?.url).toBe(`${BASE}/api/v1/pin/so/verify`);
-    expect(fake.calls[5]?.body).toEqual({ pin: '1234' });
+    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/pin/so/verify`);
+    expect(fake.calls[1]?.body).toEqual({ pin: '1234' });
 
     fake.respond({
       body: { failed_attempts: 0, max_attempts: 5, is_locked: false, recovery_seconds: 0 },
     });
     await c.pin.lockoutStatus();
-    expect(fake.calls[6]?.url).toBe(`${BASE}/api/v1/pin/lockout`);
+    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/pin/lockout`);
   });
 });
 
@@ -179,55 +160,13 @@ describe('CaClient', () => {
   });
 });
 
-describe('ClusterClient / CustodianClient / SharesClient', () => {
-  it('routes cluster, custodian, and share endpoints', async () => {
-    const fake = newFakeFetch({ body: { status: {} } });
-    const c = make(fake);
-    await c.cluster.status();
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/cluster/status`);
-
-    fake.respond({ body: { members: [] } });
-    await c.cluster.members();
-    expect(fake.calls[1]?.method).toBe('GET');
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/cluster/members`);
-
-    fake.respond({ body: { group: {} } });
-    await c.custodian.createGroup({
-      id: 'g1',
-      name: 'ops',
-      purpose: 'unseal',
-      threshold: 2,
-      total: 3,
-    });
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/custodian/groups/`);
-
-    fake.respond({ status: 204 });
-    await c.custodian.removeMember('g1', 'user 1');
-    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/custodian/groups/g1/members/user%201`);
-
-    fake.respond({ body: { server_url: 'https://s', group_id: 'g1', share_index: 1, received_at: '' } });
-    await c.shares.get('https://s:8443', 'g1', 1);
-    expect(fake.calls[4]?.url).toBe(`${BASE}/api/v1/shares/https%3A%2F%2Fs%3A8443/g1/1`);
-
-    fake.respond({ body: { group_id: 'g1', collected: 2 } });
-    await c.shares.collectionStatus('g1');
-    expect(fake.calls[5]?.url).toBe(`${BASE}/api/v1/shares/status/g1`);
-  });
-});
-
 describe('TenantsClient', () => {
-  it('routes tenant lifecycle and barrier endpoints', async () => {
+  it('routes tenant lifecycle endpoints', async () => {
     const fake = newFakeFetch({ body: { tenant: { id: 't1', sealed: true } } });
     const c = make(fake);
     const created = await c.tenants.create({ id: 't1', name: 'Tenant One' });
     expect(created.tenant.id).toBe('t1');
     expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/tenants/`);
-
-    fake.respond({
-      body: { tenant_id: 't1', sealed: false, strategy: 'passphrase', hardware_backed: false },
-    });
-    await c.tenants.barrierInit('t1', { passphrase: 'p', strategy: 'passphrase' });
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/tenants/t1/barrier/init`);
 
     fake.respond({ body: { tenant: {} } });
     await c.tenants.updateQuotas('t1', {
@@ -251,8 +190,8 @@ describe('TenantsClient', () => {
         max_dedicated_wal_groups: 1,
       },
     });
-    expect(fake.calls[2]?.method).toBe('PUT');
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/tenants/t1/quotas`);
+    expect(fake.calls[1]?.method).toBe('PUT');
+    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/tenants/t1/quotas`);
   });
 });
 
@@ -284,33 +223,25 @@ describe('PasswordsClient / PlatformClient / TpmPolicyClient', () => {
   });
 });
 
-describe('InitClient / CredentialsClient / UsersClient / CapabilitiesClient', () => {
-  it('routes init ceremony, credentials, users, and capabilities endpoints', async () => {
-    const fake = newFakeFetch({ body: { state: 'operational' } });
+describe('CredentialsClient / UsersClient / CapabilitiesClient', () => {
+  it('routes credentials, users, and capabilities endpoints', async () => {
+    const fake = newFakeFetch({ body: { strategy: 'prompt', auto_unseal: false } });
     const c = make(fake);
-    await c.init.status();
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/init/status`);
-
-    fake.respond({ body: { nonce: 'n', username: 'so1', expires_at: '' } });
-    await c.init.claimCertBegin({ username: 'so1' });
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/init/claim-cert/begin`);
-
-    fake.respond({ body: { strategy: 'prompt', auto_unseal: false } });
     await c.credentials.strategy();
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/credentials/strategy`);
+    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/credentials/strategy`);
 
     fake.respond({ body: { username: 'bob', enabled: true, created_at: '' } });
     await c.users.create({ username: 'bob', display_name: 'Bob', role: 'admin', tenant_id: '' });
-    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/users/`);
+    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/users/`);
 
     fake.respond({ body: { username: 'bob', status: 'bound' } });
     await c.users.bindCert('bob', { thumbprint: 'abc', not_after_unix: 123 });
-    expect(fake.calls[4]?.url).toBe(`${BASE}/api/v1/users/bob/cert-bindings`);
+    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/users/bob/cert-bindings`);
 
     fake.respond({ body: { webauthn: true, ssh: false } });
     const caps = await c.capabilities.get();
     expect(caps['webauthn']).toBe(true);
-    expect(fake.calls[5]?.url).toBe(`${BASE}/api/v1/capabilities`);
+    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/capabilities`);
   });
 });
 

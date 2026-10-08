@@ -1,6 +1,6 @@
 # Clustering — Architecture
 
-> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-07
 
 ## The problem
 
@@ -15,9 +15,8 @@ embedded state machine of its own** — clustering is go-qrdb's. What xkms
 owns is: embedding go-qrdb's clustered node, translating xkms's own
 `cluster:` configuration onto go-qrdb's Raft config, provisioning the
 inter-node mTLS the Raft transport requires (composing the runtime CA and
-TPM attestation xkms already owns), exposing read-only cluster status to
-the web console, and giving operators a CLI to inspect and manage the
-resulting cluster.
+TPM attestation xkms already owns), redirecting writes to the leader, and
+giving operators a CLI to inspect and manage the resulting cluster.
 
 ## Shape chosen: one embedded node, standalone by default, clustered behind a build tag
 
@@ -53,84 +52,40 @@ clustered `xkmsd` binary must build it themselves with `-tags raft` (plus
 whichever other tags their deployment needs); it does not ship pre-built by
 the default targets.
 
-The build tag mirrors down into `pkg/daemon`, the shared node-construction
-package both `pkg/server` and other embedders use:
-`pkg/daemon/node_standalone.go` (`//go:build !raft`) always builds a
-standalone node and refuses `Cluster.Enabled`; `pkg/daemon/node_cluster.go`
-(`//go:build raft`) builds a clustered node when enabled, standalone
-otherwise.
+The build tag mirrors down into `pkg/embeddednode`, the single node builder
+that `pkg/server`, `pkg/datastore` and every SDK embedder (`NewDaemonNode`)
+use: `pkg/embeddednode/node_standalone.go` (`//go:build !raft`) always builds
+a standalone node and refuses `Cluster.Enabled`;
+`pkg/embeddednode/node_cluster.go` (`//go:build raft`) builds a clustered
+node when enabled, standalone otherwise. There is no second node builder.
 
-## Two distinct surfaces over the same Raft shard
+## One cluster control plane: go-qrdb's
 
-Cluster status and membership are reachable through **two independent
-surfaces**, each built for a different caller, reading the *same* Raft shard
-through the *same* underlying go-qrdb `ClusterClient` — there is no second
-membership model:
+Cluster status, membership and membership changes have exactly one surface:
+go-qrdb's own control plane, registered directly onto xkmsd's gRPC server and
+Unix socket with zero xkms-authored handlers
+(`pkg/server/qrdb_control_plane.go:registerQRDBControlPlane`), plus the
+embedded node's admin-plane `GET /peers`. `xkmsctl cluster
+status|members|add|remove` and `xkmsctl rebalance ...`
+(`cmd/xkmsctl/cluster.go`, `rebalance.go`) drive it as a qrdb SDK client over
+gRPC or the Unix socket. go-qrdb's `AdminService`/`RebalanceService` RPCs
+answer.
 
-1. **go-qrdb's own control plane**, registered directly onto xkmsd's gRPC
-   server and Unix socket with zero xkms-authored handlers
-   (`pkg/server/qrdb_control_plane.go:registerQRDBControlPlane`). `xkmsctl
-   cluster status|members|add|remove` and `xkmsctl rebalance ...`
-   (`cmd/xkmsctl/cluster.go`, `rebalance.go`) drive this surface as a qrdb
-   SDK client over gRPC or the Unix socket — never through xkms's REST API.
-   This is the operator/automation path, the only one that can mutate
-   membership, and the one qrdb's own `AdminService`/`RebalanceService` RPCs
-   answer.
-2. **The xkms REST cluster surface**, `GET /api/v1/cluster/status` and `GET
-   /api/v1/cluster/members` (`pkg/api/rest/handlers_cluster.go:ClusterHandlers`,
-   registered in `pkg/api/rest/routes.go`), backed by the `XKMSService`
-   servicer (`pkg/xkms/servicer_cluster.go`). This exists because a browser
-   cannot speak gRPC or reach a Unix socket: the embedded web console's
-   read-only Cluster page (`web/app/src/views/ClusterView.svelte`) and the
-   TypeScript SDK's `ClusterClient` (`sdk/ts/src/clients/cluster.ts`) need an
-   HTTP surface, authenticated and authorized exactly like every other xkms
-   API route. The REST layer never calls qrdb directly for reads; it goes
-   through the `XKMSService` servicer, following the same service-layer
-   discipline as every other xkms subsystem (custodian groups, shares,
-   tenants, …).
+xkms re-hosts none of it. The former `GET /api/v1/cluster/status` and
+`GET /api/v1/cluster/members` REST routes, their servicer methods and the web
+console's Cluster page proxied go-qrdb's reads through xkms and were removed:
+go-xkms extends go-qrdb and never duplicates it.
 
-**Membership is mutated through surface #1 only — REST exposes no mutation
-route at all.** There is no `POST`/`DELETE /api/v1/cluster/members`: a route
-that could only ever answer "not implemented" would be a stub, and this
-codebase does not register stubs
-(`pkg/api/rest/handlers_cluster.go`'s package doc). This is not a gap to be
-filled in later: an earlier xkms-authored cluster/auth-factor proxy plane was
-already deleted once (`registerQRDBControlPlane`'s own comment records
-replacing "the deleted xkms-authored cluster/auth-factor proxy planes"), and
-adding a REST mutation path — working or not — would recreate exactly that
-proxy. `docs/web/parity.md`'s "Cluster mutations" section and the web
-console's Cluster page banner document the same decision independently. The
-`XKMSService` servicer therefore exposes only the read half (`ClusterStatus`,
-`ClusterMembers`); the lower-level `ClusterClient`/`ClusterMutator` Go
-contract the qrdb SDK adapter satisfies still carries `AddReplica`/
-`RemoveReplica` (`pkg/server/cluster_adapter.go`) — that plumbing exists only
-to satisfy the qrdb SDK's shape, and no `XKMSService` method, and nothing in
-REST/gRPC/QUIC, ever calls it.
-
-### Standalone degradation, not capability gating, for reads
-
-`XKMSService.Clustered()` (`pkg/xkms/service.go`) reports whether this
-node's cluster client is wired (`SetClusterClient` with a non-nil
-`ClusterClient`, set only when `config.Cluster.Enabled`). Read operations do
-**not** gate on it:
-
-- `ClusterStatus` returns `{clustered: false, has_leader: false, leader_id:
-  0}` on a standalone node instead of failing — there is a well-defined
-  "no cluster" status, not an absent one.
-- `ClusterMembers` returns an empty list on a standalone node.
-
-`ClusterStatus` and `ClusterMembers` are the only two servicer methods in
-the codebase that intentionally *degrade* rather than fail closed on a
-missing optional subsystem — every other subsystem servicer method
-(custodian, shares, tenants, …) returns `xkms.ErrNotConfigured` when its
-backing client is nil. This lets the web console's Cluster page render a
-"standalone" badge correctly whether or not the deployment ever intends to
-cluster, and lets `xkmsctl cluster status`/`members` work identically on
-every node. The REST `/auth/me` `capabilities.cluster` flag
-(`pkg/api/rest/handlers_auth.go:capabilityFlags`) still reports `false` on a
-standalone node — it exists only to hide the web console nav entry by
-default, not to gate the read routes; the routes themselves remain
-reachable if navigated to directly.
+The one cluster call xkms makes itself is leader-endpoint resolution for the
+not-leader redirect. `xkms.ClusterClient`
+(`pkg/xkms/servicer_cluster.go`) is a single-method contract,
+`LeaderEndpoint`, satisfied by an adapter over the embedded node's
+`*qrdbsdk.ClusterClient` (`pkg/server/cluster_adapter.go`).
+`XKMSService.Clustered()` (`pkg/xkms/service.go`) reports whether that client
+is wired (only when `config.Cluster.Enabled`); the REST `/auth/me`
+`capabilities.cluster` flag (`pkg/api/rest/handlers_auth.go:capabilityFlags`)
+reports it, and the web console's dashboard shows it as "clustered" or
+"standalone".
 
 ## Component boundaries
 
@@ -138,14 +93,14 @@ reachable if navigated to directly.
 |---|---|---|
 | Raft consensus, the clustered state machine, leader election | go-qrdb SDK (`qrdbnode.NewClusteredNode`) | **go-qrdb** |
 | `cluster:` config → go-qrdb `Raft` config mapping | `Server.buildXKMSQRDBConfig` (`pkg/server/qrdb_node.go`) | go-xkms |
-| Build-tag dispatch (standalone vs. clustered `newQRDBNode`) | `pkg/server/qrdb_node_standalone.go` (`!raft`), `qrdb_node_cluster.go` (`raft`); shared logic in `pkg/daemon` | go-xkms |
+| Build-tag dispatch (standalone vs. clustered `newQRDBNode`) | `pkg/server/qrdb_node_standalone.go` (`!raft`), `qrdb_node_cluster.go` (`raft`); shared logic in `pkg/embeddednode` | go-xkms |
 | Inter-node Raft mTLS provisioning (4-tier precedence) | `Server.resolveRaftMTLS` (`pkg/server/qrdb_node_cluster.go`) | go-xkms (composes the runtime CA / TPM attestation xkms owns) |
 | Cluster CA key custody strategies (`barrier` / `hsm` / `tpm-kek`) | `pkg/trust/clusterca`, wired by `pkg/server/cluster_ca_strategy.go` | go-xkms (strategy toolkit re-exported via `sdk/go/clusterca` for the rest of the stack) |
 | Leader wait, cluster advertisement | `Server.waitForClusterLeader`, `startClusterAdvertiser` (`pkg/server/qrdb_node.go`, `cluster_advertise.go`) | go-xkms |
 | Not-leader → redirect translation per transport | `pkg/api/rest/errors.go`, `pkg/api/grpc/errors.go`, `pkg/xkms/errors.go` | go-xkms |
 | Cluster admin / rebalance control plane (status, membership, shard stats) | go-qrdb's `AdminServicer`/`RebalanceServicer`, registered by `pkg/server/qrdb_control_plane.go` | **go-qrdb** implements; go-xkms registers it onto its own listeners |
 | `xkmsctl cluster` / `xkmsctl rebalance` | `cmd/xkmsctl/cluster.go`, `rebalance.go` | go-xkms CLI, speaking the qrdb SDK client directly |
-| REST cluster status/members (web console) | `pkg/api/rest/handlers_cluster.go:ClusterHandlers`, `pkg/xkms/servicer_cluster.go` | go-xkms, delegating reads to the embedded go-qrdb node's cluster client |
+| Leader API endpoint lookup for the redirect | `XKMSService.ClusterLeaderEndpoint` (`pkg/xkms/servicer_cluster.go`), `pkg/server/cluster_adapter.go` | go-xkms, delegating to the embedded go-qrdb node's cluster client |
 
 ## Data flow
 
@@ -167,23 +122,16 @@ client write reaches a follower:
   → SDK client: follows the redirect once, re-presenting the caller's
     OWN credentials to the leader (never a server-side forward)
 
-web console / SDK reads cluster status or membership:
-  GET /api/v1/cluster/status | /api/v1/cluster/members
-  → ClusterHandlers → XKMSService.ClusterStatus / ClusterMembers
-  → embedded go-qrdb node's ClusterClient (Members, Leader)
-  → degrades to {clustered:false} / [] on a standalone node, never errors
-
 xkmsctl cluster / rebalance:
   dials xkmsd's Unix socket (default) or --transport grpc / grpc://
   → speaks go-qrdb's OWN control-plane gRPC service directly
-    (AdminServicer, RebalanceServicer) — no xkms-authored proxy,
-    reachable only there, never through /api/v1/cluster/*
+    (AdminServicer, RebalanceServicer) — no xkms-authored proxy
 ```
 
 ## Leader redirect (client request routing)
 
 xkms client APIs (REST, gRPC, QUIC, Unix socket) route around Raft
-leadership independently of the cluster status/membership surface above:
+leadership:
 
 - Read operations succeed on any member.
 - Write operations (`CreateKey`, `SignCSR`, `SetPin`, …) require the leader.
@@ -211,10 +159,6 @@ configured address is never permanently repointed; a not-leader response
 carrying no API address is returned unchanged; the Unix socket transport
 never follows redirects (a local socket client has no network credentials).
 
-The cluster status/membership routes above are never subject to this
-redirect — they answer from local Raft state on any member, standalone or
-not.
-
 ### Advertised API endpoints
 
 For a redirect to be actionable, a client must be able to turn "the leader is
@@ -225,10 +169,8 @@ only on the node that owns it). Values come from the node's own
 configuration (`cluster.advertise_host` plus each enabled protocol's
 configured port), never derived from the Raft address by port arithmetic.
 When no concrete host is available the node advertises nothing rather than
-an address no client can dial, and membership listing never fails because
-endpoint discovery did (`pkg/server/cluster_adapter.go:apiEndpointsToStrings`).
-`xkmsctl cluster members` and the REST `/api/v1/cluster/members` route both
-surface these endpoints per replica.
+an address no client can dial. `xkmsctl cluster members` surfaces these
+endpoints per replica.
 
 ## Cluster CA key custody
 
@@ -252,20 +194,13 @@ certificates is a separate design surface from Raft membership itself. See
   circular. Operator-supplied PEM files or the dedicated auto-provisioned
   cluster CA are used instead (`ClusterConfig.RaftTLS` doc comment,
   `pkg/config/config.go`).
-- **The qrdb control plane's authorization posture is transitional; the REST
-  cluster surface's is not.** `registerQRDBControlPlane`
+- **The qrdb control plane's authorization posture is transitional.** `registerQRDBControlPlane`
   (`pkg/server/qrdb_control_plane.go`) states explicitly that its RPCs sit
   behind xkmsd's transport authentication (TLS + adaptive auth; the Unix
   socket adds filesystem-permission trust) and are **not yet** gated by
   xkms's own resource:action RBAC — membership mutation (`cluster
   add`/`remove`) requires only whatever the transport it is reached over
-  already requires. The REST read routes are different: both `GET
-  /api/v1/cluster/status` and `GET /api/v1/cluster/members` require the
-  `admin:status`/`admin:peers` RBAC permission when RBAC is enabled
-  (`pkg/auth/permissions.go`, enforced in `pkg/api/rest/routes.go`) — the
-  same grant qrdb's own control-plane surface uses internally, so a caller's
-  RBAC role never has to diverge between the two surfaces, even though only
-  one of them currently enforces it at the xkms layer.
+  already requires.
 - **The KV data plane is deliberately unreachable through the qrdb control
   plane.** `registerQRDBControlPlane` registers the admin/rebalance/user
   surfaces with the KV servicer nil, so every data-plane RPC answers
@@ -280,18 +215,12 @@ certificates is a separate design surface from Raft membership itself. See
 
 - **It does not implement Raft, leader election, or log replication.**
   Entirely go-qrdb's.
-- **It does not expose cluster *membership mutation* over xkms's own
-  REST/gRPC/MCP API.** There is no `POST`/`DELETE /api/v1/cluster/members`
-  and no `AddClusterReplica`/`RemoveClusterReplica` gRPC RPC on xkms's
-  `XKMSService` — verified absent from `pkg/api/rest/routes.go` and
-  `pkg/api/grpc`. Membership management goes through `xkmsctl
-  cluster`/`rebalance` only, which dial go-qrdb's own control-plane service
-  directly. Cluster *status and membership reads* are different: `GET
-  /api/v1/cluster/status` and `GET /api/v1/cluster/members` do exist on the
-  REST surface (`pkg/api/rest/handlers_cluster.go`, since go-xkms#847) for
-  the web console; see "Two distinct surfaces over the same Raft shard" above. gRPC
-  and MCP still carry no dedicated cluster status/membership RPC or tool —
-  verified absent from `pkg/api/grpc` and `pkg/api/mcp`.
+- **It does not expose cluster status, membership or membership mutation
+  over xkms's own REST/gRPC/MCP API.** No `/api/v1/cluster/*` read or
+  mutation route and no cluster RPC or tool exist on xkms's `XKMSService`
+  (`pkg/api/rest/routes.go`, `pkg/api/grpc`, `pkg/api/mcp`). All of it goes
+  through `xkmsctl cluster`/`rebalance`, which dial go-qrdb's own
+  control-plane service directly.
 - **It does not migrate data between storage engines** or provide a way to
   convert a standalone deployment's data into a cluster's replicated state;
   starting a cluster starts a new replicated store.

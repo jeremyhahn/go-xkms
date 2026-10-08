@@ -347,9 +347,10 @@ func (b *engineBackend) Close() error {
 type EngineKind string
 
 const (
-	// EngineFile selects the go-qrdb file engine: one file per key in a flat
-	// <path>/<key> layout. This is the default and matches xkms's historical
-	// on-disk format, so switching to it requires no data migration.
+	// EngineFile selects the go-qrdb file engine: one owner-only file per key,
+	// named by the SHA-256 of the key in hashed shard directories under <path>.
+	// It is the default. The engine refuses a non-empty <path> it did not
+	// initialise.
 	EngineFile EngineKind = "file"
 
 	// EnginePebble selects the go-qrdb PebbleDB engine: an embedded LSM-tree

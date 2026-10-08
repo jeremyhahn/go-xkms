@@ -188,7 +188,7 @@ func newTestBarrier(t *testing.T) *xkms.Barrier {
 	}, strategy)
 	require.NoError(t, err)
 
-	creds, err := xkms.CredentialsFor([]byte("test-barrier-password-12345"))
+	creds, err := xkms.CredentialsFor(t.Context(), []byte("test-barrier-password-12345"))
 	require.NoError(t, err)
 	defer creds.Secret.Destroy()
 
@@ -421,7 +421,7 @@ func TestDaemon_SearchItems(t *testing.T) {
 	t.Run("search_while_sealed_refuses", func(t *testing.T) {
 		require.NoError(t, daemon.barrier.Seal())
 		defer func() {
-			creds, err := xkms.CredentialsFor([]byte("test-barrier-password-12345"))
+			creds, err := xkms.CredentialsFor(t.Context(), []byte("test-barrier-password-12345"))
 			require.NoError(t, err)
 			defer creds.Secret.Destroy()
 			require.NoError(t, daemon.barrier.Unseal(context.Background(), creds))
@@ -531,7 +531,7 @@ func TestDaemon_GetSecrets(t *testing.T) {
 
 		require.NoError(t, daemon.barrier.Seal())
 		defer func() {
-			creds, err := xkms.CredentialsFor([]byte("test-barrier-password-12345"))
+			creds, err := xkms.CredentialsFor(t.Context(), []byte("test-barrier-password-12345"))
 			require.NoError(t, err)
 			defer creds.Secret.Destroy()
 			require.NoError(t, daemon.barrier.Unseal(context.Background(), creds))
@@ -619,7 +619,7 @@ func TestDaemon_ReadWriteAlias(t *testing.T) {
 	t.Run("set_alias_while_sealed_refuses", func(t *testing.T) {
 		require.NoError(t, daemon.barrier.Seal())
 		defer func() {
-			creds, err := xkms.CredentialsFor([]byte("test-barrier-password-12345"))
+			creds, err := xkms.CredentialsFor(t.Context(), []byte("test-barrier-password-12345"))
 			require.NoError(t, err)
 			defer creds.Secret.Destroy()
 			require.NoError(t, daemon.barrier.Unseal(context.Background(), creds))

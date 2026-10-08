@@ -10,6 +10,7 @@ import (
 	"errors"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -82,44 +83,12 @@ func TestNewBarrierRegistry_Success(t *testing.T) {
 	assert.Same(t, barrier, registry.SystemBarrier())
 }
 
-// TestWrapBarrierRegistry_AdoptsInnerAndSystem covers the adoption path an
-// embedded qrdb node's seal integration uses: wrapping an already-constructed
-// go-qrdb BarrierRegistry (and its system barrier) rather than building a new
-// one, so SystemBarrier and Inner both report exactly what was handed in.
-func TestWrapBarrierRegistry_AdoptsInnerAndSystem(t *testing.T) {
-	store := newMemoryBackend()
-	strategy := NewSoftwareStrategy()
-
-	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
-		RootKeyPath: "test/root-key",
-	}, strategy)
-	require.NoError(t, err)
-
-	registry, err := NewBarrierRegistry(barrier)
-	require.NoError(t, err)
-
-	wrapped := WrapBarrierRegistry(registry.Inner(), barrier)
-	require.NotNil(t, wrapped)
-	assert.Same(t, barrier, wrapped.SystemBarrier())
-	assert.Same(t, registry.Inner(), wrapped.Inner())
-}
-
-// TestBarrierRegistry_Attach covers Attach's delegation to the underlying
-// go-qrdb registry, used to wire the volume-pool subsystem on after the
-// system barrier (and therefore the registry) already exists.
-func TestBarrierRegistry_Attach(t *testing.T) {
-	store := newMemoryBackend()
-	strategy := NewSoftwareStrategy()
-
-	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
-		RootKeyPath: "test/root-key",
-	}, strategy)
-	require.NoError(t, err)
-
-	registry, err := NewBarrierRegistry(barrier)
-	require.NoError(t, err)
-
-	assert.NotPanics(t, func() { registry.Attach() })
+// TestNewBarrierRegistry_NilSystemBarrier verifies a registry is never built
+// without a system barrier.
+func TestNewBarrierRegistry_NilSystemBarrier(t *testing.T) {
+	registry, err := NewBarrierRegistry(nil)
+	require.ErrorIs(t, err, ErrNilSystemBarrier)
+	assert.Nil(t, registry)
 }
 
 // isAlreadyUnsealed returns true if err is any "already unsealed" error.
@@ -149,7 +118,7 @@ func TestBarrierRegistry_TenantLifecycle(t *testing.T) {
 	}, strategy)
 	require.NoError(t, err)
 
-	creds, err := CredentialsFor([]byte("test-password"))
+	creds, err := CredentialsFor(t.Context(), []byte("test-password"))
 	require.NoError(t, err)
 	defer creds.Secret.Destroy()
 	initAndUnsealBarrier(t, barrier, creds)
@@ -158,7 +127,7 @@ func TestBarrierRegistry_TenantLifecycle(t *testing.T) {
 	require.NoError(t, err)
 
 	// Register a default tenant.
-	tb, err := registry.RegisterTenant("tenant-1")
+	tb, err := registry.RegisterTenantDefault("tenant-1")
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 
@@ -205,7 +174,10 @@ func TestBarrierRegistry_TenantLifecycle(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestBarrierRegistry_RegisterTenantWithConfig(t *testing.T) {
+// TestBarrierRegistry_RegisterTenantOverXKMSStorage verifies go-qrdb's
+// registry accepts a tenant barrier over an xkms storage backend once it is
+// guarded for go-qrdb's StorageBackend contract.
+func TestBarrierRegistry_RegisterTenantOverXKMSStorage(t *testing.T) {
 	store := newMemoryBackend()
 	strategy := NewSoftwareStrategy()
 
@@ -214,7 +186,7 @@ func TestBarrierRegistry_RegisterTenantWithConfig(t *testing.T) {
 	}, strategy)
 	require.NoError(t, err)
 
-	creds, err := CredentialsFor([]byte("test-password"))
+	creds, err := CredentialsFor(t.Context(), []byte("test-password"))
 	require.NoError(t, err)
 	defer creds.Secret.Destroy()
 	initAndUnsealBarrier(t, barrier, creds)
@@ -222,76 +194,11 @@ func TestBarrierRegistry_RegisterTenantWithConfig(t *testing.T) {
 	registry, err := NewBarrierRegistry(barrier)
 	require.NoError(t, err)
 
-	tenantStore := newMemoryBackend()
-	tb, err := registry.RegisterTenantWithConfig("tenant-custom", tenantStore, BarrierConfig{
+	tb, err := registry.RegisterTenant(t.Context(), "tenant-custom", guardStorage(newMemoryBackend()), qrdbsdk.BarrierConfig{
 		RootKeyPath: "custom/root-key",
 	}, NewSoftwareStrategy())
 	require.NoError(t, err)
 	require.NotNil(t, tb)
-}
-
-func TestBarrierRegistry_UnregisterTenant(t *testing.T) {
-	store := newMemoryBackend()
-	strategy := NewSoftwareStrategy()
-
-	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
-		RootKeyPath: "test/root-key",
-	}, strategy)
-	require.NoError(t, err)
-
-	creds, err := CredentialsFor([]byte("test-password"))
-	require.NoError(t, err)
-	defer creds.Secret.Destroy()
-	initAndUnsealBarrier(t, barrier, creds)
-
-	registry, err := NewBarrierRegistry(barrier)
-	require.NoError(t, err)
-
-	_, err = registry.RegisterTenant("tenant-rm")
-	require.NoError(t, err)
-
-	err = registry.UnregisterTenant("tenant-rm")
-	require.NoError(t, err)
-
-	_, err = registry.GetTenant("tenant-rm")
-	assert.Error(t, err)
-}
-
-func TestBarrierRegistry_SealAll(t *testing.T) {
-	store := newMemoryBackend()
-	strategy := NewSoftwareStrategy()
-
-	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
-		RootKeyPath: "test/root-key",
-	}, strategy)
-	require.NoError(t, err)
-
-	creds, err := CredentialsFor([]byte("test-password"))
-	require.NoError(t, err)
-	defer creds.Secret.Destroy()
-	initAndUnsealBarrier(t, barrier, creds)
-
-	registry, err := NewBarrierRegistry(barrier)
-	require.NoError(t, err)
-
-	err = registry.SealAll()
-	require.NoError(t, err)
-}
-
-func TestBarrierRegistry_Close(t *testing.T) {
-	store := newMemoryBackend()
-	strategy := NewSoftwareStrategy()
-
-	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
-		RootKeyPath: "test/root-key",
-	}, strategy)
-	require.NoError(t, err)
-
-	registry, err := NewBarrierRegistry(barrier)
-	require.NoError(t, err)
-
-	err = registry.Close()
-	require.NoError(t, err)
 }
 
 func TestNewShamirStrategy_Success(t *testing.T) {

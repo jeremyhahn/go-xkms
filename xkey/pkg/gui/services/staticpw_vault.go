@@ -334,7 +334,7 @@ func (s *StaticPasswordService) passkeyCall(pin string) (transport.Client, *secu
 	if err != nil {
 		return nil, nil, err
 	}
-	pinSecret, err := secure.NewSecret([]byte(pin))
+	pinSecret, err := secure.NewSecret(s.getContext(), []byte(pin))
 	if err != nil {
 		return nil, nil, &SentinelCauseError{Sentinel: ErrStaticPWSecurityKeyPINSealFailed, Cause: err}
 	}

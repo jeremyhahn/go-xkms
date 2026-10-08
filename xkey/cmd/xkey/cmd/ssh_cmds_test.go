@@ -370,9 +370,7 @@ func TestSSHHandlers_RefuseBarrierEncryptedStore(t *testing.T) {
 
 	// Simulate an initialized barrier over the SSH store root.
 	dataDir := filepath.Join(home, ".xkey-store")
-	keyPath := filepath.Join(dataDir, defaultBarrierRootKeyPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(keyPath), 0700))
-	require.NoError(t, os.WriteFile(keyPath, []byte("sealed"), 0600))
+	writeBarrierRootKey(t, dataDir, []byte("sealed"))
 
 	tests := []struct {
 		name  string

@@ -13,7 +13,22 @@
 
 package datastore
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+var (
+	// ErrNilConfig is returned by Open when it is given no configuration.
+	ErrNilConfig = errors.New("datastore: config is required")
+
+	// ErrNilClient is returned by New when it is given no client.
+	ErrNilClient = errors.New("datastore: a go-qrdb client is required")
+
+	// ErrDatabaseNameRequired is returned by DatabaseKVStore for an empty
+	// database name.
+	ErrDatabaseNameRequired = errors.New("datastore: a database name is required")
+)
 
 // ErrUnsupportedStorageBackend indicates an unsupported remote storage
 // transport was specified.
@@ -57,19 +72,22 @@ func (e *ErrOpenDatastore) Unwrap() error {
 	return e.Err
 }
 
-// ErrClientUnavailable is returned by DatabaseKVStore when the given
-// storage.Backend does not implement ClientBackend, so there is no go-qrdb
-// client to scope a named database against. Every storage.Backend Open
-// returns implements ClientBackend; this guards a caller-constructed
-// storage.Backend that bypassed Open (e.g. a bare in-memory or file backend
-// with no go-qrdb client behind it).
-type ErrClientUnavailable struct {
-	Backend string
+// ErrDialRemote wraps a failure to build, or connect, the client for a
+// remote datastore.
+type ErrDialRemote struct {
+	Transport string
+	Address   string
+	Err       error
 }
 
 // Error returns the error message.
-func (e *ErrClientUnavailable) Error() string {
-	return fmt.Sprintf("datastore: %s does not expose a go-qrdb client (ClientBackend); open it via datastore.Open", e.Backend)
+func (e *ErrDialRemote) Error() string {
+	return fmt.Sprintf("datastore: failed to dial %s datastore at %q: %v", e.Transport, e.Address, e.Err)
+}
+
+// Unwrap exposes Err so errors.Is/errors.As can reach it.
+func (e *ErrDialRemote) Unwrap() error {
+	return e.Err
 }
 
 // ErrEnsureDatabase wraps a failure to confirm or create the named go-qrdb
@@ -103,5 +121,22 @@ func (e *ErrDatabaseScope) Error() string {
 
 // Unwrap exposes Err so errors.Is/errors.As can reach it.
 func (e *ErrDatabaseScope) Unwrap() error {
+	return e.Err
+}
+
+// ErrCallContext wraps a failure to derive the context a call into go-qrdb
+// runs on (WithCallContext) -- an embedded node with no service principal,
+// for instance. The call never reaches go-qrdb.
+type ErrCallContext struct {
+	Err error
+}
+
+// Error returns the error message.
+func (e *ErrCallContext) Error() string {
+	return fmt.Sprintf("datastore: failed to derive the call context: %v", e.Err)
+}
+
+// Unwrap exposes Err so errors.Is/errors.As can reach it.
+func (e *ErrCallContext) Unwrap() error {
 	return e.Err
 }

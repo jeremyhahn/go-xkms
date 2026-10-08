@@ -62,10 +62,33 @@ func (m *MockAccountDAO) Get(ctx context.Context, id uint64) (*entities.ACMEAcco
 	return args.Get(0).(*entities.ACMEAccount), args.Error(1)
 }
 
+// GetByNaturalKey mocks the GetByNaturalKey method.
+func (m *MockAccountDAO) GetByNaturalKey(ctx context.Context, value string) (*entities.ACMEAccount, error) {
+	args := m.Called(ctx, value)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*entities.ACMEAccount), args.Error(1)
+}
+
 // Delete mocks the Delete method.
 func (m *MockAccountDAO) Delete(ctx context.Context, entity *entities.ACMEAccount) error {
 	args := m.Called(ctx, entity)
 	return args.Error(0)
+}
+
+// CompareAndSwap mocks the CompareAndSwap method. The bool reports whether
+// this call wrote next.
+func (m *MockAccountDAO) CompareAndSwap(ctx context.Context, expected, next *entities.ACMEAccount) (bool, error) {
+	args := m.Called(ctx, expected, next)
+	return args.Bool(0), args.Error(1)
+}
+
+// DeleteIfMatch mocks the DeleteIfMatch method. The bool reports whether
+// this call deleted entity.
+func (m *MockAccountDAO) DeleteIfMatch(ctx context.Context, entity *entities.ACMEAccount) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
 }
 
 // Count mocks the Count method.
@@ -198,10 +221,33 @@ func (m *MockOrderDAO) Get(ctx context.Context, id uint64) (*entities.ACMEOrder,
 	return args.Get(0).(*entities.ACMEOrder), args.Error(1)
 }
 
+// GetByNaturalKey mocks the GetByNaturalKey method.
+func (m *MockOrderDAO) GetByNaturalKey(ctx context.Context, value string) (*entities.ACMEOrder, error) {
+	args := m.Called(ctx, value)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*entities.ACMEOrder), args.Error(1)
+}
+
 // Delete mocks the Delete method.
 func (m *MockOrderDAO) Delete(ctx context.Context, entity *entities.ACMEOrder) error {
 	args := m.Called(ctx, entity)
 	return args.Error(0)
+}
+
+// CompareAndSwap mocks the CompareAndSwap method. The bool reports whether
+// this call wrote next.
+func (m *MockOrderDAO) CompareAndSwap(ctx context.Context, expected, next *entities.ACMEOrder) (bool, error) {
+	args := m.Called(ctx, expected, next)
+	return args.Bool(0), args.Error(1)
+}
+
+// DeleteIfMatch mocks the DeleteIfMatch method. The bool reports whether
+// this call deleted entity.
+func (m *MockOrderDAO) DeleteIfMatch(ctx context.Context, entity *entities.ACMEOrder) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
 }
 
 // Count mocks the Count method.
@@ -334,10 +380,33 @@ func (m *MockAuthorizationDAO) Get(ctx context.Context, id uint64) (*entities.AC
 	return args.Get(0).(*entities.ACMEAuthorization), args.Error(1)
 }
 
+// GetByNaturalKey mocks the GetByNaturalKey method.
+func (m *MockAuthorizationDAO) GetByNaturalKey(ctx context.Context, value string) (*entities.ACMEAuthorization, error) {
+	args := m.Called(ctx, value)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*entities.ACMEAuthorization), args.Error(1)
+}
+
 // Delete mocks the Delete method.
 func (m *MockAuthorizationDAO) Delete(ctx context.Context, entity *entities.ACMEAuthorization) error {
 	args := m.Called(ctx, entity)
 	return args.Error(0)
+}
+
+// CompareAndSwap mocks the CompareAndSwap method. The bool reports whether
+// this call wrote next.
+func (m *MockAuthorizationDAO) CompareAndSwap(ctx context.Context, expected, next *entities.ACMEAuthorization) (bool, error) {
+	args := m.Called(ctx, expected, next)
+	return args.Bool(0), args.Error(1)
+}
+
+// DeleteIfMatch mocks the DeleteIfMatch method. The bool reports whether
+// this call deleted entity.
+func (m *MockAuthorizationDAO) DeleteIfMatch(ctx context.Context, entity *entities.ACMEAuthorization) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
 }
 
 // Count mocks the Count method.
@@ -470,10 +539,33 @@ func (m *MockChallengeDAO) Get(ctx context.Context, id uint64) (*entities.ACMECh
 	return args.Get(0).(*entities.ACMEChallenge), args.Error(1)
 }
 
+// GetByNaturalKey mocks the GetByNaturalKey method.
+func (m *MockChallengeDAO) GetByNaturalKey(ctx context.Context, value string) (*entities.ACMEChallenge, error) {
+	args := m.Called(ctx, value)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*entities.ACMEChallenge), args.Error(1)
+}
+
 // Delete mocks the Delete method.
 func (m *MockChallengeDAO) Delete(ctx context.Context, entity *entities.ACMEChallenge) error {
 	args := m.Called(ctx, entity)
 	return args.Error(0)
+}
+
+// CompareAndSwap mocks the CompareAndSwap method. The bool reports whether
+// this call wrote next.
+func (m *MockChallengeDAO) CompareAndSwap(ctx context.Context, expected, next *entities.ACMEChallenge) (bool, error) {
+	args := m.Called(ctx, expected, next)
+	return args.Bool(0), args.Error(1)
+}
+
+// DeleteIfMatch mocks the DeleteIfMatch method. The bool reports whether
+// this call deleted entity.
+func (m *MockChallengeDAO) DeleteIfMatch(ctx context.Context, entity *entities.ACMEChallenge) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
 }
 
 // Count mocks the Count method.
@@ -606,10 +698,33 @@ func (m *MockCertificateDAO) Get(ctx context.Context, id uint64) (*entities.ACME
 	return args.Get(0).(*entities.ACMECertificate), args.Error(1)
 }
 
+// GetByNaturalKey mocks the GetByNaturalKey method.
+func (m *MockCertificateDAO) GetByNaturalKey(ctx context.Context, value string) (*entities.ACMECertificate, error) {
+	args := m.Called(ctx, value)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*entities.ACMECertificate), args.Error(1)
+}
+
 // Delete mocks the Delete method.
 func (m *MockCertificateDAO) Delete(ctx context.Context, entity *entities.ACMECertificate) error {
 	args := m.Called(ctx, entity)
 	return args.Error(0)
+}
+
+// CompareAndSwap mocks the CompareAndSwap method. The bool reports whether
+// this call wrote next.
+func (m *MockCertificateDAO) CompareAndSwap(ctx context.Context, expected, next *entities.ACMECertificate) (bool, error) {
+	args := m.Called(ctx, expected, next)
+	return args.Bool(0), args.Error(1)
+}
+
+// DeleteIfMatch mocks the DeleteIfMatch method. The bool reports whether
+// this call deleted entity.
+func (m *MockCertificateDAO) DeleteIfMatch(ctx context.Context, entity *entities.ACMECertificate) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
 }
 
 // Count mocks the Count method.
@@ -742,10 +857,33 @@ func (m *MockNonceDAO) Get(ctx context.Context, id uint64) (*entities.ACMENonce,
 	return args.Get(0).(*entities.ACMENonce), args.Error(1)
 }
 
+// GetByNaturalKey mocks the GetByNaturalKey method.
+func (m *MockNonceDAO) GetByNaturalKey(ctx context.Context, value string) (*entities.ACMENonce, error) {
+	args := m.Called(ctx, value)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*entities.ACMENonce), args.Error(1)
+}
+
 // Delete mocks the Delete method.
 func (m *MockNonceDAO) Delete(ctx context.Context, entity *entities.ACMENonce) error {
 	args := m.Called(ctx, entity)
 	return args.Error(0)
+}
+
+// CompareAndSwap mocks the CompareAndSwap method. The bool reports whether
+// this call wrote next.
+func (m *MockNonceDAO) CompareAndSwap(ctx context.Context, expected, next *entities.ACMENonce) (bool, error) {
+	args := m.Called(ctx, expected, next)
+	return args.Bool(0), args.Error(1)
+}
+
+// DeleteIfMatch mocks the DeleteIfMatch method. The bool reports whether
+// this call deleted entity.
+func (m *MockNonceDAO) DeleteIfMatch(ctx context.Context, entity *entities.ACMENonce) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
 }
 
 // Count mocks the Count method.
@@ -879,10 +1017,33 @@ func (m *MockExternalAccountBindingDAO) Get(ctx context.Context, id uint64) (*en
 	return args.Get(0).(*entities.ExternalAccountBinding), args.Error(1)
 }
 
+// GetByNaturalKey mocks the GetByNaturalKey method.
+func (m *MockExternalAccountBindingDAO) GetByNaturalKey(ctx context.Context, value string) (*entities.ExternalAccountBinding, error) {
+	args := m.Called(ctx, value)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*entities.ExternalAccountBinding), args.Error(1)
+}
+
 // Delete mocks the Delete method.
 func (m *MockExternalAccountBindingDAO) Delete(ctx context.Context, entity *entities.ExternalAccountBinding) error {
 	args := m.Called(ctx, entity)
 	return args.Error(0)
+}
+
+// CompareAndSwap mocks the CompareAndSwap method. The bool reports whether
+// this call wrote next.
+func (m *MockExternalAccountBindingDAO) CompareAndSwap(ctx context.Context, expected, next *entities.ExternalAccountBinding) (bool, error) {
+	args := m.Called(ctx, expected, next)
+	return args.Bool(0), args.Error(1)
+}
+
+// DeleteIfMatch mocks the DeleteIfMatch method. The bool reports whether
+// this call deleted entity.
+func (m *MockExternalAccountBindingDAO) DeleteIfMatch(ctx context.Context, entity *entities.ExternalAccountBinding) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
 }
 
 // Count mocks the Count method.
@@ -1015,10 +1176,33 @@ func (m *MockTenantDAO) Get(ctx context.Context, id uint64) (*entities.Tenant, e
 	return args.Get(0).(*entities.Tenant), args.Error(1)
 }
 
+// GetByNaturalKey mocks the GetByNaturalKey method.
+func (m *MockTenantDAO) GetByNaturalKey(ctx context.Context, value string) (*entities.Tenant, error) {
+	args := m.Called(ctx, value)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*entities.Tenant), args.Error(1)
+}
+
 // Delete mocks the Delete method.
 func (m *MockTenantDAO) Delete(ctx context.Context, entity *entities.Tenant) error {
 	args := m.Called(ctx, entity)
 	return args.Error(0)
+}
+
+// CompareAndSwap mocks the CompareAndSwap method. The bool reports whether
+// this call wrote next.
+func (m *MockTenantDAO) CompareAndSwap(ctx context.Context, expected, next *entities.Tenant) (bool, error) {
+	args := m.Called(ctx, expected, next)
+	return args.Bool(0), args.Error(1)
+}
+
+// DeleteIfMatch mocks the DeleteIfMatch method. The bool reports whether
+// this call deleted entity.
+func (m *MockTenantDAO) DeleteIfMatch(ctx context.Context, entity *entities.Tenant) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
 }
 
 // Count mocks the Count method.

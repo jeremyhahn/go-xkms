@@ -185,11 +185,7 @@ func TestInitializeCA_ClusterKeyStrategyRoutesKeystore(t *testing.T) {
 	})
 	s.ctx = context.Background()
 	require.Empty(t, s.backends, "the cluster-ACME branch must never consult s.backends")
-	// newMinimalServer bypasses New(), so s.qrdbStorage is never built; give
-	// this test a real one to resolve createStorage against.
-	var err error
-	s.qrdbStorage, err = storage.NewMemoryBackend()
-	require.NoError(t, err)
+	openInMemoryDatastore(t, s)
 
 	strategy, err := clustercapkg.NewKeyStrategy(clustercapkg.KeyStrategyBarrier)
 	require.NoError(t, err)

@@ -40,7 +40,7 @@ import (
 // CLI flag.
 func mustSecret(t *testing.T, s string) *secure.Secret {
 	t.Helper()
-	sec, err := secure.NewSecret([]byte(s))
+	sec, err := secure.NewSecret(t.Context(), []byte(s))
 	if err != nil {
 		t.Fatalf("secure.NewSecret: %v", err)
 	}
@@ -294,65 +294,17 @@ func (m *authMockClient) GeneratePIVCSR(context.Context, *transport.GeneratePIVC
 	return &transport.GeneratePIVCSRResponse{}, nil
 }
 
-// Barrier operations stub implementations
-func (m *authMockClient) BarrierInitialize(context.Context, *transport.BarrierInitializeRequest) error {
-	return nil
-}
-func (m *authMockClient) BarrierUnseal(context.Context, *transport.BarrierUnsealRequest) error {
-	return nil
-}
 func (m *authMockClient) BarrierSeal(context.Context) error {
 	return nil
 }
-func (m *authMockClient) BarrierStatus(context.Context) (*transport.BarrierStatusResponse, error) {
-	return &transport.BarrierStatusResponse{}, nil
-}
+
 func (m *authMockClient) BootstrapListenerKeys(context.Context) (*transport.BootstrapListenerKeysResponse, error) {
 	return &transport.BootstrapListenerKeysResponse{}, nil
-}
-func (m *authMockClient) BarrierInitializeShamir(context.Context, *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	return nil, nil
-}
-func (m *authMockClient) BarrierUnsealWithShare(context.Context, *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	return nil, nil
-}
-func (m *authMockClient) BarrierUnsealWithShares(context.Context, *transport.BarrierUnsealSharesRequest) error {
-	return nil
-}
-
-// BarrierRekey re-encrypts the barrier with a new root key.
-func (m *authMockClient) BarrierRekey(_ context.Context, _ *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	return nil, nil
-}
-
-// BarrierGenerateRecoveryKeys generates recovery keys.
-func (m *authMockClient) BarrierGenerateRecoveryKeys(_ context.Context, _ *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	return nil, nil
-}
-
-// BarrierEnableEncryption enables barrier encryption.
-func (m *authMockClient) BarrierEnableEncryption(_ context.Context, _ *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
-	return nil, nil
-}
-
-// BarrierRecoverWithKeys recovers the barrier using recovery keys.
-func (m *authMockClient) BarrierRecoverWithKeys(_ context.Context, _ *transport.BarrierRecoverWithKeysRequest) error {
-	return nil
 }
 
 // BarrierDeleteRecoveryKeys deletes all recovery keys.
 func (m *authMockClient) BarrierDeleteRecoveryKeys(_ context.Context) error {
 	return nil
-}
-
-// BarrierHasRecoveryKeys checks if recovery keys exist.
-func (m *authMockClient) BarrierHasRecoveryKeys(_ context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	return nil, nil
-}
-
-// BarrierGenerateRootToken generates a root token.
-func (m *authMockClient) BarrierGenerateRootToken(_ context.Context, _ *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	return nil, nil
 }
 
 // PIN operations stub implementations

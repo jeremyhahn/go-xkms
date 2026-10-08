@@ -20,6 +20,7 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth_factors"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -210,8 +211,8 @@ func newTestWebAuthnService(t *testing.T) *xkmswebauthn.Service {
 		RPDisplayName: "test",
 		RPOrigins:     []string{"https://localhost"},
 	}
-	users := xkmswebauthn.NewMemoryUserStore()
-	creds := xkmswebauthn.NewMemoryCredentialStore()
+	stores := webauthntest.NewStores(t)
+	users, creds := stores.Users, stores.Credentials
 	sessions := xkmswebauthn.NewMemorySessionStore()
 	svc, err := xkmswebauthn.NewService(xkmswebauthn.ServiceParams{
 		Config: cfg, UserStore: users, SessionStore: sessions, CredentialStore: creds,

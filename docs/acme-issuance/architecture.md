@@ -1,6 +1,6 @@
 # ACME Issuance — Architecture
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## The problem
 
@@ -105,7 +105,7 @@ Rejected alternatives:
 | Nonce service | `pkg/acme/nonce` |
 | Challenge implementations | `pkg/acme/challenges/{http-01,dns-01,device-attest-01,enroll-01,endorse-01}` |
 | Issuance | `pkg/acme/server/handlers.OrderFinalizeHandler` calls `s.ca` (`pkg/ca`) directly; `pkg/acme/issuance` is not on this path — see Data flow below |
-| Storage | `pkg/acme/storage`, `pkg/acme/qrdb` (through `go-qrdb/sdk/go`) |
+| Storage | `pkg/acme/storage` — `objstore.NewFactory` over the server datastore's go-qrdb DAO factory (`pkg/datastore` `DAOFactory`) |
 | Identifier policy, CAA | `pkg/acme/policy`, `pkg/acme/server/caa.go` — both wired, see Trust boundaries |
 | Rate limits, request body cap | `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` — wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`), keyed per client IP; the tenant and per-category limiters (`tenant_rate_limiter.go`) keyed on verified accounts; `pkg/acme/server/request_body.go`'s `RequestBodyMiddleware` reads every body once, capped at 256 KiB, ahead of all of them; see Trust boundaries |
 | Circuit breakers, degradation cache | `pkg/acme/server/circuitbreaker` (breakers, `Manager`, the bounded per-target groups in `target.go`, the HTTP middleware, and the `WrapChallengeVerifier`/`WrapChallengeVerifierPerTarget`/`WrapLogSubmitter`/`WrapKMSService` decorators), `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers` (the shared challenge-verifier wrapping helper), `pkg/acme/server/degradation` (the cache `GET /acme/directory` and `GET /acme/ca-bundle` fall back to) — wired into both xkmsd and the standalone `TrustedCA`; see Trust boundaries |

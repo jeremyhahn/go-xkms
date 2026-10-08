@@ -20,14 +20,15 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
 )
 
 // TestNewDAOStore_RoundTripsThroughTheAlias proves the re-exported
-// constructor builds a working, pkg/oidc.TokenStore-satisfying store over a
-// go-qrdb KVStore, not merely a type that compiles.
+// constructor builds a working, pkg/oidc.TokenStore-satisfying store on the
+// DAO factory an SDK host builds, not merely a type that compiles.
 func TestNewDAOStore_RoundTripsThroughTheAlias(t *testing.T) {
-	store, err := oidc.NewDAOStore(qrdbsdk.NewMemoryKVStore())
+	store, err := oidc.NewDAOStore(xkms.NewStoreDAOFactory(qrdbsdk.NewMemoryKVStore()))
 	if err != nil {
 		t.Fatalf("NewDAOStore: %v", err)
 	}

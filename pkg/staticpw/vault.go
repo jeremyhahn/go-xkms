@@ -260,8 +260,8 @@ type vaultFactor struct {
 
 // validate checks a credential's shape for its type. Enrollment also needs
 // a passkey's PRF salt.
-func (c VaultCredential) validate(enrolling bool) error {
-	secretLen, err := secretSize(c.Secret)
+func (c VaultCredential) validate(ctx context.Context, enrolling bool) error {
+	secretLen, err := secretSize(ctx, c.Secret)
 	if err != nil {
 		return err
 	}
@@ -332,11 +332,11 @@ func (e *VaultKeyError) Is(target error) bool { return target == ErrVaultInvalid
 
 // secretSize returns the length of the plaintext secret holds, or 0 when
 // secret is nil (no credential presented).
-func secretSize(secret *secure.Secret) (int, error) {
+func secretSize(ctx context.Context, secret *secure.Secret) (int, error) {
 	if secret == nil {
 		return 0, nil
 	}
-	buf, err := secret.Open()
+	buf, err := secret.Open(ctx)
 	if err != nil {
 		return 0, &VaultCryptoError{Op: "open", Err: err}
 	}
@@ -426,7 +426,7 @@ func (k *vaultKeyring) aad(factorID string) []byte {
 }
 
 // wrap builds a factor of cred's type wrapping dek.
-func (k *vaultKeyring) wrap(cred VaultCredential, dek []byte) (*vaultFactor, error) {
+func (k *vaultKeyring) wrap(ctx context.Context, cred VaultCredential, dek []byte) (*vaultFactor, error) {
 	id, err := randomHex(factorIDBytes)
 	if err != nil {
 		return nil, err
@@ -454,14 +454,14 @@ func (k *vaultKeyring) wrap(cred VaultCredential, dek []byte) (*vaultFactor, err
 			return nil, err
 		}
 		// NewSecret wipes sealed; only its sealed form is stored.
-		keySecret, err := secure.NewSecret(sealed)
+		keySecret, err := secure.NewSecret(ctx, sealed)
 		if err != nil {
 			return nil, &VaultCryptoError{Op: "seal", Err: err}
 		}
 		defer keySecret.Destroy()
 		secret = keySecret
 	}
-	kek, err := f.kek(secret)
+	kek, err := f.kek(ctx, secret)
 	if err != nil {
 		return nil, err
 	}
@@ -475,8 +475,8 @@ func (k *vaultKeyring) wrap(cred VaultCredential, dek []byte) (*vaultFactor, err
 
 // unwrap returns the DEK f wraps, or ErrVaultCredentialRejected when secret
 // is not f's.
-func (k *vaultKeyring) unwrap(f *vaultFactor, secret *secure.Secret) ([]byte, error) {
-	kek, err := f.kek(secret)
+func (k *vaultKeyring) unwrap(ctx context.Context, f *vaultFactor, secret *secure.Secret) ([]byte, error) {
+	kek, err := f.kek(ctx, secret)
 	if err != nil {
 		return nil, err
 	}
@@ -521,11 +521,11 @@ func sealKeyFactor(f *vaultFactor, cred VaultCredential) ([]byte, error) {
 
 // kek derives the factor's key-encryption key from secret, opening it only
 // for the duration of the derivation.
-func (f *vaultFactor) kek(secret *secure.Secret) ([]byte, error) {
+func (f *vaultFactor) kek(ctx context.Context, secret *secure.Secret) ([]byte, error) {
 	if secret == nil {
 		return nil, &VaultCryptoError{Op: "kdf", Err: ErrVaultInvalidCredential}
 	}
-	buf, err := secret.Open()
+	buf, err := secret.Open(ctx)
 	if err != nil {
 		return nil, &VaultCryptoError{Op: "open", Err: err}
 	}
@@ -575,7 +575,7 @@ func hkdfKey(secret, salt []byte, info string) ([]byte, error) {
 
 // newRecoveryCode returns a fresh recovery code for display ("ABCD-EFGH-…",
 // 160 bits) and its normalized secret, sealed in protected memory.
-func newRecoveryCode() (display string, secret *secure.Secret, err error) {
+func newRecoveryCode(ctx context.Context) (display string, secret *secure.Secret, err error) {
 	raw, err := randomBytes(recoveryCodeBytes)
 	if err != nil {
 		return "", nil, err
@@ -585,7 +585,7 @@ func newRecoveryCode() (display string, secret *secure.Secret, err error) {
 	for i := 0; i < len(encoded); i += recoveryGroupWidth {
 		groups = append(groups, encoded[i:min(i+recoveryGroupWidth, len(encoded))])
 	}
-	sealed, err := secure.NewSecret([]byte(encoded))
+	sealed, err := secure.NewSecret(ctx, []byte(encoded))
 	if err != nil {
 		return "", nil, &VaultCryptoError{Op: "seal", Err: err}
 	}

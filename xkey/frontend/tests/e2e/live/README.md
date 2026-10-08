@@ -84,7 +84,7 @@ the real backend to be meaningful:
 - Key management against remote backends
 - Admin backends list / status
 - OIDC flows that require the server
-- Custodian / Share / Tenant ceremonies
+- Tenant lifecycle
 
 Purely local features (local FIDO2 virtual authenticator, TPM, local
 password store, etc.) are covered by the mocked-UI tests and do not

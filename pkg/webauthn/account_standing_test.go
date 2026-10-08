@@ -42,12 +42,7 @@ var refusedStates = []qrdbsdk.Lifecycle{
 // setStanding rewrites the standing of the memory-store account email names.
 func (f *enrollFixture) setStanding(t *testing.T, email string, state qrdbsdk.Lifecycle, methods []string) {
 	t.Helper()
-	user, err := f.users.GetByEmail(context.Background(), email)
-	require.NoError(t, err)
-	du, ok := user.(*DefaultUser)
-	require.True(t, ok, "memory store holds *DefaultUser")
-	du.SetLifecycle(state)
-	du.SetAuthMethods(methods)
+	f.accounts.setStanding(t, "system", email, state, methods)
 }
 
 // beginAssertion begins a user-identified login for email and returns the
@@ -126,7 +121,7 @@ func TestAccountNotActiveError_Error(t *testing.T) {
 // dropped when it was materialized, so nothing downstream could refuse.
 func TestQRDBAdapter_MaterializeCarriesStanding(t *testing.T) {
 	ctx := context.Background()
-	users, _, client, _ := newTestAdapter(t)
+	users, _, client := newTestAdapter(t)
 	created, err := users.Create(ctx, "standing@example.com", "Standing")
 	require.NoError(t, err)
 	assert.Equal(t, qrdbsdk.LifecycleActive, created.Lifecycle())

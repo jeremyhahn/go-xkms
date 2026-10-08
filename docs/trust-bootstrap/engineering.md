@@ -295,8 +295,8 @@ bootstrap:
 `pkg/server/bootstrap_key_custody.go` resolves each suite's key on every boot,
 in this order:
 
-1. **Barrier configured** (`s.barrier != nil`, adopted from the embedded qrdb
-   node or built by `initializeBarrier` — either way the same `*seal.Barrier`):
+1. **Barrier configured** (`s.barrier != nil`, the embedded qrdb node's own
+   system barrier, a `*seal.Barrier`):
    load the hex-encoded key already sealed under `bootstrap-noise/x25519-static-key`
    / `bootstrap-noise/p256-static-key` in the barrier's own key-value store
    (`seal.Barrier.Get`/`Put`, the same mechanism `pkg/server/credentials`

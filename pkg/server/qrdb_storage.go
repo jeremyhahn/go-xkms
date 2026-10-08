@@ -14,6 +14,7 @@
 package server
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
@@ -37,15 +38,18 @@ import (
 //	                remote cluster; this process hosts no local engine.
 //
 // The standalone path is Server-specific (the unified API server, its
-// modules, TLS, and node-barrier adoption -- initEmbeddedQRDBNode); the
-// remote path dials via datastore.DialRemote, the SAME Server-independent
-// implementation pkg/datastore.Open uses for callers without a *Server (the
-// SDK/library composition path) -- there is exactly one remote-dial
-// implementation (go-xkms#1345 batch 2).
+// modules, TLS, and node-barrier adoption -- initEmbeddedQRDBNode) and hands
+// the node's client to datastore.New; the remote path is datastore.Open, the
+// SAME Server-independent implementation the SDK/library composition path
+// uses -- there is exactly one remote-dial implementation.
 //
-// The resulting backend is stored on s.qrdbStorage and is owned by the server:
-// only Shutdown closes it. Per-subdir storage views are key-prefixed views over
-// this backend (see createStorage) whose Close is a no-op on the shared inner.
+// Either way the server holds the datastore (s.datastore: the client and the
+// DAO factory) and a storage backend over the datastore's client
+// (s.qrdbStorage). The backend is built over the client's KV rather than the
+// DAO factory because the seal barrier's views need fenced creates, which
+// the factory's KVStore does not carry. Per-subdir storage views are
+// key-prefixed views over this backend (see createStorage) whose Close is a
+// no-op on the shared inner; only Shutdown closes the datastore.
 func (s *Server) initializeQRDBStorage() error {
 	mode := strings.ToLower(strings.TrimSpace(s.config.Datastore.Mode))
 	if mode == "" {
@@ -55,46 +59,68 @@ func (s *Server) initializeQRDBStorage() error {
 	switch mode {
 	case "standalone":
 		// Host the qrdb engine in-process as xkms's single core (storage +
-		// identity + bootstrap + clustering). The server's storage backend is
-		// the node's KV; xkms's barrier (initializeBarrier) layers over it.
+		// identity + bootstrap + clustering). The node's own barrier is
+		// xkms's barrier; initEmbeddedQRDBNode adopts it.
 		if err := s.initEmbeddedQRDBNode(); err != nil {
 			return &ErrStorageCreate{Resource: "embedded qrdb node", Err: err}
 		}
-		s.qrdbStorage = qrdbstorage.NewBackend(s.qrdbClient.KV())
+		// Feature DAOs are xkms's own persistence, as the storage backend
+		// is (storageCallContext): they run as the node's service principal.
+		ds, err := datastore.New(s.qrdbClient, s.config.Datastore,
+			datastore.WithCallContext(s.qrdbNode.ServiceContext))
+		if err != nil {
+			return &ErrStorageCreate{Resource: "standalone datastore", Err: err}
+		}
+		s.datastore = ds
 		s.logger.Info("Initialized standalone datastore",
 			"engine", s.config.Datastore.Engine, "path", s.config.Datastore.Path)
-		return nil
 
 	case "remote":
-		backend, err := datastore.DialRemote(s.ctx, s.config.Datastore.Remote)
+		ds, err := datastore.Open(s.ctx, s.config, s.logger)
 		if err != nil {
 			return &ErrStorageCreate{Resource: "remote datastore", Err: err}
 		}
-		s.qrdbStorage = backend
+		s.datastore = ds
 		s.logger.Info("Initialized remote datastore",
 			"transport", s.config.Datastore.Remote.Transport, "address", s.config.Datastore.Remote.Address)
-		return nil
 
 	default:
 		return &datastore.ErrUnsupportedDatastoreMode{Mode: s.config.Datastore.Mode}
 	}
+
+	s.qrdbStorage = qrdbstorage.NewBackend(s.datastore.Client().KV(), s.storageCallContext()...)
+	return nil
 }
 
-// closeQRDBStorage closes the shared qrdb storage backend if one was created
-// and tears down the in-process qrdb node when xkms hosts it (embedded mode).
-// It is safe to call when no qrdb backend is in use. For the embedded node the
-// storage backend wraps the node's KV client (a no-op Close), so the node
-// itself is the lifecycle owner and is closed via stopQRDBNode.
+// storageCallContext returns the options that make the shared storage
+// backend's calls xkms's own: over the embedded node they run as its service
+// principal (embeddednode.ServicePrincipal), whatever context the caller
+// passes -- a request's storage is xkms persisting what it has already
+// authorized, exactly as a remote datastore runs it under xkms's own client
+// certificate. A remote datastore needs no binding.
+func (s *Server) storageCallContext() []qrdbstorage.Option {
+	if s.qrdbNode == nil {
+		return nil
+	}
+	return []qrdbstorage.Option{qrdbstorage.WithCallContext(s.qrdbNode.ServiceContext)}
+}
+
+// closeQRDBStorage closes the shared storage backend and the datastore if
+// they were created, and tears down the in-process qrdb node when xkms hosts
+// it (embedded mode). It is safe to call when no datastore is in use. The
+// datastore closes the client it dialed (remote mode); the embedded node's
+// client is borrowed, so the node itself is the lifecycle owner and is
+// closed via stopQRDBNode after the datastore.
 func (s *Server) closeQRDBStorage() error {
-	var storageErr error
+	var errs []error
 	if s.qrdbStorage != nil {
-		storageErr = s.qrdbStorage.Close()
+		errs = append(errs, s.qrdbStorage.Close())
 		s.qrdbStorage = nil
 	}
-	if err := s.stopQRDBNode(); err != nil {
-		if storageErr == nil {
-			return err
-		}
+	if s.datastore != nil {
+		errs = append(errs, s.datastore.Close())
+		s.datastore = nil
 	}
-	return storageErr
+	errs = append(errs, s.stopQRDBNode())
+	return errors.Join(errs...)
 }

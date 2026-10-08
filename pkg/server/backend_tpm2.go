@@ -19,8 +19,8 @@ import (
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 )
 
 // vtpmStateSubdir and vtpmRunSubdir are the default vTPM state and socket
@@ -138,8 +138,9 @@ func (s *Server) initTPM2Backend() error {
 	return nil
 }
 
-// initTPMPolicyService builds the TPM policy service (pkg/tpmpolicy) over
-// the TPM2 key backend through compose.BuildTPMPolicyService -- the path an
+// initTPMPolicyService builds the TPM policy service (pkg/tpm2/policy), its
+// registry in the datastore's tpmpolicy.DatabaseName database, over the TPM2
+// key backend through compose.BuildTPMPolicyService -- the path an
 // embedding host's module takes -- and installs it as the backend's scope
 // provider, so every TPM2 key and seal runs in its tenant's TPM scope.
 // Without a TPM2 backend the service stays off and the typed reason is
@@ -151,8 +152,13 @@ func (s *Server) initTPMPolicyService() error {
 		s.logger.Info("xkms feature off", "feature", compose.FeatureTPMPolicies, "reason", disabled.Error())
 		return nil
 	}
+	daos, err := s.daoFactory(tpmpolicy.DatabaseName)
+	if err != nil {
+		return err
+	}
 	svc, err := compose.BuildTPMPolicyService(compose.TPMPolicyParams{
 		Backend: backend,
+		DAOs:    daos,
 		Storage: s.createStorage,
 		VTPM:    s.vtpmConfig(),
 		Logger:  s.logger,

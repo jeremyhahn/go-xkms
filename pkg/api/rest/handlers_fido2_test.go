@@ -15,6 +15,7 @@ package rest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -25,32 +26,26 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	pkgwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
 
-// newTestWebAuthnService builds a fully in-memory WebAuthn relying-party
-// service using the package's memory stores. This lets the SDK FIDO2 handlers
-// exercise real ceremony logic (BeginRegistration success) without hardware or
-// a browser.
+// newTestWebAuthnService builds an in-memory WebAuthn relying-party service
+// with public registration open. This lets the SDK FIDO2 handlers exercise
+// real ceremony logic (BeginRegistration success) without hardware or a
+// browser.
 func newTestWebAuthnService(t *testing.T) *pkgwebauthn.Service {
 	t.Helper()
 	allowRegistration := true
-	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
-		Config: &pkgwebauthn.Config{
-			RPID:                    "localhost",
-			RPDisplayName:           "xkms test",
-			RPOrigins:               []string{"https://localhost"},
-			AllowPublicRegistration: &allowRegistration,
-		},
-		UserStore:       pkgwebauthn.NewMemoryUserStore(),
-		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
-		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+	return buildTestWebAuthnService(t, &pkgwebauthn.Config{
+		RPID:                    "localhost",
+		RPDisplayName:           "xkms test",
+		RPOrigins:               []string{"https://localhost"},
+		AllowPublicRegistration: &allowRegistration,
 	})
-	require.NoError(t, err)
-	return svc
 }
 
 // setupFIDO2HandlerTest initializes the singleton, optionally wires a real
@@ -91,15 +86,18 @@ func setupFIDO2HandlerTest(t *testing.T, wa *pkgwebauthn.Service) *chi.Mux {
 // account by that address, proving the alias was deleted outright rather
 // than kept as a silent fallback (owner rule 2026-09-22, PR 2).
 func TestHandleSDKBeginRegistration_UsernameKeyNotRecognized(t *testing.T) {
-	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
+	waSvc := newTestWebAuthnService(t)
+	r := setupFIDO2HandlerTest(t, waSvc)
 
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/registration/begin",
 		bytes.NewReader([]byte(`{"username":"alice@example.com","display_name":"Alice"}`))))
 
-	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 	assert.NotContains(t, rr.Body.String(), "alice@example.com",
 		"the removed \"username\" key must not be read as the login key")
+	_, err := waSvc.GetUserByEmail(context.Background(), "alice@example.com")
+	require.ErrorIs(t, err, pkgwebauthn.ErrUserNotFound,
+		"no account may be created under the address the removed key carried")
 }
 
 func TestHandleSDKBeginRegistration_Success(t *testing.T) {
@@ -121,6 +119,7 @@ func TestHandleSDKBeginRegistration_Success(t *testing.T) {
 // allow_public_registration refuses an unknown email with the documented 403,
 // not a fall-through 500, matching the browser route and docs/webauthn/api.md.
 func TestHandleSDKBeginRegistration_RegistrationClosed(t *testing.T) {
+	stores := webauthntest.NewStores(t)
 	closedRP, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
 		Config: &pkgwebauthn.Config{
 			RPID:          "localhost",
@@ -128,9 +127,9 @@ func TestHandleSDKBeginRegistration_RegistrationClosed(t *testing.T) {
 			RPOrigins:     []string{"https://localhost"},
 			// AllowPublicRegistration deliberately unset: the default is closed.
 		},
-		UserStore:       pkgwebauthn.NewMemoryUserStore(),
+		UserStore:       stores.Users,
 		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
-		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err)
 
@@ -361,6 +360,7 @@ func TestHandleSDKFinishAuthentication_ServiceNotInitialized(t *testing.T) {
 // 503 with the browser route's session_limit code, not a 500.
 func TestHandleSDKBeginRegistration_SessionStoreFull(t *testing.T) {
 	allowRegistration := true
+	stores := webauthntest.NewStores(t)
 	rp, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
 		Config: &pkgwebauthn.Config{
 			RPID:                    "localhost",
@@ -368,9 +368,9 @@ func TestHandleSDKBeginRegistration_SessionStoreFull(t *testing.T) {
 			RPOrigins:               []string{"https://localhost"},
 			AllowPublicRegistration: &allowRegistration,
 		},
-		UserStore:       pkgwebauthn.NewMemoryUserStore(),
+		UserStore:       stores.Users,
 		SessionStore:    pkgwebauthn.NewMemorySessionStore(pkgwebauthn.WithMaxSessions(1)),
-		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err)
 	r := setupFIDO2HandlerTest(t, rp)

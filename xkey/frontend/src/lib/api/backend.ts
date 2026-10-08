@@ -1069,7 +1069,8 @@ export interface BarrierSealInfo {
   strategy: string;
   strategy_label: string;
   hardware_backed: boolean;
-  root_key_path: string;
+  data_dir: string;
+  root_key_entry: string;
 }
 
 export interface PINStatus {

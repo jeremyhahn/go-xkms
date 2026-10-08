@@ -71,7 +71,7 @@ func TestCA_PKCS11Key_InitAndSign(t *testing.T) {
 
 	// The provisioned token must be live: prove it with a real key generation
 	// before relying on it for the CA hierarchy.
-	probeAttrs, err := types.KeyAttributesFromConfig(keyConfig(types.AlgorithmECDSA, types.StorePKCS11))
+	probeAttrs, err := types.KeyAttributesFromConfig(t.Context(), keyConfig(types.AlgorithmECDSA, types.StorePKCS11))
 	require.NoError(t, err)
 	probeAttrs.CN = "pkcs11-probe"
 	_, err = p11Backend.GenerateECDSA(context.Background(), probeAttrs)
@@ -111,7 +111,7 @@ func TestCA_PKCS11Key_InitAndSign(t *testing.T) {
 	require.True(t, root.IsInitialized())
 
 	// The secondary key physically lives in the HSM.
-	hsmAttrs, err := types.KeyAttributesFromConfig(keyConfig(types.AlgorithmECDSA, types.StorePKCS11))
+	hsmAttrs, err := types.KeyAttributesFromConfig(t.Context(), keyConfig(types.AlgorithmECDSA, types.StorePKCS11))
 	require.NoError(t, err)
 	hsmAttrs.CN = cn
 	hsmAttrs.KeyType = types.KeyTypeCA

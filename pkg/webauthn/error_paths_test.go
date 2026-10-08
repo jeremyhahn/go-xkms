@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/go-webauthn/webauthn/webauthn"
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
 // errBoom is a generic non-sentinel storage fault used to exercise the
@@ -184,8 +183,9 @@ func newServiceWith(t *testing.T, us UserStore, ss SessionStore, cs CredentialSt
 // ----- BeginRegistration error branches -----
 
 func TestService_BeginRegistration_GetByEmailError(t *testing.T) {
-	us := &faultyUserStore{inner: NewMemoryUserStore(), getByEmailErr: errBoom}
-	svc := newServiceWith(t, us, NewMemorySessionStore(), NewMemoryCredentialStore())
+	users, creds := newTestStores(t)
+	us := &faultyUserStore{inner: users, getByEmailErr: errBoom}
+	svc := newServiceWith(t, us, NewMemorySessionStore(), creds)
 
 	_, _, err := svc.BeginRegistration(context.Background(), "x@example.com", "X")
 	if err == nil {
@@ -202,8 +202,9 @@ func TestService_BeginRegistration_GetByEmailError(t *testing.T) {
 
 func TestService_BeginRegistration_CreateError(t *testing.T) {
 	// GetByEmail returns not-found (memory store, no user), Create fails.
-	us := &faultyUserStore{inner: NewMemoryUserStore(), createErr: errBoom}
-	svc := newServiceWith(t, us, NewMemorySessionStore(), NewMemoryCredentialStore())
+	users, creds := newTestStores(t)
+	us := &faultyUserStore{inner: users, createErr: errBoom}
+	svc := newServiceWith(t, us, NewMemorySessionStore(), creds)
 
 	_, _, err := svc.BeginRegistration(context.Background(), "new@example.com", "New")
 	if !errors.Is(err, errBoom) {
@@ -212,8 +213,9 @@ func TestService_BeginRegistration_CreateError(t *testing.T) {
 }
 
 func TestService_BeginRegistration_GetCredentialsError(t *testing.T) {
-	cs := &faultyCredStore{inner: NewMemoryCredentialStore(), getByUserIDErr: errBoom}
-	svc := newServiceWith(t, NewMemoryUserStore(), NewMemorySessionStore(), cs)
+	users, creds := newTestStores(t)
+	cs := &faultyCredStore{inner: creds, getByUserIDErr: errBoom}
+	svc := newServiceWith(t, users, NewMemorySessionStore(), cs)
 
 	_, _, err := svc.BeginRegistration(context.Background(), "c@example.com", "C")
 	if !errors.Is(err, errBoom) {
@@ -222,8 +224,9 @@ func TestService_BeginRegistration_GetCredentialsError(t *testing.T) {
 }
 
 func TestService_BeginRegistration_SaveSessionError(t *testing.T) {
+	users, creds := newTestStores(t)
 	ss := &faultySessionStore{inner: NewMemorySessionStore(), saveErr: errBoom}
-	svc := newServiceWith(t, NewMemoryUserStore(), ss, NewMemoryCredentialStore())
+	svc := newServiceWith(t, users, ss, creds)
 
 	_, _, err := svc.BeginRegistration(context.Background(), "s@example.com", "S")
 	if !errors.Is(err, errBoom) {
@@ -234,8 +237,9 @@ func TestService_BeginRegistration_SaveSessionError(t *testing.T) {
 // ----- FinishRegistration error branches -----
 
 func TestService_FinishRegistration_GetSessionError(t *testing.T) {
+	users, creds := newTestStores(t)
 	ss := &faultySessionStore{inner: NewMemorySessionStore(), getErr: errBoom}
-	svc := newServiceWith(t, NewMemoryUserStore(), ss, NewMemoryCredentialStore())
+	svc := newServiceWith(t, users, ss, creds)
 
 	_, _, err := svc.FinishRegistration(context.Background(), "missing", nil)
 	if !errors.Is(err, errBoom) {
@@ -246,8 +250,9 @@ func TestService_FinishRegistration_GetSessionError(t *testing.T) {
 func TestService_FinishRegistration_GetUserError(t *testing.T) {
 	ctx := context.Background()
 	mem := NewMemorySessionStore()
-	us := &faultyUserStore{inner: NewMemoryUserStore(), getByIDErr: errBoom}
-	svc := newServiceWith(t, us, mem, NewMemoryCredentialStore())
+	users, creds := newTestStores(t)
+	us := &faultyUserStore{inner: users, getByIDErr: errBoom}
+	svc := newServiceWith(t, us, mem, creds)
 
 	// Stash a session so Get succeeds and we reach the GetByID branch.
 	sessionID, err := mem.Save(ctx, &webauthn.SessionData{UserID: []byte("1")})
@@ -264,8 +269,9 @@ func TestService_FinishRegistration_GetUserError(t *testing.T) {
 // ----- BeginLogin error branches -----
 
 func TestService_BeginLogin_GetUserError(t *testing.T) {
-	us := &faultyUserStore{inner: NewMemoryUserStore(), getByIDErr: errBoom}
-	svc := newServiceWith(t, us, NewMemorySessionStore(), NewMemoryCredentialStore())
+	users, creds := newTestStores(t)
+	us := &faultyUserStore{inner: users, getByIDErr: errBoom}
+	svc := newServiceWith(t, us, NewMemorySessionStore(), creds)
 
 	_, _, err := svc.BeginLogin(context.Background(), []byte("1"))
 	if !errors.Is(err, errBoom) {
@@ -275,13 +281,13 @@ func TestService_BeginLogin_GetUserError(t *testing.T) {
 
 func TestService_BeginLogin_GetCredentialsError(t *testing.T) {
 	ctx := context.Background()
-	mem := NewMemoryUserStore()
-	user, err := mem.Create(ctx, "bl@example.com", "BL")
+	users, creds := newTestStores(t)
+	user, err := users.Create(ctx, "bl@example.com", "BL")
 	if err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	cs := &faultyCredStore{inner: NewMemoryCredentialStore(), getByUserIDErr: errBoom}
-	svc := newServiceWith(t, mem, NewMemorySessionStore(), cs)
+	cs := &faultyCredStore{inner: creds, getByUserIDErr: errBoom}
+	svc := newServiceWith(t, users, NewMemorySessionStore(), cs)
 
 	_, _, err = svc.BeginLogin(ctx, user.WebAuthnID())
 	if !errors.Is(err, errBoom) {
@@ -291,8 +297,9 @@ func TestService_BeginLogin_GetCredentialsError(t *testing.T) {
 
 func TestService_BeginLogin_SaveSessionError_Discoverable(t *testing.T) {
 	// Discoverable flow (nil userID) reaches session.Save directly.
+	users, creds := newTestStores(t)
 	ss := &faultySessionStore{inner: NewMemorySessionStore(), saveErr: errBoom}
-	svc := newServiceWith(t, NewMemoryUserStore(), ss, NewMemoryCredentialStore())
+	svc := newServiceWith(t, users, ss, creds)
 
 	_, _, err := svc.BeginLogin(context.Background(), nil)
 	if !errors.Is(err, errBoom) {
@@ -303,8 +310,9 @@ func TestService_BeginLogin_SaveSessionError_Discoverable(t *testing.T) {
 // ----- FinishLogin error branches -----
 
 func TestService_FinishLogin_GetSessionError(t *testing.T) {
+	users, creds := newTestStores(t)
 	ss := &faultySessionStore{inner: NewMemorySessionStore(), getErr: errBoom}
-	svc := newServiceWith(t, NewMemoryUserStore(), ss, NewMemoryCredentialStore())
+	svc := newServiceWith(t, users, ss, creds)
 
 	_, _, err := svc.FinishLogin(context.Background(), "missing", []byte("1"), nil)
 	if !errors.Is(err, errBoom) {
@@ -315,8 +323,9 @@ func TestService_FinishLogin_GetSessionError(t *testing.T) {
 func TestService_FinishLogin_GetUserError(t *testing.T) {
 	ctx := context.Background()
 	mem := NewMemorySessionStore()
-	us := &faultyUserStore{inner: NewMemoryUserStore(), getByIDErr: errBoom}
-	svc := newServiceWith(t, us, mem, NewMemoryCredentialStore())
+	users, creds := newTestStores(t)
+	us := &faultyUserStore{inner: users, getByIDErr: errBoom}
+	svc := newServiceWith(t, us, mem, creds)
 
 	sessionID, err := mem.Save(ctx, &webauthn.SessionData{UserID: []byte("1")})
 	if err != nil {
@@ -333,8 +342,9 @@ func TestService_FinishLogin_GetUserError(t *testing.T) {
 // ----- IsRegistered error branch -----
 
 func TestService_IsRegistered_GetCredentialsError(t *testing.T) {
-	cs := &faultyCredStore{inner: NewMemoryCredentialStore(), getByUserIDErr: errBoom}
-	svc := newServiceWith(t, NewMemoryUserStore(), NewMemorySessionStore(), cs)
+	users, creds := newTestStores(t)
+	cs := &faultyCredStore{inner: creds, getByUserIDErr: errBoom}
+	svc := newServiceWith(t, users, NewMemorySessionStore(), cs)
 
 	ok, err := svc.IsRegistered(context.Background(), []byte("1"))
 	if !errors.Is(err, errBoom) {
@@ -348,8 +358,9 @@ func TestService_IsRegistered_GetCredentialsError(t *testing.T) {
 // ----- DeleteUser error branch -----
 
 func TestService_DeleteUser_DeleteCredentialsError(t *testing.T) {
-	cs := &faultyCredStore{inner: NewMemoryCredentialStore(), deleteByUserErr: errBoom}
-	svc := newServiceWith(t, NewMemoryUserStore(), NewMemorySessionStore(), cs)
+	users, creds := newTestStores(t)
+	cs := &faultyCredStore{inner: creds, deleteByUserErr: errBoom}
+	svc := newServiceWith(t, users, NewMemorySessionStore(), cs)
 
 	err := svc.DeleteUser(context.Background(), []byte("1"))
 	if !errors.Is(err, errBoom) {
@@ -361,12 +372,12 @@ func TestService_DeleteUser_DeleteCredentialsError(t *testing.T) {
 
 func TestService_DiscoverableUserHandler(t *testing.T) {
 	ctx := context.Background()
-	mem := NewMemoryUserStore()
-	user, err := mem.Create(ctx, "disc@example.com", "Disc")
+	users, creds := newTestStores(t)
+	user, err := users.Create(ctx, "disc@example.com", "Disc")
 	if err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	svc := newServiceWith(t, mem, NewMemorySessionStore(), NewMemoryCredentialStore())
+	svc := newServiceWith(t, users, NewMemorySessionStore(), creds)
 
 	handler := svc.discoverableUserHandler(ctx)
 
@@ -435,21 +446,3 @@ func TestDefaultJWTGenerator_VerifyToken_NoPublicKey(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
-
-// formatUserIDForTest sanity check used to keep id helpers honest. The
-// handle is the fixed 8-byte big-endian form of the qrdb uint64 user id.
-func TestFormatUserIDForTest_Roundtrip(t *testing.T) {
-	for _, n := range []uint64{0, 1, 42, 1 << 20} {
-		got := formatUserIDForTest(n)
-		parsed, err := UserIDFromHandle(got)
-		if err != nil {
-			t.Fatalf("decode %v: %v", got, err)
-		}
-		if parsed != n {
-			t.Fatalf("got %d want %d", parsed, n)
-		}
-	}
-}
-
-// ensure qrdbtransport import is exercised in this file for clarity.
-var _ = qrdbtransport.CreateUserRequest{}

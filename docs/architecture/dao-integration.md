@@ -14,7 +14,6 @@ Three entity stores have been migrated to the DAO pattern:
 |-------|---------|--------|-------------|
 | TPM2 BlobStore | `pkg/tpm2/store` | `BlobEntry` | `FieldHashGenerator("Name")` |
 | SignerStore | `pkg/tpm2/store` | `SignerEntry` | Custom `signerEntryIDGenerator` (xxhash64 of CN) |
-| ShareStore | `pkg/sharestore` | `ShareEntry` | Custom `shareEntryIDGenerator` (xxhash64 of composite key) |
 
 ## KVStore Adapter (`pkg/storage/kvadapter`)
 
@@ -146,15 +145,6 @@ Persists `crypto.Signer` instances as PEM-encoded PKCS8 private keys. Uses a cus
 - Entity: `SignerEntry` (ID, CN, KeyPEM, Algorithm)
 - Operations: `Get(attrs)`, `Save(attrs, signer)`, `Delete(attrs)`, `SaveSignature(opts, sig, digest)`
 - Supports RSA, ECDSA, and Ed25519 key types with PKCS8/PKCS1/EC fallback parsing
-
-### ShareStore (`pkg/sharestore`)
-
-Persists Shamir secret shares with a composite key of `ServerURL/GroupID/ShareIndex`. Uses a custom `shareEntryIDGenerator` that hashes the composite key string.
-
-- Entity: `ShareEntry` (ID, ServerURL, GroupID, ShareIndex, ShareData, Purpose, ReceivedAt, TenantID)
-- Operations: `Save(entry)`, `Load(serverURL, groupID, shareIndex)`, `Delete(...)`, `List()`, `ListByServer(url)`, `ListByGroup(id)`
-- Enforces uniqueness: `Save` checks for existing entries before writing
-- Uses `atomic.Bool` for lock-free close state tracking
 
 ## UnitOfWork for Cross-Store Atomic Operations
 

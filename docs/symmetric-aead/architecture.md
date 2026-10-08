@@ -1,6 +1,6 @@
 # Symmetric Encryption & AEAD — Architecture
 
-> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## The problem
 
@@ -180,22 +180,22 @@ caller.
 **Persistence: a durable claim, not process memory alone.** The guard's own
 tracker is process memory — its salt is drawn at first use and its entries die
 with the process — but `pkg/server`'s `initializeAEADNonceStore` attaches a
-`pkg/aeadnonce.Store` to `aead.SharedAEADNonceGuard` at startup, built over the
-same `createStorage` seam every other durable subsystem in this server uses
-(`pkg/pkcs11state`, `pkg/staticpw`). `KeyNonceGuard.UseContext` — what
+`pkg/aeadnonce.Store` to `aead.SharedAEADNonceGuard` at startup. Each claim is
+one go-qrdb DAO entity (`aead_nonce_claims`) in the `aeadnonce` database of the
+configured datastore, ensured and written as the embedded node's service
+principal. `KeyNonceGuard.UseContext` — what
 `ClaimAEADNonceIn`/`ClaimGeneratedAEADNonceIn` call, so every backend's
 `Encrypt` uses it, whether reached through `XKMSService` or directly — claims
-through that store in addition to the in-memory tracker, via
-`storage.Backend.PutIfAbsent`, so the atomic claim-then-seal property holds
+through that store in addition to the in-memory tracker, via the DAO's
+`SaveIfAbsent` (one guarded conditional create, never a read-then-write), so the atomic claim-then-seal property holds
 whether the check is the first one in the process or the millionth one after a
 restart. The store's key is `persistentEntry`, a fixed-domain HMAC over the
 key material (deliberately NOT salted with the guard's own per-process random
 salt, which would make the same pair derive a different identity after every
 restart and defeat the whole point); see `pkg/crypto/aead/key_nonce_guard.go`.
-When `Storage.Backend` is `qrdb`, the claim is replicated to every node in the
-cluster through the embedded qrdb node, exactly as `pkg/pkcs11state`'s and
-`pkg/staticpw`'s records are; with the (also supported) `pebble`/`file`/`memory`
-backends the claim is durable per node but not shared across a cluster. See
+The claim entity's ID is a hash of that entry's hex, so a second claim on one
+entry lands on the first one's entity and is refused. Every node sharing the
+datastore sees every claim. See
 [go-xkms#1201](https://github.com/jeremyhahn/go-xkms/issues/1201) for the
 spec grounding this rests on: PKCS#11 v3.2 §6.13.1–§6.13.2 (`CK_GCM_PARAMS`
 always takes a caller-supplied `pIv`; `CK_GCM_MESSAGE_PARAMS`'s `ivGenerator`

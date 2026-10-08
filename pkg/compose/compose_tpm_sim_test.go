@@ -26,7 +26,10 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/hostdeps"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 )
 
 // newSimulatorBackend opens a TPM2 key backend over the simulator.
@@ -61,12 +64,33 @@ func TestBuild_TPMBackendComposesTheTPMPolicyService(t *testing.T) {
 	assert.True(t, created.Approved)
 }
 
-// TestBuildTPMPolicyService_StorageFailure proves a registry or key store
-// that cannot open fails the build with a *FeatureBuildError.
+// TestBuildTPMPolicyService_StorageFailure proves a key store that cannot
+// open fails the build with a *FeatureBuildError.
 func TestBuildTPMPolicyService_StorageFailure(t *testing.T) {
-	_, err := BuildTPMPolicyService(TPMPolicyParams{Backend: newSimulatorBackend(t), Storage: failingStorage})
+	_, err := BuildTPMPolicyService(TPMPolicyParams{
+		Backend: newSimulatorBackend(t),
+		DAOs:    testutil.NewMemoryDAOFactory(),
+		Storage: failingStorage,
+	})
 	var buildErr *FeatureBuildError
 	require.ErrorAs(t, err, &buildErr)
 	assert.Equal(t, FeatureTPMPolicies, buildErr.Feature)
 	assert.ErrorIs(t, err, errStorageDown)
+}
+
+// TestBuildTPMPolicyService_RegistryDatabaseUnavailable proves a DAO factory
+// that does not serve the registry's database fails the build with a
+// *FeatureBuildError naming the database.
+func TestBuildTPMPolicyService_RegistryDatabaseUnavailable(t *testing.T) {
+	_, err := BuildTPMPolicyService(TPMPolicyParams{
+		Backend: newSimulatorBackend(t),
+		DAOs:    dao.NewStoreFactory(nil),
+		Storage: memoryStorage(t),
+	})
+	var buildErr *FeatureBuildError
+	require.ErrorAs(t, err, &buildErr)
+	assert.Equal(t, FeatureTPMPolicies, buildErr.Feature)
+	var unavailable *dao.DatabaseUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	assert.Equal(t, tpmpolicy.DatabaseName, unavailable.Database)
 }

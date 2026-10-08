@@ -82,54 +82,6 @@ func TestDeleteTenant_RequiresTenantService(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTenantServiceNotConfigured)
 }
 
-func TestTenantBarrierInit_NilRequest(t *testing.T) {
-	svc := &XKMSService{}
-	err := svc.TenantBarrierInit(context.Background(), nil)
-	assert.ErrorIs(t, err, ErrNilRequest)
-}
-
-func TestTenantBarrierInit_EmptyTenantID(t *testing.T) {
-	svc := &XKMSService{}
-	err := svc.TenantBarrierInit(context.Background(), &transport.TenantBarrierInitRequest{})
-	assert.ErrorIs(t, err, ErrTenantIDRequired)
-}
-
-func TestTenantBarrierInit_RequiresTenantService(t *testing.T) {
-	svc := &XKMSService{}
-	err := svc.TenantBarrierInit(context.Background(), &transport.TenantBarrierInitRequest{TenantID: "acme"})
-	assert.ErrorIs(t, err, ErrTenantServiceNotConfigured)
-}
-
-func TestTenantBarrierUnseal_NilRequest(t *testing.T) {
-	svc := &XKMSService{}
-	err := svc.TenantBarrierUnseal(context.Background(), nil)
-	assert.ErrorIs(t, err, ErrNilRequest)
-}
-
-func TestTenantBarrierUnseal_EmptyTenantID(t *testing.T) {
-	svc := &XKMSService{}
-	err := svc.TenantBarrierUnseal(context.Background(), &transport.TenantBarrierUnsealRequest{})
-	assert.ErrorIs(t, err, ErrTenantIDRequired)
-}
-
-func TestTenantBarrierUnseal_RequiresTenantService(t *testing.T) {
-	svc := &XKMSService{}
-	err := svc.TenantBarrierUnseal(context.Background(), &transport.TenantBarrierUnsealRequest{TenantID: "acme"})
-	assert.ErrorIs(t, err, ErrTenantServiceNotConfigured)
-}
-
-func TestTenantBarrierStatus_EmptyTenantID(t *testing.T) {
-	svc := &XKMSService{}
-	_, err := svc.TenantBarrierStatus(context.Background(), "")
-	assert.ErrorIs(t, err, ErrTenantIDRequired)
-}
-
-func TestTenantBarrierStatus_RequiresTenantService(t *testing.T) {
-	svc := &XKMSService{}
-	_, err := svc.TenantBarrierStatus(context.Background(), "acme")
-	assert.ErrorIs(t, err, ErrTenantServiceNotConfigured)
-}
-
 func TestUpdateTenantQuotas_RequiresTenantService(t *testing.T) {
 	svc := &XKMSService{}
 	_, err := svc.UpdateTenantQuotas(context.Background(), &transport.UpdateTenantQuotasRequest{TenantID: "acme"})

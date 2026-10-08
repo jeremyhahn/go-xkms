@@ -62,13 +62,13 @@ func TestAliasedValuesCrossTheModuleBoundary(t *testing.T) {
 	}
 
 	// Hand the xkms-SDK Buffer straight to the qrdb constructor.
-	sec, err := qrdbsecure.NewSecretFromBuffer(buf)
+	sec, err := qrdbsecure.NewSecretFromBuffer(context.Background(), buf)
 	if err != nil {
 		t.Fatalf("qrdb NewSecretFromBuffer rejected an xkms SDK Buffer: %v", err)
 	}
 	t.Cleanup(sec.Destroy)
 
-	opened, err := sec.Open()
+	opened, err := sec.Open(context.Background())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -93,13 +93,13 @@ func TestNewSecretFromBuffer_RoundTrip(t *testing.T) {
 		t.Fatalf("NewBufferFromBytes: %v", err)
 	}
 
-	sec, err := secure.NewSecretFromBuffer(buf)
+	sec, err := secure.NewSecretFromBuffer(context.Background(), buf)
 	if err != nil {
 		t.Fatalf("NewSecretFromBuffer: %v", err)
 	}
 	t.Cleanup(sec.Destroy)
 
-	opened, err := sec.Open()
+	opened, err := sec.Open(context.Background())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestNewSecretFromBuffer_ConsumesBuffer(t *testing.T) {
 		t.Fatalf("NewBufferFromBytes: %v", err)
 	}
 
-	sec, err := secure.NewSecretFromBuffer(buf)
+	sec, err := secure.NewSecretFromBuffer(context.Background(), buf)
 	if err != nil {
 		t.Fatalf("NewSecretFromBuffer: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestNewSecretFromBuffer_ConsumesBuffer(t *testing.T) {
 // TestNewSecretFromBuffer_NilBuffer is the error path: a nil buffer must
 // produce a typed error rather than panic or an empty usable Secret.
 func TestNewSecretFromBuffer_NilBuffer(t *testing.T) {
-	sec, err := secure.NewSecretFromBuffer(nil)
+	sec, err := secure.NewSecretFromBuffer(context.Background(), nil)
 	if err == nil {
 		if sec != nil {
 			sec.Destroy()

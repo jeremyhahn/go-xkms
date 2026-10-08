@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -85,7 +86,7 @@ func (s *tpmKEKStrategy) Name() KeyStrategyName { return KeyStrategyTPMKEK }
 // kekProtection derives the keystore KeyProtection (a passphrase equal to the
 // HKDF-derived KEK) from the cluster seed, so the software keystore encrypts the
 // CA signing keys under the KEK.
-func (s *tpmKEKStrategy) kekProtection() (KeyProtection, error) {
+func (s *tpmKEKStrategy) kekProtection(ctx context.Context) (KeyProtection, error) {
 	if len(s.seed) == 0 {
 		return KeyProtection{}, ErrSeedUnavailable
 	}
@@ -106,7 +107,7 @@ func (s *tpmKEKStrategy) kekProtection() (KeyProtection, error) {
 	// secure.NewSecret wipes its source slice, so hexKEK is not reused
 	// after this call.
 	hexKEK := []byte(hex.EncodeToString(kek))
-	secret, err := secure.NewSecret(hexKEK)
+	secret, err := secure.NewSecret(ctx, hexKEK)
 	if err != nil {
 		return KeyProtection{}, err
 	}
@@ -162,7 +163,7 @@ func (s *tpmKEKStrategy) storeSealedSeed(ctx context.Context, deps *StrategyDeps
 	if err := os.MkdirAll(deps.NodeLocalDataDir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(s.sealedSeedPath(deps), blob, 0o600)
+	return fsutil.WriteFileAtomic(s.sealedSeedPath(deps), blob, 0o600)
 }
 
 // loadSealedSeed reads and TPM-unseals the node-local sealed seed blob.
@@ -189,7 +190,7 @@ func (s *tpmKEKStrategy) BootstrapBackends(ctx context.Context, deps *StrategyDe
 	}
 	protection := KeyProtection{Mode: KeyProtectNone, AllowInsecure: true}
 	if err := s.ensureSeed(ctx, deps); err == nil {
-		p, kerr := s.kekProtection()
+		p, kerr := s.kekProtection(ctx)
 		if kerr != nil {
 			return nil, kerr
 		}
@@ -226,7 +227,7 @@ func (s *tpmKEKStrategy) RuntimeBackend(ctx context.Context, deps *StrategyDeps)
 	if err := s.ensureSeed(ctx, deps); err != nil {
 		return nil, err
 	}
-	protection, err := s.kekProtection()
+	protection, err := s.kekProtection(ctx)
 	if err != nil {
 		return nil, err
 	}

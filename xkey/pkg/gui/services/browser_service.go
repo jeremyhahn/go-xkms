@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/urlsafety"
 )
 
@@ -439,7 +440,7 @@ func (s *BrowserService) saveConfig(config BrowserConfig) error {
 		return &SentinelCauseError{Sentinel: ErrBrowserConfigSave, Cause: err}
 	}
 
-	if err := os.WriteFile(s.configPath, data, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(s.configPath, data, 0o600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrBrowserConfigSave, Cause: err}
 	}
 

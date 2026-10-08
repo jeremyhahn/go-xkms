@@ -40,7 +40,7 @@ import (
 
 func TestTenantHandlers_CreateTenantIntermediateCA_NilCANotImplemented(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := mustTenantAwareAdminService(t, nil, nil, newTestQRDB(), logger, "test-version")
+	svc := mustTenantAwareAdminService(t, nil, nil, newTestQRDB(t), logger, "test-version")
 	handlers := NewTenantHandlers(svc, logger)
 
 	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAdmin)

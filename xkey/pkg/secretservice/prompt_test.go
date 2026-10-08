@@ -84,7 +84,7 @@ func TestPrompt_WrongCredentialsDismisses(t *testing.T) {
 	require.NoError(t, barrier.Seal())
 
 	d.SetUnlockFunc(func(ctx context.Context) (xkms.SealCredentials, error) {
-		creds, err := xkms.CredentialsFor([]byte("totally-wrong-password"))
+		creds, err := xkms.CredentialsFor(t.Context(), []byte("totally-wrong-password"))
 		require.NoError(t, err)
 		return creds, nil
 	})

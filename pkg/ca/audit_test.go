@@ -16,54 +16,22 @@ package ca
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/pkg/audit/audittest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // mockAuditLoggerCA records every audit event it receives, for asserting the
-// fields a CA lifecycle event carries on success. Mirrors
-// pkg/api/grpc's mockAuditLogger.
-type mockAuditLoggerCA struct {
-	mu     sync.Mutex
-	events []*audit.Event
-}
-
-func (m *mockAuditLoggerCA) Log(_ context.Context, event *audit.Event) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.events = append(m.events, event)
-	return nil
-}
-
-func (m *mockAuditLoggerCA) Close() error { return nil }
-
-func (m *mockAuditLoggerCA) Events() []*audit.Event {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cp := make([]*audit.Event, len(m.events))
-	copy(cp, m.events)
-	return cp
-}
+// fields a CA lifecycle event carries on success.
+type mockAuditLoggerCA = audittest.Recorder
 
 // failingAuditLoggerCA always fails to persist, so the CA lifecycle
-// write-failure handling can be exercised without a real backend. Mirrors
-// pkg/api/grpc's failingAuditLoggerGRPC.
-type failingAuditLoggerCA struct {
-	err error
-}
-
-func (f *failingAuditLoggerCA) Log(_ context.Context, _ *audit.Event) error {
-	return f.err
-}
-
-func (f *failingAuditLoggerCA) Close() error { return nil }
-
-var _ audit.Logger = (*mockAuditLoggerCA)(nil)
-var _ audit.Logger = (*failingAuditLoggerCA)(nil)
+// write-failure handling can be exercised without a real backend.
+type failingAuditLoggerCA = audittest.Failing
 
 // =============================================================================
 // CA_INITIALIZED (root)
@@ -89,12 +57,12 @@ func TestCAInit_EmitsAuditEvent_OnSuccess(t *testing.T) {
 func TestCAInit_AuditWriteFailure_FailsInitAndDoesNotPersistCert(t *testing.T) {
 	ca := setupUninitializedCA(t)
 	auditErr := errors.New("audit backend unavailable")
-	ca.auditLogger = &failingAuditLoggerCA{err: auditErr}
+	ca.auditLogger = &failingAuditLoggerCA{Err: auditErr}
 
 	err := ca.Init(context.Background())
 	require.Error(t, err)
 
-	var writeErr *audit.ErrAuditWriteFailed
+	var writeErr *qrdbsdk.AuditGateError
 	require.ErrorAs(t, err, &writeErr)
 	assert.ErrorIs(t, writeErr, auditErr)
 
@@ -143,12 +111,12 @@ func TestGenerateCRL_EmitsAuditEvent_OnSuccess(t *testing.T) {
 func TestGenerateCRL_AuditWriteFailure_FailsAndDoesNotPersistCRL(t *testing.T) {
 	ca := setupTestCA(t)
 	auditErr := errors.New("audit backend unavailable")
-	ca.auditLogger = &failingAuditLoggerCA{err: auditErr}
+	ca.auditLogger = &failingAuditLoggerCA{Err: auditErr}
 
 	_, err := ca.GenerateCRL(context.Background())
 	require.Error(t, err)
 
-	var writeErr *audit.ErrAuditWriteFailed
+	var writeErr *qrdbsdk.AuditGateError
 	require.ErrorAs(t, err, &writeErr)
 
 	issuingCert := ca.getIssuingCertificate()
@@ -194,13 +162,13 @@ func TestImportXSignedCertificate_EmitsAuditEvent_OnSuccess(t *testing.T) {
 func TestImportXSignedCertificate_AuditWriteFailure_FailsAndDoesNotPersist(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	auditErr := errors.New("audit backend unavailable")
-	ca.auditLogger = &failingAuditLoggerCA{err: auditErr}
+	ca.auditLogger = &failingAuditLoggerCA{Err: auditErr}
 	cert, _ := makeSelfSignedCert(t, "leaf")
 
 	err := ca.ImportXSignedCertificate("external-issuer", cert)
 	require.Error(t, err)
 
-	var writeErr *audit.ErrAuditWriteFailed
+	var writeErr *qrdbsdk.AuditGateError
 	require.ErrorAs(t, err, &writeErr)
 
 	key := crossSignedStoreKey("external-issuer", "leaf")

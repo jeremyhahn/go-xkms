@@ -24,10 +24,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"strings"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/cobra"
 )
@@ -378,7 +378,7 @@ func runPivGenerate(cmd *cobra.Command, args []string) error {
 // writePIVOutput writes PEM data to a file or stdout.
 func writePIVOutput(out io.Writer, outputFile string, data []byte, label, successMsg string) error {
 	if outputFile != "" {
-		if err := os.WriteFile(outputFile, data, 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(outputFile, data, 0600); err != nil {
 			return &WrappedError{Msg: fmt.Sprintf("piv: failed to write %s to %s", label, outputFile), Err: err}
 		}
 		_, _ = fmt.Fprintf(out, "%s written to %s\n", successMsg, outputFile)

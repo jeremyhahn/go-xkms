@@ -219,7 +219,7 @@ func TestCollection_Properties_DefaultFolderLabel(t *testing.T) {
 // passphrase, for tests that need to re-unseal after sealing mid-test.
 func testCredentials(t *testing.T) xkms.SealCredentials {
 	t.Helper()
-	creds, err := xkms.CredentialsFor([]byte("test-barrier-password-12345"))
+	creds, err := xkms.CredentialsFor(t.Context(), []byte("test-barrier-password-12345"))
 	require.NoError(t, err)
 	return creds
 }

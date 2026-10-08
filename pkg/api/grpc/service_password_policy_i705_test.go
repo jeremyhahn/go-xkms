@@ -308,7 +308,7 @@ func newTenantPasswordGRPCService(t *testing.T) (*Service, context.Context) {
 	)
 	require.NoError(t, err)
 
-	sysCreds, err := seal.CredentialsFor([]byte("system-password"))
+	sysCreds, err := seal.CredentialsFor(t.Context(), []byte("system-password"))
 	require.NoError(t, err)
 	defer sysCreds.Secret.Destroy()
 	require.NoError(t, sysBarrier.Initialize(ctx, sysCreds))
@@ -316,9 +316,9 @@ func newTenantPasswordGRPCService(t *testing.T) (*Service, context.Context) {
 	registry, err := seal.NewBarrierRegistry(sysBarrier)
 	require.NoError(t, err)
 
-	_, err = registry.RegisterTenant(vaultTenant)
+	_, err = registry.RegisterTenantDefault(vaultTenant)
 	require.NoError(t, err)
-	tenantCreds, err := seal.CredentialsFor([]byte("tenant-password"))
+	tenantCreds, err := seal.CredentialsFor(t.Context(), []byte("tenant-password"))
 	require.NoError(t, err)
 	defer tenantCreds.Secret.Destroy()
 	require.NoError(t, registry.InitializeTenant(ctx, vaultTenant, tenantCreds))

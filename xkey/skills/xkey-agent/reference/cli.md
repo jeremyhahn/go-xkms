@@ -309,6 +309,8 @@ Usage: `xkey barrier init [flags]`
 | `--gcp-key-ring` | string |  | GCP KMS key ring ID |
 | `--gcp-location` | string |  | GCP KMS location (e.g. us-east1) |
 | `--gcp-project-id` | string |  | GCP project ID for the gcp_kms barrier strategy |
+| `--pkcs11-library` | string |  | PKCS#11 module path for the pkcs11 strategy |
+| `--pkcs11-token` | string |  | PKCS#11 token label for the pkcs11 strategy |
 | `--strategy` | string |  | sealing strategy: software, tpm2, pkcs11, aws_kms, gcp_kms, azure_kv, vault (default: auto-detect) |
 | `--vault-address` | string |  | HashiCorp Vault server address for the vault barrier strategy |
 | `--vault-mount-path` | string |  | Vault Transit engine mount path (default: transit) |
@@ -1307,7 +1309,7 @@ Usage: `xkey oidc aws [flags]`
 | `--output`, `-o` | string | aws-credentials | Output mode: aws-credentials, json, exec, none |
 | `--profile` | string | default | AWS profile name to write credentials to |
 | `--region`, `-r` | string |  | AWS region (required) |
-| `--session-store` | string | ~/.xkey/aws-session.json | Path to session store |
+| `--session-store` | string | ~/.xkey/aws-session | Directory of an unencrypted AWS session store (bypasses the barrier when set) |
 
 ## xkey oidc import
 
@@ -1356,7 +1358,7 @@ Usage: `xkey oidc login [flags]`
 | `--tenant` | string |  | tenant holding the server credential (default: your own) |
 | `--token-encoding` | string |  | Token request body encoding: form (default) or json |
 | `--token-endpoint` | string |  | Manual token endpoint (skips discovery; requires --authorization-endpoint and --jwks-uri) |
-| `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
+| `--token-store` | string | ~/.xkey/tokens | Directory of an unencrypted token store (bypasses the barrier when set) |
 | `--userinfo-endpoint` | string |  | Manual userinfo endpoint (optional; only used with manual endpoints) |
 
 ## xkey oidc logout
@@ -1370,7 +1372,7 @@ Usage: `xkey oidc logout [flags]`
 | `--all` | bool | false | Clear all stored tokens |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
-| `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
+| `--token-store` | string | ~/.xkey/tokens | Directory of an unencrypted token store (bypasses the barrier when set) |
 
 ## xkey oidc providers
 
@@ -1409,12 +1411,12 @@ Usage: `xkey oidc providers add [flags]`
 | `--region`, `-r` | string |  | AWS region (required for type=aws) |
 | `--scope` | string |  | server credential scope: user (personal, default) or tenant (shared) |
 | `--scopes` | string |  | Scopes to request (comma-separated) |
-| `--session-store` | string | ~/.xkey/aws-session.json | AWS session store path |
+| `--session-store` | string | ~/.xkey/aws-session | Directory of an unencrypted AWS session store (bypasses the barrier when set) |
 | `--template` | string |  | server credential provider template (openai, anthropic, google, ...) |
 | `--tenant` | string |  | tenant holding the server credential (default: your own) |
 | `--token-encoding` | string |  | Token request body encoding: form (default) or json |
 | `--token-endpoint` | string |  | Manual token endpoint (skips discovery; requires --authorization-endpoint and --jwks-uri) |
-| `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
+| `--token-store` | string | ~/.xkey/tokens | Directory of an unencrypted token store (bypasses the barrier when set) |
 | `--type` | string | oidc | Provider type: oidc (default) or aws |
 | `--userinfo-endpoint` | string |  | Manual userinfo endpoint (optional; only used with manual endpoints) |
 
@@ -1429,7 +1431,7 @@ Aliases: ls
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--tenant` | string |  | tenant whose server credentials to list (default: your own) |
-| `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
+| `--token-store` | string | ~/.xkey/tokens | Directory of an unencrypted token store (bypasses the barrier when set) |
 
 ## xkey oidc providers remove
 
@@ -1444,7 +1446,7 @@ Aliases: rm, delete
 | `--owner` | string |  | owner of a personal server credential (default: you) |
 | `--scope` | string |  | server credential scope: user (personal, default) or tenant (shared) |
 | `--tenant` | string |  | tenant holding the server credential (default: your own) |
-| `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
+| `--token-store` | string | ~/.xkey/tokens | Directory of an unencrypted token store (bypasses the barrier when set) |
 
 ## xkey oidc refresh
 
@@ -1460,7 +1462,7 @@ Usage: `xkey oidc refresh [flags]`
 | `--provider` | string |  | Use saved provider configuration by name (required for manual-endpoint providers) |
 | `--scope` | string |  | server credential scope: user (personal, default) or tenant (shared) |
 | `--tenant` | string |  | tenant holding the server credential (default: your own) |
-| `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
+| `--token-store` | string | ~/.xkey/tokens | Directory of an unencrypted token store (bypasses the barrier when set) |
 
 ## xkey oidc status
 
@@ -1470,7 +1472,7 @@ Usage: `xkey oidc status [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
+| `--token-store` | string | ~/.xkey/tokens | Directory of an unencrypted token store (bypasses the barrier when set) |
 
 ## xkey oidc stop
 
@@ -1481,7 +1483,7 @@ Usage: `xkey oidc stop [provider] [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--all` | bool | false | Stop all background refresh processes |
-| `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
+| `--token-store` | string | ~/.xkey/tokens | Directory of an unencrypted token store (bypasses the barrier when set) |
 
 ## xkey oidc token
 
@@ -1499,7 +1501,7 @@ Usage: `xkey oidc token [flags]`
 | `--scope` | string |  | server credential scope: user (personal, default) or tenant (shared) |
 | `--show-full` | bool | false | Show full token values |
 | `--tenant` | string |  | tenant holding the server credential (default: your own) |
-| `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
+| `--token-store` | string | ~/.xkey/tokens | Directory of an unencrypted token store (bypasses the barrier when set) |
 
 ## xkey password
 
@@ -2023,85 +2025,6 @@ Usage: `xkey secret-service [flags]`
 | `--strategy` | string |  | barrier seal strategy override (default: the strategy the barrier was initialized with) |
 | `--tpm-device` | string |  | TPM device path for the tpm2 strategy (default: $TPM_DEVICE_PATH or /dev/tpmrm0) |
 | `--tpm-simulator` | bool | false | use the in-process TPM simulator instead of a hardware device (requires a simulator build) |
-
-## xkey share
-
-Manage Shamir secret shares
-
-Usage: `xkey share`
-
-Inherited by subcommands:
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--tls-ca` | string |  | PEM CA bundle used to verify the xkmsd server |
-
-## xkey share delete
-
-Delete a locally stored share
-
-Usage: `xkey share delete [flags]`
-
-Aliases: rm
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--group-id` | string |  | Custodian group ID |
-| `--server` | string |  | xkmsd server URL that issued the share |
-| `--share-index` | int | 0 | 1-based share index within the group |
-
-## xkey share export
-
-Export a share to a JSON file
-
-Usage: `xkey share export [flags]`
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--file` | string |  | Output path for the exported share JSON |
-| `--group-id` | string |  | Custodian group ID |
-| `--server` | string |  | xkmsd server URL that issued the share |
-| `--share-index` | int | 0 | 1-based share index within the group |
-
-## xkey share import
-
-Import a share from a JSON file
-
-Usage: `xkey share import [flags]`
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--file` | string |  | Path to JSON file containing the share |
-
-## xkey share list
-
-List locally stored shares
-
-Usage: `xkey share list`
-
-Aliases: ls
-
-## xkey share receive
-
-Receive shares from a server
-
-Usage: `xkey share receive [flags]`
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--server` | string |  | xkmsd server URL (e.g., grpc://host:9090) |
-
-## xkey share unseal
-
-Submit a share to unseal the server barrier
-
-Usage: `xkey share unseal [flags]`
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--group-id` | string |  | Custodian group ID |
-| `--server` | string |  | xkmsd server URL to submit the share to |
-| `--share-index` | int | 0 | 1-based share index within the group |
 
 ## xkey ssh
 

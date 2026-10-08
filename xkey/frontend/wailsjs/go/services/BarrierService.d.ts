@@ -30,11 +30,11 @@ export function SetAuditLogger(arg1:audit.Logger):Promise<void>;
 
 export function SetBaseBackendFactory(arg1:services.BaseBackendFactory):Promise<void>;
 
-export function SetCloudKMSStrategyFunc(arg1:any):Promise<void>;
-
 export function SetContext(arg1:context.Context):Promise<void>;
 
 export function SetDataDir(arg1:string):Promise<void>;
+
+export function SetExternalStrategyFunc(arg1:any):Promise<void>;
 
 export function SetLastStrategy(arg1:string):Promise<void>;
 

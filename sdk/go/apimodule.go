@@ -188,12 +188,6 @@ var WithServiceModuleCA = apimodule.WithCA
 // TPMVTPMConfig).
 var WithServiceModuleVTPM = apimodule.WithVTPM
 
-// WithServiceModuleBarrierRoutes mounts the barrier route families
-// (barrier, custodian, shares, init ceremony) and serves them over the
-// host's qrdb barrier and node. Off by default, so a host that owns its
-// barrier keeps those paths.
-var WithServiceModuleBarrierRoutes = apimodule.WithBarrierRoutes
-
 // ServiceModuleHostStores is what a self-built module composed:
 // (*ServiceModule).HostStores returns it after the module's first use.
 type ServiceModuleHostStores = compose.Stores
@@ -212,8 +206,6 @@ const (
 	ServiceModuleFeatureCA              = compose.FeatureCA
 	ServiceModuleFeatureTPMPolicies     = compose.FeatureTPMPolicies
 	ServiceModuleFeatureOIDCCredentials = compose.FeatureOIDCCredentials
-	ServiceModuleFeatureBarrier         = compose.FeatureBarrier
-	ServiceModuleFeatureCustody         = compose.FeatureCustody
 )
 
 // ServiceModuleFeatureDisabledError reports a feature left off because the

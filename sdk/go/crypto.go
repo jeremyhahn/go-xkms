@@ -38,34 +38,6 @@ type (
 
 // Shamir secret sharing functions.
 var (
-	// ShamirSplit divides a secret into N shares where any M shares can reconstruct it.
-	//
-	// Parameters:
-	//   - secret: The secret data to split
-	//   - threshold: Minimum number of shares needed to reconstruct (M)
-	//   - total: Total number of shares to create (N)
-	//
-	// Deprecated: the shares this returns carry their value in an un-wipeable
-	// Go string. Upstream's replacement is shamir.SplitProtected, whose shares
-	// hold their values in mlock'd, guard-paged buffers that Destroy wipes.
-	// go-qrdb/sdk/go does not re-export it yet, and xkms will not reach past
-	// that boundary into go-quicraft, so this binding stands until the upstream
-	// re-export lands. Carried forward rather than suppressed silently: a
-	// consumer of the xkms SDK would otherwise inherit the un-wipeable API with
-	// no notice of its own.
-	//nolint:staticcheck // SA1019: re-exporting a deprecated upstream symbol is
-	// the point of this binding; the deprecation is carried forward above.
-	ShamirSplit = qrdbsdk.ShamirSplit
-
-	// ShamirCombine reconstructs the original secret from M or more shares.
-	//
-	// Deprecated: reconstructs from shares whose values are un-wipeable Go
-	// strings and returns the secret in an ordinary heap buffer. Upstream's
-	// replacement is shamir.CombineProtected. See ShamirSplit above for why
-	// this binding stands.
-	//nolint:staticcheck // SA1019: see ShamirSplit above.
-	ShamirCombine = qrdbsdk.ShamirCombine
-
 	// ShamirVerifyShare checks if a share is valid and consistent with other shares.
 	ShamirVerifyShare = qrdbsdk.ShamirVerifyShare
 )

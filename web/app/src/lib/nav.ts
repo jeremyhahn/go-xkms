@@ -60,31 +60,19 @@ export const navSections: NavSection[] = [
   {
     heading: "Security",
     items: [
-      { route: "barrier", path: "/barrier", label: "Barrier & Seal", icon: "Lock", requires: { resource: "seal", action: "status" } },
       { route: "pin", path: "/pin", label: "PIN", icon: "KeyRound", requires: { resource: "pin", action: "read" } },
       { route: "piv", path: "/piv", label: "PIV", icon: "CreditCard", requires: { resource: "piv", action: "read" } },
       { route: "ssh", path: "/ssh", label: "SSH", icon: "TerminalSquare", capability: "ssh", requires: { resource: "ssh", action: "read" } },
       { route: "passwords", path: "/passwords", label: "Passwords", icon: "Vault", capability: "passwords", requires: { resource: "passwords", action: "read" } },
       { route: "oidcCredentials", path: "/oidc/credentials", label: "OIDC Credentials", icon: "LogIn", capability: "oidc_credentials", requires: { resource: "oidc_credentials", action: "list" } },
       { route: "platform", path: "/platform", label: "Platform Secrets", icon: "FolderLock", capability: "platform" },
-      { route: "ceremony", path: "/ceremony", label: "Init Ceremony", icon: "Sparkles", capability: "ceremony" },
     ],
   },
   {
     heading: "Identity & Access",
     items: [
       { route: "users", path: "/users", label: "Users", icon: "Users", requires: { resource: "users", action: "list" } },
-      { route: "factors", path: "/factors", label: "Auth Factors", icon: "Fingerprint", capability: "factors", requires: { resource: "users", action: "read" } },
-      { route: "audit", path: "/audit", label: "Audit", icon: "ScrollText", capability: "audit", requires: { resource: "audit", action: "read" } },
       { route: "tenants", path: "/tenants", label: "Tenants", icon: "Building2", capability: "tenants", requires: { resource: "tenants", action: "list" } },
-      { route: "custodians", path: "/custodians", label: "Custodians", icon: "UsersRound", capability: "custodians" },
-      { route: "shares", path: "/shares", label: "Shares", icon: "Split", capability: "shares" },
-    ],
-  },
-  {
-    heading: "Cluster",
-    items: [
-      { route: "cluster", path: "/cluster", label: "Cluster", icon: "Network", capability: "cluster" },
     ],
   },
   {

@@ -994,16 +994,16 @@ sudo rc-service xkey start
 
 The OIDC token store and the AWS DPoP session store are both
 barrier-encrypted when `xkey barrier init` has been run, and an unencrypted
-`0600` JSON file with one logged warning otherwise; an explicit
-`--token-store`/`--session-store` always uses a plain file at exactly that
-path. See [oidc/architecture.md](oidc/architecture.md#where-the-store-lives)
+go-qrdb file store with one logged warning otherwise; an explicit
+`--token-store`/`--session-store` always uses an unencrypted store in exactly
+that directory. See [oidc/architecture.md](oidc/architecture.md#where-the-store-lives)
 for the full decision.
 
 | File | Default Path | Description |
 |------|--------------|-------------|
-| Token store | `<xkey data dir>/oidc/tokens.json`, or barrier-encrypted | OIDC tokens |
+| Token store | `<xkey data dir>` (entry `oidc/tokens.json`), or barrier-encrypted | OIDC tokens |
 | Provider config | `~/.xkey/oidc-providers.json` | Saved providers (not secret) |
-| AWS session | `<xkey data dir>/oidc/aws-session.json`, or barrier-encrypted | AWS DPoP sessions |
+| AWS session | `<xkey data dir>` (entry `oidc/aws-session.json`), or barrier-encrypted | AWS DPoP sessions |
 | Logs | `~/.xkey/logs/` | Background refresh logs |
 | PIDs | `~/.xkey/pids/` | Background process PIDs |
 
@@ -1011,7 +1011,7 @@ for the full decision.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--token-store` | `~/.xkey/tokens.json` | Token storage path |
+| `--token-store` | `~/.xkey/tokens` | Token store directory |
 | `--auto-refresh` | `0` | Auto-refresh interval (seconds, 0 disables) |
 | `--background` | `false` | Run auto-refresh in background |
 | `--log-file` | (auto-generated) | Log file for background refresh |
@@ -1037,7 +1037,7 @@ for the full decision.
 | `--credentials-file` | `~/.aws/credentials` | AWS credentials file |
 | `--output`, `-o` | `aws-credentials` | Output mode |
 | `--cross-device` | `false` | Enable cross-device authentication |
-| `--session-store` | `~/.xkey/aws-session.json` | Session storage path |
+| `--session-store` | `~/.xkey/aws-session` | Session store directory |
 
 ### OIDC Output Modes
 

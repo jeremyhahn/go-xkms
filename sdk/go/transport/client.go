@@ -25,7 +25,6 @@ type KeyVersionService = pkgtransport.KeyVersionService
 type CryptoService = pkgtransport.CryptoService
 type CertService = pkgtransport.CertService
 type SealService = pkgtransport.SealService
-type BarrierService = pkgtransport.BarrierService
 type PIVService = pkgtransport.PIVService
 type FIDO2Service = pkgtransport.FIDO2Service
 type CAService = pkgtransport.CAService
@@ -36,15 +35,10 @@ type PasswordService = pkgtransport.PasswordService
 type SealStoreService = pkgtransport.SealStoreService
 type TPMPolicyService = pkgtransport.TPMPolicyService
 type OIDCCredentialService = pkgtransport.OIDCCredentialService
-type InitCeremonyService = pkgtransport.InitCeremonyService
 type CredentialManagementService = pkgtransport.CredentialManagementService
-type CustodianGroupService = pkgtransport.CustodianGroupService
-type ShareService = pkgtransport.ShareService
 type TenantService = pkgtransport.TenantService
-type AuditService = pkgtransport.AuditService
 type EscrowService = pkgtransport.EscrowService
 type BootstrapService = pkgtransport.BootstrapService
-type BackupService = pkgtransport.BackupService
 
 // Client composes all service sub-interfaces into a unified client.
 type Client = pkgtransport.Client

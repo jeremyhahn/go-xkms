@@ -15,7 +15,6 @@ package seal
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -23,22 +22,23 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 )
 
-// AuditLoggerFromXKMS wraps an xkms audit.Logger as a qrdb AuditLogger.
-// This bridges the event type difference between the two packages.
-// Returns nil if logger is nil, which disables audit logging.
-func AuditLoggerFromXKMS(logger audit.Logger) qrdbsdk.AuditLogger {
-	if logger == nil {
+// AuditLoggerFromXKMS exposes the node audit sink as the barrier's qrdb
+// AuditLogger. The barrier speaks qrdbsdk.AuditEvent; the adapter lifts it
+// onto the product audit.Event and emits it on the sink. Returns nil if sink
+// is nil, which disables audit logging.
+func AuditLoggerFromXKMS(sink qrdbsdk.NodeAuditLogger) qrdbsdk.AuditLogger {
+	if sink == nil {
 		return nil
 	}
-	return &auditLoggerAdapter{inner: logger}
+	return &auditLoggerAdapter{inner: sink}
 }
 
 type auditLoggerAdapter struct {
-	inner audit.Logger
+	inner qrdbsdk.NodeAuditLogger
 }
 
 func (a *auditLoggerAdapter) Log(ctx context.Context, event *qrdbsdk.AuditEvent) error {
-	return a.inner.Log(ctx, &audit.Event{
+	return audit.Emit(ctx, a.inner, &audit.Event{
 		Timestamp:  event.Timestamp,
 		Subject:    event.Subject,
 		Action:     event.Action,
@@ -49,21 +49,19 @@ func (a *auditLoggerAdapter) Log(ctx context.Context, event *qrdbsdk.AuditEvent)
 	})
 }
 
+// Close is a no-op: the adapter does not own the sink, whose lifecycle
+// belongs to the node that created it.
 func (a *auditLoggerAdapter) Close() error {
-	return a.inner.Close()
+	return nil
 }
 
-// emitAudit is the PlatformSealer audit helper. seal and unseal are
-// SeveritySecurity actions (docs/audit-log/engineering.md): if the audit
-// write fails, emitAudit returns *audit.ErrAuditWriteFailed so the caller
-// fails the seal/unseal request rather than complete a security-relevant
-// operation that could not be audited. A nil logger disables audit logging
-// entirely (opt-in wiring) and is not itself a failure.
-func emitAudit(logger audit.Logger, slogger *slog.Logger, action, resource, resourceID, outcome string, details map[string]string) error {
-	if logger == nil {
-		return nil
-	}
-	writeErr := logger.Log(context.Background(), &audit.Event{
+// emitAudit is the PlatformSealer audit helper. If the audit write fails,
+// emitAudit returns *qrdbsdk.AuditGateError so the caller fails the
+// seal/unseal request rather than complete a security-relevant operation that
+// could not be audited (docs/audit-log/engineering.md). A nil sink disables
+// audit logging entirely (opt-in wiring) and is not itself a failure.
+func emitAudit(sink qrdbsdk.NodeAuditLogger, action, resource, resourceID, outcome string, details map[string]string) error {
+	return audit.Emit(context.Background(), sink, &audit.Event{
 		Timestamp:  time.Now(),
 		Subject:    "seal",
 		Action:     action,
@@ -72,5 +70,4 @@ func emitAudit(logger audit.Logger, slogger *slog.Logger, action, resource, reso
 		Outcome:    outcome,
 		Details:    details,
 	})
-	return audit.HandleWriteFailure(slogger, action, writeErr)
 }

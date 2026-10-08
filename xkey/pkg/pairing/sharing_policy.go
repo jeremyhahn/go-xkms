@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // SharingPolicy controls what can be shared for a specific key.
@@ -206,7 +208,7 @@ func (s *FileSharingPolicyStore) save() error {
 		return err
 	}
 
-	return os.WriteFile(s.path, data, 0600)
+	return fsutil.WriteFileAtomic(s.path, data, 0600)
 }
 
 // policyKey builds the map key for a backend and key ID pair.

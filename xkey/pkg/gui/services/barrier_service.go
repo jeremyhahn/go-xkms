@@ -72,14 +72,14 @@ type BarrierService struct {
 	// If nil, TPM2 strategy is unavailable.
 	tpmSealerFn func() xkms.Sealer
 
-	// cloudKMSStrategyFn is called to obtain a cloud KMS sealing strategy
-	// (aws_kms/gcp_kms/azure_kv/vault) when assembleStrategy needs one. If
-	// nil, the four cloud KMS strategies are unavailable: BarrierService has
-	// no cloud backend wiring of its own -- the caller (xkey's headless
-	// `extension serve` or a future GUI flow) builds the backend from its own
-	// configuration and injects the assembled strategy here, the same
-	// pattern SetTPMSealerFunc uses for TPM2 (go-xkms#757).
-	cloudKMSStrategyFn func(strategyID string) (xkms.SealingStrategy, error)
+	// externalStrategyFn is called to obtain a pkcs11 or cloud KMS
+	// (aws_kms/gcp_kms/azure_kv/vault) sealing strategy when assembleStrategy
+	// needs one. If nil, those strategies are unavailable: BarrierService has
+	// no HSM or cloud backend wiring of its own -- the caller (xkey's
+	// headless `extension serve` or a future GUI flow) builds the backend
+	// from its own configuration and injects the assembled strategy here, the
+	// same pattern SetTPMSealerFunc uses for TPM2 (go-xkms#757).
+	externalStrategyFn func(strategyID string) (xkms.SealingStrategy, error)
 
 	// postUnsealHook is called after a successful Unseal() to allow the
 	// application to initialize services that depend on the barrier backend
@@ -125,14 +125,14 @@ func (s *BarrierService) SetTPMSealerFunc(fn func() xkms.Sealer) {
 	s.tpmSealerFn = fn
 }
 
-// SetCloudKMSStrategyFunc sets the function used to obtain a cloud KMS
-// sealing strategy (aws_kms, gcp_kms, azure_kv, or vault, identified by
+// SetExternalStrategyFunc sets the function used to obtain a pkcs11 or cloud
+// KMS sealing strategy (aws_kms, gcp_kms, azure_kv, or vault, identified by
 // strategyID) when Initialize or Unseal is called with one of those strategy
-// IDs. When nil (the default), the four cloud KMS strategies are
-// unavailable and assembleStrategy reports ErrBarrierStrategyUnavailable.
-func (s *BarrierService) SetCloudKMSStrategyFunc(fn func(strategyID string) (xkms.SealingStrategy, error)) {
+// IDs. When nil (the default), those strategies are unavailable and
+// assembleStrategy reports ErrBarrierStrategyUnavailable.
+func (s *BarrierService) SetExternalStrategyFunc(fn func(strategyID string) (xkms.SealingStrategy, error)) {
 	s.mu.Lock()
-	s.cloudKMSStrategyFn = fn
+	s.externalStrategyFn = fn
 	s.mu.Unlock()
 }
 
@@ -334,7 +334,7 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 	// "refuses empty input" guard. The password string itself is a Go string
 	// and cannot be wiped either way, so CredentialsFor's simplicity costs no
 	// additional exposure here.
-	creds, credErr := xkms.CredentialsFor([]byte(password))
+	creds, credErr := xkms.CredentialsFor(ctx, []byte(password))
 	if credErr != nil {
 		closeErr := base.Close()
 		s.log.Error("barrier: CredentialsFor failed", "error", credErr)
@@ -402,14 +402,15 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	if s.barrier != nil && s.barrier.IsSealed() {
 		// CredentialsFor: see the Initialize comment above — the active
 		// strategy may be hardware-backed and password may be empty.
-		creds, credErr := xkms.CredentialsFor([]byte(password))
+		ctx := s.context()
+		creds, credErr := xkms.CredentialsFor(ctx, []byte(password))
 		if credErr != nil {
 			s.mu.Unlock()
 			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": s.lastStrategy})
 		}
 		defer creds.Secret.Destroy()
 
-		if err := s.barrier.Unseal(s.context(), creds); err != nil {
+		if err := s.barrier.Unseal(ctx, creds); err != nil {
 			s.mu.Unlock()
 			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": s.lastStrategy})
 		}
@@ -474,7 +475,7 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	ctx := s.context()
 	// CredentialsFor: see the Initialize comment above — the active strategy
 	// may be hardware-backed and password may be empty.
-	creds, credErr := xkms.CredentialsFor([]byte(password))
+	creds, credErr := xkms.CredentialsFor(ctx, []byte(password))
 	if credErr != nil {
 		closeErr := base.Close()
 		s.mu.Unlock()
@@ -542,7 +543,7 @@ func (s *BarrierService) ChangePassword(newPassword string) error {
 	// CredentialsFor: ChangePassword is a no-op for hardware-backed
 	// strategies, which are called with an empty newPassword by design (see
 	// the doc comment above); NewCredentials would reject that empty input.
-	creds, credErr := xkms.CredentialsFor([]byte(newPassword))
+	creds, credErr := xkms.CredentialsFor(ctx, []byte(newPassword))
 	if credErr != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
 	}
@@ -676,11 +677,11 @@ func (s *BarrierService) assembleStrategy(strategyID string) (xkms.SealingStrate
 		return xkms.NewTPM2Strategy(sealer, nil), nil
 	case xkms.StrategyPassphrase:
 		return xkms.NewSoftwareSealStrategy(), nil
-	case xkms.StrategyAWSKMS, xkms.StrategyGCPKMS, xkms.StrategyAzureKV, xkms.StrategyVault:
-		if s.cloudKMSStrategyFn == nil {
+	case xkms.StrategyPKCS11, xkms.StrategyAWSKMS, xkms.StrategyGCPKMS, xkms.StrategyAzureKV, xkms.StrategyVault:
+		if s.externalStrategyFn == nil {
 			return nil, &ErrBarrierStrategyUnavailable{Strategy: strategyID}
 		}
-		strategy, err := s.cloudKMSStrategyFn(strategyID)
+		strategy, err := s.externalStrategyFn(strategyID)
 		if err != nil {
 			return nil, err
 		}
@@ -695,8 +696,7 @@ func (s *BarrierService) assembleStrategy(strategyID string) (xkms.SealingStrate
 
 // createBaseBackend creates the base storage backend for the barrier.
 // Uses the registered factory if set, otherwise defaults to the go-qrdb file
-// engine, which writes the same flat <storageDir>/<key> layout as xkey's
-// historical storage (no data migration).
+// engine, which stores each key under a hashed path inside storageDir.
 func (s *BarrierService) createBaseBackend(storageDir string) (xkms.StorageBackend, error) {
 	if s.baseBackendFn != nil {
 		return s.baseBackendFn(storageDir)
@@ -711,7 +711,11 @@ type BarrierSealInfo struct {
 	Strategy       string `json:"strategy"`
 	StrategyLabel  string `json:"strategy_label"`
 	HardwareBacked bool   `json:"hardware_backed"`
-	RootKeyPath    string `json:"root_key_path"`
+	// DataDir is the directory of the go-qrdb file engine holding the barrier.
+	DataDir string `json:"data_dir"`
+	// RootKeyEntry is the engine entry that holds the sealed root key; it is
+	// not a file below DataDir.
+	RootKeyEntry string `json:"root_key_entry"`
 }
 
 // GetSealInfo returns a snapshot of the barrier's seal state for display
@@ -725,13 +729,14 @@ func (s *BarrierService) GetSealInfo() *BarrierSealInfo {
 	foundDir := s.checkInitialized()
 
 	info := &BarrierSealInfo{
-		RootKeyPath: filepath.Join(s.storageDir(), barrierRootKeyPath),
+		DataDir:      s.storageDir(),
+		RootKeyEntry: barrierRootKeyPath,
 	}
 
 	if foundDir != "" {
 		info.Initialized = true
-		// Update RootKeyPath to actual found location.
-		info.RootKeyPath = filepath.Join(foundDir, barrierRootKeyPath)
+		// Report the data directory the barrier was actually found in.
+		info.DataDir = foundDir
 	}
 
 	// If the barrier object is live, pull strategy details from it.

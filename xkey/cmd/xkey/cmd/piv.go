@@ -24,6 +24,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/spf13/cobra"
 )
@@ -959,7 +960,7 @@ func runPIVExport(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	if outputPath != "" {
-		if err := os.WriteFile(outputPath, data, 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(outputPath, data, 0600); err != nil {
 			return errors.Join(ErrPIVExportFailed, err)
 		}
 		slotName := xkms.PIVSlotName(slot)

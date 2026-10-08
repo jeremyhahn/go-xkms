@@ -25,13 +25,15 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // Config provides configuration for creating a new CertStore instance.
 type Config struct {
-	// CertStorage provides underlying certificate storage.
-	// Required.
-	CertStorage CertificateStorageAdapter
+	// DAOs serves the store's go-qrdb database (DatabaseName), where
+	// certificates and chains persist as DAO entities. Required.
+	DAOs *qrdbsdk.DAOFactory
 
 	// VerifyOptions provides default verification options.
 	// Optional - if not provided, defaults will be used.
@@ -42,11 +44,10 @@ type Config struct {
 	AllowRevoked bool
 }
 
-// CertificateStorageAdapter is a local interface that matches storage.CertificateStorage.
-// This allows the certstore package to work with any compatible storage implementation
-// without creating a direct dependency on the storage package.
-//
-// This interface is satisfied by storage.CertificateStorage.
+// CertificateStorageAdapter is the certificate storage a keystore exposes
+// (pkg/xkms Backend.CertStorage), satisfied by storage.CertAdapter and the
+// hardware certificate stores. A CertStore does not use it: its
+// certificates are DAO entities (see Config.DAOs).
 type CertificateStorageAdapter interface {
 	SaveCert(ctx context.Context, id string, cert *x509.Certificate) error
 	GetCert(ctx context.Context, id string) (*x509.Certificate, error)

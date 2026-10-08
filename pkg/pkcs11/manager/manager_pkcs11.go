@@ -16,6 +16,7 @@
 package manager
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -488,11 +489,11 @@ func (m *memoryManager) Connect(moduleID string, slotID uint, userPin, soPin str
 	}
 
 	// Create PKCS#11 backend
-	pinSecret, err := types.NewLiteralSecretValue([]byte(userPin))
+	pinSecret, err := types.NewLiteralSecretValue(context.Background(), []byte(userPin))
 	if err != nil {
 		return nil, errors.Join(err, mod.p11ctx.CloseSession(session))
 	}
-	soPINSecret, err := types.NewLiteralSecretValue([]byte(soPin))
+	soPINSecret, err := types.NewLiteralSecretValue(context.Background(), []byte(soPin))
 	if err != nil {
 		return nil, errors.Join(err, mod.p11ctx.CloseSession(session))
 	}

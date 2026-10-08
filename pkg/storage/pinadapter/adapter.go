@@ -30,8 +30,7 @@ import (
 
 // PINStoreAdapter adapts a storage.Backend to the qrdbsdk.PINStorage interface
 // required by go-qrdb's SoftwareBackend. The adapter is intentionally
-// narrow: only Get and Put are exposed, matching the contract documented
-// in pkg/pin/storage.go.
+// narrow: only Get, Put and Delete are exposed, matching that contract.
 type PINStoreAdapter struct {
 	backend storage.Backend
 }
@@ -69,6 +68,16 @@ func (a *PINStoreAdapter) Get(ctx context.Context, key string) ([]byte, error) {
 func (a *PINStoreAdapter) Put(ctx context.Context, key string, value []byte) error {
 	if err := a.backend.Put(ctx, key, value); err != nil {
 		return &PutError{Key: key, Err: err}
+	}
+	return nil
+}
+
+// Delete removes the record stored under key. Deleting an absent key is not
+// an error: the record is already gone, which is what SoftwareBackend's
+// provisioning rollback wants either way.
+func (a *PINStoreAdapter) Delete(ctx context.Context, key string) error {
+	if err := a.backend.Delete(ctx, key); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return &DeleteError{Key: key, Err: err}
 	}
 	return nil
 }

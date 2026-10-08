@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
 )
 
@@ -514,7 +515,7 @@ func writeCodexAuth(path string, tok *client.OIDCAccessToken, now time.Time) err
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(path, data, 0o600); err != nil {
 		return &WrappedDetailError{Sentinel: ErrOIDCCodexAuthWrite, Detail: path, Err: err}
 	}
 	return nil

@@ -25,7 +25,8 @@ type AutoConfig struct {
 	// (and the certificate store) is created from, as a key-prefixed view
 	// (storage.NewPrefixBackend) -- exactly the pattern pkg/server's
 	// Server.createStorage uses for an xkmsd-hosted deployment. Callers
-	// without a *server.Server open one with pkg/datastore.Open (or, for
+	// without a *server.Server open the datastore with pkg/datastore.Open
+	// and pass pkg/compose.FactoryBackend over its DAO factory (or, for
 	// xkey/embedders that already host their own storage.Backend -- e.g. a
 	// barrier-backed store -- pass that directly). A nil Datastore uses
 	// in-memory storage for every backend (tests, ephemeral sessions); this

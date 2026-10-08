@@ -16,7 +16,8 @@
 //
 // This package wraps the go-webauthn/webauthn library and provides:
 //   - Pluggable storage interfaces for users, credentials, and sessions
-//   - In-memory storage implementations for development/testing
+//   - A go-qrdb user adapter, a DAO-entity credential store and an in-memory
+//     session store
 //   - Composable HTTP handlers that can be mounted on any router
 //   - Optional JWT generation after successful authentication
 //
@@ -30,7 +31,14 @@
 //
 // # Usage
 //
-// Basic usage with in-memory storage (for development):
+// Users live in go-qrdb and credentials are DAO entities built from the
+// datastore's DAO factory; NewQRDBUserStoreAdapter returns the paired stores:
+//
+//	users, creds, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
+//	    Users:      qrdbClient.Users(),
+//	    DAOFactory: daoFactory,
+//	    TenantID:   "system",
+//	})
 //
 //	svc, err := webauthn.NewService(webauthn.ServiceParams{
 //	    Config: &webauthn.Config{
@@ -38,12 +46,10 @@
 //	        RPDisplayName: "My App",
 //	        RPOrigins:     []string{"https://localhost:3000"},
 //	    },
-//	    UserStore:       webauthn.NewMemoryUserStore(),
+//	    UserStore:       users,
 //	    SessionStore:    webauthn.NewMemorySessionStore(),
-//	    CredentialStore: webauthn.NewMemoryCredentialStore(),
+//	    CredentialStore: creds,
 //	})
-//
-// For production, implement the storage interfaces with your database.
 //
 // # HTTP Handlers
 //

@@ -98,7 +98,7 @@ func testPINSecret(t *testing.T, pin string) *secure.Secret {
 	if pin == "" {
 		return nil
 	}
-	secret, err := secure.NewSecret([]byte(pin))
+	secret, err := secure.NewSecret(t.Context(), []byte(pin))
 	if err != nil {
 		t.Fatalf("seal test PIN: %v", err)
 	}

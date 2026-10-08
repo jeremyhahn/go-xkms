@@ -14,7 +14,7 @@
 // Package trustedca provides a library entry point for the go-xkms ACME Certificate Authority.
 //
 // It is an ACME RFC-8555 compliant Certificate Authority with support
-// for Trusted Computing specifications and multi-tenancy via QRDB.
+// for Trusted Computing specifications and multi-tenancy via go-qrdb.
 //
 // # Quick Start
 //
@@ -42,20 +42,23 @@
 //	defer cancel()
 //	tca.Serve(ctx)
 //
-// # Multi-Tenant Mode with QRDB
+// # Multi-Tenant Mode with go-qrdb
 //
 // For multi-tenant deployments with authentication:
 //
 //	import (
 //	    "github.com/jeremyhahn/go-xkms/pkg/acme/client"
+//	    "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+//	    "github.com/jeremyhahn/go-xkms/pkg/datastore"
 //	)
 //
-//	// Parent application creates QRDB service
-//	db, _ := qrdb.New(qrdbConfig)
+//	// Parent application opens the shared datastore
+//	ds, _ := datastore.Open(ctx, cfg, logger)
+//	storageFactory, _ := objstore.NewTenantAwareFactory(ds.DAOFactory())
 //
 //	// Pass to TrustedCA
 //	tca, err := trustedca.New(
-//	    trustedca.WithQRDB(db),
+//	    trustedca.WithQRDB(ds.Client()),
 //	    trustedca.WithCA(myCA),
 //	    trustedca.WithStorageFactory(storageFactory),
 //	    trustedca.WithMultiTenant(),
@@ -74,6 +77,6 @@
 // TrustedCA integrates:
 //   - ACME server for certificate issuance
 //   - Admin API for management operations
-//   - QRDB for authentication and storage
+//   - go-qrdb for authentication and storage
 //   - Multi-tenant support with per-tenant CAs and policies
 package client

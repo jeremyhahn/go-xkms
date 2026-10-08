@@ -37,6 +37,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 
 	"github.com/google/go-tpm/tpm2"
 
@@ -1985,7 +1986,7 @@ func (s *TPMService) saveHandleDescriptions(descriptions map[string]string) erro
 		return ErrTPMHandleDescriptionFailed
 	}
 
-	if writeErr := os.WriteFile(filePath, data, 0600); writeErr != nil {
+	if writeErr := fsutil.WriteFileAtomic(filePath, data, 0600); writeErr != nil {
 		return ErrTPMHandleDescriptionFailed
 	}
 

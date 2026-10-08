@@ -159,9 +159,9 @@ func runSecretService(cmd *cobra.Command, args []string) (err error) {
 	// Prompt round-trip. Starting sealed is not an error: every collection
 	// simply reports Locked=true until a client unlocks it.
 	if password, pwErr := resolveSecretServicePassword(cmd); pwErr == nil && password != "" {
-		creds, credErr := xkms.CredentialsFor([]byte(password))
+		creds, credErr := xkms.CredentialsFor(cmd.Context(), []byte(password))
 		if credErr == nil {
-			if unsealErr := barrier.Unseal(context.Background(), creds); unsealErr != nil {
+			if unsealErr := barrier.Unseal(cmd.Context(), creds); unsealErr != nil {
 				logger.Warn("secret-service: startup unseal failed, starting sealed", slog.String("error", unsealErr.Error()))
 			}
 			creds.Secret.Destroy()
@@ -210,7 +210,7 @@ func secretServiceUnlockFunc(cmd *cobra.Command) secretservice.UnlockFunc {
 				return xkms.SealCredentials{}, err
 			}
 		}
-		return xkms.CredentialsFor([]byte(password))
+		return xkms.CredentialsFor(ctx, []byte(password))
 	}
 }
 

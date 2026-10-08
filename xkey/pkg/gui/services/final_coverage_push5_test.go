@@ -245,48 +245,6 @@ func TestP7_TrustService_ExportBrowserTrustBundle_RemovesStaleBundle(t *testing.
 //  AddMember, RemoveMember, DistributeShares)
 // ---------------------------------------------------------------------------
 
-func TestP7_CustodianService_GetGroup_NoClient(t *testing.T) {
-	svc := NewCustodianService()
-	svc.SetContext(context.Background())
-	_, err := svc.GetGroup("some-id")
-	assert.ErrorIs(t, err, ErrCustodianServiceNoClient)
-}
-
-func TestP7_CustodianService_ListGroups_NoClient(t *testing.T) {
-	svc := NewCustodianService()
-	svc.SetContext(context.Background())
-	_, err := svc.ListGroups()
-	assert.ErrorIs(t, err, ErrCustodianServiceNoClient)
-}
-
-func TestP7_CustodianService_DeleteGroup_NoClient(t *testing.T) {
-	svc := NewCustodianService()
-	svc.SetContext(context.Background())
-	err := svc.DeleteGroup("some-id")
-	assert.ErrorIs(t, err, ErrCustodianServiceNoClient)
-}
-
-func TestP7_CustodianService_AddMember_NoClient(t *testing.T) {
-	svc := NewCustodianService()
-	svc.SetContext(context.Background())
-	_, err := svc.AddMember("group-1", "user-1", "test-user", "admin_approval")
-	assert.ErrorIs(t, err, ErrCustodianServiceNoClient)
-}
-
-func TestP7_CustodianService_RemoveMember_NoClient(t *testing.T) {
-	svc := NewCustodianService()
-	svc.SetContext(context.Background())
-	err := svc.RemoveMember("group-1", "user-1")
-	assert.ErrorIs(t, err, ErrCustodianServiceNoClient)
-}
-
-func TestP7_CustodianService_DistributeShares_NoClient(t *testing.T) {
-	svc := NewCustodianService()
-	svc.SetContext(context.Background())
-	_, err := svc.DistributeShares("group-1")
-	assert.ErrorIs(t, err, ErrCustodianServiceNoClient)
-}
-
 // ---------------------------------------------------------------------------
 // Agent Service - error paths
 // ---------------------------------------------------------------------------

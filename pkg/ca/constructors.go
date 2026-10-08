@@ -213,7 +213,7 @@ func NewParentCA(params *Params) (TrustedCA, error) {
 		return nil, err
 	}
 
-	keyAttrs, err := root.ToKeyAttributes()
+	keyAttrs, err := root.ToKeyAttributes(context.Background())
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "ca: root identity key attributes", Err: err}
 	}
@@ -297,7 +297,7 @@ func NewIntermediateCA(ctx context.Context, params *Params, parent TrustedCA) (T
 		return nil, err
 	}
 
-	keyAttrs, err := intermediateID.ToKeyAttributes()
+	keyAttrs, err := intermediateID.ToKeyAttributes(ctx)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "ca: intermediate identity key attributes", Err: err}
 	}

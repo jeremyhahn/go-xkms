@@ -95,7 +95,7 @@ func TestResolveFIDO2SetPINSecret_Stdin(t *testing.T) {
 	require.NotNil(t, secret)
 	defer secret.Destroy()
 
-	buf, err := secret.Open()
+	buf, err := secret.Open(t.Context())
 	require.NoError(t, err)
 	defer buf.Destroy()
 	require.NoError(t, buf.WithBytes(func(b []byte) error {

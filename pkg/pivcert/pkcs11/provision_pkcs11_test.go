@@ -16,6 +16,7 @@
 package pkcs11
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -39,7 +40,7 @@ import (
 // test fixtures that have no *testing.T in scope (e.g. pivToken.config, a
 // value method). Test-only: production callers resolve the PIN from config.
 func mustPINSecret(s string) *secure.Secret {
-	sec, err := secure.NewSecret([]byte(s))
+	sec, err := secure.NewSecret(context.Background(), []byte(s))
 	if err != nil {
 		panic(err)
 	}

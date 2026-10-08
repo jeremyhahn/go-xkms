@@ -73,7 +73,7 @@ func New(base storage.Backend, rootKeyPath string, logger *slog.Logger) (*Contro
 // initialized" and "already unsealed" are benign and tolerated.
 func (c *Controller) Unseal(passphrase []byte) error {
 	ctx := context.Background()
-	creds, credErr := seal.CredentialsFor(passphrase)
+	creds, credErr := seal.CredentialsFor(ctx, passphrase)
 	if credErr != nil {
 		return credErr
 	}
@@ -125,7 +125,7 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) error {
 
 	wasSealed := c.barrier.IsSealed()
 	if wasSealed {
-		oldCreds, credErr := seal.CredentialsFor(oldPassphrase)
+		oldCreds, credErr := seal.CredentialsFor(ctx, oldPassphrase)
 		if credErr != nil {
 			return credErr
 		}
@@ -139,7 +139,7 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) error {
 		}
 	}
 
-	newCreds, credErr := seal.CredentialsFor(newPassphrase)
+	newCreds, credErr := seal.CredentialsFor(ctx, newPassphrase)
 	if credErr != nil {
 		if wasSealed {
 			if sealErr := c.barrier.Seal(); sealErr != nil {

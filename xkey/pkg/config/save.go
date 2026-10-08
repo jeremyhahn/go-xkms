@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,7 +31,7 @@ func Save(cfg *Config) error {
 // It uses a temporary file + rename pattern for crash safety. The parent
 // directory is created with 0700 permissions if it does not exist. The
 // config file is written with 0600 permissions.
-func SaveToPath(cfg *Config, path string) (err error) {
+func SaveToPath(cfg *Config, path string) error {
 	if cfg == nil {
 		return errors.Join(ErrConfigSaveFailed, errors.New("config is nil"))
 	}
@@ -49,51 +50,8 @@ func SaveToPath(cfg *Config, path string) (err error) {
 		return errors.Join(ErrConfigSaveFailed, err)
 	}
 
-	// Write to a temporary file in the same directory so that the rename
-	// is guaranteed to be atomic on POSIX filesystems (same mount point).
-	tmpFile, err := os.CreateTemp(dir, ".xkey-config-*.yaml.tmp")
-	if err != nil {
+	if err := fsutil.WriteFileAtomic(path, data, 0600); err != nil {
 		return errors.Join(ErrConfigSaveFailed, err)
 	}
-	tmpPath := tmpFile.Name()
-
-	// Clean up the temp file on any failure path. A failed removal is
-	// joined into the returned error rather than dropped, since a leaked
-	// temp file should be visible to the caller even though it is not
-	// itself the reason the save failed.
-	success := false
-	defer func() {
-		if !success {
-			if rmErr := os.Remove(tmpPath); rmErr != nil {
-				err = errors.Join(err, rmErr)
-			}
-		}
-	}()
-
-	if _, writeErr := tmpFile.Write(data); writeErr != nil {
-		return errors.Join(ErrConfigSaveFailed, writeErr, tmpFile.Close())
-	}
-
-	// Sync to disk before closing to ensure durability.
-	if syncErr := tmpFile.Sync(); syncErr != nil {
-		return errors.Join(ErrConfigSaveFailed, syncErr, tmpFile.Close())
-	}
-
-	if closeErr := tmpFile.Close(); closeErr != nil {
-		return errors.Join(ErrConfigSaveFailed, closeErr)
-	}
-
-	// Set restrictive permissions before the rename so the file is never
-	// world-readable, even briefly.
-	if chmodErr := os.Chmod(tmpPath, 0600); chmodErr != nil {
-		return errors.Join(ErrConfigSaveFailed, chmodErr)
-	}
-
-	// Atomic rename replaces the target file in a single syscall.
-	if renameErr := os.Rename(tmpPath, path); renameErr != nil {
-		return errors.Join(ErrConfigSaveFailed, renameErr)
-	}
-
-	success = true
 	return nil
 }

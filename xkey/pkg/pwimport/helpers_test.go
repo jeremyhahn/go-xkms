@@ -22,7 +22,7 @@ import (
 // testSecret seals s into a *secure.Secret for test fixtures.
 func testSecret(t *testing.T, s string) *secure.Secret {
 	t.Helper()
-	secret, err := secure.NewSecret([]byte(s))
+	secret, err := secure.NewSecret(t.Context(), []byte(s))
 	if err != nil {
 		t.Fatalf("testSecret: %v", err)
 	}
@@ -36,7 +36,7 @@ func openSecretString(t *testing.T, secret *secure.Secret) string {
 	if secret == nil {
 		return ""
 	}
-	buf, err := secret.Open()
+	buf, err := secret.Open(t.Context())
 	if err != nil {
 		t.Fatalf("openSecretString: %v", err)
 	}

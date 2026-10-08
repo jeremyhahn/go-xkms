@@ -37,7 +37,6 @@ tell.
 | [seal](seal/) | The Barrier, barrier auto-unseal through a named TPM policy (shared by the CLI and GUI), and the sealed-blob store | `seal/README.md`, `seal/platform-policy.md`, `configuration/auto-unseal.md` (now a pointer) |
 | [secret-service](secret-service/) | The `org.freedesktop.secrets` D-Bus daemon exposing the static-password store to secret-tool, git-credential-libsecret and browsers, with Lock/Unlock tied to the barrier | — |
 | [setup-wizard](setup-wizard/) | First-run setup: quick and manual personal setup, enterprise SO provisioning and onboarding, and where the generated SO PIN may live | `gui/setup-wizard.md`, `seal/setup-wizard.md` |
-| [share-custody](share-custody/) | The Shamir share custody client | — |
 | [ssh](ssh/) | xkey's SSH key/profile/host-key management, connect/console, local `ssh_config`/agent discovery, and the GUI SSH services | `ssh/README.md` |
 | [usb](usb/) | The virtual USB CCID smartcard device (UHID or ConfigFS/FunctionFS gadget) and portable USB disk images | `usb/ccid.md`, `usb/images.md` |
 | [virtual-authenticator](virtual-authenticator/) | The virtual FIDO2/CTAP2 authenticator over Linux UHID | `fido2/` (with `headless-webauthn`) |

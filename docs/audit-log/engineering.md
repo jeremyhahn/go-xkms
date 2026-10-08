@@ -1,23 +1,18 @@
 # Audit Log — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1134)
+> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-10-07 (S2c)
 
 ## Exported surface — `pkg/audit`
 
 ```go
-type Logger interface {
-	Log(ctx context.Context, event *Event) error
-	Close() error
-}
-
 type Event struct {
-	Timestamp  time.Time         `json:"timestamp"`
-	Subject    string            `json:"subject"`
-	Action     string            `json:"action"`
-	Resource   string            `json:"resource"`
-	ResourceID string            `json:"resource_id"`
-	Outcome    string            `json:"outcome"`
-	Details    map[string]string `json:"details,omitempty"`
+	Timestamp  time.Time
+	Subject    string
+	Action     string
+	Resource   string
+	ResourceID string
+	Outcome    string
+	Details    map[string]string
 }
 
 const (
@@ -25,21 +20,23 @@ const (
 	OutcomeDeny  = "deny"
 )
 
-type NoOpLogger struct{}
-func (n *NoOpLogger) Log(ctx context.Context, event *Event) error { return nil }
-func (n *NoOpLogger) Close() error                                { return nil }
+// Emit writes event to sink. A nil sink is "auditing off" and returns nil.
+func Emit(ctx context.Context, sink qrdbsdk.NodeAuditLogger, event *Event) error
+
+var ErrNilEvent = errors.New("nil audit event")
 ```
 
-Backends: `chained_file.go` (tamper-evident local), `qrdb.go` (durable,
-queryable). Errors: `errors.go`. Write-failure policy: `severity.go`.
+`pkg/audit` has no sink of its own. The sink is go-qrdb's
+`qrdbsdk.NodeAuditLogger` (`Emit`/`Query`/`Close`), and `Emit` maps the product
+`Event` onto go-qrdb's `NodeAuditEvent`: `Subject` becomes `Actor`;
+`Details["remote_addr"]` becomes `ClientIP`; `Details["role"]` becomes `Role`;
+`ResourceID` and the remaining `Details` become `Attributes`
+(`resource_id` and the detail keys). Severity is go-qrdb's; go-xkms keeps no
+severity levels of its own in this package. `pkg/audit/audittest` provides the
+in-memory `Recorder` and `Failing` sinks for tests.
 
-Query contract — `sdk/go/transport`:
-
-```go
-type AuditService interface {
-	QueryAudit(ctx context.Context, filter *AuditFilter) (*AuditPage, error)
-}
-```
+The audit read side is go-qrdb's (`AuditService.QueryAudit`, `audit:read`,
+tenant-confined). xkms exposes no query verb on any transport.
 
 ## Invariants
 
@@ -50,71 +47,43 @@ type AuditService interface {
 - **`Details` never carries secrets.** Key material, PINs, passphrases, share
   bytes, tokens, and certificate private keys are excluded. Details land in
   durable, queryable, exportable storage — treat every value as published.
-- **`Close()` flushes.** A process that exits without closing the logger can
-  lose its last records, which are usually the interesting ones.
-- **The chained file is append-only and chained.** Each record links to its
-  predecessor; rewriting history breaks the chain and is detectable. Do not add
-  an update or delete path.
+- **The node closes its sink.** Components receiving a sink never close it;
+  `pkg/server` closes only a fallback file logger it created itself.
+- **The sink is append-only.** go-qrdb's logger owns chaining and retention;
+  go-xkms adds no update or delete path.
 - **`Timestamp` is the event time**, set at the operation, not at write time.
-- **A query's tenant comes from the identity.** `QueryAudit` replaces
-  `AuditFilter.TenantID` with `auditTenantFilter`'s answer
-  (`pkg/xkms/servicer_audit.go`): the caller's own tenant, normalized through
-  `qrdbsdk.NormalizeTenantID`, for every caller -- the system tenant included,
-  and `system` for an absent identity or one with no tenant. No grant is
-  consulted, so no grant can widen it; go-qrdb has no cross-tenant audit
-  read. The embedded node confines the filter again
-  (`tenant.ConfineAuditFilter`) and adds the untenanted platform events for a
-  system-tenant caller. Never let a transport pass a caller-chosen tenant to
-  the audit client directly.
+
 - **An emitted event's tenant is normalized, never left empty.**
-  `toTransportEvent` (`pkg/audit/qrdb.go:84-98`) resolves the tenant from the
+  `audit.Emit` (`pkg/audit/emit.go`) resolves the tenant from the
   identity on the context, same as the query side, and folds it through
   `qrdbsdk.NormalizeTenantID` before it is stored: no identity, or an identity
-  with an empty `TenantID`, becomes `system`. Both backends (`QRDBLogger`,
-  `ChainedFileLogger`) call this one function, so there is a single place the
+  with an empty `TenantID`, becomes `system`. Every sink goes through `Emit`, so there is a single place the
   fold has to hold. Without it, an event emitted off a background job or any
   other identity-less path stored `""` — the query side's
   match-everything filter — and no confined query, a system-tenant auditor's
   included, ever saw it (#1134). Events stored before the fix keep their
   stored tenant; there is no rewrite of the existing chain.
-- **Concurrency.** Loggers are safe for concurrent use; both backends serialise
-  their writes internally.
+- **Concurrency.** go-qrdb's loggers are safe for concurrent use.
 
-## Write-failure policy (issue #688)
+## Write-failure policy (issues #688, S2c)
 
-`Log`'s returned error is never discarded. Every call site runs it through the
-package's `HandleWriteFailure(slogger, classifier, writeErr)` (three
-independent, structurally identical implementations — `pkg/audit/severity.go`,
-`xkey/pkg/audit/severity.go`, `pkg/acme/audit/severity.go` — one per module
-that owns its own event/operation vocabulary):
+`Emit`'s returned error is never discarded, and every `pkg/audit` write is
+fail-closed: a sink error comes back as `*qrdbsdk.AuditGateError`
+(`Component` is the event action; `Unwrap()` reaches the cause). The caller
+must propagate it and fail the request rather than complete a
+security-relevant action that could not be audited. The action may already be
+committed (a key created, a certificate revoked) — the policy governs whether
+the caller reports success, not whether the side effect is undone.
 
-- **`SeveritySecurity`** — PIN, seal/unseal, key create/delete/use, CA issuance
-  and revocation, authentication and authorization, and (see below) TPM,
-  FIDO2/OATH credential, and password-store operations. A failed write returns
-  a typed `*ErrAuditWriteFailed` (`Unwrap()`s to the underlying cause); the
-  caller **must** propagate it and fail the request rather than complete a
-  security-relevant action that could not be audited. The action that
-  triggered the event may already be committed (e.g. a key already created,
-  a certificate already revoked with the CA) — write-failure policy governs
-  whether the caller reports success, not whether the side effect is undone;
-  there is no rollback path.
-- **`SeverityInformational`** — protocol/lifecycle progress that is not
-  itself a security decision (e.g. ACME order/challenge progress, connection
-  established/closed, service start/stop). A failed write is logged via the
-  caller's `*slog.Logger` and counted in `metrics.AuditWriteFailuresTotal`
-  (`pkg/metrics`, label `operation`; xkey and ACME servers share this same
-  Prometheus counter rather than each registering their own, since they run
-  as separate processes and never link both registrations into one binary),
-  and `HandleWriteFailure` returns `nil` so the caller proceeds.
+The one deliberate exception is best-effort emission in `pkg/oidc/credential`,
+which logs a warning and proceeds. There is no `NoOpLogger`: a nil sink means
+auditing is off and `Emit` returns nil.
 
-Classification is a fixed set per package (`informationalActions` /
-`informationalOps` / `informationalEvents`); **an operation not in the set
-defaults to `SeveritySecurity`** — fail-closed for anything nobody has
-explicitly reviewed. Extending the vocabulary means adding to the
-informational set explicitly, not the reverse.
-
-`NoOpLogger` always returns nil — by construction it cannot fail, and the
-deployment has opted out; the policy above never triggers for it.
+The informational/security severity split (`HandleWriteFailure`,
+`ClassifyAction`, `metrics.AuditWriteFailuresTotal`) survives only in the two
+modules that own a separate vocabulary and sink: `xkey/pkg/audit` and
+`pkg/acme/audit`. Classification there is a fixed set; **an operation not in
+the set defaults to security** — fail-closed for anything nobody reviewed.
 
 ### Declared-event coverage
 
@@ -141,7 +110,7 @@ unaudited (`pkg/ca/audit.go`'s `CA.emitAudit`; the attestation gate in
   `CA_CROSS_SIGN` (`ImportXSignedCertificate`). `pkg/ca` cannot import
   `pkg/acme/audit` (ACME depends on `pkg/ca`, not the reverse — `pkg/ca` is
   also embedded by non-ACME callers such as the `xkmsd init` ceremony), so
-  these emit through the generic `pkg/audit.Logger`/`Event` (the same
+  these emit through the generic `pkg/audit.Emit`/`Event` (the same
   contract `pkg/seal` and `pkg/api/grpc` already use) with action strings
   `ca_init`/`ca_crl_generate`/`ca_cross_sign`, not through
   `pkg/acme/audit`'s `EventType` enum. A `*ca.Params`/`*ca.MultiIdentityParams`
@@ -198,21 +167,20 @@ drive is a separate, already-covered surface (`OpSOPINChanged` etc. in
 
 ## Configuration
 
-Choosing a backend is composition, in-process:
+The sink is go-qrdb's, chosen by composition:
 
-- **`NoOpLogger`** — audit disabled. Visible, deliberate.
-- **chained file** — a path on local disk; tamper-evident, single host.
-- **qrdb** — through `go-qrdb/sdk/go`; durable, queryable, cluster-wide.
-
-The CLI query filters (`cmd/xkmsctl/audit.go`) mirror `AuditFilter`: `--actor`,
-`--resource`, `--action`, `--outcome`, `--tenant`, `--from`, `--to` (RFC 3339),
-`--limit` (0 = server default), `--cursor`, `--all`.
+- **Node sink** — when an embedded qrdb node exists, `pkg/server` uses the
+  node's audit logger (`embeddednode.NewEmbeddedAuditSink`), so product events
+  and go-qrdb's own events share one trail.
+- **File fallback** — with no node, `pkg/server` opens
+  `qrdbsdk.NewAuditFileLogger` at `<datastore.path>/audit-events.ndjson`
+  (`audit-events.ndjson` in the working directory when no datastore path is
+  set), and closes it at shutdown.
+- **Off** — a nil sink; `Emit` returns nil.
 
 ## Persistence
 
-- **Chained file** — append-only, each record chained to the previous record's
-  hash.
-- **qrdb** — durable and indexed for the filter dimensions above.
+Owned by go-qrdb: its logger persists, chains and indexes the records.
 
 Retention and archival are deployment decisions; this package ships neither a
 policy nor a pruner. That is intentional — a KMS that silently discarded audit
@@ -220,28 +188,11 @@ records after N days would be worse than one that grows.
 
 ## Test strategy
 
-- **Unit** — `pkg/audit/logger_test.go`, `chained_file_test.go` (including
-  chain integrity), `qrdb_test.go`, `severity_test.go` (write-failure policy:
-  a failing sink fails a `SeveritySecurity` write and does not fail a
-  `SeverityInformational` one, which instead increments the metric).
-- **Tenant confinement** — `pkg/xkms/servicer_audit_tenant_test.go` covers a
-  tenant Admin, a system Admin, a system Auditor, an identity with no tenant
-  and no identity, each sending empty, own, foreign and system filters, under
-  an admitting Authorizer that is never consulted; and RBAC disabled.
-  `TestQueryAudit_SystemAuditorSeesIdentityLessEvent` in the same file is the
-  #1134 round trip through a real embedded node's `QRDBLogger`: a system
-  Auditor reads back an identity-less event and none of tenant-a's, and
-  tenant-a asking for the system tenant reads only its own.
-  `TestAudit_NoCrossTenantRead` (`pkg/auth/permissions_test.go`) pins that
-  go-qrdb registers no `audit:read:cross`. `pkg/audit/qrdb_test.go`'s
-  `TestQRDBLogger_NoIdentityNormalizesToSystemTenant` and
-  `TestQRDBLogger_EmptyIdentityTenantNormalizesToSystemTenant` cover the
-  normalization itself. There is one transport test per surface:
-  `pkg/api/rest/handlers_audit_tenant_test.go`,
-  `pkg/api/grpc/service_audit_tenant_test.go` and
-  `pkg/api/mcp/handlers_audit_tenant_test.go`.
-- **Transport** — `pkg/api/rest/handlers_audit_test.go`,
-  `handlers_transport_audit_test.go`; `pkg/api/grpc/service_transport_audit_test.go`,
+- **Unit** — `pkg/audit/emit_test.go`: a product event reaches go-qrdb's
+  logger with its fields and actor, no identity folds onto the system tenant,
+  and a sink failure surfaces as `*qrdbsdk.AuditGateError`.
+
+- **Transport** — `pkg/api/rest/handlers_transport_audit_test.go`; `pkg/api/grpc/service_transport_audit_test.go`,
   `service_authz_test.go` (`TestAuthz_AuthorizeAuditWriteFailureFailsRequest`).
 - **Subsystem audit** — `pkg/seal/audit_test.go`, `platform_sealer_test.go`
   (`TestPlatformSealer_{Seal,Unseal}_AuditWriteFailureFailsOperation`);
@@ -251,8 +202,7 @@ records after N days would be worse than one that grows.
   `TestAuditTrail_WriteFailureFailsSecurityOperation`), `audit_tcg_test.go`;
   `pkg/acme/server/rate_limiter_audit_test.go`
   (`TestRateLimiter_RecordsEventRateLimitExceeded`).
-- **xkey** — `xkey/pkg/audit/severity_test.go` (same write-failure policy
-  shape as the server); per-service tests alongside each emitter, e.g.
+- **xkey** — `xkey/pkg/audit/severity_test.go` (its own severity policy); per-service tests alongside each emitter, e.g.
   `xkey/pkg/gui/services/staticpw_service_audit_test.go`,
   `autofill_service_test.go`, `tpm_service_reset_audit_test.go`.
 - **#766's newly wired events**, each with a success test (fields), an

@@ -30,9 +30,13 @@ import (
 // modulePermissions(), and an empty loop reports success — so the gate first
 // insists the derived set is at least as large as it was when the gate was
 // written. Measured 2026-09-29 (tpm_policy:* replaced policy:*, and
-// tenants:set_tpm_mode was added): 85. Raise it when the API surface grows;
-// a drop below it is a red run, which is the point.
-const minModulePermissions = 85
+// tenants:set_tpm_mode was added): 85. Re-measured 2026-10-04 after the
+// barrier, custody, backup, audit and init-ceremony surfaces moved to go-qrdb's
+// own API: 70. Re-measured 2026-10-08 after the REST cluster routes, which
+// re-hosted go-qrdb's AdminService, were deleted: admin:status and
+// admin:peers went with them, both still declared by go-qrdb itself: 69. Raise it when
+// the API surface grows; a drop below it is a red run, which is the point.
+const minModulePermissions = 69
 
 // upstreamDeclared records which of this module's permissions already had a
 // scope BEFORE registerRoleGrants ran — that is, the ones go-qrdb declares

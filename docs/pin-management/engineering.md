@@ -151,8 +151,8 @@ The interface, `PINStrategyID`, `PINLockoutStatus` and `ErrPINNotSet` are
   (go-xkms#1227). Every `XKMSService` PIN method refuses a tenant-scoped
   caller with `*xkms.TenantBindingError` before the backend is touched
   (`pkg/xkms/servicer_pin.go:43,54,65,76,87,98,109,136`). REST
-  (`pkg/api/rest/handlers_barrier_pin.go`), gRPC/Unix
-  (`pkg/api/grpc/service_barrier_pin.go`) and MCP (`pkg/api/mcp/handlers_pin.go`)
+  (`pkg/api/rest/handlers_pin.go`), gRPC/Unix
+  (`pkg/api/grpc/service_pin.go`) and MCP (`pkg/api/mcp/handlers_pin.go`)
   call those methods; none holds the `PINBackend`, and `rest.Config` no longer
   has a `PINManager` field. The password store's own user-PIN check
   (`pkg/xkms/servicer_password.go`) calls the backend directly and is not

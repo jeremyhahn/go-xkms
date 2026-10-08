@@ -70,52 +70,7 @@ var (
 
 	// Backup command errors (go-xkms#728)
 
-	// ErrBackupDestinationRequired is returned when --destination is not
-	// provided for backup create.
-	ErrBackupDestinationRequired = errors.New("--destination is required")
-
-	// ErrBackupIDRequired is returned when --id is not provided for a
-	// command that requires a backup ID.
-	ErrBackupIDRequired = errors.New("--id is required")
-
-	// ErrCreateBackupFailed is the sentinel error "failed to create backup".
-	ErrCreateBackupFailed = errors.New("failed to create backup")
-
-	// ErrListBackupsFailed is the sentinel error "failed to list backups".
-	ErrListBackupsFailed = errors.New("failed to list backups")
-
-	// ErrGetBackupFailed is the sentinel error "failed to get backup".
-	ErrGetBackupFailed = errors.New("failed to get backup")
-
-	// ErrDeleteBackupFailed is the sentinel error "failed to delete backup".
-	ErrDeleteBackupFailed = errors.New("failed to delete backup")
-
-	// ErrRestoreBackupFailed is the sentinel error "failed to restore backup".
-	ErrRestoreBackupFailed = errors.New("failed to restore backup")
-
-	// ErrVerifyBackupFailed is the sentinel error "failed to verify backup".
-	ErrVerifyBackupFailed = errors.New("failed to verify backup")
-
 	// Custodian group errors
-
-	// ErrCustodianNameRequired is returned when --name is not provided for custodian create.
-	ErrCustodianNameRequired = errors.New("--name is required")
-
-	// ErrCustodianInvalidThreshold is returned when --threshold or --total are not positive.
-	ErrCustodianInvalidThreshold = errors.New("--threshold and --total must be positive integers")
-
-	// ErrCustodianThresholdExceedsTotal is returned when threshold exceeds total shares.
-	ErrCustodianThresholdExceedsTotal = errors.New("--threshold must not exceed --total")
-
-	// ErrCustodianIDRequired is returned when --id is not provided for a command
-	// that requires a custodian group ID.
-	ErrCustodianIDRequired = errors.New("--id is required")
-
-	// ErrCustodianGroupIDRequired is returned when --group-id is not provided.
-	ErrCustodianGroupIDRequired = errors.New("--group-id is required")
-
-	// ErrCustodianUserIDRequired is returned when --user-id is not provided.
-	ErrCustodianUserIDRequired = errors.New("--user-id is required")
 
 	// Tenant errors
 
@@ -148,38 +103,14 @@ var (
 	// ErrServerRequired is returned when --server is not specified for init commands.
 	ErrServerRequired = errors.New("--server is required for init commands")
 
-	// ErrUsernameRequired is returned when --username is not specified.
-	ErrUsernameRequired = errors.New("--username is required")
-
-	// ErrExternalOfficerMaterial reports that external-officer enrolment was
-	// given both or neither of --cert / --pubkey. Exactly one is required:
-	// they are different trust sources (external CA chain vs admin-asserted),
-	// so accepting both would leave the trust decision ambiguous.
-	ErrExternalOfficerMaterial = errors.New("exactly one of --cert or --pubkey is required")
-
-	// ErrKeyFileRequired is returned when --key is not specified for claim-cert.
-	ErrKeyFileRequired = errors.New("--key is required for claim-cert (CSR private key)")
-
 	// ErrSPKIPinRequired is returned when --spki-pin is not specified for SPKI-pinned operations.
 	ErrSPKIPinRequired = errors.New("--spki-pin is required for initial cert claim")
-
-	// ErrNonceSignFailed is returned when nonce signing fails.
-	ErrNonceSignFailed = errors.New("failed to sign nonce challenge")
 
 	// ErrHTTPRequestFailed is returned when an HTTP request to the server fails.
 	ErrHTTPRequestFailed = errors.New("HTTP request to server failed")
 
 	// ErrServerResponseError is returned when the server returns a non-2xx status.
 	ErrServerResponseError = errors.New("server returned error")
-
-	// ErrPrivateKeyRead is returned when the private key file cannot be read.
-	ErrPrivateKeyRead = errors.New("failed to read private key file")
-
-	// ErrPrivateKeyParse is returned when the private key cannot be parsed.
-	ErrPrivateKeyParse = errors.New("failed to parse private key")
-
-	// ErrUnsupportedKeyType is returned when the private key type is not supported for signing.
-	ErrUnsupportedKeyType = errors.New("unsupported private key type for nonce signing")
 
 	// Credential errors
 
@@ -189,70 +120,17 @@ var (
 	// ErrCredentialValueRequired is returned when --value is not specified for credential submit.
 	ErrCredentialValueRequired = errors.New("--value is required for credential submit")
 
-	// ErrCSRFileRequired is returned when --csr is not specified for sign-csr.
-	ErrCSRFileRequired = errors.New("--csr is required for sign-csr")
-
-	// ErrSOPinRequired is returned when --so-pin is not specified.
-	ErrSOPinRequired = errors.New("--so-pin is required for this operation")
-
-	// ErrRoleRequired is returned when --role is not specified for sign-csr.
-	ErrRoleRequired = errors.New("--role is required for sign-csr")
-
-	// ErrJSONParseFailed is returned when a JSON response cannot be parsed.
-	ErrJSONParseFailed = errors.New("failed to parse JSON response")
-
 	// ErrJSONMarshalFailed is returned when a request cannot be marshalled to JSON.
 	ErrJSONMarshalFailed = errors.New("failed to marshal JSON request")
 
 	// ErrNonceDecode is returned when a nonce cannot be decoded.
 	ErrNonceDecode = errors.New("failed to decode nonce")
 
-	// ErrBase64Decode is returned when base64 decoding fails.
-	ErrBase64Decode = errors.New("failed to decode base64 data")
-
-	// ErrCertFileWrite is returned when a certificate file cannot be written.
-	ErrCertFileWrite = errors.New("failed to write certificate file")
-
 	// ErrShareFileWrite is returned when a share file cannot be written.
 	ErrShareFileWrite = errors.New("failed to write share file")
 
-	// ErrShareMissingInResponse is returned when the server answers a share
-	// claim with a body that carries no share document.
-	ErrShareMissingInResponse = errors.New("server response contained no share")
-
-	// ErrShareGroupIDRequired is returned when a share command needs --group-id.
-	ErrShareGroupIDRequired = errors.New("--group-id is required")
-
-	// ErrShareDataRequired is returned when share submission has no share data.
-	ErrShareDataRequired = errors.New("share data is required (use --data or --file)")
-
-	// ErrShareDataSourceConflict is returned when both --data and --file are set.
-	ErrShareDataSourceConflict = errors.New("only one of --data or --file may be provided")
-
-	// ErrSubmitShareFailed wraps a share submission failure.
-	ErrSubmitShareFailed = errors.New("failed to submit share")
-
-	// ErrListSharesFailed wraps a share listing failure.
-	ErrListSharesFailed = errors.New("failed to list shares")
-
-	// ErrShareCollectionStatusFailed wraps a collection-status failure.
-	ErrShareCollectionStatusFailed = errors.New("failed to get share collection status")
-
-	// ErrReadShareFileFailed wraps a share file read failure.
-	ErrReadShareFileFailed = errors.New("failed to read share file")
-
-	// ErrShareServerURLRequired is returned when a per-share command needs
-	// --server-url to address the share.
-	ErrShareServerURLRequired = errors.New("--server-url is required")
-
 	// ErrListAlgorithmsFailed wraps an algorithm-discovery failure.
 	ErrListAlgorithmsFailed = errors.New("failed to list algorithms")
-
-	// ErrGetShareFailed wraps a single-share retrieval failure.
-	ErrGetShareFailed = errors.New("failed to get share")
-
-	// ErrDeleteShareFailed wraps a single-share deletion failure.
-	ErrDeleteShareFailed = errors.New("failed to delete share")
 
 	// ErrKeyGenFailed is returned when key generation fails.
 	ErrKeyGenFailed = errors.New("failed to generate key pair")
@@ -280,22 +158,12 @@ var (
 // a CLI failure mode; wrap sites pair them with an underlying cause via
 // WrappedError / WrappedDetailError.
 var (
-	// ErrAddCustodianMemberFailed is the sentinel error "failed to add custodian member".
-	ErrAddCustodianMemberFailed = errors.New("failed to add custodian member")
 
 	// ErrAggregateSignaturesFailed is the sentinel error "failed to aggregate signatures".
 	ErrAggregateSignaturesFailed = errors.New("failed to aggregate signatures")
 
 	// ErrAuthenticationFailed is the sentinel error "authentication failed".
 	ErrAuthenticationFailed = errors.New("authentication failed")
-
-	// ErrAuditFromInvalid is returned when "audit query" is invoked with a
-	// --from value that does not parse as RFC3339.
-	ErrAuditFromInvalid = errors.New("--from is not a valid RFC3339 timestamp")
-
-	// ErrAuditToInvalid is returned when "audit query" is invoked with a
-	// --to value that does not parse as RFC3339.
-	ErrAuditToInvalid = errors.New("--to is not a valid RFC3339 timestamp")
 
 	// ErrBeginAuthenticationFailed is the sentinel error "failed to begin authentication".
 	ErrBeginAuthenticationFailed = errors.New("failed to begin authentication")
@@ -372,9 +240,6 @@ var (
 	// ErrCreateClientFromURLFailed is the sentinel error "failed to create client from URL".
 	ErrCreateClientFromURLFailed = errors.New("failed to create client from URL")
 
-	// ErrCreateCustodianGroupFailed is the sentinel error "failed to create custodian group".
-	ErrCreateCustodianGroupFailed = errors.New("failed to create custodian group")
-
 	// ErrCreateExportDirectoryFailed is the sentinel error "failed to create export directory".
 	ErrCreateExportDirectoryFailed = errors.New("failed to create export directory")
 
@@ -447,9 +312,6 @@ var (
 	// ErrDecodeSecretShareFailed is the sentinel error "failed to decode secret share".
 	ErrDecodeSecretShareFailed = errors.New("failed to decode secret share")
 
-	// ErrDecodeShareFailed is the sentinel error "failed to decode share".
-	ErrDecodeShareFailed = errors.New("failed to decode share")
-
 	// ErrDecodeSignatureFailed is the sentinel error "failed to decode signature".
 	ErrDecodeSignatureFailed = errors.New("failed to decode signature")
 
@@ -469,9 +331,6 @@ var (
 
 	// ErrDeleteCertificateFailed is the sentinel error "failed to delete certificate".
 	ErrDeleteCertificateFailed = errors.New("failed to delete certificate")
-
-	// ErrDeleteCustodianGroupFailed is the sentinel error "failed to delete custodian group".
-	ErrDeleteCustodianGroupFailed = errors.New("failed to delete custodian group")
 
 	// ErrDeleteKeyFailed is the sentinel error "failed to delete key".
 	ErrDeleteKeyFailed = errors.New("failed to delete key")
@@ -506,14 +365,8 @@ var (
 	// ErrDisconnectFailed is the sentinel error "failed to disconnect".
 	ErrDisconnectFailed = errors.New("failed to disconnect")
 
-	// ErrDistributeSharesFailed is the sentinel error "failed to distribute shares".
-	ErrDistributeSharesFailed = errors.New("failed to distribute shares")
-
 	// ErrEnableAdminFailed is the sentinel error "failed to enable admin".
 	ErrEnableAdminFailed = errors.New("failed to enable admin")
-
-	// ErrEnableEncryptionFailed is the sentinel error "failed to enable encryption".
-	ErrEnableEncryptionFailed = errors.New("failed to enable encryption")
 
 	// ErrEnableUserFailed is the sentinel error "failed to enable user".
 	ErrEnableUserFailed = errors.New("failed to enable user")
@@ -668,9 +521,6 @@ var (
 	// ErrGeneratePIVKeyFailed is the sentinel error "failed to generate PIV key".
 	ErrGeneratePIVKeyFailed = errors.New("failed to generate PIV key")
 
-	// ErrGenerateRecoveryKeysFailed is the sentinel error "failed to generate recovery keys".
-	ErrGenerateRecoveryKeysFailed = errors.New("failed to generate recovery keys")
-
 	// ErrGenerateSerialNumberFailed is the sentinel error "failed to generate serial number".
 	ErrGenerateSerialNumberFailed = errors.New("failed to generate serial number")
 
@@ -682,9 +532,6 @@ var (
 
 	// ErrGetBackendInfoFailed is the sentinel error "failed to get backend info".
 	ErrGetBackendInfoFailed = errors.New("failed to get backend info")
-
-	// ErrGetBarrierStatusFailed is the sentinel error "failed to get barrier status".
-	ErrGetBarrierStatusFailed = errors.New("failed to get barrier status")
 
 	// ErrGetBootstrapListenerKeysFailed is the sentinel error "failed to get bootstrap listener keys".
 	ErrGetBootstrapListenerKeysFailed = errors.New("failed to get bootstrap listener keys")
@@ -700,9 +547,6 @@ var (
 
 	// ErrGetCertificateFailed is the sentinel error "failed to get certificate".
 	ErrGetCertificateFailed = errors.New("failed to get certificate")
-
-	// ErrGetCustodianGroupFailed is the sentinel error "failed to get custodian group".
-	ErrGetCustodianGroupFailed = errors.New("failed to get custodian group")
 
 	// ErrGetImportParametersFailed is the sentinel error "failed to get import parameters".
 	ErrGetImportParametersFailed = errors.New("failed to get import parameters")
@@ -727,30 +571,6 @@ var (
 
 	// ErrImportPIVCertificateFailed is the sentinel error "failed to import PIV certificate".
 	ErrImportPIVCertificateFailed = errors.New("failed to import PIV certificate")
-
-	// ErrInitSOPINRequired is the sentinel error "xkmsctl init: --so-pin is required (or set XKMS_SO_PIN)".
-	ErrInitSOPINRequired = errors.New("xkmsctl init: --so-pin is required (or set XKMS_SO_PIN)")
-
-	// ErrInitSharesRequireShamir is the sentinel error "xkmsctl init: --shares / --threshold only valid when --barrier-strategy=shamir".
-	ErrInitSharesRequireShamir = errors.New("xkmsctl init: --shares / --threshold only valid when --barrier-strategy=shamir")
-
-	// ErrInitSharesRequired is the sentinel error "xkmsctl init: --shares >= 2 required when --barrier-strategy=shamir".
-	ErrInitSharesRequired = errors.New("xkmsctl init: --shares >= 2 required when --barrier-strategy=shamir")
-
-	// ErrInitThresholdRequired is the sentinel error "xkmsctl init: --threshold (2 <= threshold <= shares) required when --barrier-strategy=shamir".
-	ErrInitThresholdRequired = errors.New("xkmsctl init: --threshold (2 <= threshold <= shares) required when --barrier-strategy=shamir")
-
-	// ErrInitUserPINRequired is the sentinel error "xkmsctl init: --user-pin is required (or set XKMS_USER_PIN)".
-	ErrInitUserPINRequired = errors.New("xkmsctl init: --user-pin is required (or set XKMS_USER_PIN)")
-
-	// ErrInitializeBarrierFailed is the sentinel error "failed to initialize barrier".
-	ErrInitializeBarrierFailed = errors.New("failed to initialize barrier")
-
-	// ErrInitializeShamirBarrierFailed is the sentinel error "failed to initialize Shamir barrier".
-	ErrInitializeShamirBarrierFailed = errors.New("failed to initialize Shamir barrier")
-
-	// ErrInitializeTenantBarrierFailed is the sentinel error "failed to initialize tenant barrier".
-	ErrInitializeTenantBarrierFailed = errors.New("failed to initialize tenant barrier")
 
 	// ErrInitializeTokenFailed is the sentinel error "failed to initialize token".
 	ErrInitializeTokenFailed = errors.New("failed to initialize token")
@@ -834,9 +654,6 @@ var (
 	// ErrListCredentialsFailed is the sentinel error "failed to list credentials".
 	ErrListCredentialsFailed = errors.New("failed to list credentials")
 
-	// ErrListCustodianGroupsFailed is the sentinel error "failed to list custodian groups".
-	ErrListCustodianGroupsFailed = errors.New("failed to list custodian groups")
-
 	// ErrListDevicesFailed is the sentinel error "failed to list devices".
 	ErrListDevicesFailed = errors.New("failed to list devices")
 
@@ -915,9 +732,6 @@ var (
 	// ErrParsePackageFileFailed is the sentinel error "failed to parse package file".
 	ErrParsePackageFileFailed = errors.New("failed to parse package file")
 
-	// ErrQueryAuditFailed is the sentinel error "failed to query audit log".
-	ErrQueryAuditFailed = errors.New("failed to query audit log")
-
 	// ErrRSAKeySizeTooLarge is the sentinel error "RSA key size must be at most 4096 bits".
 	ErrRSAKeySizeTooLarge = errors.New("RSA key size must be at most 4096 bits")
 
@@ -990,15 +804,6 @@ var (
 	// ErrReadWrappedKeyFileFailed is the sentinel error "failed to read wrapped key file".
 	ErrReadWrappedKeyFileFailed = errors.New("failed to read wrapped key file")
 
-	// ErrRecoverBarrierFailed is the sentinel error "failed to recover barrier".
-	ErrRecoverBarrierFailed = errors.New("failed to recover barrier")
-
-	// ErrDeleteRecoveryKeysFailed wraps a recovery-key deletion failure.
-	ErrDeleteRecoveryKeysFailed = errors.New("failed to delete recovery keys")
-
-	// ErrGenerateRootTokenFailed wraps a root-token generation failure.
-	ErrGenerateRootTokenFailed = errors.New("failed to generate root token")
-
 	// ErrRegisterCredentialFailed is the sentinel error "failed to register credential".
 	ErrRegisterCredentialFailed = errors.New("failed to register credential")
 
@@ -1007,12 +812,6 @@ var (
 
 	// ErrRegisterVirtualDeviceFailed is the sentinel error "failed to register virtual device".
 	ErrRegisterVirtualDeviceFailed = errors.New("failed to register virtual device")
-
-	// ErrRekeyBarrierFailed is the sentinel error "failed to rekey barrier".
-	ErrRekeyBarrierFailed = errors.New("failed to rekey barrier")
-
-	// ErrRemoveCustodianMemberFailed is the sentinel error "failed to remove custodian member".
-	ErrRemoveCustodianMemberFailed = errors.New("failed to remove custodian member")
 
 	// ErrRevokeCertificateFailed is the sentinel error "failed to revoke certificate".
 	ErrRevokeCertificateFailed = errors.New("failed to revoke certificate")
@@ -1051,9 +850,6 @@ var (
 
 	// ErrSaveCertificateFailed is the sentinel error "failed to save certificate".
 	ErrSaveCertificateFailed = errors.New("failed to save certificate")
-
-	// ErrSealBarrierFailed is the sentinel error "failed to seal barrier".
-	ErrSealBarrierFailed = errors.New("failed to seal barrier")
 
 	// ErrSealDataFailed is the sentinel error "failed to seal data".
 	ErrSealDataFailed = errors.New("failed to seal data")
@@ -1097,17 +893,8 @@ var (
 	// ErrUnknownOutputFormat is the sentinel error "unknown output format".
 	ErrUnknownOutputFormat = errors.New("unknown output format")
 
-	// ErrUnsealBarrierFailed is the sentinel error "failed to unseal barrier".
-	ErrUnsealBarrierFailed = errors.New("failed to unseal barrier")
-
-	// ErrUnsealBarrierSharesFailed is the sentinel error "failed to unseal barrier with shares".
-	ErrUnsealBarrierSharesFailed = errors.New("failed to unseal barrier with shares")
-
 	// ErrUnsealDataFailed is the sentinel error "failed to unseal data".
 	ErrUnsealDataFailed = errors.New("failed to unseal data")
-
-	// ErrUnsealTenantBarrierFailed is the sentinel error "failed to unseal tenant barrier".
-	ErrUnsealTenantBarrierFailed = errors.New("failed to unseal tenant barrier")
 
 	// ErrUnsupportedProtocol is the sentinel error "unsupported protocol".
 	ErrUnsupportedProtocol = errors.New("unsupported protocol")
@@ -1264,12 +1051,6 @@ var (
 
 	// Password store errors
 
-	// ErrPasswordNameRequired is returned when a password entry name is missing.
-	ErrPasswordNameRequired = errors.New("password name is required")
-
-	// ErrPasswordIDRequired is returned when a password entry ID is missing.
-	ErrPasswordIDRequired = errors.New("password id is required")
-
 	// ErrPasswordSecretRequired is returned when no password value could be
 	// resolved from the flag, stdin, or the interactive prompt.
 	ErrPasswordSecretRequired = errors.New("password value is required")
@@ -1384,9 +1165,6 @@ var (
 		"(\"password vault enroll --passkey\") and remove the old one (\"password vault remove\")")
 
 	// Platform store errors
-
-	// ErrPlatformSecretNameRequired is returned when a platform secret name is missing.
-	ErrPlatformSecretNameRequired = errors.New("platform secret name is required")
 
 	// ErrPlatformSecretRequired is returned when no secret bytes could be
 	// resolved from --value, --file, stdin, or the interactive prompt.
@@ -1746,35 +1524,6 @@ func (e *ConfigLoadError) Error() string {
 // Unwrap returns the underlying cause.
 func (e *ConfigLoadError) Unwrap() error { return e.Err }
 
-// InitEnvValueError is returned when an init environment variable holds an
-// invalid value for the corresponding flag.
-type InitEnvValueError struct {
-	// Flag is the flag name whose environment value is invalid.
-	Flag string
-	// Err is the underlying parse error.
-	Err error
-}
-
-// Error returns a human-readable description.
-func (e *InitEnvValueError) Error() string {
-	return "xkmsctl init: invalid env value for " + e.Flag + ": " + e.Err.Error()
-}
-
-// Unwrap returns the underlying cause.
-func (e *InitEnvValueError) Unwrap() error { return e.Err }
-
-// InitBarrierStrategyError is returned when --barrier-strategy holds an
-// unrecognized value.
-type InitBarrierStrategyError struct {
-	// Strategy is the rejected strategy value.
-	Strategy string
-}
-
-// Error returns a human-readable description.
-func (e *InitBarrierStrategyError) Error() string {
-	return fmt.Sprintf("xkmsctl init: invalid --barrier-strategy %q", e.Strategy)
-}
-
 // BundlePathIsDirError is returned when the direct-bootstrap bundle path
 // refers to a directory instead of a file.
 type BundlePathIsDirError struct {
@@ -2017,19 +1766,14 @@ func (e *UserNoCredentialsError) Error() string {
 	return "user " + e.Username + " has no credentials"
 }
 
-// TenantBarrierStatusError is returned when the barrier status of a tenant
-// cannot be retrieved.
-type TenantBarrierStatusError struct {
-	// TenantID is the tenant whose barrier status was requested.
-	TenantID string
-	// Err is the underlying cause.
-	Err error
-}
+// Password store and platform store sentinels.
+var (
+	// ErrPasswordNameRequired is returned when a password entry name is missing.
+	ErrPasswordNameRequired = errors.New("password name is required")
 
-// Error returns a human-readable description.
-func (e *TenantBarrierStatusError) Error() string {
-	return fmt.Sprintf("failed to get barrier status for tenant %q: %v", e.TenantID, e.Err)
-}
+	// ErrPasswordIDRequired is returned when a password entry ID is missing.
+	ErrPasswordIDRequired = errors.New("password id is required")
 
-// Unwrap returns the underlying cause.
-func (e *TenantBarrierStatusError) Unwrap() error { return e.Err }
+	// ErrPlatformSecretNameRequired is returned when a platform secret name is missing.
+	ErrPlatformSecretNameRequired = errors.New("platform secret name is required")
+)

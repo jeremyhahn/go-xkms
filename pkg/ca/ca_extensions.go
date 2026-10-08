@@ -454,7 +454,7 @@ func (ca *CA) CAKeyAttributes(storeType types.StoreType) (*types.KeyAttributes, 
 	if storeType != "" && configured != storeType {
 		return nil, &errs.Detail{Err: ErrInvalidStoreType, Detail: fmt.Sprintf("requested store type %s does not match configured %s", storeType, configured)}
 	}
-	attrs, err := ca.getCAKeyAttributes(issuing)
+	attrs, err := ca.getCAKeyAttributes(context.Background(), issuing)
 	if err != nil {
 		return nil, err
 	}
@@ -523,7 +523,7 @@ func (ca *CA) IssuerForIdentity(ctx context.Context, cn string) (crypto.Signer, 
 		return nil, nil, &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("identity %q certificate: %v", cn, err)}
 	}
 
-	attrs, err := ca.getCAKeyAttributes(identity)
+	attrs, err := ca.getCAKeyAttributes(ctx, identity)
 	if err != nil {
 		return nil, nil, err
 	}

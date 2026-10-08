@@ -11,19 +11,34 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package embeddednode builds a standalone embedded go-qrdb node the same
-// way every go-xkms composition root does: resolving a deployment's
-// node-barrier seal posture (config.BarrierConfig) and deriving the
-// storage+seal shape of the qrdb daemon config from it (config.DatastoreConfig).
+// Package embeddednode is the single go-qrdb node builder of the stack.
 //
-// It is Server-independent by design (it depends only on pkg/config,
-// pkg/daemon, pkg/seal and pkg/types -- never pkg/server or pkg/xkms) so
-// both pkg/server (the xkmsd-hosted daemon) and pkg/datastore (the SDK/
-// library composition path's single shared datastore, used by pkg/xkms's
-// AutoInitialize/register_* factories through a caller-supplied handle) can
-// open byte-for-byte the same on-disk identity for one Datastore.Path: the
-// same database engine, and the same barrier/seal/encryption-at-rest
-// configuration. See docs/datastore/architecture.md.
+// [NewNode] builds the node every go-xkms-derived daemon runs on, in both
+// standalone and clustered topologies. go-xkms itself, and every downstream
+// project that embeds go-qrdb through go-xkms, calls it rather than reaching
+// for go-qrdb's node constructors directly, so the standalone/clustered
+// decision, the membership parsing and the inter-node mTLS provisioning
+// (Raft mTLS plus the cluster-enrollment advertiser) live in one place.
+//
+// Clustering is compiled in only with the `raft` build tag. Without it,
+// [NewNode] serves standalone topologies and fails loudly on a clustered
+// configuration rather than silently degrading to a single node.
+//
+// Hardware-backed provisioning (TPM-attested ACME enrollment, PKCS#11 /
+// TPM2-resident node keys) is supplied by the caller through
+// [NodeOptions.RaftMTLSResolver]. Those strategies need a certificate
+// authority and key-strategy dependencies that belong to the daemon, not to
+// node construction, so they are injected instead of imported. A nil resolver
+// selects the built-in software auto-provisioning path.
+//
+// [OpenEmbeddedNode] layers a deployment's configuration over [NewNode]:
+// it resolves the node-barrier seal posture (config.BarrierConfig) and derives
+// the storage+seal shape of the qrdb daemon config (config.DatastoreConfig).
+// It is Server-independent by design (it depends only on pkg/config, pkg/seal
+// and pkg/types -- never pkg/server or pkg/xkms) so both pkg/server (the
+// xkmsd-hosted daemon) and pkg/datastore (the SDK/library composition path's
+// single shared datastore) open byte-for-byte the same on-disk identity for
+// one Datastore.Path. See docs/datastore/architecture.md.
 package embeddednode
 
 import (
@@ -36,7 +51,6 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/daemon"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -53,29 +67,32 @@ const KeyDirSubdir = "tpm2-keys"
 const DefaultEmbeddedAuditRingCapacity = 1024
 
 // ResolvedNodeSeal is the outcome of resolving a deployment's node-barrier
-// seal posture (see config.BarrierConfig.NodeFlipWired): whether the qrdb
-// node's own barrier encrypts the data plane, and -- for tpm2, the one
-// strategy that needs a prebuilt Go object -- the SealingStrategy and its
-// hardware handle.
+// seal posture: whether the qrdb node's own barrier -- the deployment's only
+// barrier -- encrypts the data plane, and, for the hardware and cloud
+// strategies, the pre-built SealingStrategy and the resources it holds.
 type ResolvedNodeSeal struct {
-	// Enabled reports whether the qrdb node's own barrier is the single
-	// barrier for this deployment (the flip). False means either the
-	// deployment is not datastore.mode=="standalone", the barrier is
-	// disabled, or the configured strategy is not one NodeFlipWired covers
-	// -- in every case the caller's own (non-node) barrier is used instead.
+	// Enabled reports whether the qrdb node's barrier seals the data plane.
+	// False when the deployment is not datastore.mode=="standalone" (a remote
+	// datastore's barrier lives on the remote node) or the barrier is
+	// disabled.
 	Enabled bool
 
-	// Strategy is the pre-built hardware SealingStrategy fed to the node via
-	// qrdbnode.WithSealStrategy. Non-nil only for tpm2; "none", "passphrase"
-	// and "shamir" are built natively by go-qrdb's own node seal subsystem
-	// from DaemonConfig.Seal alone.
+	// Strategy is the pre-built SealingStrategy fed to the node via
+	// qrdbnode.WithSealStrategy (see NodeSealOptions). Non-nil for tpm2,
+	// pkcs11, awskms, gcpkms, azurekv and vault; "none", "passphrase" and
+	// "shamir" are built natively by go-qrdb's own node seal subsystem from
+	// DaemonConfig.Seal alone.
 	Strategy seal.SealingStrategy
 
 	// TPM is the single open TPM backend produced by the seal autodetect when
-	// Strategy is tpm2. Nil otherwise.
+	// Strategy is tpm2. Nil otherwise: pkcs11 and vault need the TPM only to
+	// release a pre-barrier secret and close it before ResolveNodeSeal
+	// returns.
 	TPM types.Sealer
 
-	// Close releases the autodetect TPM open. Nil unless Strategy is tpm2.
+	// Close releases what Strategy holds open: the TPM for tpm2, the PKCS#11
+	// session for pkcs11, the KMS backend and its key metadata for the cloud
+	// strategies. Nil for every other strategy.
 	Close func() error
 }
 
@@ -97,78 +114,172 @@ func ResolveTPM2KeyDir(cfg *config.Config) (string, error) {
 	return resolveTPM2KeyDir(cfg)
 }
 
-// ResolveNodeSeal decides whether a deployment's qrdb node uses its OWN
-// barrier to encrypt the data-plane KV (the flip), and -- for tpm2, the one
-// strategy that needs it -- resolves and pre-builds the hardware
-// SealingStrategy.
+// nodeSealResolver resolves the node seal for one barrier strategy.
+type nodeSealResolver func(cfg *config.Config, logger *slog.Logger) (ResolvedNodeSeal, error)
+
+// nodeSealResolvers maps every non-cloud barrier strategy to its resolver.
+// The cloud strategies (awskms, gcpkms, azurekv, vault) resolve through
+// resolveCloudNodeSeal, whose providers are compiled in by build tag.
+var nodeSealResolvers = map[string]nodeSealResolver{
+	"tpm2":       resolveTPM2NodeSeal,
+	"pkcs11":     resolvePKCS11NodeSealLogged,
+	"none":       resolveInsecureNodeSeal,
+	"passphrase": resolveOperatorNodeSeal,
+	"shamir":     resolveOperatorNodeSeal,
+}
+
+// ResolveNodeSeal decides whether a deployment's qrdb node seals its data
+// plane with its own barrier -- the deployment's only barrier -- and, for
+// the hardware and cloud strategies, pre-builds the SealingStrategy the node
+// is given through qrdbnode.WithSealStrategy (see NodeSealOptions). Secrets
+// a strategy needs before the node exists (the PKCS#11 PIN, the Vault
+// token) are released from the pre-barrier secret store (see OpenPreseal).
 //
-// This is the Server-independent form of (*Server).resolveNodeSeal (see
-// pkg/server/node_seal.go for the full design rationale): xkmsd run and
-// xkmsd init both call it against the SAME *config.Config so they resolve an
-// IDENTICAL seal posture before either one opens the node.
+// xkmsd run and xkmsd init both call it against the SAME *config.Config so
+// they resolve an IDENTICAL seal posture before either one opens the node.
+// An unknown strategy, or a cloud strategy not compiled into the binary,
+// fails closed.
 func ResolveNodeSeal(cfg *config.Config, logger *slog.Logger) (ResolvedNodeSeal, error) {
 	if !datastoreModeIsStandalone(cfg) || !cfg.Barrier.Enabled {
 		return ResolvedNodeSeal{}, nil
 	}
-
 	strategy := cfg.Barrier.SealStrategy()
-
-	if !cfg.Barrier.NodeFlipWired() {
-		logger.Warn("node barrier: strategy not yet wired for the node barrier; using the caller's own barrier "+
-			"(the qrdb node's own data plane will NOT be encrypted)",
-			"strategy", strategy)
-		return ResolvedNodeSeal{}, nil
+	if resolve, ok := nodeSealResolvers[strategy]; ok {
+		return resolve(cfg, logger)
 	}
-
-	if strategy == "tpm2" {
-		tpmCfg := cfg.Backends.TPM2
-		keyDir, err := resolveTPM2KeyDir(cfg)
-		if err != nil {
-			return ResolvedNodeSeal{}, &NodeSealError{Reason: "resolving TPM2 key directory", Err: err}
-		}
-		if tpmCfg == nil {
-			// barrier.strategy selects tpm2 for the node-seal flip
-			// independently of backends.tpm2 (the crypto-operation TPM2
-			// backend, gated by its own Enabled flag). An operator can
-			// reasonably set one without the other, so a missing section
-			// here must fail closed with the same typed error as "hardware
-			// not found" rather than dereferencing a nil *config.TPM2Config
-			// below.
-			return ResolvedNodeSeal{}, &NodeSealError{
-				Reason: "strategy tpm2 configured for the node-seal flip but backends.tpm2 is not set",
-			}
-		}
-		res := seal.BuildBestStrategy(seal.AutodetectOptions{
-			TPM2: &seal.TPM2ProbeConfig{
-				Device:          tpmCfg.DevicePath,
-				KeyDir:          keyDir,
-				UseSimulator:    tpmCfg.UseSimulator,
-				SimulatorHost:   tpmCfg.SimulatorHost,
-				SimulatorPort:   tpmCfg.SimulatorPort,
-				SRKHandle:       tpmCfg.SRKHandle,
-				PlatformPCR:     tpmCfg.PlatformPCR,
-				PlatformPCRBank: tpmCfg.PlatformPCRBank,
-			},
-			Logger: logger,
-		})
-		if !res.HardwareAvailable() {
-			return ResolvedNodeSeal{}, &NodeSealError{Reason: "strategy tpm2 configured but no usable, provisioned TPM was found"}
-		}
-		logger.Info("node barrier: TPM-sealed data plane")
-		return ResolvedNodeSeal{Enabled: true, Strategy: res.Strategy, TPM: res.Sealer, Close: res.Close}, nil
+	res, err := resolveCloudNodeSeal(context.Background(), cfg, strategy, logger)
+	if err != nil {
+		return ResolvedNodeSeal{}, err
 	}
+	logger.Info("node barrier: cloud-KMS-sealed data plane", "strategy", strategy)
+	return res, nil
+}
 
-	// "none", "passphrase", "shamir": go-qrdb's own node seal subsystem builds
-	// the strategy from DaemonConfig.Seal.Strategy (and, for shamir,
-	// Seal.ShamirThreshold/ShamirTotal -- see EmbeddedNodeStorageConfig); this
-	// package injects nothing here.
-	switch strategy {
-	case "none":
-		logger.Warn("node barrier: strategy 'none' — data plane is NOT encrypted (development/insecure)")
-	default:
-		logger.Info("node barrier: strategy requires operator-driven unseal", "strategy", strategy)
+// resolveTPM2NodeSeal opens the node's TPM and its seal strategy.
+func resolveTPM2NodeSeal(cfg *config.Config, logger *slog.Logger) (ResolvedNodeSeal, error) {
+	res, err := openNodeTPM(cfg, logger)
+	if err != nil {
+		return ResolvedNodeSeal{}, err
 	}
+	logger.Info("node barrier: TPM-sealed data plane")
+	return ResolvedNodeSeal{Enabled: true, Strategy: res.Strategy, TPM: res.Sealer, Close: res.Close}, nil
+}
+
+// resolvePKCS11NodeSealLogged resolves the PKCS#11 node seal and records it.
+func resolvePKCS11NodeSealLogged(cfg *config.Config, logger *slog.Logger) (ResolvedNodeSeal, error) {
+	res, err := resolvePKCS11NodeSeal(cfg, logger)
+	if err != nil {
+		return ResolvedNodeSeal{}, err
+	}
+	logger.Info("node barrier: PKCS#11-sealed data plane")
+	return res, nil
+}
+
+// resolveInsecureNodeSeal enables the node barrier under strategy "none",
+// which go-qrdb's node seal subsystem builds from DaemonConfig.Seal alone.
+func resolveInsecureNodeSeal(_ *config.Config, logger *slog.Logger) (ResolvedNodeSeal, error) {
+	logger.Warn("node barrier: strategy 'none' — data plane is NOT encrypted (development/insecure)")
 	return ResolvedNodeSeal{Enabled: true}, nil
+}
+
+// resolveOperatorNodeSeal enables the node barrier under "passphrase" or
+// "shamir", which go-qrdb's node seal subsystem builds from
+// DaemonConfig.Seal (for shamir, Seal.ShamirThreshold/ShamirTotal -- see
+// EmbeddedNodeStorageConfig) and an operator unseals.
+func resolveOperatorNodeSeal(cfg *config.Config, logger *slog.Logger) (ResolvedNodeSeal, error) {
+	logger.Info("node barrier: strategy requires operator-driven unseal", "strategy", cfg.Barrier.SealStrategy())
+	return ResolvedNodeSeal{Enabled: true}, nil
+}
+
+// NodeSealOptions returns the node and server options that make the qrdb
+// node's barrier the one barrier for a resolved node seal. Every enabled seal
+// turns on per-tenant isolation with the operator default entitlements
+// (tenantDefaultEntitlements), so the node builds the barrier registry and
+// tenant service itself. A seal with a pre-built strategy also injects it via
+// qrdbnode.WithSealStrategy, and a strategy registry holding it via
+// qrdbsdk.WithStrategyRegistry so every tenant barrier can seal with the same
+// hardware. The strategies go-qrdb builds from DaemonConfig.Seal (none,
+// passphrase, shamir) inject no strategy; a disabled seal injects nothing.
+func NodeSealOptions(res ResolvedNodeSeal) ([]qrdbnode.NodeOption, []qrdbsdk.ServerOption, error) {
+	if !res.Enabled {
+		return nil, nil, nil
+	}
+	nodeOpts := []qrdbnode.NodeOption{
+		qrdbnode.WithTenantIsolation(),
+		qrdbnode.WithDefaultTenantEntitlements(tenantDefaultEntitlements()),
+	}
+	if res.Strategy == nil {
+		return nodeOpts, nil, nil
+	}
+	registry, err := seal.NewHardwareStrategyRegistry(res.Strategy)
+	if err != nil {
+		return nil, nil, &NodeSealError{Reason: "registering the " + string(res.Strategy.ID()) + " strategy", Err: err}
+	}
+	return append(nodeOpts, qrdbnode.WithSealStrategy(res.Strategy)),
+		[]qrdbsdk.ServerOption{qrdbsdk.WithStrategyRegistry(registry)},
+		nil
+}
+
+// tenantDefaultEntitlements returns the operator default entitlements for
+// xkms's own tenants. xkms is the trust anchor that operates its tenants
+// directly (there is no untrusted billing plane inside xkms itself), so every
+// isolation mode and the system-managed auto-unseal key-management mode are
+// permitted by default. Consumers that expose tenants to untrusted callers
+// tighten these per plan via UpdateEntitlements.
+func tenantDefaultEntitlements() *qrdbsdk.Entitlements {
+	return &qrdbsdk.Entitlements{
+		AllowedIsolationModes: []string{
+			string(qrdbsdk.TenantIsolationPrefix),
+			string(qrdbsdk.TenantIsolationBarrier),
+			string(qrdbsdk.TenantIsolationVolume),
+			string(qrdbsdk.TenantIsolationRaft),
+		},
+		AllowDedicatedRaft:        true,
+		AllowVolumeStorage:        true,
+		AllowSystemManagedBarrier: true,
+		AllowDedicatedWAL:         true,
+	}
+}
+
+// openNodeTPM opens the TPM backends.tpm2 configures, with its key store in
+// the TPM2 key directory, through the seal autodetect. It fails closed when
+// backends.tpm2 is missing or no usable, provisioned TPM is found. The
+// caller closes the result.
+func openNodeTPM(cfg *config.Config, logger *slog.Logger) (*seal.AutodetectResult, error) {
+	keyDir, err := resolveTPM2KeyDir(cfg)
+	if err != nil {
+		return nil, &NodeSealError{Reason: "resolving TPM2 key directory", Err: err}
+	}
+	tpmCfg := cfg.Backends.TPM2
+	if tpmCfg == nil {
+		// barrier.strategy selects the node seal independently of
+		// backends.tpm2 (the crypto-operation TPM2 backend, gated by its own
+		// Enabled flag). An operator can reasonably set one without the
+		// other, so a missing section fails closed with the same typed
+		// error as "hardware not found".
+		return nil, &NodeSealError{
+			Reason: "strategy " + cfg.Barrier.SealStrategy() + " configured for the node seal but backends.tpm2 is not set",
+		}
+	}
+	res := seal.BuildBestStrategy(seal.AutodetectOptions{
+		TPM2: &seal.TPM2ProbeConfig{
+			Device:          tpmCfg.DevicePath,
+			KeyDir:          keyDir,
+			UseSimulator:    tpmCfg.UseSimulator,
+			SimulatorHost:   tpmCfg.SimulatorHost,
+			SimulatorPort:   tpmCfg.SimulatorPort,
+			SRKHandle:       tpmCfg.SRKHandle,
+			PlatformPCR:     tpmCfg.PlatformPCR,
+			PlatformPCRBank: tpmCfg.PlatformPCRBank,
+		},
+		Logger: logger,
+	})
+	if !res.HardwareAvailable() {
+		return nil, &NodeSealError{
+			Reason: "strategy " + cfg.Barrier.SealStrategy() + " configured but no usable, provisioned TPM was found",
+		}
+	}
+	return res, nil
 }
 
 // datastoreModeIsStandalone reports whether cfg hosts the qrdb datastore in
@@ -212,7 +323,7 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 		}
 	}
 	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: engine},
+		{Name: "default", Backend: engine},
 	}
 
 	if sealRes.Enabled {
@@ -227,8 +338,8 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 		}
 		if cfg.Datastore.Path != "" && len(qcfg.Storage.VolumePools) == 0 {
 			qcfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{{
-				Name:  "default",
-				Paths: []string{filepath.Join(cfg.Datastore.Path, "tenant-volumes")},
+				Name: "default",
+				Path: filepath.Join(cfg.Datastore.Path, "tenant-volumes"),
 			}}
 		}
 	} else {
@@ -291,20 +402,20 @@ type EmbeddedNodeOptions struct {
 	// node, which is what xkmsd init and the SDK/library composition path
 	// always use (a one-shot bootstrap ceremony, or an embedded library
 	// caller, is never a cluster member).
-	Cluster daemon.ClusterOptions
+	Cluster ClusterOptions
 
 	// RaftMTLSResolver supplies inter-node mTLS material for a multi-node
 	// cluster. Unused (and safe to leave nil) for a standalone node.
-	RaftMTLSResolver daemon.RaftMTLSResolver
+	RaftMTLSResolver RaftMTLSResolver
 }
 
 // OpenEmbeddedNode resolves this deployment's node-barrier seal posture,
 // derives the qrdb daemon config and node/server options from it, and
-// constructs the node via daemon.NewNode -- the single node-construction path
-// for the stack (pkg/daemon). xkmsd run ((*Server).initEmbeddedQRDBNode),
+// constructs the node via NewNode -- the single node-construction path
+// for the stack. xkmsd run ((*Server).initEmbeddedQRDBNode),
 // xkmsd init, and pkg/datastore.Open (the SDK/library composition path) all
 // reach the node through this same sequence of ResolveNodeSeal +
-// EmbeddedNodeStorageConfig + daemon.NewNode, so the different opens of one
+// EmbeddedNodeStorageConfig + NewNode, so the different opens of one
 // Pebble directory can never disagree about the database engine or the seal
 // strategy.
 //
@@ -317,14 +428,21 @@ func OpenEmbeddedNode(ctx context.Context, opts EmbeddedNodeOptions) (*qrdbnode.
 	if err != nil {
 		return nil, ResolvedNodeSeal{}, err
 	}
+	node, err := openEmbeddedNodeWithSeal(ctx, opts, sealRes)
+	return node, sealRes, err
+}
 
+// openEmbeddedNodeWithSeal opens the node behind an already-resolved seal.
+// The caller owns sealRes and releases it whether or not this succeeds.
+func openEmbeddedNodeWithSeal(ctx context.Context, opts EmbeddedNodeOptions, sealRes ResolvedNodeSeal) (*qrdbnode.Node, error) {
 	qcfg := EmbeddedNodeStorageConfig(opts.Config, sealRes)
 
 	auditSink := opts.AuditSink
 	if auditSink == nil {
+		var err error
 		auditSink, err = NewEmbeddedAuditSink(opts.Config, opts.Logger)
 		if err != nil {
-			return nil, sealRes, err
+			return nil, err
 		}
 	}
 
@@ -336,19 +454,14 @@ func OpenEmbeddedNode(ctx context.Context, opts EmbeddedNodeOptions) (*qrdbnode.
 		serverOpts = append(serverOpts, qrdbsdk.WithFactorRegistry(opts.FactorRegistry))
 	}
 
-	if sealRes.Enabled {
-		if sealRes.Strategy != nil {
-			nodeOpts = append(nodeOpts, qrdbnode.WithSealStrategy(sealRes.Strategy))
-			if hwReg, regErr := seal.NewHardwareStrategyRegistry(sealRes.Strategy); regErr == nil {
-				serverOpts = append(serverOpts, qrdbsdk.WithStrategyRegistry(hwReg))
-			} else {
-				opts.Logger.Warn("node barrier: could not build hardware strategy registry", "error", regErr)
-			}
-		}
-		nodeOpts = append(nodeOpts, qrdbnode.WithTenantIsolation())
+	sealNodeOpts, sealServerOpts, err := NodeSealOptions(sealRes)
+	if err != nil {
+		return nil, err
 	}
+	nodeOpts = append(nodeOpts, sealNodeOpts...)
+	serverOpts = append(serverOpts, sealServerOpts...)
 
-	res, err := daemon.NewNode(ctx, &daemon.Options{
+	res, err := NewNode(ctx, &NodeOptions{
 		QRDB:             qcfg,
 		Cluster:          opts.Cluster,
 		StoragePath:      opts.Config.Datastore.Path,
@@ -358,7 +471,7 @@ func OpenEmbeddedNode(ctx context.Context, opts EmbeddedNodeOptions) (*qrdbnode.
 		RaftMTLSResolver: opts.RaftMTLSResolver,
 	})
 	if err != nil {
-		return nil, sealRes, err
+		return nil, err
 	}
-	return res.Node, sealRes, nil
+	return res.Node, nil
 }

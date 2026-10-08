@@ -44,7 +44,7 @@ func TestCSVParser_Parse_EmbeddedDelimitersAndNewlines(t *testing.T) {
 	content := "name,username,password,url,notes\n" +
 		"\"Acme, Inc.\",alice,\"p@ss,word\",https://acme.example,\"line one\nline two\"\n"
 
-	entries, err := NewCSVParser().Parse(writeTempFile(t, "quoted.csv", content), nil)
+	entries, err := NewCSVParser().Parse(t.Context(), writeTempFile(t, "quoted.csv", content), nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
@@ -62,7 +62,7 @@ func TestCSVParser_Parse_RaggedRowsAreSkipped(t *testing.T) {
 	// parse error: a partial import would silently corrupt the vault.
 	content := "name,username,password\nshort-row\nfull,alice,s3cret\n"
 
-	entries, err := NewCSVParser().Parse(writeTempFile(t, "ragged.csv", content), nil)
+	entries, err := NewCSVParser().Parse(t.Context(), writeTempFile(t, "ragged.csv", content), nil)
 	assert.Nil(t, entries)
 	assert.ErrorIs(t, err, ErrParseError)
 }
@@ -72,7 +72,7 @@ func TestCSVParser_Parse_RaggedRowsAreSkipped(t *testing.T) {
 func TestCSVParser_Parse_HeaderOnly(t *testing.T) {
 	t.Parallel()
 
-	entries, err := NewCSVParser().Parse(writeTempFile(t, "header.csv", "name,username,password\n"), nil)
+	entries, err := NewCSVParser().Parse(t.Context(), writeTempFile(t, "header.csv", "name,username,password\n"), nil)
 	assert.Nil(t, entries)
 	assert.ErrorIs(t, err, ErrNoEntriesFound)
 }
@@ -88,7 +88,7 @@ func TestCSVParser_Parse_LargeField(t *testing.T) {
 	}
 	content := "name,username,password,notes\nbig,alice,s3cret,\"" + string(large) + "\"\n"
 
-	entries, err := NewCSVParser().Parse(writeTempFile(t, "large.csv", content), nil)
+	entries, err := NewCSVParser().Parse(t.Context(), writeTempFile(t, "large.csv", content), nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Len(t, entries[0].Notes, len(large))
@@ -179,26 +179,26 @@ func TestParsedEntry_ToStaticPassword_NameFallbacks(t *testing.T) {
 	t.Parallel()
 
 	t.Run("title wins", func(t *testing.T) {
-		sp, err := (&ParsedEntry{Title: "GitHub", Username: "alice", Password: testSecret(t, "s")}).ToStaticPassword()
+		sp, err := (&ParsedEntry{Title: "GitHub", Username: "alice", Password: testSecret(t, "s")}).ToStaticPassword(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, "GitHub", sp.Name)
 	})
 
 	t.Run("falls back to username", func(t *testing.T) {
-		sp, err := (&ParsedEntry{Username: "alice", Password: testSecret(t, "s")}).ToStaticPassword()
+		sp, err := (&ParsedEntry{Username: "alice", Password: testSecret(t, "s")}).ToStaticPassword(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, "alice", sp.Name)
 	})
 
 	t.Run("falls back to a placeholder", func(t *testing.T) {
-		sp, err := (&ParsedEntry{Password: testSecret(t, "s")}).ToStaticPassword()
+		sp, err := (&ParsedEntry{Password: testSecret(t, "s")}).ToStaticPassword(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, "Unnamed Entry", sp.Name)
 	})
 
 	t.Run("missing timestamps default to now", func(t *testing.T) {
 		before := time.Now()
-		sp, err := (&ParsedEntry{Title: "x", Password: testSecret(t, "s")}).ToStaticPassword()
+		sp, err := (&ParsedEntry{Title: "x", Password: testSecret(t, "s")}).ToStaticPassword(t.Context())
 		require.NoError(t, err)
 		assert.False(t, sp.CreatedAt.Before(before))
 		assert.False(t, sp.UpdatedAt.Before(before))
@@ -207,14 +207,14 @@ func TestParsedEntry_ToStaticPassword_NameFallbacks(t *testing.T) {
 	t.Run("supplied timestamps are preserved", func(t *testing.T) {
 		created := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 		updated := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
-		sp, err := (&ParsedEntry{Title: "x", Password: testSecret(t, "s"), CreatedAt: created, UpdatedAt: updated}).ToStaticPassword()
+		sp, err := (&ParsedEntry{Title: "x", Password: testSecret(t, "s"), CreatedAt: created, UpdatedAt: updated}).ToStaticPassword(t.Context())
 		require.NoError(t, err)
 		assert.True(t, created.Equal(sp.CreatedAt))
 		assert.True(t, updated.Equal(sp.UpdatedAt))
 	})
 
 	t.Run("nil password produces an empty StaticPassword.Password", func(t *testing.T) {
-		sp, err := (&ParsedEntry{Title: "x"}).ToStaticPassword()
+		sp, err := (&ParsedEntry{Title: "x"}).ToStaticPassword(t.Context())
 		require.NoError(t, err)
 		assert.Empty(t, sp.Password)
 	})
@@ -226,13 +226,13 @@ func TestImporter_Preview_Rejections(t *testing.T) {
 	imp := newTestImporter(t)
 
 	t.Run("undetectable format", func(t *testing.T) {
-		entries, err := imp.Preview(&ImportOptions{FilePath: writeTempFile(t, "data.bin", "x")})
+		entries, err := imp.Preview(t.Context(), &ImportOptions{FilePath: writeTempFile(t, "data.bin", "x")})
 		assert.Nil(t, entries)
 		assert.ErrorIs(t, err, ErrUnsupportedFormat)
 	})
 
 	t.Run("explicit unknown format", func(t *testing.T) {
-		entries, err := imp.Preview(&ImportOptions{
+		entries, err := imp.Preview(t.Context(), &ImportOptions{
 			FilePath: writeTempFile(t, "data.csv", "name,password\na,b\n"),
 			Format:   "1password-opvault",
 		})
@@ -278,7 +278,7 @@ func FuzzCSVParser_Parse(f *testing.F) {
 			t.Fatalf("write fixture: %v", err)
 		}
 
-		entries, err := parser.Parse(path, &ImportOptions{TargetFolder: "Imported"})
+		entries, err := parser.Parse(t.Context(), path, &ImportOptions{TargetFolder: "Imported"})
 		if err != nil {
 			if entries != nil {
 				t.Fatalf("parser returned entries alongside error %v", err)
@@ -294,7 +294,7 @@ func FuzzCSVParser_Parse(f *testing.F) {
 				t.Fatal("parser returned an entry without a password")
 			}
 			// Every successful entry must convert without panicking.
-			sp, err := entry.ToStaticPassword()
+			sp, err := entry.ToStaticPassword(t.Context())
 			if err != nil {
 				t.Fatalf("ToStaticPassword: %v", err)
 			}

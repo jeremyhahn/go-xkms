@@ -23,30 +23,27 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
-// lockFileName is the advisory-lock file each store directory holds for its
-// lifetime. It guards every write this package performs -- Put, Delete,
-// PutIfAbsent, CompareAndSwap and CompareAndDelete -- against the same
-// operations racing from another process against the same directory (#1157).
-//
-// It never collides with a stored key's on-disk path: encodeKeyToPath
-// percent-escapes the leading '.' of every path segment (see keypath.go), so
-// no key this package ever writes lands on disk as a literal dotfile, and the
-// go-qrdb file engine's own List/Scan skip dot-prefixed entries for the same
-// reason. A store's root directory is therefore never seen to hold this file
-// by anything that walks it through the Backend interface.
-const lockFileName = ".lock"
-
 // lockPollInterval bounds how long withCrossProcessLock waits between
 // attempts to acquire the advisory lock. The critical sections it protects
-// are a handful of small reads and writes to one small file, not a
+// are an engine open or a handful of small reads and writes, not a
 // long-held section, so a short fixed poll keeps contention latency low
 // without the complexity of a blocking flock(2) call plus a second
 // mechanism (a signal, or a watcher goroutine) to make it obey ctx.
 const lockPollInterval = time.Millisecond
 
 // withCrossProcessLock runs fn while holding an exclusive advisory lock on
-// lockPath, the whole point being that ANY write this package performs must
-// exclude every OTHER write -- guarded or not -- from another process, the
+// the store directory dir. It guards every write this package performs --
+// Put, Delete, PutIfAbsent, PutIfAllAbsent, CompareAndSwap and
+// CompareAndDelete -- and the engine open in New against the same operations
+// racing from another process against the same directory (#1157).
+//
+// The lock is taken on the directory itself, not on a lock file inside it:
+// go-qrdb's file engine refuses to initialise a directory that already holds
+// anything but its format marker, so a lock file created before the first
+// open would make the store unopenable. Locking the directory also leaves
+// nothing behind on disk.
+//
+// Any write this package performs must exclude every OTHER write -- guarded or not -- from another process, the
 // same guarantee engineBackend's writeMu already gives this package's calls
 // against goroutines in the same process (see pkg/storage/engine.go's
 // writeMu doc). Without covering the unconditional Put and Delete too, a
@@ -62,18 +59,16 @@ const lockPollInterval = time.Millisecond
 // this process's own goroutines calling concurrently AND every other process,
 // with no separate in-process mutex to keep paired with the flock calls.
 //
-// The lock file is created if absent and never removed; like the LOCK file a
-// PebbleDB or bbolt directory keeps for its own life, a stale lock file left
-// behind by a deleted store is harmless -- flock releases the moment the
-// holding file description closes, including on process exit.
-func withCrossProcessLock(ctx context.Context, lockPath string, fn func() error) error {
-	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+// flock releases the moment the holding file description closes, including
+// on process exit.
+func withCrossProcessLock(ctx context.Context, dir string, fn func() error) error {
+	dirFile, err := os.Open(dir) // #nosec G304 -- dir is the store root New resolved
 	if err != nil {
-		return &errs.Wrapped{Msg: "file storage: failed to open lock file", Err: err}
+		return &errs.Wrapped{Msg: "file storage: failed to open store directory for locking", Err: err}
 	}
-	defer func() { _ = lockFile.Close() }()
+	defer func() { _ = dirFile.Close() }()
 
-	fd := int(lockFile.Fd())
+	fd := int(dirFile.Fd())
 	for {
 		flockErr := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
 		if flockErr == nil {

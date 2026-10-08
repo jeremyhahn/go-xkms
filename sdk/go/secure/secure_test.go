@@ -66,13 +66,13 @@ func TestNewBufferRoundTrip(t *testing.T) {
 // it, and destroys.
 func TestNewSecretRoundTrip(t *testing.T) {
 	want := []byte("sdk-secret-needle")
-	secret, err := xkmssecure.NewSecret(append([]byte(nil), want...))
+	secret, err := xkmssecure.NewSecret(context.Background(), append([]byte(nil), want...))
 	if err != nil {
 		t.Fatalf("NewSecret: %v", err)
 	}
 	defer secret.Destroy()
 
-	buf, err := secret.Open()
+	buf, err := secret.Open(context.Background())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestNewSecretRoundTrip(t *testing.T) {
 // TestNewSecretEmpty verifies construction errors are re-exported as
 // *InvalidSizeError and that errors.As finds them.
 func TestNewSecretEmpty(t *testing.T) {
-	_, err := xkmssecure.NewSecret(nil)
+	_, err := xkmssecure.NewSecret(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error on empty slice")
 	}

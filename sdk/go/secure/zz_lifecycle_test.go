@@ -14,6 +14,7 @@
 package secure_test
 
 import (
+	"context"
 	"testing"
 
 	xkmssecure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -37,7 +38,7 @@ func TestWipeAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBufferFromBytes: %v", err)
 	}
-	if _, err := xkmssecure.WipeAll(); err != nil {
+	if _, err := xkmssecure.WipeAll(context.Background()); err != nil {
 		t.Fatalf("WipeAll: %v", err)
 	}
 	if b := buf.Bytes(); len(b) != 0 {

@@ -334,20 +334,6 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"xkms.ca.tcg.issue-lak": (*Server).handleIssueLAKCertificate,
 
 	// Barrier and Shamir operations
-	"barrier.initialize":           (*Server).handleBarrierInitialize,
-	"barrier.initializeShamir":     (*Server).handleBarrierInitializeShamir,
-	"barrier.unseal":               (*Server).handleBarrierUnseal,
-	"barrier.unsealShare":          (*Server).handleBarrierUnsealShare,
-	"barrier.unsealShares":         (*Server).handleBarrierUnsealShares,
-	"barrier.seal":                 (*Server).handleBarrierSeal,
-	"barrier.status":               (*Server).handleBarrierStatus,
-	"barrier.rekey":                (*Server).handleBarrierRekey,
-	"barrier.generateRecoveryKeys": (*Server).handleBarrierGenerateRecoveryKeys,
-	"barrier.recoverWithKeys":      (*Server).handleBarrierRecoverWithKeys,
-	"barrier.deleteRecoveryKeys":   (*Server).handleBarrierDeleteRecoveryKeys,
-	"barrier.hasRecoveryKeys":      (*Server).handleBarrierHasRecoveryKeys,
-	"barrier.generateRootToken":    (*Server).handleBarrierGenerateRootToken,
-	"barrier.enableEncryption":     (*Server).handleBarrierEnableEncryption,
 
 	// Trust bootstrap listener (go-xkms#632).
 	"bootstrap.showKeys": (*Server).handleBootstrapShowKeys,
@@ -366,23 +352,10 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	// Whole-node backup/restore (owner ruling 2026-09-30, go-xkms#728).
 	// Delegates entirely to the embedded go-qrdb node's BackupClient through
 	// the XKMS service.
-	"xkms.createBackup":  (*Server).handleCreateBackup,
-	"xkms.listBackups":   (*Server).handleListBackups,
-	"xkms.getBackup":     (*Server).handleGetBackup,
-	"xkms.deleteBackup":  (*Server).handleDeleteBackup,
-	"xkms.restoreBackup": (*Server).handleRestoreBackup,
-	"xkms.verifyBackup":  (*Server).handleVerifyBackup,
 
 	// Custodian groups (Shamir share custody roster). Custodian state lives
 	// in the embedded go-qrdb node, reached through the XKMS service
 	// (go-xkms#773).
-	"xkms.createCustodianGroup":  (*Server).handleCreateCustodianGroup,
-	"xkms.getCustodianGroup":     (*Server).handleGetCustodianGroup,
-	"xkms.listCustodianGroups":   (*Server).handleListCustodianGroups,
-	"xkms.deleteCustodianGroup":  (*Server).handleDeleteCustodianGroup,
-	"xkms.addCustodianMember":    (*Server).handleAddCustodianMember,
-	"xkms.removeCustodianMember": (*Server).handleRemoveCustodianMember,
-	"xkms.distributeShares":      (*Server).handleDistributeShares,
 
 	// Tenant administration (multi-tenant lifecycle plus per-tenant
 	// barrier). Delegates to the xkms service layer's composed go-qrdb
@@ -391,31 +364,16 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"xkms.getTenant":                (*Server).handleGetTenant,
 	"xkms.listTenants":              (*Server).handleListTenants,
 	"xkms.deleteTenant":             (*Server).handleDeleteTenant,
-	"xkms.tenantBarrierInit":        (*Server).handleTenantBarrierInit,
-	"xkms.tenantBarrierUnseal":      (*Server).handleTenantBarrierUnseal,
-	"xkms.tenantBarrierStatus":      (*Server).handleTenantBarrierStatus,
 	"xkms.updateTenantEntitlements": (*Server).handleUpdateTenantEntitlements,
 	"xkms.updateTenantQuotas":       (*Server).handleUpdateTenantQuotas,
 
 	// Shamir share operations. Share state lives in the embedded go-qrdb
 	// node, reached through the XKMS service.
-	"xkms.submitShare":              (*Server).handleSubmitShare,
-	"xkms.listShares":               (*Server).handleListShares,
-	"xkms.getShare":                 (*Server).handleGetShare,
-	"xkms.deleteShare":              (*Server).handleDeleteShare,
-	"xkms.getShareCollectionStatus": (*Server).handleGetShareCollectionStatus,
 
 	// Audit read endpoint. Audit state lives in the embedded go-qrdb node,
 	// reached through the XKMS service.
-	"xkms.queryAudit": (*Server).handleQueryAudit,
 
 	// Init ceremony operations
-	"init.getStatus":          (*Server).handleGetInitStatus,
-	"init.claimCertBegin":     (*Server).handleClaimCertBegin,
-	"init.claimCertComplete":  (*Server).handleClaimCertComplete,
-	"init.claimShareBegin":    (*Server).handleClaimShareBegin,
-	"init.claimShareComplete": (*Server).handleClaimShareComplete,
-	"init.signCSR":            (*Server).handleSignCSRInit,
 
 	// Credential management operations
 	"credentials.submit":   (*Server).handleCredentialSubmit,

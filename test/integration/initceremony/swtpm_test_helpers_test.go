@@ -22,11 +22,9 @@
 // cmd/xkmsd/init_node.go's unsealDurableInitNode and
 // pkg/embeddednode/embedded_node.go's ResolveNodeSeal / OpenEmbeddedNode) --
 // exactly what a restart-driven test with no operator step in between needs.
-// pkcs11 was considered and rejected: config.BarrierConfig.NodeFlipWired's
-// doc comment states plainly that pkcs11 is not wired through the qrdb
-// node's own barrier because resolving its credentials needs the credential
-// service, which itself sits behind the barrier pkcs11 would be sealing --
-// a cycle, not a gap this test could close by supplying a PIN.
+// pkcs11 also auto-unseals, but only with its user PIN sealed beforehand into
+// the TPM-sealed pre-barrier store (`xkmsd seal-pin`), so it needs a TPM as
+// well as a token; tpm2 alone is the simpler fixture.
 //
 // Why a PRIVATE swtpm rather than the devcontainer's shared instance
 // (/tmp/swtpm/swtpm.sock, started once per container by

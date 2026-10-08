@@ -167,7 +167,6 @@ func TestMCPToolHandler_GapMethods_RoundTrip(t *testing.T) {
 
 	for _, method := range []string{
 		"xkms.getLockoutStatus",
-		"xkms.listCustodianGroups",
 		"xkms.listTenants",
 		"xkms.deriveKey",
 	} {

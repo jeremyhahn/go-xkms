@@ -16,8 +16,24 @@ package server
 import (
 	"path/filepath"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
+
+// daoFactory returns the shared datastore's DAO factory once each of
+// databases -- the go-qrdb databases a feature's DAOs hardcode -- is open,
+// creating any that does not exist yet. The datastore runs the ensure, and
+// every call of the stores it serves, as the embedded node's service
+// principal (datastore.WithCallContext in initializeQRDBStorage).
+func (s *Server) daoFactory(databases ...string) (*qrdbsdk.DAOFactory, error) {
+	for _, name := range databases {
+		if _, err := s.datastore.DatabaseKVStore(s.ctx, name); err != nil {
+			return nil, &ErrStorageCreate{Resource: name + " database", Err: err}
+		}
+	}
+	return s.datastore.DAOFactory(), nil
+}
 
 // createStorage opens a storage view for subdir on the server's single
 // shared datastore (s.qrdbStorage, built once in initializeQRDBStorage).

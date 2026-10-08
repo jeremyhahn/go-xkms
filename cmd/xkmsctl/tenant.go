@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"time"
@@ -29,20 +28,17 @@ import (
 var tenantCmd = &cobra.Command{
 	Use:   "tenant",
 	Short: "Manage tenants",
-	Long: `Manage tenants and their per-tenant cryptographic barriers.
+	Long: `Manage tenants.
 
-Each tenant gets an isolated namespace with its own barrier, keys, and
-certificates. The per-tenant barrier must be initialized and unsealed
-independently of the global barrier.
+Each tenant gets an isolated namespace with its own keys and certificates.
+A tenant's barrier is initialized, unsealed and rekeyed through go-qrdb's
+own barrier verbs, not through xkmsctl.
 
 Subcommands:
   create          Create a new tenant
   list            List all tenants
   show            Show details for a tenant
-  delete          Delete a tenant
-  barrier-init    Initialize a per-tenant barrier
-  barrier-unseal  Unseal a per-tenant barrier
-  barrier-status  Show per-tenant barrier status`,
+  delete          Delete a tenant`,
 }
 
 // tenantCreateCmd creates a new tenant.
@@ -158,103 +154,6 @@ Example:
 	},
 }
 
-// tenantBarrierInitCmd initializes a per-tenant barrier.
-var tenantBarrierInitCmd = &cobra.Command{
-	Use:   "barrier-init",
-	Short: "Initialize a per-tenant barrier",
-	Long: `Initialize the cryptographic barrier for a specific tenant.
-
-Optionally specify Shamir threshold and shares for the tenant barrier.
-If omitted, the server uses its default configuration.
-
-Examples:
-  xkmsctl tenant barrier-init --id acme --passphrase <secret>
-  xkmsctl tenant barrier-init --id acme --strategy tpm2
-  xkmsctl tenant barrier-init --id acme --strategy shamir --passphrase <secret> --threshold 3 --shares 5`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		fr := newFlagReader(cmd)
-		id := fr.String("id")
-		threshold := fr.Int("threshold")
-		shares := fr.Int("shares")
-		passphrase := fr.String("passphrase")
-		strategy := fr.String("strategy")
-		if err := fr.Err(); err != nil {
-			handleError(err)
-			return
-		}
-
-		if id == "" {
-			handleError(ErrTenantIDRequired)
-			return
-		}
-
-		tenantBarrierInit(cfg, printer, id, passphrase, strategy, threshold, shares)
-	},
-}
-
-// tenantBarrierUnsealCmd unseals a per-tenant barrier.
-var tenantBarrierUnsealCmd = &cobra.Command{
-	Use:   "barrier-unseal",
-	Short: "Unseal a per-tenant barrier",
-	Long: `Unseal the cryptographic barrier for a specific tenant.
-
-Provide a Shamir share (base64-encoded) to contribute toward the
-quorum required to unseal the tenant barrier.
-
-Example:
-  xkmsctl tenant barrier-unseal --id acme --share <base64-share>`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		fr := newFlagReader(cmd)
-		id := fr.String("id")
-		share := fr.String("share")
-		if err := fr.Err(); err != nil {
-			handleError(err)
-			return
-		}
-
-		if id == "" {
-			handleError(ErrTenantIDRequired)
-			return
-		}
-
-		tenantBarrierUnseal(cfg, printer, id, share)
-	},
-}
-
-// tenantBarrierStatusCmd shows the per-tenant barrier status.
-var tenantBarrierStatusCmd = &cobra.Command{
-	Use:   "barrier-status",
-	Short: "Show per-tenant barrier status",
-	Long: `Display the current state of a tenant's cryptographic barrier
-including whether it is sealed or unsealed.
-
-Example:
-  xkmsctl tenant barrier-status --id acme`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		fr := newFlagReader(cmd)
-		id := fr.String("id")
-		if err := fr.Err(); err != nil {
-			handleError(err)
-			return
-		}
-		if id == "" {
-			handleError(ErrTenantIDRequired)
-			return
-		}
-
-		tenantBarrierStatus(cfg, printer, id)
-	},
-}
-
 // createTenantClient creates and connects a client, returning the client
 // and a cleanup function. The caller must call cleanup when done.
 func createTenantClient(cfg *Config) (client.Client, func(), error) {
@@ -359,90 +258,6 @@ func tenantDelete(cfg *Config, printer *Printer, id string) {
 	if err := printer.PrintSuccess(fmt.Sprintf("Tenant %q deleted", id)); err != nil {
 		handleError(err)
 	}
-}
-
-// tenantBarrierInit initializes a per-tenant barrier.
-func tenantBarrierInit(cfg *Config, printer *Printer, tenantID, passphrase, strategy string, threshold, shares int) {
-	cl, cleanup, err := createTenantClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
-	}
-	defer cleanup()
-
-	printVerbose("Initializing barrier for tenant %q strategy=%q", tenantID, strategy)
-
-	req := &transport.TenantBarrierInitRequest{
-		TenantID:   tenantID,
-		Passphrase: []byte(passphrase),
-		Strategy:   strategy,
-		Threshold:  threshold,
-		Shares:     shares,
-	}
-
-	if err := cl.TenantBarrierInit(context.Background(), req); err != nil {
-		handleError(&WrappedError{Sentinel: ErrInitializeTenantBarrierFailed, Err: err})
-		return
-	}
-
-	if err := printer.PrintSuccess(fmt.Sprintf("Barrier initialized for tenant %q", tenantID)); err != nil {
-		handleError(err)
-	}
-}
-
-// tenantBarrierUnseal unseals a per-tenant barrier.
-func tenantBarrierUnseal(cfg *Config, printer *Printer, tenantID, share string) {
-	cl, cleanup, err := createTenantClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
-	}
-	defer cleanup()
-
-	printVerbose("Unsealing barrier for tenant %q", tenantID)
-
-	req := &transport.TenantBarrierUnsealRequest{
-		TenantID: tenantID,
-	}
-
-	// Decode the base64 share if provided
-	if share != "" {
-		shareBytes, decodeErr := base64.StdEncoding.DecodeString(share)
-		if decodeErr != nil {
-			handleError(&WrappedError{Sentinel: ErrDecodeShareFailed, Err: decodeErr})
-			return
-		}
-		req.Share = shareBytes
-	}
-
-	if err := cl.TenantBarrierUnseal(context.Background(), req); err != nil {
-		handleError(&WrappedError{Sentinel: ErrUnsealTenantBarrierFailed, Err: err})
-		return
-	}
-
-	if err := printer.PrintSuccess(fmt.Sprintf("Barrier unsealed for tenant %q", tenantID)); err != nil {
-		handleError(err)
-	}
-}
-
-// tenantBarrierStatus shows the per-tenant barrier status.
-func tenantBarrierStatus(cfg *Config, printer *Printer, tenantID string) {
-	cl, cleanup, err := createTenantClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
-	}
-	defer cleanup()
-
-	printVerbose("Retrieving barrier status for tenant %q", tenantID)
-
-	resp, err := cl.TenantBarrierStatus(context.Background(), tenantID)
-	if err != nil {
-		handleError(&TenantBarrierStatusError{TenantID: tenantID, Err: err})
-		return
-	}
-
-	printTenantBarrierStatus(printer, resp)
 }
 
 // tenantUpdateEntitlementsCmd updates a tenant's feature entitlements.
@@ -624,36 +439,6 @@ func printTenantList(printer *Printer, tenants []transport.TenantInfo) {
 	}
 }
 
-// printTenantBarrierStatus prints per-tenant barrier status.
-func printTenantBarrierStatus(printer *Printer, resp *transport.TenantBarrierStatusResponse) {
-	if resp == nil {
-		return
-	}
-	switch printer.format {
-	case OutputFormatJSON:
-		if err := printer.PrintJSON(resp); err != nil {
-			handleError(err)
-		}
-	case OutputFormatTable, OutputFormatText:
-		sealState := "unsealed"
-		if resp.Sealed {
-			sealState = "sealed"
-		}
-		printer.printf("Tenant Barrier Status:\n")
-		printer.printf("  Tenant:          %s\n", resp.TenantID)
-		printer.printf("  State:           %s\n", sealState)
-		printer.printf("  Initialized:     %t\n", resp.Initialized)
-		printer.printf("  Strategy:        %s\n", resp.Strategy)
-		printer.printf("  Hardware Backed: %t\n", resp.HardwareBacked)
-		if resp.ShamirThreshold > 0 {
-			printer.printf("  Shamir:          %d-of-%d\n", resp.ShamirThreshold, resp.ShamirTotal)
-		}
-	}
-	if err := printer.Err(); err != nil {
-		handleError(err)
-	}
-}
-
 func init() {
 	// tenant create flags
 	tenantCreateCmd.Flags().String("id", "", "tenant ID (required)")
@@ -666,20 +451,6 @@ func init() {
 
 	// tenant delete flags
 	tenantDeleteCmd.Flags().String("id", "", "tenant ID (required)")
-
-	// tenant barrier-init flags
-	tenantBarrierInitCmd.Flags().String("id", "", "tenant ID (required)")
-	tenantBarrierInitCmd.Flags().String("passphrase", "", "tenant admin passphrase (required for passphrase/shamir strategies)")
-	tenantBarrierInitCmd.Flags().String("strategy", "", "seal strategy: passphrase (default) | none | shamir | tpm2 | pkcs11 | awskms | gcpkms | azurekv | vault")
-	tenantBarrierInitCmd.Flags().Int("threshold", 0, "Shamir threshold (optional)")
-	tenantBarrierInitCmd.Flags().Int("shares", 0, "total Shamir shares (optional)")
-
-	// tenant barrier-unseal flags
-	tenantBarrierUnsealCmd.Flags().String("id", "", "tenant ID (required)")
-	tenantBarrierUnsealCmd.Flags().String("share", "", "base64-encoded Shamir share")
-
-	// tenant barrier-status flags
-	tenantBarrierStatusCmd.Flags().String("id", "", "tenant ID (required)")
 
 	// tenant update-entitlements flags
 	tenantUpdateEntitlementsCmd.Flags().String("id", "", "tenant ID (required)")
@@ -703,9 +474,6 @@ func init() {
 	tenantCmd.AddCommand(tenantListCmd)
 	tenantCmd.AddCommand(tenantShowCmd)
 	tenantCmd.AddCommand(tenantDeleteCmd)
-	tenantCmd.AddCommand(tenantBarrierInitCmd)
-	tenantCmd.AddCommand(tenantBarrierUnsealCmd)
-	tenantCmd.AddCommand(tenantBarrierStatusCmd)
 	tenantCmd.AddCommand(tenantUpdateEntitlementsCmd)
 	tenantCmd.AddCommand(tenantUpdateQuotasCmd)
 

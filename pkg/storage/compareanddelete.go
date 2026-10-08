@@ -47,8 +47,8 @@ var _ CompareAndDeleter = (*qrdb.Backend)(nil)
 // held to this contract by the shared suite in pkg/storage/storagetest.
 //
 // pkcs11/module's remote state backend implements it over the PKCS11StateCAD
-// RPC: the guard is evaluated by xkmsd's pkcs11state.Store on its own backend,
-// where the writes of every host sharing that token serialise, and never
+// RPC: the guard is evaluated by xkmsd's pkcs11state.Store as a go-qrdb DAO
+// DeleteIfMatch, where the writes of every host sharing that token serialise, and never
 // emulated on the client. It is held to the same suite.
 //
 // seal.BarrierBackend also implements it, overriding the method it would

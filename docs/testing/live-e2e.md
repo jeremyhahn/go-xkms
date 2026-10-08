@@ -87,7 +87,7 @@ admin access (CA issue, key generate, admin backends), we need to:
    Server → mTLS Client Cert / Key) when running `make dev-browser`.
 
 This is tracked as a separate task — needed before the CA / Keys /
-Admin / Custodian / Tenant rows of the parity matrix can be tested.
+Admin / Tenant rows of the parity matrix can be tested.
 
 ## Known gaps
 

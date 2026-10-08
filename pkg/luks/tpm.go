@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -224,10 +225,13 @@ func (s *TPMSealer) sealPlatform(ctx context.Context) (*TPMSealResult, error) {
 		handle = uint64(parentAttrs.TPMAttributes.Handle)
 	}
 
-	token := &luks2.Token{
-		Type:          XKMSTPMTokenType,
-		TPM2Blob:      EncodeTPMSealBlobs(sealed.TPMPublic, sealed.TPMPrivate),
-		TPM2KeyHandle: handle,
+	token, err := newTPMToken(tpmTokenMembers{
+		Type:      XKMSTPMTokenType,
+		Blob:      EncodeTPMSealBlobs(sealed.TPMPublic, sealed.TPMPrivate),
+		KeyHandle: handle,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return s.buildResult(passphrase, token, sealed)
@@ -274,13 +278,16 @@ func (s *TPMSealer) sealSSRK(ctx context.Context, pcrs []int32) (*TPMSealResult,
 		handle = uint64(parentAttrs.TPMAttributes.Handle)
 	}
 
-	token := &luks2.Token{
-		Type:           TPMTokenType,
-		TPM2Blob:       EncodeTPMSealBlobs(sealed.TPMPublic, sealed.TPMPrivate),
-		TPM2PCRBank:    pcrBankNames[s.pcrBank],
-		TPM2PCRs:       int32sToInts(pcrs),
-		TPM2KeyHandle:  handle,
-		TPM2PolicyHash: base64.StdEncoding.EncodeToString(policyDigest),
+	token, err := newTPMToken(tpmTokenMembers{
+		Type:       TPMTokenType,
+		Blob:       EncodeTPMSealBlobs(sealed.TPMPublic, sealed.TPMPrivate),
+		PCRBank:    pcrBankNames[s.pcrBank],
+		PCRs:       int32sToInts(pcrs),
+		KeyHandle:  handle,
+		PolicyHash: base64.StdEncoding.EncodeToString(policyDigest),
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return s.buildResult(passphrase, token, sealed)
@@ -330,7 +337,11 @@ func (s *TPMSealer) unsealPlatform(ctx context.Context, token *luks2.Token) ([]b
 		return nil, &errs.Wrapped{Msg: "luks: no usable Platform SRK for unsealing", Err: err}
 	}
 
-	publicBlob, privateBlob, err := DecodeTPMSealBlobs(token.TPM2Blob)
+	members, err := readTPMTokenMembers(token)
+	if err != nil {
+		return nil, err
+	}
+	publicBlob, privateBlob, err := DecodeTPMSealBlobs(members.Blob)
 	if err != nil {
 		return nil, err
 	}
@@ -408,8 +419,53 @@ func computePCRPolicyDigest(tpm transport.TPM, pcrSel libtpm2.TPMLPCRSelection) 
 	return getDigest.PolicyDigest.Buffer, nil
 }
 
-// int32sToInts converts []int32 to []int for the LUKS2 token's TPM2PCRs
-// field.
+// tpmTokenMembers are the members of a LUKS2 TPM2 token. go-luks2 models only
+// a token's type and keyslots and carries every other member verbatim, so
+// go-xkms, which owns TPM2, reads and writes these through the token's JSON.
+// The member names are systemd-cryptenroll's, so a systemd-tpm2 token stays
+// readable by systemd-cryptsetup.
+type tpmTokenMembers struct {
+	Type       string   `json:"type"`
+	Keyslots   []string `json:"keyslots"`
+	Blob       string   `json:"tpm2-blob,omitempty"`
+	PCRBank    string   `json:"tpm2-pcr-bank,omitempty"`
+	PCRs       []int    `json:"tpm2-pcrs,omitempty"`
+	KeyHandle  uint64   `json:"tpm2-key-handle,omitempty"`
+	PolicyHash string   `json:"tpm2-policy-hash,omitempty"`
+}
+
+// newTPMToken builds a LUKS2 token carrying members. Keyslots is left empty
+// for luks2.EnrollKeyProvider to fill in when it is nil.
+func newTPMToken(members tpmTokenMembers) (*luks2.Token, error) {
+	if members.Keyslots == nil {
+		members.Keyslots = []string{}
+	}
+	data, err := json.Marshal(members)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrTPMSealFailed, Cause: err}
+	}
+	token := &luks2.Token{}
+	if err := json.Unmarshal(data, token); err != nil {
+		return nil, &errs.Joined{Lead: ErrTPMSealFailed, Cause: err}
+	}
+	return token, nil
+}
+
+// readTPMTokenMembers reads the TPM2 members off token.
+func readTPMTokenMembers(token *luks2.Token) (*tpmTokenMembers, error) {
+	data, err := json.Marshal(token)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrTPMInvalidToken, Cause: err}
+	}
+	members := &tpmTokenMembers{}
+	if err := json.Unmarshal(data, members); err != nil {
+		return nil, &errs.Joined{Lead: ErrTPMInvalidToken, Cause: err}
+	}
+	return members, nil
+}
+
+// int32sToInts converts []int32 to []int for the LUKS2 token's tpm2-pcrs
+// member.
 func int32sToInts(src []int32) []int {
 	if len(src) == 0 {
 		return nil

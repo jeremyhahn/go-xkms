@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/fido2"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -64,15 +65,16 @@ func newCeremonySurface(t *testing.T) *ceremonySurface {
 		rpOrigin      = "https://localhost"
 	)
 
+	stores := webauthntest.NewStores(t)
 	webauthnSvc, err := webauthn.NewService(webauthn.ServiceParams{
 		Config: &webauthn.Config{
 			RPID:          rpID,
 			RPDisplayName: rpDisplayName,
 			RPOrigins:     []string{rpOrigin},
 		},
-		UserStore:       webauthn.NewMemoryUserStore(),
+		UserStore:       stores.Users,
 		SessionStore:    webauthn.NewMemorySessionStore(),
-		CredentialStore: webauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err, "construct canonical WebAuthn relying-party service")
 

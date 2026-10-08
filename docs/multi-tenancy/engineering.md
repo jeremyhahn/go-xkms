@@ -1,6 +1,6 @@
 # Multi-Tenancy — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-02
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-04
 
 ## Exported surface — `sdk/go/transport`
 
@@ -10,9 +10,6 @@ type TenantService interface {
 	GetTenant(ctx, tenantID string) (*GetTenantResponse, error)
 	ListTenants(ctx) (*ListTenantsResponse, error)
 	DeleteTenant(ctx, tenantID string) error
-	TenantBarrierInit(ctx, req *TenantBarrierInitRequest) error
-	TenantBarrierUnseal(ctx, req *TenantBarrierUnsealRequest) error
-	TenantBarrierStatus(ctx, tenantID string) (*TenantBarrierStatusResponse, error)
 	UpdateTenantEntitlements(ctx, req *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error)
 	UpdateTenantQuotas(ctx, req *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error)
 }
@@ -62,7 +59,7 @@ in the same layout: `ObjectScope` (`ObjectScopeTenant`, `ObjectScopeUser`,
 `ScopeCrossUserError`, `ScopeServiceError`, `ScopeInvalidScopeError`,
 `ScopeInvalidSegmentError` (`sdk/go/scope.go`).
 
-Adopters: `pkg/staticpw` (store prefixes), `pkg/tpmpolicy` (registry keys and
+Adopters: `pkg/staticpw` (store prefixes), `pkg/tpm2/policy` (registry keys and
 scope names; the SDK's `TPMPolicyScopeName` is `scope.TenantName`),
 `pkg/ssh/scope` (its `Scope` is this one) and `pkg/ssh/tenancy` (every SSH
 request is bound with `Authorize`). Tests: `pkg/scope/scope_test.go`
@@ -98,7 +95,6 @@ a code change.
 - **TenantService is required; there is no barrier-registry-only fallback
   (BREAKING).** `pkg/xkms.XKMSService`'s tenant servicer methods
   (`CreateTenant`, `GetTenant`, `ListTenants`, `DeleteTenant`,
-  `TenantBarrierInit`, `TenantBarrierUnseal`, `TenantBarrierStatus`,
   `UpdateTenantEntitlements`, `UpdateTenantQuotas`) all require
   `SetTenantService` to have been called; a nil `TenantService` returns
   `ErrTenantServiceNotConfigured` rather than falling back to direct
@@ -113,12 +109,8 @@ a code change.
   cannot tell whether a *requested* tenant is the caller's.
   `bindTenantTarget` (`pkg/xkms/tenant_binding.go:67`) admits a cross-tenant
   identity (`auth.IsCrossTenant`) for any target and a tenant-scoped one only
-  for its own tenant; it guards `GetTenant`, `DeleteTenant`,
-  `TenantBarrierInit`, `TenantBarrierUnseal`, `TenantBarrierStatus`
-  (`pkg/xkms/servicer_tenant.go:94,144,191,246,283`),
-  `BarrierEnableEncryption` (`pkg/xkms/servicer_barrier.go:384`; an empty
-  `TenantID` is the system barrier and is refused to a tenant) and the SPIFFE
-  tenant of `SignCSR` (`pkg/xkms/servicer_ca.go:178`). `ListTenants` filters
+  for its own tenant; it guards `GetTenant`, `DeleteTenant`, the plan-change
+  methods and the SPIFFE tenant of `SignCSR` (`pkg/xkms/servicer_ca.go:178`). `ListTenants` filters
   to the caller's tenant (`pkg/xkms/servicer_tenant.go:127`). The gRPC
   tenant RPCs no longer carry a barrier-registry fallback that bypassed the
   servicer; with no `XKMSService` they answer `Unavailable`.

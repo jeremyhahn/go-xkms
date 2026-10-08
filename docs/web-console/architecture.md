@@ -48,7 +48,7 @@ WebAuthn, OATH TOTP/HOTP, PIV, an SSH agent, OIDC login, and the password
 vault, all driven from hardware the operator's own machine can reach (USB
 CTAP2, local PKCS#11 modules, PIV smart cards) — consuming any go-xkms
 backend through `sdk/go`. The web console is a management surface for a
-running `xkmsd` **server**: key lifecycle, CA, barrier, users, audit — all
+running `xkmsd` **server**: key lifecycle, CA, users — all
 over that server's REST API. They are two Go modules, two frontends, two
 products, built by two different teams' concerns even though `web/desktop/`
 and xkey's Wails shell look similar from the outside.
@@ -134,9 +134,8 @@ instead of `window.location.origin`.
   threshold keys and verifies finished signatures; the three-round dealer/
   participant protocol coordinates across separate share-holders and runs
   through `xkmsctl frost`.
-- **It does not perform Shamir initialization or rekey.** `barrier init`
-  with a Shamir strategy and `barrier rekey` are CLI ceremonies; the
-  console's Barrier & Seal screen covers status/unseal/seal.
-- **It is not a second cluster-admin plane, and today it is not a working
-  one either.** See `docs/web-console/engineering.md` §"Known gaps" — the
-  Cluster screen's own REST calls have no server-side route.
+- **It has no barrier, audit, custodian or share screens.** Those surfaces
+  are go-qrdb's; xkms does not re-expose them.
+- **It has no cluster or auth-factor screens.** Cluster status, membership
+  and per-user auth factors are go-qrdb's services; the dashboard shows only
+  whether the deployment is clustered.

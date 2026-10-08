@@ -31,10 +31,20 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newTestOIDCTokenStore returns an OIDC token store on a real in-process DAO
+// factory over a fresh memory store.
+func newTestOIDCTokenStore(t testing.TB) oidc.TokenStore {
+	t.Helper()
+	store, err := newOIDCTokenStore(qrdbsdk.NewMemoryKVStore())
+	require.NoError(t, err)
+	return store
+}
 
 func TestNewOIDCService(t *testing.T) {
 	svc := NewOIDCService(nil)
@@ -114,7 +124,7 @@ func TestOIDCService_Close_NoTokenStore(t *testing.T) {
 
 func TestOIDCService_Close_WithTokenStore(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 	err := svc.Close()
 	assert.NoError(t, err)
@@ -300,7 +310,7 @@ func TestOIDCService_GetTokenInfo_NoTokenStore(t *testing.T) {
 
 func TestOIDCService_GetTokenInfo_NoToken(t *testing.T) {
 	svc := NewOIDCService(nil)
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id"}
 	require.NoError(t, svc.AddProvider(entry))
 
@@ -310,7 +320,7 @@ func TestOIDCService_GetTokenInfo_NoToken(t *testing.T) {
 
 func TestOIDCService_GetTokenInfo_Success(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -340,7 +350,7 @@ func TestOIDCService_GetTokenInfo_Success(t *testing.T) {
 
 func TestOIDCService_GetTokenInfo_WithIDToken(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -376,7 +386,7 @@ func TestOIDCService_GetTokenInfo_WithIDToken(t *testing.T) {
 
 func TestOIDCService_Logout_Success(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id"}
@@ -410,7 +420,7 @@ func TestOIDCService_Logout_NoTokenStore(t *testing.T) {
 
 func TestOIDCService_Logout_TokenNotFound(t *testing.T) {
 	svc := NewOIDCService(nil)
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id"}
 	require.NoError(t, svc.AddProvider(entry))
@@ -422,7 +432,7 @@ func TestOIDCService_Logout_TokenNotFound(t *testing.T) {
 
 func TestOIDCService_GetAllTokens_Empty(t *testing.T) {
 	svc := NewOIDCService(nil)
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 
 	tokens := svc.GetAllTokens()
 	assert.Empty(t, tokens)
@@ -436,7 +446,7 @@ func TestOIDCService_GetAllTokens_NoTokenStore(t *testing.T) {
 
 func TestOIDCService_GetAllTokens_Success(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry1 := &OIDCProviderEntry{Name: "p1", Issuer: "https://a.com", ClientID: "id1"}
@@ -484,7 +494,7 @@ func TestOIDCService_StartAutoRefresh_Disabled(t *testing.T) {
 
 func TestOIDCService_StartAutoRefresh_AlreadyRunning(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id", AutoRefresh: 60}
@@ -500,7 +510,7 @@ func TestOIDCService_StartAutoRefresh_AlreadyRunning(t *testing.T) {
 
 func TestOIDCService_StartStopAutoRefresh(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id", AutoRefresh: 60}
@@ -523,7 +533,7 @@ func TestOIDCService_StartStopAutoRefresh(t *testing.T) {
 
 func TestOIDCService_GetAllRefreshStatus(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry1 := &OIDCProviderEntry{Name: "p1", Issuer: "https://a.com", ClientID: "id1", AutoRefresh: 60}
@@ -545,7 +555,7 @@ func TestOIDCService_GetAllRefreshStatus(t *testing.T) {
 
 func TestOIDCService_StopAllRefresh(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id", AutoRefresh: 60}
@@ -576,7 +586,7 @@ func TestOIDCService_ExecuteScript_ProviderNotFound(t *testing.T) {
 
 func TestOIDCService_ExecuteScript_Success(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -824,7 +834,7 @@ func TestOIDCService_RefreshToken_NoTokenStore(t *testing.T) {
 
 func TestOIDCService_RefreshToken_NoRefreshToken(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id"}
@@ -1198,7 +1208,7 @@ func TestOIDCService_Login_ResultContainsErrorMessage(t *testing.T) {
 
 func TestOIDCService_RefreshToken_NoStoredToken(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id"}
@@ -1213,7 +1223,7 @@ func TestOIDCService_RefreshToken_NoStoredToken(t *testing.T) {
 func TestOIDCService_RefreshToken_DiscoveryFails(t *testing.T) {
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -1237,7 +1247,7 @@ func TestOIDCService_RefreshToken_DiscoveryFails(t *testing.T) {
 func TestOIDCService_RefreshToken_NilContext(t *testing.T) {
 	svc := NewOIDCService(nil)
 	// ctx is nil -- should fall back to context.Background().
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -1261,7 +1271,7 @@ func TestOIDCService_RefreshToken_NilContext(t *testing.T) {
 
 func TestOIDCService_refreshLoop_CancellationSetsRunningFalse(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -1308,7 +1318,7 @@ func TestOIDCService_refreshLoop_CancellationSetsRunningFalse(t *testing.T) {
 
 func TestOIDCService_refreshLoop_NilStatusOnCancel(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -1559,7 +1569,7 @@ func TestOIDCService_SetDataDir_InvalidProviderFile(t *testing.T) {
 
 func TestOIDCService_Close_StopsRefreshAndClosesStore(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id", AutoRefresh: 60}
@@ -1608,7 +1618,7 @@ func TestOIDCService_ExecuteScript_StderrOutput(t *testing.T) {
 
 func TestOIDCService_ExecuteScript_StdinReceivesJSON(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -1632,7 +1642,7 @@ func TestOIDCService_ExecuteScript_StdinReceivesJSON(t *testing.T) {
 
 func TestOIDCService_ExecuteScript_EnvironmentVars(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -1717,7 +1727,7 @@ func TestOIDCService_extractIDTokenClaims_EmptyClaims(t *testing.T) {
 
 func TestOIDCService_DeleteProvider_StopsRunningRefresh(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -1784,7 +1794,7 @@ func TestOIDCService_SetTokenStore(t *testing.T) {
 	svc := NewOIDCService(nil)
 	assert.Nil(t, svc.tokenStore)
 
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 	assert.Equal(t, store, svc.tokenStore)
 }
@@ -1793,7 +1803,7 @@ func TestOIDCService_SetTokenStore(t *testing.T) {
 
 func TestOIDCService_refreshLoop_TickerFiresWithRefreshError(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -1887,7 +1897,7 @@ func TestOIDCService_Login_FullFlowWithMockServer(t *testing.T) {
 
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	// Capture the auth URL that would be opened in the browser, then
@@ -1996,7 +2006,7 @@ func TestOIDCService_Login_CallbackError(t *testing.T) {
 
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 	svc.SetBrowserOpen(func(authURL string) error { return nil })
 
@@ -2066,7 +2076,7 @@ func TestOIDCService_Login_CallbackNoCode(t *testing.T) {
 
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.SetBrowserOpen(func(authURL string) error { return nil })
 
 	entry := &OIDCProviderEntry{

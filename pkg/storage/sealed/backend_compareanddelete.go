@@ -57,7 +57,7 @@ func unsealAndCompare(
 	u types.UnsealerInto,
 	sealed *types.SealedData,
 	expected []byte,
-) (bool, error) {
+) (matched bool, err error) {
 	n, err := u.PlaintextLen(sealed)
 	if err != nil {
 		return false, &errs.Joined{Lead: ErrUnsealFailed, Cause: err}
@@ -83,7 +83,14 @@ func unsealAndCompare(
 	if err != nil {
 		return false, &errs.Joined{Lead: ErrGuardEnclaveFailed, Cause: err}
 	}
-	defer enc.Destroy()
+	defer func() {
+		// A guard that could not be wiped is not a trustworthy answer, so the
+		// result is withdrawn along with the comparison's own error, if any.
+		if destroyErr := enc.Destroy(); destroyErr != nil {
+			matched = false
+			err = errors.Join(err, &errs.Joined{Lead: ErrGuardEnclaveFailed, Cause: destroyErr})
+		}
+	}()
 
 	return compareInEnclave(ctx, enc, u, sealed, expected)
 }

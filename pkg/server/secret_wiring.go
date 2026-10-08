@@ -68,33 +68,18 @@ func (s *Server) buildSecretRegistry() *qrdbsecret.ResolverRegistry {
 // the phone backend's Noise static key; TestBackendCredentials_ResolveViaCredentialReference
 // (secret_wiring_test.go) proves all five end to end.
 //
-// This ordering is possible without a cycle against initializeBarrier's own
-// hardware seal strategies (buildHardwareSealStrategies, built from
-// already-initialized backends in s.keyProviders) because that path is now
-// reached only for a barrier strategy BarrierConfig.NodeFlipWired reports
-// false for (pkcs11 and the cloud-KMS strategies) — see resolveNodeSeal and
-// NodeFlipWired's doc. The strategy this call's own ordering exists to
-// serve, tpm2, is built by resolveNodeSeal directly from Backends.TPM2
-// config (never from s.keyProviders) and injected into the qrdb node's own
-// seal subsystem before this call ever runs, so it has no dependency on
-// backend initialization at all. There is no equivalent caveat for the
-// barrier's own boot secret any more: go-xkms#653 removed the
-// config-sourced BarrierConfig.Passphrase field entirely, so the barrier
-// never auto-unseals from configuration at all -- it auto-unseals through a
-// registered hardware seal strategy (tpm2 today), or blocks Server.New at
+// This ordering has no cycle against the barrier: every hardware and cloud
+// seal strategy is built by resolveNodeSeal from its own Backends.* config
+// and the TPM-sealed pre-barrier store (never from s.keyProviders), and
+// injected into the qrdb node's seal subsystem before this call ever runs.
+// The node's credentials therefore never resolve through the credential
+// service the node itself unseals. The barrier never auto-unseals from
+// configuration either (go-xkms#653 removed BarrierConfig.Passphrase): it
+// auto-unseals through its injected strategy, or blocks Server.New at
 // initializeQRDBStorage behind the sealed-window listener for an operator
 // to unseal via `xkmsctl barrier unseal`/`unseal-shares`/the equivalent
 // API call (mirroring go-qrdb's own cmd/qrdbd initSealSubsystem ->
 // awaitUnseal sequence, driven entirely through go-qrdb/sdk/go).
-//
-// A PKCS#11 barrier strategy remains genuinely impossible: it would need
-// the same already-initialized PKCS#11 backend buildHardwareSealStrategies
-// reads from s.keyProviders, which initializeBackends now builds AFTER
-// this call — the same cycle as before, just narrowed to the one strategy
-// (and the cloud-KMS strategies) NodeFlipWired excludes. That is a
-// pkg/seal/pkg/server/types.Sealer interface change (letting a barrier
-// strategy accept a deferred, per-call credential the way the software
-// strategy already does), not a reorder, and is not approved.
 func (s *Server) resolveConfigSecrets() error {
 	reg := s.buildSecretRegistry()
 	proc := qrdbsecret.NewConfigProcessor(reg)

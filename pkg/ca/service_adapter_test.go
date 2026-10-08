@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -65,12 +66,8 @@ func setupTestCA(t *testing.T) *CA {
 		t.Fatalf("Failed to create xkms backend: %v", err)
 	}
 
-	// Create in-memory cert adapter for the certstore
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
-
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: certAdapter,
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	if err != nil {
 		t.Fatalf("Failed to create certstore: %v", err)
@@ -132,10 +129,8 @@ func setupUninitializedCA(t *testing.T) *CA {
 		t.Fatalf("Failed to create xkms backend: %v", err)
 	}
 
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: certAdapter,
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	if err != nil {
 		t.Fatalf("Failed to create certstore: %v", err)

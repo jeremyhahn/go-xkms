@@ -31,6 +31,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
@@ -38,6 +39,7 @@ import (
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
@@ -311,7 +313,7 @@ func (p *Provisioner) stageBootstrapCA(ctx context.Context) (CAIssuer, error) {
 	// Guard against forking a second root: identity keys already present with
 	// no cached node certificate is the grown-from-standalone shape, which
 	// must fail closed (see ErrExistingCAWithoutStagedCerts).
-	rootAttrs, err := rootIdentity.ToKeyAttributes()
+	rootAttrs, err := rootIdentity.ToKeyAttributes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +322,7 @@ func (p *Provisioner) stageBootstrapCA(ctx context.Context) (CAIssuer, error) {
 	}
 
 	stagingCertStore, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(storage.NewMemory()),
+		DAOs: dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore()),
 	})
 	if err != nil {
 		return nil, err

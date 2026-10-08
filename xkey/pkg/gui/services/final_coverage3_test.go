@@ -154,7 +154,7 @@ func TestFC3_AdminService_ExportAuditLogs_JSONMultipleEntries(t *testing.T) {
 // StopAllRefresh is called during Close with active refresh processes.
 func TestFC3_OIDCService_Close_WithRunningRefresh(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -198,7 +198,7 @@ func TestFC3_OIDCService_Login_StateMismatch(t *testing.T) {
 
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.SetBrowserOpen(func(authURL string) error { return nil })
 
 	entry := &OIDCProviderEntry{
@@ -276,7 +276,7 @@ func TestFC3_OIDCService_Login_TokenExchangeFailed(t *testing.T) {
 
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 
 	var capturedAuthURL atomic.Value
 	svc.SetBrowserOpen(func(authURL string) error {
@@ -371,7 +371,7 @@ func TestFC3_OIDCService_Login_InvalidRedirectURL(t *testing.T) {
 
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.SetBrowserOpen(func(u string) error { return nil })
 
 	// Use a redirect URL with invalid control characters to trigger parse failure.
@@ -426,7 +426,7 @@ func TestFC3_OIDCService_Login_BrowserOpenError(t *testing.T) {
 
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 
 	var capturedAuthURL atomic.Value
 	svc.SetBrowserOpen(func(authURL string) error {
@@ -528,7 +528,7 @@ func TestFC3_OIDCService_Login_SuccessWithExecAndAutoRefresh(t *testing.T) {
 
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	var capturedAuthURL atomic.Value
@@ -654,7 +654,7 @@ func TestFC3_OIDCService_RefreshToken_StoreSaveFailure(t *testing.T) {
 	defer server.Close()
 	serverURL = server.URL
 
-	innerStore := oidc.NewMemoryTokenStore()
+	innerStore := newTestOIDCTokenStore(t)
 	require.NoError(t, innerStore.Save(serverURL, &oidc.TokenResponse{
 		AccessToken:  "old-at",
 		RefreshToken: "old-rt",
@@ -721,7 +721,7 @@ func TestFC3_OIDCService_ExecuteScript_ExitCode2(t *testing.T) {
 // where a post-refresh script is executed but fails.
 func TestFC3_OIDCService_RefreshLoop_TickerWithExecScript(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -1119,7 +1119,7 @@ func TestFC3_OIDCService_Login_DefaultPortFromRedirect(t *testing.T) {
 
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.SetBrowserOpen(func(u string) error { return nil })
 
 	// Use a redirect URL without an explicit port.
@@ -1184,7 +1184,7 @@ func TestFC3_OIDCService_Login_ListenerPortConflict(t *testing.T) {
 
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	svc.SetBrowserOpen(func(u string) error { return nil })
 
 	// Reserve an OS-assigned port, then occupy it. net.Listen binds

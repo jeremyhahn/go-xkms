@@ -100,6 +100,39 @@ func guardStorage(base storage.Backend) qrdbsdk.StorageBackend {
 	return guardedStorageBackend{base}
 }
 
+// MissingKeyError reports a key absent from the xkms storage backend under a
+// barrier. xkms backends report that as storage.ErrNotFound while go-qrdb
+// recognises it as ErrSecretNotFound -- the BarrierRegistry reads its
+// tenant-root record through the system barrier and must tell "no record yet"
+// from a failed read -- so the error matches both.
+type MissingKeyError struct {
+	// Key is the missing key.
+	Key string
+
+	// Err is the backend's own not-found error.
+	Err error
+}
+
+// Error returns the backend's not-found message.
+func (e *MissingKeyError) Error() string { return e.Err.Error() }
+
+// Unwrap returns the backend's not-found error, so errors.Is(err,
+// storage.ErrNotFound) still holds.
+func (e *MissingKeyError) Unwrap() error { return e.Err }
+
+// Is reports go-qrdb's not-found sentinel as a match.
+func (e *MissingKeyError) Is(target error) bool { return target == qrdbsdk.ErrSecretNotFound }
+
+// Get reads key from the wrapped backend, reporting an absent key as a
+// *MissingKeyError.
+func (g guardedStorageBackend) Get(ctx context.Context, key string) ([]byte, error) {
+	v, err := g.Backend.Get(ctx, key)
+	if err != nil && errors.Is(err, storage.ErrNotFound) {
+		return nil, &MissingKeyError{Key: key, Err: err}
+	}
+	return v, err
+}
+
 // CompareAndDelete forwards to the wrapped backend's optional capability, and
 // reports ErrCompareAndDeleteUnsupported when it has none. It never degrades to
 // a read followed by an unguarded delete: that reintroduces precisely the race
@@ -157,39 +190,14 @@ type Barrier = qrdbsdk.StorageBarrier
 // TenantBarrier is a type alias for qrdbsdk.TenantBarrier.
 type TenantBarrier = qrdbsdk.TenantBarrier
 
-// BarrierRegistry manages the system barrier and per-tenant barriers.
-// This is a thin wrapper around go-qrdb's BarrierRegistry that bridges
-// the go-xkms BarrierConfig (with audit.Logger) to go-qrdb's config format.
-type BarrierRegistry struct {
-	inner  *qrdbsdk.BarrierRegistry
-	system *Barrier
-}
+// BarrierRegistry is a type alias for qrdbsdk.BarrierRegistry, which manages
+// the system barrier and the per-tenant barriers. A running xkmsd has exactly
+// one: the embedded qrdb node's own (node.BarrierRegistry()).
+type BarrierRegistry = qrdbsdk.BarrierRegistry
 
 // BarrierRegistryOption configures a BarrierRegistry at construction time
-// (and via Attach). The canonical options are WithVolumePool and
-// WithPerTenantRegistry, which wire the dedicated-isolation storage seam.
+// (and via Attach).
 type BarrierRegistryOption = qrdbsdk.BarrierRegistryOption
-
-// VolumePoolSubsystem bundles the pool Manager, StateStore, and
-// PerTenantRegistry that back dedicated-isolation (barrier/volume/raft) tenant
-// storage. Build it with BuildVolumePoolSubsystem and attach via WithVolumePool
-// + WithPerTenantRegistry. Close must be called at shutdown.
-type VolumePoolSubsystem = qrdbsdk.VolumePoolSubsystem
-
-// WithVolumePool attaches the volume-pool Manager + round-robin StateStore so a
-// dedicated-isolation tenant registered with a nil backend draws its per-tenant
-// Pebble path from the pool. Without it, RegisterTenantPooled* fail with
-// ErrPoolNotConfigured.
-var WithVolumePool = qrdbsdk.WithVolumePool
-
-// WithPerTenantRegistry attaches the per-tenant Pebble registry that opens and
-// tracks each dedicated-isolation tenant's storage instance.
-var WithPerTenantRegistry = qrdbsdk.WithPerTenantRegistry
-
-// BuildVolumePoolSubsystem constructs the volume-pool subsystem from a data
-// directory and the declared pool config. It returns (nil, nil) when no pools
-// are configured.
-var BuildVolumePoolSubsystem = qrdbsdk.BuildVolumePoolSubsystem
 
 // NewBarrier creates a new sealed Barrier backed by the given storage.
 // At least one SealingStrategy must be provided.
@@ -227,127 +235,14 @@ func NewTenantBarrier(
 	return qrdbsdk.NewTenantBarrier(tenantID, logger, guardStorage(base), qrdbConfig, strategies...)
 }
 
-// NewBarrierRegistry creates a new BarrierRegistry with the given system
-// barrier. The system barrier must not be nil. Optional options (notably
-// WithVolumePool and WithPerTenantRegistry) wire the dedicated-isolation
-// storage seam so barrier/volume/raft tenants can be registered with a
-// pool-allocated per-tenant backend.
+// NewBarrierRegistry creates a go-qrdb BarrierRegistry over the given system
+// barrier, logging through the system barrier's logger. A nil system barrier
+// is refused with ErrNilSystemBarrier.
 func NewBarrierRegistry(system *Barrier, opts ...BarrierRegistryOption) (*BarrierRegistry, error) {
-	inner, err := qrdbsdk.NewBarrierRegistry(system.Logger(), system, opts...)
-	if err != nil {
-		return nil, err
+	if system == nil {
+		return nil, ErrNilSystemBarrier
 	}
-	return &BarrierRegistry{inner: inner, system: system}, nil
-}
-
-// WrapBarrierRegistry adapts an already-constructed go-qrdb BarrierRegistry
-// (e.g. the one an embedded qrdb node builds and owns when its seal is enabled)
-// into the go-xkms wrapper, so xkms can adopt the node's registry as its own
-// without re-constructing the tenant/volume subsystem. The system barrier is
-// the node's system StorageBarrier (registry.SystemBarrier()).
-func WrapBarrierRegistry(inner *qrdbsdk.BarrierRegistry, system *Barrier) *BarrierRegistry {
-	return &BarrierRegistry{inner: inner, system: system}
-}
-
-// SystemBarrier returns the system-level barrier.
-func (r *BarrierRegistry) SystemBarrier() *Barrier { return r.system }
-
-// Inner returns the underlying go-qrdb BarrierRegistry. It is the seam used to
-// compose go-qrdb's TenantService (NewServiceTenantService) on top of the
-// registry so xkms inherits the entitlement-gated isolation, system-managed
-// auto-unseal, and volume/raft tenant lifecycle without re-implementing them.
-func (r *BarrierRegistry) Inner() *qrdbsdk.BarrierRegistry { return r.inner }
-
-// Attach wires additional options (e.g. WithVolumePool / WithPerTenantRegistry)
-// onto an already-constructed registry. It is used when the volume-pool
-// subsystem is built after the registry (the system barrier must exist first).
-func (r *BarrierRegistry) Attach(opts ...BarrierRegistryOption) { r.inner.Attach(opts...) }
-
-// RestoreVolumeTenants re-registers dedicated-isolation tenants from their
-// persisted pool assignments at boot and, for system-managed (auto-unseal)
-// tenants, re-attaches and unseals their barriers credential-free.
-func (r *BarrierRegistry) RestoreVolumeTenants(ctx context.Context) error {
-	return r.inner.RestoreVolumeTenants(ctx)
-}
-
-// RegisterTenant creates and registers a new tenant barrier with default
-// in-memory storage. Returns ErrTenantAlreadyExists if the tenant ID is
-// already registered. Delegates to go-qrdb's RegisterTenantDefault.
-func (r *BarrierRegistry) RegisterTenant(tenantID string) (*TenantBarrier, error) {
-	return r.inner.RegisterTenantDefault(tenantID)
-}
-
-// RegisterTenantWithConfig creates and registers a tenant barrier with
-// custom storage, config, and strategies.
-func (r *BarrierRegistry) RegisterTenantWithConfig(
-	tenantID string,
-	base storage.Backend,
-	config BarrierConfig,
-	strategies ...SealingStrategy,
-) (*TenantBarrier, error) {
-	qrdbConfig := qrdbsdk.BarrierConfig{
-		PreferenceOrder: config.PreferenceOrder,
-		RootKeyPath:     config.RootKeyPath,
-		AuditLogger:     AuditLoggerFromXKMS(config.AuditLogger),
-		Shamir:          config.Shamir,
-	}
-	return r.inner.RegisterTenant(context.Background(), tenantID, guardStorage(base), qrdbConfig, strategies...)
-}
-
-// GetTenant looks up a registered tenant barrier by ID.
-func (r *BarrierRegistry) GetTenant(tenantID string) (*TenantBarrier, error) {
-	return r.inner.GetTenant(tenantID)
-}
-
-// Tenant is an alias for GetTenant, delegating to go-qrdb's Tenant method.
-func (r *BarrierRegistry) Tenant(tenantID string) (*TenantBarrier, error) {
-	return r.inner.Tenant(tenantID)
-}
-
-// RemoveTenant seals and removes the tenant barrier for the given ID.
-func (r *BarrierRegistry) RemoveTenant(tenantID string) error {
-	return r.inner.RemoveTenant(tenantID)
-}
-
-// UnregisterTenant is an alias for RemoveTenant, delegating to go-qrdb's
-// UnregisterTenant method.
-func (r *BarrierRegistry) UnregisterTenant(tenantID string) error {
-	return r.inner.UnregisterTenant(tenantID)
-}
-
-// InitializeTenant initializes the tenant barrier identified by tenantID.
-func (r *BarrierRegistry) InitializeTenant(ctx context.Context, tenantID string, creds Credentials) error {
-	return r.inner.InitializeTenant(ctx, tenantID, creds)
-}
-
-// UnsealTenant unseals the tenant barrier identified by tenantID.
-func (r *BarrierRegistry) UnsealTenant(ctx context.Context, tenantID string, creds Credentials) error {
-	return r.inner.UnsealTenant(ctx, tenantID, creds)
-}
-
-// SealTenant seals the tenant barrier identified by tenantID.
-func (r *BarrierRegistry) SealTenant(tenantID string) error {
-	return r.inner.SealTenant(tenantID)
-}
-
-// TenantStatus returns the current status of the tenant barrier.
-func (r *BarrierRegistry) TenantStatus(tenantID string) (*BarrierStatus, error) {
-	return r.inner.TenantStatus(tenantID)
-}
-
-// ListTenants returns all registered tenant IDs.
-func (r *BarrierRegistry) ListTenants() []string {
-	return r.inner.ListTenants()
-}
-
-// SealAll seals the system barrier and all tenant barriers.
-func (r *BarrierRegistry) SealAll() error {
-	return r.inner.SealAll()
-}
-
-// Close closes the system barrier and all tenant barriers.
-func (r *BarrierRegistry) Close() error {
-	return r.inner.Close()
+	return qrdbsdk.NewBarrierRegistry(system.Logger(), system, opts...)
 }
 
 // NewShamirStrategy creates a new Shamir secret sharing strategy with
@@ -394,7 +289,7 @@ func NewHardwareTenantService(
 	allOpts := append([]TenantServiceOption{qrdbsdk.WithTenantStrategyRegistry(hwRegistry)}, opts...)
 	// Wrap the store so a missing tenant record surfaces go-qrdb's
 	// ErrSecretNotFound rather than xkms's storage.ErrNotFound.
-	return qrdbsdk.NewServiceTenantService(tenantMetadataStore{store}, registry.Inner(), logger, allOpts...)
+	return qrdbsdk.NewServiceTenantService(tenantMetadataStore{store}, registry, logger, allOpts...)
 }
 
 // NewHardwareStrategyRegistry builds a StrategyRegistry seeded with go-qrdb's

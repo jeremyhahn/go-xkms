@@ -1549,7 +1549,8 @@ export namespace services {
 	    strategy: string;
 	    strategy_label: string;
 	    hardware_backed: boolean;
-	    root_key_path: string;
+	    data_dir: string;
+	    root_key_entry: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new BarrierSealInfo(source);
@@ -1562,7 +1563,8 @@ export namespace services {
 	        this.strategy = source["strategy"];
 	        this.strategy_label = source["strategy_label"];
 	        this.hardware_backed = source["hardware_backed"];
-	        this.root_key_path = source["root_key_path"];
+	        this.data_dir = source["data_dir"];
+	        this.root_key_entry = source["root_key_entry"];
 	    }
 	}
 	export class BarrierService {
@@ -1890,75 +1892,6 @@ export namespace services {
 	        this.passphrase = source["passphrase"];
 	    }
 	}
-	export class CustodianMemberInfo {
-	    share_index: number;
-	    user_id: string;
-	    username: string;
-	    assigned_at: string;
-	    received_at?: string;
-	    method: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new CustodianMemberInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.share_index = source["share_index"];
-	        this.user_id = source["user_id"];
-	        this.username = source["username"];
-	        this.assigned_at = source["assigned_at"];
-	        this.received_at = source["received_at"];
-	        this.method = source["method"];
-	    }
-	}
-	export class CustodianGroupInfo {
-	    id: string;
-	    tenant_id?: string;
-	    name: string;
-	    purpose: string;
-	    threshold: number;
-	    total: number;
-	    members: CustodianMemberInfo[];
-	    created_at: string;
-	    updated_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new CustodianGroupInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.tenant_id = source["tenant_id"];
-	        this.name = source["name"];
-	        this.purpose = source["purpose"];
-	        this.threshold = source["threshold"];
-	        this.total = source["total"];
-	        this.members = this.convertValues(source["members"], CustodianMemberInfo);
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	
 	export class DeviceStatus {
 	    name: string;
 	    address: string;
@@ -4796,30 +4729,6 @@ export namespace services {
 	        this.setup_complete = source["setup_complete"];
 	    }
 	}
-	export class ShareInfo {
-	    server_url: string;
-	    group_id: string;
-	    group_name?: string;
-	    share_index: number;
-	    purpose?: string;
-	    received_at: string;
-	    tenant_id?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ShareInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.server_url = source["server_url"];
-	        this.group_id = source["group_id"];
-	        this.group_name = source["group_name"];
-	        this.share_index = source["share_index"];
-	        this.purpose = source["purpose"];
-	        this.received_at = source["received_at"];
-	        this.tenant_id = source["tenant_id"];
-	    }
-	}
 	export class SharedSRKInfo {
 	    present: boolean;
 	    algorithm: string;
@@ -5891,26 +5800,6 @@ export namespace transport {
 	        this.scope = source["scope"];
 	        this.owner = source["owner"];
 	        this.name = source["name"];
-	    }
-	}
-	export class ShareCollectionStatus {
-	    group_id: string;
-	    threshold: number;
-	    total: number;
-	    collected: number;
-	    ready: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new ShareCollectionStatus(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.group_id = source["group_id"];
-	        this.threshold = source["threshold"];
-	        this.total = source["total"];
-	        this.collected = source["collected"];
-	        this.ready = source["ready"];
 	    }
 	}
 	export class TPMPolicyCondition {

@@ -30,21 +30,25 @@ func TestFirstBootNode_SeedsBuiltInRolesUnderPersistedIDs(t *testing.T) {
 	n, err := NewFirstBootNode(t)
 	require.NoError(t, err)
 
+	adminID, err := n.RoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
+	require.NoError(t, err)
+	admin := &qrdbtransport.Identity{Subject: "admin", TenantID: qrdbsdk.SystemTenantID, Roles: []string{adminID}}
+	require.NoError(t, n.Client().RBAC().Authorize(context.Background(), admin, "certs", "issue"),
+		"the seeded Admin role must carry its built-in grants")
+
+	// The node's role client authorizes every read as the caller, so the
+	// persisted identifiers are read back as the seeded Admin.
+	caller := &qrdbsdk.Identity{Subject: admin.Subject, TenantID: admin.TenantID, Roles: admin.Roles}
+	adminCtx := qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(context.Background(), caller), qrdbsdk.SystemTenantID)
 	for _, name := range []string{qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser} {
 		id, err := n.RoleID(qrdbsdk.SystemTenantID, name)
 		require.NoError(t, err, name)
 		assert.NotEqual(t, name, id, "a role identifier is not the role name")
 
-		r, err := n.Client().Roles().GetRole(qrdbsdk.ContextWithTenant(context.Background(), qrdbsdk.SystemTenantID), id)
+		r, err := n.Client().Roles().GetRole(adminCtx, id)
 		require.NoError(t, err, name)
 		assert.Equal(t, name, r.Name)
 	}
-
-	adminID, err := n.RoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
-	require.NoError(t, err)
-	admin := &qrdbtransport.Identity{Subject: "admin", TenantID: qrdbsdk.SystemTenantID, Roles: []string{adminID}}
-	require.NoError(t, n.Client().RBAC().Authorize(context.Background(), admin, "certs", "generate"),
-		"the seeded Admin role must carry its built-in grants")
 }
 
 // TestFirstBootNode_RoleIDUnknownRole proves an unseeded role name is an
@@ -81,4 +85,17 @@ func TestFirstBootNode_ProvisionTenantRejectsEmptyID(t *testing.T) {
 	n, err := NewFirstBootNode(t)
 	require.NoError(t, err)
 	require.Error(t, n.ProvisionTenant(""))
+}
+
+// TestFirstBootNode_ServerOptionsReachTheNode proves opts are wired into the
+// node: an injected audit sink is what makes the client expose an audit
+// client, and a node built without one exposes none.
+func TestFirstBootNode_ServerOptionsReachTheNode(t *testing.T) {
+	withSink, err := NewFirstBootNode(t, qrdbsdk.WithAuditLogger(qrdbsdk.NewAuditRingBuffer(8)))
+	require.NoError(t, err)
+	assert.NotNil(t, withSink.Client().Audit())
+
+	without, err := NewFirstBootNode(t)
+	require.NoError(t, err)
+	assert.Nil(t, without.Client().Audit())
 }

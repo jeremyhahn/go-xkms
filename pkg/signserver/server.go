@@ -40,14 +40,18 @@ import (
 	"sync"
 	"sync/atomic"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport/embedded"
 	"github.com/jeremyhahn/go-xkms/pkg/api/unix"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc"
 )
+
+// StateDatabase is the go-qrdb database Config.StateDAOs serves.
+const StateDatabase = pkcs11state.DatabaseName
 
 // DefaultSocketMode is the socket file mode when Config.SocketMode is zero.
 // The peer-credential allowlist, not the file mode, is the access gate; the
@@ -87,10 +91,12 @@ type Config struct {
 	// none. Empty selects the key service's default rule.
 	DefaultBackend string
 
-	// StateStorage holds the slots' token records (token state, PIN
-	// verifiers, lockout counters, key objects). It must be durable for keys
-	// to survive a restart. Required.
-	StateStorage storage.Backend
+	// StateDAOs serves the pkcs11state database (pkcs11state.DatabaseName)
+	// that holds the slots' token records (token state, PIN verifiers,
+	// lockout counters, key objects) -- typically an open datastore's
+	// DAOFactory() after the database is opened on it. It must be durable for
+	// keys to survive a restart. Required.
+	StateDAOs *qrdbsdk.DAOFactory
 
 	// Slots are the sign-only slots. At least one is required.
 	Slots []Slot
@@ -130,7 +136,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, &Error{Op: "compose key service", Err: err}
 	}
-	state, err := pkcs11state.NewStore(cfg.StateStorage)
+	state, err := pkcs11state.NewStore(cfg.StateDAOs)
 	if err != nil {
 		return nil, &Error{Op: "open token store", Err: err}
 	}
@@ -174,7 +180,7 @@ func validateConfig(cfg *Config) (map[string]map[string]struct{}, error) {
 		return nil, &Error{Op: "config", Err: ErrNoAllowedPeers}
 	case len(cfg.Backends) == 0:
 		return nil, &Error{Op: "config", Err: ErrBackendsRequired}
-	case cfg.StateStorage == nil:
+	case cfg.StateDAOs == nil:
 		return nil, &Error{Op: "config", Err: ErrStateStorageRequired}
 	case len(cfg.Slots) == 0:
 		return nil, &Error{Op: "config", Err: ErrSlotsRequired}

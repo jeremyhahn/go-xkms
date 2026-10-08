@@ -35,20 +35,20 @@ func TestSealSeedLeavesSourceIntact(t *testing.T) {
 	before := make([]byte, len(src))
 	copy(before, src)
 
-	sealed, err := sealSeed(src)
+	sealed, err := sealSeed(t.Context(), src)
 	require.NoError(t, err)
 	defer sealed.Destroy()
 
 	assert.Equal(t, before, src, "sealSeed must not wipe its argument")
 
-	buf, err := sealed.Open()
+	buf, err := sealed.Open(t.Context())
 	require.NoError(t, err)
 	defer buf.Destroy()
 	assert.Equal(t, before, buf.Bytes(), "the enclave must hold what it was given")
 }
 
 func TestSealSeed_RejectsEmpty(t *testing.T) {
-	sealed, err := sealSeed(nil)
+	sealed, err := sealSeed(t.Context(), nil)
 	require.Error(t, err, "an empty seed cannot be sealed and must not be silently accepted")
 	assert.Nil(t, sealed)
 }
@@ -65,13 +65,13 @@ func TestGeneratedSeedIsEnclavedAndPersistable(t *testing.T) {
 		{
 			name: "ML-DSA",
 			gen: func(b *QuantumBackend) (any, *keyMetadata, error) {
-				return wrapMLDSA(b.generateMLDSAKey("ML-DSA-65"))
+				return wrapMLDSA(b.generateMLDSAKey(t.Context(), "ML-DSA-65"))
 			},
 		},
 		{
 			name: "ML-KEM",
 			gen: func(b *QuantumBackend) (any, *keyMetadata, error) {
-				return wrapMLKEM(b.generateMLKEMKey("ML-KEM-768", "enclave-kem"))
+				return wrapMLKEM(b.generateMLKEMKey(t.Context(), "ML-KEM-768", "enclave-kem"))
 			},
 		},
 	}
@@ -105,17 +105,17 @@ func TestLoadedKeyDoesNotConsumeMetadataSeed(t *testing.T) {
 	_, err := qb.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	_, metadata, err := qb.generateMLKEMKey("ML-KEM-768", "reload-kem")
+	_, metadata, err := qb.generateMLKEMKey(t.Context(), "ML-KEM-768", "reload-kem")
 	require.NoError(t, err)
 
 	before := make([]byte, len(metadata.Seed))
 	copy(before, metadata.Seed)
 
-	first, err := qb.loadMLKEMKey(metadata, "reload-kem")
+	first, err := qb.loadMLKEMKey(t.Context(), metadata, "reload-kem")
 	require.NoError(t, err)
 	assert.Equal(t, before, metadata.Seed, "loading must not wipe metadata.Seed")
 
-	second, err := qb.loadMLKEMKey(metadata, "reload-kem")
+	second, err := qb.loadMLKEMKey(t.Context(), metadata, "reload-kem")
 	require.NoError(t, err)
 
 	assert.Equal(t, before, first.ExportSecretKey())
@@ -151,7 +151,7 @@ func TestStoreKeyWipesTheSeed(t *testing.T) {
 	qb, _ := newTestBackend(t)
 	defer func() { _ = qb.Close() }()
 
-	_, metadata, err := qb.generateMLKEMKey("ML-KEM-768", "wipe-kem")
+	_, metadata, err := qb.generateMLKEMKey(t.Context(), "ML-KEM-768", "wipe-kem")
 	require.NoError(t, err)
 	require.NotEmpty(t, metadata.Seed)
 

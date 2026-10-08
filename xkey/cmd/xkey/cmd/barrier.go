@@ -22,7 +22,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -219,10 +218,7 @@ func assembleBarrierStrategy(id xkms.StrategyID, dataDir string) (xkms.SealingSt
 		}
 		return xkms.NewTPM2Strategy(sealer, nil), closer, nil
 	case xkms.StrategyPKCS11:
-		return nil, nil, &BarrierError{
-			Operation: "assemble_strategy",
-			Message:   "pkcs11 strategy requires an HSM module configuration, which the CLI barrier does not support",
-		}
+		return buildPKCS11BarrierStrategy(context.Background(), dataDir, barrierTPMDevice, barrierTPMSimulator)
 	case xkms.StrategyAWSKMS, xkms.StrategyGCPKMS, xkms.StrategyAzureKV, xkms.StrategyVault:
 		return buildCloudKMSBarrierStrategy(context.Background(), id, dataDir)
 	default:
@@ -435,10 +431,45 @@ func readBarrierPasswordFromStdin(_ io.Writer) (string, error) {
 	return password1, nil
 }
 
-// barrierRootKeyExists checks if the barrier root key blob exists on disk
-// by checking the file in the storage backend directory.
+// barrierRootKeyExists reports whether the sealed root key blob is present in
+// the barrier's storage under dataDir. The go-qrdb file engine stores each key
+// under a hashed path, so the storage backend is asked rather than the
+// filesystem. A data directory that does not exist holds no barrier and is not
+// created by the probe.
 func barrierRootKeyExists(dataDir string) bool {
-	keyPath := filepath.Join(dataDir, defaultBarrierRootKeyPath)
-	_, err := os.Stat(keyPath)
-	return err == nil
+	if _, err := os.Stat(dataDir); err != nil {
+		return false
+	}
+	backend, err := xkms.NewFileStorageBackend(dataDir)
+	if err != nil {
+		slog.Default().Debug("barrier: cannot open storage to probe for the root key", "dir", dataDir, "error", err)
+		return false
+	}
+	defer closeBarrierProbeBackend(backend, dataDir)
+
+	exists, err := backend.Exists(context.Background(), defaultBarrierRootKeyPath)
+	if err != nil {
+		slog.Default().Debug("barrier: root key probe failed", "dir", dataDir, "error", err)
+		return false
+	}
+	return exists
+}
+
+// loadBarrierRootKey reads the sealed root key blob from the barrier's storage
+// under dataDir.
+func loadBarrierRootKey(dataDir string) ([]byte, error) {
+	backend, err := xkms.NewFileStorageBackend(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	defer closeBarrierProbeBackend(backend, dataDir)
+	return backend.Get(context.Background(), defaultBarrierRootKeyPath)
+}
+
+// closeBarrierProbeBackend closes a storage backend opened only to inspect the
+// root key, logging rather than failing the read it served.
+func closeBarrierProbeBackend(backend xkms.StorageBackend, dataDir string) {
+	if err := backend.Close(); err != nil {
+		slog.Default().Warn("barrier: failed to close storage after root key probe", "dir", dataDir, "error", err)
+	}
 }

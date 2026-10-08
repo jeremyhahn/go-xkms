@@ -14,7 +14,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"io/fs"
 	"log/slog"
@@ -23,49 +22,12 @@ import (
 
 	"github.com/gorilla/mux"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
-	acmeqrdb "github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	adminweb "github.com/jeremyhahn/go-xkms/pkg/acme/web/packages/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
 )
-
-// embeddedQRDBService adapts the embedded qrdb node's SDK client
-// (*qrdbsdk.Client, already published via server.Server.QRDBClient) to
-// pkg/acme/qrdb.Service, the interface the ACME admin surface's tenant
-// role/user/RBAC delegation is written against. Every data/control-plane
-// accessor (KV, Admin, Watch, Lease, Batch, Transaction, Index, Users,
-// Roles, Certs, Barrier, Ceremony, Credentials) forwards directly to the
-// client, which already implements them with matching signatures; only
-// Config/Healthy/Close need adapting:
-//   - Config reports the embedded topology descriptively — there is no
-//     remote address or socket path to report, since this is the in-process
-//     node, not a dialed connection.
-//   - Close is a deliberate no-op: the embedded client's lifecycle belongs to
-//     pkg/server (stopQRDBNode), which closes the one qrdb node for every
-//     consumer. A second Close here would race or double-close it.
-type embeddedQRDBService struct {
-	*qrdbsdk.Client
-}
-
-// Config reports the embedded node's descriptive configuration.
-func (s *embeddedQRDBService) Config() *acmeqrdb.Config {
-	return &acmeqrdb.Config{Mode: acmeqrdb.ModeStandalone}
-}
-
-// Healthy reports whether the embedded qrdb connection is healthy.
-func (s *embeddedQRDBService) Healthy(ctx context.Context) bool {
-	return s.Client.Healthy(ctx)
-}
-
-// Close is a deliberate no-op; see the type doc comment.
-func (s *embeddedQRDBService) Close() error { return nil }
-
-// Compile-time interface check.
-var _ acmeqrdb.Service = (*embeddedQRDBService)(nil)
 
 // ErrAdminQRDBClientRequired is returned by finalizeAdminModule when the
 // embedded qrdb node has not published its SDK client
@@ -165,12 +127,11 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 			Sentinel: ErrAdminQRDBClientRequired,
 		}
 	}
-	qrdbSvc := &embeddedQRDBService{Client: qrdbClient}
 
 	adminSvc, err := admin.NewTenantAwareAdminService(
 		acme.CA(),
 		acme.StorageFactory(),
-		qrdbSvc,
+		qrdbClient,
 		logger,
 		version,
 	)
@@ -179,23 +140,8 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 	}
 	adminSvc.SetTenantService(srv.TenantService())
 
-	// The barrier routes operate the system barrier through the XKMSService,
-	// never through a barrier handle of their own: the service's
-	// requirePlatformScope is what refuses a tenant-scoped caller, which the
-	// routes' seal:* / barrier:* grants cannot (go-xkms#1244).
-	xkmsSvc := srv.XKMSService()
-	if xkmsSvc == nil {
-		return &acmeInitError{
-			Stage:    "resolve xkms service for admin barrier routes",
-			Sentinel: ErrAdminXKMSServiceRequired,
-		}
-	}
-	barrierSvc := admin.NewBarrierService(xkmsSvc, logger)
-	adminSvc.SetBarrierService(barrierSvc)
-
 	handlers := admin.NewHandlers(adminSvc, logger)
 	tenantHandlers := admin.NewTenantHandlers(adminSvc, logger)
-	barrierHandlers := admin.NewBarrierHandlers(barrierSvc, logger)
 
 	// The client certificate is resolved to its qrdb user through the same
 	// SPKI-thumbprint store the crypto plane's mTLS authenticator uses, so the
@@ -211,7 +157,6 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 	router := mux.NewRouter()
 	handlers.RegisterRoutes(router, authHandler, gate)
 	tenantHandlers.RegisterRoutes(router, authHandler, gate)
-	barrierHandlers.RegisterRoutes(router, authHandler, gate)
 
 	var h http.Handler = router
 	adminRouterState.Store(&h)

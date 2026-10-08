@@ -53,6 +53,7 @@ func passwordTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer, string) {
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
+	cmd.SetContext(t.Context())
 	return cmd, &buf, store
 }
 

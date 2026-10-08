@@ -110,17 +110,19 @@ func newTenantBindingFixture(t *testing.T) *tenantBindingFixture {
 		require.NoError(t, err)
 	}
 
-	// Seed each tenant's built-in roles, as tenant provisioning does.
+	// Seed each tenant's built-in roles, as tenant provisioning does. qrdb
+	// reconciles a tenant's roles only from within that tenant.
 	client := srv.QRDBClient()
 	for _, id := range []string{bindingTenantA, bindingTenantB} {
-		_, err := client.Roles().ReconcileBuiltInRoles(ctx, &qrdbtransport.ReconcileRolesRequest{TenantID: id})
+		tenantCtx := qrdbsdk.ContextWithTenant(ctx, id)
+		_, err := client.Roles().ReconcileBuiltInRoles(tenantCtx, &qrdbtransport.ReconcileRolesRequest{TenantID: id})
 		require.NoError(t, err)
 	}
 	f := &tenantBindingFixture{srv: srv, client: client, router: *published}
 
 	adminA := tenantRole(t, client, bindingTenantA, qrdbsdk.RoleNameAdmin)
 	soA := tenantRole(t, client, bindingTenantA, qrdbsdk.RoleNameSO)
-	userA, err := client.Users().CreateUser(ctx, &qrdbtransport.CreateUserRequest{
+	userA, err := client.Users().CreateUser(qrdbsdk.ContextWithTenant(ctx, bindingTenantA), &qrdbtransport.CreateUserRequest{
 		Username:             "admin-a-1225",
 		TenantID:             bindingTenantA,
 		RoleIDs:              []string{adminA.ID, soA.ID},
@@ -130,14 +132,15 @@ func newTenantBindingFixture(t *testing.T) *tenantBindingFixture {
 	f.callerA = adminCaller{cert: bindClientCert(t, client, userA), tenantID: bindingTenantA}
 	f.platform = adminCaller{cert: bindClientCert(t, client, firstBootAdmin(t, client))}
 
-	f.userB, err = client.Users().CreateUser(ctx, &qrdbtransport.CreateUserRequest{
+	ctxB := qrdbsdk.ContextWithTenant(ctx, bindingTenantB)
+	f.userB, err = client.Users().CreateUser(ctxB, &qrdbtransport.CreateUserRequest{
 		Username:             "victim-b-1225",
 		Name:                 "Victim B",
 		TenantID:             bindingTenantB,
 		WithoutEmailLoginKey: true,
 	})
 	require.NoError(t, err)
-	f.roleB, err = client.Roles().CreateRole(ctx, &qrdbtransport.CreateRoleRequest{
+	f.roleB, err = client.Roles().CreateRole(ctxB, &qrdbtransport.CreateRoleRequest{
 		Name:        "victim-role-1225",
 		TenantID:    bindingTenantB,
 		Permissions: []string{"kv:get"},
@@ -149,7 +152,7 @@ func newTenantBindingFixture(t *testing.T) *tenantBindingFixture {
 // tenantRole resolves a built-in role of tenantID.
 func tenantRole(t *testing.T, client *qrdbsdk.Client, tenantID, name string) *qrdbtransport.Role {
 	t.Helper()
-	r, err := client.Roles().GetRoleByName(context.Background(),
+	r, err := client.Roles().GetRoleByName(qrdbsdk.ContextWithTenant(context.Background(), tenantID),
 		&qrdbtransport.GetRoleByNameRequest{TenantID: tenantID, Name: name})
 	require.NoError(t, err, "tenant %s must be seeded with the %q role", tenantID, name)
 	return r
@@ -255,18 +258,19 @@ func TestAdminPlane_TenantCallerCannotReachAnotherTenant(t *testing.T) {
 	// Tenant B is untouched.
 	_, err := f.srv.TenantService().GetTenant(ctx, bindingTenantB)
 	require.NoError(t, err, "tenant-b must survive a tenant-a caller")
-	gotUser, err := f.client.Users().GetUser(ctx, f.userB.ID)
+	ctxB := qrdbsdk.ContextWithTenant(ctx, bindingTenantB)
+	gotUser, err := f.client.Users().GetUser(ctxB, f.userB.ID)
 	require.NoError(t, err, "tenant-b's user must survive a tenant-a caller")
 	assert.Equal(t, "Victim B", gotUser.Name)
-	gotRole, err := f.client.Roles().GetRole(ctx, f.roleB.ID)
+	gotRole, err := f.client.Roles().GetRole(ctxB, f.roleB.ID)
 	require.NoError(t, err, "tenant-b's role must survive a tenant-a caller")
 	assert.Equal(t, []string{"kv:get"}, gotRole.Permissions)
-	roles, err := f.client.Roles().ListRoles(ctx, &qrdbtransport.ListRolesRequest{TenantID: bindingTenantB})
+	roles, err := f.client.Roles().ListRoles(ctxB, &qrdbtransport.ListRolesRequest{TenantID: bindingTenantB})
 	require.NoError(t, err)
 	for _, r := range roles.Roles {
 		assert.NotEqual(t, "planted", r.Name, "a tenant-a caller planted a role in tenant-b")
 	}
-	users, err := f.client.Users().ListUsers(ctx, &qrdbtransport.ListUsersRequest{TenantID: bindingTenantB})
+	users, err := f.client.Users().ListUsers(ctxB, &qrdbtransport.ListUsersRequest{TenantID: bindingTenantB})
 	require.NoError(t, err)
 	for _, u := range users.Users {
 		assert.NotEqual(t, "planted", u.Username, "a tenant-a caller planted a user in tenant-b")
@@ -345,7 +349,7 @@ func TestAdminPlane_PlatformAdminReachesEveryTenant(t *testing.T) {
 	rec = f.do(t, f.platform, http.MethodPut, "/api/v1/tenants/"+bindingTenantB+"/users/"+userBID,
 		map[string]any{"name": "Renamed B"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	gotUser, err := f.client.Users().GetUser(ctx, f.userB.ID)
+	gotUser, err := f.client.Users().GetUser(qrdbsdk.ContextWithTenant(ctx, bindingTenantB), f.userB.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed B", gotUser.Name)
 

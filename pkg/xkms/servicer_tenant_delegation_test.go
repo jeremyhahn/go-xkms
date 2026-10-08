@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
 // fakeTenantServicer is a partial ServiceTenantServicer. Embedding the
@@ -40,15 +39,6 @@ type fakeTenantServicer struct {
 	listReturn []qrdbsdk.ServiceTenantInfo
 
 	deletedID string
-
-	initID                    string
-	initPassphrase            []byte
-	initThreshold, initShares int
-	initStrategy              qrdbsdk.StrategyID
-	initErr                   error
-
-	unsealKey   []byte
-	unsealShare string
 
 	checkedTenantID     string
 	checkedMode         qrdbsdk.StrategyID
@@ -83,36 +73,6 @@ func (f *fakeTenantServicer) ListTenants(_ context.Context) ([]qrdbsdk.ServiceTe
 func (f *fakeTenantServicer) DeleteTenant(_ context.Context, id string) error {
 	f.deletedID = id
 	return nil
-}
-
-func (f *fakeTenantServicer) TenantBarrierInitWithStrategy(_ context.Context, id string, passphrase []byte, threshold, shares int, strategy qrdbsdk.StrategyID) (*qrdbsdk.ServiceTenantBarrierInitResult, error) {
-	f.initID, f.initPassphrase, f.initThreshold, f.initShares, f.initStrategy = id, passphrase, threshold, shares, strategy
-	if f.initErr != nil {
-		return nil, f.initErr
-	}
-	return &qrdbsdk.ServiceTenantBarrierInitResult{TenantID: id, Strategy: string(strategy)}, nil
-}
-
-func (f *fakeTenantServicer) TenantBarrierUnseal(_ context.Context, _ string, key []byte) error {
-	f.unsealKey = key
-	return nil
-}
-
-func (f *fakeTenantServicer) TenantBarrierUnsealShare(_ context.Context, _, share string) (*qrdbsdk.ServiceTenantBarrierUnsealProgress, error) {
-	f.unsealShare = share
-	return &qrdbsdk.ServiceTenantBarrierUnsealProgress{Complete: true}, nil
-}
-
-func (f *fakeTenantServicer) TenantBarrierStatus(_ context.Context, tenantID string) (*qrdbsdk.ServiceTenantBarrierStatus, error) {
-	return &qrdbsdk.ServiceTenantBarrierStatus{
-		TenantID:        tenantID,
-		Sealed:          true,
-		Initialized:     true,
-		Strategy:        "tpm2",
-		HardwareBacked:  true,
-		ShamirThreshold: 2,
-		ShamirTotal:     3,
-	}, nil
 }
 
 func (f *fakeTenantServicer) UpdateEntitlements(_ context.Context, tenantID string, ents *qrdbsdk.Entitlements) (*qrdbsdk.ServiceTenantInfo, error) {
@@ -191,50 +151,6 @@ func TestDeleteTenant_Delegates(t *testing.T) {
 	assert.Equal(t, "acme", fake.deletedID)
 }
 
-func TestTenantBarrierInit_DelegatesWithStrategy(t *testing.T) {
-	fake := &fakeTenantServicer{}
-	svc := &XKMSService{}
-	svc.SetTenantService(fake)
-
-	err := svc.TenantBarrierInit(context.Background(), &transport.TenantBarrierInitRequest{
-		TenantID:   "acme",
-		Passphrase: []byte("s3cret"),
-		Threshold:  2,
-		Shares:     3,
-		Strategy:   "tpm2",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "acme", fake.initID)
-	assert.Equal(t, []byte("s3cret"), fake.initPassphrase)
-	assert.Equal(t, 2, fake.initThreshold)
-	assert.Equal(t, 3, fake.initShares)
-	assert.Equal(t, qrdbsdk.StrategyID("tpm2"), fake.initStrategy)
-}
-
-func TestTenantBarrierInit_AlreadyInitializedIsNoOp(t *testing.T) {
-	fake := &fakeTenantServicer{initErr: seal.ErrAlreadyInitialized}
-	svc := &XKMSService{}
-	svc.SetTenantService(fake)
-
-	err := svc.TenantBarrierInit(context.Background(), &transport.TenantBarrierInitRequest{TenantID: "acme"})
-	assert.NoError(t, err, "ErrAlreadyInitialized must be treated as success (idempotent)")
-}
-
-func TestTenantBarrierStatus_DelegatesAndMaps(t *testing.T) {
-	svc := &XKMSService{}
-	svc.SetTenantService(&fakeTenantServicer{})
-
-	resp, err := svc.TenantBarrierStatus(context.Background(), "acme")
-	require.NoError(t, err)
-	assert.Equal(t, "acme", resp.TenantID)
-	assert.True(t, resp.Sealed)
-	assert.True(t, resp.Initialized)
-	assert.Equal(t, "tpm2", resp.Strategy)
-	assert.True(t, resp.HardwareBacked)
-	assert.Equal(t, 2, resp.ShamirThreshold)
-	assert.Equal(t, 3, resp.ShamirTotal)
-}
-
 func TestUpdateTenantEntitlements_Delegates(t *testing.T) {
 	svc := &XKMSService{}
 	svc.SetTenantService(&fakeTenantServicer{})
@@ -270,29 +186,4 @@ func TestUpdateTenantEntitlements_RequiresTenantService(t *testing.T) {
 	svc := &XKMSService{}
 	_, err := svc.UpdateTenantEntitlements(context.Background(), &transport.UpdateTenantEntitlementsRequest{TenantID: "acme"})
 	assert.ErrorIs(t, err, ErrTenantServiceNotConfigured)
-}
-
-func TestTenantBarrierUnseal_DelegatesKeyAndShare(t *testing.T) {
-	fake := &fakeTenantServicer{}
-	svc := &XKMSService{}
-	svc.SetTenantService(fake)
-
-	// Passphrase-derived key path.
-	require.NoError(t, svc.TenantBarrierUnseal(context.Background(), &transport.TenantBarrierUnsealRequest{
-		TenantID: "acme",
-		Key:      []byte("unseal-key"),
-	}))
-	assert.Equal(t, []byte("unseal-key"), fake.unsealKey)
-	assert.Empty(t, fake.unsealShare)
-
-	// Shamir share path takes precedence.
-	fake2 := &fakeTenantServicer{}
-	svc2 := &XKMSService{}
-	svc2.SetTenantService(fake2)
-	require.NoError(t, svc2.TenantBarrierUnseal(context.Background(), &transport.TenantBarrierUnsealRequest{
-		TenantID: "acme",
-		Share:    []byte("share-1"),
-	}))
-	assert.Equal(t, "share-1", fake2.unsealShare)
-	assert.Nil(t, fake2.unsealKey)
 }

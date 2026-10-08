@@ -2096,6 +2096,18 @@ func (m *MockCertificateDAO) Save(ctx context.Context, cert *entities.ACMECertif
 // (go-xkms#744 follow-up) tries SaveIfAbsent before ever calling Save, so a
 // mock that only overrode Save would let a real SaveIfAbsent succeed and
 // mask the injected failure.
+func (m *MockCertificateDAO) GetByNaturalKey(_ context.Context, _ string) (*entities.ACMECertificate, error) {
+	panic("not implemented")
+}
+
+func (m *MockCertificateDAO) CompareAndSwap(_ context.Context, _, _ *entities.ACMECertificate) (bool, error) {
+	panic("not implemented")
+}
+
+func (m *MockCertificateDAO) DeleteIfMatch(_ context.Context, _ *entities.ACMECertificate) (bool, error) {
+	panic("not implemented")
+}
+
 func (m *MockCertificateDAO) SaveIfAbsent(ctx context.Context, cert *entities.ACMECertificate) (bool, error) {
 	if m.failSave {
 		return false, caerrors.StorageFailureError("mock certificate save failure")

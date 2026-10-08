@@ -286,7 +286,7 @@ func resolveVaultCredentialSource(cmd *cobra.Command, cfg *Config, printer *Prin
 		if err := fr.Err(); err != nil {
 			return nil, nil, err
 		}
-		pin, err := resolveVaultPasskeyPIN(cmd)
+		pin, err := resolveVaultPasskeyPIN(cmd.Context(), cmd)
 		if err != nil {
 			return nil, nil, err
 		}

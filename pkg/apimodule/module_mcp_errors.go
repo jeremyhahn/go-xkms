@@ -14,7 +14,7 @@
 package apimodule
 
 import (
-	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
@@ -23,7 +23,7 @@ import (
 )
 
 // keyOpCodeToWire maps pkg/api/mcp's JSON-RPC error codes (the numbering
-// *KeyOpError carries) onto go-qrdb's MCP wire.Code, the classification go-
+// *KeyOpError carries) onto go-qrdb's MCP qrdbsdk.MCPCode, the classification go-
 // qrdb's own MCP server puts in a failed tool result's StructuredContent (see
 // go-qrdb pkg/api/mcp/wire and pkg/api/mcp/status.go's classifyToolError).
 // This is the same contract, adopted rather than re-invented: go-qrdb's own
@@ -39,9 +39,9 @@ import (
 // than each minting a separate not-found code (go-xkms#814). Duplicate and
 // Mismatch remain SSH-specific: mapSSHError is still their only producer,
 // so a duplicate and a host-key mismatch reach the wire on their own
-// distinct wire.Code instead of sharing ErrCodeInvalidParams the way the
+// distinct qrdbsdk.MCPCode instead of sharing ErrCodeInvalidParams the way the
 // xkms.* method family's coarser eight-code vocabulary still does for
-// everything but NotFound (go-xkms#792). wire.CodeFailedPrecondition is the
+// everything but NotFound (go-xkms#792). qrdbsdk.MCPCodeFailedPrecondition is the
 // closest go-qrdb code for Mismatch: it renders codes.FailedPrecondition,
 // and sdk/go/client/ssh/grpc_status.go's GRPCCodeForError already uses that
 // same gRPC code for the identical condition, so MCP and gRPC agree.
@@ -49,31 +49,31 @@ import (
 // A map rather than a switch, so an xkms code added without a row here is a
 // missing entry a reviewer can see instead of a default branch that
 // silently downgrades it to CodeInternal.
-var keyOpCodeToWire = map[int]wire.Code{
-	xkmsmcp.ErrCodeParseError:         wire.CodeInvalidArgument,
-	xkmsmcp.ErrCodeInvalidRequest:     wire.CodeInvalidArgument,
-	xkmsmcp.ErrCodeMethodNotFound:     wire.CodeUnimplemented,
-	xkmsmcp.ErrCodeInvalidParams:      wire.CodeInvalidArgument,
-	xkmsmcp.ErrCodeInternalError:      wire.CodeInternal,
-	xkmsmcp.ErrCodeUnauthorized:       wire.CodeUnauthenticated,
-	xkmsmcp.ErrCodeForbidden:          wire.CodePermissionDenied,
-	xkmsmcp.ErrCodeServiceUnavailable: wire.CodeUnavailable,
-	sdkssh.JSONRPCCodeNotFound:        wire.CodeNotFound,
-	sdkssh.JSONRPCCodeDuplicate:       wire.CodeAlreadyExists,
-	sdkssh.JSONRPCCodeMismatch:        wire.CodeFailedPrecondition,
+var keyOpCodeToWire = map[int]qrdbsdk.MCPCode{
+	xkmsmcp.ErrCodeParseError:         qrdbsdk.MCPCodeInvalidArgument,
+	xkmsmcp.ErrCodeInvalidRequest:     qrdbsdk.MCPCodeInvalidArgument,
+	xkmsmcp.ErrCodeMethodNotFound:     qrdbsdk.MCPCodeUnimplemented,
+	xkmsmcp.ErrCodeInvalidParams:      qrdbsdk.MCPCodeInvalidArgument,
+	xkmsmcp.ErrCodeInternalError:      qrdbsdk.MCPCodeInternal,
+	xkmsmcp.ErrCodeUnauthorized:       qrdbsdk.MCPCodeUnauthenticated,
+	xkmsmcp.ErrCodeForbidden:          qrdbsdk.MCPCodePermissionDenied,
+	xkmsmcp.ErrCodeServiceUnavailable: qrdbsdk.MCPCodeUnavailable,
+	sdkssh.JSONRPCCodeNotFound:        qrdbsdk.MCPCodeNotFound,
+	sdkssh.JSONRPCCodeDuplicate:       qrdbsdk.MCPCodeAlreadyExists,
+	sdkssh.JSONRPCCodeMismatch:        qrdbsdk.MCPCodeFailedPrecondition,
 }
 
-// wireCodeForKeyOp renders a *KeyOpError's local code as go-qrdb's wire.Code.
+// wireCodeForKeyOp renders a *KeyOpError's local code as go-qrdb's qrdbsdk.MCPCode.
 // A code this table does not declare (there is none today; the floor exists
 // so a future xkms code added to pkg/api/mcp without a row here still
 // answers a classified fault rather than panicking or silently losing its
-// code) falls back to wire.CodeInternal, the same defensive floor go-qrdb's
+// code) falls back to qrdbsdk.MCPCodeInternal, the same defensive floor go-qrdb's
 // own classifyToolError uses for a gRPC code its table does not cover.
-func wireCodeForKeyOp(code int) wire.Code {
+func wireCodeForKeyOp(code int) qrdbsdk.MCPCode {
 	if c, ok := keyOpCodeToWire[code]; ok {
 		return c
 	}
-	return wire.CodeInternal
+	return qrdbsdk.MCPCodeInternal
 }
 
 // codedToolResult renders a failed tool call as an MCP tool result carrying
@@ -82,8 +82,8 @@ func wireCodeForKeyOp(code int) wire.Code {
 // in pkg/api/mcp/status.go): the text content is the client-facing message
 // (xkmsmcp.ClientError's, which withholds an internal error's detail), and
 // the structured content is the classified envelope.
-func codedToolResult(tool string, code wire.Code, message string) *mcpgo.CallToolResult {
+func codedToolResult(tool string, code qrdbsdk.MCPCode, message string) *mcpgo.CallToolResult {
 	res := mcpgo.NewToolResultError(message)
-	res.StructuredContent = wire.NewErrorEnvelope(tool, code, message)
+	res.StructuredContent = qrdbsdk.NewMCPErrorEnvelope(tool, code, message)
 	return res
 }

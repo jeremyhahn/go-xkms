@@ -36,6 +36,12 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
+// unprivilegedRole names a role that is not a canonical go-qrdb role and so
+// holds no permission. Every canonical role carries admin:status since
+// go-qrdb v0.40, so the status routes need a non-canonical caller to prove the
+// gate still refuses one without the grant.
+const unprivilegedRole = "unprivileged"
+
 // errTestDenied is the deny sentinel the test RBAC client returns, standing in
 // for qrdb's PermissionDeniedError.
 var errTestDenied = errors.New("test: permission denied")
@@ -216,8 +222,8 @@ var grpcAuthzCases = []grpcAuthzCase{
 	{adminv1.AdminService_GetAccount_FullMethodName, auth.ResourceACMEAccounts, auth.ActionRead, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
 	{adminv1.AdminService_DisableAccount_FullMethodName, auth.ResourceACMEAccounts, auth.ActionDisable, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
 
-	{adminv1.AdminService_GetStatus_FullMethodName, auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
-	{adminv1.AdminService_GetStats_FullMethodName, auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
+	{adminv1.AdminService_GetStatus_FullMethodName, auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, unprivilegedRole},
+	{adminv1.AdminService_GetStats_FullMethodName, auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, unprivilegedRole},
 }
 
 // TestUnaryAuthorizationInterceptor_RequestsExactPermission verifies each method

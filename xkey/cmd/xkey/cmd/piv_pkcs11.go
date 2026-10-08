@@ -16,6 +16,7 @@
 package cmd
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 
@@ -36,7 +37,7 @@ func pivPINSecret(s string) *secure.Secret {
 	if s == "" {
 		return nil
 	}
-	secret, err := secure.NewSecret([]byte(s))
+	secret, err := secure.NewSecret(context.Background(), []byte(s))
 	if err != nil {
 		slog.Default().Error("piv: failed to seal PKCS#11 PIN into protected memory", "error", err)
 		return nil

@@ -36,11 +36,12 @@ func cloudSealKeyAttrs(store xkms.StoreType) *xkms.KeyAttributes {
 	}
 }
 
-// TestBarrierService_CloudKMSStrategy_UnavailableWithoutFunc proves every
-// cloud KMS strategy ID is unavailable until SetCloudKMSStrategyFunc is
-// called, matching how TPM2 requires SetTPMSealerFunc.
-func TestBarrierService_CloudKMSStrategy_UnavailableWithoutFunc(t *testing.T) {
-	for _, id := range []xkms.StrategyID{xkms.StrategyAWSKMS, xkms.StrategyGCPKMS, xkms.StrategyAzureKV, xkms.StrategyVault} {
+// TestBarrierService_ExternalStrategy_UnavailableWithoutFunc proves the
+// pkcs11 and every cloud KMS strategy ID are unavailable until
+// SetExternalStrategyFunc is called, matching how TPM2 requires
+// SetTPMSealerFunc.
+func TestBarrierService_ExternalStrategy_UnavailableWithoutFunc(t *testing.T) {
+	for _, id := range []xkms.StrategyID{xkms.StrategyPKCS11, xkms.StrategyAWSKMS, xkms.StrategyGCPKMS, xkms.StrategyAzureKV, xkms.StrategyVault} {
 		t.Run(string(id), func(t *testing.T) {
 			svc := newTestBarrierService(t)
 			err := svc.Initialize("", string(id))
@@ -52,7 +53,7 @@ func TestBarrierService_CloudKMSStrategy_UnavailableWithoutFunc(t *testing.T) {
 }
 
 // TestBarrierService_CloudKMSStrategy_InitUnsealRoundTrip proves that once a
-// cloud KMS strategy is injected via SetCloudKMSStrategyFunc, Initialize and
+// cloud KMS strategy is injected via SetExternalStrategyFunc, Initialize and
 // a fresh Unseal both succeed and the barrier reports the injected strategy
 // as hardware-backed -- the same round trip a real AWS/GCP/Azure/Vault
 // backend goes through, using xkms.NewCloudKMSStrategy (the same
@@ -68,7 +69,7 @@ func TestBarrierService_CloudKMSStrategy_InitUnsealRoundTrip(t *testing.T) {
 	}
 
 	svc := NewBarrierService(dataDir, testLogger())
-	svc.SetCloudKMSStrategyFunc(func(_ string) (xkms.SealingStrategy, error) {
+	svc.SetExternalStrategyFunc(func(_ string) (xkms.SealingStrategy, error) {
 		return newStrategy(), nil
 	})
 
@@ -86,10 +87,33 @@ func TestBarrierService_CloudKMSStrategy_InitUnsealRoundTrip(t *testing.T) {
 	// unseal against the same persisted root key once the cloud KMS
 	// strategy function is wired again.
 	svc2 := NewBarrierService(dataDir, testLogger())
-	svc2.SetCloudKMSStrategyFunc(func(_ string) (xkms.SealingStrategy, error) {
+	svc2.SetExternalStrategyFunc(func(_ string) (xkms.SealingStrategy, error) {
 		return newStrategy(), nil
 	})
 	require.NoError(t, svc2.Unseal("", string(xkms.StrategyAWSKMS)))
+	require.True(t, svc2.IsUnsealed())
+}
+
+// TestBarrierService_PKCS11Strategy_InitUnsealRoundTrip proves an injected
+// pkcs11 strategy initializes the barrier and unseals it again in a fresh
+// service, as headless `extension serve` does with the token PIN it
+// released from the pre-barrier secret store.
+func TestBarrierService_PKCS11Strategy_InitUnsealRoundTrip(t *testing.T) {
+	dataDir := t.TempDir()
+	sealer := &mockSealer{canSeal: true}
+	newStrategy := func(_ string) (xkms.SealingStrategy, error) {
+		return xkms.NewPKCS11Strategy(sealer, cloudSealKeyAttrs(xkms.StorePKCS11), nil), nil
+	}
+
+	svc := NewBarrierService(dataDir, testLogger())
+	svc.SetExternalStrategyFunc(newStrategy)
+	require.NoError(t, svc.Initialize("", string(xkms.StrategyPKCS11)))
+	assert.Equal(t, xkms.StrategyPKCS11, svc.Status().Strategy)
+	require.NoError(t, svc.Seal())
+
+	svc2 := NewBarrierService(dataDir, testLogger())
+	svc2.SetExternalStrategyFunc(newStrategy)
+	require.NoError(t, svc2.Unseal("", string(xkms.StrategyPKCS11)))
 	require.True(t, svc2.IsUnsealed())
 }
 
@@ -100,7 +124,7 @@ func TestBarrierService_CloudKMSStrategy_InitUnsealRoundTrip(t *testing.T) {
 func TestBarrierService_CloudKMSStrategy_FuncErrorPropagates(t *testing.T) {
 	svc := newTestBarrierService(t)
 	buildErr := &ErrBarrierStrategyUnavailable{Strategy: string(xkms.StrategyVault)}
-	svc.SetCloudKMSStrategyFunc(func(_ string) (xkms.SealingStrategy, error) {
+	svc.SetExternalStrategyFunc(func(_ string) (xkms.SealingStrategy, error) {
 		return nil, buildErr
 	})
 

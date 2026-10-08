@@ -49,18 +49,6 @@ func newPlatformScopeGRPC(t *testing.T) *Service {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	b, err := seal.NewBarrier(logger, storage.NewMemory(), seal.BarrierConfig{
-		RootKeyPath:     "core/seal",
-		PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-	}, seal.NewSoftwareStrategy())
-	require.NoError(t, err)
-	creds := seal.MustCredentials([]byte("passphrase"))
-	defer creds.Secret.Destroy()
-	require.NoError(t, b.Initialize(ctx, creds))
-	if b.IsSealed() {
-		require.NoError(t, b.Unseal(ctx, creds))
-	}
-
 	hashCfg := qrdbsdk.DefaultHashConfig()
 	hashCfg.Time, hashCfg.Memory, hashCfg.Threads = 1, 8*1024, 1
 	pins, err := qrdbsdk.NewSoftwareBackend(nil, hashCfg)
@@ -75,7 +63,6 @@ func newPlatformScopeGRPC(t *testing.T) *Service {
 	policies, _ := tpmpolicytest.NewOffline(t)
 
 	svc := &xkms.XKMSService{}
-	svc.SetBarrier(b)
 	svc.SetPINManager(pins)
 	svc.SetPlatformStore(store)
 	svc.SetTPMPolicyService(policies)
@@ -106,46 +93,6 @@ var platformScopeRPCs = map[string]platformScopeRPC{
 	},
 	"SealStoreStatus": func(ctx context.Context, s *Service) error {
 		return rpcErr(s.SealStoreStatus(ctx, &pb.SealStoreStatusRequest{}))
-	},
-
-	"BarrierInitialize": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierInitialize(ctx, &pb.BarrierInitializeRequest{Secret: "passphrase"}))
-	},
-	"BarrierUnseal": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierUnseal(ctx, &pb.BarrierUnsealRequest{Secret: "passphrase"}))
-	},
-	"BarrierSeal": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierSeal(ctx, &emptypb.Empty{}))
-	},
-	"BarrierStatus": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierStatus(ctx, &emptypb.Empty{}))
-	},
-	"BarrierInitializeShamir": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{Secret: "passphrase"}))
-	},
-	"BarrierUnsealShare": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierUnsealShare(ctx, &pb.BarrierUnsealShareRequest{Share: "s"}))
-	},
-	"BarrierUnsealShares": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierUnsealShares(ctx, &pb.BarrierUnsealSharesRequest{Shares: []string{"a", "b"}}))
-	},
-	"BarrierRekey": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierRekey(ctx, &pb.BarrierRekeyRequest{Threshold: 2, Total: 3}))
-	},
-	"BarrierGenerateRecoveryKeys": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierGenerateRecoveryKeys(ctx, &pb.BarrierGenerateRecoveryKeysRequest{Threshold: 2, Total: 3}))
-	},
-	"BarrierRecoverWithKeys": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierRecoverWithKeys(ctx, &pb.BarrierRecoverWithKeysRequest{Keys: []string{"a", "b"}}))
-	},
-	"BarrierDeleteRecoveryKeys": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierDeleteRecoveryKeys(ctx, &emptypb.Empty{}))
-	},
-	"BarrierHasRecoveryKeys": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierHasRecoveryKeys(ctx, &emptypb.Empty{}))
-	},
-	"BarrierGenerateRootToken": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.BarrierGenerateRootToken(ctx, &pb.BarrierGenerateRootTokenRequest{Shares: []string{"a", "b"}}))
 	},
 
 	"SetSOPIN": func(ctx context.Context, s *Service) error {

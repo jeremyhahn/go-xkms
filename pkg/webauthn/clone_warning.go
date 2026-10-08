@@ -43,7 +43,7 @@ const cloneWarningAuditResource = "webauthn_credential"
 // login that raised it.
 //
 // A nil audit logger records nothing beyond the log line. Otherwise the audit
-// write-failure policy applies: the returned *audit.ErrAuditWriteFailed must
+// write-failure policy applies: the returned *qrdbsdk.AuditGateError must
 // fail the login rather than let it complete unaudited.
 func (s *Service) reportCloneWarning(ctx context.Context, user User, stored *Credential, presentedCount uint32) error {
 	credentialID := base64.RawURLEncoding.EncodeToString(stored.ID)
@@ -74,5 +74,5 @@ func (s *Service) reportCloneWarning(ctx context.Context, user User, stored *Cre
 			"rp_id":                s.config.RPID,
 		},
 	}
-	return audit.HandleWriteFailure(s.logger, CloneWarningAuditAction, s.auditLogger.Log(ctx, event))
+	return audit.Emit(ctx, s.auditLogger, event)
 }

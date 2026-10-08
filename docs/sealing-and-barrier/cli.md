@@ -1,135 +1,11 @@
 # Sealing and Barrier — CLI
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-02
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-08
 
-Binary: `xkmsctl`. Groups: `barrier` (`cmd/xkmsctl/barrier*.go`), `policy`
-(`cmd/xkmsctl/policy.go`), and the top-level `seal` / `unseal` / `can-seal`
-data verbs. Global flags: [`../key-management/cli.md`](../key-management/cli.md).
+Binary: `xkmsctl`. The top-level `seal` / `unseal` / `can-seal` data verbs. Global flags: [`../key-management/cli.md`](../key-management/cli.md).
 
-## `xkmsctl barrier status`
-
-No flags. The first command to run when anything is failing — most "broken
-server" symptoms are a sealed barrier.
-
-```
-xkmsctl barrier status -o json
-```
-
-## `xkmsctl barrier init`
-
-| Flag | Type | Default | Purpose |
-|---|---|---|---|
-| `--barrier-strategy` | string | `passphrase` | `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault`, `passphrase`, `shamir`, `none` |
-| `--passphrase` | string | `""` | for a passphrase strategy |
-| `--so-pin` | string | `""` | security-officer PIN |
-| `--user-pin` | string | `""` | user PIN |
-
-```
-xkmsctl barrier init --barrier-strategy tpm2 --user-pin -
-xkmsctl barrier init --barrier-strategy passphrase --passphrase -
-```
-
-**This choice is the deployment's security posture, and it is not revisited
-automatically.** The library has no preference order and never falls back: a
-barrier initialized `passphrase` stays `passphrase` even on a machine with a
-TPM. `none` disables barrier encryption entirely.
-
-## `xkmsctl barrier init-shamir`
-
-| Flag | Type | Default | Purpose |
-|---|---|---|---|
-| `--threshold` | int | `0` | M — shares needed to unseal |
-| `--total` | int | `0` | N — shares produced |
-| `--passphrase` | string | `""` | optional |
-| `--so-pin` / `--user-pin` | string | `""` | hardware credentials |
-
-```
-xkmsctl barrier init-shamir --threshold 3 --total 5
-```
-
-The shares are printed once. There is no way to recover a share that was not
-recorded.
-
-## `xkmsctl barrier unseal` / `unseal-shares`
-
-| Verb | Flag | Type | Purpose |
-|---|---|---|---|
-| `barrier unseal` | `--passphrase` | string | passphrase-strategy unseal |
-| `barrier unseal-shares` | `--share` | string slice | repeatable: `--share a --share b …` |
-| | `--shares-file` | string | read shares from a file |
-
-```
-xkmsctl barrier unseal --passphrase -
-xkmsctl barrier unseal-shares --share "$S1" --share "$S2" --share "$S3"
-xkmsctl barrier unseal-shares --shares-file ./shares.txt
-```
-
-For a `tpm2` or cloud strategy, unsealing needs no secret from you — the
-hardware or the provider releases the key, assuming the machine is still in the
-state it was sealed against.
-
-## `xkmsctl barrier seal`
-
-| Flag | Type | Default | Purpose |
-|---|---|---|---|
-| `--so-pin` | string | `""` | authorizing PIN |
-| `--assume-yes`, `-y` | bool | `false` | skip confirmation |
-
-Closes the barrier. Everything that needs a key stops working until it is
-unsealed again — that is the point, and why it confirms.
-
-## `xkmsctl barrier rekey`
-
-| Flag | Type | Default | Purpose |
-|---|---|---|---|
-| `--so-pin` | string | `""` | authorizing PIN |
-| `--threshold` | int | `0` | new Shamir M |
-| `--total` | int | `0` | new Shamir N |
-
-Generates a new root key and re-seals. Old shares and recovery keys stop
-working.
-
-## `xkmsctl barrier recovery`
-
-| Verb | Flags | Purpose |
-|---|---|---|
-| `recovery generate` | `--threshold`, `--total`, `--so-pin` | Produce recovery keys |
-| `recovery recover` | `--share` (repeatable) | Unseal using recovery keys |
-| `recovery delete-keys` | — | Destroy the recovery keys |
-| `recovery root-token` | `--share` (repeatable) | Generate a root token |
-
-```
-xkmsctl barrier recovery generate --threshold 2 --total 3 --so-pin -
-xkmsctl barrier recovery recover --share "$R1" --share "$R2"
-xkmsctl barrier recovery delete-keys
-```
-
-**Recovery keys are a second door into the barrier.** Generating them and then
-storing them next to the server is equivalent to not having a barrier at all.
-`delete-keys` exists so the door can be closed again.
-
-## `xkmsctl barrier enable-encryption`
-
-Migrates a barrier from `none` to a keyed strategy — or between keyed
-strategies.
-
-| Flag | Type | Default | Purpose |
-|---|---|---|---|
-| `--tenant-id` | string | `""` | which barrier; empty = the system barrier |
-| `--strategy` | string | — | **required** — keyed target, e.g. `passphrase`, `shamir` |
-| `--mechanism` | string | `swap` | `swap` (default) or `in-place` |
-| `--availability` | string | `quiesced` | `quiesced` (default) or `online` |
-| `--passphrase` | string | `""` | for a passphrase target |
-| `--threshold` / `--total` | int | `0` | for a Shamir target |
-
-```
-xkmsctl barrier enable-encryption --strategy passphrase --passphrase - \
-    --mechanism swap --availability quiesced
-```
-
-`--availability online` keeps writes flowing during migration; `quiesced` is the
-default and the safer one. `--mechanism in-place` rewrites without a staging
-copy — faster, less room for recovery if it is interrupted.
+`xkmsctl barrier` was removed: the barrier is go-qrdb's, and xkms does not
+re-expose its verbs. Only the data-level sealing verbs below remain.
 
 ## Data-level sealing
 
@@ -174,6 +50,41 @@ reports bad data without that prefix.
 `--key-id` names one of the calling tenant's keys; without it the tenant's
 own default sealing key is used. A tenant account is refused on `tpm2`
 (see [`api.md`](api.md) §"Data-level sealing is tenant-scoped").
+
+## Node seal secrets: `xkmsd seal-pkcs11-pin`, `xkmsd seal-vault-token`
+
+Binary: `xkmsd`. Two node seals need a secret before the node's barrier, or
+anything behind it, is open: `pkcs11` logs in to its token with the user PIN,
+and `vault` authenticates to Transit with a token. Each verb seals its secret
+into the pre-barrier store, so that `xkmsd run` with the matching
+`barrier.strategy` unseals the node with no operator present. Run it once,
+and again whenever the secret or the platform PCRs change.
+
+| Verb | Secret | Store key | Released by |
+|---|---|---|---|
+| `seal-pkcs11-pin` | PKCS#11 token user PIN | `platform/pkcs11-pin` | `barrier.strategy: pkcs11` |
+| `seal-vault-token` | Vault token | `platform/vault-token` | `barrier.strategy: vault` |
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--config string` | none (required) | The configuration `xkmsd run` loads; the TPM (`backends.tpm2`) and the store directory (`<datastore.path>/preseal`) come from it |
+
+The secret is read from standard input, with its trailing newline removed.
+There is no flag form. The TPM must have the Platform SRK enrolled.
+
+```
+xkmsd seal-pkcs11-pin --config /etc/xkmsd/xkmsd.yaml < /run/secrets/token-pin
+xkmsd seal-vault-token --config /etc/xkmsd/xkmsd.yaml < /run/secrets/vault-token
+```
+
+Errors: `ErrSealSecretConfigRequired` (no `--config`), `ErrSealSecretEmpty`,
+`ErrSealSecretReadFailed`, or a wrapped `*embeddednode.NodeSealError` naming
+the store or TPM step that failed. A later boot that cannot release the
+secret fails closed with `*preseal.RefusedError` (the platform PCRs changed)
+or `*preseal.NotFoundError` (the secret was never sealed).
+
+The cloud KMS node seals (`awskms`, `gcpkms`, `azurekv`) have no verb: they
+authenticate with the provider's ambient credentials.
 
 ## TPM policies
 

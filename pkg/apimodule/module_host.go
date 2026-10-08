@@ -21,9 +21,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -94,10 +93,18 @@ func (m *Module) restServer() (*rest.Server, error) {
 		PIVLogin:      m.pivLogin,
 		PasswordStore: stores.PasswordStore,
 		SSHClient:     stores.SSH,
-		ServeBarrier:  m.barrierRoutes,
 	}
 	if m.resolveQRDBClient != nil {
 		hc.QRDBClient = m.resolveQRDBClient()
+	}
+	if hc.QRDBClient != nil {
+		// WebAuthn credentials persist through the host datastore's DAO
+		// factory; without one the WebAuthn routes stay unmounted.
+		ds, err := datastore.New(hc.QRDBClient, config.DatastoreConfig{})
+		if err != nil {
+			return nil, &HostBuildError{Err: err}
+		}
+		hc.DAOFactory = ds.DAOFactory()
 	}
 	if m.webauthnConfig != nil {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
@@ -118,10 +125,6 @@ func (m *Module) restServer() (*rest.Server, error) {
 // inputs (no WithRESTServer). A module bound to a host-supplied REST server
 // (xkmsd) serves what that host composed and never composes stores itself.
 func (m *Module) selfBuilds() bool { return m.resolveREST == nil }
-
-// servesBarrierRoutes reports whether RegisterHTTP mounts the barrier route
-// families (rest.IsBarrierRoute).
-func (m *Module) servesBarrierRoutes() bool { return !m.selfBuilds() || m.barrierRoutes }
 
 // hostStores composes the module's store-backed features from the host's
 // inputs through pkg/compose -- the construction path xkmsd uses -- and
@@ -149,13 +152,19 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 		CA:                  m.caConfig,
 		TPMBackend:          compose.TPM2Backend(x),
 		VTPM:                m.vtpm,
-		ServeBarrier:        m.barrierRoutes,
 		PasskeyRelyingParty: m.passwordVaultRelyingParty(),
 		Logger:              slog.Default().With("module", ModuleName),
 	}
 	if m.resolveQRDBClient != nil {
 		if client := m.resolveQRDBClient(); client != nil {
-			deps.Storage = hostStorage(client)
+			// Without storage compose leaves every store-backed feature
+			// off and records why.
+			open, daos, err := hostStorage(client, compose.Databases(deps))
+			if err != nil {
+				deps.Logger.Warn("module host storage unavailable", "error", err)
+			}
+			deps.Storage = open
+			deps.DAOs = daos
 			// The host node's lease primitive serializes OIDC credential
 			// refreshes and elects their scheduler across the host's
 			// cluster. A client whose transport carries no coordination
@@ -163,17 +172,10 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 			if coord, err := client.Coordination(); err == nil {
 				deps.Leases = coord
 			}
-			if m.barrierRoutes {
-				deps.Custodians = client.CustodianGroups()
-				deps.Shares = client.Shares()
-			}
-			deps.Backup = client.Backup()
 		}
 	}
 	if m.resolveBarrierRegistry != nil {
-		if inner := m.resolveBarrierRegistry(); inner != nil {
-			deps.BarrierRegistry = seal.WrapBarrierRegistry(inner, inner.SystemBarrier())
-		}
+		deps.BarrierRegistry = m.resolveBarrierRegistry()
 	}
 
 	// Build fails only for a nil Service, which the callers have already
@@ -193,12 +195,25 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 // server (WithRESTServer).
 func (m *Module) HostStores() *compose.Stores { return m.stores.Load() }
 
-// hostStorage opens each feature's store as a prefixed view of the host's
-// qrdb KV under HostStoragePrefix. The views share one backend and their
-// Close does not close the host's client.
-func hostStorage(client *qrdbsdk.Client) compose.StorageFactory {
-	shared := qrdbstorage.NewBackend(client.KV())
-	return func(name string) (storage.Backend, error) {
-		return storage.NewPrefixBackend(shared, HostStoragePrefix+name+"/")
+// hostStorage opens each feature's store as a prefixed view under
+// HostStoragePrefix over the DAO factory of a datastore on the host's
+// client, and returns that factory serving each of databases. The views
+// share one backend and their Close does not close the host's client. A
+// database the host's client cannot open leaves the views and returns no
+// factory, so only the features persisting DAO entities go off.
+func hostStorage(client *qrdbsdk.Client, databases []string) (compose.StorageFactory, *qrdbsdk.DAOFactory, error) {
+	ds, err := datastore.New(client, config.DatastoreConfig{})
+	if err != nil {
+		return nil, nil, err
 	}
+	open, err := compose.FactoryStorage(ds.DAOFactory(), HostStoragePrefix)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, name := range databases {
+		if _, err := ds.DatabaseKVStore(context.Background(), name); err != nil {
+			return open, nil, err
+		}
+	}
+	return open, ds.DAOFactory(), nil
 }

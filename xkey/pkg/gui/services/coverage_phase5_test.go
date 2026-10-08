@@ -247,7 +247,7 @@ func TestP5B_OIDCService_Login_BrowserOpenError(t *testing.T) {
 
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	// Browser open returns an error.
@@ -505,7 +505,7 @@ func TestP5B_OIDCService_RefreshLoop_SuccessfulRefreshUpdatesStatus(t *testing.T
 
 	svc := NewOIDCService(nil)
 	svc.SetContext(context.Background())
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	// Store initial token with refresh token.
@@ -568,7 +568,7 @@ func TestP5B_OIDCService_RefreshLoop_SuccessfulRefreshUpdatesStatus(t *testing.T
 // status is nil on ticker fire, a new status is created.
 func TestP5B_OIDCService_RefreshLoop_NilStatusOnTick(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{

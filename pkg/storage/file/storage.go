@@ -12,22 +12,19 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package file provides a file-based implementation of the storage.Backend
-// interface. Key/value I/O is delegated to the canonical go-qrdb file engine
-// (one flat file per key at <root>/<key>); this package layers three
-// xkms-specific behaviors the raw engine does not provide: storage-key
-// validation that blocks path traversal, prefix-based file permissions so
-// private key material stays owner-only (0600) while public certificates are
-// world-readable (0644), and an advisory cross-process lock (lock.go) around
-// every write so guarded writes (PutIfAbsent, CompareAndSwap,
-// CompareAndDelete) stay atomic when several processes share one store
-// directory -- the file-token case the PKCS#11 module's PIN attempt counter
-// depends on (#1144, #1157).
+// interface. Key/value I/O is delegated to the canonical go-qrdb file engine,
+// which stores each key as an owner-only (0600) opaque record in hashed shard
+// directories under the root. This package layers two xkms-specific behaviors
+// the raw engine does not provide: storage-key validation that blocks path
+// traversal, and an advisory cross-process lock (lock.go) around every write
+// so guarded writes (PutIfAbsent, CompareAndSwap, CompareAndDelete) stay
+// atomic when several processes share one store directory -- the file-token
+// case the PKCS#11 module's PIN attempt counter depends on (#1144, #1157).
 package file
 
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,27 +34,20 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
-const (
-	// Default directory permissions (owner rwx only)
-	defaultDirPerms = 0700
-
-	// File permissions based on key prefix
-	keysFilePerms  = 0600 // keys/* = owner rw only
-	certsFilePerms = 0644 // certs/* = owner rw, others r
-	defaultPerms   = 0600 // default = owner rw only
-)
+// defaultDirPerms is the root directory's mode (owner rwx only).
+const defaultDirPerms = 0700
 
 // FileStorage is a file-based implementation of storage.Backend. It wraps the
 // go-qrdb file engine for I/O and is safe for concurrent use: within one
 // process the wrapped engine serializes access, and every write this type
-// performs additionally holds an advisory lock on the store directory (see
-// lock.go) that excludes the same operations running against the same
-// directory from another process (#1157) -- which is what makes a guarded
-// write here safe for several processes sharing one file-backed token.
+// performs, and opening the engine, additionally holds an advisory lock on
+// the store directory (see lock.go) that excludes the same operations running
+// against the same directory from another process (#1157) -- which is what
+// makes a guarded write here safe for several processes sharing one
+// file-backed token.
 type FileStorage struct {
-	backend  storage.Backend // engine adapter over the go-qrdb file engine
-	rootDir  string          // absolute root, used to apply per-file permissions
-	lockPath string          // cross-process advisory lock file under rootDir
+	backend storage.Backend // engine adapter over the go-qrdb file engine
+	rootDir string          // store root; also the cross-process lock target
 }
 
 // Compile-time assertion that FileStorage satisfies storage.Backend.
@@ -86,15 +76,23 @@ func New(rootDir string) (storage.Backend, error) {
 		return nil, &errs.Wrapped{Msg: "file storage: failed to create root directory", Err: err}
 	}
 
-	backend, err := storage.OpenEngine(storage.EngineConfig{Kind: storage.EngineFile, Path: absRootDir})
+	// The engine is opened under the same cross-process lock every write
+	// takes: go-qrdb's file engine initialises a fresh directory and sweeps
+	// its own temp files when it opens, so an open racing another process's
+	// open or write could delete that process's in-flight temp file.
+	var backend storage.Backend
+	err := withCrossProcessLock(context.Background(), absRootDir, func() error {
+		var openErr error
+		backend, openErr = storage.OpenEngine(storage.EngineConfig{Kind: storage.EngineFile, Path: absRootDir})
+		return openErr
+	})
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "file storage: failed to open file engine", Err: err}
 	}
 
 	return &FileStorage{
-		backend:  backend,
-		rootDir:  absRootDir,
-		lockPath: filepath.Join(absRootDir, lockFileName),
+		backend: backend,
+		rootDir: absRootDir,
 	}, nil
 }
 
@@ -108,25 +106,12 @@ func (f *FileStorage) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 // Put stores the value for the given key, overwriting any existing value.
-// File permissions are determined by the key prefix:
-//   - keys/* = 0600 (owner rw only)
-//   - certs/* = 0644 (owner rw, others r)
-//   - default = 0600 (owner rw only)
 func (f *FileStorage) Put(ctx context.Context, key string, value []byte) error {
 	if err := validateStorageKey(key); err != nil {
 		return &errs.Wrapped{Msg: fmt.Sprintf("file storage: invalid key %q", key), Err: err}
 	}
-	return withCrossProcessLock(ctx, f.lockPath, func() error {
-		if err := f.backend.Put(ctx, key, value); err != nil {
-			return err
-		}
-		// The engine writes 0600; widen only the prefixes that require it.
-		if perm := filePermissionsForKey(key); perm != defaultPerms {
-			if err := os.Chmod(f.keyPath(key), perm); err != nil {
-				return &errs.Wrapped{Msg: fmt.Sprintf("file storage: failed to set permissions for key %q", key), Err: err}
-			}
-		}
-		return nil
+	return withCrossProcessLock(ctx, f.rootDir, func() error {
+		return f.backend.Put(ctx, key, value)
 	})
 }
 
@@ -136,7 +121,7 @@ func (f *FileStorage) Delete(ctx context.Context, key string) error {
 	if err := validateStorageKey(key); err != nil {
 		return &errs.Wrapped{Msg: fmt.Sprintf("file storage: invalid key %q", key), Err: err}
 	}
-	return withCrossProcessLock(ctx, f.lockPath, func() error {
+	return withCrossProcessLock(ctx, f.rootDir, func() error {
 		return f.backend.Delete(ctx, key)
 	})
 }
@@ -196,15 +181,4 @@ func validateStorageKey(key string) error {
 	}
 
 	return nil
-}
-
-// filePermissionsForKey determines the file permissions based on the key prefix.
-func filePermissionsForKey(key string) fs.FileMode {
-	if strings.HasPrefix(key, "keys/") {
-		return keysFilePerms
-	}
-	if strings.HasPrefix(key, "certs/") {
-		return certsFilePerms
-	}
-	return defaultPerms
 }

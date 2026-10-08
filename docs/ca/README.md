@@ -69,35 +69,29 @@ The CA uses three storage abstractions from the go-xkms and go-objstore ecosyste
 +---------------------------------------------------------------+
 ```
 
-### QRDB Object Storage
+### QRDB Entity Storage
 
-The CA can use QRDB as a backend for blob storage via the objstore package (`pkg/acme/storage/objstore`). This adapter implements the go-objstore `Storage` interface, providing:
-
-- **Attestation storage**: TPM quotes, endorsement credentials, device manifests
-- **Signature storage**: Detached signatures, signing metadata
-- **Certificate bundles**: CA chains, cross-signed certificates
-- **Revocation data**: CRL snapshots, OCSP response caches
+ACME entities (accounts, orders, authorizations, challenges, certificates,
+nonces, EAB keys) persist through `pkg/acme/storage/objstore`, whose factory
+builds its DAOs from the go-qrdb DAO factory of the server's datastore
+(`pkg/datastore`). ACME state therefore lives in the same configured engine
+as the rest of xkmsd; there is no separate ACME database client.
 
 ```go
 import (
-    "github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
     "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+    "github.com/jeremyhahn/go-xkms/pkg/datastore"
 )
 
-// Create QRDB-backed object store
-kvClient := qrdbService.KV()
-blobStore := objstore.NewAdapter(kvClient)
+ds, err := datastore.Open(ctx, cfg, logger)
+if err != nil {
+    log.Fatal(err)
+}
+defer ds.Close()
 
-// Use with CA
-authority, err := ca.New(config, certStore, blobStore)
+// ACME DAOs over the datastore's go-qrdb DAO factory
+storageFactory, err := objstore.NewFactory(ds.DAOFactory())
 ```
-
-The adapter stores blobs with entity type prefixes (`blob/`, `blob_meta/`) and supports:
-- Full CRUD operations with context support
-- Metadata management (ETag, size, timestamps)
-- Prefix-based listing with pagination
-- Lifecycle policy management
-- Archive operations
 
 ## Storage and Service Integration
 
@@ -106,7 +100,6 @@ The adapter stores blobs with entity type prefixes (`blob/`, `blob_meta/`) and s
 | Component | Backend | Description |
 |-----------|---------|-------------|
 | **KV Storage** | QRDB | ACME entities, certificates, configuration |
-| **Object Store Adapter** | QRDB | Blob storage for attestations and signatures |
 | **Key Management** | go-xkms | TPM2, PKCS#11, PKCS#8 key storage |
 | **IAM/RBAC** | QRDB | Policy-based access control |
 | **Auth** | QRDB Auth | JWT token validation and sessions |
@@ -232,32 +225,6 @@ cert, err := authority.SignCSR(csrPEM, &ca.CertificateRequest{
 
 // Get CA bundle for client trust
 bundle, err := authority.CABundle(types.StoreTypeSoftware, x509.ECDSA)
-```
-
-### With QRDB Backend
-
-```go
-import (
-    "github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
-    "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
-    "github.com/jeremyhahn/go-xkms/pkg/ca"
-)
-
-// Initialize QRDB
-dbConfig := &qrdb.Config{
-    Mode:    qrdb.ModeStandalone,
-    DataDir: "/var/lib/xkms/data",
-}
-db, err := qrdb.New(dbConfig)
-if err != nil {
-    log.Fatal(err)
-}
-
-// Create QRDB-backed object store for attestations
-blobStore := objstore.NewAdapter(db.KV())
-
-// Create CA with QRDB storage
-authority, err := ca.New(config, certStore, blobStore)
 ```
 
 ## TPM Device Enrollment
@@ -416,7 +383,7 @@ The CA follows a layered architecture with clear separation of concerns:
 ## Related Documentation
 
 - [ACME Server Documentation](../acme/README.md)
-- [QRDB Documentation](../acme/qrdb/README.md)
+- [Datastore](../datastore/architecture.md)
 - [Multi-Tenancy](../acme/multi-tenancy.md)
 - [go-xkms Documentation](https://github.com/jeremyhahn/go-xkms)
 - [go-objstore Documentation](https://github.com/jeremyhahn/go-objstore)

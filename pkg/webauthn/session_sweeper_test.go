@@ -147,11 +147,12 @@ func TestSweepSessions_StoreWithoutCleanupReturns(t *testing.T) {
 func TestService_SweepSessions(t *testing.T) {
 	clock := newTestClock()
 	store := NewMemorySessionStoreWithTTL(time.Minute, WithClock(clock.Now))
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          &Config{RPID: "kms.example.com", RPDisplayName: "xkms", RPOrigins: []string{"https://kms.example.com"}},
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    store,
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 
@@ -176,11 +177,12 @@ func TestService_SweepSessions(t *testing.T) {
 // surfaces the store's refusal as a *SessionLimitError a transport can map.
 func TestService_BeginLoginRefusedWhenSessionStoreFull(t *testing.T) {
 	store := NewMemorySessionStore(WithMaxSessions(1))
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          &Config{RPID: "kms.example.com", RPDisplayName: "xkms", RPOrigins: []string{"https://kms.example.com"}},
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    store,
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 

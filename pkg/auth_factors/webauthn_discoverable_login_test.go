@@ -27,6 +27,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -62,11 +63,11 @@ func newEC2Credential(t *testing.T) virtualwebauthn.Credential {
 // qrdb-side factor record that names it.
 type factorFixture struct {
 	v          *WebAuthnFactorVerifier
-	users      *xkmswebauthn.MemoryUserStore
 	rp         virtualwebauthn.RelyingParty
 	credential virtualwebauthn.Credential
 	user       xkmswebauthn.User
 	factor     *qrdbsdk.AuthFactor
+	stores     *webauthntest.Stores
 }
 
 // newFactorFixture enrols email's passkey directly against the RP service,
@@ -84,12 +85,12 @@ func newFactorFixture(t *testing.T, email string) *factorFixture {
 		ResidentKeyRequirement:  "preferred",
 		AllowPublicRegistration: &allowPublicRegistration,
 	}
-	users := xkmswebauthn.NewMemoryUserStore()
+	stores := webauthntest.NewStores(t)
 	svc, err := xkmswebauthn.NewService(xkmswebauthn.ServiceParams{
 		Config:          cfg,
-		UserStore:       users,
+		UserStore:       stores.Users,
 		SessionStore:    xkmswebauthn.NewMemorySessionStore(),
-		CredentialStore: xkmswebauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	if err != nil {
 		t.Fatalf("webauthn service: %v", err)
@@ -101,9 +102,9 @@ func newFactorFixture(t *testing.T, email string) *factorFixture {
 
 	f := &factorFixture{
 		v:          v,
-		users:      users,
 		rp:         virtualwebauthn.RelyingParty{Name: cfg.RPDisplayName, ID: cfg.RPID, Origin: cfg.RPOrigins[0]},
 		credential: newEC2Credential(t),
+		stores:     stores,
 	}
 
 	regOptions, regSessionID, err := svc.BeginRegistration(ctx, email, "Passkey User")
@@ -157,15 +158,10 @@ func newFactorFixture(t *testing.T, email string) *factorFixture {
 }
 
 // setStanding rewrites the enrolled account's lifecycle and auth-method
-// policy in the memory store.
+// policy on its qrdb record.
 func (f *factorFixture) setStanding(t *testing.T, state qrdbsdk.Lifecycle, methods []string) {
 	t.Helper()
-	du, ok := f.user.(*xkmswebauthn.DefaultUser)
-	if !ok {
-		t.Fatalf("memory store user is %T, want *DefaultUser", f.user)
-	}
-	du.SetLifecycle(state)
-	du.SetAuthMethods(methods)
+	f.stores.SetStanding(t, f.user.Email(), state, methods)
 }
 
 // discoverableLogin drives BeginChallenge with an empty hint (the

@@ -34,14 +34,11 @@ func storeReaders(ctx context.Context, svc *xkms.XKMSService) map[string]func() 
 			_, err := svc.SealStoreList(ctx)
 			return err
 		},
-		"barrier": func() error { _, err := svc.BarrierStatus(ctx); return err },
-		"pin":     func() error { _, err := svc.GetLockoutStatus(ctx); return err },
+		"pin": func() error { _, err := svc.GetLockoutStatus(ctx); return err },
 		"passwords": func() error {
 			_, err := svc.PasswordStoreStatus(ctx)
 			return err
 		},
-		"custody":     func() error { _, err := svc.ListCustodianGroups(ctx); return err },
-		"shares":      func() error { _, err := svc.ListShares(ctx); return err },
 		"credentials": func() error { _, err := svc.ListCredentials(ctx); return err },
 		"oidc credentials": func() error {
 			_, err := svc.OIDCCredentialList(ctx, &transport.OIDCCredentialListRequest{})

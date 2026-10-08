@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 )
 
 func TestSubsystem_ZeroValueHoldsNothing(t *testing.T) {

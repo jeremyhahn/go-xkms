@@ -64,9 +64,9 @@ func newTestCertificate(t *testing.T, cn string) *x509.Certificate {
 // configuration does, for PKCS11StorageConfig.PIN/SOPIN.
 func newTestPIN(t *testing.T, pin string) *secure.Secret {
 	t.Helper()
-	sec, err := secure.NewSecret([]byte(pin))
+	sec, err := secure.NewSecret(t.Context(), []byte(pin))
 	if err != nil {
-		t.Fatalf("secure.NewSecret() error = %v", err)
+		t.Fatalf("secure.NewSecret(t.Context(), ) error = %v", err)
 	}
 	return sec
 }

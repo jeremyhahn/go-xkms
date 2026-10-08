@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -33,7 +34,7 @@ import (
 // Ruling 2 on go-xkms#35 settles custody: the key is persisted, and the
 // barrier is the at-rest protection when one is configured. The barrier is
 // already in hand before Server.Start ever runs (adopted from the qrdb node
-// at construction, pkg/server/qrdb_node.go, or built by initializeBarrier),
+// at construction, pkg/server/qrdb_node.go -- the only barrier there is),
 // so loadBootstrapKeys — called from the post-unseal startNoiseBootstrap
 // goroutine — always sees a live, unsealed s.barrier when one is configured.
 // Ruling 1 (no network service before unseal) therefore already holds for
@@ -160,8 +161,8 @@ func (s *Server) loadOrSealP256StaticKey() (*bootstrap.P256StaticKey, error) {
 // sealed under this key yet" -- as opposed to a real failure (sealed barrier,
 // corrupt ciphertext, storage error). The barrier's Get returns whichever
 // sentinel its underlying storage backend uses for a missing key: xkms's own
-// backends (and so a hand-rolled seal.NewBarrier, e.g. initializeBarrier)
-// report storage.ErrNotFound, while a barrier adopted from the embedded qrdb
+// backends (and so a seal.NewBarrier test fixture over them) report
+// storage.ErrNotFound, while a barrier adopted from the embedded qrdb
 // node -- the SAME *seal.Barrier type, over go-qrdb's own Pebble backend --
 // reports seal.ErrSecretNotFound (see pkg/seal/barrier_adapter.go's
 // tenantMetadataStore for the same discrepancy on the tenant-lookup path).
@@ -355,9 +356,5 @@ func writeHexKeyFileAtomic(path string, hexKey []byte) error {
 		return err
 	}
 
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, hexKey, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	return fsutil.WriteFileAtomic(path, hexKey, 0600)
 }

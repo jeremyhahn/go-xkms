@@ -14,7 +14,9 @@
 package xkms
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -25,7 +27,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/hostdeps"
 	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -38,8 +41,13 @@ import (
 // ServiceModuleFeatureDisabledErrors.
 func TestServiceModule_HostCompositionThroughSDK(t *testing.T) {
 	svc := hostdeps.NewService(t)
-	client, _, err := testutil.NewQRDBFakeClient()
+	// The host's own node: a real in-memory standalone qrdb node, which
+	// serves the database the CA keeps its certificates in.
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()}}
+	ds, err := datastore.Open(context.Background(), cfg, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, ds.Close()) })
+	client := ds.Client()
 
 	module, err := NewServiceModule(func() *pkgxkms.XKMSService { return svc },
 		WithServiceModuleQRDBClient(func() *qrdbsdk.Client { return client }),
@@ -85,8 +93,8 @@ func TestServiceModule_HostCompositionThroughSDK(t *testing.T) {
 		ServiceModuleFeatureTenantPasswords,
 		ServiceModuleFeaturePlatformStore,
 		ServiceModuleFeatureTPMPolicies,
-		// The test host's fake qrdb transport carries no coordination
-		// (leases), which OIDC credentials need.
+		// The test host supplies no barrier registry, which OIDC
+		// credentials need.
 		ServiceModuleFeatureOIDCCredentials,
 	}, off)
 }

@@ -17,12 +17,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/jeremyhahn/go-xkms/sdk/go/vaulttoken"
 	"math"
 	"os"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
+	"github.com/jeremyhahn/go-xkms/sdk/go/vaulttoken"
 
 	"github.com/jeremyhahn/go-enclave"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -603,7 +605,7 @@ func (s *StaticPasswordService) BackupPasswords(filePath string, encrypt bool, a
 
 	// Write plaintext backup.
 	if !encrypt {
-		return os.WriteFile(filePath, jsonBytes, 0600)
+		return fsutil.WriteFileAtomic(filePath, jsonBytes, 0600)
 	}
 
 	secret := []byte(password)
@@ -613,7 +615,7 @@ func (s *StaticPasswordService) BackupPasswords(filePath string, encrypt bool, a
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, encrypted, 0600)
+	return fsutil.WriteFileAtomic(filePath, encrypted, 0600)
 }
 
 // SaveBackupFileAs opens the native save-file dialog and returns the path
@@ -929,7 +931,7 @@ func (s *StaticPasswordService) PreviewImport(params ImportParams) (*ImportPrevi
 	importer := s.newImporter()
 	opts := s.paramsToImportOptions(params)
 
-	entries, err := importer.Preview(opts)
+	entries, err := importer.Preview(s.getContext(), opts)
 	if err != nil {
 		return nil, err
 	}
@@ -967,7 +969,7 @@ func (s *StaticPasswordService) ImportPasswords(params ImportParams) (*ImportRes
 	importer := s.newImporter()
 	opts := s.paramsToImportOptions(params)
 
-	result, err := importer.Import(opts)
+	result, err := importer.Import(s.getContext(), opts)
 	if err != nil {
 		return nil, err
 	}

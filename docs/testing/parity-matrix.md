@@ -64,13 +64,10 @@ Status legend:
 | List backends | `AdminService.ListBackends` | `xkey admin backends list` | `xkmsctl backends list` | `GET /v1/admin/backends` | none |
 | Backend status | `AdminService.BackendStatus` | `xkey admin backends status` | `xkmsctl backends status` | `GET /v1/admin/backends/{id}/status` | none |
 
-## Custodian / Share / Tenant (multi-custodian)
+## Tenant
 
 | Operation | GUI (service.method) | xkey CLI | xkmsctl | Backend endpoint | Live test |
 |---|---|---|---|---|---|
-| Create custodian group | `CustodianService.CreateGroup` | `xkey share group create` | `xkmsctl custodian create` | `POST /v1/custodian/groups` | none |
-| Issue share | `ShareService.Issue` | `xkey share issue` | n/a | `POST /v1/shares/issue` | none |
-| Claim share | `ShareService.Claim` | `xkey share claim` | n/a | `POST /v1/shares/claim` | none |
 | Create tenant | `TenantService.Create` | n/a | `xkmsctl tenant create` | `POST /v1/tenants` | none |
 
 ## OIDC
@@ -105,7 +102,7 @@ has no value because there's no backend to talk to.
 | Keys | 5 | 0 |
 | Certificates (server) | 3 | 0 |
 | Admin / Backends | 2 | 0 |
-| Custodian / Share / Tenant | 4 | 0 |
+| Tenant | 1 | 0 |
 | OIDC | 3 | 0 |
 | **Total** | **34** | **3** |
 

@@ -1,5 +1,5 @@
-// Copyright (c) 2025 Jeremy Hahn
-// Copyright (c) 2025 Automate The Things, LLC
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
 //
 // This file is part of go-xkms.
 //
@@ -20,13 +20,22 @@ import (
 	"sync"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
+// listPageSize is the page size the store lists its certificates with.
+const listPageSize = 500
+
 // compositeCertStore implements the CertStore interface by composing
-// a CertificateStorageAdapter with certificate validation and CRL management.
+// certificate and chain DAOs in DatabaseName with certificate validation and
+// CRL management. Every entity's ID derives from its natural key, the
+// certificate's CertificateKey.
 type compositeCertStore struct {
-	storage       CertificateStorageAdapter
+	certs         qrdbsdk.GenericDAO[*certificateEntity]
+	chains        qrdbsdk.GenericDAO[*chainEntity]
 	verifyOptions *x509.VerifyOptions
 	allowRevoked  bool
 	crlCache      map[string]*x509.RevocationList // issuer -> CRL
@@ -34,20 +43,26 @@ type compositeCertStore struct {
 	closed        bool
 }
 
-// New creates a new CertStore instance with the provided configuration.
+// New creates a new CertStore whose DAOs config.DAOs builds in
+// DatabaseName. The factory must already serve that database; the errors
+// are pkg/dao's.
 //
 // Example usage:
 //
-//	storage := file.NewCertStorage("/var/lib/certs")
 //	certStore, err := certstore.New(&certstore.Config{
-//	    CertStorage: storage,
+//	    DAOs: dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore()),
 //	})
 func New(config *Config) (CertStore, error) {
 	if config == nil {
 		return nil, ErrInvalidConfig
 	}
-	if config.CertStorage == nil {
-		return nil, ErrStorageRequired
+	certs, err := newDAO(config.DAOs, certificateEntityType, func() *certificateEntity { return &certificateEntity{} })
+	if err != nil {
+		return nil, err
+	}
+	chains, err := newDAO(config.DAOs, chainEntityType, func() *chainEntity { return &chainEntity{} })
+	if err != nil {
+		return nil, err
 	}
 
 	verifyOpts := config.VerifyOptions
@@ -58,19 +73,51 @@ func New(config *Config) (CertStore, error) {
 	}
 
 	return &compositeCertStore{
-		storage:       config.CertStorage,
+		certs:         certs,
+		chains:        chains,
 		verifyOptions: verifyOpts,
 		allowRevoked:  config.AllowRevoked,
 		crlCache:      make(map[string]*x509.RevocationList),
-		closed:        false,
 	}, nil
+}
+
+// newDAO builds the DAO of one certificate store entity type, its IDs
+// derived from the entity's natural key with a collision-resistant hash.
+func newDAO[E qrdbsdk.Entity](daos *qrdbsdk.DAOFactory, entityType string, newEntity func() E) (qrdbsdk.GenericDAO[E], error) {
+	return dao.New(daos, DatabaseName, entityType, newEntity,
+		qrdbsdk.WithIDGenerator(qrdbsdk.NewCryptoFieldHashGenerator(naturalKeyField)))
+}
+
+// load returns the entity whose natural key is key, or a *NotFoundError
+// matching notFound when there is none.
+func load[E qrdbsdk.Entity](ctx context.Context, d qrdbsdk.GenericDAO[E], key string, notFound error) (E, error) {
+	entity, err := d.GetByNaturalKey(ctx, key)
+	if qrdbsdk.IsDAONotFound(err) {
+		var zero E
+		return zero, &NotFoundError{Sentinel: notFound, Key: key, Err: err}
+	}
+	if err != nil {
+		var zero E
+		return zero, &StoreError{Op: "get", Key: key, Err: err}
+	}
+	return entity, nil
+}
+
+// parseCertificate decodes the DER of the record stored under key.
+func parseCertificate(key string, der []byte) (*x509.Certificate, error) {
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, &StoreError{Op: "decode", Key: key, Err: err}
+	}
+	return cert, nil
 }
 
 // ========================================================================
 // Basic Certificate Operations
 // ========================================================================
 
-// StoreCertificate stores a certificate identified by its Common Name.
+// StoreCertificate stores a certificate under its CertificateKey, replacing
+// any certificate stored there.
 func (cs *compositeCertStore) StoreCertificate(cert *x509.Certificate) error {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
@@ -79,7 +126,7 @@ func (cs *compositeCertStore) StoreCertificate(cert *x509.Certificate) error {
 		return ErrStorageClosed
 	}
 
-	if cert == nil {
+	if cert == nil || len(cert.Raw) == 0 {
 		return ErrCertInvalid
 	}
 
@@ -113,14 +160,14 @@ func (cs *compositeCertStore) StoreCertificate(cert *x509.Certificate) error {
 		}
 	}
 
-	if err := cs.storage.SaveCert(context.Background(), key, cert); err != nil {
-		return &errs.Wrapped{Msg: "failed to store certificate", Err: err}
+	if err := cs.certs.Save(context.Background(), &certificateEntity{Key: key, DER: cert.Raw}); err != nil {
+		return &StoreError{Op: "put", Key: key, Err: err}
 	}
-
 	return nil
 }
 
-// GetCertificate retrieves a certificate by its Common Name.
+// GetCertificate retrieves a certificate by its CertificateKey, or a
+// *NotFoundError matching ErrCertNotFound.
 func (cs *compositeCertStore) GetCertificate(cn string) (*x509.Certificate, error) {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
@@ -133,15 +180,15 @@ func (cs *compositeCertStore) GetCertificate(cn string) (*x509.Certificate, erro
 		return nil, ErrInvalidCN
 	}
 
-	cert, err := cs.storage.GetCert(context.Background(), cn)
+	entity, err := load(context.Background(), cs.certs, cn, ErrCertNotFound)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get certificate", Err: err}
+		return nil, err
 	}
-
-	return cert, nil
+	return parseCertificate(cn, entity.DER)
 }
 
-// DeleteCertificate removes a certificate by its Common Name.
+// DeleteCertificate removes a certificate by its CertificateKey, or returns
+// a *NotFoundError matching ErrCertNotFound when none is stored there.
 func (cs *compositeCertStore) DeleteCertificate(cn string) error {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
@@ -154,14 +201,19 @@ func (cs *compositeCertStore) DeleteCertificate(cn string) error {
 		return ErrInvalidCN
 	}
 
-	if err := cs.storage.DeleteCert(context.Background(), cn); err != nil {
-		return &errs.Wrapped{Msg: "failed to delete certificate", Err: err}
+	ctx := context.Background()
+	entity, err := load(ctx, cs.certs, cn, ErrCertNotFound)
+	if err != nil {
+		return err
 	}
-
+	if err := cs.certs.Delete(ctx, entity); err != nil {
+		return &StoreError{Op: "delete", Key: cn, Err: err}
+	}
 	return nil
 }
 
-// ListCertificates returns all certificates currently stored.
+// ListCertificates returns all certificates currently stored, in storage
+// order.
 func (cs *compositeCertStore) ListCertificates() ([]*x509.Certificate, error) {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
@@ -170,23 +222,21 @@ func (cs *compositeCertStore) ListCertificates() ([]*x509.Certificate, error) {
 		return nil, ErrStorageClosed
 	}
 
-	ids, err := cs.storage.ListCerts(context.Background())
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to list certificates", Err: err}
-	}
-
 	var certs []*x509.Certificate
-	for _, id := range ids {
-		cert, err := cs.storage.GetCert(context.Background(), id)
-		if err != nil {
-			continue
+	query := qrdbsdk.PageQuery{Page: 1, PageSize: listPageSize}
+	err := cs.certs.ForEachPage(context.Background(), query, func(page qrdbsdk.PageResult[*certificateEntity]) error {
+		for _, entity := range page.Entities {
+			cert, err := parseCertificate(entity.Key, entity.DER)
+			if err != nil {
+				return err
+			}
+			certs = append(certs, cert)
 		}
-		if cert == nil {
-			continue
-		}
-		certs = append(certs, cert)
+		return nil
+	})
+	if err != nil {
+		return nil, &StoreError{Op: "list", Key: certificateEntityType, Err: err}
 	}
-
 	return certs, nil
 }
 
@@ -194,7 +244,8 @@ func (cs *compositeCertStore) ListCertificates() ([]*x509.Certificate, error) {
 // Certificate Chain Operations
 // ========================================================================
 
-// StoreCertificateChain stores a certificate chain.
+// StoreCertificateChain stores a certificate chain under its leaf's
+// CertificateKey, replacing any chain stored there.
 // The chain should be ordered from leaf to root.
 func (cs *compositeCertStore) StoreCertificateChain(chain []*x509.Certificate) error {
 	cs.mu.Lock()
@@ -210,26 +261,27 @@ func (cs *compositeCertStore) StoreCertificateChain(chain []*x509.Certificate) e
 
 	// Use the leaf certificate's key, the same rule StoreCertificate applies
 	// (see CertificateKey), as the chain identifier.
-	cn := CertificateKey(chain[0])
-	if cn == "" {
+	key := CertificateKey(chain[0])
+	if key == "" {
 		return ErrInvalidCN
 	}
 
-	// Validate each certificate in the chain
+	der := make([][]byte, 0, len(chain))
 	for i, cert := range chain {
-		if cert == nil {
-			return &errs.Detail{Err: ErrChainInvalid, Detail: fmt.Sprintf("certificate at index %d is nil", i)}
+		if cert == nil || len(cert.Raw) == 0 {
+			return &errs.Detail{Err: ErrChainInvalid, Detail: fmt.Sprintf("certificate at index %d is nil or not parsed from DER", i)}
 		}
+		der = append(der, cert.Raw)
 	}
 
-	if err := cs.storage.SaveCertChain(context.Background(), cn, chain); err != nil {
-		return &errs.Wrapped{Msg: "failed to store certificate chain", Err: err}
+	if err := cs.chains.Save(context.Background(), &chainEntity{Key: key, DER: der}); err != nil {
+		return &StoreError{Op: "put", Key: key, Err: err}
 	}
-
 	return nil
 }
 
-// GetCertificateChain retrieves a certificate chain by Common Name.
+// GetCertificateChain retrieves a certificate chain by its leaf's
+// CertificateKey, or a *NotFoundError matching ErrChainNotFound.
 func (cs *compositeCertStore) GetCertificateChain(cn string) ([]*x509.Certificate, error) {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
@@ -242,11 +294,18 @@ func (cs *compositeCertStore) GetCertificateChain(cn string) ([]*x509.Certificat
 		return nil, ErrInvalidCN
 	}
 
-	chain, err := cs.storage.GetCertChain(context.Background(), cn)
+	entity, err := load(context.Background(), cs.chains, cn, ErrChainNotFound)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get certificate chain", Err: err}
+		return nil, err
 	}
-
+	chain := make([]*x509.Certificate, 0, len(entity.DER))
+	for _, der := range entity.DER {
+		cert, err := parseCertificate(cn, der)
+		if err != nil {
+			return nil, err
+		}
+		chain = append(chain, cert)
+	}
 	return chain, nil
 }
 
@@ -412,25 +471,14 @@ func (cs *compositeCertStore) isRevokedLocked(cert *x509.Certificate) (bool, err
 // Lifecycle
 // ========================================================================
 
-// Close releases all resources held by the cert store.
+// Close marks the store closed and drops its CRL cache. The DAO factory
+// belongs to the composition root, which closes the datastore behind it.
 func (cs *compositeCertStore) Close() error {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
-	if cs.closed {
-		return nil
-	}
-
 	cs.closed = true
-
-	// Clear CRL cache
 	cs.crlCache = nil
-
-	// Close underlying storage
-	if err := cs.storage.Close(); err != nil {
-		return &errs.Wrapped{Msg: "failed to close storage", Err: err}
-	}
-
 	return nil
 }
 

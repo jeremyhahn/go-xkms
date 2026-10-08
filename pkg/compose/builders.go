@@ -19,7 +19,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
@@ -33,8 +33,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sealedstorage "github.com/jeremyhahn/go-xkms/pkg/storage/sealed"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -48,12 +48,9 @@ const (
 	StoragePasswords      = "passwords"
 	StoragePlatformStore  = "platform-store"
 	StorageSSH            = "ssh"
-	StorageCA             = "ca"
 	StorageCASerials      = "ca-serials"
 	StorageCARevocations  = "ca-revocations"
-	StorageTPMPolicies    = "tpm-policies"
 	StorageTPMKeys        = "tpm-keys"
-	StorageKeyVersions    = "key-versions"
 	defaultCredentialMode = credentialspkg.StrategyManual
 )
 
@@ -87,20 +84,16 @@ func BuildPasswordStore(open StorageFactory) (*staticpw.BackendStore, error) {
 	return staticpw.NewStore(backend), nil
 }
 
-// BuildKeyVersionStore builds the key-version record store over the storage
-// StorageKeyVersions names. It is the one construction path of the store:
-// xkmsd and an embedding host's module both build it here, and the
-// XKMSService it is wired into (SetKeyVersionStore) needs it to rotate keys
-// and to change the state of their versions.
-func BuildKeyVersionStore(open StorageFactory) (*keyversion.Store, error) {
-	if open == nil {
-		return nil, &NilDependencyError{Feature: FeatureKeyVersions, Dependency: "storage factory"}
+// BuildKeyVersionStore builds the key-version record store over the
+// keyversion.DatabaseName database daos serves. It is the one construction
+// path of the store: xkmsd and an embedding host's module both build it
+// here, and the XKMSService it is wired into (SetKeyVersionStore) needs it to
+// rotate keys and to change the state of their versions.
+func BuildKeyVersionStore(daos *qrdbsdk.DAOFactory) (*keyversion.Store, error) {
+	if daos == nil {
+		return nil, &NilDependencyError{Feature: FeatureKeyVersions, Dependency: "DAO factory"}
 	}
-	backend, err := open(StorageKeyVersions)
-	if err != nil {
-		return nil, &FeatureBuildError{Feature: FeatureKeyVersions, Err: err}
-	}
-	store, err := keyversion.NewStore(backend)
+	store, err := keyversion.NewStore(daos)
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureKeyVersions, Err: err}
 	}
@@ -209,8 +202,11 @@ type CAParams struct {
 	// Config is the CA's identity hierarchy. Required.
 	Config *ca.MultiIdentityCAConfig
 
-	// Storage opens the CA's certificate, serial and revocation stores.
-	// Required.
+	// DAOs serves the CA's certificate store database
+	// (certstore.DatabaseName). Required.
+	DAOs *qrdbsdk.DAOFactory
+
+	// Storage opens the CA's serial and revocation stores. Required.
 	Storage StorageFactory
 
 	// BackendForStore resolves the keystore holding each CA key by the
@@ -218,7 +214,7 @@ type CAParams struct {
 	BackendForStore ca.BackendForStoreFunc
 
 	// AuditLogger records CA lifecycle events. Optional.
-	AuditLogger audit.Logger
+	AuditLogger qrdbsdk.NodeAuditLogger
 
 	// AdoptCertStore runs against the CA's certificate store after the CA is
 	// constructed and before it loads, so a caller can stage certificates
@@ -237,6 +233,9 @@ type CAParams struct {
 func BuildCA(ctx context.Context, p CAParams) (ca.TrustedCA, error) {
 	if p.Config == nil {
 		return nil, &NilDependencyError{Feature: FeatureCA, Dependency: "CA configuration"}
+	}
+	if p.DAOs == nil {
+		return nil, &NilDependencyError{Feature: FeatureCA, Dependency: "DAO factory"}
 	}
 	if p.Storage == nil {
 		return nil, &NilDependencyError{Feature: FeatureCA, Dependency: "storage factory"}
@@ -258,11 +257,7 @@ func BuildCA(ctx context.Context, p CAParams) (ca.TrustedCA, error) {
 		return nil, &CAOperationError{Operation: "resolve keystore", Err: err}
 	}
 
-	caStorage, err := p.Storage(StorageCA)
-	if err != nil {
-		return nil, &CAOperationError{Operation: "open certificate storage", Err: err}
-	}
-	certStore, err := certstore.New(&certstore.Config{CertStorage: storage.NewCertAdapter(caStorage)})
+	certStore, err := certstore.New(&certstore.Config{DAOs: p.DAOs})
 	if err != nil {
 		return nil, &CAOperationError{Operation: "create certificate store", Err: err}
 	}
@@ -320,8 +315,12 @@ type TPMPolicyParams struct {
 	// tenant. Required.
 	Backend *tpm2backend.Backend
 
-	// Storage opens the service's registry (StorageTPMPolicies) and the
-	// store of every tenant's TPM object blobs (StorageTPMKeys). Required.
+	// DAOs serves the policy registry's go-qrdb database
+	// (tpmpolicy.DatabaseName). Required.
+	DAOs *qrdbsdk.DAOFactory
+
+	// Storage opens the store of every tenant's TPM object blobs
+	// (StorageTPMKeys). Required.
 	Storage StorageFactory
 
 	// VTPM configures the per-tenant vTPM supervisor. Nil leaves vtpm mode
@@ -343,6 +342,9 @@ func BuildTPMPolicyService(p TPMPolicyParams) (*tpmpolicy.Service, error) {
 	if p.Backend == nil {
 		return nil, &NilDependencyError{Feature: FeatureTPMPolicies, Dependency: "TPM2 backend"}
 	}
+	if p.DAOs == nil {
+		return nil, &NilDependencyError{Feature: FeatureTPMPolicies, Dependency: "DAO factory"}
+	}
 	if p.Storage == nil {
 		return nil, &NilDependencyError{Feature: FeatureTPMPolicies, Dependency: "storage factory"}
 	}
@@ -350,11 +352,7 @@ func BuildTPMPolicyService(p TPMPolicyParams) (*tpmpolicy.Service, error) {
 	if !ok {
 		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: ErrUnsupportedTPM}
 	}
-	registryStore, err := p.Storage(StorageTPMPolicies)
-	if err != nil {
-		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: err}
-	}
-	registry, err := tpmpolicy.NewRegistry(registryStore)
+	registry, err := tpmpolicy.NewRegistry(p.DAOs)
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: err}
 	}
@@ -389,8 +387,13 @@ type OIDCCredentialParams struct {
 	// Required.
 	Leases credential.Leases
 
+	// LeaseContext derives the context the lease calls run on
+	// (credential.WithLeaseContext); over an embedded node it is the node's
+	// ServiceContext. Nil runs them on the caller's context.
+	LeaseContext credential.CallContext
+
 	// Audit receives credential events; nil logs them only.
-	Audit audit.Logger
+	Audit qrdbsdk.NodeAuditLogger
 
 	// SchedulerInterval is how often the leader looks for credentials due
 	// for refresh; zero is credential.DefaultSchedulerInterval.
@@ -412,6 +415,9 @@ func BuildOIDCCredentialService(p OIDCCredentialParams) (*credential.Service, er
 		return nil, &NilDependencyError{Feature: FeatureOIDCCredentials, Dependency: "qrdb coordination"}
 	}
 	opts := []credential.Option{credential.WithLogger(orDefault(p.Logger)), credential.WithLeases(p.Leases)}
+	if p.LeaseContext != nil {
+		opts = append(opts, credential.WithLeaseContext(p.LeaseContext))
+	}
 	if p.Audit != nil {
 		opts = append(opts, credential.WithAudit(p.Audit))
 	}

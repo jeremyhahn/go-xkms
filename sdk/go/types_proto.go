@@ -134,19 +134,6 @@ type ProtoCanSealRequest = xkmspb.CanSealRequest
 type ProtoCanSealResponse = xkmspb.CanSealResponse
 
 // ==========================================================================
-// Barrier
-// ==========================================================================
-
-// ProtoBarrierInitializeRequest is the gRPC barrier initialization request.
-type ProtoBarrierInitializeRequest = xkmspb.BarrierInitializeRequest
-
-// ProtoBarrierUnsealRequest is the gRPC barrier unseal request.
-type ProtoBarrierUnsealRequest = xkmspb.BarrierUnsealRequest
-
-// ProtoBarrierStatusResponse is the gRPC barrier status response.
-type ProtoBarrierStatusResponse = xkmspb.BarrierStatusResponse
-
-// ==========================================================================
 // Backend
 // ==========================================================================
 

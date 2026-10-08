@@ -1,6 +1,6 @@
 # Certificate Authority — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Exported surface — `pkg/ca`
 
@@ -305,10 +305,10 @@ e-mail addresses are valid tenant names and are not SPIFFE path segments.
   unset still stores and loads under the same `KeyTypeCA`-defaulted
   attributes on every call; the two paths must never diverge (go-xkms#793).
   See "CA reload / restart persistence" under Persistence.
-- **Only a genuine `storage.ErrNotFound` behind a certificate lookup becomes
-  `ErrCertificateNotFound`.** A `certStore.GetCertificate` failure for any
-  other reason (a corrupt or unparseable persisted certificate, a backend
-  I/O failure) is returned as a distinct error that does not satisfy
+- **Only the certificate store's DAO reporting the entity not found
+  (`qrdbsdk.IsDAONotFound`) becomes `ErrCertificateNotFound`.** A
+  `certStore.GetCertificate` failure for any other reason (a corrupt or
+  undecodable persisted record, a datastore failure) is returned as a distinct error that does not satisfy
   `errors.Is(_, ErrCertificateNotFound)`, so a caller — in particular
   `pkg/server`'s `initializeCA` — can never mistake damaged existing state
   for an empty store (`wrapCertLookupError`, go-xkms#793).
@@ -530,14 +530,31 @@ REST routes for the CA group are gated by the `hasCA` predicate in
 
 ## Persistence
 
-- Certificates and chains: `pkg/certstore` over go-objstore.
+- Certificates and chains: `pkg/certstore`, as go-qrdb DAO entities in the
+  CA's own database, `certstore.DatabaseName` (`ca`). `certificates` holds
+  one certificate's DER per `certstore.CertificateKey` (the Common Name, or
+  the SPKI SHA-256 thumbprint of a subject-less certificate);
+  `certificate_chains` holds a chain's DER, leaf first, under its leaf's
+  key. Both are looked up by that natural key. `certstore.New` takes the DAO
+  factory in `certstore.Config.DAOs` and refuses a factory that does not
+  serve the database (`*dao.DatabaseUnavailableError`). A miss is a
+  `*certstore.NotFoundError` that matches `ErrCertNotFound` /
+  `ErrChainNotFound` and wraps the DAO's typed not-found error; any other
+  failure is a `*certstore.StoreError` naming the operation.
 - Serial and revocation records: through `go-qrdb/sdk/go`.
 - CA signing keys: the keystore backend, never a file this package writes.
 - Cross-signed material is keyed by issuer CN.
 - Attestation blobs are keyed by AK key attributes and blob type.
 
+The composition root opens the `ca` database and hands its factory to
+`compose.BuildCA` (`CAParams.DAOs`): `xkmsd` through the shared datastore
+(`pkg/server` `initializeCA`), a module host through `compose.Databases`,
+and the `xkmsd init` ceremony's bootstrap CA through an in-memory factory.
+
 Compatibility: certificate encodings are standards-defined and stable. The
-store layout is internal, and a change to it needs a data migration.
+store layout is internal. The move from the file/KV certificate adapter to
+DAO entities carried no migration: certificates stored the old way are not
+read.
 
 ### CRL persistence (#275)
 
@@ -617,7 +634,7 @@ certificate issued from the previous root and every client's pin to it.
 **The contract going forward:** an identity's key attributes must resolve
 identically across `Init` and `Load` (`getCAKeyAttributes`, not
 `ToKeyAttributes`, in both), and only `ErrCertificateNotFound` -- itself
-gated on the underlying cause being `storage.ErrNotFound`, not any
+gated on the underlying cause being the DAO's typed not-found, not any
 `certStore.GetCertificate` failure -- authorizes `initializeCA` to
 (re-)initialize.
 

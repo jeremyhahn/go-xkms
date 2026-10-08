@@ -14,6 +14,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -23,6 +24,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/opaque"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -487,4 +489,7 @@ func TestCompareOpaqueKeyEquality_Ed25519ByteDifference(t *testing.T) {
 	if got != false {
 		t.Errorf("CompareOpaqueKeyEquality() with different Ed25519 key bytes = %v, want false", got)
 	}
+}
+func identityCtx(tenantID string, roles ...string) context.Context {
+	return auth.WithIdentity(context.Background(), &auth.Identity{Subject: "caller", TenantID: tenantID, Roles: roles})
 }

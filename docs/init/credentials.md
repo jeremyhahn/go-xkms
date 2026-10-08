@@ -22,6 +22,8 @@ The SO PIN is **never stored** by go-xkms. It is verified against the actual PKC
 | `vault` | Vault transit encryption | High | HashiCorp Vault-backed |
 | `passphrase` | Password-encrypted file | Medium | Development, testing |
 
+`manual` and `barrier` are go-qrdb's versioned credential service, used as is; the other strategies are xkms's, over the sealed platform store.
+
 ### Default: `manual`
 
 The User PIN is not stored anywhere. An operator must enter it at every server startup. This is the most secure option and the default.

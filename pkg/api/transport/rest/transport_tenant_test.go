@@ -52,7 +52,7 @@ func newTenantTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 	}
 
 	ctx := context.Background()
-	creds := seal.MustCredentials([]byte("test-password"))
+	creds := seal.MustCredentials(t.Context(), []byte("test-password"))
 	defer creds.Secret.Destroy()
 	if err := barrier.Initialize(ctx, creds); err != nil {
 		t.Fatal(err)
@@ -124,9 +124,6 @@ func newTenantTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 		r.Get("/", handlers.ListTenantsHandler)
 		r.Get("/{tenantID}", handlers.GetTenantHandler)
 		r.Delete("/{tenantID}", handlers.DeleteTenantHandler)
-		r.Get("/{tenantID}/barrier/status", handlers.TenantBarrierStatusHandler)
-		r.Post("/{tenantID}/barrier/init", handlers.TenantBarrierInitHandler)
-		r.Post("/{tenantID}/barrier/unseal", handlers.TenantBarrierUnsealHandler)
 		r.Put("/{tenantID}/entitlements", handlers.UpdateTenantEntitlementsHandler)
 		r.Put("/{tenantID}/quotas", handlers.UpdateTenantQuotasHandler)
 	})
@@ -306,19 +303,6 @@ func TestTransport_DeleteTenant_NotFound(t *testing.T) {
 // (TestTenantBarrierInit_DelegatesWithStrategy); this file covers the
 // not-found guard below.
 
-func TestTransport_TenantBarrierInit_NotFound(t *testing.T) {
-	tr, _ := newTenantTestTransport(t)
-
-	err := tr.TenantBarrierInit(context.Background(), &transport.TenantBarrierInitRequest{
-		TenantID:  "nonexistent",
-		Threshold: 2,
-		Shares:    3,
-	})
-	if err == nil {
-		t.Fatal("expected error for nonexistent tenant")
-	}
-}
-
 // TestTransport_TenantBarrierUnseal_AlreadyUnsealed is intentionally absent
 // here for the same reason as TenantBarrierInit's: it depends on a prior
 // successful barrier init, which needs go-qrdb's pooled per-tenant storage.
@@ -326,18 +310,6 @@ func TestTransport_TenantBarrierInit_NotFound(t *testing.T) {
 // TenantServicer in pkg/xkms/servicer_tenant_delegation_test.go
 // (TestTenantBarrierUnseal_DelegatesKeyAndShare); this file covers the
 // not-found guard below.
-
-func TestTransport_TenantBarrierUnseal_NotFound(t *testing.T) {
-	tr, _ := newTenantTestTransport(t)
-
-	err := tr.TenantBarrierUnseal(context.Background(), &transport.TenantBarrierUnsealRequest{
-		TenantID: "nonexistent",
-		Key:      []byte("test-key"),
-	})
-	if err == nil {
-		t.Fatal("expected error for nonexistent tenant")
-	}
-}
 
 // TestCreateTenant_CollectionRootRequiresTrailingSlash and
 // TestListTenants_CollectionRootRequiresTrailingSlash reproduce the

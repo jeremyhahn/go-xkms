@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,7 +26,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -34,6 +34,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/hostdeps"
@@ -82,7 +84,7 @@ func mountLikeHost(t *testing.T, client *qrdbsdk.Client, opts ...Option) *hostMo
 // fullHostOptions supplies every dependency the host composition accepts.
 func (h *hostMount) fullHostOptions(t *testing.T) []Option {
 	return []Option{
-		WithBarrierRegistry(func() *qrdbsdk.BarrierRegistry { return h.registry.Inner() }),
+		WithBarrierRegistry(func() *qrdbsdk.BarrierRegistry { return h.registry }),
 		WithPINBackend(hostdeps.NewPINBackend(t, hostSOPIN, hostUserPIN)),
 		WithPlatformSealer("passphrase", hostdeps.NewSealer(t)),
 		WithCA(hostdeps.NewCAConfig("Host Mount Root")),
@@ -90,12 +92,24 @@ func (h *hostMount) fullHostOptions(t *testing.T) []Option {
 	}
 }
 
-// newFullHostMount mounts the module with every host dependency supplied.
+// newFullHostMount mounts the module with every host dependency supplied,
+// over the client of a real in-process qrdb node: the CA keeps its
+// certificates in its own database, which the host opens on that node.
 func newFullHostMount(t *testing.T, extra ...Option) *hostMount {
 	t.Helper()
-	client, _, err := testutil.NewQRDBFakeClient()
+	return newFullHostMountWithClient(t, newHostNodeClient(t), extra...)
+}
+
+// newHostNodeClient boots a real in-memory standalone qrdb node under
+// t.TempDir and returns its client, the way a host hands the module its own
+// node's client.
+func newHostNodeClient(t *testing.T) *qrdbsdk.Client {
+	t.Helper()
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()}}
+	ds, err := datastore.Open(context.Background(), cfg, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
-	return newFullHostMountWithClient(t, client, extra...)
+	t.Cleanup(func() { require.NoError(t, ds.Close()) })
+	return ds.Client()
 }
 
 func newFullHostMountWithClient(t *testing.T, client *qrdbsdk.Client, extra ...Option) *hostMount {
@@ -145,16 +159,6 @@ func (h *hostMount) callAs(t *testing.T, id *auth.Identity, method, pattern, pat
 	w := httptest.NewRecorder()
 	handler(w, req.WithContext(ctx))
 	return w
-}
-
-// registered reports whether method+pattern was registered.
-func (h *hostMount) registered(method, pattern string) bool {
-	for _, rec := range *h.routes {
-		if rec.method == method && rec.pattern == pattern {
-			return true
-		}
-	}
-	return false
 }
 
 // TestModule_HostMount_EveryStoreAnswers is the host-mode acceptance test:
@@ -240,10 +244,9 @@ func TestModule_HostMount_EveryStoreAnswers(t *testing.T) {
 	})
 
 	// The host's service has no TPM2 backend (the simulator tests in
-	// pkg/compose cover that composition), and the fake qrdb transport
-	// carries no coordination (leases), which the OIDC credential service
-	// needs (pkg/compose covers it over a real node). Those two are off,
-	// each with its typed reason; every other feature is on.
+	// pkg/compose cover that composition), so that feature is off with its
+	// typed reason; every other feature is on, the OIDC credential service
+	// included, over the host node's leases.
 	stores := h.module.HostStores()
 	require.NotNil(t, stores)
 	missing := map[compose.Feature]string{}
@@ -253,8 +256,7 @@ func TestModule_HostMount_EveryStoreAnswers(t *testing.T) {
 		missing[disabled.Feature] = disabled.Missing
 	}
 	assert.Equal(t, map[compose.Feature]string{
-		compose.FeatureTPMPolicies:     "TPM2 backend",
-		compose.FeatureOIDCCredentials: "qrdb coordination",
+		compose.FeatureTPMPolicies: "TPM2 backend",
 	}, missing)
 }
 
@@ -286,6 +288,7 @@ func TestModule_HostMount_MissingDependenciesAreTypedAndOff(t *testing.T) {
 		compose.FeatureCA:              "CA configuration",
 		compose.FeatureTPMPolicies:     "TPM2 backend",
 		compose.FeatureOIDCCredentials: "barrier registry",
+		compose.FeatureKeyVersions:     "DAO factory",
 	}, missing)
 
 	w = h.call(t, http.MethodGet, "/api/v1/ca/certificate", "/api/v1/ca/certificate", nil, nil)
@@ -316,79 +319,4 @@ func TestModule_HostMount_NoQRDBClientLeavesStoresOff(t *testing.T) {
 		reasons = append(reasons, reason.Error())
 	}
 	assert.Contains(t, strings.Join(reasons, "\n"), "compose: passwords is off: no storage was supplied")
-}
-
-// TestModule_BarrierRoutes_OffByDefault proves a host that did not opt in
-// keeps the barrier route families: the module registers none of them, so
-// the host can own those paths.
-func TestModule_BarrierRoutes_OffByDefault(t *testing.T) {
-	h := newFullHostMount(t)
-	for _, spec := range rest.Routes() {
-		if rest.IsBarrierRoute(spec) {
-			assert.False(t, h.registered(spec.Method, spec.Pattern), "%s %s must not be mounted", spec.Method, spec.Pattern)
-		}
-	}
-	assert.True(t, h.registered(http.MethodGet, "/api/v1/passwords/"), "non-barrier routes still mount")
-
-	// The host's barrier registry still backs the per-tenant Password
-	// Manager; it is simply not served.
-	h.call(t, http.MethodGet, "/xkms/v1/ssh/keys", "/xkms/v1/ssh/keys", nil, nil)
-	stores := h.module.HostStores()
-	assert.NotNil(t, stores.PasswordManager)
-	assert.Nil(t, stores.Barrier)
-}
-
-// custodyTransport is the fake qrdb transport plus the custody capability a
-// real node transport carries, so the host's client can hand the module its
-// custodian and share clients. Only the capability matters here; no custody
-// call is made.
-type custodyTransport struct {
-	*testutil.QRDBFakeTransport
-	qrdbtransport.CustodianGroupClient
-	qrdbtransport.ShareClient
-}
-
-// TestModule_BarrierRoutes_ServeTheHostBarrier proves WithBarrierRoutes
-// mounts the barrier families and serves them over the host's own qrdb
-// barrier: the status reflects the host's initialized, unsealed barrier.
-func TestModule_BarrierRoutes_ServeTheHostBarrier(t *testing.T) {
-	client, err := qrdbsdk.NewClient(&custodyTransport{QRDBFakeTransport: testutil.NewQRDBFakeTransport()})
-	require.NoError(t, err)
-	h := newFullHostMountWithClient(t, client, WithBarrierRoutes())
-
-	for _, spec := range rest.Routes() {
-		if rest.IsBarrierRoute(spec) {
-			assert.True(t, h.registered(spec.Method, spec.Pattern), "%s %s must be mounted", spec.Method, spec.Pattern)
-		}
-	}
-
-	w := h.call(t, http.MethodGet, "/api/v1/barrier/status", "/api/v1/barrier/status", nil, nil)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	assert.Contains(t, w.Body.String(), `"sealed":false`)
-
-	stores := h.module.HostStores()
-	assert.Same(t, h.registry.SystemBarrier(), stores.Barrier)
-	assert.NotNil(t, stores.Custodians)
-	assert.NotNil(t, stores.Shares)
-}
-
-// TestModule_BarrierRoutes_WithoutRegistryIsTypedOff proves opting in
-// without supplying the barrier leaves the barrier off with a typed reason.
-func TestModule_BarrierRoutes_WithoutRegistryIsTypedOff(t *testing.T) {
-	client, err := qrdbsdk.NewClient(&custodyTransport{QRDBFakeTransport: testutil.NewQRDBFakeTransport()})
-	require.NoError(t, err)
-	h := mountLikeHost(t, client, WithBarrierRoutes())
-
-	w := h.call(t, http.MethodGet, "/api/v1/barrier/status", "/api/v1/barrier/status", nil, nil)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
-
-	var disabled *compose.FeatureDisabledError
-	found := false
-	for _, reason := range h.module.HostStores().Disabled {
-		if assert.ErrorAs(t, reason, &disabled) && disabled.Feature == compose.FeatureBarrier {
-			found = true
-			assert.Equal(t, "barrier registry", disabled.Missing)
-		}
-	}
-	assert.True(t, found, "the barrier's absence must be recorded")
 }

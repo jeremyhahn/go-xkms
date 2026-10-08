@@ -36,8 +36,8 @@ behaviour, including the backend-dependent table below, is identical across
 all four transports. Before go-xkms#1227 REST called its own `PINManager` and
 gRPC a package-level backend that production never set.
 
-Handlers: `pkg/api/rest/handlers_barrier_pin.go`,
-`pkg/api/grpc/service_barrier_pin.go`, `pkg/api/mcp/handlers_pin.go`.
+Handlers: `pkg/api/rest/handlers_pin.go`,
+`pkg/api/grpc/service_pin.go`, `pkg/api/mcp/handlers_pin.go`.
 
 ## Platform scope
 
@@ -47,7 +47,7 @@ pass the RBAC gate included -- before the PIN backend is touched
 (`pkg/xkms/servicer_pin.go:43,54,65,76,87,98,109,136`, go-xkms#1227). A
 refused attempt does not reach the backend, so it does not count toward the
 lockout. The answer is the one a missing tenant gets: REST `404`
-(`pkg/api/rest/handlers_barrier_pin.go:564`), gRPC `NotFound` and MCP
+(`pkg/api/rest/handlers_pin.go:564`), gRPC `NotFound` and MCP
 `JSONRPCCodeNotFound` (`pkg/api/apierrors/tables.go:96`).
 
 ## Backend-dependent behaviour

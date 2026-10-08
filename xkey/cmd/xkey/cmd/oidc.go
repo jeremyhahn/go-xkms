@@ -42,6 +42,7 @@ import (
 	"github.com/spf13/cobra"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/urlsafety"
@@ -50,7 +51,7 @@ import (
 // Default OIDC configuration values.
 const (
 	defaultOIDCScopes          = "openid,profile,email"
-	defaultOIDCTokenStorePath  = "~/.xkey/tokens.json"
+	defaultOIDCTokenStorePath  = "~/.xkey/tokens"
 	defaultOIDCCallbackTimeout = 5 * time.Minute
 	defaultOIDCProviderTimeout = 30 * time.Second
 	oidcCodeVerifierLength     = 43
@@ -1676,7 +1677,7 @@ func saveOIDCConfig(path string, config OIDCConfig) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0600)
+	return fsutil.WriteFileAtomic(path, data, 0600)
 }
 
 // truncateTokenPrefixLen is the maximum number of leading token characters
@@ -1971,7 +1972,7 @@ func saveRefreshStatus(tokenStore, providerName string, status *OIDCRefreshStatu
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(statusFile, data, 0600)
+	return fsutil.WriteFileAtomic(statusFile, data, 0600)
 }
 
 // loadRefreshStatus loads the refresh status from disk.
@@ -2060,7 +2061,7 @@ func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID
 	}
 
 	// Write PID file
-	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0600); err != nil {
 		killErr := cmd.Process.Kill()
 		return &WrappedError{Msg: "failed to write PID file", Err: errors.Join(err, killErr, logFileHandle.Close())}
 	}
@@ -2406,7 +2407,7 @@ func runAWSProviderLogin(cmd *cobra.Command, provider *OIDCProvider) error {
 	sessionStoreExplicit := provider.AWSSessionStore != ""
 	sessionStore := provider.AWSSessionStore
 	if sessionStore == "" {
-		sessionStore = "~/.xkey/aws-session.json"
+		sessionStore = "~/.xkey/aws-session"
 	}
 
 	callback, err := resolveOIDCCallback(cmd)
@@ -2461,7 +2462,7 @@ func init() {
 	oidcLoginCmd.Flags().String("redirect-url", "", "Callback URL (default: http://localhost:<oidc.callback_port>/callback)")
 	registerOIDCCallbackFlags(oidcLoginCmd.Flags())
 	oidcLoginCmd.Flags().String("scopes", defaultOIDCScopes, "Scopes to request (comma-separated)")
-	oidcLoginCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
+	oidcLoginCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Directory of an unencrypted token store (bypasses the barrier when set)")
 	oidcLoginCmd.Flags().Bool("no-browser", false, "Don't open browser, print URL instead")
 	oidcLoginCmd.Flags().String("exec", "", "Execute script after login (receives JSON payload via stdin)")
 	oidcLoginCmd.Flags().Int("auto-refresh", 0, "Auto-refresh interval in seconds (0 to disable)")
@@ -2483,29 +2484,29 @@ func init() {
 	_ = oidcLoginCmd.Flags().MarkHidden("provider-name")
 
 	// oidc token flags
-	oidcTokenCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
+	oidcTokenCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Directory of an unencrypted token store (bypasses the barrier when set)")
 	oidcTokenCmd.Flags().Bool("show-full", false, "Show full token values")
 	addBarrierPasswordFlags(oidcTokenCmd)
 
 	// oidc refresh flags
-	oidcRefreshCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
+	oidcRefreshCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Directory of an unencrypted token store (bypasses the barrier when set)")
 	oidcRefreshCmd.Flags().String("provider", "", "Use saved provider configuration by name (required for manual-endpoint providers)")
 	addBarrierPasswordFlags(oidcRefreshCmd)
 
 	// oidc logout flags
-	oidcLogoutCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
+	oidcLogoutCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Directory of an unencrypted token store (bypasses the barrier when set)")
 	oidcLogoutCmd.Flags().Bool("all", false, "Clear all stored tokens")
 	addBarrierPasswordFlags(oidcLogoutCmd)
 
 	// oidc status flags
-	oidcStatusCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
+	oidcStatusCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Directory of an unencrypted token store (bypasses the barrier when set)")
 
 	// oidc stop flags
-	oidcStopCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
+	oidcStopCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Directory of an unencrypted token store (bypasses the barrier when set)")
 	oidcStopCmd.Flags().Bool("all", false, "Stop all background refresh processes")
 
 	// oidc providers list flags
-	oidcProvidersListCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
+	oidcProvidersListCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Directory of an unencrypted token store (bypasses the barrier when set)")
 
 	// oidc providers add flags
 	oidcProvidersAddCmd.Flags().String("name", "", "Provider name (required)")
@@ -2530,15 +2531,15 @@ func init() {
 	oidcProvidersAddCmd.Flags().String("credentials-file", "~/.aws/credentials", "AWS credentials file path")
 	oidcProvidersAddCmd.Flags().StringP("output", "o", "aws-credentials", "AWS output mode: aws-credentials, json, exec, none")
 	oidcProvidersAddCmd.Flags().Bool("cross-device", false, "Enable AWS cross-device authentication")
-	oidcProvidersAddCmd.Flags().String("session-store", "~/.xkey/aws-session.json", "AWS session store path")
+	oidcProvidersAddCmd.Flags().String("session-store", "~/.xkey/aws-session", "Directory of an unencrypted AWS session store (bypasses the barrier when set)")
 
 	// Common flags
 	oidcProvidersAddCmd.Flags().String("exec", "", "Script to execute after login")
 	oidcProvidersAddCmd.Flags().Int("auto-refresh", 0, "Auto-refresh interval in seconds (0 to disable)")
 	oidcProvidersAddCmd.Flags().Bool("background", false, "Run auto-refresh in background by default")
 	oidcProvidersAddCmd.Flags().String("log-file", "", "Log file for background refresh")
-	oidcProvidersAddCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
+	oidcProvidersAddCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Directory of an unencrypted token store (bypasses the barrier when set)")
 
 	// oidc providers remove flags
-	oidcProvidersRemoveCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
+	oidcProvidersRemoveCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Directory of an unencrypted token store (bypasses the barrier when set)")
 }

@@ -20,25 +20,25 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
-// newTestDAOStore creates a DAOStore backed by in-memory storage for testing.
+// newTestDAOStore creates a DAOStore on an in-process go-qrdb DAO factory.
 func newTestDAOStore(t *testing.T) *DAOStore {
 	t.Helper()
-	backend := storage.NewMemory()
-	t.Cleanup(func() { backend.Close() })
+	return newTestDAOStoreOn(t, testutil.NewMemoryDAOFactory())
+}
 
-	kvStore, err := kvadapter.New(backend)
+// newTestDAOStoreOn creates a DAOStore on factory, closed when the test ends.
+func newTestDAOStoreOn(t *testing.T, factory *qrdbsdk.DAOFactory) *DAOStore {
+	t.Helper()
+	store, err := NewDAOStore(factory)
 	require.NoError(t, err)
-
-	store, err := NewDAOStore(kvStore)
-	require.NoError(t, err)
-	t.Cleanup(func() { store.Close() })
-
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	return store
 }
 
@@ -54,10 +54,46 @@ func testTokenResponse(issuer string) *TokenResponse {
 	}
 }
 
-func TestDAOStore_NewDAOStore_NilKVStore(t *testing.T) {
+func TestDAOStore_NewDAOStore_NilFactory(t *testing.T) {
 	store, err := NewDAOStore(nil)
-	require.ErrorIs(t, err, ErrNilBackend)
+	var creation ErrDAOCreation
+	require.ErrorAs(t, err, &creation)
+	require.ErrorIs(t, err, dao.ErrNilFactory)
 	assert.Nil(t, store)
+}
+
+// TestDAOStore_NewDAOStore_DatabaseNotServed proves a factory that does not
+// serve DatabaseName is refused rather than writing tokens into another
+// database.
+func TestDAOStore_NewDAOStore_DatabaseNotServed(t *testing.T) {
+	factory := qrdbsdk.NewDAOFactory(func(uint64) qrdbsdk.KVStore { return qrdbsdk.NewMemoryKVStore() })
+	store, err := NewDAOStore(factory)
+	var unavailable *dao.DatabaseUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	assert.Equal(t, DatabaseName, unavailable.Database)
+	assert.Nil(t, store)
+}
+
+// TestDAOStore_PersistsThroughFactory proves tokens live in the factory's
+// store, not in the DAOStore: a second store on the same factory -- the
+// next process start, in production -- loads and lists what the first saved.
+func TestDAOStore_PersistsThroughFactory(t *testing.T) {
+	factory := testutil.NewMemoryDAOFactory()
+	issuer := "https://auth.example.com"
+	tokens := testTokenResponse(issuer)
+
+	first := newTestDAOStoreOn(t, factory)
+	require.NoError(t, first.Save(issuer, tokens))
+	require.NoError(t, first.Close())
+
+	second := newTestDAOStoreOn(t, factory)
+	loaded, err := second.Load(issuer)
+	require.NoError(t, err)
+	assert.Equal(t, tokens.AccessToken, loaded.AccessToken)
+	assert.Equal(t, tokens.RefreshToken, loaded.RefreshToken)
+	issuers, err := second.List()
+	require.NoError(t, err)
+	assert.Equal(t, []string{issuer}, issuers)
 }
 
 func TestDAOStore_SaveLoad(t *testing.T) {

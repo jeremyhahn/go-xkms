@@ -237,9 +237,9 @@ tenant := cert.Subject.OrganizationalUnit[0]
 When a tenant is initialized:
 
 ```go
-barrierRegistry.RegisterTenant(tenantID)
+barrierRegistry.RegisterTenantDefault(tenantID)
 // or with explicit config
-barrierRegistry.RegisterTenantWithConfig(tenantID, base, config, strategies...)
+barrierRegistry.RegisterTenant(ctx, tenantID, base, config, strategies...)
 ```
 
 The barrier creates a new DEK encrypted with the configured sealing strategy.

@@ -39,6 +39,10 @@ const (
 
 	// SecretTPM2Auth is the well-known key for a TPM 2.0 auth value.
 	SecretTPM2Auth = "platform/tpm2-auth"
+
+	// SecretVaultToken is the well-known key for the Vault token a vault
+	// node seal authenticates to Transit with.
+	SecretVaultToken = "platform/vault-token"
 )
 
 // platformStorePrefix is the storage key prefix for all platform store secrets.

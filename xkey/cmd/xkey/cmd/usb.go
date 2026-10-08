@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -212,7 +213,7 @@ func runUSBCreate(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Binaries: %d\n", len(binaries))
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 
-	if err := usb.CreateImage(cfg); err != nil {
+	if err := usb.CreateImage(cmd.Context(), cfg); err != nil {
 		return &USBCmdError{Operation: "create_image", Err: err}
 	}
 
@@ -322,7 +323,7 @@ func runUSBUpdate(cmd *cobra.Command, args []string) error {
 // *secure.Secret. The caller owns the returned Secret and must Destroy it.
 func readUSBPassphrase(cmd *cobra.Command) (*secure.Secret, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return readUSBPassphraseFromStdin()
+		return readUSBPassphraseFromStdin(cmd.Context())
 	}
 
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), "Enter passphrase for LUKS data partition: ")
@@ -358,7 +359,7 @@ func readUSBPassphrase(cmd *cobra.Command) (*secure.Secret, error) {
 	}
 
 	// NewSecret wipes pass1 on return.
-	secret, err := secure.NewSecret(pass1)
+	secret, err := secure.NewSecret(cmd.Context(), pass1)
 	if err != nil {
 		return nil, &USBCmdError{Operation: "read_passphrase", Err: err}
 	}
@@ -368,7 +369,7 @@ func readUSBPassphrase(cmd *cobra.Command) (*secure.Secret, error) {
 // readUSBPassphraseFromStdin reads passphrase from piped stdin and seals
 // it into a *secure.Secret. The caller owns the returned Secret and must
 // Destroy it.
-func readUSBPassphraseFromStdin() (*secure.Secret, error) {
+func readUSBPassphraseFromStdin(ctx context.Context) (*secure.Secret, error) {
 	var pass1, pass2 string
 
 	if _, err := fmt.Scanln(&pass1); err != nil {
@@ -394,7 +395,7 @@ func readUSBPassphraseFromStdin() (*secure.Secret, error) {
 		}
 	}
 
-	secret, err := secure.NewSecret([]byte(pass1))
+	secret, err := secure.NewSecret(ctx, []byte(pass1))
 	if err != nil {
 		return nil, &USBCmdError{Operation: "read_passphrase", Err: err}
 	}

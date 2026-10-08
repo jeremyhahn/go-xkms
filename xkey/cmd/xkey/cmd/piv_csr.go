@@ -20,6 +20,7 @@ import (
 	"os"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/cobra"
 )
@@ -149,7 +150,7 @@ func runPivCSR(cmd *cobra.Command, args []string) error {
 	// Output CSR
 	outputPath, _ := cmd.Flags().GetString("output")
 	if outputPath != "" {
-		if err := os.WriteFile(outputPath, resp.CSR, 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(outputPath, resp.CSR, 0600); err != nil {
 			return errors.Join(ErrPIVCSROutputFailed, err)
 		}
 		slotName := xkms.PIVSlotName(slot)

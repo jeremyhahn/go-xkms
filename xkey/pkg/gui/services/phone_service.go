@@ -32,6 +32,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 
 	"gopkg.in/yaml.v3"
 
@@ -2342,7 +2343,7 @@ func (s *PhoneService) saveConfig(cfg *phoneConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	return fsutil.WriteFileAtomic(path, data, 0600)
 }
 
 // phoneConfigPath returns the path to the shared devices config file

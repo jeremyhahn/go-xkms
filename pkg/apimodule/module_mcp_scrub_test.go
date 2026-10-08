@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -101,7 +101,7 @@ func TestMCPToolHandler_InternalErrorWithheld(t *testing.T) {
 
 	res := call()
 	payload := decodeToolErrorCode(t, res)
-	assert.Equal(t, wire.CodeInternal, payload.Code)
+	assert.Equal(t, qrdbsdk.MCPCodeInternal, payload.Code)
 	assert.Equal(t, xkmsmcp.ErrInternal.Error(), payload.Message)
 	assert.NotContains(t, toolResultText(t, res), scrubMarker)
 
@@ -117,7 +117,7 @@ func TestMCPToolHandler_ClientFaultKeepsMessage(t *testing.T) {
 
 	res := call()
 	payload := decodeToolErrorCode(t, res)
-	assert.Equal(t, wire.CodeNotFound, payload.Code)
+	assert.Equal(t, qrdbsdk.MCPCodeNotFound, payload.Code)
 	assert.Contains(t, payload.Message, xkms.ErrKeyNotFound.Error())
 	assert.Contains(t, payload.Message, "signing-key")
 	assert.NotContains(t, logs.String(), "internal error withheld")

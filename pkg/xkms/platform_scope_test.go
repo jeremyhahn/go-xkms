@@ -29,11 +29,11 @@ import (
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmpolicytest"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 )
 
 // Platform-scope tests for go-xkms#1226 and #1227. The sealed platform store,
-// credential submission, the system barrier, the token PINs, the server's PIV
+// credential submission, the token PINs, the server's PIV
 // card and the tenants' TPM modes are platform-global state: the RBAC gate admits a
 // tenant-local Admin to all of them (its ScopeSelf grants resolve against its
 // own tenant), so the service's requirePlatformScope is what confines them to
@@ -48,26 +48,13 @@ const (
 )
 
 // newPlatformScopeService returns an XKMSService composed with every
-// platform-global subsystem over in-memory state: an initialized, unsealed
-// system barrier; a software PIN backend with both PINs set; a platform store
+// platform-global subsystem over in-memory state: a software PIN backend with both PINs set; a platform store
 // holding one secret; a TPM policy service; a manual
 // credential service; and a PIV manager over the "software" store.
 func newPlatformScopeService(t *testing.T) *XKMSService {
 	t.Helper()
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	barrier, err := seal.NewBarrier(logger, storage.NewMemory(), seal.BarrierConfig{
-		RootKeyPath:     "core/seal",
-		PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-	}, seal.NewSoftwareStrategy())
-	require.NoError(t, err)
-	creds := seal.MustCredentials([]byte(bindingPassphrase))
-	defer creds.Secret.Destroy()
-	require.NoError(t, barrier.Initialize(ctx, creds))
-	if barrier.IsSealed() {
-		require.NoError(t, barrier.Unseal(ctx, creds))
-	}
 
 	// A light Argon2id cost keeps the per-operation fixture fast; the PIN
 	// semantics under test do not depend on the work factor.
@@ -90,7 +77,6 @@ func newPlatformScopeService(t *testing.T) *XKMSService {
 	setupPIVForOps(t, nil)
 
 	svc := &XKMSService{}
-	svc.SetBarrier(barrier)
 	svc.SetPINManager(pins)
 	svc.SetPlatformStore(store)
 	svc.SetTPMPolicyService(policies)
@@ -135,54 +121,6 @@ var platformScopedOps = map[string]platformScopedOp{
 
 	"ListCredentials": func(ctx context.Context, s *XKMSService) error {
 		_, err := s.ListCredentials(ctx)
-		return err
-	},
-
-	// System barrier (#1227).
-	"BarrierInitialize": func(ctx context.Context, s *XKMSService) error {
-		return s.BarrierInitialize(ctx, &transport.BarrierInitializeRequest{Secret: bindingPassphrase})
-	},
-	"BarrierUnseal": func(ctx context.Context, s *XKMSService) error {
-		return s.BarrierUnseal(ctx, &transport.BarrierUnsealRequest{Secret: bindingPassphrase})
-	},
-	"BarrierSeal": func(ctx context.Context, s *XKMSService) error {
-		return s.BarrierSeal(ctx)
-	},
-	"BarrierStatus": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.BarrierStatus(ctx)
-		return err
-	},
-	"BarrierInitializeShamir": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{Secret: bindingPassphrase, Threshold: 2, TotalShares: 3})
-		return err
-	},
-	"BarrierUnsealWithShare": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.BarrierUnsealWithShare(ctx, &transport.BarrierUnsealShareRequest{Share: "share"})
-		return err
-	},
-	"BarrierUnsealWithShares": func(ctx context.Context, s *XKMSService) error {
-		return s.BarrierUnsealWithShares(ctx, &transport.BarrierUnsealSharesRequest{Shares: []string{"a", "b"}})
-	},
-	"BarrierRekey": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.BarrierRekey(ctx, &transport.BarrierRekeyRequest{Threshold: 2, Total: 3})
-		return err
-	},
-	"BarrierGenerateRecoveryKeys": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{Threshold: 2, Total: 3})
-		return err
-	},
-	"BarrierRecoverWithKeys": func(ctx context.Context, s *XKMSService) error {
-		return s.BarrierRecoverWithKeys(ctx, &transport.BarrierRecoverWithKeysRequest{Keys: []string{"a", "b"}})
-	},
-	"BarrierDeleteRecoveryKeys": func(ctx context.Context, s *XKMSService) error {
-		return s.BarrierDeleteRecoveryKeys(ctx)
-	},
-	"BarrierHasRecoveryKeys": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.BarrierHasRecoveryKeys(ctx)
-		return err
-	},
-	"BarrierGenerateRootToken": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.BarrierGenerateRootToken(ctx, &transport.BarrierGenerateRootTokenRequest{Shares: []string{"a", "b"}})
 		return err
 	},
 
@@ -282,8 +220,7 @@ func TestPlatformScope_TenantAdminRefusedOnEveryOperation(t *testing.T) {
 
 // TestPlatformScope_RefusalLeavesPlatformStateUntouched proves the refusal
 // happens before the operation: after a tenant Admin's attempts to read,
-// overwrite and delete the platform credential, seal the barrier, delete the
-// recovery keys, take over the PINs and switch a tenant's TPM off, every piece of
+// overwrite and delete the platform credential, take over the PINs and switch a tenant's TPM off, every piece of
 // platform state is exactly as the platform left it.
 func TestPlatformScope_RefusalLeavesPlatformStateUntouched(t *testing.T) {
 	svc := newPlatformScopeService(t)
@@ -296,10 +233,6 @@ func TestPlatformScope_RefusalLeavesPlatformStateUntouched(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("platform-secret"), got.Secret)
 
-	status, err := svc.BarrierStatus(ctx)
-	require.NoError(t, err)
-	assert.False(t, status.Sealed, "a refused seal must leave the system barrier unsealed")
-
 	require.NoError(t, svc.VerifySOPIN(ctx, &transport.VerifySOPINRequest{SOPIN: platformScopeSOPIN}))
 	require.NoError(t, svc.VerifyUserPIN(ctx, &transport.VerifyUserPINRequest{UserPIN: platformScopeUserPIN}))
 
@@ -311,8 +244,7 @@ func TestPlatformScope_RefusalLeavesPlatformStateUntouched(t *testing.T) {
 // TestPlatformScope_SystemIdentityPassesEveryGate proves the refusal is
 // scoped: the platform's own identity -- and a context with no identity at
 // all, the in-process boot path -- still reach every operation. Past the gate
-// some operations fail on their own preconditions (an initialized barrier
-// cannot be initialized again, a vTPM cannot start without a supervisor); none may
+// some operations fail on their own preconditions (a vTPM cannot start without a supervisor); none may
 // fail with the binding's refusal, so the operations share one fixture.
 func TestPlatformScope_SystemIdentityPassesEveryGate(t *testing.T) {
 	callers := map[string]context.Context{
@@ -361,9 +293,4 @@ func TestPlatformScope_SystemIdentityCompletesTheExploitedOperations(t *testing.
 	changed, err := svc.SetTenantTPMMode(ctx, &transport.SetTenantTPMModeRequest{TenantID: platformScopeTPMTenant, Mode: "none"})
 	require.NoError(t, err)
 	assert.Equal(t, string(tpmpolicy.ModeNone), changed.Mode)
-
-	require.NoError(t, svc.BarrierSeal(ctx))
-	status, err := svc.BarrierStatus(ctx)
-	require.NoError(t, err)
-	assert.True(t, status.Sealed)
 }

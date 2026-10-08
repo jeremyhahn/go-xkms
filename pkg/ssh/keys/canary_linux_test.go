@@ -37,7 +37,7 @@ import (
 func TestCanary_PEMNotOnHeap(t *testing.T) {
 	needle := []byte("-----BEGIN OPENSSH PRIVATE KEY-----")
 
-	key, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestCanary_PEMNotOnHeap(t *testing.T) {
 	// deeper /proc/self/mem scan. For this package, a simple "needle
 	// is not present in our own visible memory via a read of the
 	// locked-buffer bytes field" check is the smoke-level guard.
-	if buf, err := key.Material.Open(); err == nil {
+	if buf, err := key.Material.Open(t.Context()); err == nil {
 		// The needle should only appear inside the opened Buffer —
 		// and it must live there, since that's literally what Open
 		// returns. This guard is the positive-control half of the

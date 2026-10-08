@@ -39,7 +39,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 )
 
 const (
@@ -102,9 +101,9 @@ func newBindingFixture(t *testing.T) *bindingFixture {
 	require.NoError(t, err)
 	f.roleB, err = svc.CreateTenantRole(ctx, boundTenantB, &db.CreateRoleRequest{Name: "role-b", Permissions: []string{"kv:get"}})
 	require.NoError(t, err)
-	f.userA, err = svc.CreateTenantUser(ctx, boundTenantA, &db.CreateUserRequest{Username: "user-a", Name: "User A"})
+	f.userA, err = svc.CreateTenantUser(ctx, boundTenantA, &db.CreateUserRequest{Username: "user-a", Name: "User A", Email: "user-a@example.com"})
 	require.NoError(t, err)
-	f.userB, err = svc.CreateTenantUser(ctx, boundTenantB, &db.CreateUserRequest{Username: "user-b", Name: "User B"})
+	f.userB, err = svc.CreateTenantUser(ctx, boundTenantB, &db.CreateUserRequest{Username: "user-b", Name: "User B", Email: "user-b@example.com"})
 	require.NoError(t, err)
 
 	eab, err := svc.CreateTenantEAB(ctx, boundTenantB, CreateEABRequest{Purpose: "account-binding"})
@@ -301,7 +300,7 @@ func TestTenantBinding_TenantCallerManagesOwnTenant(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed A", user.Name)
 
-	created, err := svc.CreateTenantUser(ctx, boundTenantA, &db.CreateUserRequest{Username: "new-a"})
+	created, err := svc.CreateTenantUser(ctx, boundTenantA, &db.CreateUserRequest{Username: "new-a", Email: "new-a@example.com"})
 	require.NoError(t, err)
 	assert.Equal(t, boundTenantA, created.TenantID)
 
@@ -661,6 +660,25 @@ func TestBindTenantTarget(t *testing.T) {
 	requireTenantRefusal(t, bindTenantTarget(ctx, "op", ""), "empty target is the system scope")
 }
 
+// TestBindTenantIAM proves an admitted IAM call is scoped to the tenant the
+// request addressed, so a platform caller's user or role lookup resolves in
+// that tenant rather than its own.
+func TestBindTenantIAM(t *testing.T) {
+	scoped, err := bindTenantIAM(platformCtx(), "get tenant user", boundTenantB)
+	require.NoError(t, err)
+	bound, ok := qrdbsdk.TenantFromContext(scoped)
+	require.True(t, ok)
+	assert.Equal(t, boundTenantB, bound)
+}
+
+// TestBindTenantIAM_ForeignTenantRefused proves a tenant-scoped caller is
+// refused another tenant's IAM and is handed no scoped context.
+func TestBindTenantIAM_ForeignTenantRefused(t *testing.T) {
+	scoped, err := bindTenantIAM(callerCtx(boundTenantA), "update tenant user", boundTenantB)
+	requireTenantRefusal(t, err, "foreign")
+	assert.Nil(t, scoped)
+}
+
 // TestRequirePlatformScope covers the platform-only predicate and its error.
 func TestRequirePlatformScope(t *testing.T) {
 	require.NoError(t, requirePlatformScope(platformCtx(), "op"))
@@ -719,9 +737,9 @@ func (failingUserClient) GetUser(context.Context, uint64) (*db.User, error) {
 
 var errFailingQRDB = &db.ConnectionError{Address: "qrdb.example.com", Err: context.DeadlineExceeded}
 
-// failingIdentityQRDB is a qrdb service whose role and user lookups fail.
+// failingIdentityQRDB is a qrdb client whose role and user lookups fail.
 type failingIdentityQRDB struct {
-	qrdb.Service
+	QRDBClient
 }
 
 func (failingIdentityQRDB) Roles() db.RoleClient { return failingRoleClient{} }
@@ -731,7 +749,7 @@ func (failingIdentityQRDB) Users() db.UserClient { return failingUserClient{} }
 // lookup that fails for any reason other than a miss is surfaced as the
 // failure, never masked as not-found and never followed by the mutation.
 func TestTenantBinding_OwnershipLookupFailureIsNotNotFound(t *testing.T) {
-	svc := mustTenantAwareAdminService(t, nil, nil, failingIdentityQRDB{Service: qrdb.NewTestService()}, discardLogger(), "test")
+	svc := mustTenantAwareAdminService(t, nil, nil, failingIdentityQRDB{QRDBClient: newTestQRDB(t)}, discardLogger(), "test")
 	ctx := platformCtx()
 
 	_, err := svc.UpdateTenantRole(ctx, boundTenantA, &db.UpdateRoleRequest{ID: "r"})

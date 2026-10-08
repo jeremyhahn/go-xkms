@@ -72,7 +72,7 @@ func TestNewFIDO2Device_FileStorageWarnsUnencrypted(t *testing.T) {
 
 	cfg := seedPINConfig(t, FIDO2StorageTypeFile, t.TempDir(), "")
 
-	device, err := newFIDO2Device(cfg, logger)
+	device, err := newFIDO2Device(t.Context(), cfg, logger)
 	require.NoError(t, err)
 	defer func() { _ = device.Close() }()
 
@@ -88,7 +88,7 @@ func TestNewFIDO2Device_MemoryStorageDoesNotWarn(t *testing.T) {
 
 	cfg := seedPINConfig(t, FIDO2StorageTypeMemory, t.TempDir(), "")
 
-	device, err := newFIDO2Device(cfg, logger)
+	device, err := newFIDO2Device(t.Context(), cfg, logger)
 	require.NoError(t, err)
 	defer func() { _ = device.Close() }()
 

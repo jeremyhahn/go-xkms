@@ -176,7 +176,7 @@ func TestKeyFactor_ServerCannotUnlockAlone(t *testing.T) {
 	cred, err := h.unlockCred(t, res.Factor)
 	require.NoError(t, err)
 
-	plaintext, err := cred.Secret.Open()
+	plaintext, err := cred.Secret.Open(t.Context())
 	require.NoError(t, err)
 	defer plaintext.Destroy()
 	vault, err := scope.PersonalPrefix("tenant-a", VaultFeature, "alice")

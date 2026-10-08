@@ -20,13 +20,12 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"io"
-	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -152,103 +151,11 @@ func generateNoiseKey(outputFile string) {
 	fmt.Printf("Public key:  %s\n", publicHex)
 }
 
-// noiseKeyFile is what writeNoiseKeyFile needs of the handle it writes
-// through: write it, close it, and identify it on disk. Stat is what makes
-// the failure cleanup safe, so it is part of the contract rather than a type
-// assertion at the point of use. *os.File satisfies it.
-type noiseKeyFile interface {
-	io.WriteCloser
-	Stat() (os.FileInfo, error)
-}
-
-// createNoiseKeyFile creates the private-key file, failing if it already
-// exists. It is a variable so tests can substitute a handle that fails
-// mid-write and assert the partial file is cleaned up.
-var createNoiseKeyFile = func(path string) (noiseKeyFile, error) {
-	// O_EXCL, not os.WriteFile: WriteFile applies its mode only when it
-	// creates the file, so writing over an existing 0644 path would leave the
-	// private key world-readable. Refusing an existing path also stops a
-	// second run from silently replacing a Noise identity that peers have
-	// already pinned.
-	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-}
-
 // writeNoiseKeyFile writes the hex-encoded private key to path, creating it at
-// mode 0600 and refusing to overwrite.
-//
-// A write or close that fails removes the file it created. Leaving it behind
-// would strand a truncated private key on disk and, because the next attempt
-// refuses an existing path, would block the retry that replaces it.
+// mode 0600 and refusing to overwrite, so a second run cannot silently replace
+// a Noise identity that peers have already pinned.
 func writeNoiseKeyFile(path string, encoded []byte) error {
-	f, err := createNoiseKeyFile(path)
-	if err != nil {
-		return err
-	}
-
-	// The byte count matters, not just the error. A compliant io.Writer must
-	// error on a short write, but this one is injectable for tests and the
-	// cost of being wrong is a truncated private key reported as persisted.
-	n, err := f.Write(encoded)
-	if err == nil && n != len(encoded) {
-		err = io.ErrShortWrite
-	}
-
-	// Identify the file while the descriptor is still open. Stat on a closed
-	// handle fails, and this identity is the whole basis of removeIfSame. A
-	// stat that fails leaves created nil, which means "do not remove".
-	created, statErr := f.Stat()
-	if statErr != nil {
-		created = nil
-	}
-
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		removeIfSame(created, path)
-		return err
-	}
-	return nil
-}
-
-// removeIfSame unlinks path only while it still names the file described by
-// created.
-//
-// An unconditional os.Remove unlinks whatever holds the name NOW, not the
-// file the failure produced. Anything with write access to the parent
-// directory can rename our partial key away and drop an unrelated file at the
-// same path in between, and the cleanup would then delete that file instead —
-// destroying somebody else's data in the name of tidying up after ourselves.
-//
-// The trade when identity cannot be established: leave the file. A stranded
-// partial key file is reported to the caller and refused by the next run's
-// O_EXCL; a wrong unlink is silent and irreversible.
-//
-// KNOWN AND IRREDUCIBLE: the check and the unlink are not atomic, so a
-// substitution landing between them is still removed. This is narrowed, not
-// eliminated — the window went from the whole write-and-close to the gap
-// between an fstat and an unlink — and it cannot be closed with what the
-// platform offers. Linux has no unlink-by-inode; unlinkat resolves a name
-// like unlink does, so a directory file descriptor buys nothing here. The
-// alternative that WOULD close it is not removing the file at all, which
-// strands a partial private key that the next run's O_EXCL then refuses,
-// turning a rare race into a guaranteed failed retry. Reviewed and kept
-// deliberately.
-func removeIfSame(created os.FileInfo, path string) {
-	if created == nil {
-		return
-	}
-
-	// Lstat, so a symlink swapped in for our file is compared as the symlink
-	// it is and fails the identity check rather than being followed.
-	onDisk, err := os.Lstat(path)
-	if err != nil || !os.SameFile(created, onDisk) {
-		return
-	}
-
-	if err := os.Remove(path); err != nil {
-		slog.Default().Debug("xkmsctl: cleanup remove failed", "path", path, "error", err)
-	}
+	return fsutil.CreateExclusive(path, encoded, 0600)
 }
 
 func showNoiseKey(keyFile, keyHex string) {

@@ -23,13 +23,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/pkg/audit/audittest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -39,42 +39,11 @@ import (
 var errAssertAuditUnavailable = errors.New("audit backend unavailable")
 
 // mockAuthAuditLogger records every audit event it receives.
-type mockAuthAuditLogger struct {
-	mu     sync.Mutex
-	events []*audit.Event
-}
-
-func (m *mockAuthAuditLogger) Log(_ context.Context, event *audit.Event) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.events = append(m.events, event)
-	return nil
-}
-
-func (m *mockAuthAuditLogger) Close() error { return nil }
-
-func (m *mockAuthAuditLogger) Events() []*audit.Event {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cp := make([]*audit.Event, len(m.events))
-	copy(cp, m.events)
-	return cp
-}
+type mockAuthAuditLogger = audittest.Recorder
 
 // failingAuthAuditLogger always fails to persist, so the REST auth
 // write-failure handling can be exercised without a real backend.
-type failingAuthAuditLogger struct {
-	err error
-}
-
-func (f *failingAuthAuditLogger) Log(_ context.Context, _ *audit.Event) error {
-	return f.err
-}
-
-func (f *failingAuthAuditLogger) Close() error { return nil }
-
-var _ audit.Logger = (*mockAuthAuditLogger)(nil)
-var _ audit.Logger = (*failingAuthAuditLogger)(nil)
+type failingAuthAuditLogger = audittest.Failing
 
 // =============================================================================
 // auth.login.piv
@@ -112,7 +81,7 @@ func TestPIVLogin_AuditWriteFailure_FailsLoginAndReturnsNoToken(t *testing.T) {
 		c.AuthUserStore = &fakeAuthUserStore{user: auth.MTLSUser{
 			Username: "alice", Roles: []string{"admin"}, TenantID: "system", Enabled: true,
 		}}
-		c.AuditLogger = &failingAuthAuditLogger{err: auditErr}
+		c.AuditLogger = &failingAuthAuditLogger{Err: auditErr}
 	})
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -154,7 +123,7 @@ func TestPIVLogin_DenyOutcome_AuditWriteFailure_Returns500(t *testing.T) {
 	server := newAuthTestServer(t, func(c *Config) {
 		c.PIVLogin = &PIVLoginOptions{Enabled: true, AllowUnattested: true}
 		c.AuthUserStore = &fakeAuthUserStore{user: auth.MTLSUser{Username: "alice", Enabled: false}}
-		c.AuditLogger = &failingAuthAuditLogger{err: errAssertAuditUnavailable}
+		c.AuditLogger = &failingAuthAuditLogger{Err: errAssertAuditUnavailable}
 	})
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -197,7 +166,7 @@ func TestAuthLogout_EmitsAuditEvent_OnSuccess(t *testing.T) {
 
 func TestAuthLogout_AuditWriteFailure_FailsLogout(t *testing.T) {
 	server := newAuthTestServer(t, func(c *Config) {
-		c.AuditLogger = &failingAuthAuditLogger{err: errAssertAuditUnavailable}
+		c.AuditLogger = &failingAuthAuditLogger{Err: errAssertAuditUnavailable}
 	})
 
 	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice"})

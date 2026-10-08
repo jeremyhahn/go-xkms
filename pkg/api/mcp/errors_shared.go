@@ -22,8 +22,8 @@ import (
 // classToJSONRPCCode translates apierrors.Class onto this transport's
 // JSON-RPC error code. It is total over every Class the apierrors tables
 // this package reads (ImportExportSentinelClasses, AEADSentinelClasses,
-// PIVSentinelClasses, BarrierSentinelClasses, PINSentinelClasses,
-// SealStoreSentinelClasses, CustodianSentinelClasses, and TPMPolicyClassOf)
+// PIVSentinelClasses, PINSentinelClasses,
+// SealStoreSentinelClasses, and TPMPolicyClassOf)
 // can produce;
 // jsonRPCCodeForClass's ErrCodeInternalError floor exists only for a Class a
 // future apierrors table introduces without a row here.
@@ -105,24 +105,9 @@ func mapPIVError(err error, operation string) error {
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
 }
 
-// mapBarrierError converts a barrier or Shamir domain error into a
-// *KeyOpError, classifying it through apierrors.BarrierSentinelClasses --
-// the table go-xkms#912 made this package share with
-// pkg/api/grpc/service_barrier_pin.go's mapBarrierError. Anything not in
-// that table is an internal fault.
-func mapBarrierError(err error, operation string) error {
-	if err == nil {
-		return nil
-	}
-	if class, ok := apierrors.ClassOf(apierrors.BarrierSentinelClasses, err); ok {
-		return classified(jsonRPCCodeForClass(class), &errs.Wrapped{Msg: operation, Err: err})
-	}
-	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
-}
-
 // mapPINError converts a PIN domain error into a *KeyOpError, classifying it
 // through apierrors.PINSentinelClasses -- the table go-xkms#773 made this
-// package share with pkg/api/grpc/service_barrier_pin.go's mapPINError,
+// package share with pkg/api/grpc/service_pin.go's mapPINError,
 // following the go-xkms#912 precedent set for PIV and barrier. Anything not
 // in that table is an internal fault.
 func mapPINError(err error, operation string) error {

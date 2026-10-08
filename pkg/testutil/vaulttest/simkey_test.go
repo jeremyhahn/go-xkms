@@ -25,7 +25,7 @@ import (
 
 func sealPIN(t *testing.T, pin string) *secure.Secret {
 	t.Helper()
-	sealed, err := secure.NewSecret([]byte(pin))
+	sealed, err := secure.NewSecret(t.Context(), []byte(pin))
 	require.NoError(t, err)
 	return sealed
 }

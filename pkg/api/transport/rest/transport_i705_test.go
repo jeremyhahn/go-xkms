@@ -201,34 +201,7 @@ func TestAlgorithms_MalformedResponse(t *testing.T) {
 
 // --- ClaimShareComplete ---
 
-func TestClaimShareComplete_Connected(t *testing.T) {
-	tr, srv := newI705RecordingTransport(t, mustJSON(t, transport.ClaimShareCompleteResponse{}))
-	_, err := tr.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, "/api/v1/init/claim-share/complete", srv.gotPath)
-}
-
-func TestClaimShareComplete_NotConnected(t *testing.T) {
-	tr := &Transport{config: transport.DefaultConfig()}
-	_, err := tr.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 // --- BarrierEnableEncryption ---
-
-func TestBarrierEnableEncryption_Connected(t *testing.T) {
-	tr, srv := newI705RecordingTransport(t, mustJSON(t, transport.BarrierEnableEncryptionResponse{Status: "started", Scope: "system"}))
-	resp, err := tr.BarrierEnableEncryption(context.Background(), &transport.BarrierEnableEncryptionRequest{Strategy: "passphrase"})
-	require.NoError(t, err)
-	assert.Equal(t, "started", resp.Status)
-	assert.Equal(t, "/api/v1/barrier/enable-encryption", srv.gotPath)
-}
-
-func TestBarrierEnableEncryption_NotConnected(t *testing.T) {
-	tr := &Transport{config: transport.DefaultConfig()}
-	_, err := tr.BarrierEnableEncryption(context.Background(), &transport.BarrierEnableEncryptionRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
 
 // --- PKCS11State* (Put, PutIfAbsent, CAS, Get, Delete, List; CAD has its own file) ---
 

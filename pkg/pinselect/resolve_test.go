@@ -301,15 +301,14 @@ func TestResolve_SelectFailurePropagatesOnFreshDataDir(t *testing.T) {
 }
 
 func TestResolve_SaveFailureOnFreshDataDirPropagates(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root ignores directory permission bits")
-	}
-
+	// A dangling symlink at the strategy path reads as "not persisted", so
+	// Resolve goes on to save, and the atomic writer refuses to write through
+	// the symlink. Unlike a read-only directory, this fails for root too.
 	pinDir := t.TempDir()
-	if err := os.Chmod(pinDir, 0500); err != nil {
-		t.Fatalf("Chmod: %v", err)
+	missing := filepath.Join(t.TempDir(), "missing")
+	if err := os.Symlink(missing, StrategyPath(pinDir)); err != nil {
+		t.Fatalf("Symlink: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(pinDir, 0700) })
 
 	_, _, err := Resolve(ResolveConfig{
 		PINDir: pinDir,

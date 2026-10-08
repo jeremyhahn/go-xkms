@@ -1976,7 +1976,7 @@ func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
 // path production code uses, and fails the test if it cannot be read.
 func secretBytes(t *testing.T, sv *types.SecretValue) []byte {
 	t.Helper()
-	b, err := types.SecretValueBytes(sv)
+	b, err := types.SecretValueBytes(t.Context(), sv)
 	require.NoError(t, err)
 	return b
 }

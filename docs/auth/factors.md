@@ -7,47 +7,29 @@ This is the surface that manages that set.
 ## Who owns what
 
 Factor records belong to **go-qrdb**. xkms stores none of them and adds no
-rules of its own. There are two paths to the same qrdb service:
+rules of its own, and it does not re-host the service:
 
 ```
 xkmsctl auth factor …                          (CLI)
   └─ qrdb SDK client (unix / grpc transport)
       └─ qrdb UserAuthFactorService            (registered by
                                                 pkg/server/qrdb_control_plane.go)
-
-web GUI / TS SDK
-  └─ REST /api/v1/factors/*        (pkg/api/rest/handlers_authfactor.go)
-      └─ XKMSService passthrough   (pkg/xkms/servicer_authfactor.go)
-          └─ qrdb UserAuthFactorClient   (embedded node)
 ```
 
-The REST proxy exists for HTTP-only consumers (the web GUI via the TS
-SDK); the CLI drives qrdb's own service directly.
+Every consumer reaches go-qrdb's `UserAuthFactorService` the same way,
+through the qrdb SDK client's `AuthFactors()` / `UserAuthFactors()`
+accessors. The former xkms REST proxy (`/api/v1/factors/*`), its
+`XKMSService` passthrough and the web console's Auth Factors page duplicated
+that service and were removed.
 
 ## Resolution is not authentication
 
-`POST /factors/login` maps a `(type, lookup_key)` pair to a principal. That
-is a database lookup and **nothing more**.
+go-qrdb's factor login lookup maps a `(type, lookup_key)` pair to a
+principal. That is a database lookup and **nothing more**.
 
 The hardware proof — a FIDO2 assertion, a PIV signature, an mTLS handshake —
 must be verified by the caller *before* the result is treated as an
-authenticated identity. Reaching this endpoint is not evidence that anyone
-proved possession of anything.
-
-## Endpoints
-
-| Method | Path | Purpose | Permission |
-|--------|------|---------|-----------|
-| GET | `/api/v1/factors?user_id=N` | List a user's factors (active and revoked) | `users:read` |
-| POST | `/api/v1/factors` | Enrol a factor (owner in body) | `users:update` |
-| GET | `/api/v1/factors/{factorID}` | Read one factor | `users:read` |
-| DELETE | `/api/v1/factors/{factorID}` | Revoke a factor | `users:update` |
-| PATCH | `/api/v1/factors/{factorID}` | Relabel a factor | `users:update` |
-| POST | `/api/v1/factors/{factorID}/rotate` | Add a replacement and revoke the old one atomically | `users:update` |
-| POST | `/api/v1/factors/login` | Resolve `(type, lookup_key)` to a principal | `users:read` |
-
-Mutations carry `users:update` because enrolling or revoking a factor changes
-who can log in as that user.
+authenticated identity.
 
 ### Lookup keys
 
@@ -60,8 +42,8 @@ who can log in as that user.
 ### Removing the last factor
 
 qrdb refuses to revoke a user's last active factor, because doing so locks
-them out. `?force=true` overrides that and moves the user to inactive. Force
-is opt-in — a routine delete never sets it.
+them out. Force (`xkmsctl auth factor remove --force`) overrides that and
+moves the user to inactive. It is opt-in — a routine delete never sets it.
 
 ## CLI
 
@@ -73,7 +55,7 @@ xkmsctl auth factor remove --factor-id f-123 [--force]
 xkmsctl auth factor rotate --factor-id f-123 --type piv
 ```
 
-The CLI does not use the REST proxy above. It derives a qrdb SDK
+The CLI derives a qrdb SDK
 transport (unix socket by default, `grpc://` / `grpcs://` per the
 standard `--server`/`--transport` conventions) and calls qrdb's
 `UserAuthFactorService` — hosted on xkmsd's gRPC server and unix socket
@@ -115,4 +97,5 @@ without importing `pkg/*`:
 - [PIV](../piv/README.md) — where PIV factors come from
 
 The N-factor model itself is specified in go-qrdb's
-`docs/08-bootstrap-auth-architecture.md` §5e; xkms implements the proxy only.
+`docs/08-bootstrap-auth-architecture.md` §5e; xkms contributes only the
+hardware factor verifiers.

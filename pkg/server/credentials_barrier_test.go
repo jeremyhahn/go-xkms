@@ -76,15 +76,18 @@ func TestCredentialBarrierStrategy_RoundTripsAcrossRestart(t *testing.T) {
 	roundTripped, err := second.CredentialService().RetrieveCredential(context.Background(), credName)
 	require.NoError(t, err, "credential stored under the barrier strategy must survive a restart")
 	require.Equal(t, credValue, roundTripped)
+
+	require.NoError(t, second.CredentialService().DeleteCredential(context.Background(), credName))
+	_, err = second.CredentialService().RetrieveCredential(context.Background(), credName)
+	require.ErrorIs(t, err, credentialspkg.ErrCredentialNotFound)
 }
 
 // TestNew_CredentialBarrierStrategy_UnsupportedConfigurationRefusedCleanly
 // covers the other half of go-xkms#812: a deployment whose barrier is NOT
-// the qrdb node's own (see CredentialsBarrierStrategySupported) can never
-// give the credential service a non-nil barrier before resolveConfigSecrets
-// and initializeBackends need to consume it -- the general (non-node) xkms
-// barrier is itself built from already-initialized backends
-// (buildHardwareSealStrategies), which is exactly the cycle
+// a standalone qrdb node's own (see CredentialsBarrierStrategySupported) has
+// no barrier in this process at all, so the credential service can never be
+// given a non-nil barrier before resolveConfigSecrets and initializeBackends
+// need to consume it -- which is exactly the configuration
 // config.Config.Validate() refuses at load time.
 //
 // Since go-xkms#666, New() itself calls Validate() first, so this exact

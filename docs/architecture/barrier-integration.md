@@ -148,7 +148,7 @@ No adapter layer is needed because `storage.Backend` and
 | PKCS#11 Strategy | `pkg/seal/strategy_pkcs11.go` | HSM token wrapping key |
 | Cloud Strategies | `pkg/seal/strategy_cloud.go` | AWS KMS, GCP KMS, Azure KV, Vault |
 | PlatformSealer | `pkg/seal/platform_sealer.go` | Strategy routing for arbitrary data |
-| TPM policies | `pkg/tpmpolicy/` | Named, TPM-authorized policies shared by TPM keys and sealed objects |
+| TPM policies | `pkg/tpm2/policy/` | Named, TPM-authorized policies shared by TPM keys and sealed objects |
 
 ## Shamir M-of-N Initialization Ceremony
 

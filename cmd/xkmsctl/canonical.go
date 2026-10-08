@@ -12,10 +12,10 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // canonical.go wires the locked canonical CLI surface for xkmsctl per
-// docs/08-bootstrap-auth-architecture.md §6. The canonical init / auth
-// / ceremony / credential / bootstrap sub-trees mirror qrdb's surface
-// 1:1; status / claim-cert / claim-share / sign-csr are registered
-// exactly once, under the "ceremony" group defined here.
+// docs/08-bootstrap-auth-architecture.md §6. The canonical auth /
+// credential / bootstrap sub-trees mirror qrdb's surface. The init
+// ceremony and holder quorum verbs are qrdb's own (qrdb ceremony,
+// barrier and holder commands); xkmsctl carries no copy of them.
 package main
 
 import (
@@ -23,33 +23,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
-
-// validBarrierStrategies is the canonical --barrier-strategy set per
-// docs/08-bootstrap-auth-architecture.md §2.
-var validBarrierStrategies = map[string]struct{}{
-	"passphrase": {},
-	"shamir":     {},
-	"pkcs11":     {},
-	"tpm2":       {},
-	"awskms":     {},
-	"gcpkms":     {},
-	"azurekv":    {},
-	"vault":      {},
-}
-
-// canonicalInitFlags holds the canonical init flag set per
-// docs/08-bootstrap-auth-architecture.md §6.
-type canonicalInitFlags struct {
-	soPin           string
-	userPin         string
-	barrierStrategy string
-	shares          int
-	threshold       int
-	hostname        string
-	sans            string
-}
 
 // PendingCredentialBackendError is emitted by "credential" subcommand
 // handlers before the credential service surface ships in the SDK.
@@ -62,142 +36,12 @@ func (e *PendingCredentialBackendError) Error() string {
 	return e.Op + " is not yet wired to the SDK CredentialService"
 }
 
-// canonicalSurfaceFlags is the package-level state used by the
-// canonical init handler. It is declared at package scope so the
-// PreRunE flag-resolution closure can see it without leaking the
-// fields to the legacy initCmd shape.
-var canonicalSurfaceFlags = &canonicalInitFlags{}
-
-// configureCanonicalSurface wires the canonical init / auth / ceremony /
-// credential subcommands onto the existing rootCmd. The function is
-// invoked from package init() AFTER the legacy initCmd has been
-// constructed so we can re-parent its children under the new
-// ceremonyCmd group.
+// configureCanonicalSurface wires the canonical auth / credential
+// subcommands onto the existing rootCmd.
 func configureCanonicalSurface() {
-	wireCanonicalInitFlags(initCmd)
-	initCmd.RunE = runCanonicalInit
-
 	rootCmd.AddCommand(newCanonicalAuthCmd())
-	rootCmd.AddCommand(newCanonicalCeremonyCmd())
 	augmentCanonicalCredentialCmd(credentialCmd)
 	bootstrapCmd.AddCommand(newCanonicalBootstrapDirectCmd())
-}
-
-// wireCanonicalInitFlags attaches the canonical flag set to the init
-// command. The flag set is identical across qrdb / xkmsd / quicbaasd /
-// platformctl per the locked canonical surface.
-func wireCanonicalInitFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&canonicalSurfaceFlags.soPin, "so-pin", "",
-		"Security Officer PIN (required, FIPS 140-3 / PCI-DSS v4 SO credential)")
-	cmd.Flags().StringVar(&canonicalSurfaceFlags.userPin, "user-pin", "",
-		"User PIN (required, FIPS 140-3 / PCI-DSS v4 user credential)")
-	cmd.Flags().StringVar(&canonicalSurfaceFlags.barrierStrategy, "barrier-strategy", "passphrase",
-		"Barrier sealing strategy: passphrase | shamir | pkcs11 | tpm2 | awskms | gcpkms | azurekv | vault")
-	cmd.Flags().IntVar(&canonicalSurfaceFlags.shares, "shares", 0,
-		"Total Shamir shares (required when --barrier-strategy=shamir)")
-	cmd.Flags().IntVar(&canonicalSurfaceFlags.threshold, "threshold", 0,
-		"Shamir M-of-N threshold (required when --barrier-strategy=shamir)")
-	cmd.Flags().StringVar(&canonicalSurfaceFlags.hostname, "hostname", "",
-		"FQDN written into the admin/server certificate CN")
-	cmd.Flags().StringVar(&canonicalSurfaceFlags.sans, "sans", "",
-		"Comma-separated additional DNS / IP SANs")
-
-	cmd.Long = `Bootstrap the xkms server in one call.
-
-Canonical init command per docs/08-bootstrap-auth-architecture.md §6.
-
-Canonical environment variables (Viper-bound):
-  XKMS_SO_PIN              equivalent to --so-pin
-  XKMS_USER_PIN            equivalent to --user-pin
-  XKMS_BARRIER_STRATEGY    equivalent to --barrier-strategy
-  XKMS_SHARES              equivalent to --shares
-  XKMS_THRESHOLD           equivalent to --threshold
-  XKMS_HOSTNAME            equivalent to --hostname
-  XKMS_SANS                equivalent to --sans`
-}
-
-// resolveCanonicalInitEnvFallbacks resolves XKMS_* env-var fallbacks
-// for any flag that was not explicitly set on the command line.
-func resolveCanonicalInitEnvFallbacks(cmd *cobra.Command, f *canonicalInitFlags) error {
-	v := viper.New()
-	v.SetEnvPrefix("XKMS")
-	v.AutomaticEnv()
-
-	bindings := map[string]string{
-		"so-pin":           "SO_PIN",
-		"user-pin":         "USER_PIN",
-		"barrier-strategy": "BARRIER_STRATEGY",
-		"shares":           "SHARES",
-		"threshold":        "THRESHOLD",
-		"hostname":         "HOSTNAME",
-		"sans":             "SANS",
-	}
-	for flagName, envKey := range bindings {
-		if err := v.BindEnv(flagName, "XKMS_"+envKey); err != nil {
-			return &InitEnvValueError{Flag: flagName, Err: err}
-		}
-		if !cmd.Flags().Changed(flagName) {
-			if val := v.GetString(flagName); val != "" {
-				if err := cmd.Flags().Set(flagName, val); err != nil {
-					return &InitEnvValueError{Flag: flagName, Err: err}
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// runCanonicalInit validates the canonical init flag set. The
-// xkmsctl client is a thin wrapper that delegates to the xkmsd
-// CeremonyService; per spec the underlying business logic stays
-// untouched.
-func runCanonicalInit(cmd *cobra.Command, _ []string) error {
-	f := canonicalSurfaceFlags
-
-	if err := resolveCanonicalInitEnvFallbacks(cmd, f); err != nil {
-		return err
-	}
-
-	// Treat empty PINs as "no canonical init invocation" — show help
-	// instead (claim-cert / claim-share / sign-csr / status live under
-	// "ceremony", not here).
-	if f.soPin == "" && f.userPin == "" {
-		return cmd.Help()
-	}
-	if f.soPin == "" {
-		return ErrInitSOPINRequired
-	}
-	if f.userPin == "" {
-		return ErrInitUserPINRequired
-	}
-	if _, ok := validBarrierStrategies[f.barrierStrategy]; !ok {
-		return &InitBarrierStrategyError{Strategy: f.barrierStrategy}
-	}
-	if f.barrierStrategy == "shamir" {
-		if f.shares < 2 {
-			return ErrInitSharesRequired
-		}
-		if f.threshold < 2 || f.threshold > f.shares {
-			return ErrInitThresholdRequired
-		}
-	} else if f.shares != 0 || f.threshold != 0 {
-		return ErrInitSharesRequireShamir
-	}
-
-	out := newOutputWriter(cmd.OutOrStdout())
-	out.println("=== xkmsctl init: Canonical Surface Validated ===")
-	out.printf("  BarrierStrategy: %s\n", f.barrierStrategy)
-	if f.barrierStrategy == "shamir" {
-		out.printf("  Shamir Mode:     %d-of-%d\n", f.threshold, f.shares)
-	}
-	out.printf("  Hostname:        %s\n", f.hostname)
-	if f.sans != "" {
-		out.printf("  SANs:            %s\n", f.sans)
-	}
-	out.println()
-	out.println("Note: SDK ceremony delegation pending; xkmsctl init wires the canonical")
-	out.println("shape that calls quicbaas SDK Ceremony().Initialize() once available.")
-	return out.Err()
 }
 
 // newCanonicalAuthCmd builds the canonical auth command group.
@@ -229,18 +73,6 @@ func newCanonicalAuthFactorCmd() *cobra.Command {
 	cmd.AddCommand(newAuthFactorRemoveRunCmd())
 	cmd.AddCommand(newAuthFactorRotateRunCmd())
 	cmd.AddCommand(newAuthFactorRelabelRunCmd())
-	return cmd
-}
-
-// newCanonicalCeremonyCmd builds the canonical ceremony command group,
-// attaching the status / claim-cert / claim-share / sign-csr handlers
-// defined in init.go directly: this is their only parent.
-func newCanonicalCeremonyCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "ceremony",
-		Short: "Ceremony state-machine ops (status, claim-cert, claim-share, sign-csr)",
-	}
-	cmd.AddCommand(initStatusCmd, claimCertCmd, claimShareCmd, initSignCSRCmd)
 	return cmd
 }
 

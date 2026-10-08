@@ -29,6 +29,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	dns01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01"
@@ -46,9 +47,9 @@ import (
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	nativeca "github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 )
 
 // ACME integration error types. These are returned from startACMEServer and
@@ -90,6 +91,10 @@ var (
 	// anchors cannot be loaded or none is configured. The server does not start:
 	// the challenge would otherwise verify against nothing.
 	ErrACMEDeviceAttestAnchors = errors.New("acme: failed to configure device-attest-01 trust anchors")
+
+	// ErrACMEDatastoreUnavailable is returned when the xkmsd server has no
+	// shared datastore for ACME to persist through and report health on.
+	ErrACMEDatastoreUnavailable = errors.New("acme: datastore not available")
 
 	// ErrACMEListen is returned when the ACME listener cannot be bound.
 	ErrACMEListen = errors.New("acme: failed to bind listener")
@@ -244,19 +249,16 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		return nil, &acmeInitError{Stage: "build device-attest-01 verifier", Sentinel: ErrACMEDeviceAttestAnchors, Err: err}
 	}
 
+	ds := srv.Datastore()
+	if ds == nil {
+		return nil, &acmeInitError{Stage: "resolve datastore", Err: ErrACMEDatastoreUnavailable}
+	}
+
 	// Create the storage factory for ACME accounts/orders/authorizations.
-	// ACME state persists through the server's configured datastore (the same
-	// durable engine — pebble/file/qrdb — as the rest of xkmsd), wrapped as a
-	// go-qrdb KVStore. This replaces the previous separate local object store.
-	stateBackend, err := srv.CreateStorage("acme-state")
-	if err != nil {
-		return nil, &acmeInitError{Stage: "create state store", Err: err}
-	}
-	stateKV, err := kvadapter.New(stateBackend)
-	if err != nil {
-		return nil, &acmeInitError{Stage: "wrap state store", Err: err}
-	}
-	storageFactory, err := acmeobjstore.NewFactoryFromKVStore(stateKV)
+	// ACME entities persist through the server's datastore: the DAOs come
+	// from its go-qrdb DAO factory, so ACME state lives in the same
+	// configured engine as the rest of xkmsd.
+	storageFactory, err := acmeobjstore.NewFactory(ds.DAOFactory())
 	if err != nil {
 		return nil, &acmeInitError{Stage: "create storage factory", Err: err}
 	}
@@ -267,6 +269,11 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	// Manager through both means HealthHandler reports every breaker from a
 	// single registry.
 	breakers := circuitbreaker.NewManager()
+
+	// HealthHandler reports the shared datastore's readiness through the
+	// go-qrdb SDK health checker alongside the breakers above.
+	health := qrdbsdk.NewHealthChecker()
+	health.RegisterCheck(datastore.HealthCheckName, ds.HealthCheck)
 
 	// Build the challenge verifiers based on configured challenge types.
 	challengeMap, attestingVerifiers := buildChallengeMap(acmeCfg.Challenges, acmeCfg.Resilience, breakers, deviceAttest)
@@ -361,6 +368,7 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		StorageFactory:              storageFactory,
 		TermsOfService:              acmeCfg.TermsOfService,
 		Breakers:                    breakers,
+		Health:                      health,
 		StorageBreaker:              acmeCfg.Resilience.Storage.CircuitBreakerConfig("storage"),
 		KMSBreaker:                  acmeCfg.Resilience.KMS.CircuitBreakerConfig("kms"),
 		DegradationCacheTTL:         acmeCfg.Resilience.Degradation.ResolveCacheTTL(),

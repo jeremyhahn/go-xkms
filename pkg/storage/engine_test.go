@@ -221,49 +221,64 @@ func TestOpenEngineMemory(t *testing.T) {
 	}
 }
 
-// TestOpenEngineFileFlatLayout is the no-migration regression guard: the file
-// engine must write one plain file per key at <path>/<key>, matching xkms's
-// historical on-disk format exactly.
-func TestOpenEngineFileFlatLayout(t *testing.T) {
+// TestOpenEngineFileHashedLayout checks that the file engine persists a record
+// across a reopen and stores it under go-qrdb's hashed layout (go-qrdb#592):
+// the key's '/' segments never become directories under the root.
+func TestOpenEngineFileHashedLayout(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	b, err := OpenEngine(EngineConfig{Kind: EngineFile, Path: dir})
 	if err != nil {
 		t.Fatalf("OpenEngine(file): %v", err)
 	}
-	t.Cleanup(func() { _ = b.Close() })
-
 	if err := b.Put(ctx, "staticpw/alice", []byte("secret")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	onDisk := filepath.Join(dir, "staticpw", "alice")
-	data, err := os.ReadFile(onDisk)
-	if err != nil {
-		t.Fatalf("expected flat file at %s: %v", onDisk, err)
+	if err := b.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
-	if string(data) != "secret" {
-		t.Fatalf("on-disk value = %q, want secret", data)
+
+	if _, err := os.Stat(filepath.Join(dir, "staticpw")); !os.IsNotExist(err) {
+		t.Fatalf("key segment became a directory under the root (stat err = %v)", err)
 	}
-	// Round-trip through the Backend confirms key↔path symmetry.
-	got, err := b.Get(ctx, "staticpw/alice")
+
+	reopened := openFileEngine(t, dir)
+	got, err := reopened.Get(ctx, "staticpw/alice")
 	if err != nil || string(got) != "secret" {
-		t.Fatalf("Get = %q, %v; want secret", got, err)
+		t.Fatalf("Get after reopen = %q, %v; want secret", got, err)
 	}
 }
 
 func TestOpenEngineEmptyKindDefaultsToFile(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	b, err := OpenEngine(EngineConfig{Path: dir})
 	if err != nil {
 		t.Fatalf("OpenEngine(empty kind): %v", err)
 	}
-	t.Cleanup(func() { _ = b.Close() })
-	if err := b.Put(context.Background(), "k", []byte("v")); err != nil {
+	if err := b.Put(ctx, "k", []byte("v")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "k")); err != nil {
-		t.Fatalf("empty kind did not default to file engine: %v", err)
+	if err := b.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
+
+	// Only a file engine's directory reopens as one and still holds the record.
+	reopened := openFileEngine(t, dir)
+	if got, err := reopened.Get(ctx, "k"); err != nil || string(got) != "v" {
+		t.Fatalf("empty kind did not default to file engine: Get = %q, %v", got, err)
+	}
+}
+
+// openFileEngine reopens dir as a file engine, closed when the test ends.
+func openFileEngine(t *testing.T, dir string) Backend {
+	t.Helper()
+	b, err := OpenEngine(EngineConfig{Kind: EngineFile, Path: dir})
+	if err != nil {
+		t.Fatalf("reopen file engine: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	return b
 }
 
 func TestOpenEnginePebble(t *testing.T) {

@@ -47,7 +47,7 @@ func testRegistry(t *testing.T) *seal.BarrierRegistry {
 	)
 	require.NoError(t, err)
 
-	creds := seal.MustCredentials([]byte("test-password"))
+	creds := seal.MustCredentials(t.Context(), []byte("test-password"))
 	defer creds.Secret.Destroy()
 	require.NoError(t, barrier.Initialize(context.Background(), creds))
 
@@ -60,10 +60,10 @@ func testRegistry(t *testing.T) *seal.BarrierRegistry {
 // unsealed TenantBarrier.
 func testRegisteredTenant(t *testing.T, registry *seal.BarrierRegistry, tenantID string) *seal.TenantBarrier {
 	t.Helper()
-	tb, err := registry.RegisterTenant(tenantID)
+	tb, err := registry.RegisterTenantDefault(tenantID)
 	require.NoError(t, err)
 
-	tenantCreds := seal.MustCredentials([]byte("tenant-password"))
+	tenantCreds := seal.MustCredentials(t.Context(), []byte("tenant-password"))
 	defer tenantCreds.Secret.Destroy()
 	require.NoError(t, registry.InitializeTenant(context.Background(), tenantID, tenantCreds))
 	require.False(t, tb.IsSealed(), "tenant barrier should be unsealed after initialization")
@@ -152,7 +152,7 @@ func TestAccess_TenantLocalOfficerIsScoped(t *testing.T) {
 		var notFound *ErrTenantNotFound
 		require.ErrorAs(t, err, &notFound, roleName)
 
-		_, err = registry.RegisterTenant("tenant-a")
+		_, err = registry.RegisterTenantDefault("tenant-a")
 		require.NoError(t, err)
 		_, err = Access(identity, registry)
 		var sealed *ErrTenantSealed
@@ -179,7 +179,7 @@ func TestAccess_SORoleNameConfersNothing(t *testing.T) {
 	require.ErrorAs(t, err, &notFound)
 
 	registry := testRegistry(t)
-	_, err = registry.RegisterTenant("sealed-tenant")
+	_, err = registry.RegisterTenantDefault("sealed-tenant")
 	require.NoError(t, err)
 	identity.TenantID = "sealed-tenant"
 	_, err = Access(identity, registry)
@@ -213,7 +213,7 @@ func TestAccess_TenantNotFound(t *testing.T) {
 
 func TestAccess_TenantSealed(t *testing.T) {
 	registry := testRegistry(t)
-	_, err := registry.RegisterTenant("sealed-tenant")
+	_, err := registry.RegisterTenantDefault("sealed-tenant")
 	require.NoError(t, err)
 
 	identity := &auth.Identity{Subject: "tenant-user", TenantID: "sealed-tenant", Roles: []string{"operator"}}

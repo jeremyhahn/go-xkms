@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-10-02
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Exported surface — `pkg/webauthn`
 
@@ -62,22 +62,31 @@ neither is deprecated.
 ### Store interfaces (`interfaces.go`)
 
 `UserStore`, `SessionStore`, `CredentialStore` — method sets in
-[`architecture.md`](architecture.md). Implementations: `memory_stores.go`,
-`qrdb_userstore.go`, `backend_stores.go`.
+[`architecture.md`](architecture.md). One implementation each:
+`qrdb_userstore.go` (users are go-qrdb's), `credential_store.go` (credentials
+are go-qrdb DAO entities) and `session_store.go` (sessions, in memory).
+
+**One credential store, on the injected DAO factory.**
+`NewQRDBUserStoreAdapter(QRDBUserStoreOptions{Users, DAOFactory, TenantID})`
+(`qrdb_userstore.go:58`) returns the user store and the credential store
+together; a nil `DAOFactory` is refused with `*QRDBAdapterConfigError`. The
+credential store (`credential_store.go:59`) is built with `dao.New` on the
+factory's default database, entity type `webauthn_credentials`. Each credential
+is a `credentialEntity` whose ID is a SHA-256 of the base64url credential ID
+and whose `UserID` is indexed, so lookup by credential ID is a natural-key read
+and lookup by user is an indexed query. `pkg/webauthn` never imports
+`pkg/datastore`: xkmsd passes `Datastore.DAOFactory()`, the API-module host
+passes `HostConfig.DAOFactory`, and tests use `testutil.NewMemoryDAOFactory()`.
 
 **`CredentialStore.Save` creates and `Update` edits (go-xkms#1295).** `Save`
 refuses a credential ID that is already stored, under any account, with
-`ErrCredentialAlreadyExists` and leaves the stored record alone: the qrdb store
-writes with `PutIfAbsent`, the backend store with `storage.Backend.PutIfAbsent`,
-the memory store under its lock. `Update` is the path a login's sign counter,
-clone flag and last-used time take: it requires the credential to exist
+`ErrCredentialAlreadyExists` and leaves the stored record alone (the DAO's
+`SaveIfAbsent`). `Update` is the path a login's sign counter, clone flag and
+last-used time take: it requires the credential to exist
 (`ErrCredentialNotFound`) and to belong to the user the update names
-(`ErrCredentialOwnerMismatch`). The qrdb store's `Update` is a `CompareAndSwap`
-against the record it checked, so a credential deleted or replaced meanwhile is
-never resurrected (`ErrCredentialUpdateConflict`); the backend store checks and
-then writes. `NewQRDBUserStoreAdapter` therefore requires a
-`qrdbtransport.GuardedKVClient` and fails with `*GuardedKVUnsupportedError`
-without one — the same capability `token.NewQRDBRefreshStore` requires.
+(`ErrCredentialOwnerMismatch`). It is a `CompareAndSwap` against the record it
+checked, so a credential deleted or replaced meanwhile is never resurrected
+(`ErrCredentialUpdateConflict`).
 
 **`SessionStore` contract change:** The interface now defines an atomic `Take`
 method that claims a session in one indivisible operation:
@@ -234,8 +243,9 @@ ceremony create a duplicate account; a false error costs a retry.
 
 ## Persistence
 
-Through the three store interfaces. Production wiring is go-qrdb via
-`go-qrdb/sdk/go` (`qrdb_userstore.go`, `backend_stores.go`). Credentials carry
+Through the three store interfaces. Users are go-qrdb's, through
+`go-qrdb/sdk/go` (`qrdb_userstore.go`); credentials are go-qrdb DAO entities
+on the injected DAO factory (`credential_store.go`). Credentials carry
 the credential id, public key, AAGUID, sign counter and user handle. Sessions
 are short-lived and in memory; see §"Session lifetime and the session cap".
 
@@ -244,7 +254,11 @@ qrdb's identity.
 
 ### Credential-store decoration — the composed-host seam
 
-`rest.BuildWebAuthnService` derives the qrdb-backed credential store itself.
+`rest.BuildWebAuthnService` (`pkg/api/rest/host.go:398`) derives the
+DAO-backed credential store itself from `WebAuthnServiceParams.DAOFactory`
+(`:352`; the self-built host surface takes it as `HostConfig.DAOFactory`,
+`:635`). `rest.NewServer` builds no stores of its own: a WebAuthn config
+without a pre-built service is refused with `rest.ErrWebAuthnServiceRequired`.
 A composing host that needs its own side effect on every registration served
 by xkms's relying party supplies a decorator rather than a second relying
 party over the same store:
@@ -297,23 +311,22 @@ session store is bounded two ways:
   on the service's own store. The default interval,
   `DefaultSessionSweepInterval` (`session_sweeper.go:24`), is one minute.
 - **Capped.** `MemorySessionStore` holds at most `DefaultMaxSessions` (10,000,
-  `memory_stores.go:180`; `WithMaxSessions`, `:168`, overrides it). At the cap
-  `Save` (`:238`) first removes expired sessions itself, and refuses with
+  `session_store.go:64`; `WithMaxSessions`, `:52`, overrides it). At the cap
+  `Save` (`:122`) first removes expired sessions itself, and refuses with
   `*SessionLimitError` (`errors.go:79`; `IsSessionLimit`, `:90`) only when
   every held session is still live. Transports map it to 503 /
   `ResourceExhausted` ([api.md](api.md) §"Status and error mapping").
 
 **One owner for the sweeper.** xkmsd owns the one `Service` shared by the
 browser and SDK ceremonies, so `pkg/server` runs its sweeper:
-`startWebAuthnSessionSweeper` (`pkg/server/server.go:2698`), called from
-`Start` (`:2664`), runs it on a goroutine tracked by the server's wait group
+`startWebAuthnSessionSweeper` (`pkg/server/server.go:2634`), called from
+`Start` (`:2524`), runs it on a goroutine tracked by the server's wait group
 under the server context. `Shutdown` cancels that context and waits on the
 group, so the sweeper stops with the server and does not leak.
 
 A composing host's self-built surface (`rest.NewHostServer`) has no lifecycle
 hook to stop a goroutine, so it runs no sweeper; the sweep-on-save at the cap
-keeps its store bounded and self-healing. `rest.WebAuthnStores`
-`StartCleanupRoutine` is a thin wrapper over the same `SweepSessions`.
+keeps its store bounded and self-healing.
 
 ### Session expiry takes an injectable clock
 
@@ -321,8 +334,7 @@ keeps its store bounded and self-healing. `rest.WebAuthnStores`
 `func() time.Time` supplied by `WithClock` on `NewMemorySessionStore` /
 `NewMemorySessionStoreWithTTL`. It is optional and variadic: nil, or no option
 at all, selects `time.Now`, so production behaviour and every existing call
-site are unchanged. `rest.WebAuthnStoresConfig` carries the same seam through
-as its `Clock` field.
+site are unchanged.
 
 It exists for tests. Expiry is a comparison against the wall clock, so a test
 that establishes it by sleeping is asserting the machine was not busy —
@@ -335,19 +347,21 @@ they can (#287).
 against the store's clock. `session_sweeper_test.go` therefore advances an
 injected clock past the TTL, runs the sweeper with a one-millisecond interval,
 and waits on the *event* — `MemorySessionStore.Count()` reaching the expected
-value — rather than on a duration. `StartCleanupRoutine`'s own test keeps real
-time and a short TTL for the same reason.
+value — rather than on a duration.
 
 ## Test strategy
 
 - **Unit** — `service_test.go`, `config_test.go`, `types_test.go`,
   `registration_policy_test.go`, `verification_error_test.go`,
-  `error_paths_test.go`, `memory_stores_test.go`, `backend_stores_test.go`,
-  `backend_stores_gaps_test.go`, `mock_authenticator_test.go`,
+  `error_paths_test.go`, `session_store_test.go`, `mock_authenticator_test.go`,
   `session_sweeper_test.go` (cap refuses then recovers after a sweep, the
   sweeper removes expired sessions and returns when its context ends). The
   lifecycle ownership is pinned in `pkg/server/rest_limits_test.go`.
-- **Store conformance** — `qrdb_userstore_test.go`, `qrdb_userstore_gaps_test.go`,
+- **Store conformance** — `credential_store_test.go` (credentials round-trip
+  through a real in-process DAO, lookup by credential ID and by user, sign
+  counts persist, a duplicate ID is refused, not-found is
+  `ErrCredentialNotFound`, a nil factory is refused),
+  `qrdb_userstore_test.go`, `qrdb_userstore_gaps_test.go`,
   `qrdb_error_paths_test.go`, and `qrdb_register_login_repro_test.go` (a
   regression reproduction kept as a permanent test).
 - **Conformance** — `conformance_test.go`.

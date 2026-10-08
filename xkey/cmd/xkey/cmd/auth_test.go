@@ -1233,6 +1233,7 @@ func newAuthRegisterCmd(t *testing.T, out *bytes.Buffer) *cobra.Command {
 	// cannot drift from the flags resolvePINInput reads.
 	addPINFlags(cmd)
 	cmd.SetOut(out)
+	cmd.SetContext(t.Context())
 	return cmd
 }
 
@@ -1247,6 +1248,7 @@ func newAuthLoginCmd(t *testing.T, out *bytes.Buffer) *cobra.Command {
 	cmd.Flags().String("tls-ca", "", "")
 	addPINFlags(cmd)
 	cmd.SetOut(out)
+	cmd.SetContext(t.Context())
 	return cmd
 }
 

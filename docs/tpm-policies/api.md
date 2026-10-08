@@ -2,7 +2,7 @@
 
 > **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-30
 
-Design: [`architecture.md`](architecture.md). Service: `pkg/tpmpolicy.Service`,
+Design: [`architecture.md`](architecture.md). Service: `pkg/tpm2/policy.Service`,
 reached only through `XKMSService` (`pkg/xkms/servicer_tpm_policy.go`), which
 every transport calls.
 

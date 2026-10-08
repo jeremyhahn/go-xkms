@@ -304,8 +304,6 @@ func (m *mockTPM) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([
 func (m *mockTPM) SetHierarchyAuth(oldSecret, newSecret types.Password, hierarchy *tpm2.TPMHandle) error {
 	return nil
 }
-func (m *mockTPM) SecretFromShares(shares []string) (string, error)        { return "", nil }
-func (m *mockTPM) ShareSecret(secret []byte, shares int) ([]string, error) { return nil, nil }
 func (m *mockTPM) SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 	return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, nil
 }

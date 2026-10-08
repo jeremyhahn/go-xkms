@@ -158,7 +158,7 @@ func (b *Backend) Config() *Config {
 // leaves the PIN's SecretValue enclave only for the duration of this
 // accessor's return value. Returns "" when no PIN is configured.
 func (b *Backend) userPIN() (string, error) {
-	pin, err := types.SecretValueBytes(b.config.PIN)
+	pin, err := types.SecretValueBytes(context.Background(), b.config.PIN)
 	if err != nil {
 		return "", err
 	}
@@ -169,7 +169,7 @@ func (b *Backend) userPIN() (string, error) {
 // the same miekg/pkcs11 boundary userPIN documents. Returns "" when no SO
 // PIN is configured.
 func (b *Backend) soPIN() (string, error) {
-	pin, err := types.SecretValueBytes(b.config.SOPIN)
+	pin, err := types.SecretValueBytes(context.Background(), b.config.SOPIN)
 	if err != nil {
 		return "", err
 	}
@@ -715,11 +715,11 @@ func (b *Backend) Initialize(soPIN, userPIN string) error {
 		return ErrInvalidPINLength
 	}
 
-	soSecret, err := types.NewLiteralSecretValue([]byte(soPIN))
+	soSecret, err := types.NewLiteralSecretValue(context.Background(), []byte(soPIN))
 	if err != nil {
 		return err
 	}
-	userSecret, err := types.NewLiteralSecretValue([]byte(userPIN))
+	userSecret, err := types.NewLiteralSecretValue(context.Background(), []byte(userPIN))
 	if err != nil {
 		return err
 	}

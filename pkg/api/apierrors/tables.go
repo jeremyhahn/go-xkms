@@ -27,7 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -106,7 +106,7 @@ var PIVSentinelClasses = []SentinelClass{
 // (SetSOPIN, SetUserPIN, ChangeSOPIN, ChangeUserPIN, VerifySOPIN,
 // VerifyUserPIN, GetLockoutStatus, ResetLockout) return, plus the
 // xkms.ErrNotConfigured every one of those operations returns when no
-// qrdbsdk.PINBackend is composed. Both pkg/api/grpc/service_barrier_pin.go's
+// qrdbsdk.PINBackend is composed. Both pkg/api/grpc/service_pin.go's
 // mapPINError and pkg/api/mcp's mirror of it read this table (go-xkms#773,
 // following the go-xkms#912 precedent set for PIV and barrier).
 var PINSentinelClasses = []SentinelClass{
@@ -124,75 +124,6 @@ var PINSentinelClasses = []SentinelClass{
 	// tenant-scoped caller is refused with xkms.TenantBindingError, which
 	// unwraps to go-qrdb's unknown-tenant sentinel (go-xkms#1227).
 	{qrdbsdk.ErrTenantMissing, ClassNotFound},
-}
-
-// CustodianSentinelClasses classifies the go-qrdb custodian-group domain
-// errors (qrdbsdk.ErrCeremonyGroupNotFound, ErrCeremonyGroupAlreadyExists,
-// ...) surfaced by the embedded node's CustodianGroupClient, via
-// pkg/xkms/servicer_custodian.go's CreateCustodianGroup et al., plus the
-// xkms.ErrNotConfigured / xkms.ErrNilRequest sentinels those same operations
-// return when no client is composed or the request is nil. Both
-// pkg/api/grpc/service_custodian_share_tenant.go's mapCustodianError and
-// pkg/api/mcp's mirror of it read this table (go-xkms#773, following the
-// go-xkms#912 precedent set for PIV and barrier).
-var CustodianSentinelClasses = []SentinelClass{
-	{xkms.ErrNotConfigured, ClassUnavailable},
-	{xkms.ErrNilRequest, ClassInvalidArgument},
-	{qrdbsdk.ErrCeremonyGroupNotFound, ClassNotFound},
-	{qrdbsdk.ErrCeremonyMemberNotFound, ClassNotFound},
-	{qrdbsdk.ErrCeremonyUserNotFound, ClassNotFound},
-	{qrdbsdk.ErrCeremonyGroupAlreadyExists, ClassAlreadyExists},
-	{qrdbsdk.ErrCeremonyMemberAlreadyExists, ClassAlreadyExists},
-	{qrdbsdk.ErrCeremonyGroupFull, ClassFailedPrecondition},
-	{qrdbsdk.ErrCeremonyInsufficientMembers, ClassFailedPrecondition},
-	{qrdbsdk.ErrCeremonyEmptyGroupID, ClassInvalidArgument},
-	{qrdbsdk.ErrCeremonyEmptyGroupName, ClassInvalidArgument},
-	{qrdbsdk.ErrCeremonyInvalidThreshold, ClassInvalidArgument},
-	{qrdbsdk.ErrCeremonyInvalidTotal, ClassInvalidArgument},
-}
-
-// BarrierSentinelClasses classifies the pkg/seal barrier and Shamir
-// domain errors. Both pkg/api/grpc's mapBarrierError and pkg/api/mcp's
-// mirror of it read this table (go-xkms#912).
-var BarrierSentinelClasses = []SentinelClass{
-	// Core barrier errors.
-	{seal.ErrSealed, ClassFailedPrecondition},
-	{seal.ErrAlreadyUnsealed, ClassAlreadyExists},
-	{seal.ErrAlreadyInitialized, ClassAlreadyExists},
-	{seal.ErrNotInitialized, ClassFailedPrecondition},
-	{seal.ErrInvalidCredentials, ClassUnauthenticated},
-	// Software strategies report a wrong passphrase as ErrDecryptionFailed;
-	// hardware ones raise ErrInvalidCredentials. Both are Unauthenticated.
-	{seal.ErrDecryptionFailed, ClassUnauthenticated},
-	{seal.ErrNoAvailableStrategy, ClassUnavailable},
-	{seal.ErrStrategyNotFound, ClassNotFound},
-	{seal.ErrStrategyMismatch, ClassFailedPrecondition},
-	{seal.ErrCorruptRootKey, ClassDataLoss},
-	{seal.ErrEncryptorNotAvailable, ClassFailedPrecondition},
-	// BarrierEnableEncryption's target tenant is caller-supplied; XKMSService's
-	// tenant binding refuses a foreign one, and every system-barrier operation
-	// refuses a tenant-scoped caller outright (go-xkms#1227), with an error
-	// that unwraps to go-qrdb's unknown-tenant sentinel
-	// (xkms.TenantBindingError).
-	{qrdbsdk.ErrTenantMissing, ClassNotFound},
-	// XKMSService returns ErrNotConfigured when no system barrier is composed.
-	{xkms.ErrNotConfigured, ClassUnavailable},
-
-	// Shamir secret sharing errors.
-	{seal.ErrShamirNotConfigured, ClassFailedPrecondition},
-	{seal.ErrShamirThresholdInvalid, ClassInvalidArgument},
-	{seal.ErrShamirQuorumIncomplete, ClassFailedPrecondition},
-	{seal.ErrShamirQuorumExpired, ClassDeadlineExceeded},
-	{seal.ErrShamirDuplicateShare, ClassAlreadyExists},
-	{seal.ErrShamirCombineFailed, ClassInternal},
-	{seal.ErrShamirShareNotFound, ClassNotFound},
-	{seal.ErrShamirNoSharesFound, ClassNotFound},
-	{seal.ErrShamirVerificationFailed, ClassDataLoss},
-	{seal.ErrShamirStorageFailed, ClassInternal},
-
-	// Recovery and root token errors.
-	{seal.ErrRecoveryKeysNotFound, ClassNotFound},
-	{seal.ErrRootTokenVerificationFailed, ClassUnauthenticated},
 }
 
 // TPMPolicySentinelClasses classifies the sentinel errors of the TPM policy

@@ -32,6 +32,7 @@ import (
 	"time"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -784,7 +785,7 @@ Example:
 
 		if keyOutputFile != "" {
 			// #nosec G306 - Key files should be protected
-			if err := os.WriteFile(keyOutputFile, keyPEM, 0600); err != nil {
+			if err := fsutil.WriteFileAtomic(keyOutputFile, keyPEM, 0600); err != nil {
 				handleError(&WrappedError{Sentinel: ErrWritePrivateKeyFailed, Err: err})
 				return
 			}
@@ -1012,7 +1013,7 @@ Examples:
 
 		if keyOutputFile != "" {
 			// #nosec G306 - Key files should be protected
-			if err := os.WriteFile(keyOutputFile, keyPEM, 0600); err != nil {
+			if err := fsutil.WriteFileAtomic(keyOutputFile, keyPEM, 0600); err != nil {
 				handleError(&WrappedError{Sentinel: ErrWritePrivateKeyFailed, Err: err})
 				return
 			}

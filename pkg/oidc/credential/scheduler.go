@@ -56,6 +56,11 @@ func (s *Service) Start(interval time.Duration) {
 // interval.
 func (s *Service) schedule(ctx context.Context, interval time.Duration) {
 	defer close(s.done)
+	leaseCtx, err := s.locks.leaseContext(ctx)
+	if err != nil {
+		s.logger.Error("oidc credential: scheduler cannot take its lease", "error", err)
+		return
+	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -64,12 +69,12 @@ func (s *Service) schedule(ctx context.Context, interval time.Duration) {
 			return
 		case <-timer.C:
 		}
-		lease, held, err := s.locks.tryAcquire(ctx, schedulerLeaseKey, 3*interval)
+		lease, held, err := s.locks.tryAcquire(leaseCtx, schedulerLeaseKey, 3*interval)
 		switch {
 		case err != nil:
 			s.logger.Warn("oidc credential: scheduler campaign failed", "error", err)
 		case !held:
-			s.lead(ctx, lease, interval)
+			s.lead(ctx, leaseCtx, lease, interval)
 		}
 		timer.Reset(interval)
 	}
@@ -77,13 +82,13 @@ func (s *Service) schedule(ctx context.Context, interval time.Duration) {
 
 // lead refreshes due credentials every interval until ctx ends or the
 // leadership lease is lost. A nil lease is a standalone node's permanent
-// leadership.
-func (s *Service) lead(ctx context.Context, lease qrdbsdk.Lease, interval time.Duration) {
+// leadership. leaseCtx is the context the lease's own calls run on.
+func (s *Service) lead(ctx, leaseCtx context.Context, lease qrdbsdk.Lease, interval time.Duration) {
 	var lost <-chan struct{}
 	if lease != nil {
 		lost = lease.Done()
 		defer func() {
-			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), interval)
+			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(leaseCtx), interval)
 			defer cancel()
 			if err := lease.Release(releaseCtx); err != nil {
 				s.logger.Debug("oidc credential: scheduler lease release failed", "error", err)
@@ -107,7 +112,7 @@ func (s *Service) lead(ctx context.Context, lease qrdbsdk.Lease, interval time.D
 		case <-ticker.C:
 		}
 		if lease != nil {
-			if err := lease.Renew(ctx); err != nil {
+			if err := lease.Renew(leaseCtx); err != nil {
 				s.logger.Info("oidc credential: scheduler leadership not renewed", "error", err)
 				return
 			}

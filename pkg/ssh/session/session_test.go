@@ -173,7 +173,7 @@ func generateHostSigner(t *testing.T) ssh.Signer {
 // generateClientKey returns an enclave-backed *keys.Key for auth.
 func generateClientKey(t *testing.T) *keys.Key {
 	t.Helper()
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519, Comment: "test"})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519, Comment: "test"})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestClose_IsIdempotent(t *testing.T) {
 		t.Fatalf("second Close: %v", err)
 	}
 	// Key enclave should be destroyed — subsequent Open must fail.
-	if _, oerr := clientKey.Material.Open(); oerr == nil {
+	if _, oerr := clientKey.Material.Open(t.Context()); oerr == nil {
 		// Material is nilled out after Destroy, so Open returns a
 		// NilSecretError; the fact that we got an error at all
 		// confirms the enclave was destroyed.

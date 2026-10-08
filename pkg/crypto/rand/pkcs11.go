@@ -16,6 +16,7 @@
 package rand
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -76,7 +77,7 @@ func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 
 	// Login if PIN is required
 	if config.PINRequired && config.PIN != nil {
-		buf, openErr := config.PIN.Open()
+		buf, openErr := config.PIN.Open(context.Background())
 		if openErr != nil {
 			closeErr := ctx.CloseSession(session)
 			finalizeErr := ctx.Finalize()

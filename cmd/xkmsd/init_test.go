@@ -14,334 +14,20 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/iotest"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
-	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
-// generateTestCSR creates a PEM-encoded ECDSA P-256 CSR for testing.
-func generateTestCSR(t *testing.T, cn string) []byte {
-	t.Helper()
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-
-	template := &x509.CertificateRequest{
-		Subject: pkix.Name{
-			CommonName: cn,
-		},
-	}
-
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, key)
-	if err != nil {
-		t.Fatalf("create CSR: %v", err)
-	}
-
-	return pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE REQUEST",
-		Bytes: csrDER,
-	})
-}
-
-// writeTestCSR writes a PEM-encoded CSR to a temporary file.
-func writeTestCSR(t *testing.T, dir, filename string, pemData []byte) string {
-	t.Helper()
-	path := filepath.Join(dir, filename)
-	if err := os.WriteFile(path, pemData, 0600); err != nil {
-		t.Fatalf("write CSR file: %v", err)
-	}
-	return path
-}
-
-func TestParseOfficerFlag_ValidFormat(t *testing.T) {
-	username, csrPath, err := parseOfficerFlag("admin1@example.com:/path/to/admin1.csr")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if username != "admin1@example.com" {
-		t.Errorf("expected username admin1@example.com, got %q", username)
-	}
-	if csrPath != "/path/to/admin1.csr" {
-		t.Errorf("expected CSR path /path/to/admin1.csr, got %q", csrPath)
-	}
-}
-
-func TestParseOfficerFlag_MissingColon(t *testing.T) {
-	_, _, err := parseOfficerFlag("admin1-no-colon")
-	if err == nil {
-		t.Fatal("expected error for missing colon")
-	}
-	if !errors.Is(err, ErrInvalidOfficerFormat) {
-		t.Errorf("expected ErrInvalidOfficerFormat, got %v", err)
-	}
-}
-
-func TestParseOfficerFlag_EmptyUsername(t *testing.T) {
-	_, _, err := parseOfficerFlag(":/path/to/csr.pem")
-	if err == nil {
-		t.Fatal("expected error for empty username")
-	}
-	if !errors.Is(err, ErrEmptyOfficerUsername) {
-		t.Errorf("expected ErrEmptyOfficerUsername, got %v", err)
-	}
-}
-
-func TestParseOfficerFlag_EmptyCSRPath(t *testing.T) {
-	_, _, err := parseOfficerFlag("admin1:")
-	if err == nil {
-		t.Fatal("expected error for empty CSR path")
-	}
-	if !errors.Is(err, ErrEmptyCSRPath) {
-		t.Errorf("expected ErrEmptyCSRPath, got %v", err)
-	}
-	// The rendered message (what an operator sees in the CLI's error output)
-	// must name the sentinel condition, not just satisfy errors.Is.
-	var detailErr *WrappedDetailError
-	if !errors.As(err, &detailErr) {
-		t.Fatalf("expected *WrappedDetailError, got %T", err)
-	}
-	if got := detailErr.Error(); !strings.Contains(got, ErrEmptyCSRPath.Error()) {
-		t.Errorf("WrappedDetailError.Error() = %q, want it to contain %q", got, ErrEmptyCSRPath.Error())
-	}
-}
-
-func TestParseOfficerFlag_WhitespaceHandling(t *testing.T) {
-	username, csrPath, err := parseOfficerFlag("  admin1  :  /path/to/csr.pem  ")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if username != "admin1" {
-		t.Errorf("expected trimmed username admin1, got %q", username)
-	}
-	if csrPath != "/path/to/csr.pem" {
-		t.Errorf("expected trimmed CSR path /path/to/csr.pem, got %q", csrPath)
-	}
-}
-
-func TestReadAndValidateCSR_ValidCSR(t *testing.T) {
-	dir := t.TempDir()
-	csrPEM := generateTestCSR(t, "test-officer")
-	csrPath := writeTestCSR(t, dir, "test.csr", csrPEM)
-
-	result, err := readAndValidateCSR(csrPath)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result) == 0 {
-		t.Error("expected non-empty PEM data")
-	}
-
-	// Verify the returned PEM is parseable.
-	block, _ := pem.Decode(result)
-	if block == nil {
-		t.Fatal("returned data is not valid PEM")
-		return
-	}
-	_, err = x509.ParseCertificateRequest(block.Bytes)
-	if err != nil {
-		t.Fatalf("returned PEM does not contain valid CSR: %v", err)
-	}
-}
-
-func TestReadAndValidateCSR_FileNotFound(t *testing.T) {
-	_, err := readAndValidateCSR("/nonexistent/path/to/csr.pem")
-	if err == nil {
-		t.Fatal("expected error for nonexistent file")
-	}
-	if !errors.Is(err, ErrCSRFileNotFound) {
-		t.Errorf("expected ErrCSRFileNotFound, got %v", err)
-	}
-}
-
-func TestReadAndValidateCSR_Directory(t *testing.T) {
-	dir := t.TempDir()
-	_, err := readAndValidateCSR(dir)
-	if err == nil {
-		t.Fatal("expected error for directory path")
-	}
-	if !errors.Is(err, ErrCSRReadFailed) {
-		t.Errorf("expected ErrCSRReadFailed, got %v", err)
-	}
-	// A WrappedDetailError with no underlying cause still names the path, so
-	// an operator sees which CSR it rejected without an "<nil>" suffix.
-	var detailErr *WrappedDetailError
-	if !errors.As(err, &detailErr) {
-		t.Fatalf("expected *WrappedDetailError, got %T", err)
-	}
-	if got := detailErr.Error(); !strings.Contains(got, dir) {
-		t.Errorf("WrappedDetailError.Error() = %q, want it to name the rejected path %q", got, dir)
-	}
-}
-
-func TestReadAndValidateCSR_InvalidPEM(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bad.csr")
-	if err := os.WriteFile(path, []byte("not valid PEM data"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := readAndValidateCSR(path)
-	if err == nil {
-		t.Fatal("expected error for invalid PEM")
-	}
-	if !errors.Is(err, ErrCSRDecodeFailed) {
-		t.Errorf("expected ErrCSRDecodeFailed, got %v", err)
-	}
-}
-
-func TestReadAndValidateCSR_InvalidDER(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bad.csr")
-
-	// Write valid PEM with garbage DER inside.
-	fakePEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE REQUEST",
-		Bytes: []byte("not a real DER certificate request"),
-	})
-	if err := os.WriteFile(path, fakePEM, 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := readAndValidateCSR(path)
-	if err == nil {
-		t.Fatal("expected error for invalid DER")
-	}
-	if !errors.Is(err, ErrCSRParseFailed) {
-		t.Errorf("expected ErrCSRParseFailed, got %v", err)
-	}
-}
-
-// TestReadAndValidateCSR_InvalidSignature proves the final security check --
-// CheckSignature -- is actually reached and enforced: a CSR that parses
-// cleanly (well-formed ASN.1) but whose signature does not verify against
-// its own public key (tampered or corrupted in transit) is rejected with
-// ErrCSRSignatureInvalid rather than accepted on the strength of parsing
-// alone.
-func TestReadAndValidateCSR_InvalidSignature(t *testing.T) {
-	dir := t.TempDir()
-	csrPEM := generateTestCSR(t, "test-officer")
-
-	block, _ := pem.Decode(csrPEM)
-	if block == nil {
-		t.Fatal("fixture setup: generateTestCSR did not return valid PEM")
-	}
-	// Flip the DER's final byte. x509.CreateCertificateRequest places the
-	// signature last, so this corrupts the signature bytes while leaving
-	// the ASN.1 structure (and therefore x509.ParseCertificateRequest)
-	// intact -- the CSR must fail signature verification, not parsing.
-	corrupted := make([]byte, len(block.Bytes))
-	copy(corrupted, block.Bytes)
-	corrupted[len(corrupted)-1] ^= 0xFF
-	tamperedPEM := pem.EncodeToMemory(&pem.Block{Type: block.Type, Bytes: corrupted})
-
-	path := writeTestCSR(t, dir, "tampered.csr", tamperedPEM)
-
-	_, err := readAndValidateCSR(path)
-	if err == nil {
-		t.Fatal("expected error for a CSR with an invalid signature")
-	}
-	if !errors.Is(err, ErrCSRSignatureInvalid) {
-		t.Errorf("expected ErrCSRSignatureInvalid, got %v", err)
-	}
-}
-
-// TestReadAndValidateCSR_StatErrorNotNotExist proves a stat failure other
-// than "file does not exist" (for example a malformed path) is reported as
-// ErrCSRReadFailed rather than misclassified as ErrCSRFileNotFound, which
-// would tell an operator to check a typo when the real problem is a
-// different I/O fault.
-func TestReadAndValidateCSR_StatErrorNotNotExist(t *testing.T) {
-	// A NUL byte in a path is rejected by the kernel with EINVAL, never
-	// ENOENT, on every platform this project builds for -- a portable way
-	// to force os.Stat's non-IsNotExist branch without touching file modes
-	// (this suite runs as root in CI, where permission bits are moot).
-	_, err := readAndValidateCSR("bad\x00path")
-	if err == nil {
-		t.Fatal("expected error for a malformed path")
-	}
-	if !errors.Is(err, ErrCSRReadFailed) {
-		t.Errorf("expected ErrCSRReadFailed, got %v", err)
-	}
-	if errors.Is(err, ErrCSRFileNotFound) {
-		t.Error("a non-ENOENT stat failure must not be reported as ErrCSRFileNotFound")
-	}
-}
-
-func TestBuildOfficerConfigs_ValidOfficers(t *testing.T) {
-	dir := t.TempDir()
-	csr1 := generateTestCSR(t, "officer1")
-	csr2 := generateTestCSR(t, "officer2")
-	path1 := writeTestCSR(t, dir, "officer1.csr", csr1)
-	path2 := writeTestCSR(t, dir, "officer2.csr", csr2)
-
-	flags := []string{
-		"officer1:" + path1,
-		"officer2:" + path2,
-	}
-
-	officers, err := buildOfficerConfigs(flags)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(officers) != 2 {
-		t.Fatalf("expected 2 officers, got %d", len(officers))
-	}
-	if officers[0].Username != "officer1" {
-		t.Errorf("expected officer1, got %q", officers[0].Username)
-	}
-	if officers[1].Username != "officer2" {
-		t.Errorf("expected officer2, got %q", officers[1].Username)
-	}
-	if len(officers[0].CSRPEM) == 0 {
-		t.Error("officer1 CSRPEM should not be empty")
-	}
-	if len(officers[1].CSRPEM) == 0 {
-		t.Error("officer2 CSRPEM should not be empty")
-	}
-}
-
-func TestBuildOfficerConfigs_InvalidFormat(t *testing.T) {
-	_, err := buildOfficerConfigs([]string{"no-colon-here"})
-	if err == nil {
-		t.Fatal("expected error for invalid format")
-	}
-	if !errors.Is(err, ErrInvalidOfficerFormat) {
-		t.Errorf("expected ErrInvalidOfficerFormat, got %v", err)
-	}
-}
-
-func TestBuildOfficerConfigs_CSRNotFound(t *testing.T) {
-	_, err := buildOfficerConfigs([]string{"admin:/nonexistent/csr.pem"})
-	if err == nil {
-		t.Fatal("expected error for nonexistent CSR")
-	}
-	if !errors.Is(err, ErrCSRFileNotFound) {
-		t.Errorf("expected ErrCSRFileNotFound, got %v", err)
-	}
-}
-
 func TestValidateInitFlags_MissingSOPin(t *testing.T) {
-	flags := &initFlags{
-		userPin: "user-pin-value",
-	}
-	err := validateInitFlags(flags)
+	err := validateInitFlags(&initFlags{barrierStrategy: "passphrase"})
 	if err == nil {
 		t.Fatal("expected error for missing SO PIN")
 	}
@@ -350,115 +36,51 @@ func TestValidateInitFlags_MissingSOPin(t *testing.T) {
 	}
 }
 
-func TestValidateInitFlags_MissingUserPin(t *testing.T) {
-	flags := &initFlags{
-		soPin: "so-pin-value",
-	}
-	err := validateInitFlags(flags)
-	if err == nil {
-		t.Fatal("expected error for missing User PIN")
-	}
-	if !errors.Is(err, ErrMissingUserPin) {
-		t.Errorf("expected ErrMissingUserPin, got %v", err)
-	}
-}
-
 func TestValidateInitFlags_ValidSingleAdmin(t *testing.T) {
-	flags := &initFlags{
-		soPin:           "so-pin-value",
-		userPin:         "user-pin-value",
-		barrierStrategy: "passphrase",
-	}
+	flags := &initFlags{soPin: "so-pin-value", barrierStrategy: "passphrase"}
 	if err := validateInitFlags(flags); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestValidateInitFlags_ThresholdWithoutOfficers(t *testing.T) {
-	// Threshold without --barrier-strategy=shamir and without officers
-	// is rejected. The canonical model requires --shares >= 2 when
-	// --barrier-strategy=shamir; supplying --threshold alone with the
-	// default software strategy is invalid.
-	flags := &initFlags{
-		soPin:           "so-pin-value",
-		userPin:         "user-pin-value",
-		barrierStrategy: "passphrase",
-		threshold:       2,
-	}
-	err := validateInitFlags(flags)
-	if err == nil {
-		t.Fatal("expected error for threshold with non-shamir strategy")
-	}
-}
-
-func TestValidateInitFlags_ThresholdExceedsOfficers(t *testing.T) {
-	flags := &initFlags{
-		soPin:           "so-pin-value",
-		userPin:         "user-pin-value",
-		barrierStrategy: "shamir",
-		shares:          2,
-		threshold:       3,
-		officers:        stringSlice{"admin1:/path/csr1", "admin2:/path/csr2"},
-	}
-	err := validateInitFlags(flags)
-	if err == nil {
-		t.Fatal("expected error for threshold exceeding shares")
-	}
-}
-
-func TestValidateInitFlags_ValidMofN(t *testing.T) {
-	flags := &initFlags{
-		soPin:           "so-pin-value",
-		userPin:         "user-pin-value",
-		barrierStrategy: "shamir",
-		shares:          3,
-		threshold:       2,
-		officers:        stringSlice{"admin1:/path/csr1", "admin2:/path/csr2", "admin3:/path/csr3"},
-	}
-	if err := validateInitFlags(flags); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+// TestValidateInitFlags_RefusesStrategiesInitCannotComplete proves the
+// barrier strategies init validates are the ones it can complete unattended:
+// Shamir custody is run through go-qrdb's own holder quorum, so shamir -- like
+// any unknown name -- is refused up front.
+func TestValidateInitFlags_RefusesStrategiesInitCannotComplete(t *testing.T) {
+	for _, strategy := range []string{"shamir", "bogus", ""} {
+		err := validateInitFlags(&initFlags{soPin: "so-pin-value", barrierStrategy: strategy})
+		if !errors.Is(err, ErrInvalidBarrierStrategy) {
+			t.Errorf("strategy %q: expected ErrInvalidBarrierStrategy, got %v", strategy, err)
+		}
 	}
 }
 
 func TestParseInitFlags_Defaults(t *testing.T) {
-	flags, err := parseInitFlags([]string{
-		"--so-pin", "test-so-pin",
-		"--user-pin", "test-user-pin",
-	})
+	flags, err := parseInitFlags([]string{"--so-pin", "test-so-pin"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if flags.soPin != "test-so-pin" {
 		t.Errorf("expected so-pin test-so-pin, got %q", flags.soPin)
 	}
-	if flags.userPin != "test-user-pin" {
-		t.Errorf("expected user-pin test-user-pin, got %q", flags.userPin)
-	}
 	if flags.configPath != "/etc/xkms/xkmsd.yaml" {
 		t.Errorf("expected default config path, got %q", flags.configPath)
 	}
-	if flags.threshold != 0 {
-		t.Errorf("expected default threshold 0, got %d", flags.threshold)
-	}
-	if flags.credentialStrategy != "" {
-		t.Errorf("expected empty credential strategy, got %q", flags.credentialStrategy)
+	if flags.barrierStrategy != "passphrase" {
+		t.Errorf("expected default barrier strategy passphrase, got %q", flags.barrierStrategy)
 	}
 }
 
 func TestParseInitFlags_AllFlags(t *testing.T) {
-	dir := t.TempDir()
-	csrPEM := generateTestCSR(t, "admin1")
-	csrPath := writeTestCSR(t, dir, "admin1.csr", csrPEM)
-
 	flags, err := parseInitFlags([]string{
 		"--config", "/custom/config.yaml",
 		"--so-pin", "my-so-pin",
-		"--user-pin", "my-user-pin",
-		"--threshold", "2",
-		"--so", "admin1:" + csrPath,
-		"--credential-strategy", "barrier",
+		"--barrier-strategy", "tpm2",
 		"--data-dir", "/custom/data",
 		"--hostname", "xkms.example.com",
+		"--sans", "a.example.com,b.example.com",
+		"--admin-factor", "mtls,fido2",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -469,20 +91,8 @@ func TestParseInitFlags_AllFlags(t *testing.T) {
 	if flags.soPin != "my-so-pin" {
 		t.Errorf("expected so-pin my-so-pin, got %q", flags.soPin)
 	}
-	if flags.userPin != "my-user-pin" {
-		t.Errorf("expected user-pin my-user-pin, got %q", flags.userPin)
-	}
-	if flags.threshold != 2 {
-		t.Errorf("expected threshold 2, got %d", flags.threshold)
-	}
-	if len(flags.officers) != 1 {
-		t.Fatalf("expected 1 officer, got %d", len(flags.officers))
-	}
-	if flags.officers[0] != "admin1:"+csrPath {
-		t.Errorf("expected officer admin1:%s, got %q", csrPath, flags.officers[0])
-	}
-	if flags.credentialStrategy != "barrier" {
-		t.Errorf("expected credential-strategy barrier, got %q", flags.credentialStrategy)
+	if flags.barrierStrategy != "tpm2" {
+		t.Errorf("expected barrier-strategy tpm2, got %q", flags.barrierStrategy)
 	}
 	if flags.dataDir != "/custom/data" {
 		t.Errorf("expected data-dir /custom/data, got %q", flags.dataDir)
@@ -490,26 +100,21 @@ func TestParseInitFlags_AllFlags(t *testing.T) {
 	if flags.hostname != "xkms.example.com" {
 		t.Errorf("expected hostname xkms.example.com, got %q", flags.hostname)
 	}
+	if flags.sans != "a.example.com,b.example.com" {
+		t.Errorf("expected sans, got %q", flags.sans)
+	}
+	if len(flags.adminFactors) != 1 || flags.adminFactors[0] != "mtls,fido2" {
+		t.Errorf("expected admin-factor [mtls,fido2], got %v", flags.adminFactors)
+	}
 }
 
-func TestParseInitFlags_RepeatableSOFlag(t *testing.T) {
-	flags, err := parseInitFlags([]string{
-		"--so-pin", "pin",
-		"--user-pin", "pin",
-		"--so", "admin1:/path/csr1",
-		"--so", "admin2:/path/csr2",
-		"--so", "admin3:/path/csr3",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(flags.officers) != 3 {
-		t.Fatalf("expected 3 officers, got %d", len(flags.officers))
-	}
-	expected := []string{"admin1:/path/csr1", "admin2:/path/csr2", "admin3:/path/csr3"}
-	for i, exp := range expected {
-		if flags.officers[i] != exp {
-			t.Errorf("officer[%d] expected %q, got %q", i, exp, flags.officers[i])
+// TestParseInitFlags_RefusesRemovedCeremonyFlags proves the holder-ceremony
+// flags are gone: officers, thresholds, shares and the user PIN belong to
+// go-qrdb's own ceremony, not to `xkmsd init`.
+func TestParseInitFlags_RefusesRemovedCeremonyFlags(t *testing.T) {
+	for _, flag := range []string{"--so", "--threshold", "--shares", "--user-pin", "--credential-strategy"} {
+		if _, err := parseInitFlags([]string{"--so-pin", "pin", flag, "x"}); err == nil {
+			t.Errorf("%s was accepted; the ceremony flags are go-qrdb's, not xkmsd init's", flag)
 		}
 	}
 }
@@ -546,22 +151,6 @@ func TestStringSlice_Set(t *testing.T) {
 	}
 }
 
-func TestResolveCredentialStrategy_FlagOverridesConfig(t *testing.T) {
-	flags := &initFlags{credentialStrategy: "tpm2"}
-	result := resolveCredentialStrategy(flags, nil)
-	if result != "tpm2" {
-		t.Errorf("expected tpm2, got %q", result)
-	}
-}
-
-func TestResolveCredentialStrategy_DefaultsToBarrier(t *testing.T) {
-	flags := &initFlags{}
-	result := resolveCredentialStrategy(flags, nil)
-	if result != "barrier" {
-		t.Errorf("expected barrier, got %q", result)
-	}
-}
-
 func TestResolveDataDir_FlagOverridesDefault(t *testing.T) {
 	flags := &initFlags{dataDir: "/custom/data"}
 	result := resolveDataDir(flags, nil)
@@ -594,15 +183,6 @@ func TestResolveHostname_DefaultValue(t *testing.T) {
 	}
 }
 
-func TestResolveCredentialStrategy_ConfigUsedWhenFlagEmpty(t *testing.T) {
-	flags := &initFlags{}
-	cfg := &config.Config{Credentials: config.CredentialsConfig{SealStrategy: "pkcs11"}}
-	result := resolveCredentialStrategy(flags, cfg)
-	if result != "pkcs11" {
-		t.Errorf("expected the config value pkcs11 when the flag is unset, got %q", result)
-	}
-}
-
 func TestResolveDataDir_ConfigUsedWhenFlagEmpty(t *testing.T) {
 	flags := &initFlags{}
 	cfg := &config.Config{Datastore: config.DatastoreConfig{Path: "/etc/configured/data"}}
@@ -628,32 +208,6 @@ func TestParseInitFlags_InvalidFlag(t *testing.T) {
 	}
 }
 
-func TestValidateInitFlags_ThresholdOneIsNotMofN(t *testing.T) {
-	// Per canonical surface, --threshold is only valid when
-	// --barrier-strategy=shamir. Threshold=1 with the default
-	// software strategy is rejected.
-	flags := &initFlags{
-		soPin:           "so-pin",
-		userPin:         "user-pin",
-		barrierStrategy: "passphrase",
-		threshold:       1,
-	}
-	if err := validateInitFlags(flags); err == nil {
-		t.Fatal("expected ErrSharesRequiresShamir for threshold>0 with non-shamir strategy")
-	}
-}
-
-func TestValidateInitFlags_ThresholdZeroIsValid(t *testing.T) {
-	flags := &initFlags{
-		soPin:           "so-pin",
-		userPin:         "user-pin",
-		barrierStrategy: "passphrase",
-	}
-	if err := validateInitFlags(flags); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 // openTestPasskeyPIN opens a sealed PIN and returns its plaintext for
 // comparison, destroying the buffer once read. A nil secret is reported as
 // "no PIN configured".
@@ -663,7 +217,7 @@ func openTestPasskeyPIN(t *testing.T, secret *secure.Secret) string {
 	if secret == nil {
 		return ""
 	}
-	buf, err := secret.Open()
+	buf, err := secret.Open(t.Context())
 	if err != nil {
 		t.Fatalf("open resolved passkey PIN: %v", err)
 	}
@@ -676,7 +230,7 @@ func TestResolvePasskeyPIN(t *testing.T) {
 		t.Setenv("XKMS_PASSKEY_PIN", "from-env")
 
 		flags := &initFlags{passkeyPINStdin: true}
-		pin, err := resolvePasskeyPIN(flags, strings.NewReader("123456\n"))
+		pin, err := resolvePasskeyPIN(t.Context(), flags, strings.NewReader("123456\n"))
 		if err != nil {
 			t.Fatalf("resolvePasskeyPIN: %v", err)
 		}
@@ -691,7 +245,7 @@ func TestResolvePasskeyPIN(t *testing.T) {
 	t.Run("environment is the fallback", func(t *testing.T) {
 		t.Setenv("XKMS_PASSKEY_PIN", "654321")
 
-		pin, err := resolvePasskeyPIN(&initFlags{}, strings.NewReader("ignored"))
+		pin, err := resolvePasskeyPIN(t.Context(), &initFlags{}, strings.NewReader("ignored"))
 		if err != nil {
 			t.Fatalf("resolvePasskeyPIN: %v", err)
 		}
@@ -705,7 +259,7 @@ func TestResolvePasskeyPIN(t *testing.T) {
 
 		// A key with no PIN configured enrolls without one; refusing here
 		// would block a working ceremony.
-		pin, err := resolvePasskeyPIN(&initFlags{}, strings.NewReader(""))
+		pin, err := resolvePasskeyPIN(t.Context(), &initFlags{}, strings.NewReader(""))
 		if err != nil {
 			t.Fatalf("resolvePasskeyPIN: %v", err)
 		}
@@ -717,7 +271,7 @@ func TestResolvePasskeyPIN(t *testing.T) {
 	t.Run("unreadable stdin is reported, not silently empty", func(t *testing.T) {
 		flags := &initFlags{passkeyPINStdin: true}
 
-		_, err := resolvePasskeyPIN(flags, iotest.ErrReader(errors.New("closed")))
+		_, err := resolvePasskeyPIN(t.Context(), flags, iotest.ErrReader(errors.New("closed")))
 		if !errors.Is(err, ErrPasskeyPINReadFailed) {
 			t.Fatalf("err = %v, want ErrPasskeyPINReadFailed", err)
 		}
@@ -729,7 +283,6 @@ func TestParseInitFlags_PasskeyPINHasNoFlagForm(t *testing.T) {
 	// the life of the command, so --passkey-pin must not exist.
 	if _, err := parseInitFlags([]string{
 		"--so-pin", "pin",
-		"--user-pin", "pin",
 		"--passkey-pin", "123456",
 	}); err == nil {
 		t.Fatal("--passkey-pin was accepted; a PIN must never be passed in argv")
@@ -737,7 +290,6 @@ func TestParseInitFlags_PasskeyPINHasNoFlagForm(t *testing.T) {
 
 	flags, err := parseInitFlags([]string{
 		"--so-pin", "pin",
-		"--user-pin", "pin",
 		"--passkey-pin-stdin",
 	})
 	if err != nil {
@@ -814,64 +366,6 @@ func TestCloseFIDO2Handler_ClosesAnOpenHandler(t *testing.T) {
 // printInitSummary
 // =============================================================================
 
-func TestPrintInitSummary_SingleAdminMode(t *testing.T) {
-	out := captureStdout(t, func() {
-		printInitSummary(
-			&initialize.CeremonyConfig{Hostname: "node1.example.com", DataDir: "/var/lib/xkms"},
-			"barrier",
-			nil,
-			&initFlags{barrierStrategy: "passphrase"},
-		)
-	})
-
-	for _, want := range []string{"node1.example.com", "/var/lib/xkms", "passphrase", "barrier", "Single Admin", "Validation Passed"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("printInitSummary output missing %q; got:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "M-of-N") {
-		t.Errorf("single-admin summary must not mention M-of-N mode; got:\n%s", out)
-	}
-}
-
-func TestPrintInitSummary_MofNMode(t *testing.T) {
-	officers := []initialize.OfficerConfig{{Username: "officer-a"}, {Username: "officer-b"}}
-	out := captureStdout(t, func() {
-		printInitSummary(
-			&initialize.CeremonyConfig{Hostname: "node1.example.com", DataDir: "/data", Threshold: 2},
-			"barrier",
-			officers,
-			&initFlags{barrierStrategy: "passphrase"},
-		)
-	})
-
-	for _, want := range []string{"M-of-N (2-of-2)", "officer-a", "officer-b"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("printInitSummary output missing %q; got:\n%s", want, out)
-		}
-	}
-}
-
-func TestPrintInitSummary_ShamirStrategyReportsShareCounts(t *testing.T) {
-	out := captureStdout(t, func() {
-		printInitSummary(
-			&initialize.CeremonyConfig{Hostname: "node1.example.com", DataDir: "/data"},
-			"barrier",
-			nil,
-			&initFlags{barrierStrategy: "shamir", threshold: 3, shares: 5},
-		)
-	})
-
-	if !strings.Contains(out, "Shamir Mode:          3-of-5") {
-		t.Errorf("printInitSummary output missing the Shamir mode line; got:\n%s", out)
-	}
-	// Shamir mode has no single-admin/M-of-N administrator yet (officers
-	// claim in a later step), so neither mode line applies.
-	if strings.Contains(out, "Single Admin") || strings.Contains(out, "M-of-N") {
-		t.Errorf("Shamir summary must not claim a Mode line before any officer has claimed; got:\n%s", out)
-	}
-}
-
 // captureStdout redirects os.Stdout for the duration of fn and returns
 // everything written to it, restoring the original afterwards.
 func captureStdout(t *testing.T, fn func()) string {
@@ -895,4 +389,19 @@ func captureStdout(t *testing.T, fn func()) string {
 		t.Fatalf("read pipe: %v", err)
 	}
 	return string(got)
+}
+
+func TestPrintInitSummary_ReportsConfiguration(t *testing.T) {
+	out := captureStdout(t, func() {
+		printInitSummary("node1.example.com", "/var/lib/xkms", &initFlags{barrierStrategy: "passphrase"})
+	})
+
+	for _, want := range []string{"node1.example.com", "/var/lib/xkms", "passphrase", "Validation Passed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("printInitSummary output missing %q; got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "M-of-N") || strings.Contains(out, "Shamir") {
+		t.Errorf("summary must not mention the holder ceremony; got:\n%s", out)
+	}
 }

@@ -364,7 +364,7 @@ Example:
 		// correcting it should not first cost a server round trip or a
 		// half-consumed challenge. An empty PIN is legitimate here — it is
 		// what an authenticator with no PIN configured needs.
-		pin, err := resolvePINInput(cmd)
+		pin, err := resolvePINInput(cmd.Context(), cmd)
 		if err != nil {
 			handleError(err)
 			return

@@ -82,6 +82,18 @@ func (m *mockStorage) SaveWithCondition(_ context.Context, _ *entities.ACMEAccou
 	panic("not implemented")
 }
 
+func (m *mockStorage) GetByNaturalKey(_ context.Context, _ string) (*entities.ACMEAccount, error) {
+	panic("not implemented")
+}
+
+func (m *mockStorage) CompareAndSwap(_ context.Context, _, _ *entities.ACMEAccount) (bool, error) {
+	panic("not implemented")
+}
+
+func (m *mockStorage) DeleteIfMatch(_ context.Context, _ *entities.ACMEAccount) (bool, error) {
+	panic("not implemented")
+}
+
 func (m *mockStorage) SaveIfAbsent(_ context.Context, _ *entities.ACMEAccount) (bool, error) {
 	panic("not implemented")
 }
@@ -163,6 +175,18 @@ func (m *mockCertStorage) Save(_ context.Context, cert *entities.ACMECertificate
 }
 
 func (m *mockCertStorage) SaveWithCondition(_ context.Context, _ *entities.ACMECertificate, _ qrdbsdk.Condition) error {
+	panic("not implemented")
+}
+
+func (m *mockCertStorage) GetByNaturalKey(_ context.Context, _ string) (*entities.ACMECertificate, error) {
+	panic("not implemented")
+}
+
+func (m *mockCertStorage) CompareAndSwap(_ context.Context, _, _ *entities.ACMECertificate) (bool, error) {
+	panic("not implemented")
+}
+
+func (m *mockCertStorage) DeleteIfMatch(_ context.Context, _ *entities.ACMECertificate) (bool, error) {
 	panic("not implemented")
 }
 
@@ -253,6 +277,18 @@ func (m *mockOrderStorage) Save(_ context.Context, order *entities.ACMEOrder) er
 }
 
 func (m *mockOrderStorage) SaveWithCondition(_ context.Context, _ *entities.ACMEOrder, _ qrdbsdk.Condition) error {
+	panic("not implemented")
+}
+
+func (m *mockOrderStorage) GetByNaturalKey(_ context.Context, _ string) (*entities.ACMEOrder, error) {
+	panic("not implemented")
+}
+
+func (m *mockOrderStorage) CompareAndSwap(_ context.Context, _, _ *entities.ACMEOrder) (bool, error) {
+	panic("not implemented")
+}
+
+func (m *mockOrderStorage) DeleteIfMatch(_ context.Context, _ *entities.ACMEOrder) (bool, error) {
 	panic("not implemented")
 }
 

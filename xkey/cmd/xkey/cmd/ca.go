@@ -21,6 +21,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/cobra"
 )
@@ -399,7 +400,7 @@ func writeOutput(outputPath string, data []byte) error {
 		_, err := os.Stdout.Write(data)
 		return err
 	}
-	if err := os.WriteFile(outputPath, data, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(outputPath, data, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrCAOutputWriteFailed, Cause: err}
 	}
 	fmt.Fprintf(os.Stderr, "Written to %s\n", outputPath)

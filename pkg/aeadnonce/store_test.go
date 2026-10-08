@@ -1,5 +1,5 @@
-// Copyright (c) 2025 Jeremy Hahn
-// Copyright (c) 2025 Automate The Things, LLC
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
 //
 // This file is part of go-xkms.
 //
@@ -15,39 +15,58 @@ package aeadnonce
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"sync"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := NewStore(storage.NewMemory())
+	s, err := NewStore(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
 	return s
 }
 
-// TestNewStoreRejectsNilBackend covers the constructor's error path: a store
-// built over no backend could not persist anything, and must not be handed
-// out looking usable.
-func TestNewStoreRejectsNilBackend(t *testing.T) {
+// TestNewStore proves a store needs a factory serving its database: a store
+// that could not persist anything must not be handed out looking usable.
+func TestNewStore(t *testing.T) {
 	_, err := NewStore(nil)
-	require.Error(t, err)
-	var nilBackend NilBackendError
-	assert.ErrorAs(t, err, &nilBackend)
+	assert.ErrorIs(t, err, ErrNilDAOFactory)
+
+	_, err = NewStore(dao.NewStoreFactory(nil))
+	var storeErr *StoreError
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "open", storeErr.Op)
+	var unavailable *dao.DatabaseUnavailableError
+	assert.ErrorAs(t, err, &unavailable)
 }
 
 // TestClaimNonceAcceptsTheFirstClaim covers the ordinary case: an entry
-// nobody has claimed before is accepted and reported as claimed.
+// nobody has claimed before is accepted, reported as claimed, and stored as
+// one entity named by the entry's hex.
 func TestClaimNonceAcceptsTheFirstClaim(t *testing.T) {
-	s := newTestStore(t)
-	claimed, err := s.ClaimNonce(context.Background(), []byte("first-entry"))
+	daos := testutil.NewMemoryDAOFactory()
+	s, err := NewStore(daos)
+	require.NoError(t, err)
+	entry := []byte("first-entry")
+
+	claimed, err := s.ClaimNonce(context.Background(), entry)
 	require.NoError(t, err)
 	assert.True(t, claimed, "an entry claimed for the first time must report claimed=true")
+
+	raw, err := newClaimDAO(daos)
+	require.NoError(t, err)
+	stored, err := raw.GetByNaturalKey(context.Background(), hex.EncodeToString(entry))
+	require.NoError(t, err)
+	assert.Equal(t, hex.EncodeToString(entry), stored.Entry)
 }
 
 // TestClaimNonceRefusesARepeat is the property this whole package exists
@@ -67,30 +86,30 @@ func TestClaimNonceRefusesARepeat(t *testing.T) {
 	assert.False(t, claimed, "a second claim on the same entry must be refused")
 }
 
-// TestClaimNonceSurvivesAFreshStoreOverTheSameBackend reproduces a restart at
-// this package's level: a second *Store built over the SAME storage.Backend
-// (a fresh instance never told about the earlier claim, exactly what a
-// process restart produces) must still see it.
-func TestClaimNonceSurvivesAFreshStoreOverTheSameBackend(t *testing.T) {
-	backend := storage.NewMemory()
+// TestClaimNonceSurvivesAFreshStoreOverTheSameDatabase reproduces a restart
+// at this package's level: a second *Store over the SAME database (a fresh
+// instance never told about the earlier claim, exactly what a process
+// restart produces) must still see it.
+func TestClaimNonceSurvivesAFreshStoreOverTheSameDatabase(t *testing.T) {
+	daos := testutil.NewMemoryDAOFactory()
 	entry := []byte("restart-entry")
 	ctx := context.Background()
 
-	before, err := NewStore(backend)
+	before, err := NewStore(daos)
 	require.NoError(t, err)
 	claimed, err := before.ClaimNonce(ctx, entry)
 	require.NoError(t, err)
 	require.True(t, claimed)
 
-	after, err := NewStore(backend)
+	after, err := NewStore(daos)
 	require.NoError(t, err)
 	claimed, err = after.ClaimNonce(ctx, entry)
 	require.NoError(t, err)
 	assert.False(t, claimed, "a claim made before a restart must still hold after one")
 }
 
-// TestClaimNonceDistinguishesEntries proves the store namespaces by the
-// entry's own bytes rather than collapsing every claim onto one record.
+// TestClaimNonceDistinguishesEntries proves the store keys by the entry's
+// own bytes rather than collapsing every claim onto one record.
 func TestClaimNonceDistinguishesEntries(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -105,10 +124,17 @@ func TestClaimNonceDistinguishesEntries(t *testing.T) {
 }
 
 // TestClaimNonceIsAtomicUnderConcurrency proves exactly one of many
-// concurrent claims on one entry succeeds, the property KeyNonceGuard.
-// UseContext depends on this store to provide.
+// concurrent claims on one entry succeeds -- across two stores over one
+// database, as two nodes sharing a datastore are -- the property
+// KeyNonceGuard.UseContext depends on this store to provide.
 func TestClaimNonceIsAtomicUnderConcurrency(t *testing.T) {
-	s := newTestStore(t)
+	daos := testutil.NewMemoryDAOFactory()
+	stores := make([]*Store, 2)
+	for i := range stores {
+		s, err := NewStore(daos)
+		require.NoError(t, err)
+		stores[i] = s
+	}
 	entry := []byte("racing-entry")
 	ctx := context.Background()
 
@@ -123,7 +149,7 @@ func TestClaimNonceIsAtomicUnderConcurrency(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			<-start
-			results[idx], errs[idx] = s.ClaimNonce(ctx, entry)
+			results[idx], errs[idx] = stores[idx%len(stores)].ClaimNonce(ctx, entry)
 		}(i)
 	}
 	close(start)
@@ -139,27 +165,30 @@ func TestClaimNonceIsAtomicUnderConcurrency(t *testing.T) {
 	assert.Equal(t, 1, claimedCount, "exactly one concurrent claim on one entry may succeed")
 }
 
-// errBackend is a storage.Backend whose PutIfAbsent always fails, so
-// ClaimNonce's error propagation can be exercised without a real storage
-// failure.
-type errBackend struct {
-	storage.Backend
+// failingKV is an atomic KVStore whose conditional create fails, so
+// ClaimNonce's error reporting can be exercised without a real outage.
+type failingKV struct {
+	*qrdbsdk.MemoryKVStore
 	err error
 }
 
-func (b *errBackend) PutIfAbsent(context.Context, string, []byte) (bool, error) {
-	return false, b.err
+func (f failingKV) PutIfAbsent(context.Context, string, []byte) (bool, error) {
+	return false, f.err
 }
 
-// TestClaimNoncePropagatesABackendError proves a backend failure is reported
-// as itself, not folded into a false "already claimed" refusal a caller could
-// mistake for a genuine reuse.
-func TestClaimNoncePropagatesABackendError(t *testing.T) {
-	backendErr := errors.New("backend unavailable")
-	s, err := NewStore(&errBackend{Backend: storage.NewMemory(), err: backendErr})
+// TestClaimNonceReportsAStoreFailure proves a datastore failure is reported
+// as a *StoreError carrying the cause, not folded into a false "already
+// claimed" refusal a caller could mistake for a genuine reuse.
+func TestClaimNonceReportsAStoreFailure(t *testing.T) {
+	cause := errors.New("datastore unavailable")
+	kv := failingKV{MemoryKVStore: qrdbsdk.NewMemoryKVStore(), err: cause}
+	s, err := NewStore(dao.NewStoreFactory(kv))
 	require.NoError(t, err)
 
 	claimed, err := s.ClaimNonce(context.Background(), []byte("err-entry"))
-	require.ErrorIs(t, err, backendErr)
+	var storeErr *StoreError
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "claim", storeErr.Op)
+	assert.ErrorIs(t, err, cause)
 	assert.False(t, claimed)
 }

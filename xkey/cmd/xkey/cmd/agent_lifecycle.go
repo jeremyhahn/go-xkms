@@ -26,6 +26,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // Agent server lifecycle errors.
@@ -283,29 +284,7 @@ func updateAgentServerState(state *agentServerState) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrAgentStateWrite, Cause: err}
 	}
-	temp, err := os.CreateTemp(filepath.Dir(path), ".server.state.*.tmp")
-	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrAgentStateWrite, Cause: err}
-	}
-	tempName := temp.Name()
-
-	_, writeErr := temp.Write(payload)
-	closeErr := temp.Close()
-	if writeErr != nil || closeErr != nil {
-		cause := writeErr
-		if cause == nil {
-			cause = closeErr
-		}
-		if removeErr := os.Remove(tempName); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
-			return &SentinelCauseError{Sentinel: ErrAgentStateRemove, Cause: removeErr}
-		}
-		return &SentinelCauseError{Sentinel: ErrAgentStateWrite, Cause: cause}
-	}
-
-	if err := os.Rename(tempName, path); err != nil {
-		if removeErr := os.Remove(tempName); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
-			return &SentinelCauseError{Sentinel: ErrAgentStateRemove, Cause: removeErr}
-		}
+	if err := fsutil.WriteFileAtomic(path, payload, 0o600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrAgentStateWrite, Cause: err}
 	}
 	return nil

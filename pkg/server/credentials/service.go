@@ -11,39 +11,46 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package credentials manages sealed backend credentials using configurable
-// seal strategies. It wraps seal.PlatformStore and seal.Barrier to seal/unseal
-// credentials to any backend (barrier, TPM2, PKCS#11, cloud KMS, software, or
-// manual entry).
+// Package credentials manages sealed backend credentials (PKCS#11 user PIN,
+// cloud-KMS secrets, and the like) under a configurable strategy.
+//
+// The manual and barrier strategies are go-qrdb's versioned credential
+// service, used as is. What xkms adds are the hardware platform strategies
+// (TPM 2.0, PKCS#11, cloud KMS, Vault, passphrase), which keep credentials in
+// the sealed seal.PlatformStore; go-qrdb has no equivalent.
 package credentials
 
 import (
 	"context"
 	"errors"
 	"log/slog"
-	"sort"
+	"slices"
 	"strings"
-	"sync"
 
-	"github.com/jeremyhahn/go-enclave"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
-// StrategyManual is the strategy ID for manual credential entry.
-const StrategyManual = "manual"
+const (
+	// StrategyManual is the strategy ID for operator-submitted credentials.
+	StrategyManual = qrdbsdk.CredentialStrategyManual
 
-// credentialPrefix namespaces credential keys within the storage backend.
+	// StrategyBarrier is the strategy ID for credentials stored in the barrier.
+	StrategyBarrier = qrdbsdk.CredentialStrategyBarrier
+)
+
+// credentialPrefix namespaces credential keys within the platform store,
+// which holds more than credentials.
 const credentialPrefix = "credentials/"
 
 // validStrategies maps all supported strategy names to true for O(1) validation.
 // The cloud-KMS names match the seal layer's StrategyID constants
 // (awskms/gcpkms/azurekv, no underscores); there is no underscored alias.
 var validStrategies = map[string]bool{
-	StrategyManual: true,
-	"barrier":      true,
-	"tpm2":         true,
-	"pkcs11":       true,
+	StrategyManual:  true,
+	StrategyBarrier: true,
+	"tpm2":          true,
+	"pkcs11":        true,
 	// Cloud-KMS names (align with pkg/seal StrategyAWSKMS/GCPKMS/AzureKV).
 	"awskms":  true,
 	"gcpkms":  true,
@@ -63,28 +70,26 @@ type Config struct {
 	Strategy string
 }
 
-// Service manages sealed backend credentials using configurable seal strategies.
-// It wraps seal.PlatformStore to seal/unseal credentials to any backend
-// (barrier, TPM2, PKCS#11, cloud KMS, software, or manual entry).
-type Service struct {
-	platformStore seal.PlatformStore
-	barrier       *seal.Barrier
-	strategy      string
-	logger        *slog.Logger
-
-	// manualCreds stores credentials submitted by operator in manual mode.
-	// Protected by mu.
-	mu          sync.RWMutex
-	manualCreds map[string][]byte
-
-	// waiters tracks channels waiting for manual credential submission.
-	waitersMu sync.Mutex
-	waiters   map[string][]chan []byte
+// credentialStore is the operation set every strategy provides. go-qrdb's
+// *qrdbsdk.VersionedCredentialService satisfies it for manual and barrier;
+// platformCredentials satisfies it for the hardware strategies.
+type credentialStore interface {
+	StoreCredential(ctx context.Context, name string, value []byte) error
+	RetrieveCredential(ctx context.Context, name string) ([]byte, error)
+	SubmitCredential(ctx context.Context, name string, value []byte) error
+	DeleteCredential(ctx context.Context, name string) error
+	ListCredentials(ctx context.Context) ([]string, error)
 }
 
-// New creates a new credential Service. For "manual" strategy, only logger is
-// required. For "barrier" strategy, the barrier must be provided. For other
-// strategies, platformStore must be provided.
+// Service manages sealed backend credentials using the configured strategy.
+type Service struct {
+	store    credentialStore
+	strategy string
+}
+
+// New creates a credential service for cfg.Strategy (default "manual").
+// The barrier strategy requires barrier; the platform strategies require
+// platformStore.
 func New(cfg *Config, platformStore seal.PlatformStore, barrier *seal.Barrier, logger *slog.Logger) (*Service, error) {
 	strategy := cfg.Strategy
 	if strategy == "" {
@@ -95,109 +100,65 @@ func New(cfg *Config, platformStore seal.PlatformStore, barrier *seal.Barrier, l
 		return nil, ErrInvalidStrategy
 	}
 
-	if strategy == "barrier" && barrier == nil {
-		return nil, ErrNilBarrier
-	}
-
-	if isPlatformStrategy(strategy) && platformStore == nil {
-		return nil, ErrNilPlatformStore
-	}
-
 	if logger == nil {
 		logger = slog.Default()
 	}
+	logger = logger.With("component", "credential_service")
 
-	return &Service{
-		platformStore: platformStore,
-		barrier:       barrier,
-		strategy:      strategy,
-		logger:        logger.With("component", "credential_service"),
-		manualCreds:   make(map[string][]byte),
-		waiters:       make(map[string][]chan []byte),
-	}, nil
+	if isPlatformStrategy(strategy) {
+		if platformStore == nil {
+			return nil, ErrNilPlatformStore
+		}
+		return &Service{
+			store:    &platformCredentials{store: platformStore, strategy: strategy, logger: logger},
+			strategy: strategy,
+		}, nil
+	}
+
+	if strategy == StrategyBarrier && barrier == nil {
+		return nil, ErrNilBarrier
+	}
+	store, err := qrdbsdk.NewVersionedCredentialService(&qrdbsdk.CredentialConfig{Strategy: strategy}, barrier, logger)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{store: store, strategy: strategy}, nil
 }
 
 // StoreCredential seals a named credential using the configured strategy.
-// For "manual" strategy, this stores in memory (for operator-submitted creds).
-// For "barrier" strategy, stores inside the barrier.
-// For other strategies, delegates to PlatformStore.
 func (s *Service) StoreCredential(ctx context.Context, name string, value []byte) error {
 	if err := validateInput(name, value); err != nil {
 		return err
 	}
-
-	switch s.strategy {
-	case StrategyManual:
-		return s.storeManual(name, value)
-	case "barrier":
-		return s.storeBarrier(name, value)
-	default:
-		return s.storePlatform(ctx, name, value)
-	}
+	return s.store.StoreCredential(ctx, name, value)
 }
 
-// RetrieveCredential unseals a named credential.
-// For "manual" strategy: returns immediately if already submitted, or blocks
-// until submitted via SubmitCredential or context is cancelled.
-// For "barrier" strategy: reads from barrier.
-// For other strategies: reads from PlatformStore.
+// RetrieveCredential unseals a named credential. Under the manual strategy it
+// blocks until the credential is submitted or ctx is cancelled.
 func (s *Service) RetrieveCredential(ctx context.Context, name string) ([]byte, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, ErrEmptyCredentialName
 	}
-
-	switch s.strategy {
-	case StrategyManual:
-		return s.retrieveManual(ctx, name)
-	case "barrier":
-		return s.retrieveBarrier(name)
-	default:
-		return s.retrievePlatform(ctx, name)
-	}
+	return s.store.RetrieveCredential(ctx, name)
 }
 
-// SubmitCredential is used by operators to submit a credential in "manual" mode.
-// The value is stored in memory and any blocked RetrieveCredential calls are
-// unblocked. For non-manual strategies, this delegates to StoreCredential.
+// SubmitCredential is used by operators to submit a credential. Under the
+// manual strategy a credential is submitted once, and a second submission
+// returns ErrCredentialAlreadySubmitted; the other strategies store it.
 func (s *Service) SubmitCredential(ctx context.Context, name string, value []byte) error {
 	if err := validateInput(name, value); err != nil {
 		return err
 	}
-
-	if s.strategy != StrategyManual {
-		return s.StoreCredential(ctx, name, value)
-	}
-
-	s.mu.Lock()
-	if _, exists := s.manualCreds[name]; exists {
-		s.mu.Unlock()
-		return ErrCredentialAlreadySubmitted
-	}
-
-	// Copy the value to avoid external mutation.
-	cred := make([]byte, len(value))
-	copy(cred, value)
-	s.manualCreds[name] = cred
-	s.mu.Unlock()
-
-	// Notify all blocked waiters.
-	s.waitersMu.Lock()
-	if waiters, ok := s.waiters[name]; ok {
-		for _, ch := range waiters {
-			// Send a copy to each waiter.
-			waiterCopy := make([]byte, len(cred))
-			copy(waiterCopy, cred)
-			select {
-			case ch <- waiterCopy:
-			default:
-			}
+	if s.strategy == StrategyManual {
+		names, err := s.store.ListCredentials(ctx)
+		if err != nil {
+			return err
 		}
-		delete(s.waiters, name)
+		if slices.Contains(names, name) {
+			return ErrCredentialAlreadySubmitted
+		}
 	}
-	s.waitersMu.Unlock()
-
-	s.logger.Info("manual credential submitted", "name", name)
-	return nil
+	return s.store.SubmitCredential(ctx, name, value)
 }
 
 // DeleteCredential removes a stored credential.
@@ -205,15 +166,7 @@ func (s *Service) DeleteCredential(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return ErrEmptyCredentialName
 	}
-
-	switch s.strategy {
-	case StrategyManual:
-		return s.deleteManual(name)
-	case "barrier":
-		return s.deleteBarrier(name)
-	default:
-		return s.deletePlatform(ctx, name)
-	}
+	return s.store.DeleteCredential(ctx, name)
 }
 
 // ListCredentials returns the names of the stored credentials, sorted.
@@ -224,74 +177,16 @@ func (s *Service) DeleteCredential(ctx context.Context, name string) error {
 // which an operator needs in order to know what is still outstanding before
 // a backend can unseal.
 func (s *Service) ListCredentials(ctx context.Context) ([]string, error) {
-	var (
-		names []string
-		err   error
-	)
-
-	switch s.strategy {
-	case StrategyManual:
-		names = s.listManual()
-	case "barrier":
-		names, err = s.listBarrier(ctx)
-	default:
-		names, err = s.listPlatform(ctx)
-	}
+	names, err := s.store.ListCredentials(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	sort.Strings(names)
+	slices.Sort(names)
 	return names, nil
 }
 
-// listManual returns the names held in memory for the manual strategy.
-func (s *Service) listManual() []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	names := make([]string, 0, len(s.manualCreds))
-	for name := range s.manualCreds {
-		names = append(names, name)
-	}
-	return names
-}
-
-// listBarrier returns the credential names stored inside the barrier.
-func (s *Service) listBarrier(ctx context.Context) ([]string, error) {
-	keys, err := s.barrier.List(ctx, credentialPrefix)
-	if err != nil {
-		return nil, err
-	}
-	return stripCredentialPrefix(keys), nil
-}
-
-// listPlatform returns the credential names held in the PlatformStore. The
-// store holds more than credentials, so entries outside the credential
-// namespace are filtered out rather than reported as credentials.
-func (s *Service) listPlatform(ctx context.Context) ([]string, error) {
-	keys, err := s.platformStore.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return stripCredentialPrefix(keys), nil
-}
-
-// stripCredentialPrefix keeps only credential-namespaced keys and returns
-// them with the namespace removed, which is the name the operator submitted.
-func stripCredentialPrefix(keys []string) []string {
-	names := make([]string, 0, len(keys))
-	for _, key := range keys {
-		if name, ok := strings.CutPrefix(key, credentialPrefix); ok {
-			names = append(names, name)
-		}
-	}
-	return names
-}
-
-// AutoUnsealAvailable returns true if the configured strategy supports
-// auto-unseal (i.e., credentials can be retrieved without operator
-// intervention).
+// AutoUnsealAvailable reports whether credentials can be retrieved without
+// operator intervention, which every strategy but manual allows.
 func (s *Service) AutoUnsealAvailable() bool {
 	return s.strategy != StrategyManual
 }
@@ -301,148 +196,72 @@ func (s *Service) Strategy() string {
 	return s.strategy
 }
 
-// storeManual stores a credential in the in-memory map.
-func (s *Service) storeManual(name string, value []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	cred := make([]byte, len(value))
-	copy(cred, value)
-	s.manualCreds[name] = cred
-
-	s.logger.Debug("credential stored in memory", "name", name)
-	return nil
+// platformCredentials keeps credentials in the hardware-sealed platform
+// store, namespaced under credentialPrefix.
+type platformCredentials struct {
+	store    seal.PlatformStore
+	strategy string
+	logger   *slog.Logger
 }
 
-// storeBarrier stores a credential via the barrier's Put method.
-func (s *Service) storeBarrier(name string, value []byte) error {
-	if err := s.barrier.Put(context.Background(), credentialPrefix+name, value); err != nil {
+// StoreCredential seals value into the platform store.
+func (p *platformCredentials) StoreCredential(ctx context.Context, name string, value []byte) error {
+	if err := p.store.Put(ctx, credentialPrefix+name, value); err != nil {
 		return err
 	}
-	s.logger.Debug("credential stored in barrier", "name", name)
+	p.logger.Debug("credential stored in platform store", "name", name, "strategy", p.strategy)
 	return nil
 }
 
-// storePlatform stores a credential via the PlatformStore.
-func (s *Service) storePlatform(ctx context.Context, name string, value []byte) error {
-	if err := s.platformStore.Put(ctx, credentialPrefix+name, value); err != nil {
-		return err
+// RetrieveCredential unseals a credential from the platform store.
+func (p *platformCredentials) RetrieveCredential(ctx context.Context, name string) ([]byte, error) {
+	value, err := p.store.Get(ctx, credentialPrefix+name)
+	if errors.Is(err, seal.ErrSecretNotFound) {
+		return nil, ErrCredentialNotFound
 	}
-	s.logger.Debug("credential stored in platform store", "name", name, "strategy", s.strategy)
-	return nil
+	return value, err
 }
 
-// retrieveManual returns a credential from the in-memory map if present,
-// otherwise blocks until the credential is submitted or context is cancelled.
-func (s *Service) retrieveManual(ctx context.Context, name string) ([]byte, error) {
-	// Check if already submitted.
-	s.mu.RLock()
-	if cred, exists := s.manualCreds[name]; exists {
-		result := make([]byte, len(cred))
-		copy(result, cred)
-		s.mu.RUnlock()
-		return result, nil
-	}
-	s.mu.RUnlock()
-
-	// Register a waiter channel.
-	ch := make(chan []byte, 1)
-	s.waitersMu.Lock()
-	s.waiters[name] = append(s.waiters[name], ch)
-	s.waitersMu.Unlock()
-
-	// Block until credential is submitted or context is done.
-	select {
-	case value := <-ch:
-		return value, nil
-	case <-ctx.Done():
-		// Clean up the waiter.
-		s.waitersMu.Lock()
-		waiters := s.waiters[name]
-		for i, w := range waiters {
-			if w == ch {
-				s.waiters[name] = append(waiters[:i], waiters[i+1:]...)
-				break
-			}
-		}
-		if len(s.waiters[name]) == 0 {
-			delete(s.waiters, name)
-		}
-		s.waitersMu.Unlock()
-		return nil, ctx.Err()
-	}
+// SubmitCredential stores the credential; only the manual strategy
+// distinguishes submission from storage.
+func (p *platformCredentials) SubmitCredential(ctx context.Context, name string, value []byte) error {
+	return p.StoreCredential(ctx, name, value)
 }
 
-// retrieveBarrier reads a credential from the barrier.
-func (s *Service) retrieveBarrier(name string) ([]byte, error) {
-	value, err := s.barrier.Get(context.Background(), credentialPrefix+name)
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return nil, ErrCredentialNotFound
-		}
-		return nil, err
-	}
-	return value, nil
-}
-
-// retrievePlatform reads a credential from the PlatformStore.
-func (s *Service) retrievePlatform(ctx context.Context, name string) ([]byte, error) {
-	value, err := s.platformStore.Get(ctx, credentialPrefix+name)
-	if err != nil {
-		if errors.Is(err, seal.ErrSecretNotFound) {
-			return nil, ErrCredentialNotFound
-		}
-		return nil, err
-	}
-	return value, nil
-}
-
-// deleteManual removes a credential from the in-memory map and zeroes its value.
-func (s *Service) deleteManual(name string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	cred, exists := s.manualCreds[name]
-	if !exists {
+// DeleteCredential removes a credential from the platform store.
+func (p *platformCredentials) DeleteCredential(ctx context.Context, name string) error {
+	err := p.store.Delete(ctx, credentialPrefix+name)
+	if errors.Is(err, seal.ErrSecretNotFound) {
 		return ErrCredentialNotFound
 	}
-	enclave.Wipe(cred)
-	delete(s.manualCreds, name)
-
-	s.logger.Debug("credential deleted from memory", "name", name)
-	return nil
-}
-
-// deleteBarrier removes a credential from the barrier.
-func (s *Service) deleteBarrier(name string) error {
-	err := s.barrier.Delete(context.Background(), credentialPrefix+name)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return ErrCredentialNotFound
-		}
 		return err
 	}
-	s.logger.Debug("credential deleted from barrier", "name", name)
+	p.logger.Debug("credential deleted from platform store", "name", name, "strategy", p.strategy)
 	return nil
 }
 
-// deletePlatform removes a credential from the PlatformStore.
-func (s *Service) deletePlatform(ctx context.Context, name string) error {
-	err := s.platformStore.Delete(ctx, credentialPrefix+name)
+// ListCredentials returns the credential names held in the platform store.
+// Entries outside the credential namespace are not credentials and are
+// skipped.
+func (p *platformCredentials) ListCredentials(ctx context.Context) ([]string, error) {
+	keys, err := p.store.List(ctx)
 	if err != nil {
-		if errors.Is(err, seal.ErrSecretNotFound) {
-			return ErrCredentialNotFound
-		}
-		return err
+		return nil, err
 	}
-	s.logger.Debug("credential deleted from platform store", "name", name, "strategy", s.strategy)
-	return nil
+	names := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if name, ok := strings.CutPrefix(key, credentialPrefix); ok {
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
 
-// isPlatformStrategy returns true if the strategy uses the PlatformStore
-// (not manual and not barrier).
+// isPlatformStrategy reports whether strategy keeps credentials in the
+// platform store rather than go-qrdb's credential service.
 func isPlatformStrategy(strategy string) bool {
-	return strategy != StrategyManual && strategy != "barrier"
+	return strategy != StrategyManual && strategy != StrategyBarrier
 }
 
 // validateInput checks that name and value are non-empty.

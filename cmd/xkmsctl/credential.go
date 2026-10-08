@@ -133,7 +133,7 @@ func runCredentialSubmit(cmd *cobra.Command, args []string) error {
 		return ErrCredentialValueRequired
 	}
 
-	httpClient, err := createInitHTTPClient(cfg, false)
+	httpClient, err := createServerHTTPClient(cfg, false)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func runCredentialSubmit(cmd *cobra.Command, args []string) error {
 		Value: base64.StdEncoding.EncodeToString([]byte(value)),
 	}
 
-	resp, err := doInitRequest(httpClient, http.MethodPost, url, reqBody)
+	resp, err := doServerRequest(httpClient, http.MethodPost, url, reqBody)
 	if err != nil {
 		return err
 	}
@@ -181,7 +181,7 @@ func runCredentialStrategy(cmd *cobra.Command, args []string) error {
 		return ErrServerRequired
 	}
 
-	httpClient, err := createInitHTTPClient(cfg, false)
+	httpClient, err := createServerHTTPClient(cfg, false)
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ func runCredentialStrategy(cmd *cobra.Command, args []string) error {
 	printVerbose("Querying credential strategy")
 
 	url := cfg.Server + "/api/v1/credentials/strategy"
-	resp, err := doInitRequest(httpClient, http.MethodGet, url, nil)
+	resp, err := doServerRequest(httpClient, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
@@ -227,7 +227,7 @@ func runCredentialList(cmd *cobra.Command, args []string) error {
 		return ErrServerRequired
 	}
 
-	httpClient, err := createInitHTTPClient(cfg, false)
+	httpClient, err := createServerHTTPClient(cfg, false)
 	if err != nil {
 		return err
 	}
@@ -237,7 +237,7 @@ func runCredentialList(cmd *cobra.Command, args []string) error {
 	printVerbose("Listing submitted credentials")
 
 	url := cfg.Server + "/api/v1/credentials"
-	resp, err := doInitRequest(httpClient, http.MethodGet, url, nil)
+	resp, err := doServerRequest(httpClient, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}

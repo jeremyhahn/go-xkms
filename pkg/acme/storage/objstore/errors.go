@@ -13,8 +13,24 @@
 
 package objstore
 
-import "errors"
+import (
+	"errors"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+)
 
 // ErrIndexNotSupported is returned when an index query is attempted against
 // the objstore backend, which does not support native indexes.
 var ErrIndexNotSupported = errors.New("objstore: index queries not supported")
+
+// errNilDAOFactory is the go-qrdb configuration error a factory constructor
+// returns when it is given no DAO factory.
+func errNilDAOFactory() error {
+	return qrdbsdk.DAOInvalidConfigError{Field: "daoFactory", Reason: "DAO factory not configured"}
+}
+
+// errNilKVStore is the go-qrdb configuration error a factory constructor
+// returns when it is given no KVStore.
+func errNilKVStore() error {
+	return qrdbsdk.DAOInvalidConfigError{Field: "kvStore", Reason: "kv store not configured"}
+}

@@ -48,18 +48,6 @@ func newPlatformScopeMCP(t *testing.T) *Server {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	server := createTestServer(t)
 
-	b, err := seal.NewBarrier(logger, storage.NewMemory(), seal.BarrierConfig{
-		RootKeyPath:     "core/seal",
-		PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-	}, seal.NewSoftwareStrategy())
-	require.NoError(t, err)
-	creds := seal.MustCredentials([]byte("passphrase"))
-	defer creds.Secret.Destroy()
-	require.NoError(t, b.Initialize(ctx, creds))
-	if b.IsSealed() {
-		require.NoError(t, b.Unseal(ctx, creds))
-	}
-
 	hashCfg := qrdbsdk.DefaultHashConfig()
 	hashCfg.Time, hashCfg.Memory, hashCfg.Threads = 1, 8*1024, 1
 	pins, err := qrdbsdk.NewSoftwareBackend(nil, hashCfg)
@@ -76,7 +64,6 @@ func newPlatformScopeMCP(t *testing.T) *Server {
 	credSvc, err := credentialspkg.New(&credentialspkg.Config{Strategy: credentialspkg.StrategyManual}, nil, nil, logger)
 	require.NoError(t, err)
 
-	server.xkmsService.SetBarrier(b)
 	server.xkmsService.SetPINManager(pins)
 	server.xkmsService.SetPlatformStore(store)
 	server.xkmsService.SetTPMPolicyService(policies)
@@ -94,20 +81,6 @@ var platformScopeMethods = map[string]string{
 	"sealStore.reseal":   `{"name":"credentials/pkcs11-pin"}`,
 	"sealStore.status":   `{}`,
 	"credentials.submit": `{"name":"pkcs11-pin","value":"c2VjcmV0"}`,
-
-	"barrier.initialize":           `{"secret":"passphrase"}`,
-	"barrier.initializeShamir":     `{"secret":"passphrase"}`,
-	"barrier.unseal":               `{"secret":"passphrase"}`,
-	"barrier.unsealShare":          `{"share":"s"}`,
-	"barrier.unsealShares":         `{"shares":["a","b"]}`,
-	"barrier.seal":                 `{}`,
-	"barrier.status":               `{}`,
-	"barrier.rekey":                `{"threshold":2,"total":3}`,
-	"barrier.generateRecoveryKeys": `{"threshold":2,"total":3}`,
-	"barrier.recoverWithKeys":      `{"keys":["a","b"]}`,
-	"barrier.deleteRecoveryKeys":   `{}`,
-	"barrier.hasRecoveryKeys":      `{}`,
-	"barrier.generateRootToken":    `{"shares":["a","b"]}`,
 
 	"xkms.setSOPIN":         `{"current_so_pin":"so-pin-123456","new_so_pin":"so-pin-654321"}`,
 	"xkms.setUserPIN":       `{"so_pin":"so-pin-123456","new_user_pin":"user-pin-654321"}`,

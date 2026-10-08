@@ -1403,71 +1403,7 @@ func TestWithSPKIPin(t *testing.T) {
 	})
 }
 
-// Barrier operations
-func (m *mockService) BarrierInitialize(ctx context.Context, req *BarrierInitializeRequest) error {
-	return nil
-}
-
-func (m *mockService) BarrierUnseal(ctx context.Context, req *BarrierUnsealRequest) error {
-	return nil
-}
-
-func (m *mockService) BarrierSeal(ctx context.Context) error {
-	return nil
-}
-
-func (m *mockService) BarrierStatus(ctx context.Context) (*BarrierStatusResponse, error) {
-	return nil, nil
-}
-
 func (m *mockService) BootstrapListenerKeys(ctx context.Context) (*BootstrapListenerKeysResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) BarrierInitializeShamir(ctx context.Context, req *BarrierInitializeShamirRequest) (*BarrierInitializeShamirResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) BarrierUnsealWithShare(ctx context.Context, req *BarrierUnsealShareRequest) (*BarrierUnsealShareResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) BarrierUnsealWithShares(ctx context.Context, req *BarrierUnsealSharesRequest) error {
-	return nil
-}
-
-// BarrierRekey re-encrypts the barrier with a new root key.
-func (m *mockService) BarrierRekey(_ context.Context, _ *BarrierRekeyRequest) (*BarrierRekeyResponse, error) {
-	return nil, nil
-}
-
-// BarrierGenerateRecoveryKeys generates recovery keys.
-func (m *mockService) BarrierGenerateRecoveryKeys(_ context.Context, _ *BarrierGenerateRecoveryKeysRequest) (*BarrierRecoveryKeysResponse, error) {
-	return nil, nil
-}
-
-// BarrierEnableEncryption enables barrier encryption.
-func (m *mockService) BarrierEnableEncryption(_ context.Context, _ *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error) {
-	return nil, nil
-}
-
-// BarrierRecoverWithKeys recovers the barrier using recovery keys.
-func (m *mockService) BarrierRecoverWithKeys(_ context.Context, _ *BarrierRecoverWithKeysRequest) error {
-	return nil
-}
-
-// BarrierDeleteRecoveryKeys deletes all recovery keys.
-func (m *mockService) BarrierDeleteRecoveryKeys(_ context.Context) error {
-	return nil
-}
-
-// BarrierHasRecoveryKeys checks if recovery keys exist.
-func (m *mockService) BarrierHasRecoveryKeys(_ context.Context) (*BarrierHasRecoveryKeysResponse, error) {
-	return nil, nil
-}
-
-// BarrierGenerateRootToken generates a root token.
-func (m *mockService) BarrierGenerateRootToken(_ context.Context, _ *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error) {
 	return nil, nil
 }
 
@@ -1504,78 +1440,6 @@ func (m *mockService) ResetLockout(ctx context.Context, req *ResetLockoutRequest
 	return nil
 }
 
-func (m *mockService) CreateBackup(ctx context.Context, req *BackupRequest) (*BackupInfo, error) {
-	return nil, nil
-}
-
-func (m *mockService) ListBackups(ctx context.Context) ([]BackupInfo, error) {
-	return nil, nil
-}
-
-func (m *mockService) GetBackup(ctx context.Context, id string) (*BackupInfo, error) {
-	return nil, nil
-}
-
-func (m *mockService) DeleteBackup(ctx context.Context, id string) error {
-	return nil
-}
-
-func (m *mockService) RestoreBackup(ctx context.Context, req *RestoreRequest) (*RestoreResult, error) {
-	return nil, nil
-}
-
-func (m *mockService) VerifyBackup(ctx context.Context, id string) (*VerifyResult, error) {
-	return nil, nil
-}
-
-func (m *mockService) CreateCustodianGroup(ctx context.Context, req *CreateCustodianGroupRequest) (*CreateCustodianGroupResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) GetCustodianGroup(ctx context.Context, groupID string) (*GetCustodianGroupResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) ListCustodianGroups(ctx context.Context) (*ListCustodianGroupsResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) DeleteCustodianGroup(ctx context.Context, groupID string) error {
-	return nil
-}
-
-func (m *mockService) AddCustodianMember(ctx context.Context, req *AddCustodianMemberRequest) (*AddCustodianMemberResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) RemoveCustodianMember(ctx context.Context, req *RemoveCustodianMemberRequest) error {
-	return nil
-}
-
-func (m *mockService) DistributeShares(ctx context.Context, req *DistributeSharesRequest) (*DistributeSharesResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) SubmitShare(ctx context.Context, req *SubmitShareRequest) (*SubmitShareResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) ListShares(ctx context.Context) (*ListSharesResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*ShareInfo, error) {
-	return nil, nil
-}
-
-func (m *mockService) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
-	return nil
-}
-
-func (m *mockService) GetShareCollectionStatus(ctx context.Context, groupID string) (*ShareCollectionStatus, error) {
-	return nil, nil
-}
-
 func (m *mockService) CreateTenant(ctx context.Context, req *CreateTenantRequest) (*CreateTenantResponse, error) {
 	return nil, nil
 }
@@ -1592,18 +1456,6 @@ func (m *mockService) DeleteTenant(ctx context.Context, tenantID string) error {
 	return nil
 }
 
-func (m *mockService) TenantBarrierInit(ctx context.Context, req *TenantBarrierInitRequest) error {
-	return nil
-}
-
-func (m *mockService) TenantBarrierUnseal(ctx context.Context, req *TenantBarrierUnsealRequest) error {
-	return nil
-}
-
-func (m *mockService) TenantBarrierStatus(_ context.Context, _ string) (*TenantBarrierStatusResponse, error) {
-	return nil, nil
-}
-
 func (m *mockService) UpdateTenantEntitlements(_ context.Context, _ *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error) {
 	return nil, nil
 }
@@ -1613,30 +1465,6 @@ func (m *mockService) UpdateTenantQuotas(_ context.Context, _ *UpdateTenantQuota
 }
 
 // InitCeremonyService methods
-
-func (m *mockService) GetInitStatus(ctx context.Context) (*InitStatusResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) ClaimCertBegin(ctx context.Context, req *ClaimCertBeginRequest) (*ClaimCertBeginResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) ClaimCertComplete(ctx context.Context, req *ClaimCertCompleteRequest) (*ClaimCertCompleteResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) ClaimShareBegin(ctx context.Context, req *ClaimShareBeginRequest) (*ClaimShareBeginResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) ClaimShareComplete(ctx context.Context, req *ClaimShareCompleteRequest) (*ClaimShareCompleteResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) SignCSRInit(ctx context.Context, req *SignCSRInitRequest) (*SignCSRInitResponse, error) {
-	return nil, nil
-}
 
 // CredentialManagementService methods
 
@@ -1677,9 +1505,5 @@ func (m *mockService) BindUserCert(ctx context.Context, username, thumbprint str
 }
 
 func (m *mockService) ListUserCredentials(ctx context.Context, username string) (*ListUserCredentialsResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) QueryAudit(ctx context.Context, filter *AuditFilter) (*AuditPage, error) {
 	return nil, nil
 }

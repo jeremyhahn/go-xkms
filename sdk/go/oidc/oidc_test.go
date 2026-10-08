@@ -41,12 +41,13 @@ func TestDatabaseName_MatchesPkg(t *testing.T) {
 	}
 }
 
-// TestNewDAOStore_NilKVStore proves the re-exported constructor's error
-// path is reachable through the alias with the pkg/oidc sentinel intact.
-func TestNewDAOStore_NilKVStore(t *testing.T) {
+// TestNewDAOStore_NilFactory proves the re-exported constructor's error
+// path is reachable through the alias with the pkg/oidc error type intact.
+func TestNewDAOStore_NilFactory(t *testing.T) {
 	store, err := oidc.NewDAOStore(nil)
-	if !errors.Is(err, pkg.ErrNilBackend) {
-		t.Fatalf("NewDAOStore(nil) error = %v, want ErrNilBackend", err)
+	var creation pkg.ErrDAOCreation
+	if !errors.As(err, &creation) {
+		t.Fatalf("NewDAOStore(nil) error = %v, want ErrDAOCreation", err)
 	}
 	if store != nil {
 		t.Fatalf("NewDAOStore(nil) store = %v, want nil", store)

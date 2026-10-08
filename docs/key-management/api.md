@@ -531,7 +531,7 @@ and three ordered `[]SentinelClass` tables — `ImportExportSentinelClasses`,
 `PIVSentinelClasses`, `BarrierSentinelClasses` — that pair each domain
 sentinel with its `Class`. `ClassOf` runs `errors.Is` against a table, first
 match wins. Both `pkg/api/grpc` (`errors_keyops.go`'s `mapImportExportError`,
-`service_piv.go`'s `mapPIVError`, `service_barrier_pin.go`'s
+`service_piv.go`'s `mapPIVError`, `service_pin.go`'s
 `mapBarrierError`) and `pkg/api/mcp` (`errors_shared.go`'s three
 identically-named functions) call `apierrors.ClassOf` against these same
 three tables and translate the resulting `Class` into their own wire
@@ -744,7 +744,7 @@ condition.
   `getShare`, `deleteShare`, `getShareCollectionStatus`) gained a local
   `shareSentinelCodes` table and `mapShareError`, classifying
   `qrdbsdk.ErrCeremonyShareNotFound` as `sdkssh.JSONRPCCodeNotFound` — the
-  same outcome `pkg/api/grpc/service_custodian_share_tenant.go`'s
+  same outcome `pkg/api/grpc/service_tenant.go`'s
   `shareErrorToGRPC` reports as `codes.NotFound` — and `xkms.ErrNotConfigured`
   as `ErrCodeServiceUnavailable`. The latter has no gRPC counterpart to
   mirror: gRPC's five share RPCs never call through the xkms service layer at

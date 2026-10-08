@@ -61,19 +61,6 @@ var platformScopeRoutes = map[string]platformScopeRoute{
 	"credentials submit": {http.MethodPost, "/credentials/submit", `{"name":"pkcs11-pin","value":"c2VjcmV0"}`},
 	"credentials list":   {http.MethodGet, "/credentials/", ""},
 
-	"barrier initialize":        {http.MethodPost, "/barrier/initialize", `{"password_b64":"` + base64.StdEncoding.EncodeToString([]byte("passphrase")) + `"}`},
-	"barrier unseal":            {http.MethodPost, "/barrier/unseal", `{"password_b64":"` + base64.StdEncoding.EncodeToString([]byte("passphrase")) + `"}`},
-	"barrier seal":              {http.MethodPost, "/barrier/seal", ""},
-	"barrier status":            {http.MethodGet, "/barrier/status", ""},
-	"barrier shamir initialize": {http.MethodPost, "/barrier/shamir/initialize", `{"secret":"passphrase"}`},
-	"barrier unseal share":      {http.MethodPost, "/barrier/shamir/unseal-share", `{"share":"s"}`},
-	"barrier unseal shares":     {http.MethodPost, "/barrier/shamir/unseal-shares", `{"shares":["a","b"]}`},
-	"barrier rekey":             {http.MethodPost, "/barrier/rekey", `{"threshold":2,"total":3}`},
-	"barrier recovery generate": {http.MethodPost, "/barrier/recovery/generate", `{"threshold":2,"total":3}`},
-	"barrier recovery recover":  {http.MethodPost, "/barrier/recovery/recover", `{"keys":["a","b"]}`},
-	"barrier recovery delete":   {http.MethodDelete, "/barrier/recovery/keys", ""},
-	"barrier root token":        {http.MethodPost, "/barrier/recovery/root-token", `{"shares":["a","b"]}`},
-
 	"pin so set":        {http.MethodPost, "/pin/so/set", `{"current_so_pin":"so-pin-123456","new_so_pin":"so-pin-654321"}`},
 	"pin user set":      {http.MethodPost, "/pin/user/set", `{"so_pin":"so-pin-123456","new_user_pin":"user-pin-654321"}`},
 	"pin so change":     {http.MethodPost, "/pin/so/change", `{"current_so_pin":"so-pin-123456","new_so_pin":"so-pin-654321"}`},
@@ -109,18 +96,6 @@ func newPlatformScopeService(t *testing.T) *xkms.XKMSService {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	barrier, err := seal.NewBarrier(logger, storage.NewMemory(), seal.BarrierConfig{
-		RootKeyPath:     "core/seal",
-		PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-	}, seal.NewSoftwareStrategy())
-	require.NoError(t, err)
-	creds := seal.MustCredentials([]byte("passphrase"))
-	defer creds.Secret.Destroy()
-	require.NoError(t, barrier.Initialize(ctx, creds))
-	if barrier.IsSealed() {
-		require.NoError(t, barrier.Unseal(ctx, creds))
-	}
-
 	hashCfg := qrdbsdk.DefaultHashConfig()
 	hashCfg.Time, hashCfg.Memory, hashCfg.Threads = 1, 8*1024, 1
 	pins, err := qrdbsdk.NewSoftwareBackend(nil, hashCfg)
@@ -138,7 +113,6 @@ func newPlatformScopeService(t *testing.T) *xkms.XKMSService {
 	require.NoError(t, err)
 
 	svc := &xkms.XKMSService{}
-	svc.SetBarrier(barrier)
 	svc.SetPINManager(pins)
 	svc.SetPlatformStore(store)
 	svc.SetTPMPolicyService(policies)
@@ -171,19 +145,6 @@ func platformScopeRouter(t *testing.T, svc *xkms.XKMSService, identity *auth.Ide
 	r.Get("/platform/status", platform.StatusHandler)
 	r.Post("/credentials/submit", creds.HandleSubmit)
 	r.Get("/credentials/", creds.HandleList)
-
-	r.Post("/barrier/initialize", h.BarrierInitializeHandler)
-	r.Post("/barrier/unseal", h.BarrierUnsealHandler)
-	r.Post("/barrier/seal", h.BarrierSealHandler)
-	r.Get("/barrier/status", h.BarrierStatusHandler)
-	r.Post("/barrier/shamir/initialize", h.BarrierInitializeShamirHandler)
-	r.Post("/barrier/shamir/unseal-share", h.BarrierUnsealShareHandler)
-	r.Post("/barrier/shamir/unseal-shares", h.BarrierUnsealSharesHandler)
-	r.Post("/barrier/rekey", h.BarrierRekeyHandler)
-	r.Post("/barrier/recovery/generate", h.BarrierGenerateRecoveryKeysHandler)
-	r.Post("/barrier/recovery/recover", h.BarrierRecoverWithKeysHandler)
-	r.Delete("/barrier/recovery/keys", h.BarrierDeleteRecoveryKeysHandler)
-	r.Post("/barrier/recovery/root-token", h.BarrierGenerateRootTokenHandler)
 
 	r.Post("/pin/so/set", h.SetSOPINHandler)
 	r.Post("/pin/user/set", h.SetUserPINHandler)

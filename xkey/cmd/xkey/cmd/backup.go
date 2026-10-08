@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"io"
 	"log/slog"
 	"math"
@@ -27,6 +26,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -1299,7 +1301,7 @@ func writeEncryptedBackup(path string, encrypted *backup.EncryptedBackup) error 
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrBackupCreateFailed, Cause: err}
 	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(path, data, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrBackupCreateFailed, Cause: err}
 	}
 	return nil

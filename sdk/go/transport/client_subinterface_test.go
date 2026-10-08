@@ -141,47 +141,7 @@ func (s *stubClient) CanSeal(context.Context, string) (*CanSealResponse, error) 
 	panic("stub")
 }
 
-func (s *stubClient) BarrierInitialize(context.Context, *BarrierInitializeRequest) error {
-	panic("stub")
-}
-func (s *stubClient) BarrierUnseal(context.Context, *BarrierUnsealRequest) error {
-	panic("stub")
-}
-func (s *stubClient) BarrierSeal(context.Context) error { panic("stub") }
-func (s *stubClient) BarrierStatus(context.Context) (*BarrierStatusResponse, error) {
-	panic("stub")
-}
 func (s *stubClient) BootstrapListenerKeys(context.Context) (*BootstrapListenerKeysResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) BarrierInitializeShamir(context.Context, *BarrierInitializeShamirRequest) (*BarrierInitializeShamirResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) BarrierUnsealWithShare(context.Context, *BarrierUnsealShareRequest) (*BarrierUnsealShareResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) BarrierUnsealWithShares(context.Context, *BarrierUnsealSharesRequest) error {
-	panic("stub")
-}
-func (s *stubClient) BarrierRekey(context.Context, *BarrierRekeyRequest) (*BarrierRekeyResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) BarrierGenerateRecoveryKeys(context.Context, *BarrierGenerateRecoveryKeysRequest) (*BarrierRecoveryKeysResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) BarrierEnableEncryption(context.Context, *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) BarrierRecoverWithKeys(context.Context, *BarrierRecoverWithKeysRequest) error {
-	panic("stub")
-}
-func (s *stubClient) BarrierDeleteRecoveryKeys(context.Context) error {
-	panic("stub")
-}
-func (s *stubClient) BarrierHasRecoveryKeys(context.Context) (*BarrierHasRecoveryKeysResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) BarrierGenerateRootToken(context.Context, *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error) {
 	panic("stub")
 }
 
@@ -462,52 +422,6 @@ func (s *stubClient) TenantVTPMStop(context.Context, string) (*TenantVTPMStatusR
 	panic("stub")
 }
 
-// BackupService stubs.
-func (s *stubClient) CreateBackup(context.Context, *BackupRequest) (*BackupInfo, error) {
-	panic("stub")
-}
-func (s *stubClient) ListBackups(context.Context) ([]BackupInfo, error)      { panic("stub") }
-func (s *stubClient) GetBackup(context.Context, string) (*BackupInfo, error) { panic("stub") }
-func (s *stubClient) DeleteBackup(context.Context, string) error             { panic("stub") }
-func (s *stubClient) RestoreBackup(context.Context, *RestoreRequest) (*RestoreResult, error) {
-	panic("stub")
-}
-func (s *stubClient) VerifyBackup(context.Context, string) (*VerifyResult, error) { panic("stub") }
-
-// CustodianGroupService stubs.
-func (s *stubClient) CreateCustodianGroup(context.Context, *CreateCustodianGroupRequest) (*CreateCustodianGroupResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) GetCustodianGroup(context.Context, string) (*GetCustodianGroupResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) ListCustodianGroups(context.Context) (*ListCustodianGroupsResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) DeleteCustodianGroup(context.Context, string) error { panic("stub") }
-func (s *stubClient) AddCustodianMember(context.Context, *AddCustodianMemberRequest) (*AddCustodianMemberResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) RemoveCustodianMember(context.Context, *RemoveCustodianMemberRequest) error {
-	panic("stub")
-}
-func (s *stubClient) DistributeShares(context.Context, *DistributeSharesRequest) (*DistributeSharesResponse, error) {
-	panic("stub")
-}
-
-// ShareService stubs.
-func (s *stubClient) SubmitShare(context.Context, *SubmitShareRequest) (*SubmitShareResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) ListShares(context.Context) (*ListSharesResponse, error) { panic("stub") }
-func (s *stubClient) GetShare(context.Context, string, string, int) (*ShareInfo, error) {
-	panic("stub")
-}
-func (s *stubClient) DeleteShare(context.Context, string, string, int) error { panic("stub") }
-func (s *stubClient) GetShareCollectionStatus(context.Context, string) (*ShareCollectionStatus, error) {
-	panic("stub")
-}
-
 // TenantService stubs.
 func (s *stubClient) CreateTenant(context.Context, *CreateTenantRequest) (*CreateTenantResponse, error) {
 	panic("stub")
@@ -517,40 +431,11 @@ func (s *stubClient) GetTenant(context.Context, string) (*GetTenantResponse, err
 }
 func (s *stubClient) ListTenants(context.Context) (*ListTenantsResponse, error) { panic("stub") }
 func (s *stubClient) DeleteTenant(context.Context, string) error                { panic("stub") }
-func (s *stubClient) TenantBarrierInit(context.Context, *TenantBarrierInitRequest) error {
-	panic("stub")
-}
-func (s *stubClient) TenantBarrierUnseal(context.Context, *TenantBarrierUnsealRequest) error {
-	panic("stub")
-}
-func (s *stubClient) TenantBarrierStatus(_ context.Context, _ string) (*TenantBarrierStatusResponse, error) {
-	return nil, nil
-}
 func (s *stubClient) UpdateTenantEntitlements(_ context.Context, _ *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error) {
 	return nil, nil
 }
 func (s *stubClient) UpdateTenantQuotas(_ context.Context, _ *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error) {
 	return nil, nil
-}
-
-// InitCeremonyService stubs.
-func (s *stubClient) GetInitStatus(context.Context) (*InitStatusResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) ClaimCertBegin(context.Context, *ClaimCertBeginRequest) (*ClaimCertBeginResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) ClaimCertComplete(context.Context, *ClaimCertCompleteRequest) (*ClaimCertCompleteResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) ClaimShareBegin(context.Context, *ClaimShareBeginRequest) (*ClaimShareBeginResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) ClaimShareComplete(context.Context, *ClaimShareCompleteRequest) (*ClaimShareCompleteResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) SignCSRInit(context.Context, *SignCSRInitRequest) (*SignCSRInitResponse, error) {
-	panic("stub")
 }
 
 // CredentialManagementService stubs.
@@ -622,11 +507,6 @@ func (s *stubClient) RotateScopeKeys(context.Context, *RotateScopeKeysRequest) (
 	panic("stub")
 }
 
-// AuditService stub.
-func (s *stubClient) QueryAudit(context.Context, *AuditFilter) (*AuditPage, error) {
-	panic("stub")
-}
-
 // Compile-time assertions: stubClient must satisfy Client and every sub-interface.
 var (
 	_ Client                      = (*stubClient)(nil)
@@ -637,7 +517,6 @@ var (
 	_ CryptoService               = (*stubClient)(nil)
 	_ CertService                 = (*stubClient)(nil)
 	_ SealService                 = (*stubClient)(nil)
-	_ BarrierService              = (*stubClient)(nil)
 	_ PIVService                  = (*stubClient)(nil)
 	_ FIDO2Service                = (*stubClient)(nil)
 	_ CAService                   = (*stubClient)(nil)
@@ -646,12 +525,8 @@ var (
 	_ PasswordService             = (*stubClient)(nil)
 	_ SealStoreService            = (*stubClient)(nil)
 	_ TPMPolicyService            = (*stubClient)(nil)
-	_ CustodianGroupService       = (*stubClient)(nil)
-	_ ShareService                = (*stubClient)(nil)
 	_ TenantService               = (*stubClient)(nil)
-	_ InitCeremonyService         = (*stubClient)(nil)
 	_ CredentialManagementService = (*stubClient)(nil)
-	_ AuditService                = (*stubClient)(nil)
 )
 
 // TestClientComposesAllSubInterfaces verifies that a value satisfying the
@@ -671,7 +546,6 @@ func TestClientComposesAllSubInterfaces(t *testing.T) {
 		{"CryptoService", func() bool { var v CryptoService = c; return v != nil }},
 		{"CertService", func() bool { var v CertService = c; return v != nil }},
 		{"SealService", func() bool { var v SealService = c; return v != nil }},
-		{"BarrierService", func() bool { var v BarrierService = c; return v != nil }},
 		{"PIVService", func() bool { var v PIVService = c; return v != nil }},
 		{"FIDO2Service", func() bool { var v FIDO2Service = c; return v != nil }},
 		{"CAService", func() bool { var v CAService = c; return v != nil }},
@@ -679,10 +553,7 @@ func TestClientComposesAllSubInterfaces(t *testing.T) {
 		{"PasswordService", func() bool { var v PasswordService = c; return v != nil }},
 		{"SealStoreService", func() bool { var v SealStoreService = c; return v != nil }},
 		{"TPMPolicyService", func() bool { var v TPMPolicyService = c; return v != nil }},
-		{"CustodianGroupService", func() bool { var v CustodianGroupService = c; return v != nil }},
-		{"ShareService", func() bool { var v ShareService = c; return v != nil }},
 		{"TenantService", func() bool { var v TenantService = c; return v != nil }},
-		{"InitCeremonyService", func() bool { var v InitCeremonyService = c; return v != nil }},
 		{"CredentialManagementService", func() bool {
 			var v CredentialManagementService = c
 			return v != nil
@@ -753,16 +624,8 @@ func TestSubInterfaceIndependence(t *testing.T) {
 		var _ CertService = stub
 	})
 
-	t.Run("BarrierServiceOnly", func(t *testing.T) {
-		var _ BarrierService = stub
-	})
-
 	t.Run("CAServiceOnly", func(t *testing.T) {
 		var _ CAService = stub
-	})
-
-	t.Run("InitCeremonyServiceOnly", func(t *testing.T) {
-		var _ InitCeremonyService = stub
 	})
 
 	t.Run("CredentialManagementServiceOnly", func(t *testing.T) {

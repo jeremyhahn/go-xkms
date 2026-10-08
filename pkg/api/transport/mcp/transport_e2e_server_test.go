@@ -24,7 +24,7 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/require"
 
-	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -55,7 +55,7 @@ import (
 // software backend, plus an initialized, unsealed *seal.BarrierRegistry with
 // no tenants registered in it, so a caller identity scoped to any tenant is
 // deterministically unregistered -- exercising the tenant gate's
-// ErrCodeForbidden path (wire.CodePermissionDenied) without the weight of a
+// ErrCodeForbidden path (qrdbsdk.MCPCodePermissionDenied) without the weight of a
 // real qrdb node.
 func newE2EBackendWithBarrier(t *testing.T) *xkmsmcp.Server {
 	t.Helper()
@@ -84,7 +84,7 @@ func newE2EBackendWithBarrier(t *testing.T) *xkmsmcp.Server {
 		seal.NewSoftwareStrategy(),
 	)
 	require.NoError(t, err)
-	creds := seal.MustCredentials([]byte("test-password"))
+	creds := seal.MustCredentials(t.Context(), []byte("test-password"))
 	defer creds.Secret.Destroy()
 	require.NoError(t, barrier.Initialize(context.Background(), creds))
 	registry, err := seal.NewBarrierRegistry(barrier)
@@ -140,7 +140,7 @@ func connectInProcessToModule(t *testing.T, backend *xkmsmcp.Server) *Transport 
 // type assertion with xkms.ErrOperationNotSupported -- the one
 // errors_keyops.go sentinel with a code distinct from ErrCodeInternalError
 // -- and reaches this SDK's caller as an *RPCError classified
-// ErrCodeMethodNotFound, go-qrdb's wire.CodeUnimplemented reconstituted.
+// ErrCodeMethodNotFound, go-qrdb's qrdbsdk.MCPCodeUnimplemented reconstituted.
 func TestE2E_CapabilityBoundaryIsUnimplemented(t *testing.T) {
 	backend := newE2EBackendWithBarrier(t)
 	tr := connectInProcessToModule(t, backend)
@@ -160,7 +160,7 @@ func TestE2E_CapabilityBoundaryIsUnimplemented(t *testing.T) {
 // mapping end to end, through the real server: signing a non-Ed25519 key
 // with no data reaches XKMSService.Sign's "data is required"
 // *xkms.ErrValidation, which mapKeyOpError renders as ErrCodeInvalidParams
-// (wire.CodeInvalidArgument on the wire), and this SDK reconstitutes it as
+// (qrdbsdk.MCPCodeInvalidArgument on the wire), and this SDK reconstitutes it as
 // an *RPCError carrying that same code -- go-xkms#797.
 func TestE2E_ValidationFailureIsInvalidArgument(t *testing.T) {
 	backend := newE2EBackendWithBarrier(t)
@@ -194,7 +194,7 @@ func TestE2E_ValidationFailureIsInvalidArgument(t *testing.T) {
 // denied" mapping end to end: a caller identity scoped to a tenant the
 // barrier registry has never heard of is refused by the tenant gate
 // (pkg/api/mcp/tenant.go), which mapKeyOpError-adjacent tenantAccess renders
-// as ErrCodeForbidden (wire.CodePermissionDenied on the wire), and this SDK
+// as ErrCodeForbidden (qrdbsdk.MCPCodePermissionDenied on the wire), and this SDK
 // reconstitutes it as an *RPCError carrying ErrCodeForbidden.
 func TestE2E_UnregisteredTenantIsPermissionDenied(t *testing.T) {
 	backend := newE2EBackendWithBarrier(t)
@@ -218,22 +218,22 @@ func TestE2E_UnregisteredTenantIsPermissionDenied(t *testing.T) {
 // TestE2E_NotFoundIsClassifiedByCode is the not-found cell of the same
 // matrix, run against a real mcp-go server and this SDK's real rpcCall/
 // classifyToolError path rather than against production dispatch: a hand-
-// built tool result carrying wire.CodeNotFound -- exactly the shape
+// built tool result carrying qrdbsdk.MCPCodeNotFound -- exactly the shape
 // codedToolResult produces -- is received by the real Streamable-HTTP-shaped
 // in-process transport and reconstituted by this client as an *RPCError
 // carrying both WireCode (go-qrdb's raw classification) and Code
-// (sdkssh.JSONRPCCodeNotFound, wireCodeToRPCCode's row for wire.CodeNotFound;
+// (sdkssh.JSONRPCCodeNotFound, wireCodeToRPCCode's row for qrdbsdk.MCPCodeNotFound;
 // go-xkms#814). TestE2E_MissingKeyIsClassifiedNotFound below proves the same
 // outcome end to end through production dispatch, closing the gap this
 // test's predecessor documented (before go-xkms#814, no xkms tool call
-// reached wire.CodeNotFound at all, so only the client's reconstruction in
+// reached qrdbsdk.MCPCodeNotFound at all, so only the client's reconstruction in
 // isolation could be exercised).
 func TestE2E_NotFoundIsClassifiedByCode(t *testing.T) {
 	srv := mcpserver.NewMCPServer("xkms-mcp-e2e-notfound-test", "0.0.0", mcpserver.WithToolCapabilities(true))
 	const toolName = "xkms_getKey"
 	srv.AddTool(mcpgo.Tool{Name: toolName}, func(_ context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		res := mcpgo.NewToolResultError("key not found: does-not-exist")
-		res.StructuredContent = wire.NewErrorEnvelope(toolName, wire.CodeNotFound, "key not found: does-not-exist")
+		res.StructuredContent = qrdbsdk.NewMCPErrorEnvelope(toolName, qrdbsdk.MCPCodeNotFound, "key not found: does-not-exist")
 		return res, nil
 	})
 
@@ -259,7 +259,7 @@ func TestE2E_NotFoundIsClassifiedByCode(t *testing.T) {
 	var rpcErr *RPCError
 	require.ErrorAs(t, err, &rpcErr)
 	require.Equal(t, sdkssh.JSONRPCCodeNotFound, rpcErr.Code)
-	require.Equal(t, wire.CodeNotFound, rpcErr.WireCode)
+	require.Equal(t, qrdbsdk.MCPCodeNotFound, rpcErr.WireCode)
 }
 
 // TestE2E_MissingKeyIsClassifiedNotFound proves the "not found" mapping end
@@ -268,7 +268,7 @@ func TestE2E_NotFoundIsClassifiedByCode(t *testing.T) {
 // (pkg/xkms/servicer_helpers.go's findKeyAttrs), which pkg/api/mcp's
 // handleGetKey now runs through mapKeyOpError (errors_keyops.go's
 // keyOpSentinelCodes) instead of the bare *errs.Wrapped it used to return,
-// so it renders as sdkssh.JSONRPCCodeNotFound (wire.CodeNotFound on the
+// so it renders as sdkssh.JSONRPCCodeNotFound (qrdbsdk.MCPCodeNotFound on the
 // wire, via pkg/apimodule's keyOpCodeToWire), and this SDK reconstitutes it
 // as an *RPCError carrying that same Code and WireCode -- go-xkms#814.
 func TestE2E_MissingKeyIsClassifiedNotFound(t *testing.T) {
@@ -281,5 +281,5 @@ func TestE2E_MissingKeyIsClassifiedNotFound(t *testing.T) {
 	var rpcErr *RPCError
 	require.ErrorAs(t, err, &rpcErr)
 	require.Equal(t, sdkssh.JSONRPCCodeNotFound, rpcErr.Code)
-	require.Equal(t, wire.CodeNotFound, rpcErr.WireCode)
+	require.Equal(t, qrdbsdk.MCPCodeNotFound, rpcErr.WireCode)
 }

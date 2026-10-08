@@ -101,9 +101,6 @@ func newMalformedParamsTestServer(t *testing.T) *Server {
 	_, _, manager := passwordTestRegistry(t)
 	server.xkmsService.SetPasswordStoreManager(manager)
 
-	barrier, _, _ := createTestBarrier(t)
-	server.xkmsService.SetBarrier(barrier)
-
 	backend, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
 	sshClient, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})

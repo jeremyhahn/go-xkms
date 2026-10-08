@@ -8,7 +8,6 @@ package xkms.v1;
 option go_package = "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1";
 
 import "google/protobuf/empty.proto";
-import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 
@@ -149,7 +148,7 @@ service KeystoreService {
 
   // SaveCert stores a certificate
   rpc SaveCert(SaveCertRequest) returns (SaveCertResponse) {
-    option (qrdb.v1.permission) = "certs:generate";
+    option (qrdb.v1.permission) = "certs:enroll";
   }
 
   // GetCert retrieves a certificate
@@ -174,7 +173,7 @@ service KeystoreService {
 
   // SaveCertChain stores a certificate chain
   rpc SaveCertChain(SaveCertChainRequest) returns (SaveCertChainResponse) {
-    option (qrdb.v1.permission) = "certs:generate";
+    option (qrdb.v1.permission) = "certs:enroll";
   }
 
   // GetCertChain retrieves a certificate chain
@@ -336,12 +335,12 @@ service KeystoreService {
 
   // SignCSR signs a certificate signing request.
   rpc SignCSR(SignCSRRequest) returns (SignCSRResponse) {
-    option (qrdb.v1.permission) = "certs:generate";
+    option (qrdb.v1.permission) = "certs:issue";
   }
 
   // IssueCertificate issues a new certificate.
   rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse) {
-    option (qrdb.v1.permission) = "certs:generate";
+    option (qrdb.v1.permission) = "certs:issue";
   }
 
   // RevokeCertificate revokes a certificate by serial number.
@@ -363,113 +362,29 @@ service KeystoreService {
 
   // IssueEKCertificate issues an Endorsement Key certificate for a TPM.
   rpc IssueEKCertificate(IssueEKCertificateRequest) returns (IssueEKCertificateResponse) {
-    option (qrdb.v1.permission) = "certs:generate";
+    option (qrdb.v1.permission) = "certs:issue";
   }
 
   // IssueAKCertificate issues an Attestation Key certificate for a TPM.
   rpc IssueAKCertificate(IssueAKCertificateRequest) returns (IssueAKCertificateResponse) {
-    option (qrdb.v1.permission) = "certs:generate";
+    option (qrdb.v1.permission) = "certs:issue";
   }
 
   // SignTCGCSR signs a TCG-CSR-IDEVID and returns IAK and IDevID certificates.
   rpc SignTCGCSR(SignTCGCSRRequest) returns (SignTCGCSRResponse) {
-    option (qrdb.v1.permission) = "certs:generate";
+    option (qrdb.v1.permission) = "certs:issue";
   }
 
   // EnrollDevice performs full TCG device enrollment with credential activation challenge.
   rpc EnrollDevice(EnrollDeviceRequest) returns (EnrollDeviceResponse) {
-    option (qrdb.v1.permission) = "certs:generate";
+    option (qrdb.v1.permission) = "certs:issue";
   }
 
   // IssueLAKCertificate issues a Local Attestation Key certificate in the
   // WebAuthn Level 2 section 8.3.1 profile, after verifying the LAK's
   // TPM2_Certify evidence against the device's IAK certificate (go-xkms#715).
   rpc IssueLAKCertificate(IssueLAKCertificateRequest) returns (IssueLAKCertificateResponse) {
-    option (qrdb.v1.permission) = "certs:generate";
-  }
-
-  // ==================== Barrier Operations ====================
-
-  // BarrierInitialize generates a root key, seals it with the best available
-  // strategy, and transitions the barrier to unsealed state. Must be called
-  // exactly once for a new barrier.
-  rpc BarrierInitialize(BarrierInitializeRequest) returns (google.protobuf.Empty) {
-    option (qrdb.v1.permission) = "seal:bootstrap";
-  }
-
-  // BarrierUnseal loads and unseals the root key, deriving the data encryption
-  // key to enable storage operations.
-  rpc BarrierUnseal(BarrierUnsealRequest) returns (google.protobuf.Empty) {
-    option (qrdb.v1.permission) = "seal:unseal";
-  }
-
-  // BarrierSeal transitions the barrier to sealed state and zeros the DEK.
-  // All subsequent storage operations will fail until Unseal is called again.
-  rpc BarrierSeal(google.protobuf.Empty) returns (google.protobuf.Empty) {
-    option (qrdb.v1.permission) = "seal:seal";
-  }
-
-  // BarrierStatus returns the current state of the barrier including whether
-  // it is sealed, which strategy is active, and hardware backing status.
-  rpc BarrierStatus(google.protobuf.Empty) returns (BarrierStatusResponse) {
-    option (qrdb.v1.permission) = "seal:status";
-  }
-
-  // BarrierInitializeShamir generates a root key and splits it into Shamir
-  // shares. In direct mode (StrategyShamir), the root key IS the secret.
-  // In credential mode, the credential password is split into shares.
-  rpc BarrierInitializeShamir(BarrierInitializeShamirRequest) returns (BarrierShamirInitResponse) {
-    option (qrdb.v1.permission) = "seal:initialize_shamir";
-  }
-
-  // BarrierUnsealShare submits a single share for quorum-based unsealing.
-  // When enough shares reach the threshold, the barrier auto-unseals.
-  rpc BarrierUnsealShare(BarrierUnsealShareRequest) returns (BarrierQuorumProgressResponse) {
-    option (qrdb.v1.permission) = "barrier:unseal-share";
-  }
-
-  // BarrierUnsealShares performs stateless batch unsealing with all shares.
-  rpc BarrierUnsealShares(BarrierUnsealSharesRequest) returns (google.protobuf.Empty) {
-    option (qrdb.v1.permission) = "seal:unseal";
-  }
-
-  // BarrierRekey generates new Shamir shares for the existing root key.
-  rpc BarrierRekey(BarrierRekeyRequest) returns (BarrierShamirInitResponse) {
-    option (qrdb.v1.permission) = "seal:rekey";
-  }
-
-  // BarrierGenerateRecoveryKeys generates an independent set of recovery
-  // shares from the current DEK for disaster recovery.
-  rpc BarrierGenerateRecoveryKeys(BarrierGenerateRecoveryKeysRequest) returns (BarrierRecoveryKeysResponse) {
-    option (qrdb.v1.permission) = "seal:generate_recovery";
-  }
-
-  // BarrierRecoverWithKeys reconstructs the DEK from recovery shares.
-  rpc BarrierRecoverWithKeys(BarrierRecoverWithKeysRequest) returns (google.protobuf.Empty) {
-    option (qrdb.v1.permission) = "seal:recover_with_keys";
-  }
-
-  // BarrierDeleteRecoveryKeys removes recovery key metadata from storage.
-  rpc BarrierDeleteRecoveryKeys(google.protobuf.Empty) returns (google.protobuf.Empty) {
-    option (qrdb.v1.permission) = "seal:generate_recovery";
-  }
-
-  // BarrierHasRecoveryKeys reports whether recovery keys have been generated.
-  rpc BarrierHasRecoveryKeys(google.protobuf.Empty) returns (BarrierHasRecoveryKeysResponse) {
-    option (qrdb.v1.permission) = "seal:status";
-  }
-
-  // BarrierGenerateRootToken generates a one-time root token by proving
-  // knowledge of the master key through Shamir share reconstruction.
-  rpc BarrierGenerateRootToken(BarrierGenerateRootTokenRequest) returns (BarrierRootTokenResponse) {
-    option (qrdb.v1.permission) = "seal:rotate_root_key";
-  }
-
-  // BarrierEnableEncryption migrates a previously-unencrypted barrier to a
-  // keyed strategy in place. The migration runs asynchronously; the response
-  // acknowledges the start and clients poll BarrierStatus for completion.
-  rpc BarrierEnableEncryption(BarrierEnableEncryptionRequest) returns (BarrierEnableEncryptionResponse) {
-    option (qrdb.v1.permission) = "seal:enable_encryption";
+    option (qrdb.v1.permission) = "certs:issue";
   }
 
   // ==================== Trust Bootstrap ====================
@@ -567,112 +482,11 @@ service KeystoreService {
     option (qrdb.v1.permission) = "piv:use";
   }
 
-  // ==================== Backup Operations ====================
-  //
-  // Whole-node backup/restore over the embedded go-qrdb node's shard-snapshot
-  // capability (owner ruling 2026-09-30, go-xkms#728). The permission names
-  // mirror go-qrdb's own backup:* family verbatim.
-
-  // CreateBackup initiates a new backup with the specified options.
-  rpc CreateBackup(BackupRequest) returns (BackupInfo) {
-    option (qrdb.v1.permission) = "backup:create";
-  }
-
-  // ListBackups returns metadata for all available backups.
-  rpc ListBackups(google.protobuf.Empty) returns (ListBackupsResponse) {
-    option (qrdb.v1.permission) = "backup:list";
-  }
-
-  // GetBackup returns metadata for a specific backup by ID.
-  rpc GetBackup(GetBackupRequest) returns (BackupInfo) {
-    option (qrdb.v1.permission) = "backup:read";
-  }
-
-  // DeleteBackup removes a backup by ID.
-  rpc DeleteBackup(DeleteBackupRequest) returns (google.protobuf.Empty) {
-    option (qrdb.v1.permission) = "backup:delete";
-  }
-
-  // RestoreBackup restores data from a backup, overwriting live shard state.
-  rpc RestoreBackup(RestoreRequest) returns (RestoreResult) {
-    option (qrdb.v1.permission) = "backup:restore";
-  }
-
-  // VerifyBackup verifies the integrity of a backup by computing and
-  // comparing checksums.
-  rpc VerifyBackup(VerifyBackupRequest) returns (VerifyResult) {
-    option (qrdb.v1.permission) = "backup:verify";
-  }
-
-  // ==================== Custodian Group Operations ====================
-
-  // CreateCustodianGroup creates a new custodian group for Shamir threshold ceremonies.
-  rpc CreateCustodianGroup(CreateCustodianGroupRequest) returns (CreateCustodianGroupResponse) {
-    option (qrdb.v1.permission) = "ceremony:enroll_custodian";
-  }
-
-  // GetCustodianGroup retrieves a custodian group by ID.
-  rpc GetCustodianGroup(GetCustodianGroupRequest) returns (GetCustodianGroupResponse) {
-    option (qrdb.v1.permission) = "ceremony:status";
-  }
-
-  // ListCustodianGroups returns all custodian groups.
-  rpc ListCustodianGroups(ListCustodianGroupsRequest) returns (ListCustodianGroupsResponse) {
-    option (qrdb.v1.permission) = "ceremony:status";
-  }
-
-  // DeleteCustodianGroup deletes a custodian group.
-  rpc DeleteCustodianGroup(DeleteCustodianGroupRequest) returns (google.protobuf.Empty) {
-    option (qrdb.v1.permission) = "ceremony:revoke_custodian";
-  }
-
-  // AddCustodianMember adds a member to a custodian group.
-  rpc AddCustodianMember(AddCustodianMemberRequest) returns (AddCustodianMemberResponse) {
-    option (qrdb.v1.permission) = "ceremony:enroll_custodian";
-  }
-
-  // RemoveCustodianMember removes a member from a custodian group.
-  rpc RemoveCustodianMember(RemoveCustodianMemberRequest) returns (google.protobuf.Empty) {
-    option (qrdb.v1.permission) = "ceremony:revoke_custodian";
-  }
-
-  // DistributeShares triggers share distribution for a custodian group.
-  rpc DistributeShares(DistributeSharesRequest) returns (DistributeSharesResponse) {
-    option (qrdb.v1.permission) = "ceremony:claim_share_begin";
-  }
 
   // Algorithms reports the cryptographic algorithms this build supports and
   // which backends provide each one. Public discovery: it reflects compiled-in
   // capability only and reads no state.
   rpc Algorithms(AlgorithmsRequest) returns (AlgorithmsResponse);
-
-  // ==================== Share Operations ====================
-
-  // SubmitShare submits a Shamir share for storage.
-  rpc SubmitShare(SubmitShareRequest) returns (SubmitShareResponse) {
-    option (qrdb.v1.permission) = "barrier:unseal-share";
-  }
-
-  // ListShares returns all stored shares.
-  rpc ListShares(ListSharesRequest) returns (ListSharesResponse) {
-    option (qrdb.v1.permission) = "ceremony:status";
-  }
-
-  // GetShare returns a single stored share. Sensitive share material is
-  // never included in the response.
-  rpc GetShare(GetShareRequest) returns (ShareInfo) {
-    option (qrdb.v1.permission) = "ceremony:status";
-  }
-
-  // DeleteShare removes a single stored share.
-  rpc DeleteShare(DeleteShareRequest) returns (google.protobuf.Empty) {
-    option (qrdb.v1.permission) = "barrier:unseal-share";
-  }
-
-  // GetShareCollectionStatus returns the share collection status for a group.
-  rpc GetShareCollectionStatus(GetShareCollectionStatusRequest) returns (ShareCollectionStatusResponse) {
-    option (qrdb.v1.permission) = "ceremony:status";
-  }
 
   // ==================== Tenant Operations ====================
 
@@ -694,21 +508,6 @@ service KeystoreService {
   // DeleteTenant deletes a tenant.
   rpc DeleteTenant(DeleteTenantRequest) returns (google.protobuf.Empty) {
     option (qrdb.v1.permission) = "tenants:delete";
-  }
-
-  // TenantBarrierInit initializes the barrier for a tenant.
-  rpc TenantBarrierInit(TenantBarrierInitRequest) returns (google.protobuf.Empty) {
-    option (qrdb.v1.permission) = "tenant_barrier:init";
-  }
-
-  // TenantBarrierUnseal unseals the barrier for a tenant.
-  rpc TenantBarrierUnseal(TenantBarrierUnsealRequest) returns (google.protobuf.Empty) {
-    option (qrdb.v1.permission) = "tenant_barrier:unseal";
-  }
-
-  // TenantBarrierStatus reports the current state of a per-tenant barrier.
-  rpc TenantBarrierStatus(TenantBarrierStatusRequest) returns (TenantBarrierStatusResponse) {
-    option (qrdb.v1.permission) = "tenant_barrier:status";
   }
 
   // UpdateTenantEntitlements updates a tenant's feature entitlements. Plan
@@ -1140,13 +939,6 @@ service KeystoreService {
 
   // ==================== Audit Operations ====================
 
-  // QueryAudit returns one page of audit events from the tamper-evident
-  // chain owned by the embedded qrdb node. There is deliberately no emit
-  // RPC: events are written server-side as a side effect of the audited
-  // operation, never on a caller's request.
-  rpc QueryAudit(QueryAuditRequest) returns (QueryAuditResponse) {
-    option (qrdb.v1.permission) = "audit:read";
-  }
 }
 
 // UserInfo describes an xkms user.
@@ -2864,33 +2656,6 @@ message IssueLAKCertificateResponse {
   bytes certificate_pem = 2;
   string serial_number = 3;
 }
-// ==================== Barrier Operations Messages ====================
-
-// BarrierInitializeRequest requests initialization of the barrier with a secret.
-message BarrierInitializeRequest {
-  // secret is the credential used to seal the root key.
-  // Interpreted per strategy: password for software, auth value for TPM2.
-  string secret = 1;
-}
-
-// BarrierUnsealRequest requests unsealing of the barrier.
-message BarrierUnsealRequest {
-  // secret is the credential used to unseal the root key.
-  string secret = 1;
-}
-
-// BarrierStatusResponse reports the current state of the barrier.
-message BarrierStatusResponse {
-  // sealed is true when the barrier is in sealed state.
-  bool sealed = 1;
-  // strategy identifies which sealing strategy protects the root key.
-  string strategy = 2;
-  // hardware_backed is true when the active strategy uses dedicated
-  // cryptographic hardware (TPM, HSM, cloud HSM).
-  bool hardware_backed = 3;
-  // initialized_at records when the barrier was first initialized (RFC 3339).
-  string initialized_at = 4;
-}
 
 // BootstrapListenerKeysResponse reports the running trust-bootstrap
 // listener's public static keys (go-xkms#632). Only public material is
@@ -2906,137 +2671,6 @@ message BootstrapListenerKeysResponse {
   // p256_public_key is the hex-encoded uncompressed P-256 static public key
   // of the FIPS-approved TSBOOT1_P256_AESGCM_SHA256 suite.
   string p256_public_key = 2;
-}
-
-// BarrierInitializeShamirRequest requests initialization with Shamir secret sharing.
-message BarrierInitializeShamirRequest {
-  // secret is the credential used for credential mode. Empty for direct mode.
-  string secret = 1;
-}
-
-// BarrierShamirInitResponse reports the Shamir parameters from
-// initialization or rekey. Share material is never returned (qrdb
-// share-free contract): shares are sealed to enrolled Security Officers
-// and claimed through the identity-gated claim endpoints.
-message BarrierShamirInitResponse {
-  // Field 1 carried raw share values before the share-free redesign and
-  // must never be reintroduced.
-  reserved 1;
-  reserved "shares";
-  // threshold is the minimum number of shares needed to reconstruct.
-  int32 threshold = 2;
-  // total_shares is the total number of shares generated.
-  int32 total_shares = 3;
-  // share_count is the number of shares sealed to officer enclaves.
-  int32 share_count = 4;
-}
-
-// BarrierUnsealShareRequest submits a single share for quorum unsealing.
-message BarrierUnsealShareRequest {
-  // share is the base64-encoded share value.
-  string share = 1;
-}
-
-// BarrierUnsealSharesRequest submits all shares for batch unsealing.
-message BarrierUnsealSharesRequest {
-  // shares are the base64-encoded share values.
-  repeated string shares = 1;
-}
-
-// BarrierQuorumProgressResponse reports the state of quorum accumulation.
-message BarrierQuorumProgressResponse {
-  // required is the threshold number of shares needed.
-  int32 required = 1;
-  // submitted is the number of shares submitted so far.
-  int32 submitted = 2;
-  // complete is true when the threshold has been met.
-  bool complete = 3;
-}
-
-// BarrierRekeyRequest requests generation of new shares for the existing root key.
-message BarrierRekeyRequest {
-  // threshold is the new minimum shares needed.
-  int32 threshold = 1;
-  // total is the new total number of shares.
-  int32 total = 2;
-}
-
-// BarrierGenerateRecoveryKeysRequest requests generation of recovery key shares.
-message BarrierGenerateRecoveryKeysRequest {
-  // threshold is the minimum recovery keys needed.
-  int32 threshold = 1;
-  // total is the total number of recovery keys.
-  int32 total = 2;
-}
-
-// BarrierRecoveryKeysResponse reports the recovery key generation
-// parameters. Recovery key material is never returned (qrdb share-free
-// contract): recovery shares are sealed to enrolled recovery officers.
-// BarrierHasRecoveryKeysResponse reports whether recovery keys exist.
-message BarrierHasRecoveryKeysResponse {
-  // has_keys is true when recovery keys have been generated.
-  bool has_keys = 1;
-}
-
-message BarrierRecoveryKeysResponse {
-  // Field 1 carried raw recovery share values before the share-free
-  // redesign and must never be reintroduced.
-  reserved 1;
-  reserved "shares";
-  // threshold is the minimum shares needed to recover.
-  int32 threshold = 2;
-  // total_shares is the total number of recovery shares generated.
-  int32 total_shares = 3;
-  // share_count is the number of shares sealed to officer enclaves.
-  int32 share_count = 4;
-}
-
-// BarrierRecoverWithKeysRequest requests recovery using recovery key shares.
-message BarrierRecoverWithKeysRequest {
-  // keys are the base64-encoded recovery share values.
-  repeated string keys = 1;
-}
-
-// BarrierGenerateRootTokenRequest requests a one-time root token.
-message BarrierGenerateRootTokenRequest {
-  // shares are the Shamir share values to prove master key knowledge.
-  repeated string shares = 1;
-}
-
-// BarrierRootTokenResponse returns the generated root token.
-message BarrierRootTokenResponse {
-  // token is the hex-encoded root token value.
-  string token = 1;
-  // created_at records when the token was generated (RFC 3339).
-  string created_at = 2;
-}
-
-// BarrierEnableEncryptionRequest enables at-rest encryption on a
-// previously-unencrypted barrier by migrating it to a keyed strategy in place.
-message BarrierEnableEncryptionRequest {
-  // tenant_id selects the tenant barrier to migrate; empty targets the system
-  // barrier (admin authority).
-  string tenant_id = 1;
-  // strategy is the keyed target strategy id (e.g. "passphrase", "shamir").
-  string strategy = 2;
-  // mechanism selects the re-encryption approach ("swap" or "in-place").
-  string mechanism = 3;
-  // availability selects write behaviour during migration ("quiesced" or
-  // "online").
-  string availability = 4;
-  // passphrase carries the secret for a passphrase-target migration.
-  string passphrase = 5;
-  // shamir_threshold / shamir_total configure an M-of-N Shamir-target migration.
-  int32 shamir_threshold = 6;
-  int32 shamir_total = 7;
-}
-
-// BarrierEnableEncryptionResponse acknowledges that the migration has started.
-message BarrierEnableEncryptionResponse {
-  // status is "migration_started".
-  string status = 1;
-  // scope is the migrated barrier scope ("system" or "tenant").
-  string scope = 2;
 }
 
 // ==================== PIN Operations Messages ====================
@@ -3222,180 +2856,6 @@ message GeneratePIVCSRResponse {
   bytes csr = 2;
 }
 
-// ==================== Custodian Group Messages ====================
-
-// CustodianMember represents a member in a custodian group.
-message CustodianMember {
-  string user_id = 1;
-  string name = 2;
-  string email = 3;
-  string role = 4;
-}
-
-// CustodianGroup represents a group of custodians for threshold ceremonies.
-message CustodianGroup {
-  string id = 1;
-  string name = 2;
-  string description = 3;
-  int32 threshold = 4;
-  repeated CustodianMember members = 5;
-  string created_at = 6;
-  string updated_at = 7;
-}
-
-// ===========================================================================
-// Backup messages (go-xkms#728)
-//
-// compression is one of "none", "zstd", "snappy"; encryption is one of
-// "none", "aes256"; status is one of "pending", "running", "complete",
-// "failed". These mirror go-qrdb's string-typed service enums verbatim.
-// ===========================================================================
-
-// BackupRequest describes a backup to capture. An empty shard_ids list backs
-// up every shard on the host.
-message BackupRequest {
-  string destination = 1;
-  string compression = 2;
-  string encryption = 3;
-  bytes encryption_key = 4;
-  map<string, string> metadata = 5;
-  repeated uint64 shard_ids = 6;
-}
-
-// BackupInfo is the metadata describing a stored backup artifact.
-message BackupInfo {
-  string id = 1;
-  int64 timestamp_ns = 2;
-  int64 size = 3;
-  int32 shard_count = 4;
-  string status = 5;
-  string checksum = 6;
-  string destination = 7;
-  string compression = 8;
-  string encryption = 9;
-  map<string, string> metadata = 10;
-  int64 duration_ns = 11;
-  string error_message = 12;
-}
-
-// ListBackupsResponse enumerates stored backups. Artifact contents are
-// never returned by enumeration.
-message ListBackupsResponse {
-  repeated BackupInfo backups = 1;
-}
-
-// GetBackupRequest names a backup by ID.
-message GetBackupRequest {
-  string id = 1;
-}
-
-// DeleteBackupRequest names a backup to remove.
-message DeleteBackupRequest {
-  string id = 1;
-}
-
-// RestoreRequest restores shards from a stored backup. An empty
-// target_shards list restores every shard captured in the backup.
-message RestoreRequest {
-  string backup_id = 1;
-  repeated uint64 target_shards = 2;
-  bool validate_first = 3;
-  bytes decryption_key = 4;
-}
-
-// BackupShardError reports a per-shard failure during restore.
-message BackupShardError {
-  uint64 shard_id = 1;
-  string message = 2;
-}
-
-// RestoreResult reports the outcome of a restore.
-message RestoreResult {
-  string backup_id = 1;
-  int32 shards_restored = 2;
-  int64 duration_ns = 3;
-  repeated BackupShardError errors = 4;
-}
-
-// VerifyBackupRequest names a backup to verify.
-message VerifyBackupRequest {
-  string id = 1;
-}
-
-// VerifyResult reports backup integrity-check results.
-message VerifyResult {
-  bool valid = 1;
-  bool checksum_match = 2;
-  string expected_checksum = 3;
-  string actual_checksum = 4;
-  repeated string errors = 5;
-}
-
-// CreateCustodianGroupRequest requests creation of a new custodian group.
-message CreateCustodianGroupRequest {
-  string name = 1;
-  string description = 2;
-  int32 threshold = 3;
-}
-
-// CreateCustodianGroupResponse contains the created custodian group.
-message CreateCustodianGroupResponse {
-  CustodianGroup group = 1;
-}
-
-// GetCustodianGroupRequest requests retrieval of a custodian group.
-message GetCustodianGroupRequest {
-  string group_id = 1;
-}
-
-// GetCustodianGroupResponse contains the custodian group.
-message GetCustodianGroupResponse {
-  CustodianGroup group = 1;
-}
-
-// ListCustodianGroupsRequest requests listing all custodian groups.
-message ListCustodianGroupsRequest {}
-
-// ListCustodianGroupsResponse contains the list of custodian groups.
-message ListCustodianGroupsResponse {
-  repeated CustodianGroup groups = 1;
-}
-
-// DeleteCustodianGroupRequest requests deletion of a custodian group.
-message DeleteCustodianGroupRequest {
-  string group_id = 1;
-}
-
-// AddCustodianMemberRequest requests adding a member to a custodian group.
-message AddCustodianMemberRequest {
-  string group_id = 1;
-  string user_id = 2;
-  string name = 3;
-  string email = 4;
-  string role = 5;
-}
-
-// AddCustodianMemberResponse contains the added member information.
-message AddCustodianMemberResponse {
-  CustodianMember member = 1;
-}
-
-// RemoveCustodianMemberRequest requests removal of a member from a custodian group.
-message RemoveCustodianMemberRequest {
-  string group_id = 1;
-  string user_id = 2;
-}
-
-// DistributeSharesRequest requests share distribution for a custodian group.
-message DistributeSharesRequest {
-  string group_id = 1;
-}
-
-// DistributeSharesResponse contains the distribution result.
-message DistributeSharesResponse {
-  int32 distributed = 1;
-}
-
 // ==================== Algorithm Discovery Messages ====================
 
 // AlgorithmsRequest requests the supported-algorithm inventory.
@@ -3416,71 +2876,6 @@ message AlgorithmsResponse {
   repeated AlgorithmInfo key_encapsulation = 2;
 }
 
-// ==================== Share Messages ====================
-
-// ShareInfo represents a stored Shamir share.
-message ShareInfo {
-  string id = 1;
-  string group_id = 2;
-  string server_url = 3;
-  string group_name = 4;
-  int32 share_index = 5;
-  string purpose = 6;
-  string tenant_id = 7;
-  string submitted_at = 8;
-}
-
-// SubmitShareRequest requests storage of a Shamir share.
-message SubmitShareRequest {
-  string group_id = 1;
-  string share_data = 2;
-  string server_url = 3;
-  string group_name = 4;
-  int32 share_index = 5;
-  string purpose = 6;
-  string tenant_id = 7;
-}
-
-// SubmitShareResponse contains the submission result.
-message SubmitShareResponse {
-  string id = 1;
-  string message = 2;
-}
-
-// ListSharesRequest requests listing of all shares.
-message ListSharesRequest {}
-
-// ListSharesResponse contains the list of shares.
-message ListSharesResponse {
-  repeated ShareInfo shares = 1;
-}
-
-// GetShareRequest identifies a single stored share.
-message GetShareRequest {
-  string server_url = 1;
-  string group_id = 2;
-  int32 share_index = 3;
-}
-
-// DeleteShareRequest identifies a single stored share to remove.
-message DeleteShareRequest {
-  string server_url = 1;
-  string group_id = 2;
-  int32 share_index = 3;
-}
-
-// GetShareCollectionStatusRequest requests the collection status for a group.
-message GetShareCollectionStatusRequest {
-  string group_id = 1;
-}
-
-// ShareCollectionStatusResponse contains the collection status.
-message ShareCollectionStatusResponse {
-  string group_id = 1;
-  int32 collected = 2;
-  int32 required = 3;
-  bool complete = 4;
-}
 
 // ==================== Tenant Messages ====================
 
@@ -3526,22 +2921,6 @@ message TenantEntitlements {
   bool allow_dedicated_raft = 2;
   bool allow_volume_storage = 3;
   bool allow_system_managed_barrier = 4;
-}
-
-// TenantBarrierStatusRequest requests the status of a per-tenant barrier.
-message TenantBarrierStatusRequest {
-  string tenant_id = 1;
-}
-
-// TenantBarrierStatusResponse reports the current state of a per-tenant barrier.
-message TenantBarrierStatusResponse {
-  string tenant_id = 1;
-  bool sealed = 2;
-  bool initialized = 3;
-  string strategy = 4;
-  bool hardware_backed = 5;
-  int32 shamir_threshold = 6;
-  int32 shamir_total = 7;
 }
 
 // UpdateTenantEntitlementsRequest updates a tenant's feature entitlements.
@@ -3605,25 +2984,6 @@ message ListTenantsResponse {
 // DeleteTenantRequest requests deletion of a tenant.
 message DeleteTenantRequest {
   string tenant_id = 1;
-}
-
-// TenantBarrierInitRequest requests initialization of a tenant barrier. The
-// secret is the tenant admin's caller-supplied passphrase; the server never
-// generates it (§3.6). The strategy selects the seal strategy (empty means the
-// passphrase strategy).
-message TenantBarrierInitRequest {
-  string tenant_id = 1;
-  string secret = 2;
-  int32 shares = 3;
-  int32 threshold = 4;
-  string strategy = 5;
-}
-
-// TenantBarrierUnsealRequest requests unsealing of a tenant barrier.
-message TenantBarrierUnsealRequest {
-  string tenant_id = 1;
-  string secret = 2;
-  repeated string share_values = 3;
 }
 
 // ==================== Password Store Messages ====================
@@ -4592,45 +3952,4 @@ message SSHAuthorizedKeyRef {
   string name = 3;
 }
 
-// ==================== Audit Messages ====================
 
-// AuditEvent is one record from the tamper-evident audit chain.
-message AuditEvent {
-  google.protobuf.Timestamp timestamp = 1;
-  string actor = 2;
-  string tenant_id = 3;
-  string role = 4;
-  string resource = 5;
-  string action = 6;
-  string outcome = 7;
-  // attributes carries free-form event detail. It is a Struct rather than
-  // map<string,string> so a value that was a number or bool at emission does
-  // not come back as a string over gRPC while REST keeps its real type.
-  google.protobuf.Struct attributes = 8;
-  string client_ip = 9;
-  string request_id = 10;
-  // prev_hash is the chain link that makes the log verifiable.
-  string prev_hash = 11;
-}
-
-// QueryAuditRequest narrows an audit query. Unset from/to means unbounded on
-// that side; cursor continues a previous page.
-message QueryAuditRequest {
-  google.protobuf.Timestamp from = 1;
-  google.protobuf.Timestamp to = 2;
-  string actor = 3;
-  string resource = 4;
-  string action = 5;
-  string outcome = 6;
-  string tenant_id = 7;
-  int32 limit = 8;
-  string cursor = 9;
-}
-
-// QueryAuditResponse is one page of audit events. next is empty on the last
-// page and is a cursor, not an offset.
-message QueryAuditResponse {
-  repeated AuditEvent events = 1;
-  string next = 2;
-  int32 total = 3;
-}

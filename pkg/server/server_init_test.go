@@ -34,8 +34,9 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
+	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -232,6 +233,27 @@ func newMinimalServer(t *testing.T, cfg *config.Config) *Server {
 		ctx:    ctx,
 		cancel: cancel,
 	}
+}
+
+// openInMemoryDatastore gives a newMinimalServer -- which bypasses New(), so
+// never opens the shared datastore -- a real in-process qrdb node on the
+// memory engine, wired the way initializeQRDBStorage wires it: the datastore
+// serves the feature databases (the CA's, for instance) and s.qrdbStorage
+// resolves createStorage against the same node.
+func openInMemoryDatastore(t *testing.T, s *Server) {
+	t.Helper()
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()}}
+	ds, err := datastore.Open(context.Background(), cfg, s.logger)
+	if err != nil {
+		t.Fatalf("open in-memory datastore: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := ds.Close(); err != nil {
+			t.Errorf("close in-memory datastore: %v", err)
+		}
+	})
+	s.datastore = ds
+	s.qrdbStorage = qrdbstorage.NewBackend(ds.Client().KV())
 }
 
 // ============================================================================
@@ -639,23 +661,6 @@ func TestSetCA_Nil(t *testing.T) {
 	s.SetCA(nil)
 	if s.ca != nil {
 		t.Fatal("expected ca to be nil after SetCA(nil)")
-	}
-}
-
-func TestSetCeremonyService(t *testing.T) {
-	cfg := &config.Config{}
-	s := newMinimalServer(t, cfg)
-
-	if s.ceremonyService != nil {
-		t.Fatal("expected ceremonyService to be nil initially")
-	}
-
-	// We cannot easily construct a real CeremonyService without many deps,
-	// so verify the setter works by assigning and reading back.
-	var svc *initialize.CeremonyService
-	s.SetCeremonyService(svc)
-	if s.ceremonyService != nil {
-		t.Fatal("expected ceremonyService to be nil when set with nil")
 	}
 }
 

@@ -20,8 +20,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -341,7 +341,7 @@ func runIAKExport(cmd *cobra.Command, args []string) (err error) {
 		return nil
 	}
 
-	if err := os.WriteFile(iakExportOutput, pemData, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(iakExportOutput, pemData, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
@@ -387,7 +387,7 @@ func runIAKCSR(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Write CSR to file
-	if err := os.WriteFile(iakCSROutput, csrBytes, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(iakCSROutput, csrBytes, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 

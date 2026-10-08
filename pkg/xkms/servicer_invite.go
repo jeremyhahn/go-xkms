@@ -58,15 +58,13 @@ import (
 // which is the enumeration an opaque token exists to prevent.
 
 // InviteStore is the tenant-routed invitation lifecycle surface CreateUser
-// and every invite-redemption entry point consume. It is satisfied
-// structurally by *qrdbsdk.TenantInviteStore — this is not a re-declaration
-// of qrdb's invitation logic, only the seam pkg/server wires its one
-// production implementation through (see SetInviteStore's doc comment on
-// XKMSService and pkg/server/invite_store.go's tenantPrefixedInviteStore,
-// built unconditionally over the createStorage seam every other xkmsd
-// subsystem uses, so invitations work in the default configuration with no
-// fallback branch). qrdbsdk.TenantInviteStore itself also satisfies this
-// interface and is what this package's own tests construct directly.
+// and every invite-redemption entry point consume. It is not a
+// re-declaration of qrdb's invitation logic, only the seam pkg/compose wires
+// its one production implementation through (see SetInviteStore's doc
+// comment on XKMSService and pkg/compose/invite.go's
+// tenantPrefixedInviteStore, built unconditionally over the StorageFactory
+// seam every other xkmsd subsystem uses, so invitations work in the default
+// configuration with no fallback branch).
 type InviteStore interface {
 	// Create issues an invitation for userID in tenantID and returns the
 	// plaintext token, which is returned exactly once and is not
@@ -79,10 +77,6 @@ type InviteStore interface {
 	// Redeem consumes a token within tenantID exactly once.
 	Redeem(ctx context.Context, tenantID, token string) (*qrdbsdk.InviteEntity, error)
 }
-
-// Compile-time check: qrdb's own tenant-routed store satisfies InviteStore
-// with no adapter.
-var _ InviteStore = (*qrdbsdk.TenantInviteStore)(nil)
 
 // InviteConfig controls the operator-configured invitation link base URL and
 // TTL bounds. The zero value is usable: an empty PublicBaseURL yields a link

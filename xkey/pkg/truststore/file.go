@@ -24,6 +24,8 @@ import (
 	"regexp"
 	"sync"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 const (
@@ -621,7 +623,7 @@ func (fs *FileStore) writeCertPEM(fingerprint string, cert *x509.Certificate) er
 	}
 
 	pemBytes := pem.EncodeToMemory(block)
-	if err := os.WriteFile(pemPath, pemBytes, pemFileMode); err != nil {
+	if err := fsutil.WriteFileAtomic(pemPath, pemBytes, pemFileMode); err != nil {
 		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
 	}
 
@@ -642,15 +644,8 @@ func (fs *FileStore) writeMetadata() error {
 
 	metaPath := filepath.Join(fs.config.BaseDir, metadataFile)
 
-	// Write to a temp file first, then rename for atomicity.
-	tmpPath := metaPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, metadataMode); err != nil {
+	if err := fsutil.WriteFileAtomic(metaPath, data, metadataMode); err != nil {
 		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
-	}
-
-	if err := os.Rename(tmpPath, metaPath); err != nil {
-		removeErr := os.Remove(tmpPath)
-		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: errors.Join(err, removeErr)}
 	}
 
 	return nil

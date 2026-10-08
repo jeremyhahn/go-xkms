@@ -27,20 +27,22 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	pkgwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
 // securityFixture is a handler over stores the test can seed directly.
 type securityFixture struct {
-	h     *Handler
-	users pkgwebauthn.UserStore
-	creds pkgwebauthn.CredentialStore
+	h      *Handler
+	users  pkgwebauthn.UserStore
+	creds  pkgwebauthn.CredentialStore
+	stores *webauthntest.Stores
 }
 
 func newSecurityFixture(t *testing.T, allowPublic bool) *securityFixture {
 	t.Helper()
-	users := pkgwebauthn.NewMemoryUserStore()
-	creds := pkgwebauthn.NewMemoryCredentialStore()
+	stores := webauthntest.NewStores(t)
+	users, creds := stores.Users, stores.Credentials
 	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
 		Config: &pkgwebauthn.Config{
 			RPID:                    "example.com",
@@ -53,7 +55,7 @@ func newSecurityFixture(t *testing.T, allowPublic bool) *securityFixture {
 		CredentialStore: creds,
 	})
 	require.NoError(t, err)
-	return &securityFixture{h: NewHandler(svc), users: users, creds: creds}
+	return &securityFixture{h: NewHandler(svc), users: users, creds: creds, stores: stores}
 }
 
 // account creates email's account holding one credential.

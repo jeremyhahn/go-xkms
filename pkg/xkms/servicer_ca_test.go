@@ -600,7 +600,7 @@ func TestRevokeCertificate_CAError(t *testing.T) {
 // RevokeCertificate / IssueCertificate ownership (go-xkms#1229)
 //
 // RevokeCertificate's permission, certs:revoke, is enforced by the
-// transports before dispatch, exactly like SignCSR's certs:generate (see
+// transports before dispatch, exactly like SignCSR's certs:issue (see
 // "SignCSR authorization" above); pkg/api/grpc/service_authz_deny_test.go
 // drives the permission-denial path. These tests drive the ownership check
 // the servicer itself makes: the certificate's issuing tenant, recorded at
@@ -917,7 +917,7 @@ func TestParseSerialHex_Empty(t *testing.T) {
 // ========================================================================
 // SignCSR authorization
 //
-// SignCSR's permission, certs:generate, is enforced by the transports before
+// SignCSR's permission, certs:issue, is enforced by the transports before
 // dispatch (pkg/api/mcp authz_roleid_test.go drives it on a seeded node). The
 // servicer itself must not make a second, role-based decision.
 // ========================================================================

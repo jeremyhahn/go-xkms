@@ -97,16 +97,13 @@ func TestSave_EmptyStrategyIsError(t *testing.T) {
 }
 
 func TestSave_UnwritablePINDirIsSaveError(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root ignores directory permission bits")
+	// The PIN directory's parent is a regular file, so it cannot be created.
+	// Unlike a read-only directory, this fails for root too.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
 	}
-
-	root := t.TempDir()
-	pinDir := filepath.Join(root, "pin")
-	if err := os.Chmod(root, 0500); err != nil {
-		t.Fatalf("Chmod: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(root, 0700) })
+	pinDir := filepath.Join(blocker, "pin")
 
 	err := SaveStrategy(pinDir, qrdbsdk.PINStrategySoftware)
 	var saveErr *StrategySaveError
@@ -116,18 +113,12 @@ func TestSave_UnwritablePINDirIsSaveError(t *testing.T) {
 }
 
 func TestLoad_UnreadableFileIsLoadError(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root ignores file permission bits")
-	}
-
+	// The strategy path is a directory, so reading it fails with EISDIR.
+	// Unlike a mode-0000 file, this fails for root too.
 	pinDir := t.TempDir()
-	if err := SaveStrategy(pinDir, qrdbsdk.PINStrategySoftware); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := os.Mkdir(StrategyPath(pinDir), 0700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
 	}
-	if err := os.Chmod(StrategyPath(pinDir), 0000); err != nil {
-		t.Fatalf("Chmod: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(StrategyPath(pinDir), 0600) })
 
 	_, err := LoadStrategy(pinDir)
 	var loadErr *StrategyLoadError

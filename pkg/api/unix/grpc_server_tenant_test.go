@@ -49,7 +49,7 @@ func tenantGRPCTestRegistry(t *testing.T) *seal.BarrierRegistry {
 	)
 	require.NoError(t, err)
 
-	creds := seal.MustCredentials([]byte("test-password"))
+	creds := seal.MustCredentials(t.Context(), []byte("test-password"))
 	defer creds.Secret.Destroy()
 	require.NoError(t, barrier.Initialize(context.Background(), creds))
 
@@ -109,7 +109,7 @@ func startTenantTestGRPCServer(t *testing.T, registry *seal.BarrierRegistry) (pb
 // tenants the registry holds.
 func TestGRPCServer_TenantInterceptors_WithRegistryPassesThrough(t *testing.T) {
 	registry := tenantGRPCTestRegistry(t)
-	_, err := registry.RegisterTenant("tenant-a")
+	_, err := registry.RegisterTenantDefault("tenant-a")
 	require.NoError(t, err)
 
 	client, cleanup := startTenantTestGRPCServer(t, registry)

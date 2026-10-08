@@ -18,9 +18,18 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	acmeentities "github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	"github.com/jeremyhahn/go-xkms/pkg/aeadnonce"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
+	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -92,6 +101,104 @@ func TestCreateStorage_QRDBEmbeddedRoundTrip(t *testing.T) {
 	got, err := users.Get(ctx, "alice")
 	require.NoError(t, err)
 	assert.Equal(t, []byte("alice-value"), got)
+}
+
+// TestDAOFactory_ServesTheOpenedDatabase proves daoFactory opens a database on
+// the embedded datastore and the factory it returns serves a DAO over it.
+func TestDAOFactory_ServesTheOpenedDatabase(t *testing.T) {
+	s := newQRDBTestServer(t)
+	s.ctx = context.Background()
+	t.Cleanup(func() { _ = s.closeQRDBStorage() })
+
+	daos, err := s.daoFactory(tpmpolicy.DatabaseName)
+	require.NoError(t, err)
+	registry, err := tpmpolicy.NewRegistry(daos)
+	require.NoError(t, err)
+	require.NoError(t, registry.PutScope(s.ctx, &tpmpolicy.Scope{Tenant: "acme", Mode: tpmpolicy.ModeShared}))
+	scope, err := registry.Scope(s.ctx, "acme")
+	require.NoError(t, err)
+	assert.Equal(t, tpmpolicy.ModeShared, scope.Mode)
+}
+
+// TestDAOFactory_ReportsADatabaseThatCannotOpen proves a database the
+// datastore refuses fails with *ErrStorageCreate carrying the cause.
+func TestDAOFactory_ReportsADatabaseThatCannotOpen(t *testing.T) {
+	s := newQRDBTestServer(t)
+	s.ctx = context.Background()
+	t.Cleanup(func() { _ = s.closeQRDBStorage() })
+
+	daos, err := s.daoFactory("")
+	assert.Nil(t, daos)
+	var createErr *ErrStorageCreate
+	require.ErrorAs(t, err, &createErr)
+	assert.ErrorIs(t, err, datastore.ErrDatabaseNameRequired)
+}
+
+// TestFeatureDAOs_RunAsServicePrincipal proves every feature DAO the server
+// builds over its embedded node -- the key-version, AEAD nonce, PKCS#11
+// state, TPM policy and ACME stores, named databases and the default one --
+// runs as the node's service principal through the datastore's one binding,
+// though each call here carries no identity. The node enforces
+// authentication: the same client in a datastore without the binding is
+// refused.
+func TestFeatureDAOs_RunAsServicePrincipal(t *testing.T) {
+	s := &Server{
+		ctx: context.Background(),
+		config: &config.Config{
+			Auth:      config.AuthConfig{Enabled: true},
+			Datastore: config.DatastoreConfig{Path: t.TempDir()},
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	require.NoError(t, s.initializeQRDBStorage())
+	t.Cleanup(func() { _ = s.closeQRDBStorage() })
+	ctx := context.Background()
+
+	require.NoError(t, s.initializeKeyVersionStore())
+	rec := keyversion.Implicit("k", "software")
+	rec.AddCurrent(2, time.Now(), "")
+	require.NoError(t, s.keyVersions.Put(ctx, "acme", rec))
+	_, found, err := s.keyVersions.Load(ctx, "acme", "software", "k")
+	require.NoError(t, err)
+	assert.True(t, found)
+
+	daos, err := s.daoFactory(aeadnonce.DatabaseName)
+	require.NoError(t, err)
+	nonces, err := aeadnonce.NewStore(daos)
+	require.NoError(t, err)
+	claimed, err := nonces.ClaimNonce(ctx, []byte("entry"))
+	require.NoError(t, err)
+	assert.True(t, claimed)
+
+	require.NoError(t, s.initializePKCS11StateStore())
+	stored, err := s.pkcs11StateStore.PutIfAbsent(ctx, "acme", "token", "k", []byte("v"))
+	require.NoError(t, err)
+	assert.True(t, stored)
+	keys, err := s.pkcs11StateStore.List(ctx, "acme", "token", "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"k"}, keys)
+
+	daos, err = s.daoFactory(tpmpolicy.DatabaseName)
+	require.NoError(t, err)
+	registry, err := tpmpolicy.NewRegistry(daos)
+	require.NoError(t, err)
+	require.NoError(t, registry.PutScope(ctx, &tpmpolicy.Scope{Tenant: "acme", Mode: tpmpolicy.ModeShared}))
+	_, err = registry.Scope(ctx, "acme")
+	require.NoError(t, err)
+
+	acmeStores, err := acmeobjstore.NewFactory(s.datastore.DAOFactory())
+	require.NoError(t, err)
+	accounts, err := acmeStores.AccountDAO()
+	require.NoError(t, err)
+	require.NoError(t, accounts.Save(ctx, &acmeentities.ACMEAccount{ID: 7, Status: "valid"}))
+	account, err := accounts.Get(ctx, 7)
+	require.NoError(t, err)
+	assert.Equal(t, "valid", account.Status)
+
+	unbound, err := datastore.New(s.qrdbClient, s.config.Datastore)
+	require.NoError(t, err)
+	_, err = unbound.DatabaseKVStore(ctx, "unbound")
+	assert.ErrorIs(t, err, qrdbsdk.ErrUnauthenticated)
 }
 
 // TestCreateStorage_QRDBNamespaceIsolation verifies that two subdir views over
@@ -215,7 +322,7 @@ func TestCreateStorageAt_QRDBDerivesPrefixFromBase(t *testing.T) {
 // initializeQRDBStorage always builds the one shared datastore now, in
 // either "standalone" or "remote" mode (go-xkms#1345). The remaining,
 // reachable transport-rejection path is exercised directly by
-// TestDialRemote_UnsupportedTransport (pkg/datastore/datastore_test.go)
+// TestDialRemote_UnsupportedTransport (pkg/datastore/remote_test.go)
 // and end to end by TestInitializeQRDBStorage_InvalidTransport
 // (server_extra_test.go).
 

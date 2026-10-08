@@ -14,7 +14,6 @@
 package rest
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -27,7 +26,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -89,36 +87,6 @@ func TestNewServer_WithRBACEnabled_NoAuthorizerFailsClosed(t *testing.T) {
 	server, err := NewServer(cfg)
 	require.ErrorIs(t, err, ErrAuthorizerRequired)
 	assert.Nil(t, server)
-}
-
-func TestNewServer_WithCustodianService(t *testing.T) {
-	ks := newMockKeyStore()
-
-	cfg := &Config{
-		Authenticator:    auth.NewNoOpAuthenticator(),
-		Backends:         map[string]xkms.Backend{"test": ks},
-		CustodianEnabled: true,
-	}
-
-	server, err := NewServer(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	assert.NotNil(t, server.custodianHandlers)
-}
-
-func TestNewServer_WithShareEnabled(t *testing.T) {
-	ks := newMockKeyStore()
-
-	cfg := &Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Backends:      map[string]xkms.Backend{"test": ks},
-		ShareEnabled:  true,
-	}
-
-	server, err := NewServer(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	assert.NotNil(t, server.shareHandlers)
 }
 
 func TestNewServer_WithBarrierRegistry(t *testing.T) {
@@ -529,65 +497,6 @@ func TestRecoveryMiddleware_PanicRecovery(t *testing.T) {
 	// Should not panic.
 	handler.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-// ==========================================================================
-// handlers_barrier_pin.go - BarrierSealHandler error path
-// ==========================================================================
-
-func TestBarrierSealHandler_NotInitialized(t *testing.T) {
-	memStore := storage.NewMemory()
-	sealStrategy := seal.NewSoftwareStrategy()
-
-	barrier, err := seal.NewBarrier(
-		slog.Default(),
-		memStore,
-		seal.BarrierConfig{RootKeyPath: "test-key"},
-		sealStrategy,
-	)
-	require.NoError(t, err)
-
-	// Do NOT initialize barrier. Sealing an uninitialized barrier should error.
-	h := handlerOverBarrier(barrier)
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/seal", nil)
-	w := httptest.NewRecorder()
-	h.BarrierSealHandler(w, req)
-	// Barrier seal should complete (even uninitialized in software strategy).
-	// The important thing is the error path in the handler was exercised.
-	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, w.Code)
-}
-
-// ==========================================================================
-// handlers_custodian.go - RemoveMemberHandler missing params
-// ==========================================================================
-
-func TestRemoveMemberHandler_CustodianMissingGroupID(t *testing.T) {
-	h, _ := setupCustodianTestHandlers(t)
-
-	req := httptest.NewRequest(http.MethodDelete, "/custodian/groups//members/user1", nil)
-	w := httptest.NewRecorder()
-	h.RemoveMemberHandler(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemoveMemberHandler_CustodianMissingUserID(t *testing.T) {
-	h, _ := setupCustodianTestHandlers(t)
-
-	req := httptest.NewRequest(http.MethodDelete, "/custodian/groups/grp1/members/", nil)
-	req = chiContext(req, map[string]string{"id": "grp1", "userID": ""})
-	w := httptest.NewRecorder()
-	h.RemoveMemberHandler(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// chiContext returns r carrying chi URL params, as the router would set them.
-func chiContext(r *http.Request, params map[string]string) *http.Request {
-	rctx := chi.NewRouteContext()
-	for k, v := range params {
-		rctx.URLParams.Add(k, v)
-	}
-	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
 
 // ==========================================================================

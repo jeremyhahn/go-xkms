@@ -82,26 +82,6 @@ type UnsealRequest = pkgtransport.UnsealRequest
 type UnsealResponse = pkgtransport.UnsealResponse
 type CanSealResponse = pkgtransport.CanSealResponse
 
-// Barrier types (re-exported from qrdb via pkg/transport).
-type BarrierInitializeRequest = pkgtransport.BarrierInitializeRequest
-type BarrierUnsealRequest = pkgtransport.BarrierUnsealRequest
-type BarrierStatusResponse = pkgtransport.BarrierStatusResponse
-type BarrierInitializeShamirRequest = pkgtransport.BarrierInitializeShamirRequest
-type BarrierInitializeShamirResponse = pkgtransport.BarrierInitializeShamirResponse
-type BarrierUnsealShareRequest = pkgtransport.BarrierUnsealShareRequest
-type BarrierUnsealShareResponse = pkgtransport.BarrierUnsealShareResponse
-type BarrierUnsealSharesRequest = pkgtransport.BarrierUnsealSharesRequest
-type BarrierRekeyRequest = pkgtransport.BarrierRekeyRequest
-type BarrierRekeyResponse = pkgtransport.BarrierRekeyResponse
-type BarrierGenerateRecoveryKeysRequest = pkgtransport.BarrierGenerateRecoveryKeysRequest
-type BarrierRecoveryKeysResponse = pkgtransport.BarrierRecoveryKeysResponse
-type BarrierRecoverWithKeysRequest = pkgtransport.BarrierRecoverWithKeysRequest
-type BarrierHasRecoveryKeysResponse = pkgtransport.BarrierHasRecoveryKeysResponse
-type BarrierGenerateRootTokenRequest = pkgtransport.BarrierGenerateRootTokenRequest
-type BarrierRootTokenResponse = pkgtransport.BarrierRootTokenResponse
-type BarrierEnableEncryptionRequest = pkgtransport.BarrierEnableEncryptionRequest
-type BarrierEnableEncryptionResponse = pkgtransport.BarrierEnableEncryptionResponse
-
 // Trust bootstrap listener types (re-exported from pkg/api/transport).
 type BootstrapListenerKeysResponse = pkgtransport.BootstrapListenerKeysResponse
 
@@ -341,11 +321,6 @@ var (
 	// branch of a PCR selection.
 	TPMPolicyBranches = pkgtransport.TPMPolicyBranches
 )
-
-// Audit types.
-type AuditEvent = pkgtransport.AuditEvent
-type AuditFilter = pkgtransport.AuditFilter
-type AuditPage = pkgtransport.AuditPage
 
 // Pagination types and functional options.
 type PageRequest = pkgtransport.PageRequest

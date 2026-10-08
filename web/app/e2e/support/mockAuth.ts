@@ -50,9 +50,6 @@ export const ALL_PERMISSIONS: Record<string, boolean> = {
   'keys:create': true,
   'keys:import': true,
   'certs:list': true,
-  'seal:status': true,
-  'seal:unseal': true,
-  'seal:seal': true,
   'pin:read': true,
   'piv:read': true,
   'ssh:read': true,
@@ -64,7 +61,6 @@ export const ALL_PERMISSIONS: Record<string, boolean> = {
   'users:enable': true,
   'users:disable': true,
   'users:delete': true,
-  'audit:read': true,
   'tenants:list': true,
   'oidc_credentials:list': true,
 };
@@ -78,12 +74,8 @@ export const ALL_CAPABILITIES: Record<string, boolean> = {
   passwords: true,
   oidc_credentials: true,
   platform: true,
-  ceremony: true,
   factors: true,
-  audit: true,
   tenants: true,
-  custodians: true,
-  shares: true,
   cluster: true,
 };
 

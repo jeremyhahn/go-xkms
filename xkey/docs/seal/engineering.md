@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — Engineering
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-10-07
 
 See [architecture.md](architecture.md) for the two-layer shape (Barrier vs.
 the legacy sealed-blob store) and the auto-unseal decision order before
@@ -20,7 +20,7 @@ CLI — see architecture.md's "Rejected alternatives") wraps it:
 func NewBarrierService(configDir string, log *slog.Logger) *BarrierService
 func (s *BarrierService) SetDataDir(dir string)
 func (s *BarrierService) SetTPMSealerFunc(fn func() xkms.Sealer)
-func (s *BarrierService) SetCloudKMSStrategyFunc(fn func(strategyID string) (xkms.SealingStrategy, error))
+func (s *BarrierService) SetExternalStrategyFunc(fn func(strategyID string) (xkms.SealingStrategy, error))
 func (s *BarrierService) Initialize(password, strategyID string) error
 func (s *BarrierService) Unseal(password, strategyID string) error
 func (s *BarrierService) Seal() error
@@ -32,7 +32,7 @@ func (s *BarrierService) GetBarrier() *xkms.Barrier
 
 `SetTPMSealerFunc` must be called before `Initialize`/`Unseal` with
 `strategyID == "tpm2"` — `assembleStrategy` returns
-`ErrBarrierStrategyUnavailable` otherwise. Likewise `SetCloudKMSStrategyFunc`
+`ErrBarrierStrategyUnavailable` otherwise. Likewise `SetExternalStrategyFunc`
 must be called before `Initialize`/`Unseal` with `strategyID` one of
 `"awskms"`/`"gcpkms"`/`"azurekv"`/`"vault"` (`sdk/go.StrategyAWSKMS` etc.);
 the injected function's own error return is propagated unchanged (e.g. a
@@ -283,7 +283,7 @@ TPM it opened on success so the caller decides the connection's lifetime
 | `services.ErrBarrierAutoUnsealEmptyPolicyName`, `ErrBarrierAutoUnsealBuiltinPolicy`, `ErrBarrierAutoUnsealCredentialRequired` | `EnableAutoUnseal` validation: a named (not the built-in) policy and a non-empty password are required |
 | `cmd.ErrLocalTPMPoliciesOpenFailed` | The CLI could not open the local TPM policy service (no TPM, an unprovisioned one, or its registry) |
 | `cmd.ErrBarrierStoreTPMUnavailable` | `openBarrierBackend`'s direct-unseal fallback found no TPM |
-| `services.ErrBarrierStrategyUnavailable` | `SetTPMSealerFunc`/`SetCloudKMSStrategyFunc` was not called (or, for TPM2, returned nil/`!CanSeal()`) before an `Unseal`/`Initialize` needing it |
+| `services.ErrBarrierStrategyUnavailable` | `SetTPMSealerFunc`/`SetExternalStrategyFunc` was not called (or, for TPM2, returned nil/`!CanSeal()`) before an `Unseal`/`Initialize` needing it |
 | `config.ErrBarrierCloudKMSConfigInvalid` | A cloud KMS barrier strategy's persisted config is missing a required field or pairs a credential field partially |
 | `cmd.ErrBarrierConfigNotLoaded` | `xkey barrier init --strategy aws_kms\|gcp_kms\|azure_kv\|vault` ran before the unified config was loaded (defensive; not reachable through normal CLI startup) |
 | `sdk/go.ErrUnresolvedSecretURI` | A cloud KMS strategy's explicit `*SecretValue` credential field names a reference xkey has no resolver for |
@@ -320,7 +320,7 @@ Sealed-blob store (`SealService`/`AutoUnsealService`, GUI-only):
 | `xkey/pkg/config/load_test.go`, `load_partial_test.go`, `save_test.go` | `ble codec_json` | Pre-existing config-loader suite, re-run by this feature: `secretValueDecodeHookFunc`/`stringToWeakSliceHookFunc` (`load.go`) must not regress a `*SecretValue`-free `Load()`/`Save()` round trip or an env-var slice override (`TestLoadFromPath_EnvOverride`'s `XKEY_GUI_AUTO_UNSEAL_PCRS`) |
 | `xkey/cmd/xkey/cmd/barrier_cloudkms_test.go` | `ble codec_json` | `resolveBarrierCloudSecrets` (nil field skipped, unclaimed reference fails), `buildCloudKMSBarrierStrategy`'s "not compiled in" error, `persistBarrierCloudKMSConfig` (no-op for non-cloud strategies, missing-config error, a full init→save→reload round trip including `KeyID`), `--aws-key-id` flag registration |
 | `xkey/pkg/config/barrier_cloud_test.go` | `ble codec_json` | (also) `TestBarrierAWSKMSConfig_KeyIDRoundTrip` — `KeyID` survives `Save`→`Load` intact; `TestBarrierAWSKMSConfig_Validate_KeyIDNotCheckedHere` — `Validate` accepts any `KeyID` value, format checking is `awskms.Config.Validate`'s job |
-| `xkey/pkg/gui/services/barrier_cloudkms_test.go` | `ble codec_json tpm_simulator` | `assembleStrategy`'s cloud KMS branch: unavailable without `SetCloudKMSStrategyFunc`, a full Initialize→Seal→Unseal round trip via `sdk/go.NewCloudKMSStrategy` over a mock sealer, injected-function error propagation |
+| `xkey/pkg/gui/services/barrier_cloudkms_test.go` | `ble codec_json tpm_simulator` | `assembleStrategy`'s cloud KMS branch: unavailable without `SetExternalStrategyFunc`, a full Initialize→Seal→Unseal round trip via `sdk/go.NewCloudKMSStrategy` over a mock sealer, injected-function error propagation |
 | `pkg/seal/cloud_provision_test.go` (root module) | `awskms gcpkms azurekv vault` | `EnsureSealKey`/`BuildCloudKMSStrategy` against a generic mock `types.KeyProvider`, all four strategy IDs; `TestEnsureSealKey_AWSKMSOperatorKeyNotFoundFailsClosed` (go-xkms#842) — an operator-configured key that resolves not-found fails closed with `ErrOperatorSealKeyNotFound` instead of falling through to `GenerateSymmetricKey` |
 | `pkg/seal/cloud_provision_awskms_test.go` (root module) | `awskms` | `BuildCloudKMSStrategy` against the real `*awskms.Backend` and its own `MockKMSClient`: init→seal→unseal round trip, a missing-credentials failure surfacing from `SealRootKey`, an operator-configured `Config.KeyID` reused without ever calling `CreateKey` (see that file's doc comment for why `EnsureSealKey`'s AWS KMS branch never reaches a real `CreateKey` call on this path — a pre-existing property of the shared provisioning recipe, not new here), and (go-xkms#842) `TestBuildCloudKMSStrategy_AWSKMSBackend_OperatorConfiguredKeyNotFound` — a configured `KeyID` `DescribeKey` reports as not found fails closed with `ErrOperatorSealKeyNotFound`, `CreateKey` never called |
 

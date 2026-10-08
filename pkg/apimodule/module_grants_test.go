@@ -78,8 +78,8 @@ func grpcAndMCPPermissionPairs(t *testing.T) map[string]struct{} {
 	addServicePermissions(t, set, pb.File_pkg_api_grpc_proto_xkmsv1_xkms_proto.Services())
 
 	// xkmsd also serves go-qrdb's admin surface on its control plane
-	// (pkg/server/qrdb_control_plane.go), and the REST cluster routes gate on
-	// exactly its admin:status and admin:peers pairs. qrdb declares those on
+	// (pkg/server/qrdb_control_plane.go), and the ACME admin routes gate on
+	// its admin:status pair. qrdb declares its admin:* pairs on
 	// qrdb.v1.QRDBService, which also carries the KV surface xkms does not
 	// expose, so only its admin:* pairs are added.
 	qrdbService := qrdbv1.File_pkg_api_grpc_proto_qrdbv1_qrdb_proto.Services().ByName("QRDBService")

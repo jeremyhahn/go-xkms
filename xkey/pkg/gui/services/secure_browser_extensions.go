@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/shellquote"
 )
 
@@ -400,7 +401,7 @@ func (s *SecureBrowserService) generateNativeMessagingHost(
 		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 	dstManifest := filepath.Join(manifestDir, fileName)
-	if err := os.WriteFile(dstManifest, out, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(dstManifest, out, 0o600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 	return nil
@@ -505,7 +506,7 @@ func mergeExtensionSettings(path string, entries map[string]json.RawMessage) err
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(path, out, 0o600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrSecureBrowserExtImport, Cause: err}
 	}
 	return nil

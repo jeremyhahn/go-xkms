@@ -44,7 +44,7 @@ func (f *FileStorage) CompareAndDelete(ctx context.Context, key string, expected
 		return false, storage.ErrCompareAndDeleteUnsupported
 	}
 	var deleted bool
-	err := withCrossProcessLock(ctx, f.lockPath, func() error {
+	err := withCrossProcessLock(ctx, f.rootDir, func() error {
 		var cadErr error
 		deleted, cadErr = cad.CompareAndDelete(ctx, key, expected)
 		return cadErr

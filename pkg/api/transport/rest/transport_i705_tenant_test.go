@@ -27,24 +27,6 @@ import (
 // reuses transport_tenant_test.go's newTenantTestTransport helper, whose
 // router now also registers the entitlements/quotas routes.
 
-func TestTransport_TenantBarrierStatus_Success(t *testing.T) {
-	tr, _ := newTenantTestTransport(t)
-	ctx := context.Background()
-
-	_, err := tr.CreateTenant(ctx, &transport.CreateTenantRequest{ID: "acme", Name: "Acme"})
-	require.NoError(t, err)
-
-	resp, err := tr.TenantBarrierStatus(ctx, "acme")
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
-func TestTransport_TenantBarrierStatus_NotFound(t *testing.T) {
-	tr, _ := newTenantTestTransport(t)
-	_, err := tr.TenantBarrierStatus(context.Background(), "nonexistent")
-	require.Error(t, err)
-}
-
 func TestTransport_UpdateTenantEntitlements_Success(t *testing.T) {
 	tr, _ := newTenantTestTransport(t)
 	ctx := context.Background()

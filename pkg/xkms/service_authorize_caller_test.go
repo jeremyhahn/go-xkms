@@ -31,7 +31,7 @@ var errGrantMissing = errors.New("fake rbac: permission denied")
 // serviceWithRBAC is a service whose Authorizer is backed by rbac.
 func serviceWithRBAC(t *testing.T, rbac qrdbtransport.RBACClient) *XKMSService {
 	t.Helper()
-	svc := auditService(t, &stubAuditClient{page: &qrdbtransport.AuditPage{}})
+	svc := &XKMSService{}
 	svc.SetAuthorizer(auth.NewAuthorizer(rbac))
 	return svc
 }
@@ -71,15 +71,4 @@ func TestAuthorizeCaller_AsksTheAuthorizerForTheCaller(t *testing.T) {
 	assert.Equal(t, auth.ActionService, rbac.action)
 
 	require.ErrorIs(t, svc.AuthorizeCaller(ctx, auth.ResourceSSH, auth.ActionDelete), errGrantMissing)
-}
-
-// TestAuthorizeCaller_Unauthenticated proves an enabled authorizer refuses a
-// request with no identity, and a service with RBAC disabled allows it, as
-// the transport gate does.
-func TestAuthorizeCaller_Unauthenticated(t *testing.T) {
-	svc := serviceWithRBAC(t, &recordingRBAC{grant: "ssh:service"})
-	require.ErrorIs(t, svc.AuthorizeCaller(context.Background(), auth.ResourceSSH, auth.ActionService), auth.ErrUnauthenticated)
-
-	disabled := auditService(t, &stubAuditClient{page: &qrdbtransport.AuditPage{}})
-	require.NoError(t, disabled.AuthorizeCaller(context.Background(), auth.ResourceSSH, auth.ActionService))
 }

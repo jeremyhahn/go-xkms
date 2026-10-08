@@ -59,10 +59,6 @@ func (e *TokenRequestError) Unwrap() error {
 }
 
 var (
-	// ErrNilBackend is returned when a token store constructor is given a
-	// nil backing store (a qrdbsdk.KVStore for DAOStore).
-	ErrNilBackend = errors.New("oidc: nil storage backend")
-
 	// ErrDiscoveryFailed is returned when OIDC discovery fails to retrieve provider metadata.
 	ErrDiscoveryFailed = errors.New("oidc: discovery failed")
 

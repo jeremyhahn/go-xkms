@@ -55,7 +55,7 @@ Rejected alternatives:
 | Backend selection | `pkg/pinselect` | go-xkms |
 | TPM2 PIN backend | `pkg/pintpm2` | go-xkms |
 | PKCS#11 PIN backend | `pkg/pkcs11` | go-xkms |
-| Wire surface | `pkg/api/rest/handlers_barrier_pin.go`, `pkg/api/grpc/service_barrier_pin.go` | go-xkms |
+| Wire surface | `pkg/api/rest/handlers_pin.go`, `pkg/api/grpc/service_pin.go` | go-xkms |
 
 This is capability row **"TPM2 / PKCS#11 PIN backends" (tier 2)** —
 composition-plane, registered into go-qrdb via `WithPINBackend`.

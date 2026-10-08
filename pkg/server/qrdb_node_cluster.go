@@ -26,17 +26,17 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/daemon"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 )
 
 // defaultRaftTrustDomain is the SPIFFE trust domain stamped into auto-provisioned
 // Raft node certificates when RaftEnrollment.TrustDomain is unset.
-const defaultRaftTrustDomain = daemon.DefaultTrustDomain
+const defaultRaftTrustDomain = embeddednode.DefaultTrustDomain
 
 // raftTLSCacheSubdir is the subdirectory of Datastore.Path where auto-provisioned
 // cluster TLS material (CA + node cert/key + Noise key) is cached so restarts
 // reuse it.
-const raftTLSCacheSubdir = daemon.RaftTLSCacheSubdir
+const raftTLSCacheSubdir = embeddednode.RaftTLSCacheSubdir
 
 // ErrRaftTLSRead is returned when one of the operator-supplied Raft mTLS PEM
 // files cannot be read at node boot. It carries the offending field name and
@@ -62,9 +62,9 @@ func (e *ErrRaftTLSRead) Unwrap() error { return e.Err }
 // single-node. The Raft parameters were mapped onto qcfg.Raft by
 // buildXKMSQRDBConfig; the initial membership comes from Cluster.Peers.
 func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbsdk.ServerOption, nodeOpts []qrdbnode.NodeOption) (*qrdbnode.Node, error) {
-	res, err := daemon.NewNode(s.ctx, &daemon.Options{
+	res, err := embeddednode.NewNode(s.ctx, &embeddednode.NodeOptions{
 		QRDB:             qcfg,
-		Cluster:          s.daemonClusterOptions(),
+		Cluster:          s.nodeClusterOptions(),
 		StoragePath:      s.config.Datastore.Path,
 		Logger:           s.logger,
 		ServerOptions:    serverOpts,
@@ -80,11 +80,11 @@ func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbsdk.Se
 	return res.Node, nil
 }
 
-// daemonClusterOptions maps the xkms cluster configuration onto the shared
-// pkg/daemon topology options.
-func (s *Server) daemonClusterOptions() daemon.ClusterOptions {
+// nodeClusterOptions maps the xkms cluster configuration onto the shared
+// pkg/embeddednode topology options.
+func (s *Server) nodeClusterOptions() embeddednode.ClusterOptions {
 	enr := s.config.Cluster.RaftEnrollment
-	return daemon.ClusterOptions{
+	return embeddednode.ClusterOptions{
 		Enabled:            s.config.Cluster.Enabled,
 		NodeID:             s.config.Cluster.NodeID,
 		RaftAddress:        s.config.Cluster.RaftAddress,
@@ -122,9 +122,9 @@ func (s *Server) raftNoiseBindHost() string {
 	return s.config.Server.Host
 }
 
-// resolveRaftMTLS supplies pkg/daemon with the inter-node mTLS material for a
+// resolveRaftMTLS supplies pkg/embeddednode with the inter-node mTLS material for a
 // multi-node cluster, applying xkms's provisioning precedence. These strategies
-// stay here rather than in pkg/daemon because they depend on the runtime
+// stay here rather than in pkg/embeddednode because they depend on the runtime
 // TrustedCA and key-strategy dependencies the daemon owns.
 //
 //  1. operator-supplied explicit PEM files (RaftTLS)
@@ -213,13 +213,13 @@ func (s *Server) provisionRaftClusterTLS(members map[uint64]string) (*qrdbnode.R
 }
 
 // buildClusterEnrollOptions maps the xkms cluster configuration onto the qrdb
-// clusterenroll Options by delegating to the shared pkg/daemon mapping, which
+// clusterenroll Options by delegating to the shared pkg/embeddednode mapping, which
 // applies the trust-domain and advertise-port defaults and computes SingleNode
 // from the membership. It is pure (no side effects) so the mapping can be
 // unit-tested without starting the Noise advertiser.
 func (s *Server) buildClusterEnrollOptions(members map[uint64]string) *clusterenroll.Options {
-	opts := &daemon.Options{
-		Cluster:     s.daemonClusterOptions(),
+	opts := &embeddednode.NodeOptions{
+		Cluster:     s.nodeClusterOptions(),
 		StoragePath: s.config.Datastore.Path,
 	}
 	return opts.ClusterEnrollOptions(members)
@@ -229,5 +229,5 @@ func (s *Server) buildClusterEnrollOptions(members map[uint64]string) *clusteren
 // slice form clusterenroll uses to derive a bootstrap server URL. An empty list
 // yields nil.
 func splitClusterPeers(peers string) []string {
-	return daemon.ClusterOptions{Peers: peers}.PeerList()
+	return embeddednode.ClusterOptions{Peers: peers}.PeerList()
 }

@@ -19,6 +19,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // Owner-defined NV index range boundaries per TCG specification.
@@ -163,5 +165,5 @@ func (a *NVIndexAllocator) persistCounter() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(a.counterFilePath(), data, 0600)
+	return fsutil.WriteFileAtomic(a.counterFilePath(), data, 0600)
 }

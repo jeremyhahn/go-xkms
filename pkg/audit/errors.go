@@ -15,10 +15,5 @@ package audit
 
 import "errors"
 
-var (
-	// ErrLoggerClosed is returned when a write is attempted on a closed logger.
-	ErrLoggerClosed = errors.New("audit logger closed")
-
-	// ErrNilEvent is returned when a nil event is passed to Log.
-	ErrNilEvent = errors.New("nil audit event")
-)
+// ErrNilEvent is returned when a nil event is passed to Emit.
+var ErrNilEvent = errors.New("nil audit event")

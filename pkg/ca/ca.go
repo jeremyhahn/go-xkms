@@ -86,7 +86,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	backendpkg "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
@@ -95,6 +94,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
 	objstore "github.com/jeremyhahn/go-objstore/pkg/common"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // Params contains the parameters for creating a new CA instance.
@@ -108,7 +108,7 @@ type Params struct {
 	Config *CAConfig
 
 	// KeyAttributes provides the runtime key attributes for the CA's key pair.
-	// Typically derived from Identity.ToKeyAttributes() when using
+	// Typically derived from Identity.ToKeyAttributes(ctx) when using
 	// MultiIdentityCAConfig, or constructed directly.
 	// Required.
 	KeyAttributes *types.KeyAttributes
@@ -200,7 +200,7 @@ type Params struct {
 	// operation rather than let it complete unaudited. A nil logger disables
 	// audit logging for the CA entirely (opt-in wiring) and is not itself a
 	// failure. Optional.
-	AuditLogger audit.Logger
+	AuditLogger qrdbsdk.NodeAuditLogger
 }
 
 // Validate checks that all required parameters are present.
@@ -308,7 +308,7 @@ type CA struct {
 
 	// auditLogger records CA lifecycle events (see Params.AuditLogger and
 	// pkg/ca/audit.go). nil disables audit logging for this CA instance.
-	auditLogger audit.Logger
+	auditLogger qrdbsdk.NodeAuditLogger
 
 	// secondaryKeyErr records the error from the most recent
 	// initSecondaryKeys call during Init, or nil if every secondary key
@@ -579,7 +579,7 @@ type MultiIdentityParams struct {
 
 	// AuditLogger records CA lifecycle events. See Params.AuditLogger.
 	// Optional.
-	AuditLogger audit.Logger
+	AuditLogger qrdbsdk.NodeAuditLogger
 }
 
 // NewFromMultiIdentityConfig creates a new CA from a MultiIdentityCAConfig.
@@ -610,7 +610,7 @@ func NewFromMultiIdentityConfig(mp *MultiIdentityParams) (TrustedCA, error) {
 	}
 
 	// Derive KeyAttributes from the issuing identity
-	keyAttrs, err := issuingIdentity.ToKeyAttributes()
+	keyAttrs, err := issuingIdentity.ToKeyAttributes(context.Background())
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrInvalidConfig, Detail: fmt.Sprintf("failed to derive key attributes: %v", err)}
 	}
@@ -793,16 +793,16 @@ func (ca *CA) Init(ctx context.Context) error {
 }
 
 // wrapCertLookupError classifies a certStore.GetCertificate failure inside
-// Load. A genuine storage.ErrNotFound (no record was ever written under this
-// CN) becomes ErrCertificateNotFound: the one condition callers -- in
-// particular pkg/server's initializeCA -- may treat as "never initialized"
-// and safely retry through Init. Any other cause (a corrupt or unparseable
+// Load. The certificate store's DAO reporting the entity not found (no
+// certificate was ever stored under this CN) becomes ErrCertificateNotFound:
+// the one condition callers -- in particular pkg/server's initializeCA -- may
+// treat as "never initialized" and safely retry through Init. Any other cause (a corrupt or unparseable
 // persisted certificate, a backend I/O failure) is returned as a distinct
 // error that does not satisfy errors.Is(_, ErrCertificateNotFound), so
 // damaged existing state can never be mistaken for an empty store and
 // silently papered over by minting a new CA (go-xkms#793).
 func wrapCertLookupError(label string, err error) error {
-	if errors.Is(err, storage.ErrNotFound) {
+	if qrdbsdk.IsDAONotFound(err) {
 		return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("%s: %v", label, err)}
 	}
 	return &errs.Wrapped{Msg: fmt.Sprintf("failed to load %s", label), Err: err}
@@ -851,7 +851,7 @@ func (ca *CA) Load(ctx context.Context) error {
 	// generated and stored this same key (go-xkms#793): Load must attempt the
 	// lookup with the identical attributes Init wrote under, or the lookup
 	// fails KeyAttributes.Validate() before it ever reaches the keystore.
-	rootAttrs, err := ca.getCAKeyAttributes(rootIdentity)
+	rootAttrs, err := ca.getCAKeyAttributes(ctx, rootIdentity)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to get root key attributes", Err: err}
 	}
@@ -878,7 +878,7 @@ func (ca *CA) Load(ctx context.Context) error {
 
 		// Verify intermediate key exists. Same getCAKeyAttributes default-filling
 		// as the root key above (go-xkms#793).
-		intermediateAttrs, err := ca.getCAKeyAttributes(issuingIdentity)
+		intermediateAttrs, err := ca.getCAKeyAttributes(ctx, issuingIdentity)
 		if err != nil {
 			return &errs.Wrapped{Msg: "failed to get intermediate key attributes", Err: err}
 		}
@@ -903,7 +903,7 @@ func (ca *CA) Load(ctx context.Context) error {
 				return wrapCertLookupError(fmt.Sprintf("intermediate %q certificate", cn), err)
 			}
 			// Same getCAKeyAttributes default-filling as above (go-xkms#793).
-			attrs, err := ca.getCAKeyAttributes(&intermediate)
+			attrs, err := ca.getCAKeyAttributes(ctx, &intermediate)
 			if err != nil {
 				return &errs.Wrapped{Msg: fmt.Sprintf("failed to get intermediate %q key attributes", cn), Err: err}
 			}
@@ -1154,7 +1154,7 @@ func (ca *CA) getSigner(ctx context.Context) (crypto.Signer, error) {
 		return nil, ErrInvalidConfig
 	}
 
-	attrs, err := ca.getCAKeyAttributes(issuingIdentity)
+	attrs, err := ca.getCAKeyAttributes(ctx, issuingIdentity)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to get signer", Err: err}
 	}
@@ -1169,11 +1169,11 @@ func (ca *CA) getSigner(ctx context.Context) (crypto.Signer, error) {
 // getCAKeyAttributes returns KeyAttributes for the specified identity.
 // If the key type is not set, it defaults to KeyTypeCA since all CA keys
 // are by definition CA keys.
-func (ca *CA) getCAKeyAttributes(identity *Identity) (*types.KeyAttributes, error) {
+func (ca *CA) getCAKeyAttributes(ctx context.Context, identity *Identity) (*types.KeyAttributes, error) {
 	if identity == nil {
 		return nil, ErrInvalidConfig
 	}
-	attrs, err := identity.ToKeyAttributes()
+	attrs, err := identity.ToKeyAttributes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1324,7 +1324,7 @@ func (ca *CA) initSecondaryKeys(ctx context.Context, identity *Identity) error {
 		return nil
 	}
 	for i, kc := range id.Keys[1:] {
-		attrs, err := types.KeyAttributesFromConfig(kc)
+		attrs, err := types.KeyAttributesFromConfig(ctx, kc)
 		if err != nil {
 			return &errs.Wrapped{Msg: fmt.Sprintf("ca: secondary key %d attributes", i+1), Err: err}
 		}
@@ -1348,7 +1348,7 @@ func (ca *CA) createRootCertificate(ctx context.Context) error {
 	}
 
 	// Get key attributes for the root CA
-	attrs, err := ca.getCAKeyAttributes(rootIdentity)
+	attrs, err := ca.getCAKeyAttributes(ctx, rootIdentity)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to get root key attributes", Err: err}
 	}
@@ -1442,7 +1442,7 @@ func (ca *CA) createIntermediateCertificates(ctx context.Context) error {
 		return ErrInvalidConfig
 	}
 
-	rootAttrs, err := rootIdentity.ToKeyAttributes()
+	rootAttrs, err := rootIdentity.ToKeyAttributes(ctx)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to get root key attributes", Err: err}
 	}
@@ -1510,7 +1510,7 @@ func (ca *CA) createIntermediateCertificates(ctx context.Context) error {
 		// Update parent for next intermediate in chain
 		parentCert = cert
 
-		attrs, err := identity.ToKeyAttributes()
+		attrs, err := identity.ToKeyAttributes(ctx)
 		if err != nil {
 			return &errs.Wrapped{Msg: "failed to get intermediate key attributes", Err: err}
 		}
@@ -1548,7 +1548,7 @@ func (ca *CA) createSingleIntermediateCertificate(
 	parentSigner crypto.Signer,
 ) (*x509.Certificate, error) {
 	// Get key attributes for the intermediate CA
-	attrs, err := ca.getCAKeyAttributes(identity)
+	attrs, err := ca.getCAKeyAttributes(ctx, identity)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to get intermediate key attributes", Err: err}
 	}

@@ -44,13 +44,6 @@ func TestWrappingPublicKeyError(t *testing.T) {
 
 // --- shareParams ---
 
-func TestShareParams(t *testing.T) {
-	got := shareParams("https://a.example", "g1", 3)
-	assert.Equal(t, "https://a.example", got["server_url"])
-	assert.Equal(t, "g1", got["group_id"])
-	assert.Equal(t, 3, got["share_index"])
-}
-
 // --- Algorithms ---
 
 func TestAlgorithms_Connected(t *testing.T) {
@@ -75,88 +68,9 @@ func TestAlgorithms_Connected(t *testing.T) {
 
 // --- GetShare / DeleteShare ---
 
-func TestGetShare_Connected(t *testing.T) {
-	addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
-		if req.Method != "xkms.getShare" {
-			return jsonrpcResponse{Result: json.RawMessage(`{}`)}
-		}
-		var params map[string]any
-		_ = json.Unmarshal(req.Params, &params)
-		d, _ := json.Marshal(transport.ShareInfo{
-			ServerURL: params["server_url"].(string), GroupID: params["group_id"].(string),
-		})
-		return jsonrpcResponse{Result: d}
-	})
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	resp, err := tr.GetShare(context.Background(), "https://a.example", "group-1", 2)
-	require.NoError(t, err)
-	assert.Equal(t, "https://a.example", resp.ServerURL)
-	assert.Equal(t, "group-1", resp.GroupID)
-}
-
-func TestDeleteShare_Connected(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	require.NoError(t, tr.DeleteShare(context.Background(), "https://a.example", "group-1", 2))
-}
-
 // --- QueryAudit ---
 
-func TestQueryAudit_Connected(t *testing.T) {
-	addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
-		if req.Method != "xkms.queryAudit" {
-			return jsonrpcResponse{Result: json.RawMessage(`{}`)}
-		}
-		d, _ := json.Marshal(transport.AuditPage{
-			Events: []transport.AuditEvent{{Actor: "alice", Action: "sign"}}, Total: 1,
-		})
-		return jsonrpcResponse{Result: d}
-	})
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	page, err := tr.QueryAudit(context.Background(), &transport.AuditFilter{Actor: "alice"})
-	require.NoError(t, err)
-	assert.Equal(t, 1, page.Total)
-	require.Len(t, page.Events, 1)
-	assert.Equal(t, "alice", page.Events[0].Actor)
-}
-
-func TestQueryAudit_NilFilter(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	_, err := tr.QueryAudit(context.Background(), nil)
-	assert.ErrorIs(t, err, transport.ErrInvalidRequest)
-}
-
 // --- TenantBarrierStatus / UpdateTenantEntitlements / UpdateTenantQuotas ---
-
-func TestTenantBarrierStatus_Connected(t *testing.T) {
-	addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
-		if req.Method != "xkms.tenantBarrierStatus" {
-			return jsonrpcResponse{Result: json.RawMessage(`{}`)}
-		}
-		d, _ := json.Marshal(transport.TenantBarrierStatusResponse{TenantID: "acme", Initialized: true})
-		return jsonrpcResponse{Result: d}
-	})
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	resp, err := tr.TenantBarrierStatus(context.Background(), "acme")
-	require.NoError(t, err)
-	assert.True(t, resp.Initialized)
-}
 
 func TestUpdateTenantEntitlements_Connected(t *testing.T) {
 	addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
@@ -194,37 +108,4 @@ func TestUpdateTenantQuotas_Connected(t *testing.T) {
 
 // --- BarrierEnableEncryption ---
 
-func TestBarrierEnableEncryption_Connected(t *testing.T) {
-	addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
-		if req.Method != "barrier.enableEncryption" {
-			return jsonrpcResponse{Result: json.RawMessage(`{}`)}
-		}
-		d, _ := json.Marshal(transport.BarrierEnableEncryptionResponse{Status: "started", Scope: "system"})
-		return jsonrpcResponse{Result: d}
-	})
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	resp, err := tr.BarrierEnableEncryption(context.Background(), &transport.BarrierEnableEncryptionRequest{Strategy: "passphrase"})
-	require.NoError(t, err)
-	assert.Equal(t, "started", resp.Status)
-}
-
-func TestBarrierEnableEncryption_NotConnected(t *testing.T) {
-	tr := &Transport{config: transport.DefaultConfig()}
-	_, err := tr.BarrierEnableEncryption(context.Background(), &transport.BarrierEnableEncryptionRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 // --- ClaimShareComplete ---
-
-func TestClaimShareComplete_Connected(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	_, err := tr.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
-	require.NoError(t, err)
-}

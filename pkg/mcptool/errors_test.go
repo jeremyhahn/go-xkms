@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
-	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 func TestRPCError_Error(t *testing.T) {
-	e := &RPCError{Code: -32602, WireCode: wire.CodeInvalidArgument, Message: "invalid request"}
+	e := &RPCError{Code: -32602, WireCode: qrdbsdk.MCPCodeInvalidArgument, Message: "invalid request"}
 	got := e.Error()
 	if !strings.Contains(got, "-32602") || !strings.Contains(got, "invalid request") || !strings.Contains(got, "INVALID_ARGUMENT") {
 		t.Errorf("Error() = %q, want it to name the code, wire code, and message", got)

@@ -50,16 +50,16 @@ export function SetBaseBackendFactory(arg1) {
   return window['go']['services']['BarrierService']['SetBaseBackendFactory'](arg1);
 }
 
-export function SetCloudKMSStrategyFunc(arg1) {
-  return window['go']['services']['BarrierService']['SetCloudKMSStrategyFunc'](arg1);
-}
-
 export function SetContext(arg1) {
   return window['go']['services']['BarrierService']['SetContext'](arg1);
 }
 
 export function SetDataDir(arg1) {
   return window['go']['services']['BarrierService']['SetDataDir'](arg1);
+}
+
+export function SetExternalStrategyFunc(arg1) {
+  return window['go']['services']['BarrierService']['SetExternalStrategyFunc'](arg1);
 }
 
 export function SetLastStrategy(arg1) {

@@ -202,7 +202,7 @@ collision with the existing `TrustBootstrap*` surface in the same flat package.
 
 - [Trust bootstrap](bootstrap.md) — the `pkg/trust/bootstrap` dispatch library
   that each strategy delegates to for wire-protocol fetches.
-- [Init system](../init/README.md) — `xkmsd init` ceremony produces the CA
+- [Init ceremony](../init-ceremony/architecture.md) — `xkmsd init` ceremony produces the CA
   bundle that the resolver fetches.
 - `pkg/trust/resolver` source — `config.go`, `resolver.go`, `errors.go`,
   `install.go`.

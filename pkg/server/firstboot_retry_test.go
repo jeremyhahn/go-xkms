@@ -21,13 +21,14 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // swapFirstBootInitialize substitutes the SDK initialize function for the
 // test and restores it afterwards.
-func swapFirstBootInitialize(t *testing.T, fn func(context.Context, qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error)) {
+func swapFirstBootInitialize(t *testing.T, fn func(context.Context, *qrdbnode.Node, qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error)) {
 	t.Helper()
 	prev := firstBootInitialize
 	firstBootInitialize = fn
@@ -43,7 +44,7 @@ func newRetryTestServer() *Server {
 // leader settles.
 func TestFirstBootWithLeaderRetry_RetriesNotLeaderThenSucceeds(t *testing.T) {
 	calls := 0
-	swapFirstBootInitialize(t, func(context.Context, qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error) {
+	swapFirstBootInitialize(t, func(context.Context, *qrdbnode.Node, qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error) {
 		calls++
 		if calls < 3 {
 			return nil, &qrdbsdk.NotLeaderError{ShardID: 1}
@@ -63,7 +64,7 @@ func TestFirstBootWithLeaderRetry_RetriesNotLeaderThenSucceeds(t *testing.T) {
 func TestFirstBootWithLeaderRetry_NonLeaderErrorFailsImmediately(t *testing.T) {
 	calls := 0
 	boom := errors.New("storage exploded")
-	swapFirstBootInitialize(t, func(context.Context, qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error) {
+	swapFirstBootInitialize(t, func(context.Context, *qrdbnode.Node, qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error) {
 		calls++
 		return nil, boom
 	})
@@ -77,7 +78,7 @@ func TestFirstBootWithLeaderRetry_NonLeaderErrorFailsImmediately(t *testing.T) {
 // TestFirstBootWithLeaderRetry_ContextCancelStopsWaiting proves cancellation
 // interrupts the backoff wait.
 func TestFirstBootWithLeaderRetry_ContextCancelStopsWaiting(t *testing.T) {
-	swapFirstBootInitialize(t, func(context.Context, qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error) {
+	swapFirstBootInitialize(t, func(context.Context, *qrdbnode.Node, qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error) {
 		return nil, &qrdbsdk.NotLeaderError{ShardID: 1}
 	})
 

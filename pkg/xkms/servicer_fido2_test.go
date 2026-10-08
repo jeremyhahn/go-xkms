@@ -9,6 +9,7 @@ import (
 	waprotocol "github.com/go-webauthn/webauthn/protocol"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,6 +20,14 @@ import (
 // unit test without any hardware or browser.
 func newConfiguredWebAuthnService(t *testing.T) *webauthn.Service {
 	t.Helper()
+	svc, _ := newConfiguredWebAuthnServiceAndStores(t)
+	return svc
+}
+
+// newConfiguredWebAuthnServiceAndStores also returns the stores behind the
+// service, for tests that change an account's qrdb record mid-ceremony.
+func newConfiguredWebAuthnServiceAndStores(t *testing.T) (*webauthn.Service, *webauthntest.Stores) {
+	t.Helper()
 
 	allowRegistration := true
 	cfg := &webauthn.Config{
@@ -28,14 +37,15 @@ func newConfiguredWebAuthnService(t *testing.T) *webauthn.Service {
 		AllowPublicRegistration: &allowRegistration,
 	}
 
+	stores := webauthntest.NewStores(t)
 	svc, err := webauthn.NewService(webauthn.ServiceParams{
 		Config:          cfg,
-		UserStore:       webauthn.NewMemoryUserStore(),
+		UserStore:       stores.Users,
 		SessionStore:    webauthn.NewMemorySessionStore(),
-		CredentialStore: webauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err)
-	return svc
+	return svc, stores
 }
 
 // TestRegistrationCeremony_EndToEnd proves the FIDO2/WebAuthn registration

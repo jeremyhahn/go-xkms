@@ -43,7 +43,7 @@ func pinString(t *testing.T, secret *secure.Secret) string {
 func mustSealPIN(t *testing.T, pin string) *secure.Secret {
 	t.Helper()
 
-	secret, err := sealCeremonyPIN(pin)
+	secret, err := sealCeremonyPIN(t.Context(), pin)
 	require.NoError(t, err)
 	return secret
 }

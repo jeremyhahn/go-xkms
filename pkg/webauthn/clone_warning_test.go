@@ -20,40 +20,16 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"sync"
 	"testing"
 
 	"github.com/descope/virtualwebauthn"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/pkg/audit/audittest"
 )
-
-// recordingAuditLogger captures audit events, or fails every write with err.
-type recordingAuditLogger struct {
-	mu     sync.Mutex
-	events []*audit.Event
-	err    error
-}
-
-func (r *recordingAuditLogger) Log(_ context.Context, event *audit.Event) error {
-	if r.err != nil {
-		return r.err
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, event)
-	return nil
-}
-
-func (r *recordingAuditLogger) Close() error { return nil }
-
-func (r *recordingAuditLogger) recorded() []*audit.Event {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]*audit.Event(nil), r.events...)
-}
 
 // cloneFixture is a registered credential on a service whose log output and
 // audit events the test can inspect.
@@ -66,7 +42,7 @@ type cloneFixture struct {
 	user          User
 }
 
-func newCloneFixture(t *testing.T, auditLogger audit.Logger) *cloneFixture {
+func newCloneFixture(t *testing.T, auditLogger qrdbsdk.NodeAuditLogger) *cloneFixture {
 	t.Helper()
 	ctx := context.Background()
 
@@ -77,11 +53,12 @@ func newCloneFixture(t *testing.T, auditLogger audit.Logger) *cloneFixture {
 		AllowPublicRegistration: openRegistration(),
 	}
 	logs := &bytes.Buffer{}
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 		Logger:          slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn})),
 		AuditLogger:     auditLogger,
 	})
@@ -131,18 +108,18 @@ func (f *cloneFixture) login(t *testing.T, counter uint32) error {
 }
 
 func TestFinishLogin_CloneWarningIsLoggedAndAudited(t *testing.T) {
-	recorder := &recordingAuditLogger{}
+	recorder := &audittest.Recorder{}
 	f := newCloneFixture(t, recorder)
 
 	require.NoError(t, f.login(t, 5))
-	assert.Empty(t, recorder.recorded(), "an advancing counter raises no clone warning")
+	assert.Empty(t, recorder.Events(), "an advancing counter raises no clone warning")
 	assert.Empty(t, f.logs.String())
 
 	// A counter that goes backwards is go-webauthn's CloneWarning. Refusing
 	// the login is RP policy the service does not impose, so it still succeeds.
 	require.NoError(t, f.login(t, 3), "the clone warning must not change the login outcome")
 
-	events := recorder.recorded()
+	events := recorder.Events()
 	require.Len(t, events, 1)
 	event := events[0]
 	assert.Equal(t, CloneWarningAuditAction, event.Action)
@@ -164,19 +141,19 @@ func TestFinishLogin_CloneWarningIsLoggedAndAudited(t *testing.T) {
 	// The flag is sticky on the stored credential: the next login with it is
 	// reported again, no longer as the first detection.
 	require.NoError(t, f.login(t, 6))
-	events = recorder.recorded()
+	events = recorder.Events()
 	require.Len(t, events, 2)
 	assert.Equal(t, "false", events[1].Details["first_detection"])
 }
 
 func TestFinishLogin_CloneWarningAuditFailureFailsLogin(t *testing.T) {
 	writeErr := errors.New("audit sink unavailable")
-	f := newCloneFixture(t, &recordingAuditLogger{err: writeErr})
+	f := newCloneFixture(t, &audittest.Failing{Err: writeErr})
 
 	require.NoError(t, f.login(t, 5), "no audit event is written without a clone warning")
 
 	err := f.login(t, 5)
-	var auditErr *audit.ErrAuditWriteFailed
+	var auditErr *qrdbsdk.AuditGateError
 	require.ErrorAs(t, err, &auditErr, "a security event that cannot be audited must fail the login")
 	assert.ErrorIs(t, err, writeErr)
 }

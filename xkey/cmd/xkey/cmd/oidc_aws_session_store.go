@@ -34,7 +34,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -96,23 +95,22 @@ func (s *awsCLISessionStore) Load() (*AWSStoredSession, error) {
 // otherwise, with the one standard "unencrypted at rest" warning
 // resolveSecretStoreBackend already logs.
 //
-// explicitPath, when non-empty, is a plain file path the caller has already
+// explicitPath, when non-empty, is a store directory the caller has already
 // determined the operator explicitly asked for (an --session-store flag
 // actually set on the command, or a provider's saved AWSSessionStore
-// configuration) -- resolved to exactly that file, matching how `xkey
-// oath`'s --store override and `xkey oidc`'s --token-store override bypass
-// barrier auto-detection entirely: the operator asked for a specific file,
-// so the barrier decision does not apply. An empty explicitPath uses the
-// barrier-or-fallback decision above, rooted at the shared xkey data
-// directory rather than the historical fixed ~/.xkey/aws-session.json path.
+// configuration) -- an unencrypted go-qrdb file store rooted there, matching
+// how `xkey oath`'s --store override and `xkey oidc`'s --token-store override
+// bypass barrier auto-detection entirely: the operator asked for a specific
+// store, so the barrier decision does not apply. An empty explicitPath uses
+// the barrier-or-fallback decision above, rooted at the shared xkey data
+// directory.
 func openAWSSessionStore(cmd *cobra.Command, explicitPath string) (*awsCLISessionStore, error) {
 	if explicitPath != "" {
-		path := expandPath(explicitPath)
-		backend, err := xkms.NewFileStorageBackend(filepath.Dir(path))
+		backend, err := xkms.NewFileStorageBackend(expandPath(explicitPath))
 		if err != nil {
 			return nil, &SentinelCauseError{Sentinel: ErrAWSSessionStoreFailed, Cause: err}
 		}
-		return &awsCLISessionStore{backend: backend, key: filepath.Base(path)}, nil
+		return &awsCLISessionStore{backend: backend, key: awsSessionStoreKey}, nil
 	}
 
 	dataDir, err := resolveDataDir("")

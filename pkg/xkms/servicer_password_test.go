@@ -649,7 +649,7 @@ func setupServiceWithPasswordManager(t *testing.T) (*XKMSService, *seal.BarrierR
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	sysCreds, err := seal.CredentialsFor([]byte("test-pw"))
+	sysCreds, err := seal.CredentialsFor(t.Context(), []byte("test-pw"))
 	require.NoError(t, err)
 	defer sysCreds.Secret.Destroy()
 	err = sysBarrier.Initialize(ctx, sysCreds)
@@ -659,9 +659,9 @@ func setupServiceWithPasswordManager(t *testing.T) (*XKMSService, *seal.BarrierR
 	registry, err := seal.NewBarrierRegistry(sysBarrier)
 	require.NoError(t, err)
 
-	_, err = registry.RegisterTenant("tenant-1")
+	_, err = registry.RegisterTenantDefault("tenant-1")
 	require.NoError(t, err)
-	tenantCreds, err := seal.CredentialsFor([]byte("tenant-pw"))
+	tenantCreds, err := seal.CredentialsFor(t.Context(), []byte("tenant-pw"))
 	require.NoError(t, err)
 	defer tenantCreds.Secret.Destroy()
 	err = registry.InitializeTenant(ctx, "tenant-1", tenantCreds)
@@ -1241,19 +1241,23 @@ func TestCheckSharedPasswordOwnership_AdministratorRoleIDsAllowed(t *testing.T) 
 }
 
 // TestCheckSharedPasswordOwnership_NonAdministratorDenied proves a non-owner
-// holding only non-administrator roles is refused.
+// holding only non-administrator roles is refused. The administrator override
+// is resolved through the role store as the caller: a caller whose roles grant
+// roles:read (Auditor) learns it is not the owner, and one whose roles do not
+// (User, Operator) is refused with the typed resolution error -- membership
+// unknown fails closed, never "not a member".
 func TestCheckSharedPasswordOwnership_NonAdministratorDenied(t *testing.T) {
 	svc := setupServiceWithPasswordStore(t)
 	roleID := seedPasswordRoles(t, svc)
 
-	for _, roles := range [][]string{
-		nil,
-		{roleID(qrdbsdk.RoleNameUser)},
-		{roleID(qrdbsdk.RoleNameOperator)},
-		{roleID(qrdbsdk.RoleNameAuditor)},
-	} {
+	for _, roles := range [][]string{nil, {roleID(qrdbsdk.RoleNameAuditor)}} {
 		err := svc.checkSharedPasswordOwnership(sharedPasswordCtx("bob", roles...), alicesSharedPassword())
 		assert.ErrorIs(t, err, staticpw.ErrNotOwner, "roles %v", roles)
+	}
+	for _, roles := range [][]string{{roleID(qrdbsdk.RoleNameUser)}, {roleID(qrdbsdk.RoleNameOperator)}} {
+		err := svc.checkSharedPasswordOwnership(sharedPasswordCtx("bob", roles...), alicesSharedPassword())
+		var resErr *auth.RoleResolutionError
+		assert.ErrorAs(t, err, &resErr, "roles %v", roles)
 	}
 }
 
@@ -1344,27 +1348,39 @@ func addAlicesSharedPassword(t *testing.T, svc *XKMSService, name string) string
 	return addResp.ID
 }
 
+// TestPasswordUpdate_SharedOwnershipDenied proves PasswordUpdate refuses a
+// non-owner. An Operator cannot read roles, so its override check fails closed
+// with the typed resolution error (see
+// TestCheckSharedPasswordOwnership_NonAdministratorDenied).
 func TestPasswordUpdate_SharedOwnershipDenied(t *testing.T) {
 	svc, _ := setupServiceWithPasswordManager(t)
 	roleID := seedPasswordRoles(t, svc)
 	id := addAlicesSharedPassword(t, svc, "Alice Shared Secret")
 
 	newName := "Hijacked"
-	for _, roles := range [][]string{nil, {roleID(qrdbsdk.RoleNameOperator)}, {qrdbsdk.RoleNameAdmin}} {
+	for _, roles := range [][]string{nil, {qrdbsdk.RoleNameAdmin}} {
 		_, err := svc.PasswordUpdate(sharedPasswordCtx("bob", roles...), &transport.PasswordUpdateRequest{ID: id, Name: &newName})
 		assert.ErrorIs(t, err, staticpw.ErrNotOwner, "roles %v", roles)
 	}
+	_, err := svc.PasswordUpdate(sharedPasswordCtx("bob", roleID(qrdbsdk.RoleNameOperator)), &transport.PasswordUpdateRequest{ID: id, Name: &newName})
+	var resErr *auth.RoleResolutionError
+	assert.ErrorAs(t, err, &resErr)
 }
 
+// TestPasswordDelete_SharedOwnershipDenied proves PasswordDelete refuses a
+// non-owner, with the same per-role outcomes as PasswordUpdate.
 func TestPasswordDelete_SharedOwnershipDenied(t *testing.T) {
 	svc, _ := setupServiceWithPasswordManager(t)
 	roleID := seedPasswordRoles(t, svc)
 	id := addAlicesSharedPassword(t, svc, "Alice Shared DB Creds")
 
-	for _, roles := range [][]string{nil, {roleID(qrdbsdk.RoleNameOperator)}, {qrdbsdk.RoleNameSO}} {
+	for _, roles := range [][]string{nil, {qrdbsdk.RoleNameSO}} {
 		err := svc.PasswordDelete(sharedPasswordCtx("bob", roles...), &transport.PasswordDeleteRequest{ID: id})
 		assert.ErrorIs(t, err, staticpw.ErrNotOwner, "roles %v", roles)
 	}
+	err := svc.PasswordDelete(sharedPasswordCtx("bob", roleID(qrdbsdk.RoleNameOperator)), &transport.PasswordDeleteRequest{ID: id})
+	var resErr *auth.RoleResolutionError
+	assert.ErrorAs(t, err, &resErr)
 }
 
 func TestPasswordUpdate_SharedOwnershipAllowedForAdmin(t *testing.T) {

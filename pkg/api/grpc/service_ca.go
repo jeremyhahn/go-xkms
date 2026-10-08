@@ -133,7 +133,7 @@ func (s *Service) SignCSR(ctx context.Context, req *pb.SignCSRRequest) (*pb.Sign
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionIssue, ""); err != nil {
 		return nil, err
 	}
 
@@ -169,7 +169,7 @@ func (s *Service) IssueCertificate(ctx context.Context, req *pb.IssueCertificate
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionIssue, ""); err != nil {
 		return nil, err
 	}
 

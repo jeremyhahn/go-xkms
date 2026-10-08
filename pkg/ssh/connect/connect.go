@@ -35,6 +35,7 @@ import (
 	sshagent "github.com/jeremyhahn/go-xkms/pkg/ssh/agent"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // Request describes a connection to launch.
@@ -259,7 +260,7 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 	}
 	// khFile is under workDir (req.WorkDir), which -- like ExtraKnownHosts
 	// above -- is local operator/library-caller config, not remote input.
-	if werr := os.WriteFile(khFile, seed, 0o600); werr != nil { // #nosec G304 G703 -- operator-supplied WorkDir, not attacker-controlled
+	if werr := fsutil.WriteFileAtomic(khFile, seed, 0o600); werr != nil { // #nosec G304 G703 -- operator-supplied WorkDir, not attacker-controlled
 		// Nothing has attached yet, so this join is immediate.
 		_ = agentSess.Stop(context.Background())
 		return nil, errors.Join(&LaunchError{Op: "write known_hosts", Err: werr}, cleanupDir(ownsWorkDir, workDir))

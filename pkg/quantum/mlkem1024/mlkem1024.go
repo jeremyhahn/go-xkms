@@ -17,6 +17,7 @@
 package mlkem1024
 
 import (
+	"context"
 	"crypto/mlkem"
 	"errors"
 
@@ -85,7 +86,7 @@ func New() (*MLKEM1024, error) {
 	// key, so it is sealed directly: NewSecret consumes and wipes what it is
 	// given, which leaves no plaintext copy behind for the GC to hold onto.
 	seed := dk.Bytes()
-	sealed, sealErr := secure.NewSecret(seed)
+	sealed, sealErr := secure.NewSecret(context.Background(), seed)
 	if sealErr != nil {
 		secure.Wipe(seed)
 		return nil, sealErr
@@ -108,7 +109,7 @@ func Create(seed []byte) (*MLKEM1024, error) {
 	ownedSeed := make([]byte, SeedSize)
 	copy(ownedSeed, seed)
 	// NewSecret wipes ownedSeed; the caller's own slice is untouched.
-	sealed, sealErr := secure.NewSecret(ownedSeed)
+	sealed, sealErr := secure.NewSecret(context.Background(), ownedSeed)
 	if sealErr != nil {
 		return nil, sealErr
 	}
@@ -151,7 +152,7 @@ func (k *MLKEM1024) ExportSecretKey() []byte {
 	if k.dk == nil || k.seed == nil {
 		return nil
 	}
-	buf, err := k.seed.Open()
+	buf, err := k.seed.Open(context.Background())
 	if err != nil {
 		return nil
 	}

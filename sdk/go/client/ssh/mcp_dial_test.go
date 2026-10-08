@@ -24,7 +24,7 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
-	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	pkgknownhosts "github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -80,91 +80,91 @@ func newMCPSSHFixture(t *testing.T) sdkssh.Client {
 	srv := newFakeMCPServer(t)
 	ctx := context.Background()
 
-	srv.handle("ssh.keys.generate", func(params json.RawMessage) (interface{}, string, wire.Code) {
+	srv.handle("ssh.keys.generate", func(params json.RawMessage) (interface{}, string, qrdbsdk.MCPCode) {
 		var req sdkssh.GenerateRequest
 		if err := json.Unmarshal(params, &req); err != nil {
-			return nil, err.Error(), wire.CodeInvalidArgument
+			return nil, err.Error(), qrdbsdk.MCPCodeInvalidArgument
 		}
 		key, err := embedded.Keys().Generate(ctx, req)
 		if err != nil {
-			return nil, err.Error(), wire.CodeInternal
+			return nil, err.Error(), qrdbsdk.MCPCodeInternal
 		}
-		return key, "", wire.CodeOK
+		return key, "", qrdbsdk.MCPCodeOK
 	})
 
-	srv.handle("ssh.keys.export", func(params json.RawMessage) (interface{}, string, wire.Code) {
+	srv.handle("ssh.keys.export", func(params json.RawMessage) (interface{}, string, qrdbsdk.MCPCode) {
 		var req sdkssh.ExportRequest
 		if err := json.Unmarshal(params, &req); err != nil {
-			return nil, err.Error(), wire.CodeInvalidArgument
+			return nil, err.Error(), qrdbsdk.MCPCodeInvalidArgument
 		}
 		pub, err := embedded.Keys().ExportPublic(ctx, req)
 		if err != nil {
-			return nil, err.Error(), wire.CodeInternal
+			return nil, err.Error(), qrdbsdk.MCPCodeInternal
 		}
-		return pub, "", wire.CodeOK
+		return pub, "", qrdbsdk.MCPCodeOK
 	})
 
-	srv.handle("ssh.keys.sign", func(params json.RawMessage) (interface{}, string, wire.Code) {
+	srv.handle("ssh.keys.sign", func(params json.RawMessage) (interface{}, string, qrdbsdk.MCPCode) {
 		var req mcpTestSignParams
 		if err := json.Unmarshal(params, &req); err != nil {
-			return nil, err.Error(), wire.CodeInvalidArgument
+			return nil, err.Error(), qrdbsdk.MCPCodeInvalidArgument
 		}
 		signer, err := embedded.Keys().Signer(ctx, sdkssh.GetKeyRequest{
 			Scope: req.Scope, Owner: req.Owner, Name: req.Name,
 		})
 		if err != nil {
-			return nil, err.Error(), wire.CodeInternal
+			return nil, err.Error(), qrdbsdk.MCPCodeInternal
 		}
 		sig, err := signer.Sign(rand.Reader, req.Digest)
 		if err != nil {
-			return nil, err.Error(), wire.CodeInternal
+			return nil, err.Error(), qrdbsdk.MCPCodeInternal
 		}
-		return mcpTestSignResult{Format: sig.Format, Blob: sig.Blob, Rest: sig.Rest}, "", wire.CodeOK
+		return mcpTestSignResult{Format: sig.Format, Blob: sig.Blob, Rest: sig.Rest}, "", qrdbsdk.MCPCodeOK
 	})
 
-	srv.handle("ssh.keys.delete", func(params json.RawMessage) (interface{}, string, wire.Code) {
+	srv.handle("ssh.keys.delete", func(params json.RawMessage) (interface{}, string, qrdbsdk.MCPCode) {
 		var req sdkssh.DeleteKeyRequest
 		if err := json.Unmarshal(params, &req); err != nil {
-			return nil, err.Error(), wire.CodeInvalidArgument
+			return nil, err.Error(), qrdbsdk.MCPCodeInvalidArgument
 		}
 		if err := embedded.Keys().Delete(ctx, req); err != nil {
-			return nil, err.Error(), wire.CodeInternal
+			return nil, err.Error(), qrdbsdk.MCPCodeInternal
 		}
-		return struct{}{}, "", wire.CodeOK
+		return struct{}{}, "", qrdbsdk.MCPCodeOK
 	})
 
-	srv.handle("ssh.knownHosts.add", func(params json.RawMessage) (interface{}, string, wire.Code) {
+	srv.handle("ssh.knownHosts.add", func(params json.RawMessage) (interface{}, string, qrdbsdk.MCPCode) {
 		var req sdkssh.AddKnownHostRequest
 		if err := json.Unmarshal(params, &req); err != nil {
-			return nil, err.Error(), wire.CodeInvalidArgument
+			return nil, err.Error(), qrdbsdk.MCPCodeInvalidArgument
 		}
 		if err := embedded.KnownHosts().Add(ctx, req); err != nil {
-			return nil, err.Error(), wire.CodeInternal
+			return nil, err.Error(), qrdbsdk.MCPCodeInternal
 		}
-		return struct{}{}, "", wire.CodeOK
+		return struct{}{}, "", qrdbsdk.MCPCodeOK
 	})
 
-	srv.handle("ssh.knownHosts.verify", func(params json.RawMessage) (interface{}, string, wire.Code) {
+	srv.handle("ssh.knownHosts.verify", func(params json.RawMessage) (interface{}, string, qrdbsdk.MCPCode) {
 		var req mcpTestKnownHostVerifyParams
 		if err := json.Unmarshal(params, &req); err != nil {
-			return nil, err.Error(), wire.CodeInvalidArgument
+			return nil, err.Error(), qrdbsdk.MCPCodeInvalidArgument
 		}
 		pub, _, _, _, perr := gossh.ParseAuthorizedKey([]byte(req.PublicKey))
 		if perr != nil {
-			return nil, perr.Error(), wire.CodeInvalidArgument
+			return nil, perr.Error(), qrdbsdk.MCPCodeInvalidArgument
 		}
 		if err := embedded.KnownHosts().Verify(ctx, req.Scope, req.Owner, req.Host, pub); err != nil {
 			// Mirror pkg/api/mcp's real mapSSHError classification so this
-			// fixture exercises the same wire.Code the production dispatch
+			// fixture exercises the same qrdbsdk.MCPCode the production dispatch
 			// sends for each condition: an unpinned host is NotFound, a
 			// pinned-but-different key is FailedPrecondition (Mismatch).
 			var mismatchErr *pkgknownhosts.MismatchError
 			if errors.As(err, &mismatchErr) {
-				return nil, err.Error(), wire.CodeFailedPrecondition
+				return nil, err.Error(), qrdbsdk.MCPCodeFailedPrecondition
 			}
-			return nil, err.Error(), wire.CodeNotFound
+			return nil, err.Error(), qrdbsdk.MCPCodeNotFound
 		}
-		return struct{}{}, "", wire.CodeOK
+		return struct{}{}, "", qrdbsdk.MCPCodeOK
 	})
 
 	return newMCPFixture(t, srv)

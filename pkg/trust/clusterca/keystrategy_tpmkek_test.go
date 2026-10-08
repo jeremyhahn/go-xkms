@@ -65,9 +65,9 @@ func TestTPMKEKStrategy_BootstrapGeneratesSeed(t *testing.T) {
 	require.Len(t, s.seed, clusterSeedLen, "bootstrap must generate a cluster seed")
 
 	// KEK is deterministic in the seed.
-	p1, err := s.kekProtection()
+	p1, err := s.kekProtection(t.Context())
 	require.NoError(t, err)
-	p2, err := s.kekProtection()
+	p2, err := s.kekProtection(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, secretBytes(t, p1.Passphrase), secretBytes(t, p2.Passphrase))
 	require.NotEmpty(t, secretBytes(t, p1.Passphrase))
@@ -123,9 +123,9 @@ func TestTPMKEKStrategy_SeedDeliveryRoundTrip(t *testing.T) {
 	require.True(t, bytes.Equal(first.seed, joiner.seed), "joiner must recover the same cluster seed")
 
 	// Both derive the same KEK → both can load the KEK-wrapped CA key.
-	fp, err := first.kekProtection()
+	fp, err := first.kekProtection(t.Context())
 	require.NoError(t, err)
-	jp, err := joiner.kekProtection()
+	jp, err := joiner.kekProtection(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, secretBytes(t, fp.Passphrase), secretBytes(t, jp.Passphrase))
 

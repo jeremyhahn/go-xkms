@@ -83,7 +83,7 @@ func ParsePEM(ctx context.Context, pemBuf *secure.Buffer, provider secure.Passph
 	if copyErr != nil {
 		return nil, &KeyMaterialError{Op: "copy pem", Err: copyErr}
 	}
-	material, secErr := secure.NewSecret(sealed)
+	material, secErr := secure.NewSecret(ctx, sealed)
 	if secErr != nil {
 		return nil, &KeyMaterialError{Op: "seal pem", Err: secErr}
 	}

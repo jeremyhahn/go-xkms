@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
 
 // newTestTokenIssuer builds a token issuer over a fresh software ECDSA key
@@ -377,12 +378,12 @@ func TestAuthMe_ReturnsIdentityPermissionsCapabilities(t *testing.T) {
 	assert.False(t, resp.Capabilities["ssh"])
 }
 
-// TestAuthMe_PermissionsReflectRBACGrant proves /auth/me reports audit:read
+// TestAuthMe_PermissionsReflectRBACGrant proves /auth/me reports users:list
 // as true when the identity's RBAC grant covers it. This is the regression
 // case for go-xkms#846: uiPermissionMatrix must carry every pair nav.ts
 // gates on, or the key never reaches the response at all.
 func TestAuthMe_PermissionsReflectRBACGrant(t *testing.T) {
-	rbac := &recordingRBACClient{allowResource: auth.ResourceAudit, allowAction: auth.ActionRead}
+	rbac := &recordingRBACClient{allowResource: auth.ResourceUsers, allowAction: auth.ActionList}
 
 	server, err := NewServer(&Config{
 		Authenticator:  auth.NewNoOpAuthenticator(),
@@ -401,13 +402,13 @@ func TestAuthMe_PermissionsReflectRBACGrant(t *testing.T) {
 	var resp authMeResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	allowed, ok := resp.Permissions["audit:read"]
-	require.True(t, ok, "uiPermissionMatrix must report audit:read")
-	assert.True(t, allowed, "identity holding audit:read must see it as true")
+	allowed, ok := resp.Permissions["users:list"]
+	require.True(t, ok, "uiPermissionMatrix must report users:list")
+	assert.True(t, allowed, "identity holding users:list must see it as true")
 }
 
 // TestAuthMe_PermissionsDenyWithoutRBACGrant is the error-path counterpart:
-// an identity whose RBAC grant does not cover audit:read must see it as
+// an identity whose RBAC grant does not cover users:list must see it as
 // false rather than absent or true.
 func TestAuthMe_PermissionsDenyWithoutRBACGrant(t *testing.T) {
 	// allowResource/allowAction left zero-valued: every Authorize call is
@@ -431,9 +432,9 @@ func TestAuthMe_PermissionsDenyWithoutRBACGrant(t *testing.T) {
 	var resp authMeResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	allowed, ok := resp.Permissions["audit:read"]
-	require.True(t, ok, "uiPermissionMatrix must report audit:read")
-	assert.False(t, allowed, "identity without audit:read must see it as false")
+	allowed, ok := resp.Permissions["users:list"]
+	require.True(t, ok, "uiPermissionMatrix must report users:list")
+	assert.False(t, allowed, "identity without users:list must see it as false")
 }
 
 func TestAuthValidate_ReturnsSubject(t *testing.T) {
@@ -484,4 +485,56 @@ func TestAuthRoutes_AbsentWithoutIssuer(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", nil)
 	w := doAuthRequest(t, server, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// stubLeaderEndpointClient is the smallest xkms.ClusterClient: wiring any
+// non-nil client is what marks the service clustered.
+type stubLeaderEndpointClient struct{}
+
+func (stubLeaderEndpointClient) LeaderEndpoint(context.Context, uint64, string) (string, error) {
+	return "", nil
+}
+
+// newCapabilityTestServer builds a server over a fresh XKMSService singleton
+// wired with the given cluster client (nil for a standalone node).
+func newCapabilityTestServer(t *testing.T, cluster xkms.ClusterClient) *Server {
+	t.Helper()
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"mem": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "mem",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	svc.SetClusterClient(cluster, 1)
+
+	server, err := NewServer(&Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Backends:      map[string]xkms.Backend{"test": newMockKeyStore()},
+		XKMSService:   svc,
+	})
+	require.NoError(t, err)
+	return server
+}
+
+func TestCapabilityFlags_Cluster(t *testing.T) {
+	t.Run("clustered", func(t *testing.T) {
+		server := newCapabilityTestServer(t, stubLeaderEndpointClient{})
+		assert.True(t, server.capabilityFlags()["cluster"])
+	})
+
+	t.Run("standalone", func(t *testing.T) {
+		server := newCapabilityTestServer(t, nil)
+		assert.False(t, server.capabilityFlags()["cluster"])
+	})
+
+	t.Run("no xkms service wired", func(t *testing.T) {
+		server, err := NewServer(&Config{
+			Authenticator: auth.NewNoOpAuthenticator(),
+			Backends:      map[string]xkms.Backend{"test": newMockKeyStore()},
+		})
+		require.NoError(t, err)
+		assert.False(t, server.capabilityFlags()["cluster"])
+	})
 }

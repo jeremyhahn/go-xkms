@@ -22,8 +22,8 @@ import (
 
 	xscope "github.com/jeremyhahn/go-xkms/pkg/scope"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 

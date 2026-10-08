@@ -154,58 +154,6 @@ function isWailsRuntime() {
   return w["go"] !== void 0 || w["runtime"] !== void 0;
 }
 
-// src/clients/audit.ts
-var BASE = "/api/v1/audit";
-var DEFAULT_MAX_PAGES = 100;
-var AuditClient = class {
-  constructor(http) {
-    __publicField(this, "http", http);
-  }
-  /**
-   * GET /api/v1/audit/
-   *
-   * Every filter field is an optional query parameter; `buildURL` drops
-   * undefined/null/empty-string values, so an absent field is simply not
-   * sent rather than sent blank. Paging is by opaque cursor: pass a prior
-   * page's `next` back as `cursor` to continue, and stop once `next` is
-   * empty or absent.
-   */
-  query(filter = {}) {
-    return this.http.request("GET", `${BASE}/`, {
-      query: {
-        from: filter.from,
-        to: filter.to,
-        actor: filter.actor,
-        resource: filter.resource,
-        action: filter.action,
-        outcome: filter.outcome,
-        tenant_id: filter.tenant_id,
-        limit: filter.limit,
-        cursor: filter.cursor
-      }
-    });
-  }
-  /**
-   * queryAll follows the `next` cursor across pages, yielding each
-   * AuditPage.query() returns, and stops as soon as a page's `next` is
-   * empty/absent (the last page). `maxPages` bounds the number of requests
-   * this can issue — an append-only chain that never stops handing back a
-   * `next` cursor would otherwise loop forever — and defaults to
-   * DEFAULT_MAX_PAGES (100).
-   */
-  async *queryAll(filter = {}, maxPages = DEFAULT_MAX_PAGES) {
-    let cursor = filter.cursor;
-    for (let i = 0; i < maxPages; i++) {
-      const page = await this.query(cursor === void 0 ? filter : { ...filter, cursor });
-      yield page;
-      if (!page.next) {
-        return;
-      }
-      cursor = page.next;
-    }
-  }
-};
-
 // src/clients/auth.ts
 var HEADER_SESSION_ID = "X-Session-Id";
 var WEBAUTHN_BASE = "/api/v1/webauthn";
@@ -347,117 +295,57 @@ var BackendsClient = class {
   }
 };
 
-// src/clients/barrier.ts
-var BASE2 = "/api/v1/barrier";
-var BarrierClient = class {
-  constructor(http) {
-    __publicField(this, "http", http);
-  }
-  /** POST /api/v1/barrier/initialize */
-  initialize(req) {
-    return this.http.request("POST", `${BASE2}/initialize`, { body: req });
-  }
-  /** POST /api/v1/barrier/unseal */
-  unseal(req) {
-    return this.http.request("POST", `${BASE2}/unseal`, { body: req });
-  }
-  /** POST /api/v1/barrier/seal */
-  seal() {
-    return this.http.request("POST", `${BASE2}/seal`);
-  }
-  /** GET /api/v1/barrier/status */
-  status() {
-    return this.http.request("GET", `${BASE2}/status`);
-  }
-  /** POST /api/v1/barrier/shamir/initialize */
-  shamirInitialize(req) {
-    return this.http.request("POST", `${BASE2}/shamir/initialize`, { body: req });
-  }
-  /** POST /api/v1/barrier/shamir/unseal-share (stateful quorum accumulation). */
-  shamirUnsealShare(req) {
-    return this.http.request("POST", `${BASE2}/shamir/unseal-share`, { body: req });
-  }
-  /** POST /api/v1/barrier/shamir/unseal-shares (stateless batch unseal). */
-  shamirUnsealShares(req) {
-    return this.http.request("POST", `${BASE2}/shamir/unseal-shares`, { body: req });
-  }
-  /** POST /api/v1/barrier/rekey */
-  rekey(req) {
-    return this.http.request("POST", `${BASE2}/rekey`, { body: req });
-  }
-  /** POST /api/v1/barrier/recovery/generate */
-  generateRecoveryKeys(req) {
-    return this.http.request("POST", `${BASE2}/recovery/generate`, { body: req });
-  }
-  /** POST /api/v1/barrier/recovery/recover */
-  recoverWithKeys(req) {
-    return this.http.request("POST", `${BASE2}/recovery/recover`, { body: req });
-  }
-  /** DELETE /api/v1/barrier/recovery/keys */
-  deleteRecoveryKeys() {
-    return this.http.request("DELETE", `${BASE2}/recovery/keys`);
-  }
-  /** POST /api/v1/barrier/recovery/root-token */
-  generateRootToken(req) {
-    return this.http.request("POST", `${BASE2}/recovery/root-token`, { body: req });
-  }
-  /** POST /api/v1/barrier/enable-encryption (async migration; poll status). */
-  enableEncryption(req) {
-    return this.http.request("POST", `${BASE2}/enable-encryption`, { body: req });
-  }
-};
-
 // src/clients/ca.ts
-var BASE3 = "/api/v1/ca";
+var BASE = "/api/v1/ca";
 var CaClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
   /** GET /api/v1/ca/bundle?store_type=&algorithm= */
   bundle(storeType, algorithm) {
-    return this.http.request("GET", `${BASE3}/bundle`, {
+    return this.http.request("GET", `${BASE}/bundle`, {
       query: { store_type: storeType, algorithm }
     });
   }
   /** GET /api/v1/ca/certificate?identity= */
   certificate(identity) {
-    return this.http.request("GET", `${BASE3}/certificate`, { query: { identity } });
+    return this.http.request("GET", `${BASE}/certificate`, { query: { identity } });
   }
   /** POST /api/v1/ca/sign-csr */
   signCSR(req) {
-    return this.http.request("POST", `${BASE3}/sign-csr`, { body: req });
+    return this.http.request("POST", `${BASE}/sign-csr`, { body: req });
   }
   /** POST /api/v1/ca/issue */
   issue(req) {
-    return this.http.request("POST", `${BASE3}/issue`, { body: req });
+    return this.http.request("POST", `${BASE}/issue`, { body: req });
   }
   /** POST /api/v1/ca/revoke */
   revoke(req) {
-    return this.http.request("POST", `${BASE3}/revoke`, { body: req });
+    return this.http.request("POST", `${BASE}/revoke`, { body: req });
   }
   /** POST /api/v1/ca/crl */
   generateCRL(req) {
-    return this.http.request("POST", `${BASE3}/crl`, { body: req ?? {} });
+    return this.http.request("POST", `${BASE}/crl`, { body: req ?? {} });
   }
   /** GET /api/v1/ca/revoked/{serial} */
   isRevoked(serial) {
-    return this.http.request("GET", `${BASE3}/revoked/${encodeURIComponent(serial)}`);
+    return this.http.request("GET", `${BASE}/revoked/${encodeURIComponent(serial)}`);
   }
   /** POST /api/v1/ca/tcg/ek */
   issueEK(req) {
-    return this.http.request("POST", `${BASE3}/tcg/ek`, { body: req });
+    return this.http.request("POST", `${BASE}/tcg/ek`, { body: req });
   }
   /** POST /api/v1/ca/tcg/ak */
   issueAK(req) {
-    return this.http.request("POST", `${BASE3}/tcg/ak`, { body: req });
+    return this.http.request("POST", `${BASE}/tcg/ak`, { body: req });
   }
   /** POST /api/v1/ca/tcg/sign-csr */
   signTCGCSR(req) {
-    return this.http.request("POST", `${BASE3}/tcg/sign-csr`, { body: req });
+    return this.http.request("POST", `${BASE}/tcg/sign-csr`, { body: req });
   }
   /** POST /api/v1/ca/tcg/enroll */
   enrollDevice(req) {
-    return this.http.request("POST", `${BASE3}/tcg/enroll`, { body: req });
+    return this.http.request("POST", `${BASE}/tcg/enroll`, { body: req });
   }
   /**
    * GET /v1/ca/bootstrap — the unauthenticated go-truststrap bootstrap
@@ -482,9 +370,9 @@ var CapabilitiesClient = class {
 };
 
 // src/clients/certs.ts
-var BASE4 = "/api/v1/certs";
+var BASE2 = "/api/v1/certs";
 function certPath(id, suffix = "") {
-  return `${BASE4}/${encodeURIComponent(id)}${suffix}`;
+  return `${BASE2}/${encodeURIComponent(id)}${suffix}`;
 }
 var CertsClient = class {
   constructor(http) {
@@ -495,14 +383,14 @@ var CertsClient = class {
    * backend from the query string; the body carries the PEM.
    */
   save(keyId, backend, req) {
-    return this.http.request("POST", BASE4, {
+    return this.http.request("POST", BASE2, {
       body: req,
       query: { key_id: keyId, backend }
     });
   }
   /** GET /api/v1/certs?backend= */
   list(backend, page) {
-    return this.http.request("GET", BASE4, { query: { backend, ...page } });
+    return this.http.request("GET", BASE2, { query: { backend, ...page } });
   }
   /** GET /api/v1/certs/{id}?backend= */
   get(id, backend) {
@@ -540,189 +428,65 @@ var CertsClient = class {
   }
 };
 
-// src/clients/cluster.ts
-var BASE5 = "/api/v1/cluster";
-var ClusterClient = class {
-  constructor(http) {
-    __publicField(this, "http", http);
-  }
-  /** GET /api/v1/cluster/status */
-  status() {
-    return this.http.request("GET", `${BASE5}/status`);
-  }
-  /** GET /api/v1/cluster/members */
-  members() {
-    return this.http.request("GET", `${BASE5}/members`);
-  }
-};
-
 // src/clients/credentials.ts
-var BASE6 = "/api/v1/credentials";
+var BASE3 = "/api/v1/credentials";
 var CredentialsClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
   /** POST /api/v1/credentials/submit */
   submit(req) {
-    return this.http.request("POST", `${BASE6}/submit`, { body: req });
+    return this.http.request("POST", `${BASE3}/submit`, { body: req });
   }
   /** GET /api/v1/credentials/strategy */
   strategy() {
-    return this.http.request("GET", `${BASE6}/strategy`);
-  }
-};
-
-// src/clients/custodian.ts
-var BASE7 = "/api/v1/custodian/groups";
-var CustodianClient = class {
-  constructor(http) {
-    __publicField(this, "http", http);
-  }
-  /** POST /api/v1/custodian/groups/ */
-  createGroup(req) {
-    return this.http.request("POST", `${BASE7}/`, { body: req });
-  }
-  /** GET /api/v1/custodian/groups/ */
-  listGroups(page) {
-    return this.http.request("GET", `${BASE7}/`, { query: { ...page } });
-  }
-  /** GET /api/v1/custodian/groups/{id} */
-  getGroup(id) {
-    return this.http.request("GET", `${BASE7}/${encodeURIComponent(id)}`);
-  }
-  /** DELETE /api/v1/custodian/groups/{id} (204) */
-  async deleteGroup(id) {
-    await this.http.request("DELETE", `${BASE7}/${encodeURIComponent(id)}`, {
-      parse: "void"
-    });
-  }
-  /** POST /api/v1/custodian/groups/{id}/members */
-  addMember(id, req) {
-    return this.http.request("POST", `${BASE7}/${encodeURIComponent(id)}/members`, {
-      body: req
-    });
-  }
-  /** DELETE /api/v1/custodian/groups/{id}/members/{userID} (204) */
-  async removeMember(id, userId) {
-    await this.http.request(
-      "DELETE",
-      `${BASE7}/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`,
-      { parse: "void" }
-    );
-  }
-  /** POST /api/v1/custodian/groups/{id}/distribute */
-  distributeShares(id) {
-    return this.http.request("POST", `${BASE7}/${encodeURIComponent(id)}/distribute`);
-  }
-};
-
-// src/clients/factors.ts
-var BASE8 = "/api/v1/factors";
-var FactorsClient = class {
-  constructor(http) {
-    __publicField(this, "http", http);
-  }
-  /**
-   * GET /api/v1/factors?user_id=N
-   *
-   * The owner is a QUERY parameter, not a path segment — the server parses
-   * `user_id` off the query string and rejects a missing or zero value.
-   */
-  list(userID) {
-    return this.http.request("GET", `${BASE8}/`, { query: { user_id: userID } });
-  }
-  /** POST /api/v1/factors — the owning user comes from the BODY. */
-  add(req) {
-    return this.http.request("POST", `${BASE8}/`, { body: req });
-  }
-  /** GET /api/v1/factors/{factorID} */
-  get(factorID) {
-    return this.http.request("GET", `${BASE8}/${encodeURIComponent(factorID)}`);
-  }
-  /**
-   * DELETE /api/v1/factors/{factorID}
-   *
-   * qrdb refuses to revoke a user's last active factor; `force` asks it to
-   * stand down, which also moves the user to inactive.
-   */
-  remove(factorID, force = false) {
-    return this.http.request("DELETE", `${BASE8}/${encodeURIComponent(factorID)}`, {
-      query: force ? { force: "true" } : {}
-    });
-  }
-  /**
-   * PATCH /api/v1/factors/{factorID}
-   *
-   * The server takes the factor id from the path and overwrites whatever the
-   * body carries, so only the label needs sending.
-   */
-  relabel(factorID, req) {
-    return this.http.request("PATCH", `${BASE8}/${encodeURIComponent(factorID)}`, { body: req });
-  }
-  /**
-   * POST /api/v1/factors/{factorID}/rotate — atomically revoke and replace.
-   * The old factor id comes from the path; the body carries only new_factor.
-   */
-  rotate(factorID, req) {
-    return this.http.request("POST", `${BASE8}/${encodeURIComponent(factorID)}/rotate`, {
-      body: req
-    });
-  }
-  /**
-   * POST /api/v1/factors/login
-   *
-   * Resolves a (type, lookup_key) pair to a principal and NOTHING more. This
-   * is not proof of possession: the hardware challenge must already have been
-   * verified before the result is treated as an authenticated identity.
-   */
-  login(req) {
-    return this.http.request("POST", `${BASE8}/login`, { body: req });
+    return this.http.request("GET", `${BASE3}/strategy`);
   }
 };
 
 // src/clients/frost.ts
-var BASE9 = "/api/v1/frost";
+var BASE4 = "/api/v1/frost";
 var FrostClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
   /** POST /api/v1/frost/keys */
   generateKey(req) {
-    return this.http.request("POST", `${BASE9}/keys`, { body: req });
+    return this.http.request("POST", `${BASE4}/keys`, { body: req });
   }
   /** POST /api/v1/frost/keys/import */
   importKey(req) {
-    return this.http.request("POST", `${BASE9}/keys/import`, { body: req });
+    return this.http.request("POST", `${BASE4}/keys/import`, { body: req });
   }
   /** GET /api/v1/frost/keys */
   listKeys(page) {
-    return this.http.request("GET", `${BASE9}/keys`, { query: { ...page } });
+    return this.http.request("GET", `${BASE4}/keys`, { query: { ...page } });
   }
   /** GET /api/v1/frost/keys/{id} */
   getKey(id) {
-    return this.http.request("GET", `${BASE9}/keys/${encodeURIComponent(id)}`);
+    return this.http.request("GET", `${BASE4}/keys/${encodeURIComponent(id)}`);
   }
   /** DELETE /api/v1/frost/keys/{id} */
   deleteKey(id) {
-    return this.http.request("DELETE", `${BASE9}/keys/${encodeURIComponent(id)}`);
+    return this.http.request("DELETE", `${BASE4}/keys/${encodeURIComponent(id)}`);
   }
   /** POST /api/v1/frost/keys/{id}/nonces */
   generateNonces(id) {
-    return this.http.request("POST", `${BASE9}/keys/${encodeURIComponent(id)}/nonces`);
+    return this.http.request("POST", `${BASE4}/keys/${encodeURIComponent(id)}/nonces`);
   }
   /** POST /api/v1/frost/keys/{id}/sign */
   signRound(id, req) {
-    return this.http.request("POST", `${BASE9}/keys/${encodeURIComponent(id)}/sign`, {
+    return this.http.request("POST", `${BASE4}/keys/${encodeURIComponent(id)}/sign`, {
       body: req
     });
   }
   /** POST /api/v1/frost/aggregate */
   aggregate(req) {
-    return this.http.request("POST", `${BASE9}/aggregate`, { body: req });
+    return this.http.request("POST", `${BASE4}/aggregate`, { body: req });
   }
   /** POST /api/v1/frost/verify */
   verify(req) {
-    return this.http.request("POST", `${BASE9}/verify`, { body: req });
+    return this.http.request("POST", `${BASE4}/verify`, { body: req });
   }
 };
 
@@ -753,42 +517,10 @@ var HealthClient = class {
   }
 };
 
-// src/clients/init.ts
-var BASE10 = "/api/v1/init";
-var InitClient = class {
-  constructor(http) {
-    __publicField(this, "http", http);
-  }
-  /** GET /api/v1/init/status */
-  status() {
-    return this.http.request("GET", `${BASE10}/status`);
-  }
-  /** POST /api/v1/init/claim-cert/begin */
-  claimCertBegin(req) {
-    return this.http.request("POST", `${BASE10}/claim-cert/begin`, { body: req });
-  }
-  /** POST /api/v1/init/claim-cert/complete */
-  claimCertComplete(req) {
-    return this.http.request("POST", `${BASE10}/claim-cert/complete`, { body: req });
-  }
-  /** POST /api/v1/init/claim-share/begin (requires the officer's mTLS cert). */
-  claimShareBegin(req) {
-    return this.http.request("POST", `${BASE10}/claim-share/begin`, { body: req });
-  }
-  /** POST /api/v1/init/claim-share/complete (requires the officer's mTLS cert). */
-  claimShareComplete(req) {
-    return this.http.request("POST", `${BASE10}/claim-share/complete`, { body: req });
-  }
-  /** POST /api/v1/init/sign-csr (authenticated; RBAC ceremony:sign_csr). */
-  signCSR(req) {
-    return this.http.request("POST", `${BASE10}/sign-csr`, { body: req });
-  }
-};
-
 // src/clients/keyVersions.ts
-var BASE11 = "/api/v1/keys";
+var BASE5 = "/api/v1/keys";
 function versionsPath(id, suffix = "") {
-  return `${BASE11}/${encodeURIComponent(id)}/versions${suffix}`;
+  return `${BASE5}/${encodeURIComponent(id)}/versions${suffix}`;
 }
 var KeyVersionsClient = class {
   constructor(http) {
@@ -820,16 +552,16 @@ var KeyVersionsClient = class {
   }
   /** POST /api/v1/keys/rotate-all — rotates every key of the caller's tenant, or of tenantId (system callers only). */
   rotateAll(tenantId) {
-    return this.http.request("POST", `${BASE11}/rotate-all`, {
+    return this.http.request("POST", `${BASE5}/rotate-all`, {
       body: tenantId ? { tenant_id: tenantId } : {}
     });
   }
 };
 
 // src/clients/keys.ts
-var BASE12 = "/api/v1/keys";
+var BASE6 = "/api/v1/keys";
 function keyPath(id, suffix = "") {
-  return `${BASE12}/${encodeURIComponent(id)}${suffix}`;
+  return `${BASE6}/${encodeURIComponent(id)}${suffix}`;
 }
 var KeysClient = class {
   constructor(http) {
@@ -840,11 +572,11 @@ var KeysClient = class {
   }
   /** POST /api/v1/keys */
   generate(req) {
-    return this.http.request("POST", BASE12, { body: req });
+    return this.http.request("POST", BASE6, { body: req });
   }
   /** GET /api/v1/keys?backend= */
   list(backend, page) {
-    return this.http.request("GET", BASE12, { query: { backend, ...page } });
+    return this.http.request("GET", BASE6, { query: { backend, ...page } });
   }
   /** GET /api/v1/keys/{id}?backend= */
   get(id, backend) {
@@ -894,19 +626,19 @@ var KeysClient = class {
   }
   /** POST /api/v1/keys/import-params */
   importParams(req) {
-    return this.http.request("POST", `${BASE12}/import-params`, { body: req });
+    return this.http.request("POST", `${BASE6}/import-params`, { body: req });
   }
   /** POST /api/v1/keys/wrap */
   wrap(req) {
-    return this.http.request("POST", `${BASE12}/wrap`, { body: req });
+    return this.http.request("POST", `${BASE6}/wrap`, { body: req });
   }
   /** POST /api/v1/keys/unwrap */
   unwrap(req) {
-    return this.http.request("POST", `${BASE12}/unwrap`, { body: req });
+    return this.http.request("POST", `${BASE6}/unwrap`, { body: req });
   }
   /** POST /api/v1/keys/import */
   import(req) {
-    return this.http.request("POST", `${BASE12}/import`, { body: req });
+    return this.http.request("POST", `${BASE6}/import`, { body: req });
   }
   /** POST /api/v1/keys/{id}/export */
   export(id, req) {
@@ -917,7 +649,7 @@ var KeysClient = class {
   }
   /** POST /api/v1/keys/copy */
   copy(req) {
-    return this.http.request("POST", `${BASE12}/copy`, { body: req });
+    return this.http.request("POST", `${BASE6}/copy`, { body: req });
   }
   /** POST /api/v1/attest */
   attest(req) {
@@ -925,7 +657,7 @@ var KeysClient = class {
   }
   /** POST /api/v1/keys/derive-ecdh */
   deriveECDH(req) {
-    return this.http.request("POST", `${BASE12}/derive-ecdh`, { body: req });
+    return this.http.request("POST", `${BASE6}/derive-ecdh`, { body: req });
   }
   /** POST /api/v1/keys/{id}/export-material?backend= */
   exportMaterial(id, backend) {
@@ -935,16 +667,16 @@ var KeysClient = class {
   }
   /** POST /api/v1/keys/wrap-by-id */
   wrapById(req) {
-    return this.http.request("POST", `${BASE12}/wrap-by-id`, { body: req });
+    return this.http.request("POST", `${BASE6}/wrap-by-id`, { body: req });
   }
   /** POST /api/v1/keys/unwrap-by-id */
   unwrapById(req) {
-    return this.http.request("POST", `${BASE12}/unwrap-by-id`, { body: req });
+    return this.http.request("POST", `${BASE6}/unwrap-by-id`, { body: req });
   }
 };
 
 // src/clients/oidcCredential.ts
-var BASE13 = "/api/v1/oidc/credentials";
+var BASE7 = "/api/v1/oidc/credentials";
 var DEFAULT_DEVICE_INTERVAL_SECONDS = 5;
 var OIDCDeviceLoginError = class extends Error {
   constructor(reason, name) {
@@ -957,7 +689,7 @@ var OIDCDeviceLoginError = class extends Error {
   }
 };
 function credentialPath(ref, action) {
-  const path = `${BASE13}/${encodeURIComponent(ref.scope)}/${encodeURIComponent(ref.name)}`;
+  const path = `${BASE7}/${encodeURIComponent(ref.scope)}/${encodeURIComponent(ref.name)}`;
   return action ? `${path}/${action}` : path;
 }
 function refQuery(ref) {
@@ -986,14 +718,14 @@ var OidcCredentialClient = class {
   }
   /** GET /api/v1/oidc/credentials?tenant_id= — the shared credentials and the caller's personal ones. */
   list(tenantId) {
-    return this.http.request("GET", BASE13, { query: { tenant_id: tenantId } });
+    return this.http.request("GET", BASE7, { query: { tenant_id: tenantId } });
   }
   /**
    * POST /api/v1/oidc/credentials (201). With tokens the credential is
    * active at once; without, it is pending a device login or an import.
    */
   create(req) {
-    return this.http.request("POST", BASE13, { body: req });
+    return this.http.request("POST", BASE7, { body: req });
   }
   /** GET /api/v1/oidc/credentials/{scope}/{name}?tenant_id=&owner= — the public view (no tokens). */
   get(ref) {
@@ -1079,7 +811,7 @@ var OidcCredentialClient = class {
 };
 
 // src/clients/passwords.ts
-var BASE14 = "/api/v1/passwords";
+var BASE8 = "/api/v1/passwords";
 var VAULT = "/api/v1/password-vault";
 var PasswordsClient = class {
   constructor(http) {
@@ -1087,23 +819,23 @@ var PasswordsClient = class {
   }
   /** POST /api/v1/passwords/ */
   add(req) {
-    return this.http.request("POST", `${BASE14}/`, { body: req });
+    return this.http.request("POST", `${BASE8}/`, { body: req });
   }
   /** GET /api/v1/passwords/?folder=&scope= */
   list(folder, scope) {
-    return this.http.request("GET", `${BASE14}/`, { query: { folder, scope } });
+    return this.http.request("GET", `${BASE8}/`, { query: { folder, scope } });
   }
   /** GET /api/v1/passwords/{id} */
   get(id) {
-    return this.http.request("GET", `${BASE14}/${encodeURIComponent(id)}`);
+    return this.http.request("GET", `${BASE8}/${encodeURIComponent(id)}`);
   }
   /** PUT /api/v1/passwords/{id} */
   update(id, req) {
-    return this.http.request("PUT", `${BASE14}/${encodeURIComponent(id)}`, { body: req });
+    return this.http.request("PUT", `${BASE8}/${encodeURIComponent(id)}`, { body: req });
   }
   /** DELETE /api/v1/passwords/{id} */
   delete(id) {
-    return this.http.request("DELETE", `${BASE14}/${encodeURIComponent(id)}`);
+    return this.http.request("DELETE", `${BASE8}/${encodeURIComponent(id)}`);
   }
   /** POST /api/v1/password-vault/unlock -- opens the caller's session with one of their vault factors. */
   unlock(req) {
@@ -1142,58 +874,58 @@ var PasswordsClient = class {
   }
   /** POST /api/v1/passwords/access-mode */
   setAccessMode(req) {
-    return this.http.request("POST", `${BASE14}/access-mode`, { body: req });
+    return this.http.request("POST", `${BASE8}/access-mode`, { body: req });
   }
   /** POST /api/v1/passwords/generate */
   generate(req) {
-    return this.http.request("POST", `${BASE14}/generate`, { body: req });
+    return this.http.request("POST", `${BASE8}/generate`, { body: req });
   }
 };
 
 // src/clients/pin.ts
-var BASE15 = "/api/v1/pin";
+var BASE9 = "/api/v1/pin";
 var PinClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
   /** POST /api/v1/pin/so/set */
   setSO(req) {
-    return this.http.request("POST", `${BASE15}/so/set`, { body: req });
+    return this.http.request("POST", `${BASE9}/so/set`, { body: req });
   }
   /** POST /api/v1/pin/user/set */
   setUser(req) {
-    return this.http.request("POST", `${BASE15}/user/set`, { body: req });
+    return this.http.request("POST", `${BASE9}/user/set`, { body: req });
   }
   /** POST /api/v1/pin/so/change */
   changeSO(req) {
-    return this.http.request("POST", `${BASE15}/so/change`, { body: req });
+    return this.http.request("POST", `${BASE9}/so/change`, { body: req });
   }
   /** POST /api/v1/pin/user/change */
   changeUser(req) {
-    return this.http.request("POST", `${BASE15}/user/change`, { body: req });
+    return this.http.request("POST", `${BASE9}/user/change`, { body: req });
   }
   /** POST /api/v1/pin/so/verify */
   verifySO(req) {
-    return this.http.request("POST", `${BASE15}/so/verify`, { body: req });
+    return this.http.request("POST", `${BASE9}/so/verify`, { body: req });
   }
   /** POST /api/v1/pin/user/verify */
   verifyUser(req) {
-    return this.http.request("POST", `${BASE15}/user/verify`, { body: req });
+    return this.http.request("POST", `${BASE9}/user/verify`, { body: req });
   }
   /** GET /api/v1/pin/lockout */
   lockoutStatus() {
-    return this.http.request("GET", `${BASE15}/lockout`);
+    return this.http.request("GET", `${BASE9}/lockout`);
   }
   /** POST /api/v1/pin/lockout/reset */
   resetLockout(req) {
-    return this.http.request("POST", `${BASE15}/lockout/reset`, { body: req });
+    return this.http.request("POST", `${BASE9}/lockout/reset`, { body: req });
   }
 };
 
 // src/clients/piv.ts
-var BASE16 = "/api/v1/piv";
+var BASE10 = "/api/v1/piv";
 function slotPath(slot, suffix) {
-  return `${BASE16}/slots/${encodeURIComponent(slot)}${suffix}`;
+  return `${BASE10}/slots/${encodeURIComponent(slot)}${suffix}`;
 }
 var PivClient = class {
   constructor(http) {
@@ -1201,7 +933,7 @@ var PivClient = class {
   }
   /** GET /api/v1/piv/slots?backend= */
   listSlots(backend) {
-    return this.http.request("GET", `${BASE16}/slots`, { query: { backend } });
+    return this.http.request("GET", `${BASE10}/slots`, { query: { backend } });
   }
   /** GET /api/v1/piv/slots/{slot}/certificate?backend=&format= */
   getCertificate(slot, backend, format) {
@@ -1240,36 +972,36 @@ var PivClient = class {
 };
 
 // src/clients/platform.ts
-var BASE17 = "/api/v1/platform";
+var BASE11 = "/api/v1/platform";
 var PlatformClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
   /** PUT /api/v1/platform/secrets/{key} */
   putSecret(key, req) {
-    return this.http.request("PUT", `${BASE17}/secrets/${encodeURIComponent(key)}`, {
+    return this.http.request("PUT", `${BASE11}/secrets/${encodeURIComponent(key)}`, {
       body: req
     });
   }
   /** GET /api/v1/platform/secrets/{key} */
   getSecret(key) {
-    return this.http.request("GET", `${BASE17}/secrets/${encodeURIComponent(key)}`);
+    return this.http.request("GET", `${BASE11}/secrets/${encodeURIComponent(key)}`);
   }
   /** DELETE /api/v1/platform/secrets/{key} */
   deleteSecret(key) {
-    return this.http.request("DELETE", `${BASE17}/secrets/${encodeURIComponent(key)}`);
+    return this.http.request("DELETE", `${BASE11}/secrets/${encodeURIComponent(key)}`);
   }
   /** GET /api/v1/platform/secrets */
   listSecrets() {
-    return this.http.request("GET", `${BASE17}/secrets`);
+    return this.http.request("GET", `${BASE11}/secrets`);
   }
   /** POST /api/v1/platform/secrets/{key}/reseal */
   resealSecret(key) {
-    return this.http.request("POST", `${BASE17}/secrets/${encodeURIComponent(key)}/reseal`);
+    return this.http.request("POST", `${BASE11}/secrets/${encodeURIComponent(key)}/reseal`);
   }
   /** GET /api/v1/platform/status */
   status() {
-    return this.http.request("GET", `${BASE17}/status`);
+    return this.http.request("GET", `${BASE11}/status`);
   }
 };
 
@@ -1292,48 +1024,13 @@ var SealClient = class {
   }
 };
 
-// src/clients/shares.ts
-var BASE18 = "/api/v1/shares";
-var SharesClient = class {
-  constructor(http) {
-    __publicField(this, "http", http);
-  }
-  /** POST /api/v1/shares/submit */
-  submit(req) {
-    return this.http.request("POST", `${BASE18}/submit`, { body: req });
-  }
-  /** GET /api/v1/shares/ */
-  list(page) {
-    return this.http.request("GET", `${BASE18}/`, { query: { ...page } });
-  }
-  /** GET /api/v1/shares/{serverURL}/{groupID}/{shareIndex} (serverURL is path-escaped). */
-  get(serverURL, groupId, shareIndex) {
-    return this.http.request(
-      "GET",
-      `${BASE18}/${encodePathSegment(serverURL)}/${encodePathSegment(groupId)}/${shareIndex}`
-    );
-  }
-  /** DELETE /api/v1/shares/{serverURL}/{groupID}/{shareIndex} (204). */
-  async delete(serverURL, groupId, shareIndex) {
-    await this.http.request(
-      "DELETE",
-      `${BASE18}/${encodePathSegment(serverURL)}/${encodePathSegment(groupId)}/${shareIndex}`,
-      { parse: "void" }
-    );
-  }
-  /** GET /api/v1/shares/status/{groupID} */
-  collectionStatus(groupId) {
-    return this.http.request("GET", `${BASE18}/status/${encodePathSegment(groupId)}`);
-  }
-};
-
 // src/clients/ssh.ts
-var BASE19 = "/xkms/v1/ssh";
+var BASE12 = "/xkms/v1/ssh";
 function keyPath2(scope, owner, name, suffix = "") {
-  return `${BASE19}/keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}${suffix}`;
+  return `${BASE12}/keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}${suffix}`;
 }
 function authorizedPath(scope, owner, name) {
-  return `${BASE19}/authorized-keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}`;
+  return `${BASE12}/authorized-keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}`;
 }
 var SshClient = class {
   constructor(http) {
@@ -1344,15 +1041,15 @@ var SshClient = class {
   // ------------------------------------------------------------------
   /** POST /xkms/v1/ssh/keys */
   generateKey(req) {
-    return this.http.request("POST", `${BASE19}/keys`, { body: req });
+    return this.http.request("POST", `${BASE12}/keys`, { body: req });
   }
   /** POST /xkms/v1/ssh/keys/import */
   importKey(req) {
-    return this.http.request("POST", `${BASE19}/keys/import`, { body: req });
+    return this.http.request("POST", `${BASE12}/keys/import`, { body: req });
   }
   /** GET /xkms/v1/ssh/keys?scope=&owner= */
   listKeys(scope, owner) {
-    return this.http.request("GET", `${BASE19}/keys`, { query: { scope, owner } });
+    return this.http.request("GET", `${BASE12}/keys`, { query: { scope, owner } });
   }
   /** GET /xkms/v1/ssh/keys/{scope}/{owner}/{name} */
   getKey(scope, owner, name) {
@@ -1375,18 +1072,18 @@ var SshClient = class {
   // ------------------------------------------------------------------
   /** POST /xkms/v1/ssh/known-hosts (201). */
   async addKnownHost(req) {
-    await this.http.request("POST", `${BASE19}/known-hosts`, {
+    await this.http.request("POST", `${BASE12}/known-hosts`, {
       body: req,
       parse: "void"
     });
   }
   /** GET /xkms/v1/ssh/known-hosts?scope=&owner= */
   listKnownHosts(scope, owner) {
-    return this.http.request("GET", `${BASE19}/known-hosts`, { query: { scope, owner } });
+    return this.http.request("GET", `${BASE12}/known-hosts`, { query: { scope, owner } });
   }
   /** DELETE /xkms/v1/ssh/known-hosts/{host}?scope=&owner= (204). */
   async removeKnownHost(host, scope, owner) {
-    await this.http.request("DELETE", `${BASE19}/known-hosts/${encodePathSegment(host)}`, {
+    await this.http.request("DELETE", `${BASE12}/known-hosts/${encodePathSegment(host)}`, {
       query: { scope, owner },
       parse: "void"
     });
@@ -1399,7 +1096,7 @@ var SshClient = class {
   async verifyKnownHost(host, req) {
     await this.http.request(
       "POST",
-      `${BASE19}/known-hosts/${encodePathSegment(host)}/verify`,
+      `${BASE12}/known-hosts/${encodePathSegment(host)}/verify`,
       { body: req, parse: "void" }
     );
   }
@@ -1408,14 +1105,14 @@ var SshClient = class {
   // ------------------------------------------------------------------
   /** POST /xkms/v1/ssh/authorized-keys (201). */
   async addAuthorizedKey(req) {
-    await this.http.request("POST", `${BASE19}/authorized-keys`, {
+    await this.http.request("POST", `${BASE12}/authorized-keys`, {
       body: req,
       parse: "void"
     });
   }
   /** GET /xkms/v1/ssh/authorized-keys?scope=&owner= */
   listAuthorizedKeys(scope, owner) {
-    return this.http.request("GET", `${BASE19}/authorized-keys`, { query: { scope, owner } });
+    return this.http.request("GET", `${BASE12}/authorized-keys`, { query: { scope, owner } });
   }
   /** GET /xkms/v1/ssh/authorized-keys/{scope}/{owner}/{name} */
   getAuthorizedKey(scope, owner, name) {
@@ -1429,18 +1126,18 @@ var SshClient = class {
   }
   /** POST /xkms/v1/ssh/authorized-keys/emit */
   emitAuthorizedKey(req) {
-    return this.http.request("POST", `${BASE19}/authorized-keys/emit`, { body: req });
+    return this.http.request("POST", `${BASE12}/authorized-keys/emit`, { body: req });
   }
   /** POST /xkms/v1/ssh/authorized-keys/verify — returns the matching entry. */
   verifyAuthorizedKey(req) {
-    return this.http.request("POST", `${BASE19}/authorized-keys/verify`, { body: req });
+    return this.http.request("POST", `${BASE12}/authorized-keys/verify`, { body: req });
   }
 };
 
 // src/clients/tenants.ts
-var BASE20 = "/api/v1/tenants";
+var BASE13 = "/api/v1/tenants";
 function tenantPath(id, suffix = "") {
-  return `${BASE20}/${encodeURIComponent(id)}${suffix}`;
+  return `${BASE13}/${encodeURIComponent(id)}${suffix}`;
 }
 var TenantsClient = class {
   constructor(http) {
@@ -1448,11 +1145,11 @@ var TenantsClient = class {
   }
   /** POST /api/v1/tenants/ */
   create(req) {
-    return this.http.request("POST", `${BASE20}/`, { body: req });
+    return this.http.request("POST", `${BASE13}/`, { body: req });
   }
   /** GET /api/v1/tenants/ */
   list(page) {
-    return this.http.request("GET", `${BASE20}/`, { query: { ...page } });
+    return this.http.request("GET", `${BASE13}/`, { query: { ...page } });
   }
   /** GET /api/v1/tenants/{tenantID} */
   get(tenantId) {
@@ -1461,18 +1158,6 @@ var TenantsClient = class {
   /** DELETE /api/v1/tenants/{tenantID} (204). */
   async delete(tenantId) {
     await this.http.request("DELETE", tenantPath(tenantId), { parse: "void" });
-  }
-  /** GET /api/v1/tenants/{tenantID}/barrier/status */
-  barrierStatus(tenantId) {
-    return this.http.request("GET", tenantPath(tenantId, "/barrier/status"));
-  }
-  /** POST /api/v1/tenants/{tenantID}/barrier/init */
-  barrierInit(tenantId, req) {
-    return this.http.request("POST", tenantPath(tenantId, "/barrier/init"), { body: req });
-  }
-  /** POST /api/v1/tenants/{tenantID}/barrier/unseal */
-  barrierUnseal(tenantId, req) {
-    return this.http.request("POST", tenantPath(tenantId, "/barrier/unseal"), { body: req });
   }
   /** PUT /api/v1/tenants/{tenantID}/entitlements */
   updateEntitlements(tenantId, req) {
@@ -1511,12 +1196,12 @@ var TenantsClient = class {
 };
 
 // src/clients/tpmPolicy.ts
-var BASE21 = "/api/v1/tpm/policies";
+var BASE14 = "/api/v1/tpm/policies";
 function pcrBranch(bank, pcrs) {
   return { conditions: [{ type: "pcr", bank, pcrs }] };
 }
 function policyPath(name, action) {
-  const path = `${BASE21}/${encodeURIComponent(name)}`;
+  const path = `${BASE14}/${encodeURIComponent(name)}`;
   return action ? `${path}/${action}` : path;
 }
 var TpmPolicyClient = class {
@@ -1525,11 +1210,11 @@ var TpmPolicyClient = class {
   }
   /** POST /api/v1/tpm/policies — captures the live values of its pcr conditions. */
   create(req) {
-    return this.http.request("POST", BASE21, { body: req });
+    return this.http.request("POST", BASE14, { body: req });
   }
   /** GET /api/v1/tpm/policies?tenant_id= */
   list(tenantId) {
-    return this.http.request("GET", BASE21, { query: { tenant_id: tenantId } });
+    return this.http.request("GET", BASE14, { query: { tenant_id: tenantId } });
   }
   /** GET /api/v1/tpm/policies/{name}?tenant_id= */
   get(name, tenantId) {
@@ -1599,9 +1284,9 @@ var TpmPolicyClient = class {
 };
 
 // src/clients/users.ts
-var BASE22 = "/api/v1/users";
+var BASE15 = "/api/v1/users";
 function userPath(username, suffix = "") {
-  return `${BASE22}/${encodeURIComponent(username)}${suffix}`;
+  return `${BASE15}/${encodeURIComponent(username)}${suffix}`;
 }
 var UsersClient = class {
   constructor(http) {
@@ -1609,11 +1294,11 @@ var UsersClient = class {
   }
   /** POST /api/v1/users/ */
   create(req) {
-    return this.http.request("POST", `${BASE22}/`, { body: req });
+    return this.http.request("POST", `${BASE15}/`, { body: req });
   }
   /** GET /api/v1/users/ */
   list() {
-    return this.http.request("GET", `${BASE22}/`);
+    return this.http.request("GET", `${BASE15}/`);
   }
   /** GET /api/v1/users/{username} */
   get(username) {
@@ -1654,24 +1339,17 @@ var XkmsClient = class {
     __publicField(this, "certs");
     __publicField(this, "seal");
     __publicField(this, "frost");
-    __publicField(this, "barrier");
     __publicField(this, "pin");
     __publicField(this, "piv");
     __publicField(this, "ca");
-    __publicField(this, "cluster");
-    __publicField(this, "custodian");
-    __publicField(this, "shares");
     __publicField(this, "tenants");
     __publicField(this, "passwords");
     __publicField(this, "oidcCredentials");
     __publicField(this, "platform");
     __publicField(this, "tpmPolicies");
-    __publicField(this, "init");
     __publicField(this, "credentials");
     __publicField(this, "users");
-    __publicField(this, "factors");
     __publicField(this, "ssh");
-    __publicField(this, "audit");
     this.http = new HttpCore(config);
     this.authPaths = resolveAuthPaths(config.authPaths);
     this.health = new HealthClient(this.http);
@@ -1682,24 +1360,17 @@ var XkmsClient = class {
     this.certs = new CertsClient(this.http);
     this.seal = new SealClient(this.http);
     this.frost = new FrostClient(this.http);
-    this.barrier = new BarrierClient(this.http);
     this.pin = new PinClient(this.http);
     this.piv = new PivClient(this.http);
     this.ca = new CaClient(this.http);
-    this.cluster = new ClusterClient(this.http);
-    this.custodian = new CustodianClient(this.http);
-    this.shares = new SharesClient(this.http);
     this.tenants = new TenantsClient(this.http);
     this.passwords = new PasswordsClient(this.http);
     this.oidcCredentials = new OidcCredentialClient(this.http);
     this.platform = new PlatformClient(this.http);
     this.tpmPolicies = new TpmPolicyClient(this.http);
-    this.init = new InitClient(this.http);
     this.credentials = new CredentialsClient(this.http);
     this.users = new UsersClient(this.http);
-    this.factors = new FactorsClient(this.http);
     this.ssh = new SshClient(this.http);
-    this.audit = new AuditClient(this.http);
   }
 };
 function createClient(config) {
@@ -2025,23 +1696,17 @@ async function unlockWithXkey(fingerprints, win = window, timeoutMs = XKEY_UNLOC
   }
 }
 export {
-  AuditClient,
   AuthClient,
   BackendsClient,
-  BarrierClient,
   CaClient,
   CapabilitiesClient,
   CertsClient,
-  ClusterClient,
   CredentialsClient,
-  CustodianClient,
   DEFAULT_AUTH_PATHS,
-  FactorsClient,
   FrostClient,
   HEADER_SESSION_ID,
   HealthClient,
   HttpCore,
-  InitClient,
   KeyVersionsClient,
   KeysClient,
   OIDCDeviceLoginError,
@@ -2051,7 +1716,6 @@ export {
   PivClient,
   PlatformClient,
   SealClient,
-  SharesClient,
   SshClient,
   TenantsClient,
   TpmPolicyClient,

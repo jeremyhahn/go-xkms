@@ -43,7 +43,7 @@ const testRP = "kms.example.com"
 
 func pinSecret(t *testing.T, pin string) *secure.Secret {
 	t.Helper()
-	s, err := secure.NewSecret([]byte(pin))
+	s, err := secure.NewSecret(t.Context(), []byte(pin))
 	require.NoError(t, err)
 	return s
 }

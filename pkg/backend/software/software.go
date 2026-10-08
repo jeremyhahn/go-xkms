@@ -512,7 +512,7 @@ func (b *SoftwareBackend) GetImportParameters(ctx context.Context, attrs *types.
 
 	// Seal the private key; only the public key stays in plaintext. See
 	// importtoken.SealedRSAKey for the seal/open/destroy handling.
-	wrappingKey, err := importtoken.NewSealedRSAKey(privateKey)
+	wrappingKey, err := importtoken.NewSealedRSAKey(ctx, privateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -618,7 +618,7 @@ func (b *SoftwareBackend) UnwrapKey(ctx context.Context, wrapped *backend.Wrappe
 		return nil, ErrStorageClosed
 	}
 
-	return b.unwrapKey(wrapped)
+	return b.unwrapKey(ctx, wrapped)
 }
 
 // unwrapKey is UnwrapKey's token-consuming core, without the closed check.
@@ -626,7 +626,7 @@ func (b *SoftwareBackend) UnwrapKey(ctx context.Context, wrapped *backend.Wrappe
 // ImportKey already checked b.closed under its own b.mu.Lock(); UnwrapKey's
 // closed check takes b.mu.RLock(), and sync.RWMutex is not reentrant, so
 // calling UnwrapKey from inside an already-held b.mu.Lock() would deadlock.
-func (b *SoftwareBackend) unwrapKey(wrapped *backend.WrappedKeyMaterial) ([]byte, error) {
+func (b *SoftwareBackend) unwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial) ([]byte, error) {
 	// Get the import token UUID
 	tokenUUID := string(wrapped.ImportToken)
 	if tokenUUID == "" {
@@ -645,7 +645,7 @@ func (b *SoftwareBackend) unwrapKey(wrapped *backend.WrappedKeyMaterial) ([]byte
 	// importtoken.Unwrap refuses wrapped.Algorithm unless it matches
 	// tokenData.algorithm -- the algorithm GetImportParameters issued
 	// this token for -- before it ever opens the wrapping key's enclave.
-	return importtoken.Unwrap(tokenData.wrappingKey, tokenData.algorithm, wrapped.Algorithm, wrapped.WrappedKey)
+	return importtoken.Unwrap(ctx, tokenData.wrappingKey, tokenData.algorithm, wrapped.Algorithm, wrapped.WrappedKey)
 }
 
 // ImportKey imports externally generated key material into the backend.
@@ -676,7 +676,7 @@ func (b *SoftwareBackend) ImportKey(ctx context.Context, attrs *types.KeyAttribu
 	// directly, not the public UnwrapKey, since UnwrapKey's own closed
 	// check would re-take b.mu.RLock() while this call already holds
 	// b.mu.Lock() -- see unwrapKey's doc comment.
-	keyMaterial, err := b.unwrapKey(wrapped)
+	keyMaterial, err := b.unwrapKey(ctx, wrapped)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to unwrap key material", Err: err}
 	}

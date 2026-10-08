@@ -29,12 +29,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	acmestorage "github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -150,9 +150,8 @@ func createTestInfrastructure(t *testing.T) (ca.TCGCA, acmestorage.Factory, func
 	})
 	require.NoError(t, err)
 
-	certAdapter := xkmssdk.NewStorageCertAdapter(certStorageBackend)
 	certStore, err := xkmssdk.NewCertStore(&xkmssdk.CertStoreConfig{
-		CertStorage: certAdapter,
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	require.NoError(t, err)
 
@@ -264,9 +263,8 @@ func createRootOnlyTestCA(t *testing.T) ca.TCGCA {
 	})
 	require.NoError(t, err)
 
-	certAdapter := xkmssdk.NewStorageCertAdapter(certStorageBackend)
 	certStore, err := xkmssdk.NewCertStore(&xkmssdk.CertStoreConfig{
-		CertStorage: certAdapter,
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	require.NoError(t, err)
 
@@ -305,7 +303,7 @@ func newTenantAwareTestService(t *testing.T) *TenantAwareAdminService {
 	require.NoError(t, err)
 
 	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
+	qrdbSvc := newTestQRDB(t)
 
 	svc := mustTenantAwareAdminService(t, nil, factory, qrdbSvc, logger, "1.0.0")
 	svc.SetTenantService(newFakeTenantServicer())

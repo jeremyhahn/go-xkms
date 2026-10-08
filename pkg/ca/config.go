@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"context"
 	"crypto/elliptic"
 	"crypto/x509"
 	"fmt"
@@ -587,11 +588,11 @@ func (b *ConfigBuilder) Build() (*MultiIdentityCAConfig, error) {
 //
 // Both are wired through types.KeyAttributesFromConfig so that the pkcs8
 // backend writes encrypted-at-rest PKCS#8 when a password is present.
-func (id *Identity) ToKeyAttributes() (*types.KeyAttributes, error) {
+func (id *Identity) ToKeyAttributes(ctx context.Context) (*types.KeyAttributes, error) {
 	if len(id.Keys) == 0 {
 		return nil, ErrNoKeysConfigured
 	}
-	attrs, err := types.KeyAttributesFromConfig(id.Keys[0])
+	attrs, err := types.KeyAttributesFromConfig(ctx, id.Keys[0])
 	if err != nil {
 		return nil, err
 	}
@@ -602,7 +603,7 @@ func (id *Identity) ToKeyAttributes() (*types.KeyAttributes, error) {
 	// Apply identity-level software keystore password as fallback when the
 	// per-key password was not set (Password is nil after KeyAttributesFromConfig).
 	if attrs.Password == nil && id.Keystores != nil && id.Keystores.Software != nil {
-		pw, err := types.NewPasswordFromSecretValue(id.Keystores.Software.Password)
+		pw, err := types.NewPasswordFromSecretValue(ctx, id.Keystores.Software.Password)
 		if err != nil {
 			return nil, err
 		}

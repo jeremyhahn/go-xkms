@@ -28,7 +28,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
 
-	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/stretchr/testify/assert"
@@ -1785,63 +1784,7 @@ func TestBridge_ComputeDeviceFingerprint_Deterministic(t *testing.T) {
 
 // --- Barrier operations (mock only, not exercised by bridge) ---
 
-func (m *mockTransportClient) BarrierInitialize(_ context.Context, _ *transport.BarrierInitializeRequest) error {
-	return errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierUnseal(_ context.Context, _ *transport.BarrierUnsealRequest) error {
-	return errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierSeal(_ context.Context) error {
-	return errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierStatus(_ context.Context) (*transport.BarrierStatusResponse, error) {
-	return nil, errNotImplemented
-}
-
 func (m *mockTransportClient) BootstrapListenerKeys(_ context.Context) (*transport.BootstrapListenerKeysResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierInitializeShamir(_ context.Context, _ *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierUnsealWithShare(_ context.Context, _ *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierUnsealWithShares(_ context.Context, _ *transport.BarrierUnsealSharesRequest) error {
-	return errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierRekey(_ context.Context, _ *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierGenerateRecoveryKeys(_ context.Context, _ *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierRecoverWithKeys(_ context.Context, _ *transport.BarrierRecoverWithKeysRequest) error {
-	return errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierDeleteRecoveryKeys(_ context.Context) error {
-	return errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierHasRecoveryKeys(_ context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierGenerateRootToken(_ context.Context, _ *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierEnableEncryption(_ context.Context, _ *pkgtransport.BarrierEnableEncryptionRequest) (*pkgtransport.BarrierEnableEncryptionResponse, error) {
 	return nil, errNotImplemented
 }
 

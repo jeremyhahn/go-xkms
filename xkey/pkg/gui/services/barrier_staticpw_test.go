@@ -16,7 +16,6 @@ package services
 import (
 	"encoding/json"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -67,17 +66,13 @@ func TestBarrierStaticPW_EncryptionEndToEnd(t *testing.T) {
 	require.NoError(t, err, "adding password entry must succeed")
 
 	// ---------------------------------------------------------------
-	// Step 3: Read the raw file bytes from disk.
+	// Step 3: Read the raw stored bytes beneath the barrier.
 	// The file storage root is configDir/barrier/ and the staticpw
-	// store writes keys as "staticpw/<id>.json", so the file is at
-	// configDir/barrier/staticpw/<id>.json.
+	// store writes keys as "staticpw/<id>.json".
 	// ---------------------------------------------------------------
 	expectedID := xkms.GenerateStaticPasswordID("TestPassword", "")
-	rawFilePath := filepath.Join(configDir, "barrier", "staticpw", expectedID+".json")
-
-	rawBytes, err := os.ReadFile(rawFilePath)
-	require.NoError(t, err, "raw file must exist on disk at %s", rawFilePath)
-	require.NotEmpty(t, rawBytes, "raw file must not be empty")
+	rawBytes := readRawBarrierEntry(t, filepath.Join(configDir, "barrier"), "staticpw/"+expectedID+".json")
+	require.NotEmpty(t, rawBytes, "raw entry must not be empty")
 
 	// The raw bytes must NOT be valid JSON. If the barrier encryption is
 	// working, the file contains a version byte followed by the AES-256-GCM
@@ -203,20 +198,16 @@ func TestBarrierStaticPW_MultipleEntries(t *testing.T) {
 		require.NoError(t, err, "adding entry %q must succeed", entries[i].Name)
 	}
 
-	// Verify all entries are stored and encrypted on disk.
-	barrierDir := filepath.Join(configDir, "barrier", "staticpw")
-	dirEntries, err := os.ReadDir(barrierDir)
-	require.NoError(t, err)
-	assert.Len(t, dirEntries, 3, "must have 3 files in staticpw directory")
-
-	for _, de := range dirEntries {
-		rawBytes, readErr := os.ReadFile(filepath.Join(barrierDir, de.Name()))
-		require.NoError(t, readErr)
+	// Verify all entries are stored encrypted beneath the barrier.
+	barrierDir := filepath.Join(configDir, "barrier")
+	for _, entry := range entries {
+		key := "staticpw/" + xkms.GenerateStaticPasswordID(entry.Name, "") + ".json"
+		rawBytes := readRawBarrierEntry(t, barrierDir, key)
 
 		var probe map[string]any
 		jsonErr := json.Unmarshal(rawBytes, &probe)
 		assert.Error(t, jsonErr,
-			"file %s must contain encrypted data, not plaintext JSON", de.Name())
+			"entry %s must contain encrypted data, not plaintext JSON", key)
 	}
 
 	// Verify retrieval through the store.
@@ -248,4 +239,17 @@ func TestBarrierStaticPW_MultipleEntries(t *testing.T) {
 		assert.Equal(t, want.Password, got.Password)
 		assert.Equal(t, want.Username, got.Username)
 	}
+}
+
+// readRawBarrierEntry returns the bytes the go-qrdb file engine under dir
+// holds for key, bypassing the barrier: the ciphertext the barrier wrote.
+func readRawBarrierEntry(t *testing.T, dir, key string) []byte {
+	t.Helper()
+
+	backend, err := xkms.NewFileStorageBackend(dir)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, backend.Close()) }()
+	data, err := backend.Get(t.Context(), key)
+	require.NoError(t, err, "storage under %s must hold %s", dir, key)
+	return data
 }

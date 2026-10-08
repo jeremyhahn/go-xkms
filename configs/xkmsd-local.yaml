@@ -44,8 +44,8 @@ auth:
 # from configuration. Because this file's storage backend is "qrdb" (below),
 # xkmsd's ComplianceGaps gate currently requires a hardware seal strategy
 # (barrier.strategy: "tpm2"/"pkcs11") for this file to start unattended; a
-# software strategy here needs `xkmsctl barrier init` / `xkmsctl barrier
-# unseal` run against the daemon before it will serve. See go-xkms#653.
+# software strategy here needs the node barrier initialized and unsealed
+# through go-qrdb's own barrier surface before it will serve. See go-xkms#653.
 barrier:
   enabled: true
   strategy: "passphrase"

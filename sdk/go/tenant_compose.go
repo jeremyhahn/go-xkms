@@ -22,7 +22,7 @@ import (
 // Hardware-crypto-enhanced multi-tenant composition surface.
 //
 // go-qrdb owns the per-tenant barrier framework (isolation modes, entitlements,
-// system-managed auto-unseal, quotas, volume pool); go-xkms owns the hardware
+// system-managed auto-unseal, quotas, volume pools); go-xkms owns the hardware
 // and cloud seal strategies (TPM2/PKCS#11/AWS-KMS/GCP-KMS/Azure-KV/Vault). This
 // file re-exports the composition seam so a downstream service (go-quicbaas)
 // builds hardware-backed per-tenant encryption from the go-xkms SDK alone,
@@ -41,31 +41,16 @@ type StrategyRegistry = seal.StrategyRegistry
 // by a TPM, PKCS#11 token, or cloud KMS.
 var NewHardwareStrategyRegistry = seal.NewHardwareStrategyRegistry
 
-// --- Barrier registry + volume pool ---
+// --- Barrier registry ---
 
 // BarrierRegistry manages the system barrier and per-tenant barriers.
 type BarrierRegistry = seal.BarrierRegistry
 
-// BarrierRegistryOption configures a BarrierRegistry (notably WithVolumePool /
-// WithPerTenantRegistry for dedicated-isolation tenant storage).
+// BarrierRegistryOption configures a BarrierRegistry.
 type BarrierRegistryOption = seal.BarrierRegistryOption
 
 // NewBarrierRegistry creates a BarrierRegistry over the given system barrier.
 var NewBarrierRegistry = seal.NewBarrierRegistry
-
-// VolumePoolSubsystem backs dedicated-isolation (barrier/volume/raft) tenants
-// with per-tenant Pebble storage drawn from a configured pool.
-type VolumePoolSubsystem = seal.VolumePoolSubsystem
-
-// BuildVolumePoolSubsystem constructs the volume-pool subsystem from a data
-// directory and declared pool config; returns (nil, nil) when no pools are set.
-var BuildVolumePoolSubsystem = seal.BuildVolumePoolSubsystem
-
-// WithVolumePool attaches the volume-pool Manager + round-robin StateStore.
-var WithVolumePool = seal.WithVolumePool
-
-// WithPerTenantRegistry attaches the per-tenant Pebble registry.
-var WithPerTenantRegistry = seal.WithPerTenantRegistry
 
 // --- TenantService composition ---
 

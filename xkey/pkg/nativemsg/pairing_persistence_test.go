@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,10 +63,8 @@ func TestSaveLocked_RenameFails(t *testing.T) {
 	require.Error(t, err)
 	var wrapped *WrappedError
 	require.ErrorAs(t, err, &wrapped)
-	assert.Equal(t, "nativemsg: failed to rename pairing temp file", wrapped.Msg)
-
-	_, statErr := os.Stat(statePath + ".tmp")
-	assert.True(t, os.IsNotExist(statErr), "the temp file must be cleaned up after a failed rename")
+	assert.Equal(t, "nativemsg: failed to write pairing temp file", wrapped.Msg)
+	assert.ErrorIs(t, err, fsutil.ErrTargetNotRegular)
 }
 
 // TestRemoveStateLocked_PermissionDenied proves a removal failure other than

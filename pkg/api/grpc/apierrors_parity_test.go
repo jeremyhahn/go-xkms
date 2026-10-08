@@ -63,11 +63,10 @@ var wireExpectationForClass = map[apierrors.Class]wireExpectation{
 
 // TestClassification_MatchesSharedTables walks every sentinel in
 // apierrors.ImportExportSentinelClasses, PIVSentinelClasses,
-// BarrierSentinelClasses, SealStoreSentinelClasses, PINSentinelClasses,
-// CustodianSentinelClasses, TPMPolicySentinelClasses and
+// SealStoreSentinelClasses, PINSentinelClasses, TPMPolicySentinelClasses and
 // OIDCCredentialSentinelClasses and asserts this package's
-// mapImportExportError / mapPIVError / mapBarrierError / mapSealStoreError /
-// mapPINError / mapCustodianError / mapTPMPolicyError / mapOIDCCredentialError
+// mapImportExportError / mapPIVError / mapSealStoreError /
+// mapPINError / mapTPMPolicyError / mapOIDCCredentialError
 // renders the gRPC status code wireExpectationForClass names for that
 // sentinel's Class. It is the gRPC half of the cross-transport parity
 // pinned by go-xkms#912; see this file's wireExpectationForClass doc
@@ -96,17 +95,6 @@ func TestClassification_MatchesSharedTables(t *testing.T) {
 		}
 	})
 
-	t.Run("barrier", func(t *testing.T) {
-		for _, entry := range apierrors.BarrierSentinelClasses {
-			want, ok := wireExpectationForClass[entry.Class]
-			require.True(t, ok, "no wire expectation for class %v", entry.Class)
-			t.Run(want.name, func(t *testing.T) {
-				err := mapBarrierError(entry.Sentinel, "op")
-				assert.Equal(t, want.grpcCode, status.Code(err))
-			})
-		}
-	})
-
 	t.Run("seal store", func(t *testing.T) {
 		for _, entry := range apierrors.SealStoreSentinelClasses {
 			want, ok := wireExpectationForClass[entry.Class]
@@ -124,17 +112,6 @@ func TestClassification_MatchesSharedTables(t *testing.T) {
 			require.True(t, ok, "no wire expectation for class %v", entry.Class)
 			t.Run(want.name, func(t *testing.T) {
 				err := mapPINError(entry.Sentinel, "op")
-				assert.Equal(t, want.grpcCode, status.Code(err))
-			})
-		}
-	})
-
-	t.Run("custodian", func(t *testing.T) {
-		for _, entry := range apierrors.CustodianSentinelClasses {
-			want, ok := wireExpectationForClass[entry.Class]
-			require.True(t, ok, "no wire expectation for class %v", entry.Class)
-			t.Run(want.name, func(t *testing.T) {
-				err := mapCustodianError(entry.Sentinel, "op")
 				assert.Equal(t, want.grpcCode, status.Code(err))
 			})
 		}

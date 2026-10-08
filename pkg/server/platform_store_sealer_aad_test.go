@@ -34,7 +34,7 @@ func TestPlatformStoreSealers_BindCallerAAD(t *testing.T) {
 
 	adapters := map[string]types.Sealer{
 		"fixedKeyAttrsSealer":  &fixedKeyAttrsSealer{inner: fixedInner, attrs: fixedAttrs},
-		"platformPolicySealer": &platformPolicySealer{inner: policyInner, cn: "platform-store-object"},
+		"PlatformPolicySealer": seal.NewPlatformPolicySealer(policyInner, "platform-store-object", nil),
 	}
 	aad := []byte("record=pkcs11-pin")
 	for name, sealer := range adapters {

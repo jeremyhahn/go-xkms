@@ -21,8 +21,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +41,7 @@ func postPKCS11State(t *testing.T, h *PKCS11StateHandlers, handlerFn http.Handle
 }
 
 func TestPKCS11StatePutHandler_Success(t *testing.T) {
-	h, svc := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, svc := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	body, err := json.Marshal(transport.PKCS11StatePutRequest{Token: "tok0", Key: "k", Value: []byte("v")})
 	require.NoError(t, err)
 
@@ -55,7 +55,7 @@ func TestPKCS11StatePutHandler_Success(t *testing.T) {
 }
 
 func TestPKCS11StatePutHandler_BadInput(t *testing.T) {
-	h, _ := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, _ := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	rec := postPKCS11State(t, h, h.PutHandler, []byte("{not json"))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
@@ -65,7 +65,7 @@ func TestPKCS11StatePutHandler_BadInput(t *testing.T) {
 }
 
 func TestPKCS11StatePutIfAbsentHandler_StoresOnlyOnce(t *testing.T) {
-	h, _ := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, _ := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	body, err := json.Marshal(transport.PKCS11StatePutIfAbsentRequest{Token: "tok0", Key: "k", Value: []byte("first")})
 	require.NoError(t, err)
 
@@ -84,13 +84,13 @@ func TestPKCS11StatePutIfAbsentHandler_StoresOnlyOnce(t *testing.T) {
 }
 
 func TestPKCS11StatePutIfAbsentHandler_BadInput(t *testing.T) {
-	h, _ := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, _ := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	rec := postPKCS11State(t, h, h.PutIfAbsentHandler, []byte("{not json"))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestPKCS11StateCASHandler_SwapsOnlyOnMatch(t *testing.T) {
-	h, svc := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, svc := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	_, err := svc.PKCS11StatePut(context.Background(), &transport.PKCS11StatePutRequest{Token: "tok0", Key: "k", Value: []byte("old")})
 	require.NoError(t, err)
 
@@ -111,13 +111,13 @@ func TestPKCS11StateCASHandler_SwapsOnlyOnMatch(t *testing.T) {
 }
 
 func TestPKCS11StateCASHandler_BadInput(t *testing.T) {
-	h, _ := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, _ := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	rec := postPKCS11State(t, h, h.CASHandler, []byte("{not json"))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestPKCS11StateGetHandler_NotFound(t *testing.T) {
-	h, _ := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, _ := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	body, err := json.Marshal(transport.PKCS11StateGetRequest{Token: "tok0", Key: "missing"})
 	require.NoError(t, err)
 	rec := postPKCS11State(t, h, h.GetHandler, body)
@@ -128,13 +128,13 @@ func TestPKCS11StateGetHandler_NotFound(t *testing.T) {
 }
 
 func TestPKCS11StateGetHandler_BadInput(t *testing.T) {
-	h, _ := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, _ := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	rec := postPKCS11State(t, h, h.GetHandler, []byte("{not json"))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestPKCS11StateDeleteHandler_Success(t *testing.T) {
-	h, svc := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, svc := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	_, err := svc.PKCS11StatePut(context.Background(), &transport.PKCS11StatePutRequest{Token: "tok0", Key: "k", Value: []byte("v")})
 	require.NoError(t, err)
 
@@ -149,13 +149,13 @@ func TestPKCS11StateDeleteHandler_Success(t *testing.T) {
 }
 
 func TestPKCS11StateDeleteHandler_BadInput(t *testing.T) {
-	h, _ := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, _ := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	rec := postPKCS11State(t, h, h.DeleteHandler, []byte("{not json"))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestPKCS11StateListHandler_FiltersByPrefix(t *testing.T) {
-	h, svc := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, svc := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	for _, key := range []string{"ns/a", "ns/b", "other/c"} {
 		_, err := svc.PKCS11StatePut(context.Background(), &transport.PKCS11StatePutRequest{Token: "tok0", Key: key, Value: []byte("v")})
 		require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestPKCS11StateListHandler_FiltersByPrefix(t *testing.T) {
 }
 
 func TestPKCS11StateListHandler_BadInput(t *testing.T) {
-	h, _ := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, _ := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	rec := postPKCS11State(t, h, h.ListHandler, []byte("{not json"))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }

@@ -24,6 +24,7 @@ import (
 	"sync"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -271,7 +272,7 @@ func (s *PKCS11Service) ensureSoftHSM2Config() error {
 
 	// Write config file
 	configContent := fmt.Sprintf(softhsm2ConfigTemplate, tokenDir)
-	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(configPath, []byte(configContent), 0600); err != nil {
 		return &WrappedError{Msg: "failed to write SoftHSM2 config", Err: err}
 	}
 

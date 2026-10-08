@@ -189,19 +189,6 @@ func TestPbTenantInfoToTransport_WithQuotasAndEntitlements(t *testing.T) {
 
 // --- ClaimShareComplete: gRPC never implements this endpoint ---
 
-func TestClaimShareComplete_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestClaimShareComplete_NotSupportedWhenConnected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	tr.connected = true
-	_, err := tr.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
-}
-
 // --- Connect: the success path, never exercised before this ---
 
 func TestConnect_Success(t *testing.T) {

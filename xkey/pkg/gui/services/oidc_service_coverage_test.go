@@ -218,7 +218,7 @@ func TestOIDCService_Coverage_GetRawTokenResponse_NoTokenStore(t *testing.T) {
 
 func TestOIDCService_Coverage_GetRawTokenResponse_NoToken(t *testing.T) {
 	svc := NewOIDCService(nil)
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id"}
 	require.NoError(t, svc.AddProvider(entry))
 
@@ -228,7 +228,7 @@ func TestOIDCService_Coverage_GetRawTokenResponse_NoToken(t *testing.T) {
 
 func TestOIDCService_Coverage_GetRawTokenResponse_Success(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id"}
@@ -273,7 +273,7 @@ func TestOIDCService_Coverage_GetAccessToken_NoTokenStore(t *testing.T) {
 
 func TestOIDCService_Coverage_GetAccessToken_NoToken(t *testing.T) {
 	svc := NewOIDCService(nil)
-	svc.SetTokenStore(oidc.NewMemoryTokenStore())
+	svc.SetTokenStore(newTestOIDCTokenStore(t))
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id"}
 	require.NoError(t, svc.AddProvider(entry))
 
@@ -283,7 +283,7 @@ func TestOIDCService_Coverage_GetAccessToken_NoToken(t *testing.T) {
 
 func TestOIDCService_Coverage_GetAccessToken_Success(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id"}
@@ -301,7 +301,7 @@ func TestOIDCService_Coverage_GetAccessToken_Success(t *testing.T) {
 
 func TestOIDCService_Coverage_GetAccessToken_NestedJSON(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id"}
@@ -321,7 +321,7 @@ func TestOIDCService_Coverage_GetAccessToken_NestedJSON(t *testing.T) {
 
 func TestOIDCService_Coverage_GetAccessToken_NestedJSON_NoInnerToken(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{Name: "test", Issuer: "https://ex.com", ClientID: "id"}
@@ -360,7 +360,7 @@ func TestOIDCService_Coverage_ExecuteProgram_ProviderNotFound(t *testing.T) {
 
 func TestOIDCService_Coverage_ExecuteProgram_Success(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{
@@ -684,7 +684,7 @@ func TestOIDCService_Coverage_ExecuteScriptFile_FileNotFound(t *testing.T) {
 
 func TestOIDCService_Coverage_ExecuteScriptFile_Success(t *testing.T) {
 	svc := NewOIDCService(nil)
-	store := oidc.NewMemoryTokenStore()
+	store := newTestOIDCTokenStore(t)
 	svc.SetTokenStore(store)
 
 	entry := &OIDCProviderEntry{Name: "file-exec", Issuer: "https://ex.com", ClientID: "id"}
@@ -859,7 +859,7 @@ func TestOIDCService_Coverage_SaveProvidersToBackend_PutError(t *testing.T) {
 func TestOIDCService_Coverage_Close_WithTokenStoreCloseError(t *testing.T) {
 	svc := NewOIDCService(nil)
 	mockStore := &mockClosableTokenStore{
-		TokenStore: oidc.NewMemoryTokenStore(),
+		TokenStore: newTestOIDCTokenStore(t),
 		closeErr:   errors.New("close error"),
 	}
 	svc.tokenStore = mockStore

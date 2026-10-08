@@ -26,10 +26,10 @@ import (
 //
 //   - (*PermissionGate).Wrap(resource, action, handler) — every privileged
 //     ACME admin route is registered through this one decorator
-//     (handlers.go, barrier_handlers.go, tenant_handlers.go's RegisterRoutes
+//     (handlers.go, tenant_handlers.go's RegisterRoutes
 //     methods), so it is this package's only seam.
 //
-// All three RegisterRoutes methods share the same name (different receiver
+// Both RegisterRoutes methods share the same name (different receiver
 // types, one per file), so keying by enclosing function name would collapse
 // every gate in the package into one "RegisterRoutes#N" series and make the
 // golden table unreadable and fragile to reordering. The third argument to
@@ -89,17 +89,6 @@ var goldenAdminPermissions = map[string]string{
 	"UpdateTenantRole":                 "roles:update",
 	"UpdateTenantStatus":               "tenants:update",
 	"UpdateTenantUser":                 "users:update",
-	"handleBarrierInitialize":          "seal:bootstrap",
-	"handleBarrierRecoveryGenerate":    "seal:generate_recovery",
-	"handleBarrierRecoveryRecover":     "seal:recover_with_keys",
-	"handleBarrierRecoveryStatus":      "seal:status",
-	"handleBarrierRekey":               "seal:rekey",
-	"handleBarrierRootToken":           "seal:rotate_root_key",
-	"handleBarrierSeal":                "seal:seal",
-	"handleBarrierShamirInitialize":    "seal:initialize_shamir",
-	"handleBarrierShamirUnsealShare":   "barrier:unseal-share",
-	"handleBarrierStatus":              "seal:status",
-	"handleBarrierUnseal":              "seal:unseal",
 }
 
 // TestAdminPermissions_MatchWireContract pins the resource:action pair of

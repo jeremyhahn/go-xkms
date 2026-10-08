@@ -68,6 +68,11 @@ var (
 	// explicit-credential set). See DetailError for the specific field.
 	ErrBarrierCloudKMSConfigInvalid = errors.New("config: cloud KMS barrier strategy configuration is invalid")
 
+	// ErrBarrierPKCS11ConfigInvalid is returned when the pkcs11 barrier
+	// strategy is missing its HSM module path or token label. See
+	// DetailError for the specific field.
+	ErrBarrierPKCS11ConfigInvalid = errors.New("config: pkcs11 barrier strategy configuration is invalid")
+
 	// ErrSandboxPolicyCombo is returned by ValidateAPIExplorerSandboxPolicy
 	// when the policy combines allow-scripts with allow-same-origin, which
 	// lets a previewed API Explorer response escape its sandbox (go-xkms#1274).

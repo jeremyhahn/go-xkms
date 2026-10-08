@@ -1,6 +1,6 @@
 # Sign Server — Architecture
 
-> **Status: NORMATIVE** · Feature: `sign-server` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `sign-server` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## The problem
 
@@ -26,7 +26,7 @@ mode against its unix socket.
  ────────────────────────────────                ───────────────────────────
  signserver.Server                               libxkms_pkcs11.so, remote mode
    xkms.NewService(backends) ── own instance       XKMS_PKCS11_TARGET=unix://...
-   pkcs11state.Store(StateStorage)                 │
+   pkcs11state.Store(StateDAOs)                    │
    CreateKey ─► module.ProvisionECKeyPair          │
                  (in-process Module,               ▼
                   embedded transport)        /run/<daemon>/ike.sock
@@ -89,8 +89,9 @@ allowlist is the access control. List only the uid of the consumer.
 - The server runs inside the owning daemon and has its privileges.
 - The socket's file mode (default `0660`) only has to let the consumer reach
   it; the allowlist decides.
-- The token store (`StateStorage`) holds the PIN verifiers and key objects. It
-  must be private to the daemon and durable for keys to survive a restart.
+- The token store (`StateDAOs`, the `pkcs11state` database of the daemon's
+  go-qrdb datastore) holds the PIN verifiers and key objects. It must be
+  private to the daemon and durable for keys to survive a restart.
 - Key material stays in the chosen backend; the token records hold only key
   identifiers and public attributes.
 

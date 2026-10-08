@@ -14,6 +14,7 @@
 package rand
 
 import (
+	"context"
 	"crypto"
 	"fmt"
 	"log"
@@ -237,7 +238,7 @@ func ExampleConfig_tpm2() {
 // ExampleConfig_pkcs11 demonstrates configuring PKCS#11 RNG.
 // For use with hardware security modules and smart cards.
 func ExampleConfig_pkcs11() {
-	pin, err := secure.NewSecret([]byte("1234"))
+	pin, err := secure.NewSecret(context.Background(), []byte("1234"))
 	if err != nil {
 		log.Fatal(err)
 	}

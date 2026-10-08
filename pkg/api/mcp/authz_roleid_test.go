@@ -74,12 +74,12 @@ func TestSignCSR_SeededAdminRoleIDAdmitted(t *testing.T) {
 
 	resp := signCSRAs(t, s, adminID)
 	require.NotNil(t, resp.Error, "the fixture has no CA, so an admitted request fails in the servicer")
-	assert.NotEqual(t, ErrCodeForbidden, resp.Error.Code, "Admin must pass certs:generate")
+	assert.NotEqual(t, ErrCodeForbidden, resp.Error.Code, "Admin must pass certs:issue")
 	assert.Equal(t, xkms.ErrNotConfigured.Error(), resp.Error.Message,
 		"the admitted request must reach XKMSService.SignCSR, which reports the missing CA")
 }
 
-// TestSignCSR_NonAdminRoleIDRefused proves roles without certs:generate are
+// TestSignCSR_NonAdminRoleIDRefused proves roles without certs:issue are
 // refused at the gate.
 func TestSignCSR_NonAdminRoleIDRefused(t *testing.T) {
 	s, n := newSeededRBACServer(t)

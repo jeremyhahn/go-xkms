@@ -30,9 +30,9 @@ try {
 ```
 
 Domain clients: `health`, `capabilities`, `auth`, `backends`, `keys`, `certs`,
-`seal`, `frost`, `barrier`, `pin`, `piv`, `ca`, `cluster`, `custodian`,
-`shares`, `tenants`, `passwords`, `oidcCredentials`, `platform`, `tpmPolicies`, `init`,
-`credentials`, `users`, `ssh`. Every request/response type mirrors the Go
+`seal`, `frost`, `pin`, `piv`, `ca`, `cluster`, `tenants`, `passwords`,
+`oidcCredentials`, `platform`, `tpmPolicies`, `credentials`,
+`factors`, `users`, `ssh`. Every request/response type mirrors the Go
 DTO json tags exactly; Go `[]byte` members are standard-base64 strings.
 
 Named TPM policies (PCR-bank capture, approval lifecycle, auto-unseal, and

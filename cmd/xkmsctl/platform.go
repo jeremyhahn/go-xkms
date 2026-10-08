@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -255,7 +256,7 @@ func platformGet(cfg *Config, printer *Printer, name, outputFile string) {
 	}
 
 	if outputFile != "" {
-		if err := os.WriteFile(outputFile, resp.Secret, 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(outputFile, resp.Secret, 0600); err != nil {
 			handleError(&WrappedError{Sentinel: ErrWriteSecretFileFailed, Err: err})
 			return
 		}

@@ -29,6 +29,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -256,9 +257,7 @@ func TestRootCertificate_SwitchFallback_B13(t *testing.T) {
 
 	// Build a CA with no certStore so GetCertificate always returns an error,
 	// forcing the switch to be taken.
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
-	cs, err := certstore.New(&certstore.Config{CertStorage: certAdapter})
+	cs, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	ca := &CA{

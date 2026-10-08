@@ -13,7 +13,46 @@
 
 package certstore
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
+
+// NotFoundError is returned when no certificate or chain is stored under
+// Key. It matches Sentinel -- ErrCertNotFound or ErrChainNotFound -- and
+// wraps the go-qrdb DAO's not-found error, so a caller can test for either.
+type NotFoundError struct {
+	Sentinel error
+	Key      string
+	Err      error
+}
+
+// Error returns the error message.
+func (e *NotFoundError) Error() string {
+	return fmt.Sprintf("%v: %q", e.Sentinel, e.Key)
+}
+
+// Is reports whether target is the error's sentinel.
+func (e *NotFoundError) Is(target error) bool { return target == e.Sentinel }
+
+// Unwrap exposes the DAO's not-found error.
+func (e *NotFoundError) Unwrap() error { return e.Err }
+
+// StoreError is returned when the certificate store's DAOs fail an
+// operation on Key, or a stored record cannot be decoded.
+type StoreError struct {
+	Op  string
+	Key string
+	Err error
+}
+
+// Error returns the error message.
+func (e *StoreError) Error() string {
+	return fmt.Sprintf("certstore: %s %q: %v", e.Op, e.Key, e.Err)
+}
+
+// Unwrap exposes the underlying failure.
+func (e *StoreError) Unwrap() error { return e.Err }
 
 // Certificate operation errors
 var (
@@ -65,9 +104,6 @@ var (
 
 // Configuration errors
 var (
-	// ErrStorageRequired is returned when certificate storage is required but not provided.
-	ErrStorageRequired = errors.New("certstore: certificate storage is required")
-
 	// ErrStorageClosed is returned when the storage has been closed.
 	ErrStorageClosed = errors.New("certstore: storage is closed")
 

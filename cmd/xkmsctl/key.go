@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -944,7 +945,7 @@ func exportKey(cfg *Config, printer *Printer, keyID, outputFile string, algorith
 		return
 	}
 
-	if err := os.WriteFile(outputFile, wrappedData, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(outputFile, wrappedData, 0600); err != nil {
 		handleError(&WrappedError{Sentinel: ErrWriteWrappedKeyFileFailed, Err: err})
 		return
 	}
@@ -1116,7 +1117,7 @@ func getImportParams(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm
 			return
 		}
 
-		if err := os.WriteFile(outputFile, paramsData, 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(outputFile, paramsData, 0600); err != nil {
 			handleError(&WrappedError{Sentinel: ErrWriteParametersFileFailed, Err: err})
 			return
 		}
@@ -1231,7 +1232,7 @@ func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *client.I
 		return
 	}
 
-	if err := os.WriteFile(outputFile, wrappedData, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(outputFile, wrappedData, 0600); err != nil {
 		handleError(&WrappedError{Sentinel: ErrWriteWrappedKeyFileFailed, Err: err})
 		return
 	}
@@ -1324,7 +1325,7 @@ func unwrapKey(cfg *Config, printer *Printer, wrapped *client.WrappedKeyMaterial
 	printVerbose("Unwrapped key material size: %d bytes", len(resp.KeyMaterial))
 
 	// Write unwrapped key material
-	if err := os.WriteFile(outputFile, resp.KeyMaterial, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(outputFile, resp.KeyMaterial, 0600); err != nil {
 		handleError(&WrappedError{Sentinel: ErrWriteKeyMaterialFileFailed, Err: err})
 		return
 	}
@@ -1419,7 +1420,7 @@ func attestKey(cfg *Config, printer *Printer, keyID string, nonce []byte, output
 			handleError(&WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err})
 			return
 		}
-		if err := os.WriteFile(outputFile, data, 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(outputFile, data, 0600); err != nil {
 			handleError(&WrappedError{Sentinel: ErrWriteAttestationFileFailed, Err: err})
 			return
 		}
@@ -1552,7 +1553,7 @@ func deriveKeyECDH(cfg *Config, printer *Printer, req *client.DeriveKeyECDHReque
 	}
 
 	if outputFile != "" {
-		if err := os.WriteFile(outputFile, resp.DerivedKey, 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(outputFile, resp.DerivedKey, 0600); err != nil {
 			handleError(&WrappedError{Sentinel: ErrWriteDerivedKeyFileFailed, Err: err})
 			return
 		}
@@ -1656,7 +1657,7 @@ func wrapKeyByID(cfg *Config, printer *Printer, req *client.WrapKeyByIDRequest, 
 	}
 
 	if outputFile != "" {
-		if err := os.WriteFile(outputFile, resp.WrappedKey, 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(outputFile, resp.WrappedKey, 0600); err != nil {
 			handleError(&WrappedError{Sentinel: ErrWriteWrappedKeyFileFailed, Err: err})
 			return
 		}
@@ -1852,7 +1853,7 @@ func exportKeyMaterial(cfg *Config, printer *Printer, keyID, outputFile string) 
 	}
 
 	if outputFile != "" {
-		if err := os.WriteFile(outputFile, resp.KeyMaterial, 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(outputFile, resp.KeyMaterial, 0600); err != nil {
 			handleError(&WrappedError{Sentinel: ErrWriteKeyMaterialFileFailed, Err: err})
 			return
 		}

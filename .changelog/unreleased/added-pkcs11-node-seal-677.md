@@ -1,0 +1,14 @@
+- **A PKCS#11 barrier now seals the qrdb node and unseals unattended, as a TPM 2.0 barrier does, in both xkmsd and xkey**
+  - **How the PIN is stored.** The token user PIN is a pre-barrier secret. It is sealed in the new pre-barrier store (`pkg/preseal`) under the Platform SRK and the platform PCR policy, and released automatically at boot.
+    - `pkg/preseal` is the existing platform store and `seal.PlatformPolicySealer` composed over a go-qrdb file engine in `<datastore.path>/preseal`, beside the barriered datastore. It is not a new sealed format.
+    - A PIN sealed under other PCR values is refused with `*preseal.RefusedError`. A PIN that was never sealed is reported as `*preseal.NotFoundError`. A TPM without an enrolled Platform SRK is refused with `*preseal.PlatformSRKError`.
+  - **xkmsd.**
+    - With `barrier.strategy: pkcs11`, `embeddednode.ResolveNodeSeal` returns a PKCS#11 node seal built from `backends.pkcs11` and the released PIN, instead of warning that the strategy is not wired. That shared build is `pkcs11strategy.BuildWithSealedPIN`, which wipes the released copy.
+    - New `xkmsd seal-pkcs11-pin --config <path>` seals the PIN. It reads the PIN from standard input and has no flag form.
+  - **xkey.**
+    - `xkey barrier init --strategy pkcs11 --pkcs11-library <module> --pkcs11-token <label>` saves the token under `barrier.pkcs11` in the config file. It seals the PIN (prompted, or the first piped line) into `<data-dir>/preseal`.
+    - `barrier unseal` and `extension serve` then build the strategy through the same `BuildWithSealedPIN` path. `extension serve` no longer refuses a `pkcs11` barrier, and `ErrServePKCS11StrategyUnavailable` is removed.
+    - `BarrierService.SetCloudKMSStrategyFunc` is renamed `SetExternalStrategyFunc` and now covers `pkcs11` as well.
+  - **SDK.** `sdk/go` re-exports `OpenPreseal`, `PresealStore`, `PresealPKCS11PIN`, `PresealNotFoundError`, `PresealRefusedError`, `BuildPKCS11StrategyWithSealedPIN`, `PKCS11StrategyBuildError` and `ErrPKCS11StrategyNotCompiledIn`.
+  - **Not covered.** The credentials platform store's `pkcs11` seal strategy still fails closed.
+  - Refs #677.

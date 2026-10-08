@@ -131,30 +131,8 @@ var methodMapping = map[string]string{
 	"/api/v1/ca/tcg/sign-csr": "xkms.ca.tcg.sign-csr",
 	"/api/v1/ca/tcg/enroll":   "xkms.ca.tcg.enroll",
 
-	// Barrier
-	"/v1/barrier/initialize":             "barrier.initialize",
-	"/v1/barrier/initialize-shamir":      "barrier.initializeShamir",
-	"/v1/barrier/unseal":                 "barrier.unseal",
-	"/v1/barrier/unseal-share":           "barrier.unsealShare",
-	"/v1/barrier/unseal-shares":          "barrier.unsealShares",
-	"/v1/barrier/seal":                   "barrier.seal",
-	"/v1/barrier/status":                 "barrier.status",
-	"/v1/barrier/rekey":                  "barrier.rekey",
-	"/v1/barrier/root-token":             "barrier.generateRootToken",
-	"/v1/barrier/recovery-keys":          "barrier.deleteRecoveryKeys",
-	"/v1/barrier/recovery-keys/generate": "barrier.generateRecoveryKeys",
-	"/v1/barrier/recovery-keys/recover":  "barrier.recoverWithKeys",
-
 	// Attestation
 	"/api/v1/attest": "xkms.attestKey",
-
-	// Init Ceremony
-	"/api/v1/init/status":               "init.getStatus",
-	"/api/v1/init/claim-cert/begin":     "init.claimCertBegin",
-	"/api/v1/init/claim-cert/complete":  "init.claimCertComplete",
-	"/api/v1/init/claim-share/begin":    "init.claimShareBegin",
-	"/api/v1/init/claim-share/complete": "init.claimShareComplete",
-	"/api/v1/init/sign-csr":             "init.signCSR",
 
 	// Credentials
 	"/api/v1/credentials/submit":   "credentials.submit",
@@ -184,16 +162,6 @@ var methodMapping = map[string]string{
 	// Key derivation
 	"/api/v1/keys/derive":      "xkms.deriveKey",
 	"/api/v1/keys/derive-ecdh": "xkms.deriveKeyECDH",
-
-	// Custodian Groups
-	"/api/v1/custodian/groups": "xkms.listCustodianGroups",
-
-	// Shares
-	"/api/v1/shares/submit": "xkms.submitShare",
-	"/api/v1/shares":        "xkms.listShares",
-
-	// Audit
-	"/api/v1/audit": "xkms.queryAudit",
 
 	// Tenants
 	"/api/v1/tenants": "xkms.listTenants",
@@ -284,25 +252,9 @@ var dynamicPatterns = []struct {
 		},
 	},
 	{
-		prefix: "/api/v1/custodian/groups/",
-		patterns: []pathPattern{
-			{suffix: "/distribute", method: "xkms.distributeShares"},
-			{suffix: "/members", method: "xkms.addCustodianMember"},
-			{suffix: "", method: "xkms.getCustodianGroup"},
-		},
-	},
-	{
 		prefix: "/api/v1/tenants/",
 		patterns: []pathPattern{
-			{suffix: "/barrier/init", method: "xkms.tenantBarrierInit"},
-			{suffix: "/barrier/unseal", method: "xkms.tenantBarrierUnseal"},
 			{suffix: "", method: "xkms.getTenant"},
-		},
-	},
-	{
-		prefix: "/api/v1/shares/status/",
-		patterns: []pathPattern{
-			{suffix: "", method: "xkms.getShareCollectionStatus"},
 		},
 	},
 }
@@ -1275,42 +1227,6 @@ func (t *Transport) GeneratePIVCSR(ctx context.Context, req *transport.GenerateP
 
 // Barrier Operations
 
-// BarrierInitialize initializes the barrier by generating a root key and sealing it.
-func (t *Transport) BarrierInitialize(ctx context.Context, req *transport.BarrierInitializeRequest) error {
-	if !t.IsConnected() {
-		return ErrNotConnected
-	}
-	return t.rpcCall(ctx, "barrier.initialize", req, nil)
-}
-
-// BarrierUnseal unseals the barrier by loading and decrypting the root key.
-func (t *Transport) BarrierUnseal(ctx context.Context, req *transport.BarrierUnsealRequest) error {
-	if !t.IsConnected() {
-		return ErrNotConnected
-	}
-	return t.rpcCall(ctx, "barrier.unseal", req, nil)
-}
-
-// BarrierSeal transitions the barrier to sealed state, zeroing the DEK.
-func (t *Transport) BarrierSeal(ctx context.Context) error {
-	if !t.IsConnected() {
-		return ErrNotConnected
-	}
-	return t.rpcCall(ctx, "barrier.seal", nil, nil)
-}
-
-// BarrierStatus returns the current barrier status.
-func (t *Transport) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
-	if !t.IsConnected() {
-		return nil, ErrNotConnected
-	}
-	var result transport.BarrierStatusResponse
-	if err := t.rpcCall(ctx, "barrier.status", nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
 // BootstrapListenerKeys returns the running trust-bootstrap listener's
 // public static keys.
 func (t *Transport) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
@@ -1319,115 +1235,6 @@ func (t *Transport) BootstrapListenerKeys(ctx context.Context) (*transport.Boots
 	}
 	var result transport.BootstrapListenerKeysResponse
 	if err := t.rpcCall(ctx, "bootstrap.showKeys", nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// BarrierInitializeShamir initializes the barrier using Shamir secret sharing.
-func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	if !t.IsConnected() {
-		return nil, ErrNotConnected
-	}
-	var result transport.BarrierInitializeShamirResponse
-	if err := t.rpcCall(ctx, "barrier.initializeShamir", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// BarrierUnsealWithShare submits a single Shamir share toward the quorum.
-func (t *Transport) BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	if !t.IsConnected() {
-		return nil, ErrNotConnected
-	}
-	var result transport.BarrierUnsealShareResponse
-	if err := t.rpcCall(ctx, "barrier.unsealShare", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// BarrierUnsealWithShares submits all Shamir shares at once.
-func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error {
-	if !t.IsConnected() {
-		return ErrNotConnected
-	}
-	return t.rpcCall(ctx, "barrier.unsealShares", req, nil)
-}
-
-// BarrierRekey rotates Shamir shares while keeping the same root key.
-func (t *Transport) BarrierRekey(ctx context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	if !t.IsConnected() {
-		return nil, ErrNotConnected
-	}
-	var result transport.BarrierRekeyResponse
-	if err := t.rpcCall(ctx, "barrier.rekey", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// BarrierGenerateRecoveryKeys generates recovery keys for disaster recovery.
-func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	if !t.IsConnected() {
-		return nil, ErrNotConnected
-	}
-	var result transport.BarrierRecoveryKeysResponse
-	if err := t.rpcCall(ctx, "barrier.generateRecoveryKeys", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// BarrierEnableEncryption migrates a previously-unencrypted barrier to a keyed
-// strategy in place.
-func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
-	if !t.IsConnected() {
-		return nil, ErrNotConnected
-	}
-	var result transport.BarrierEnableEncryptionResponse
-	if err := t.rpcCall(ctx, "barrier.enableEncryption", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// BarrierRecoverWithKeys unseals the barrier using recovery keys.
-func (t *Transport) BarrierRecoverWithKeys(ctx context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
-	if !t.IsConnected() {
-		return ErrNotConnected
-	}
-	return t.rpcCall(ctx, "barrier.recoverWithKeys", req, nil)
-}
-
-// BarrierDeleteRecoveryKeys deletes stored recovery key metadata.
-func (t *Transport) BarrierDeleteRecoveryKeys(ctx context.Context) error {
-	if !t.IsConnected() {
-		return ErrNotConnected
-	}
-	return t.rpcCall(ctx, "barrier.deleteRecoveryKeys", nil, nil)
-}
-
-// BarrierHasRecoveryKeys checks if recovery keys exist.
-func (t *Transport) BarrierHasRecoveryKeys(ctx context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	if !t.IsConnected() {
-		return nil, ErrNotConnected
-	}
-	var result transport.BarrierHasRecoveryKeysResponse
-	if err := t.rpcCall(ctx, "barrier.hasRecoveryKeys", nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// BarrierGenerateRootToken generates a one-time root token.
-func (t *Transport) BarrierGenerateRootToken(ctx context.Context, req *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	if !t.IsConnected() {
-		return nil, ErrNotConnected
-	}
-	var result transport.BarrierRootTokenResponse
-	if err := t.rpcCall(ctx, "barrier.generateRootToken", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -2125,188 +1932,11 @@ func (t *Transport) OIDCCredentialDevicePoll(ctx context.Context, req *transport
 
 // BackupService methods (go-xkms#728).
 
-// CreateBackup initiates a new backup with the specified options.
-func (t *Transport) CreateBackup(ctx context.Context, req *transport.BackupRequest) (*transport.BackupInfo, error) {
-	var result transport.BackupInfo
-	if err := t.rpcCall(ctx, "xkms.createBackup", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// ListBackups returns metadata for all available backups.
-func (t *Transport) ListBackups(ctx context.Context) ([]transport.BackupInfo, error) {
-	var result transport.ListBackupsResponse
-	if err := t.rpcCall(ctx, "xkms.listBackups", nil, &result); err != nil {
-		return nil, err
-	}
-	return result.Backups, nil
-}
-
-// GetBackup returns metadata for a specific backup by ID.
-func (t *Transport) GetBackup(ctx context.Context, id string) (*transport.BackupInfo, error) {
-	params := map[string]string{"id": id}
-	var result transport.BackupInfo
-	if err := t.rpcCall(ctx, "xkms.getBackup", params, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// DeleteBackup removes a backup by ID.
-func (t *Transport) DeleteBackup(ctx context.Context, id string) error {
-	params := map[string]string{"id": id}
-	return t.rpcCall(ctx, "xkms.deleteBackup", params, nil)
-}
-
-// RestoreBackup restores data from a backup.
-func (t *Transport) RestoreBackup(ctx context.Context, req *transport.RestoreRequest) (*transport.RestoreResult, error) {
-	var result transport.RestoreResult
-	if err := t.rpcCall(ctx, "xkms.restoreBackup", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// VerifyBackup verifies the integrity of a backup by computing and comparing
-// checksums.
-func (t *Transport) VerifyBackup(ctx context.Context, id string) (*transport.VerifyResult, error) {
-	params := map[string]string{"id": id}
-	var result transport.VerifyResult
-	if err := t.rpcCall(ctx, "xkms.verifyBackup", params, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
 // CustodianGroupService methods.
-
-// CreateCustodianGroup creates a new custodian group.
-func (t *Transport) CreateCustodianGroup(ctx context.Context, req *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	var result transport.CreateCustodianGroupResponse
-	if err := t.rpcCall(ctx, "xkms.createCustodianGroup", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// GetCustodianGroup retrieves a custodian group by ID.
-func (t *Transport) GetCustodianGroup(ctx context.Context, groupID string) (*transport.GetCustodianGroupResponse, error) {
-	params := map[string]string{"group_id": groupID}
-	var result transport.GetCustodianGroupResponse
-	if err := t.rpcCall(ctx, "xkms.getCustodianGroup", params, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// ListCustodianGroups returns all custodian groups.
-func (t *Transport) ListCustodianGroups(ctx context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	var result transport.ListCustodianGroupsResponse
-	if err := t.rpcCall(ctx, "xkms.listCustodianGroups", nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// DeleteCustodianGroup deletes a custodian group by ID.
-func (t *Transport) DeleteCustodianGroup(ctx context.Context, groupID string) error {
-	params := map[string]string{"group_id": groupID}
-	return t.rpcCall(ctx, "xkms.deleteCustodianGroup", params, nil)
-}
-
-// AddCustodianMember adds a member to a custodian group.
-func (t *Transport) AddCustodianMember(ctx context.Context, req *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	var result transport.AddCustodianMemberResponse
-	if err := t.rpcCall(ctx, "xkms.addCustodianMember", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// RemoveCustodianMember removes a member from a custodian group.
-func (t *Transport) RemoveCustodianMember(ctx context.Context, req *transport.RemoveCustodianMemberRequest) error {
-	return t.rpcCall(ctx, "xkms.removeCustodianMember", req, nil)
-}
-
-// DistributeShares triggers share distribution for a custodian group.
-func (t *Transport) DistributeShares(ctx context.Context, req *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	var result transport.DistributeSharesResponse
-	if err := t.rpcCall(ctx, "xkms.distributeShares", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
 
 // ShareService methods.
 
-// SubmitShare submits a Shamir share for storage.
-func (t *Transport) SubmitShare(ctx context.Context, req *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	var result transport.SubmitShareResponse
-	if err := t.rpcCall(ctx, "xkms.submitShare", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// ListShares returns all stored shares.
-func (t *Transport) ListShares(ctx context.Context) (*transport.ListSharesResponse, error) {
-	var result transport.ListSharesResponse
-	if err := t.rpcCall(ctx, "xkms.listShares", nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// GetShare returns a single stored share. Share material is never included
-// in the response — the server returns metadata only.
-func (t *Transport) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
-	var result transport.ShareInfo
-	if err := t.rpcCall(ctx, "xkms.getShare", shareParams(serverURL, groupID, shareIndex), &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// DeleteShare removes a single stored share.
-func (t *Transport) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
-	var result struct{}
-	return t.rpcCall(ctx, "xkms.deleteShare", shareParams(serverURL, groupID, shareIndex), &result)
-}
-
-// shareParams builds the JSON-RPC parameter object addressing a single share.
-func shareParams(serverURL, groupID string, shareIndex int) map[string]any {
-	return map[string]any{
-		"server_url":  serverURL,
-		"group_id":    groupID,
-		"share_index": shareIndex,
-	}
-}
-
-// GetShareCollectionStatus returns the share collection status for a group.
-func (t *Transport) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
-	params := map[string]string{"group_id": groupID}
-	var result transport.ShareCollectionStatus
-	if err := t.rpcCall(ctx, "xkms.getShareCollectionStatus", params, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
 // AuditService methods.
-
-// QueryAudit returns one page of audit events from the tamper-evident audit
-// chain owned by the embedded qrdb node.
-func (t *Transport) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
-	if filter == nil {
-		return nil, transport.ErrInvalidRequest
-	}
-	var result transport.AuditPage
-	if err := t.rpcCall(ctx, "xkms.queryAudit", filter, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
 
 // TenantService methods.
 
@@ -2344,26 +1974,6 @@ func (t *Transport) DeleteTenant(ctx context.Context, tenantID string) error {
 	return t.rpcCall(ctx, "xkms.deleteTenant", params, nil)
 }
 
-// TenantBarrierInit initializes the barrier for a tenant.
-func (t *Transport) TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error {
-	return t.rpcCall(ctx, "xkms.tenantBarrierInit", req, nil)
-}
-
-// TenantBarrierUnseal unseals the barrier for a tenant.
-func (t *Transport) TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error {
-	return t.rpcCall(ctx, "xkms.tenantBarrierUnseal", req, nil)
-}
-
-// TenantBarrierStatus reports the status of a per-tenant barrier.
-func (t *Transport) TenantBarrierStatus(ctx context.Context, tenantID string) (*transport.TenantBarrierStatusResponse, error) {
-	params := map[string]string{"tenant_id": tenantID}
-	var result transport.TenantBarrierStatusResponse
-	if err := t.rpcCall(ctx, "xkms.tenantBarrierStatus", params, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
 // UpdateTenantEntitlements updates a tenant's feature entitlements.
 func (t *Transport) UpdateTenantEntitlements(ctx context.Context, req *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
 	var result transport.UpdateTenantEntitlementsResponse
@@ -2383,61 +1993,6 @@ func (t *Transport) UpdateTenantQuotas(ctx context.Context, req *transport.Updat
 }
 
 // Init Ceremony Methods
-
-// GetInitStatus returns the current init ceremony state.
-func (t *Transport) GetInitStatus(ctx context.Context) (*transport.InitStatusResponse, error) {
-	var result transport.InitStatusResponse
-	if err := t.rpcCall(ctx, "init.getStatus", nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// ClaimCertBegin begins the certificate claim process for an officer.
-func (t *Transport) ClaimCertBegin(ctx context.Context, req *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	var result transport.ClaimCertBeginResponse
-	if err := t.rpcCall(ctx, "init.claimCertBegin", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// ClaimCertComplete completes the certificate claim by verifying the officer's signature.
-func (t *Transport) ClaimCertComplete(ctx context.Context, req *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	var result transport.ClaimCertCompleteResponse
-	if err := t.rpcCall(ctx, "init.claimCertComplete", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// ClaimShare retrieves the Shamir share for the named officer.
-func (t *Transport) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
-	var result transport.ClaimShareBeginResponse
-	if err := t.rpcCall(ctx, "init.claimShareBegin", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// ClaimShareComplete completes the Shamir share claim handshake for the named
-// officer.
-func (t *Transport) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
-	var result transport.ClaimShareCompleteResponse
-	if err := t.rpcCall(ctx, "init.claimShareComplete", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// SignCSRInit signs a CSR during initialization with SO authorization.
-func (t *Transport) SignCSRInit(ctx context.Context, req *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
-	var result transport.SignCSRInitResponse
-	if err := t.rpcCall(ctx, "init.signCSR", req, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
 
 // Credential Management Methods
 

@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -71,7 +72,7 @@ func newClusterTestCA(t *testing.T, cfg *MultiIdentityCAConfig) (*CA, xkms.Backe
 	require.NoError(t, err)
 
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(storage.NewMemory()),
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	require.NoError(t, err)
 
@@ -228,7 +229,7 @@ func TestLoad_MissingNonSelectedIntermediateFails(t *testing.T) {
 	// the cluster intermediate is missing, so Load must fail closed instead
 	// of leaving a non-selected identity silently unusable.
 	partial, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(storage.NewMemory()),
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	require.NoError(t, err)
 	rootCert, err := testCA.certStore.GetCertificate("Test Root CA")

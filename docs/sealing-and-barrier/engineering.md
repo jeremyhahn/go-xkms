@@ -1,6 +1,6 @@
 # Sealing and Barrier — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-03
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Exported surface — `pkg/seal`
 
@@ -56,10 +56,10 @@ func (r *AutodetectResult) Close() error
 
 ### Cloud KMS strategy composition (`cloud_provision.go`, go-xkms#757)
 
-The ONE function `xkmsd` (`pkg/server/seal_strategies.go`) and `xkey`
-(`go-xkms/xkey`, which has no backend/provider registry of its own) both
-call to turn an already-constructed cloud KMS backend into a
-`CloudKMSStrategy`:
+The ONE function `xkmsd` (`pkg/embeddednode/node_seal_cloud.go`, for the
+node seal) and `xkey` (`go-xkms/xkey`, which has no backend/provider
+registry of its own) both call to turn an already-constructed cloud KMS
+backend into a `CloudKMSStrategy`:
 
 ```go
 const SealKeyCN = "xkms-barrier-seal"
@@ -85,9 +85,8 @@ provisions (creates on first use, reuses thereafter, via `EnsureSealKey`)
 the symmetric wrapping key identified by `SealKeyAttributes(store)` — the
 fixed `SealKeyCN` identifies the key's *purpose* (`"xkms-barrier-seal"`) to
 every backend, but is never itself passed to a cloud KMS as a key ID — and
-wraps the provider's `types.Sealer` in a `CloudKMSStrategy`. `pkg/server`'s
-own `buildHardwareSealStrategy` calls this for its four cloud IDs and
-continues to wrap TPM2/PKCS11 (not shared with xkey) inline; see
+wraps the provider's `types.Sealer` in a `CloudKMSStrategy`.
+`pkg/embeddednode` calls this for its four cloud node seals; see
 `xkey/docs/seal/architecture.md` for xkey's side of the composition
 (per-provider backend construction gated by that provider's build tag, then
 this same call).
@@ -170,9 +169,74 @@ silent answer and errors on everything else:
   caller addressing a different KMS key than the one actually recorded,
   with nothing surfaced to say so.
 
+### Barrier and registry (`barrier_adapter.go`)
+
+The barrier and its registry are go-qrdb's types, aliased; go-xkms adds no
+wrapper:
+
+```go
+type Barrier         = qrdbsdk.StorageBarrier
+type TenantBarrier   = qrdbsdk.TenantBarrier
+type BarrierRegistry = qrdbsdk.BarrierRegistry
+
+func NewBarrier(logger *slog.Logger, base storage.Backend, config BarrierConfig, strategies ...SealingStrategy) (*Barrier, error)
+func NewTenantBarrier(tenantID string, logger *slog.Logger, base storage.Backend, config BarrierConfig, strategies ...SealingStrategy) (*TenantBarrier, error)
+func NewBarrierRegistry(system *Barrier, opts ...BarrierRegistryOption) (*BarrierRegistry, error)
+func NewHardwareStrategyRegistry(strategies ...SealingStrategy) (StrategyRegistry, error)
+func NewHardwareTenantService(store qrdbsdk.StorageBackend, registry *BarrierRegistry, logger *slog.Logger, strategies []SealingStrategy, opts ...TenantServiceOption) (TenantService, error)
+```
+
+`NewBarrier` and `NewTenantBarrier` accept an xkms `storage.Backend` and
+guard it for go-qrdb's `StorageBackend` contract (the optional
+compare-and-delete, compare-and-swap and fenced-create capabilities, and the
+not-found sentinel); a nil base stays nil, so go-qrdb's own nil checks still
+fire. `NewBarrierRegistry` refuses a nil system barrier with
+`ErrNilSystemBarrier`. A running xkmsd builds none of these: it adopts the
+node's `BarrierRegistry()`. They serve xkey and tests.
+
+A hardware or cloud strategy whose backend refuses to unseal the root key
+returns `*RootKeyUnsealError{Strategy, Err}`. It unwraps to go-qrdb's
+`ErrInvalidCredentials` and to the backend's own error, so a wrong TPM,
+token or KMS key surfaces through `node.Unseal`, `UnsealTenant` and a
+tenant barrier's `Unseal` as go-qrdb's typed credential error.
+
+### Node seal wiring (`pkg/embeddednode`)
+
+```go
+type ResolvedNodeSeal struct {
+	Enabled  bool
+	Strategy seal.SealingStrategy
+	TPM      types.Sealer
+	Close    func() error
+}
+
+func ResolveNodeSeal(cfg *config.Config, logger *slog.Logger) (ResolvedNodeSeal, error)
+func NodeSealOptions(res ResolvedNodeSeal) ([]qrdbnode.NodeOption, []qrdbsdk.ServerOption, error)
+const CloudNodeSealSubdir = "node-seal"
+```
+
+`ResolveNodeSeal` returns `Enabled` only for a standalone datastore with
+`barrier.enabled`. It builds the configured strategy: `tpm2` from the
+platform TPM, `pkcs11` with the PIN released from the pre-barrier store,
+the cloud strategies from their backend over
+`<datastore.path>/node-seal/<strategy>`, and `vault` with its token released
+from the pre-barrier store. `none`, `passphrase` and `shamir` leave
+`Strategy` nil; go-qrdb builds those itself. A cloud strategy not compiled
+into the binary (its build tag is absent) is a `*NodeSealError`.
+
+`NodeSealOptions` is the only place a strategy reaches the node. For an
+enabled seal it returns `node.WithTenantIsolation`,
+`node.WithDefaultTenantEntitlements` (every isolation mode, dedicated Raft,
+volume storage, dedicated WAL and system-managed auto-unseal) and, with a
+strategy, `node.WithSealStrategy` plus the server option
+`sdk.WithStrategyRegistry` holding the same strategy, so a per-tenant
+barrier can be sealed by it. A registry failure is a `*NodeSealError`;
+nothing is logged and skipped. `OpenEmbeddedNode` and `pkg/server` both
+call it.
+
 ### Other components
 
-`barrier_adapter.go`, `barrier_putifabsent.go` (CAS init),
+`barrier_putifabsent.go` (CAS init),
 `hardware_encryptor.go`, `platform_sealer.go`, `platform_store.go`,
 `platform_store_tenant.go`, `secret_sealer.go`, `audit.go`, `config.go`,
 `errors.go`, `policy/`.
@@ -199,26 +263,6 @@ silent answer and errors on everything else:
   opens sessions.
 - **Tenant barriers are independent.** A tenant barrier's state does not affect
   the platform barrier.
-- **The system barrier and the PCR policies are platform-scoped** (go-xkms#1227).
-  Every system-barrier method of `XKMSService` refuses a tenant-scoped caller
-  with `*xkms.TenantBindingError` before the barrier is touched
-  (`pkg/xkms/servicer_barrier.go:89,117,128,139,170,205,236,253,278,300,314,325,342`),
-  and so does every `Policy*` method (`pkg/xkms/servicer_policy.go:42,66,84,106,120,138,160`).
-  No transport holds the barrier or the policy manager: REST, gRPC/Unix,
-  MCP and the ACME admin plane's `/admin/barrier/*` routes call the service
-  (the admin plane through its `SystemBarrier` interface,
-  `pkg/acme/admin/barrier_service.go:199`, which `*xkms.XKMSService`
-  satisfies and xkmsd supplies at `cmd/xkmsd/admin.go:186-194`;
-  go-xkms#1244). REST's barrier initialize and unseal keep the secret in
-  protected memory end to end through `BarrierInitializeWithCredentials` /
-  `BarrierUnsealWithCredentials` (`pkg/xkms/servicer_barrier.go:88,116`), which
-  take a `seal.Credentials` the caller owns. `BarrierEnableEncryption` binds
-  its target instead (`pkg/xkms/servicer_barrier.go:384`).
-- **A Shamir initialize request that states no shape uses the configured
-  one.** `BarrierInitializeShamir` applies the request's threshold/total only
-  when either is non-zero (`pkg/xkms/servicer_barrier.go:179`); the REST,
-  gRPC and MCP wire forms carry only the secret, and routing them through the
-  service must not overwrite the barrier's configured shape with zeros.
 - **Data-level sealing stays inside the caller's tenant** (go-xkms#1228).
   `XKMSService.Seal` / `Unseal` resolve the backend with
   `resolveTenantBackend` (`pkg/xkms/servicer_seal.go:157`, `:237`) and find
@@ -333,13 +377,58 @@ Per-strategy credentials:
 | Strategy | Credential |
 |---|---|
 | `tpm2` | platform/TPM authorization, plus PCR policy where configured |
-| `pkcs11` | SO PIN and/or user PIN |
+| `pkcs11` | the token user PIN; for the node seal and xkey's barrier, the PIN sealed in the pre-barrier store (see below) |
 | `awskms` / `gcpkms` / `azurekv` / `vault` | the provider's own ambient credential chain by default, from the **process's** environment — `xkmsd`'s or `xkey`'s, whichever builds the strategy (go-xkms#757); an explicit credential is a `*types.SecretValue` config reference, never a literal |
 | `passphrase` | a passphrase |
 | `shamir` | M-of-N shares |
 | `none` | none — encryption disabled |
 
-A TPM2 sealed object is bound to a named TPM policy (`pkg/tpmpolicy`, [`../tpm-policies/`](../tpm-policies/)) through `SealRequest.TPMPolicy`; the old PCR-selection seal fields were removed because they bound nothing.
+A TPM2 sealed object is bound to a named TPM policy (`pkg/tpm2/policy`, [`../tpm-policies/`](../tpm-policies/)) through `SealRequest.TPMPolicy`; the old PCR-selection seal fields were removed because they bound nothing.
+
+**PKCS#11 node seal and the pre-barrier store (go-xkms#677).** With
+`barrier.strategy: pkcs11`, `embeddednode.ResolveNodeSeal`
+(`pkg/embeddednode/embedded_node.go`) calls `resolvePKCS11NodeSeal`
+(`pkg/embeddednode/node_seal_pkcs11.go`) and returns a PKCS#11 node seal. It
+never falls back to the "not yet wired" warning path. The steps are:
+
+1. `embeddednode.OpenPreseal` opens the TPM that `backends.tpm2` configures,
+   and the store in `<datastore.path>/preseal` (`PresealSubdir`).
+2. `pkcs11strategy.BuildWithSealedPIN` (`pkg/pkcs11strategy/sealed_pin.go`)
+   releases `seal.SecretPKCS11PIN` (`platform/pkcs11-pin`), holds it as a
+   `types.SecretValue`, wipes the released bytes, and calls
+   `pkcs11strategy.Build` against `backends.pkcs11.library`/`token` with the
+   key CN `xkms-node-seal-pkcs11`.
+3. The store and the TPM are closed. `ResolvedNodeSeal.Close` releases the
+   PKCS#11 session.
+
+xkey's barrier takes the same path through
+`sdk/go.BuildPKCS11StrategyWithSealedPIN`, with key CN `xkey-barrier-pkcs11`.
+
+`pkg/preseal` surface: `Open(tpm, dir, logger)`, `New(tpm, records, logger)`,
+`(*Store).Put/Get/Close`, and `PKCS11PIN`. `TPM` is `types.Sealer` plus
+`PlatformSRKAttributes()`. `New` refuses a TPM with no enrolled Platform SRK
+(`*PlatformSRKError`), because go-xkms seals under no other parent.
+
+| Error | When |
+|---|---|
+| `ErrTPMRequired`, `ErrRecordsRequired`, `ErrDirRequired` | a nil TPM, a nil record backend, or an empty directory |
+| `*PlatformSRKError` | the Platform SRK is not enrolled |
+| `*OpenError` | the record directory or the sealed store cannot be opened |
+| `*EmptySecretError` | `Put` with an empty secret |
+| `*SealError` | the TPM refuses to seal |
+| `*NotFoundError` | `Get` of a name that was never sealed |
+| `*RefusedError` | the TPM refuses to release: the platform PCRs, or the TPM, differ from the ones it was sealed under |
+| `*UnsealError` | any other unseal failure |
+| `pkcs11strategy.ErrPINSourceRequired` | `BuildWithSealedPIN` with a nil store |
+| `*pkcs11strategy.BuildError` | the release, or the login with the released PIN, failed; the cause is kept |
+| `*embeddednode.NodeSealError` | wraps every node-seal failure, including `backends.pkcs11` not being set |
+
+Tests:
+- `pkg/preseal/store_simulator_test.go` covers the round trip and refusal
+  after a PCR change, on the simulator.
+- `pkg/pkcs11strategy/sealed_pin_test.go` and `builder_softhsm_test.go`
+  cover the release, the wipe and a SoftHSM login.
+- `pkg/embeddednode/node_seal_pkcs11_*_test.go` covers the node seal.
 
 **TPM2 key directory.** Both the general TPM2 backend
 (`pkg/server/backend_tpm2.go`) and the node-barrier flip's `tpm2` strategy
@@ -389,18 +478,12 @@ The seal store is **fully implemented** across all transports:
   `seal:initialize-shamir`, `barrier:unseal-share`, `seal:rekey`,
   `seal:generate-recovery`, `seal:recover-with-keys`, `seal:rotate-root-key`,
   `seal:enable-encryption`, `keys:encrypt`, `keys:decrypt`, `keys:get`)
-- **gRPC / Unix** (`xkmsv1.KeystoreService.Barrier*` and `Seal*` methods)
+- **gRPC / Unix** (`xkmsv1.KeystoreService.Seal*` methods)
 - **QUIC** (same routes as REST)
-- **MCP** (`barrier.initialize`, `barrier.unseal`, `barrier.seal`,
-  `barrier.status`, `barrier.initializeShamir`, `barrier.unsealShare`,
-  `barrier.unsealShares`, `barrier.rekey`, `barrier.generateRecoveryKeys`,
-  `barrier.recoverWithKeys`, `barrier.deleteRecoveryKeys`,
-  `barrier.hasRecoveryKeys`, `barrier.generateRootToken`,
-  `barrier.enableEncryption`, `xkms.seal`, `xkms.unseal`, `xkms.canSeal`)
+- **MCP** (`xkms.seal`, `xkms.unseal`, `xkms.canSeal`)
 - **USB** — documented structural exception; not a native transport.
 
-RBAC is applied on every route: barrier operations require `seal:*` and
-`barrier:*` permissions; data sealing requires `keys:encrypt`/`keys:decrypt`.
+RBAC is applied on every route: data sealing requires `keys:encrypt`/`keys:decrypt`.
 
 Migration: bump `sealedRootKeyVersion` for any format change and handle the old
 version on read. A root key that cannot be unsealed is unrecoverable data loss,

@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // strategyFileName is the file recording the governing PIN strategy, kept
@@ -100,11 +101,7 @@ func SaveStrategy(pinDir string, strategy qrdbsdk.PINStrategyID) error {
 		return &StrategySaveError{Path: path, Cause: err}
 	}
 
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return &StrategySaveError{Path: path, Cause: err}
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := fsutil.WriteFileAtomic(path, data, 0600); err != nil {
 		return &StrategySaveError{Path: path, Cause: err}
 	}
 

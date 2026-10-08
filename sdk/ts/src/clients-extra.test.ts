@@ -24,9 +24,6 @@
  * the path string were wrong, so every case below asserts at least one of
  * those. Methods already covered by clients.test.ts or auth.test.ts are not
  * repeated here.
- *
- * `src/clients/factors.ts` is intentionally out of scope — a sibling agent
- * owns FactorsClient and its tests (src/factors.test.ts).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -242,49 +239,6 @@ describe('SealClient (seal/unseal)', () => {
   });
 });
 
-describe('BarrierClient (initialize/unseal/seal/shamir/recovery)', () => {
-  it('routes the plain initialize/unseal/seal lifecycle', async () => {
-    const fake = newFakeFetch({ body: {} });
-    const c = make(fake);
-    await c.barrier.initialize({ secret: 'x' });
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/barrier/initialize`);
-
-    await c.barrier.unseal({ secret: 'x' });
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/barrier/unseal`);
-
-    await c.barrier.seal();
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/barrier/seal`);
-    expect(fake.calls[2]?.body).toBeUndefined();
-  });
-
-  it('routes shamir batch unseal and rekey', async () => {
-    const fake = newFakeFetch({ body: {} });
-    const c = make(fake);
-    await c.barrier.shamirUnsealShares({ shares: ['s1', 's2'] });
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/barrier/shamir/unseal-shares`);
-
-    await c.barrier.rekey({ threshold: 2, total: 3 });
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/barrier/rekey`);
-  });
-
-  it('routes the recovery-key lifecycle', async () => {
-    const fake = newFakeFetch({ body: {} });
-    const c = make(fake);
-    await c.barrier.generateRecoveryKeys({ threshold: 2, total: 3 });
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/barrier/recovery/generate`);
-
-    await c.barrier.recoverWithKeys({ keys: ['k1', 'k2'] });
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/barrier/recovery/recover`);
-
-    await c.barrier.deleteRecoveryKeys();
-    expect(fake.calls[2]?.method).toBe('DELETE');
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/barrier/recovery/keys`);
-
-    await c.barrier.generateRootToken({ shares: ['s1', 's2'] });
-    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/barrier/recovery/root-token`);
-  });
-});
-
 describe('PinClient (set/change/verify)', () => {
   it('routes the SO and user PIN set/change/verify/reset endpoints', async () => {
     const fake = newFakeFetch({ body: {} });
@@ -344,71 +298,7 @@ describe('CaClient (issue/revoke/tcg endpoints)', () => {
   });
 });
 
-describe('ClusterClient (status/members, read-only)', () => {
-  it('routes status and members list', async () => {
-    const fake = newFakeFetch({ body: {} });
-    const c = make(fake);
-    await c.cluster.status();
-    expect(fake.calls[0]?.method).toBe('GET');
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/cluster/status`);
-
-    await c.cluster.members();
-    expect(fake.calls[1]?.method).toBe('GET');
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/cluster/members`);
-  });
-});
-
-describe('CustodianClient (list/get/delete group + members + distribute)', () => {
-  it('routes group list/get/delete', async () => {
-    const fake = newFakeFetch({ body: {} });
-    const c = make(fake);
-    await c.custodian.listGroups();
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/custodian/groups/`);
-
-    await c.custodian.getGroup('g1');
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/custodian/groups/g1`);
-
-    fake.respond({ status: 204 });
-    await c.custodian.deleteGroup('g1');
-    expect(fake.calls[2]?.method).toBe('DELETE');
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/custodian/groups/g1`);
-  });
-
-  it('routes addMember and distributeShares', async () => {
-    const fake = newFakeFetch({ body: {} });
-    const c = make(fake);
-    await c.custodian.addMember('g1', { user_id: 'u1', username: 'alice', method: 'webauthn' });
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/custodian/groups/g1/members`);
-    expect(fake.calls[0]?.body).toEqual({ user_id: 'u1', username: 'alice', method: 'webauthn' });
-
-    await c.custodian.distributeShares('g1');
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/custodian/groups/g1/distribute`);
-  });
-});
-
-describe('SharesClient (submit/list/delete)', () => {
-  it('routes submit, list, and delete', async () => {
-    const fake = newFakeFetch({ body: {} });
-    const c = make(fake);
-    await c.shares.submit({
-      server_url: 'https://s:8443',
-      group_id: 'g1',
-      share_index: 1,
-      share_data: 'ZGF0YQ==',
-    });
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/shares/submit`);
-
-    await c.shares.list();
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/shares/`);
-
-    fake.respond({ status: 204 });
-    await c.shares.delete('https://s:8443', 'g1', 1);
-    expect(fake.calls[2]?.method).toBe('DELETE');
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/shares/https%3A%2F%2Fs%3A8443/g1/1`);
-  });
-});
-
-describe('TenantsClient (list/get/delete/barrier/entitlements)', () => {
+describe('TenantsClient (list/get/delete/entitlements)', () => {
   it('routes list, get, delete', async () => {
     const fake = newFakeFetch({ body: { tenant: {} } });
     const c = make(fake);
@@ -424,24 +314,15 @@ describe('TenantsClient (list/get/delete/barrier/entitlements)', () => {
     expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/tenants/t1`);
   });
 
-  it('routes tenant barrier status/unseal and entitlements update', async () => {
-    const fake = newFakeFetch({
-      body: { tenant_id: 't1', sealed: false, hardware_backed: false },
-    });
+  it('routes the entitlements update', async () => {
+    const fake = newFakeFetch({ body: { tenant: {} } });
     const c = make(fake);
-    await c.tenants.barrierStatus('t1');
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/tenants/t1/barrier/status`);
-
-    await c.tenants.barrierUnseal('t1', { share: 'c2hhcmU=' });
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/tenants/t1/barrier/unseal`);
-
-    fake.respond({ body: { tenant: {} } });
     await c.tenants.updateEntitlements('t1', {
       tenant_id: 't1',
       entitlements: { allow_dedicated_raft: true },
     });
-    expect(fake.calls[2]?.method).toBe('PUT');
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/tenants/t1/entitlements`);
+    expect(fake.calls[0]?.method).toBe('PUT');
+    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/tenants/t1/entitlements`);
   });
 });
 
@@ -705,29 +586,6 @@ describe('TenantsClient (TPM mode and vTPM)', () => {
   });
 });
 
-describe('InitClient (claim-cert complete, claim-share, sign-csr)', () => {
-  it('routes claim-cert/complete and the claim-share ceremony', async () => {
-    const fake = newFakeFetch({ body: {} });
-    const c = make(fake);
-    await c.init.claimCertComplete({ username: 'so1', nonce: 'n', signature: 'c2ln' });
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/init/claim-cert/complete`);
-
-    await c.init.claimShareBegin({ username: 'so1' });
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/init/claim-share/begin`);
-
-    await c.init.claimShareComplete({ username: 'so1', nonce: 'n', signature: 'c2ln' });
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/init/claim-share/complete`);
-  });
-
-  it('routes the authenticated ceremony sign-csr', async () => {
-    const fake = newFakeFetch({ body: { cert_pem: 'PEM' } });
-    const c = make(fake);
-    await c.init.signCSR({ username: 'so1', so_pin: '1234', csr_pem: 'CSR', role: 'so' });
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/init/sign-csr`);
-    expect(fake.calls[0]?.headers['Authorization']).toBe('Bearer tk');
-  });
-});
-
 describe('CredentialsClient (submit)', () => {
   it('routes boot-credential submission', async () => {
     const fake = newFakeFetch({ body: { status: 'accepted' } });
@@ -947,7 +805,7 @@ describe('domain client error propagation', () => {
   it('surfaces a non-2xx response on a void (204-shaped) DELETE call as XkmsApiError', async () => {
     const fake = newFakeFetch({ status: 403, body: { error: 'forbidden' } });
     const c = make(fake);
-    const err = await c.custodian.deleteGroup('g1').catch((e: unknown) => e);
+    const err = await c.tenants.delete('t1').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(XkmsApiError);
     expect((err as XkmsApiError).status).toBe(403);
   });

@@ -20,7 +20,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,7 +30,7 @@ import (
 
 func newPKCS11StateGRPCService(t *testing.T) (*Service, *xkms.XKMSService) {
 	t.Helper()
-	store, err := pkcs11state.NewStore(storage.NewMemory())
+	store, err := pkcs11state.NewStore(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
 	xkmsSvc := &xkms.XKMSService{}
 	xkmsSvc.SetPKCS11StateStore(store)

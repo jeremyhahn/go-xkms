@@ -291,15 +291,6 @@ func TestAuthorizeMethod_EveryPrivilegedMethod(t *testing.T) {
 				// an authorization failure once the grant is held.
 				assert.NotEqual(t, ErrCodeForbidden, resp.Error.Code,
 					"holder of %s must not be denied: %s", grant, resp.Error.Message)
-				// authedCtx carries an identity, so the gate never reports
-				// ErrCodeUnauthorized here. The one handler-level
-				// ErrCodeUnauthorized is the share-claim steps' missing mTLS
-				// peer certificate (ErrClientCertRequired), which is not an
-				// authorization failure.
-				if resp.Error.Code == ErrCodeUnauthorized {
-					assert.Equal(t, ErrClientCertRequired.Error(), resp.Error.Message,
-						"holder of %s must not be challenged: %s", grant, resp.Error.Message)
-				}
 			}
 		})
 	}
@@ -565,106 +556,75 @@ func TestIsDispatchable(t *testing.T) {
 var goldenMethodPermissions = map[string]string{
 	// Key, backend, certificate, sealing, and PIV surface —
 	// pkg/api/grpc/service.go, pkg/api/quic/handlers*.go.
-	"xkms.asymmetricDecrypt":        "keys:decrypt",
-	"xkms.asymmetricEncrypt":        "keys:encrypt",
-	"xkms.attestKey":                "keys:get",
-	"xkms.canSeal":                  "keys:get",
-	"xkms.certExists":               "certs:read",
-	"xkms.copyKey":                  "keys:create",
-	"xkms.decrypt":                  "keys:decrypt",
-	"xkms.deleteCert":               "certs:revoke",
-	"xkms.deleteKey":                "keys:delete",
-	"xkms.deletePIVCertificate":     "piv:delete",
-	"xkms.deleteShare":              "barrier:unseal-share",
-	"xkms.deriveKeyECDH":            "keys:derive",
-	"xkms.encrypt":                  "keys:encrypt",
-	"xkms.exportKey":                "keys:export",
-	"xkms.exportKeyMaterial":        "keys:export",
-	"xkms.exportPIVCertificate":     "piv:read",
-	"xkms.generateKey":              "keys:create",
-	"xkms.generatePIVCSR":           "piv:use",
-	"xkms.generatePIVKey":           "piv:write",
-	"xkms.getBackend":               "backends:read",
-	"xkms.getCert":                  "certs:read",
-	"xkms.getCertChain":             "certs:read",
-	"xkms.getImportParameters":      "keys:import",
-	"xkms.getKey":                   "keys:get",
-	"xkms.getPIVCertificate":        "piv:read",
-	"xkms.getShare":                 "ceremony:status",
-	"xkms.getShareCollectionStatus": "ceremony:status",
-	"xkms.getTLSCertificate":        "certs:read",
-	"xkms.importKey":                "keys:import",
-	"xkms.importPIVCertificate":     "piv:write",
-	"xkms.listBackends":             "backends:list",
-	"xkms.listCerts":                "certs:list",
-	"xkms.listKeys":                 "keys:list",
-	"xkms.listPIVSlots":             "piv:read",
-	"xkms.listShares":               "ceremony:status",
-	"xkms.queryAudit":               "audit:read",
-	"xkms.rotateKey":                "keys:rotate",
-	"xkms.listKeyVersions":          "keys:list",
-	"xkms.enableKeyVersion":         "keys:rotate",
-	"xkms.disableKeyVersion":        "keys:rotate",
-	"xkms.retireKeyVersion":         "keys:delete",
-	"xkms.enableAllKeyVersions":     "keys:rotate",
-	"xkms.disableAllKeyVersions":    "keys:rotate",
-	"xkms.rotateScopeKeys":          "keys:rotate",
-	"xkms.saveCert":                 "certs:generate",
-	"xkms.saveCertChain":            "certs:generate",
-	"xkms.seal":                     "keys:encrypt",
-	"xkms.sign":                     "keys:sign",
-	"xkms.storePIVCertificate":      "piv:write",
-	"xkms.submitShare":              "barrier:unseal-share",
-	"xkms.unseal":                   "keys:decrypt",
-	"xkms.unwrapKey":                "keys:unwrap",
-	"xkms.unwrapKeyByID":            "keys:unwrap",
-	"xkms.verify":                   "keys:verify",
-	"xkms.wrapKey":                  "keys:wrap",
-	"xkms.wrapKeyByID":              "keys:wrap",
+	"xkms.asymmetricDecrypt":     "keys:decrypt",
+	"xkms.asymmetricEncrypt":     "keys:encrypt",
+	"xkms.attestKey":             "keys:get",
+	"xkms.canSeal":               "keys:get",
+	"xkms.certExists":            "certs:read",
+	"xkms.copyKey":               "keys:create",
+	"xkms.decrypt":               "keys:decrypt",
+	"xkms.deleteCert":            "certs:revoke",
+	"xkms.deleteKey":             "keys:delete",
+	"xkms.deletePIVCertificate":  "piv:delete",
+	"xkms.deriveKeyECDH":         "keys:derive",
+	"xkms.encrypt":               "keys:encrypt",
+	"xkms.exportKey":             "keys:export",
+	"xkms.exportKeyMaterial":     "keys:export",
+	"xkms.exportPIVCertificate":  "piv:read",
+	"xkms.generateKey":           "keys:create",
+	"xkms.generatePIVCSR":        "piv:use",
+	"xkms.generatePIVKey":        "piv:write",
+	"xkms.getBackend":            "backends:read",
+	"xkms.getCert":               "certs:read",
+	"xkms.getCertChain":          "certs:read",
+	"xkms.getImportParameters":   "keys:import",
+	"xkms.getKey":                "keys:get",
+	"xkms.getPIVCertificate":     "piv:read",
+	"xkms.getTLSCertificate":     "certs:read",
+	"xkms.importKey":             "keys:import",
+	"xkms.importPIVCertificate":  "piv:write",
+	"xkms.listBackends":          "backends:list",
+	"xkms.listCerts":             "certs:list",
+	"xkms.listKeys":              "keys:list",
+	"xkms.listPIVSlots":          "piv:read",
+	"xkms.rotateKey":             "keys:rotate",
+	"xkms.listKeyVersions":       "keys:list",
+	"xkms.enableKeyVersion":      "keys:rotate",
+	"xkms.disableKeyVersion":     "keys:rotate",
+	"xkms.retireKeyVersion":      "keys:delete",
+	"xkms.enableAllKeyVersions":  "keys:rotate",
+	"xkms.disableAllKeyVersions": "keys:rotate",
+	"xkms.rotateScopeKeys":       "keys:rotate",
+	"xkms.saveCert":              "certs:enroll",
+	"xkms.saveCertChain":         "certs:enroll",
+	"xkms.seal":                  "keys:encrypt",
+	"xkms.sign":                  "keys:sign",
+	"xkms.storePIVCertificate":   "piv:write",
+	"xkms.unseal":                "keys:decrypt",
+	"xkms.unwrapKey":             "keys:unwrap",
+	"xkms.unwrapKeyByID":         "keys:unwrap",
+	"xkms.verify":                "keys:verify",
+	"xkms.wrapKey":               "keys:wrap",
+	"xkms.wrapKeyByID":           "keys:wrap",
 
 	// Certificate authority — pkg/api/quic/handlers_ca.go.
 	"xkms.ca.bundle":      "certs:read",
 	"xkms.ca.certificate": "certs:read",
 	"xkms.ca.crl":         "certs:read",
 	"xkms.ca.is-revoked":  "certs:read",
-	"xkms.ca.issue":       "certs:generate",
+	"xkms.ca.issue":       "certs:issue",
 	"xkms.ca.revoke":      "certs:revoke",
-	"xkms.ca.sign-csr":    "certs:generate",
+	"xkms.ca.sign-csr":    "certs:issue",
 
 	// TCG certificate authority — pkg/api/quic/handlers_ca_tcg.go.
-	"xkms.ca.tcg.enroll":    "certs:generate",
-	"xkms.ca.tcg.issue-ak":  "certs:generate",
-	"xkms.ca.tcg.issue-ek":  "certs:generate",
-	"xkms.ca.tcg.issue-lak": "certs:generate",
-	"xkms.ca.tcg.sign-csr":  "certs:generate",
-
-	// Barrier lifecycle — pkg/api/quic/handlers_barrier_pin.go,
-	// handlers_barrier_shamir.go, pkg/api/rest/server.go.
-	"barrier.deleteRecoveryKeys":   "seal:generate_recovery",
-	"barrier.enableEncryption":     "seal:enable_encryption",
-	"barrier.generateRecoveryKeys": "seal:generate_recovery",
-	"barrier.generateRootToken":    "seal:rotate_root_key",
-	"barrier.hasRecoveryKeys":      "seal:status",
-	"barrier.initialize":           "seal:bootstrap",
-	"barrier.initializeShamir":     "seal:initialize_shamir",
-	"barrier.recoverWithKeys":      "seal:recover_with_keys",
-	"barrier.rekey":                "seal:rekey",
-	"barrier.seal":                 "seal:seal",
-	"barrier.status":               "seal:status",
-	"barrier.unseal":               "seal:unseal",
-	"barrier.unsealShare":          "barrier:unseal-share",
-	"barrier.unsealShares":         "seal:unseal",
+	"xkms.ca.tcg.enroll":    "certs:issue",
+	"xkms.ca.tcg.issue-ak":  "certs:issue",
+	"xkms.ca.tcg.issue-ek":  "certs:issue",
+	"xkms.ca.tcg.issue-lak": "certs:issue",
+	"xkms.ca.tcg.sign-csr":  "certs:issue",
 
 	// Trust bootstrap listener (go-xkms#632).
 	"bootstrap.showKeys": "bootstrap:read",
-
-	// Init ceremony — pkg/api/quic/handlers_init_credentials.go.
-	"init.claimCertBegin":     "ceremony:claim_cert",
-	"init.claimCertComplete":  "ceremony:claim_cert",
-	"init.claimShareBegin":    "ceremony:claim_share_begin",
-	"init.claimShareComplete": "ceremony:claim_share_complete",
-	"init.getStatus":          "ceremony:status",
-	"init.signCSR":            "ceremony:sign_csr",
 
 	// Credential submission — pkg/api/quic/handlers_init_credentials.go.
 	"credentials.strategy": "credentials:strategy",
@@ -773,7 +733,7 @@ var goldenMethodPermissions = map[string]string{
 	"frost.signRound":      "keys:sign",
 	"frost.verify":         "keys:verify",
 
-	// PIN management — pkg/api/grpc/service_barrier_pin.go (go-xkms#773).
+	// PIN management — pkg/api/grpc/service_pin.go (go-xkms#773).
 	"xkms.changeSOPIN":      "pin:write",
 	"xkms.changeUserPIN":    "pin:write",
 	"xkms.getLockoutStatus": "pin:read",
@@ -783,34 +743,12 @@ var goldenMethodPermissions = map[string]string{
 	"xkms.verifySOPIN":      "pin:read",
 	"xkms.verifyUserPIN":    "pin:read",
 
-	// Whole-node backup/restore — pkg/api/grpc/service_backup.go (owner
-	// ruling 2026-09-30, go-xkms#728).
-	"xkms.createBackup":  "backup:create",
-	"xkms.listBackups":   "backup:list",
-	"xkms.getBackup":     "backup:read",
-	"xkms.deleteBackup":  "backup:delete",
-	"xkms.restoreBackup": "backup:restore",
-	"xkms.verifyBackup":  "backup:verify",
-
-	// Custodian groups — pkg/api/grpc/service_custodian_share_tenant.go
-	// (go-xkms#773).
-	"xkms.addCustodianMember":    "ceremony:enroll_custodian",
-	"xkms.createCustodianGroup":  "ceremony:enroll_custodian",
-	"xkms.deleteCustodianGroup":  "ceremony:revoke_custodian",
-	"xkms.distributeShares":      "ceremony:claim_share_begin",
-	"xkms.getCustodianGroup":     "ceremony:status",
-	"xkms.listCustodianGroups":   "ceremony:status",
-	"xkms.removeCustodianMember": "ceremony:revoke_custodian",
-
-	// Tenant administration — pkg/api/grpc/service_custodian_share_tenant.go
+	// Tenant administration — pkg/api/grpc/service_tenant.go
 	// (go-xkms#773).
 	"xkms.createTenant":             "tenants:create",
 	"xkms.deleteTenant":             "tenants:delete",
 	"xkms.getTenant":                "tenants:read",
 	"xkms.listTenants":              "tenants:list",
-	"xkms.tenantBarrierInit":        "tenant_barrier:init",
-	"xkms.tenantBarrierStatus":      "tenant_barrier:status",
-	"xkms.tenantBarrierUnseal":      "tenant_barrier:unseal",
 	"xkms.updateTenantEntitlements": "tenants:set_entitlements",
 	"xkms.updateTenantQuotas":       "tenants:set_quotas",
 

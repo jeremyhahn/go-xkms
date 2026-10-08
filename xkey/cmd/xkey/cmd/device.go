@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
@@ -464,7 +465,7 @@ func saveDevicesConfig(cfg *DevicesConfig) error {
 	}
 
 	// Write with restricted permissions (contains private keys)
-	return os.WriteFile(configPath, data, 0600)
+	return fsutil.WriteFileAtomic(configPath, data, 0600)
 }
 
 // lookupUserHome returns the home directory of the named account. It is a

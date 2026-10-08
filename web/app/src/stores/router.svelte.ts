@@ -25,10 +25,7 @@ export type RouteName =
   | "keys"
   | "certificates"
   | "ca"
-  | "barrier"
   | "tenants"
-  | "custodians"
-  | "shares"
   | "pin"
   | "piv"
   | "ssh"
@@ -37,11 +34,7 @@ export type RouteName =
   | "platform"
   | "tpmPolicies"
   | "users"
-  | "factors"
   | "frost"
-  | "audit"
-  | "cluster"
-  | "ceremony"
   | "settings"
   | "not-found";
 
@@ -63,10 +56,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/certs": "certificates",
   "/certificates": "certificates",
   "/ca": "ca",
-  "/barrier": "barrier",
   "/tenants": "tenants",
-  "/custodians": "custodians",
-  "/shares": "shares",
   "/pin": "pin",
   "/piv": "piv",
   "/ssh": "ssh",
@@ -75,11 +65,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/platform": "platform",
   "/tpm/policies": "tpmPolicies",
   "/users": "users",
-  "/factors": "factors",
   "/frost": "frost",
-  "/audit": "audit",
-  "/cluster": "cluster",
-  "/ceremony": "ceremony",
   "/settings": "settings",
 };
 

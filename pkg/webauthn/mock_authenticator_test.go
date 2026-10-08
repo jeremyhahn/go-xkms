@@ -263,9 +263,8 @@ func TestMockAuthenticator_FullRegistrationFlow(t *testing.T) {
 		AllowPublicRegistration: openRegistration(),
 	}
 
-	users := NewMemoryUserStore()
+	users, creds := newTestStores(t)
 	sessions := NewMemorySessionStoreWithTTL(5 * time.Minute)
-	creds := NewMemoryCredentialStore()
 
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
@@ -358,9 +357,8 @@ func TestMockAuthenticator_FullLoginFlow(t *testing.T) {
 		AllowPublicRegistration: openRegistration(),
 	}
 
-	users := NewMemoryUserStore()
+	users, creds := newTestStores(t)
 	sessions := NewMemorySessionStoreWithTTL(5 * time.Minute)
-	creds := NewMemoryCredentialStore()
 
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
@@ -462,9 +460,8 @@ func TestMockAuthenticator_CloneDetection(t *testing.T) {
 		AllowPublicRegistration: openRegistration(),
 	}
 
-	users := NewMemoryUserStore()
+	users, creds := newTestStores(t)
 	sessions := NewMemorySessionStoreWithTTL(5 * time.Minute)
-	creds := NewMemoryCredentialStore()
 
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
@@ -586,9 +583,8 @@ func TestMockAuthenticator_DiscoverableCredentials(t *testing.T) {
 		AllowPublicRegistration: openRegistration(),
 	}
 
-	users := NewMemoryUserStore()
+	users, creds := newTestStores(t)
 	sessions := NewMemorySessionStoreWithTTL(5 * time.Minute)
-	creds := NewMemoryCredentialStore()
 
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
@@ -667,9 +663,8 @@ func TestMockAuthenticator_MultipleCredentials(t *testing.T) {
 		AllowPublicRegistration: openRegistration(),
 	}
 
-	users := NewMemoryUserStore()
+	users, creds := newTestStores(t)
 	sessions := NewMemorySessionStoreWithTTL(5 * time.Minute)
-	creds := NewMemoryCredentialStore()
 
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,

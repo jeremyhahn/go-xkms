@@ -43,6 +43,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -102,8 +103,7 @@ func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
 	})
 	require.NoError(t, err)
 
-	certAdapter := storage.NewCertAdapter(storage.NewMemory())
-	certStore, err := certstore.New(&certstore.Config{CertStorage: certAdapter})
+	certStore, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	config := pkgca.DefaultMultiIdentityCAConfig()

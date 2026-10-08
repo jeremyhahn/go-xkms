@@ -455,7 +455,7 @@ func TestNewClientSecretCredential(t *testing.T) {
 		ClientSecret: secrettest.Literal(t, []byte("super-secret")),
 	}}
 
-	cred, err := b.newClientSecretCredential(nil)
+	cred, err := b.newClientSecretCredential(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("newClientSecretCredential() error = %v", err)
 	}

@@ -158,7 +158,7 @@ func TestAutoInitialize_WithBackendConfigs(t *testing.T) {
 }
 
 // TestAutoInitialize_WithDatastore proves a caller-supplied Datastore handle
-// (e.g. pkg/datastore.Open, or -- as here -- any storage.Backend, standing in
+// (e.g. pkg/compose.FactoryBackend over the datastore, or -- as here -- any storage.Backend, standing in
 // for one) is what every backend's key storage is created from: not a
 // resolved directory this package opens itself.
 func TestAutoInitialize_WithDatastore(t *testing.T) {

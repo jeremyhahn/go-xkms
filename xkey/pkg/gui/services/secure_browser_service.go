@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/urlsafety"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nssdb"
@@ -465,7 +466,7 @@ func (s *SecureBrowserService) syncFirefox(certs []*x509.Certificate) error {
 			Bytes: cert.Raw,
 		}
 		pemData := pem.EncodeToMemory(block)
-		if err := os.WriteFile(pemPath, pemData, 0o600); err != nil {
+		if err := fsutil.WriteFileAtomic(pemPath, pemData, 0o600); err != nil {
 			return &SentinelCauseError{Sentinel: ErrSecureBrowserCertExport, Cause: err}
 		}
 		certPaths = append(certPaths, pemPath)
@@ -548,7 +549,7 @@ func (s *SecureBrowserService) writeFirefoxPolicies(certPaths []string) error {
 		return &SentinelCauseError{Sentinel: ErrSecureBrowserPolicyWrite, Cause: err}
 	}
 
-	if err := os.WriteFile(policiesPath, data, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(policiesPath, data, 0o600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrSecureBrowserPolicyWrite, Cause: err}
 	}
 
@@ -596,7 +597,7 @@ func (s *SecureBrowserService) buildLaunchArgs(
 			// Sentinel file — empty, presence is the signal.
 			sentinelPath := filepath.Join(profileDir, "First Run")
 			if _, statErr := os.Stat(sentinelPath); os.IsNotExist(statErr) {
-				if writeErr := os.WriteFile(sentinelPath, []byte{}, 0o600); writeErr != nil {
+				if writeErr := fsutil.WriteFileAtomic(sentinelPath, []byte{}, 0o600); writeErr != nil {
 					err = &SentinelCauseError{Sentinel: ErrSecureBrowserLaunchFailed, Cause: writeErr}
 					return
 				}
@@ -621,7 +622,7 @@ func (s *SecureBrowserService) buildLaunchArgs(
 					`"sync_promo":{"show_on_first_run_allowed":false,"user_skipped":true},` +
 					`"signin":{"allowed":false,"allowed_on_next_startup":false},` +
 					`"metrics_reporting_enabled":false}`)
-				if writeErr := os.WriteFile(masterPrefsPath, masterPrefs, 0o600); writeErr != nil {
+				if writeErr := fsutil.WriteFileAtomic(masterPrefsPath, masterPrefs, 0o600); writeErr != nil {
 					err = &SentinelCauseError{Sentinel: ErrSecureBrowserLaunchFailed, Cause: writeErr}
 					return
 				}
@@ -799,7 +800,7 @@ func (s *SecureBrowserService) writeTrustHash(family nativemsg.Browser, hash str
 	if err := os.MkdirAll(s.baseDir, 0o700); err != nil {
 		return &SentinelCauseError{Sentinel: ErrSecureBrowserHashWrite, Cause: err}
 	}
-	if err := os.WriteFile(s.trustHashPath(family), []byte(hash), 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(s.trustHashPath(family), []byte(hash), 0o600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrSecureBrowserHashWrite, Cause: err}
 	}
 	return nil

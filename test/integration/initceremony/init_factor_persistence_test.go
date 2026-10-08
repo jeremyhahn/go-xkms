@@ -245,7 +245,7 @@ ca:
 
 // runInit runs `xkmsd init` to completion (it exits on its own) and fails
 // the test on a non-zero exit or a missing admin credential.
-func runInit(t *testing.T, bin, cfgPath, dataDir, soPin, userPin string) {
+func runInit(t *testing.T, bin, cfgPath, dataDir, soPin string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -255,7 +255,6 @@ func runInit(t *testing.T, bin, cfgPath, dataDir, soPin, userPin string) {
 		"--data-dir", dataDir,
 		"--hostname", "localhost",
 		"--so-pin", soPin,
-		"--user-pin", userPin,
 		"--barrier-strategy", "tpm2",
 		"--admin-factor", "mtls",
 	)
@@ -474,7 +473,7 @@ func TestInitPersistsAdminFactor_SurvivesRestart(t *testing.T) {
 	tpmPort := startTPM2Simulator(t)
 	cfgPath := writeMinimalConfig(t, dataDir, restPort, tpmPort)
 
-	runInit(t, bin, cfgPath, dataDir, "test-so-pin-0123456789", "test-user-pin-0123456789")
+	runInit(t, bin, cfgPath, dataDir, "test-so-pin-0123456789")
 
 	certPath := filepath.Join(dataDir, "admin-cert.pem")
 	keyPath := filepath.Join(dataDir, "admin-key.pem")

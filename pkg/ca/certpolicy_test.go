@@ -201,7 +201,7 @@ func setupTestCAWithEndpoints(t *testing.T) *CA {
 	require.NoError(t, err)
 
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(storage.NewMemory()),
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	require.NoError(t, err)
 

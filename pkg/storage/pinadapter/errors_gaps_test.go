@@ -45,3 +45,11 @@ func TestPutError_Error_FormatsKeyAndCause(t *testing.T) {
 
 	assert.Equal(t, "pinadapter: put session/abc: read-only fs", got)
 }
+
+func TestDeleteError_Error_FormatsKeyAndCause(t *testing.T) {
+	e := &DeleteError{Key: "session/abc", Err: errors.New("read-only fs")}
+
+	got := e.Error()
+
+	assert.Equal(t, "pinadapter: delete session/abc: read-only fs", got)
+}

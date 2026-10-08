@@ -22,7 +22,7 @@ import (
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 

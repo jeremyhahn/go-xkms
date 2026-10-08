@@ -64,29 +64,6 @@ func fullMockHandler() http.Handler {
 			})
 
 		// Barrier ops
-		case strings.Contains(path, "/barrier/shamir/initialize"):
-			respond(transport.BarrierInitializeShamirResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
-		case strings.Contains(path, "/barrier/shamir/unseal-share") && !strings.HasSuffix(path, "s"):
-			respond(map[string]interface{}{"required": 2, "submitted": 1, "complete": false})
-		case strings.Contains(path, "/barrier/shamir/unseal-shares"):
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/barrier/rekey"):
-			respond(transport.BarrierRekeyResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
-		case strings.Contains(path, "/barrier/recovery/generate") && r.Method == http.MethodPost:
-			// Share-free contract: only metadata crosses the wire.
-			respond(map[string]interface{}{"threshold": 2, "total_shares": 3, "share_count": 3})
-		case strings.Contains(path, "/barrier/recovery/recover") && r.Method == http.MethodPost:
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/barrier/recovery/keys") && r.Method == http.MethodDelete:
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/barrier/recovery/keys") && r.Method == http.MethodGet:
-			respond(map[string]bool{"has_recovery_keys": true})
-		case strings.Contains(path, "/barrier/recovery/root-token"):
-			respond(transport.BarrierRootTokenResponse{Token: "root-token"})
-		case strings.Contains(path, "/barrier/status"):
-			respond(transport.BarrierStatusResponse{Sealed: false, InitializedAt: "2024-01-01"})
-		case strings.Contains(path, "/barrier"):
-			w.WriteHeader(http.StatusOK)
 
 		// PIN management
 		case strings.Contains(path, "/pin/so") && strings.Contains(path, "set"):
@@ -107,38 +84,11 @@ func fullMockHandler() http.Handler {
 			w.WriteHeader(http.StatusOK)
 
 		// Custodian groups
-		case strings.Contains(path, "/custodian") && strings.Contains(path, "/members") && r.Method == http.MethodDelete:
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/custodian") && strings.Contains(path, "/members"):
-			respond(map[string]interface{}{"member": map[string]string{"user_id": "u1"}})
-		case strings.Contains(path, "/custodian") && strings.Contains(path, "/distribute"):
-			respond(transport.DistributeSharesResponse{Distributed: 3})
-		case strings.Contains(path, "/custodian") && r.Method == http.MethodPost:
-			respond(map[string]interface{}{"id": "g1", "name": "test-group", "threshold": 2})
-		case strings.Contains(path, "/custodian") && r.Method == http.MethodDelete:
-			w.WriteHeader(http.StatusOK)
-		case path == "/api/v1/custodian/groups" && r.Method == http.MethodGet:
-			respond(transport.ListCustodianGroupsResponse{
-				Groups: []transport.CustodianGroupInfo{{ID: "g1", Name: "test-group"}},
-			})
-		case strings.HasPrefix(path, "/api/v1/custodian/groups/"):
-			respond(map[string]interface{}{"id": "g1", "name": "test-group"})
 
 		// Shares
-		case strings.HasPrefix(path, "/api/v1/shares/status"):
-			respond(transport.ShareCollectionStatus{GroupID: "g1", Collected: 1, Threshold: 2})
-		case strings.HasPrefix(path, "/api/v1/shares") && r.Method == http.MethodPost:
-			respond(transport.SubmitShareResponse{Accepted: true})
-		case strings.HasPrefix(path, "/api/v1/shares"):
-			respond(transport.ListSharesResponse{
-				Shares: []transport.ShareInfo{{GroupID: "g1", ShareIndex: 0}},
-			})
 
 		// Tenants
-		case strings.Contains(path, "/tenants") && strings.Contains(path, "/barrier/init"):
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/tenants") && strings.Contains(path, "/barrier/unseal"):
-			w.WriteHeader(http.StatusOK)
+
 		case strings.Contains(path, "/tenants") && r.Method == http.MethodPost:
 			respond(map[string]interface{}{"id": "t1", "name": "test-tenant"})
 		case strings.Contains(path, "/tenants") && r.Method == http.MethodDelete:
@@ -151,16 +101,7 @@ func fullMockHandler() http.Handler {
 			respond(map[string]interface{}{"id": "t1", "name": "test-tenant"})
 
 		// Init / Credentials
-		case strings.Contains(path, "/init/status"):
-			respond(transport.InitStatusResponse{State: "initialized"})
-		case strings.Contains(path, "/init/claim-cert/begin"):
-			respond(transport.ClaimCertBeginResponse{Nonce: "abc"})
-		case strings.Contains(path, "/init/claim-cert/complete"):
-			respond(map[string]string{"certificate_pem": "cert"})
-		case strings.Contains(path, "/init/claim-share"):
-			respond(map[string]interface{}{"share": "encoded-share-data"})
-		case strings.Contains(path, "/init/sign-csr"):
-			respond(map[string]string{"certificate_pem": "cert"})
+
 		case strings.Contains(path, "/credentials/strategy"):
 			respond(transport.CredentialStrategyResponse{Strategy: "manual"})
 		case strings.Contains(path, "/credentials/submit"):
@@ -397,80 +338,6 @@ func TestExportPIVCertificate_Connected(t *testing.T) {
 
 // --- Barrier Shamir tests ---
 
-func TestBarrierInitializeShamir_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.BarrierInitializeShamir(context.Background(), &transport.BarrierInitializeShamirRequest{Threshold: 2, TotalShares: 3})
-	require.NoError(t, err)
-	assert.Equal(t, 2, resp.Threshold)
-	assert.Equal(t, 3, resp.TotalShares)
-	assert.Equal(t, 3, resp.ShareCount)
-}
-
-func TestBarrierUnsealWithShare_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.BarrierUnsealWithShare(context.Background(), &transport.BarrierUnsealShareRequest{Share: "share-1"})
-	require.NoError(t, err)
-	assert.Equal(t, 2, resp.Required)
-}
-
-func TestBarrierUnsealWithShares_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	err := tr.BarrierUnsealWithShares(context.Background(), &transport.BarrierUnsealSharesRequest{Shares: []string{"s1", "s2"}})
-	require.NoError(t, err)
-}
-
-func TestBarrierRekey_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.BarrierRekey(context.Background(), &transport.BarrierRekeyRequest{Threshold: 2, Total: 3})
-	require.NoError(t, err)
-	assert.Equal(t, 2, resp.Threshold)
-}
-
-func TestBarrierGenerateRecoveryKeys_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.BarrierGenerateRecoveryKeys(context.Background(), &transport.BarrierGenerateRecoveryKeysRequest{Threshold: 2, Total: 3})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, 2, resp.Threshold)
-	assert.Equal(t, 3, resp.TotalShares)
-	assert.Equal(t, 3, resp.ShareCount)
-}
-
-func TestBarrierRecoverWithKeys_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	err := tr.BarrierRecoverWithKeys(context.Background(), &transport.BarrierRecoverWithKeysRequest{Keys: []string{"k1"}})
-	require.NoError(t, err)
-}
-
-func TestBarrierDeleteRecoveryKeys_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	err := tr.BarrierDeleteRecoveryKeys(context.Background())
-	require.NoError(t, err)
-}
-
-func TestBarrierHasRecoveryKeys_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.BarrierHasRecoveryKeys(context.Background())
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestBarrierGenerateRootToken_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.BarrierGenerateRootToken(context.Background(), &transport.BarrierGenerateRootTokenRequest{Shares: []string{"s1"}})
-	require.NoError(t, err)
-	assert.Equal(t, "root-token", resp.Token)
-}
-
 // --- PIN management tests ---
 
 func TestSetSOPIN_Connected(t *testing.T) {
@@ -532,85 +399,7 @@ func TestResetLockout_Connected(t *testing.T) {
 
 // --- Custodian Group tests ---
 
-func TestCreateCustodianGroup_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.CreateCustodianGroup(context.Background(), &transport.CreateCustodianGroupRequest{Name: "test"})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestGetCustodianGroup_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.GetCustodianGroup(context.Background(), "g1")
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestListCustodianGroups_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.ListCustodianGroups(context.Background())
-	require.NoError(t, err)
-	require.Len(t, resp.Groups, 1)
-}
-
-func TestDeleteCustodianGroup_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	err := tr.DeleteCustodianGroup(context.Background(), "g1")
-	require.NoError(t, err)
-}
-
-func TestAddCustodianMember_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.AddCustodianMember(context.Background(), &transport.AddCustodianMemberRequest{GroupID: "g1"})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestRemoveCustodianMember_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	err := tr.RemoveCustodianMember(context.Background(), &transport.RemoveCustodianMemberRequest{GroupID: "g1", UserID: "u1"})
-	require.NoError(t, err)
-}
-
-func TestDistributeShares_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.DistributeShares(context.Background(), &transport.DistributeSharesRequest{GroupID: "g1"})
-	require.NoError(t, err)
-	assert.Equal(t, 3, resp.Distributed)
-}
-
 // --- Share tests ---
-
-func TestSubmitShare_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.SubmitShare(context.Background(), &transport.SubmitShareRequest{GroupID: "g1"})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestListShares_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.ListShares(context.Background())
-	require.NoError(t, err)
-	require.Len(t, resp.Shares, 1)
-}
-
-func TestGetShareCollectionStatus_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.GetShareCollectionStatus(context.Background(), "g1")
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
 
 // --- Tenant tests ---
 
@@ -645,61 +434,7 @@ func TestDeleteTenant_Connected(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestTenantBarrierInit_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	err := tr.TenantBarrierInit(context.Background(), &transport.TenantBarrierInitRequest{TenantID: "t1"})
-	require.NoError(t, err)
-}
-
-func TestTenantBarrierUnseal_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	err := tr.TenantBarrierUnseal(context.Background(), &transport.TenantBarrierUnsealRequest{TenantID: "t1"})
-	require.NoError(t, err)
-}
-
 // --- Init / Credential tests ---
-
-func TestGetInitStatus_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.GetInitStatus(context.Background())
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestClaimCertBegin_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.ClaimCertBegin(context.Background(), &transport.ClaimCertBeginRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestClaimCertComplete_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.ClaimCertComplete(context.Background(), &transport.ClaimCertCompleteRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestClaimShareBegin_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestSignCSRInit_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.SignCSRInit(context.Background(), &transport.SignCSRInitRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
 
 func TestSubmitCredential_Connected(t *testing.T) {
 	tr, cleanup := newFullMockTransport(t)

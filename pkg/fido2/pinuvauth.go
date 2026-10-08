@@ -14,6 +14,7 @@
 package fido2
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
@@ -627,7 +628,7 @@ func (a *Authenticator) GetPINToken(session *PINUVAuthSession, pin *secure.Secre
 	// The PIN is opened only for the instant the CTAP 2.1 6.5.5.7 pinHashEnc
 	// computation needs its bytes: pinHashEnc is
 	// encrypt(LEFT(SHA-256(pin), 16)).
-	pinBuf, openErr := pin.Open()
+	pinBuf, openErr := pin.Open(context.Background())
 	if openErr != nil {
 		return nil, &errs.Joined{Lead: ErrPINTokenFailed, Cause: openErr}
 	}

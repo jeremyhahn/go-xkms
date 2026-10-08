@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -412,62 +413,10 @@ func TestExists(t *testing.T) {
 	}
 }
 
-func TestFilePermissions(t *testing.T) {
-	ctx := context.Background()
-	tests := []struct {
-		name     string
-		key      string
-		value    []byte
-		wantPerm os.FileMode
-	}{
-		{
-			name:     "keys prefix",
-			key:      "keys/mykey",
-			value:    []byte("key-data"),
-			wantPerm: 0600,
-		},
-		{
-			name:     "certs prefix",
-			key:      "certs/mycert.pem",
-			value:    []byte("cert-data"),
-			wantPerm: 0644,
-		},
-		{
-			name:     "default permissions",
-			key:      "other/data",
-			value:    []byte("other-data"),
-			wantPerm: 0600,
-		},
-	}
-
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := store.Put(ctx, tt.key, tt.value); err != nil {
-				t.Fatalf("Put() error = %v", err)
-			}
-
-			// Check file permissions (stored at <root>/<key>)
-			filePath := filepath.Join(dir, tt.key)
-			info, err := os.Stat(filePath)
-			if err != nil {
-				t.Fatalf("Stat() error = %v", err)
-			}
-
-			if info.Mode().Perm() != tt.wantPerm {
-				t.Errorf("File permissions = %o, want %o", info.Mode().Perm(), tt.wantPerm)
-			}
-		})
-	}
-}
-
-func TestFilePermissionsKeyPrefixBased(t *testing.T) {
+// TestStoredRecordsAreOwnerOnly verifies nothing the store writes is readable
+// by group or other, whatever the key's prefix: private key material, PINs and
+// sealed blobs share one store with certificates, so no prefix may widen it.
+func TestStoredRecordsAreOwnerOnly(t *testing.T) {
 	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
@@ -476,33 +425,34 @@ func TestFilePermissionsKeyPrefixBased(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	// keys/ prefix should get 0600 permissions
-	key := "keys/perm-test"
-	value := []byte("data")
-
-	if err := store.Put(ctx, key, value); err != nil {
-		t.Fatalf("Put() error = %v", err)
+	for _, key := range []string{"keys/mykey", "certs/mycert.pem", "other/data", "deeply/nested/path/to/key"} {
+		if err := store.Put(ctx, key, []byte("data")); err != nil {
+			t.Fatalf("Put(%q) error = %v", key, err)
+		}
 	}
 
-	filePath := filepath.Join(dir, key)
-	info, err := os.Stat(filePath)
+	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			t.Errorf("%s has mode %o; want no group or other access", path, perm)
+		}
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("Stat() error = %v", err)
-	}
-
-	if info.Mode().Perm() != 0600 {
-		t.Errorf("File permissions for keys/ = %o, want 0600", info.Mode().Perm())
+		t.Fatalf("WalkDir() error = %v", err)
 	}
 }
 
-// TestPrefixCollisionRejected documents the flat-namespace contract of the file
-// backend: a key and a sub-key under it cannot coexist on a filesystem (the same
-// path cannot be both a file holding a value and a directory holding sub-keys).
-// Writing a child of an existing key returns an error rather than corrupting
-// state, and the parent is left intact. Callers must use namespace discipline —
-// e.g. the qrdb barrier stores its metadata as a SIBLING key ("root_key.meta"),
-// never a child ("root_key/meta") — see go-qrdb/pkg/seal/barrier.go.
-func TestPrefixCollisionRejected(t *testing.T) {
+// TestKeyAndChildKeyCoexist documents that the store's namespace is flat: a
+// key and a key nested beneath it are independent records, so writing one
+// neither fails on nor disturbs the other.
+func TestKeyAndChildKeyCoexist(t *testing.T) {
 	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
@@ -514,54 +464,13 @@ func TestPrefixCollisionRejected(t *testing.T) {
 	if err := store.Put(ctx, "barrier/root_key", []byte("blob")); err != nil {
 		t.Fatalf("Put(parent) error = %v", err)
 	}
-	// A child of an existing key cannot be stored on a flat-file backend.
-	if err := store.Put(ctx, "barrier/root_key/meta", []byte("meta")); err == nil {
-		t.Errorf("Put(child of existing key) should return an error on a flat-file backend")
+	if err := store.Put(ctx, "barrier/root_key/meta", []byte("meta")); err != nil {
+		t.Fatalf("Put(child) error = %v", err)
 	}
-	// The parent remains intact and readable.
-	if got, err := store.Get(ctx, "barrier/root_key"); err != nil || string(got) != "blob" {
-		t.Fatalf("Get(parent) = %q, %v; want \"blob\", nil", got, err)
-	}
-}
-
-func TestDirectoryCreation(t *testing.T) {
-	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	key := "deeply/nested/path/to/key"
-	value := []byte("nested-value")
-
-	if err := store.Put(ctx, key, value); err != nil {
-		t.Fatalf("Put() error = %v", err)
-	}
-
-	// Verify all directories were created
-	dirPath := filepath.Join(dir, "deeply/nested/path/to")
-	info, err := os.Stat(dirPath)
-	if err != nil {
-		t.Fatalf("Directory not created: %v", err)
-	}
-	if !info.IsDir() {
-		t.Error("Path is not a directory")
-	}
-
-	// Verify directory permissions
-	if info.Mode().Perm() != 0700 {
-		t.Errorf("Directory permissions = %o, want 0700", info.Mode().Perm())
-	}
-
-	// Verify the file was created
-	got, err := store.Get(ctx, key)
-	if err != nil {
-		t.Fatalf("Get() error = %v", err)
-	}
-	if !bytes.Equal(got, value) {
-		t.Errorf("Get() = %v, want %v", got, value)
+	for key, want := range map[string]string{"barrier/root_key": "blob", "barrier/root_key/meta": "meta"} {
+		if got, err := store.Get(ctx, key); err != nil || string(got) != want {
+			t.Errorf("Get(%q) = %q, %v; want %q, nil", key, got, err, want)
+		}
 	}
 }
 
@@ -838,44 +747,6 @@ func TestOverwriteKey(t *testing.T) {
 	}
 }
 
-func TestFilePermissionsForKey(t *testing.T) {
-	tests := []struct {
-		name     string
-		key      string
-		wantPerm os.FileMode
-	}{
-		{
-			name:     "keys prefix uses 0600",
-			key:      "keys/test",
-			wantPerm: 0600,
-		},
-		{
-			name:     "certs prefix uses 0644",
-			key:      "certs/test",
-			wantPerm: 0644,
-		},
-		{
-			name:     "other prefix uses default 0600",
-			key:      "other/test",
-			wantPerm: 0600,
-		},
-		{
-			name:     "no prefix uses default 0600",
-			key:      "test",
-			wantPerm: 0600,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			perms := filePermissionsForKey(tt.key)
-			if perms != tt.wantPerm {
-				t.Errorf("filePermissionsForKey() = %o, want %o", perms, tt.wantPerm)
-			}
-		})
-	}
-}
-
 // TestPathConversionRoundTrip verifies key↔on-disk-path symmetry through the
 // public API: a key written under the file backend is listed back verbatim
 // (the engine owns the <root>/<key> mapping; this guards the round-trip).
@@ -990,7 +861,6 @@ func TestExistsEdgeCases(t *testing.T) {
 }
 
 func TestErrorConditions(t *testing.T) {
-	ctx := context.Background()
 	t.Run("new with invalid path causes error during mkdir", func(t *testing.T) {
 		// Create a file where we want to create a directory
 		tempFile, err := os.CreateTemp("", "filestorage-test-")
@@ -1006,123 +876,6 @@ func TestErrorConditions(t *testing.T) {
 		_, err = New(invalidPath)
 		if err == nil {
 			t.Error("New() with invalid path should return error")
-		}
-	})
-
-	// The error paths below are driven with POSIX conditions the kernel
-	// enforces for every user — EISDIR, ENOTDIR, ENOTEMPTY, ENOENT — rather
-	// than with chmod. Permission bits are bypassed by root, so a chmod-based
-	// setup silently stops testing anything the moment the suite runs in a
-	// container as uid 0, which is exactly where CI runs it.
-
-	t.Run("get with read error", func(t *testing.T) {
-		dir := setupTestDir(t)
-		store, err := New(dir)
-		if err != nil {
-			t.Fatalf("New() error = %v", err)
-		}
-		defer func() { _ = store.Close() }()
-
-		// A directory at the key's path makes the read fail with EISDIR.
-		key := "test-key"
-		if err := os.MkdirAll(filepath.Join(dir, key), 0700); err != nil {
-			t.Fatalf("Failed to create dir: %v", err)
-		}
-
-		_, err = store.Get(ctx, key)
-		if err == nil {
-			t.Error("Get() on a directory should return error")
-		}
-		if err == storage.ErrNotFound {
-			t.Error("Get() on a directory should not return ErrNotFound")
-		}
-	})
-
-	t.Run("put with write error", func(t *testing.T) {
-		dir := setupTestDir(t)
-		store, err := New(dir)
-		if err != nil {
-			t.Fatalf("New() error = %v", err)
-		}
-		defer func() { _ = store.Close() }()
-
-		// A regular file where a parent directory is expected makes the write
-		// fail with ENOTDIR.
-		if err := os.WriteFile(filepath.Join(dir, "notadir"), []byte("blocker"), 0600); err != nil {
-			t.Fatalf("Failed to write blocker file: %v", err)
-		}
-
-		if err := store.Put(ctx, "notadir/file", []byte("data")); err == nil {
-			t.Error("Put() beneath a regular file should return error")
-		}
-	})
-
-	t.Run("delete with stat error", func(t *testing.T) {
-		dir := setupTestDir(t)
-		store, err := New(dir)
-		if err != nil {
-			t.Fatalf("New() error = %v", err)
-		}
-		defer func() { _ = store.Close() }()
-
-		if err := os.WriteFile(filepath.Join(dir, "notadir"), []byte("blocker"), 0600); err != nil {
-			t.Fatalf("Failed to write blocker file: %v", err)
-		}
-
-		err = store.Delete(ctx, "notadir/file")
-		if err == nil {
-			t.Error("Delete() with stat error should return error")
-		}
-		if err == storage.ErrNotFound {
-			t.Error("Delete() with stat error should not return ErrNotFound")
-		}
-	})
-
-	t.Run("delete with remove error", func(t *testing.T) {
-		dir := setupTestDir(t)
-		store, err := New(dir)
-		if err != nil {
-			t.Fatalf("New() error = %v", err)
-		}
-		defer func() { _ = store.Close() }()
-
-		// A non-empty directory at the key's path makes the unlink fail with
-		// ENOTEMPTY.
-		key := "occupied"
-		if err := os.MkdirAll(filepath.Join(dir, key, "child"), 0700); err != nil {
-			t.Fatalf("Failed to create dir: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, key, "child", "f"), []byte("x"), 0600); err != nil {
-			t.Fatalf("Failed to write nested file: %v", err)
-		}
-
-		err = store.Delete(ctx, key)
-		if err == nil {
-			t.Error("Delete() of a non-empty directory should return error")
-		}
-		if err == storage.ErrNotFound {
-			t.Error("Delete() of a non-empty directory should not return ErrNotFound")
-		}
-	})
-
-	t.Run("exists with stat error", func(t *testing.T) {
-		dir := setupTestDir(t)
-		store, err := New(dir)
-		if err != nil {
-			t.Fatalf("New() error = %v", err)
-		}
-		defer func() { _ = store.Close() }()
-
-		if err := os.WriteFile(filepath.Join(dir, "notadir"), []byte("blocker"), 0600); err != nil {
-			t.Fatalf("Failed to write blocker file: %v", err)
-		}
-
-		exists, err := store.Exists(ctx, "notadir/file")
-		if err == nil {
-			t.Error("Exists() with stat error should return error")
-		}
-		if exists {
-			t.Error("Exists() must not report a key behind a stat error as present")
 		}
 	})
 }

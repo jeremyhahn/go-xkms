@@ -206,7 +206,7 @@ func TestUnwrapKey_CorruptedEnclaveData(t *testing.T) {
 	wrapped, err := be.WrapKey(context.Background(), []byte("some key material"), params)
 	require.NoError(t, err)
 
-	garbage, err := secure.NewSecret([]byte("this is not a valid pkcs8 der blob"))
+	garbage, err := secure.NewSecret(t.Context(), []byte("this is not a valid pkcs8 der blob"))
 	require.NoError(t, err)
 
 	td, peekErr := be.importTokens.Peek(string(wrapped.ImportToken))
@@ -237,7 +237,7 @@ func TestUnwrapKey_EnclaveNotRSA(t *testing.T) {
 	require.NoError(t, err)
 	der, err := x509.MarshalPKCS8PrivateKey(ecdsaKey)
 	require.NoError(t, err)
-	sealedECDSA, err := secure.NewSecret(der)
+	sealedECDSA, err := secure.NewSecret(t.Context(), der)
 	require.NoError(t, err)
 
 	td, peekErr := be.importTokens.Peek(string(wrapped.ImportToken))

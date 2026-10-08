@@ -14,6 +14,7 @@
 package usb
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -80,7 +81,7 @@ type ImageStatus struct {
 //
 // This function requires root privileges for partitioning and
 // filesystem creation.
-func CreateImage(cfg ImageConfig) error {
+func CreateImage(ctx context.Context, cfg ImageConfig) error {
 	if getEUID() != 0 {
 		return ErrPermissionDenied
 	}
@@ -106,14 +107,14 @@ func CreateImage(cfg ImageConfig) error {
 		if err := ValidateBlockDevice(cfg.Path); err != nil {
 			return err
 		}
-		return createOnBlockDevice(cfg)
+		return createOnBlockDevice(ctx, cfg)
 	}
 
-	return createOnImageFile(cfg)
+	return createOnImageFile(ctx, cfg)
 }
 
 // createOnImageFile creates a sparse image file and partitions it.
-func createOnImageFile(cfg ImageConfig) error {
+func createOnImageFile(ctx context.Context, cfg ImageConfig) error {
 	if cfg.SizeBytes < MinImageSize {
 		return &USBError{
 			Operation: "validate_size",
@@ -159,7 +160,7 @@ func createOnImageFile(cfg ImageConfig) error {
 
 	slog.Info("loop device attached", "device", loopDev, "image", cfg.Path)
 
-	if err := partitionAndFormat(loopDev, cfg); err != nil {
+	if err := partitionAndFormat(ctx, loopDev, cfg); err != nil {
 		detachErr := luksDetachLoopDevice(loopDev)
 		removeErr := os.Remove(cfg.Path)
 		return errors.Join(err, detachErr, removeErr)
@@ -173,13 +174,13 @@ func createOnImageFile(cfg ImageConfig) error {
 }
 
 // createOnBlockDevice partitions and formats a block device directly.
-func createOnBlockDevice(cfg ImageConfig) error {
-	return partitionAndFormat(cfg.Path, cfg)
+func createOnBlockDevice(ctx context.Context, cfg ImageConfig) error {
+	return partitionAndFormat(ctx, cfg.Path, cfg)
 }
 
 // partitionAndFormat creates the GPT partition table, formats both
 // partitions, and populates the FAT32 partition with binaries.
-func partitionAndFormat(device string, cfg ImageConfig) error {
+func partitionAndFormat(ctx context.Context, device string, cfg ImageConfig) error {
 	// Step 1: Create GPT partition table with sgdisk.
 	if err := createPartitionTable(device); err != nil {
 		return err
@@ -202,7 +203,7 @@ func partitionAndFormat(device string, cfg ImageConfig) error {
 	}
 
 	// Step 3: Format partition 2 as LUKS2.
-	if err := formatLUKS(part2, cfg.Passphrase); err != nil {
+	if err := formatLUKS(ctx, part2, cfg.Passphrase); err != nil {
 		return err
 	}
 
@@ -278,8 +279,8 @@ func formatFAT32(partition string) error {
 // formatLUKS formats a partition as LUKS2 using the go-luks2 library. The
 // passphrase is opened into protected memory for the duration of the call
 // and never copied to the ordinary heap.
-func formatLUKS(partition string, passphrase *secure.Secret) error {
-	buf, err := passphrase.Open()
+func formatLUKS(ctx context.Context, partition string, passphrase *secure.Secret) error {
+	buf, err := passphrase.Open(ctx)
 	if err != nil {
 		return &USBError{
 			Operation: "open_passphrase",

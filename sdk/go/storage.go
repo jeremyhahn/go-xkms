@@ -48,7 +48,9 @@ type (
 	// operations for X.509 certificates, chains, and CRLs.
 	CertStore = certstore.CertStore
 
-	// CertStoreConfig configures the certificate store.
+	// CertStoreConfig configures the certificate store: DAOs is the DAO factory
+	// that serves the CertStoreDatabase database, which holds the certificate
+	// and chain entities.
 	CertStoreConfig = certstore.Config
 
 	// CRLEntry holds information about a revoked certificate in a CRL.
@@ -91,6 +93,10 @@ type (
 	// ObjectLifecyclePolicy configures retention and expiry rules on a storage backend.
 	ObjectLifecyclePolicy = objstorecommon.LifecyclePolicy
 )
+
+// CertStoreDatabase is the go-qrdb database the certificate store keeps its
+// entities in; the DAO factory in CertStoreConfig must serve it.
+const CertStoreDatabase = certstore.DatabaseName
 
 // Storage backend constructors re-exported from pkg/storage and subpackages.
 var (

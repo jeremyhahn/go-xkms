@@ -47,22 +47,6 @@ func TestAlgorithms_Connected(t *testing.T) {
 	assert.NotNil(t, resp)
 }
 
-func TestBarrierEnableEncryption_NotConnected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	require.NoError(t, tr.Close())
-	_, err = tr.BarrierEnableEncryption(context.Background(), &transport.BarrierEnableEncryptionRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierEnableEncryption_Connected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	resp, err := tr.BarrierEnableEncryption(context.Background(), &transport.BarrierEnableEncryptionRequest{Strategy: "passphrase"})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
 func TestEscrowKey_NotConnected(t *testing.T) {
 	tr, err := New(&mockService{})
 	require.NoError(t, err)
@@ -122,50 +106,6 @@ func TestRevokeEscrow_Connected(t *testing.T) {
 	require.NoError(t, tr.RevokeEscrow(context.Background(), "escrow-1"))
 }
 
-func TestGetShare_NotConnected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	require.NoError(t, tr.Close())
-	_, err = tr.GetShare(context.Background(), "https://a", "g1", 0)
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestGetShare_Connected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	_, err = tr.GetShare(context.Background(), "https://a", "g1", 0)
-	require.NoError(t, err)
-}
-
-func TestDeleteShare_NotConnected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	require.NoError(t, tr.Close())
-	err = tr.DeleteShare(context.Background(), "https://a", "g1", 0)
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestDeleteShare_Connected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	require.NoError(t, tr.DeleteShare(context.Background(), "https://a", "g1", 0))
-}
-
-func TestTenantBarrierStatus_NotConnected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	require.NoError(t, tr.Close())
-	_, err = tr.TenantBarrierStatus(context.Background(), "acme")
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestTenantBarrierStatus_Connected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	_, err = tr.TenantBarrierStatus(context.Background(), "acme")
-	require.NoError(t, err)
-}
-
 func TestUpdateTenantEntitlements_NotConnected(t *testing.T) {
 	tr, err := New(&mockService{})
 	require.NoError(t, err)
@@ -193,21 +133,6 @@ func TestUpdateTenantQuotas_Connected(t *testing.T) {
 	tr, err := New(&mockService{})
 	require.NoError(t, err)
 	_, err = tr.UpdateTenantQuotas(context.Background(), &transport.UpdateTenantQuotasRequest{TenantID: "acme"})
-	require.NoError(t, err)
-}
-
-func TestClaimShareComplete_NotConnected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	require.NoError(t, tr.Close())
-	_, err = tr.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestClaimShareComplete_Connected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	_, err = tr.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{})
 	require.NoError(t, err)
 }
 

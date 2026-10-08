@@ -232,9 +232,9 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 
 	switch {
 	case quantumAlgo.IsSignature():
-		privateKey, metadata, err = b.generateMLDSAKey(algorithm)
+		privateKey, metadata, err = b.generateMLDSAKey(ctx, algorithm)
 	case quantumAlgo.IsKEM():
-		privateKey, metadata, err = b.generateMLKEMKey(algorithm, keyID)
+		privateKey, metadata, err = b.generateMLKEMKey(ctx, algorithm, keyID)
 	default:
 		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: algorithm}
 	}
@@ -276,10 +276,10 @@ func cleanPrivateKey(key crypto.PrivateKey) {
 // every call site here still needs src afterwards — either to build the
 // metadata that gets serialized to storage, or because src belongs to the
 // caller. Wiping src, where that is this package's to do, is the caller's job.
-func sealSeed(src []byte) (*secure.Secret, error) {
+func sealSeed(ctx context.Context, src []byte) (*secure.Secret, error) {
 	owned := make([]byte, len(src))
 	copy(owned, src)
-	sealed, err := secure.NewSecret(owned)
+	sealed, err := secure.NewSecret(ctx, owned)
 	if err != nil {
 		secure.Wipe(owned)
 		return nil, &errs.Wrapped{Msg: "failed to seal key seed", Err: err}
@@ -290,7 +290,7 @@ func sealSeed(src []byte) (*secure.Secret, error) {
 // generateMLDSAKey generates a ML-DSA signing key using crypto/mldsa.
 // A random 32-byte seed is generated and used to deterministically derive
 // the key pair via NewKeyFromSeed, enabling seed-based reconstruction.
-func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *keyMetadata, error) {
+func (b *QuantumBackend) generateMLDSAKey(ctx context.Context, algorithm string) (*MLDSAPrivateKey, *keyMetadata, error) {
 	gen, ok := mldsaKeyGenerators[algorithm]
 	if !ok {
 		return nil, nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: algorithm}
@@ -315,7 +315,7 @@ func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *
 	// which holds it enclaved, and the metadata, which is serialized to
 	// storage. Both take their own copy so the stack array can be wiped as soon
 	// as they have it.
-	sealedSeed, sealErr := sealSeed(seed[:])
+	sealedSeed, sealErr := sealSeed(ctx, seed[:])
 	if sealErr != nil {
 		return nil, nil, sealErr
 	}
@@ -344,7 +344,7 @@ func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *
 }
 
 // generateMLKEMKey generates a ML-KEM key encapsulation key using Go stdlib crypto/mlkem.
-func (b *QuantumBackend) generateMLKEMKey(algorithm, keyID string) (*MLKEMPrivateKey, *keyMetadata, error) {
+func (b *QuantumBackend) generateMLKEMKey(ctx context.Context, algorithm, keyID string) (*MLKEMPrivateKey, *keyMetadata, error) {
 	gen, ok := mlkemGenerators[algorithm]
 	if !ok {
 		return nil, nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: algorithm}
@@ -360,7 +360,7 @@ func (b *QuantumBackend) generateMLKEMKey(algorithm, keyID string) (*MLKEMPrivat
 
 	// As in generateMLDSAKey: the enclaved key and the serialized metadata each
 	// take their own copy, and seedBytes is wiped once both are served.
-	sealedSeed, sealErr := sealSeed(seedBytes)
+	sealedSeed, sealErr := sealSeed(ctx, seedBytes)
 	if sealErr != nil {
 		return nil, nil, sealErr
 	}
@@ -451,9 +451,9 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 
 	switch {
 	case types.QuantumAlgorithm(metadata.Algorithm).IsSignature():
-		return b.loadMLDSAKey(&metadata)
+		return b.loadMLDSAKey(ctx, &metadata)
 	case types.QuantumAlgorithm(metadata.Algorithm).IsKEM():
-		return b.loadMLKEMKey(&metadata, keyID)
+		return b.loadMLKEMKey(ctx, &metadata, keyID)
 	default:
 		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: metadata.Algorithm}
 	}
@@ -461,7 +461,7 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 
 // loadMLDSAKey recreates a ML-DSA key from stored seed using crypto/mldsa's
 // NewPrivateKey.
-func (b *QuantumBackend) loadMLDSAKey(metadata *keyMetadata) (*MLDSAPrivateKey, error) {
+func (b *QuantumBackend) loadMLDSAKey(ctx context.Context, metadata *keyMetadata) (*MLDSAPrivateKey, error) {
 	gen, ok := mldsaKeyGenerators[metadata.Algorithm]
 	if !ok {
 		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: metadata.Algorithm}
@@ -481,7 +481,7 @@ func (b *QuantumBackend) loadMLDSAKey(metadata *keyMetadata) (*MLDSAPrivateKey, 
 
 	// seed is this function's own stack copy, so it is wiped once sealed;
 	// metadata.Seed belongs to the caller and is left intact.
-	sealedSeed, sealErr := sealSeed(seed[:])
+	sealedSeed, sealErr := sealSeed(ctx, seed[:])
 	if sealErr != nil {
 		return nil, sealErr
 	}
@@ -500,7 +500,7 @@ func (b *QuantumBackend) loadMLDSAKey(metadata *keyMetadata) (*MLDSAPrivateKey, 
 }
 
 // loadMLKEMKey recreates a ML-KEM key from stored seed using stdlib NewDecapsulationKey.
-func (b *QuantumBackend) loadMLKEMKey(metadata *keyMetadata, keyID string) (*MLKEMPrivateKey, error) {
+func (b *QuantumBackend) loadMLKEMKey(ctx context.Context, metadata *keyMetadata, keyID string) (*MLKEMPrivateKey, error) {
 	loader, ok := mlkemSeedLoaders[metadata.Algorithm]
 	if !ok {
 		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: metadata.Algorithm}
@@ -513,7 +513,7 @@ func (b *QuantumBackend) loadMLKEMKey(metadata *keyMetadata, keyID string) (*MLK
 
 	// metadata.Seed belongs to the caller and may still be needed, so it is
 	// sealed by copy and left in place.
-	sealedSeed, sealErr := sealSeed(metadata.Seed)
+	sealedSeed, sealErr := sealSeed(ctx, metadata.Seed)
 	if sealErr != nil {
 		return nil, sealErr
 	}
@@ -675,11 +675,11 @@ func (b *QuantumBackend) RotateKey(ctx context.Context, attrs *types.KeyAttribut
 	switch {
 	case rotatedAlgo.IsSignature():
 		var mldsaKey *MLDSAPrivateKey
-		mldsaKey, newMetadata, err = b.generateMLDSAKey(metadata.Algorithm)
+		mldsaKey, newMetadata, err = b.generateMLDSAKey(ctx, metadata.Algorithm)
 		rotated = mldsaKey
 	case rotatedAlgo.IsKEM():
 		var mlkemKey *MLKEMPrivateKey
-		mlkemKey, newMetadata, err = b.generateMLKEMKey(metadata.Algorithm, keyID)
+		mlkemKey, newMetadata, err = b.generateMLKEMKey(ctx, metadata.Algorithm, keyID)
 		rotated = mlkemKey
 	default:
 		return &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: metadata.Algorithm}

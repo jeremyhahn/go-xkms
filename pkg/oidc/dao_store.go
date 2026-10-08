@@ -20,19 +20,20 @@ import (
 	"sync/atomic"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 )
 
-// DatabaseName is the go-qrdb database this package's DAOs live in. A
-// composition root resolves the qrdbsdk.KVStore for it before calling
-// NewDAOStore: xkmsd's (pkg/compose, when it wires this package) via
-// pkg/datastore.DatabaseKVStore(ctx, backend, cfg, oidc.DatabaseName), which
-// confines the store to this named go-qrdb database via
-// Client.DatabaseScoped; xkey, which hosts no go-qrdb node of its own, via
-// its barrier-backed storage.Backend adapted through
-// sdk/go.NewKVStoreAdapter instead (see xkey/pkg/gui/services/oidc_service.go).
-// Either way, pkg/oidc itself never resolves a KVStore -- it only names the
-// database and accepts one.
+// DatabaseName is the go-qrdb database this package's DAOs live in. The
+// composition root injects a DAO factory that serves it: xkmsd opens it with
+// pkg/datastore's Datastore.DatabaseKVStore(ctx, oidc.DatabaseName) and
+// passes Datastore.DAOFactory(); xkey, which hosts no go-qrdb node, passes a
+// factory over its one barrier-backed store. pkg/oidc never resolves a store
+// itself -- it only names the database.
 const DatabaseName = "oidc"
+
+// tokenEntityType is the go-qrdb entity type OIDC tokens are stored under.
+const tokenEntityType = "oidc_tokens"
 
 // ErrDAOCreation is returned when the DAO layer fails to initialize.
 type ErrDAOCreation struct {
@@ -49,8 +50,8 @@ func (e ErrDAOCreation) Unwrap() error {
 	return e.Cause
 }
 
-// DAOStore implements TokenStore using a go-qrdb GenericDAO backed by
-// a kvstore.KVStore. Each OIDC token entry is stored as an OIDCTokenEntity
+// DAOStore implements TokenStore on a go-qrdb GenericDAO in DatabaseName.
+// Each OIDC token entry is stored as an OIDCTokenEntity
 // with a deterministic ID derived from the normalized issuer URL.
 type DAOStore struct {
 	closed atomic.Bool
@@ -61,18 +62,16 @@ type DAOStore struct {
 // Compile-time interface compliance check.
 var _ TokenStore = (*DAOStore)(nil)
 
-// NewDAOStore creates a new DAOStore using the given kvstore.KVStore.
-// The entity type namespace is "oidc_tokens".
-func NewDAOStore(kvStore qrdbsdk.KVStore) (*DAOStore, error) {
-	if kvStore == nil {
-		return nil, ErrNilBackend
-	}
-
+// NewDAOStore creates a DAOStore on the DAO factory the composition root
+// injects. The factory must serve DatabaseName; the entity type is
+// "oidc_tokens".
+func NewDAOStore(factory *qrdbsdk.DAOFactory) (*DAOStore, error) {
 	idGen := qrdbsdk.NewFieldHashGenerator("Issuer")
 
-	tokenDAO, err := qrdbsdk.NewDAO[*OIDCTokenEntity](
-		kvStore,
-		"oidc_tokens",
+	tokenDAO, err := dao.New(
+		factory,
+		DatabaseName,
+		tokenEntityType,
 		func() *OIDCTokenEntity { return &OIDCTokenEntity{} },
 		qrdbsdk.WithIDGenerator(idGen),
 	)
@@ -197,8 +196,8 @@ func (s *DAOStore) Page(ctx context.Context, query qrdbsdk.PageQuery) (qrdbsdk.P
 	return s.dao.Page(ctx, query)
 }
 
-// Close marks the store as closed. The underlying DAO does not need
-// explicit closing since its lifecycle is managed by the kvstore.
+// Close marks the store as closed. The DAO needs no closing: the store
+// behind the factory belongs to the composition root.
 func (s *DAOStore) Close() error {
 	s.closed.Store(true)
 	return nil

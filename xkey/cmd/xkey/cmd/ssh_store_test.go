@@ -16,7 +16,6 @@ package cmd
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -86,13 +85,7 @@ func TestXkeySSHBackend_BarrierEncrypted(t *testing.T) {
 	home := withCLIHome(t)
 
 	dataDir := filepath.Join(home, ".xkey-store")
-	barrierDir := filepath.Join(dataDir, "barrier")
-	if err := os.MkdirAll(barrierDir, 0o700); err != nil {
-		t.Fatalf("mkdir barrier dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(barrierDir, "root_key"), []byte("sealed"), 0o600); err != nil {
-		t.Fatalf("write root_key: %v", err)
-	}
+	writeBarrierRootKey(t, dataDir, []byte("sealed"))
 
 	_, err := xkeySSHBackend()
 	if !errors.Is(err, ErrSSHStoreBarrierEncrypted) {

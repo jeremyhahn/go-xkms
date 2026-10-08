@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/pbconv"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -92,7 +93,7 @@ var (
 type Service struct {
 	pb.UnimplementedKeystoreServiceServer
 	authorizer  *auth.Authorizer
-	auditLogger audit.Logger
+	auditLogger qrdbsdk.NodeAuditLogger
 	xkmsService *xkms.XKMSService
 	sshClient   sdkssh.Client
 
@@ -147,14 +148,11 @@ func (s *Service) SetSSHClient(client sdkssh.Client) {
 // A nil xkmsService causes service-layer handlers to return codes.Unavailable.
 // If authorizer or auditLogger are nil, no-op implementations are used.
 // opts applies optional construction-time configuration; see WithLocalTrust.
-func NewService(authorizer *auth.Authorizer, auditLogger audit.Logger, xkmsService *xkms.XKMSService, opts ...ServiceOption) *Service {
+func NewService(authorizer *auth.Authorizer, auditLogger qrdbsdk.NodeAuditLogger, xkmsService *xkms.XKMSService, opts ...ServiceOption) *Service {
 	if authorizer == nil {
 		// A nil authorizer disables authorization (allow all), matching the
 		// behavior of an Authorizer constructed with a nil RBAC client.
 		authorizer = auth.NewAuthorizer(nil)
-	}
-	if auditLogger == nil {
-		auditLogger = &audit.NoOpLogger{}
 	}
 	s := &Service{
 		authorizer:  authorizer,
@@ -224,10 +222,9 @@ func (s *Service) authorize(ctx context.Context, resource, action, resourceID st
 		// the caller's to see (go-xkms#1103).
 		auditEvent.Details["reason"] = err.Error()
 	}
-	// authorize is a SeveritySecurity action (docs/audit-log/engineering.md):
-	// a failed audit write fails the request rather than let an
-	// authorization decision proceed unaudited.
-	if auditErr := audit.HandleWriteFailure(nil, auditEvent.Action, s.auditLogger.Log(ctx, auditEvent)); auditErr != nil {
+	// A failed audit write fails the request rather than let an
+	// authorization decision proceed unaudited (docs/audit-log/engineering.md).
+	if auditErr := audit.Emit(ctx, s.auditLogger, auditEvent); auditErr != nil {
 		return status.Error(codes.Internal, auditErr.Error())
 	}
 
@@ -780,7 +777,7 @@ func (s *Service) SaveCert(ctx context.Context, req *pb.SaveCertRequest) (*pb.Sa
 		return nil, status.Error(codes.InvalidArgument, "cert_pem is required")
 	}
 
-	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, req.KeyId); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionEnroll, req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -909,7 +906,7 @@ func (s *Service) SaveCertChain(ctx context.Context, req *pb.SaveCertChainReques
 		return nil, status.Error(codes.InvalidArgument, "cert_chain_pem is required")
 	}
 
-	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, req.KeyId); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionEnroll, req.KeyId); err != nil {
 		return nil, err
 	}
 

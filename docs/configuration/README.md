@@ -73,7 +73,6 @@ pin:
 **Related documentation:**
 - [Barrier Architecture](../seal/README.md)
 - [PIN Management](../seal/pin.md)
-- [CLI Barrier Commands](../../xkey/docs/usage/cli/barrier.md)
 - [CLI PIN Commands](../../xkey/docs/usage/cli/pin.md)
 
 ### Backend-Specific Configuration

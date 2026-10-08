@@ -436,24 +436,6 @@ type (
 	GeneratePIVCSRResponse      = transport.GeneratePIVCSRResponse
 
 	// Barrier Operations
-	BarrierInitializeRequest           = transport.BarrierInitializeRequest
-	BarrierUnsealRequest               = transport.BarrierUnsealRequest
-	BarrierStatusResponse              = transport.BarrierStatusResponse
-	BarrierInitializeShamirRequest     = transport.BarrierInitializeShamirRequest
-	BarrierInitializeShamirResponse    = transport.BarrierInitializeShamirResponse
-	BarrierUnsealShareRequest          = transport.BarrierUnsealShareRequest
-	BarrierUnsealShareResponse         = transport.BarrierUnsealShareResponse
-	BarrierUnsealSharesRequest         = transport.BarrierUnsealSharesRequest
-	BarrierRekeyRequest                = transport.BarrierRekeyRequest
-	BarrierRekeyResponse               = transport.BarrierRekeyResponse
-	BarrierGenerateRecoveryKeysRequest = transport.BarrierGenerateRecoveryKeysRequest
-	BarrierRecoveryKeysResponse        = transport.BarrierRecoveryKeysResponse
-	BarrierRecoverWithKeysRequest      = transport.BarrierRecoverWithKeysRequest
-	BarrierHasRecoveryKeysResponse     = transport.BarrierHasRecoveryKeysResponse
-	BarrierGenerateRootTokenRequest    = transport.BarrierGenerateRootTokenRequest
-	BarrierRootTokenResponse           = transport.BarrierRootTokenResponse
-	BarrierEnableEncryptionRequest     = transport.BarrierEnableEncryptionRequest
-	BarrierEnableEncryptionResponse    = transport.BarrierEnableEncryptionResponse
 
 	// Trust Bootstrap Listener
 	BootstrapListenerKeysResponse = transport.BootstrapListenerKeysResponse
@@ -580,41 +562,12 @@ type (
 	OIDCAccessToken             = transport.OIDCAccessToken
 
 	// Audit Operations
-	AuditEvent  = transport.AuditEvent
-	AuditFilter = transport.AuditFilter
-	AuditPage   = transport.AuditPage
 
 	// Backup Operations
-	CompressionType     = transport.CompressionType
-	EncryptionType      = transport.EncryptionType
-	BackupStatus        = transport.BackupStatus
-	BackupRequest       = transport.BackupRequest
-	BackupInfo          = transport.BackupInfo
-	RestoreRequest      = transport.RestoreRequest
-	RestoreResult       = transport.RestoreResult
-	ShardError          = transport.ShardError
-	VerifyResult        = transport.VerifyResult
-	ListBackupsResponse = transport.ListBackupsResponse
 
 	// Custodian Group Operations
-	CustodianGroupInfo           = transport.CustodianGroupInfo
-	CustodianMemberInfo          = transport.CustodianMemberInfo
-	CreateCustodianGroupRequest  = transport.CreateCustodianGroupRequest
-	CreateCustodianGroupResponse = transport.CreateCustodianGroupResponse
-	GetCustodianGroupResponse    = transport.GetCustodianGroupResponse
-	ListCustodianGroupsResponse  = transport.ListCustodianGroupsResponse
-	AddCustodianMemberRequest    = transport.AddCustodianMemberRequest
-	AddCustodianMemberResponse   = transport.AddCustodianMemberResponse
-	RemoveCustodianMemberRequest = transport.RemoveCustodianMemberRequest
-	DistributeSharesRequest      = transport.DistributeSharesRequest
-	DistributeSharesResponse     = transport.DistributeSharesResponse
 
 	// Share Operations
-	SubmitShareRequest    = transport.SubmitShareRequest
-	SubmitShareResponse   = transport.SubmitShareResponse
-	ShareInfo             = transport.ShareInfo
-	ListSharesResponse    = transport.ListSharesResponse
-	ShareCollectionStatus = transport.ShareCollectionStatus
 
 	// Tenant Operations
 	TenantInfo                       = transport.TenantInfo
@@ -622,26 +575,12 @@ type (
 	CreateTenantResponse             = transport.CreateTenantResponse
 	GetTenantResponse                = transport.GetTenantResponse
 	ListTenantsResponse              = transport.ListTenantsResponse
-	TenantBarrierInitRequest         = transport.TenantBarrierInitRequest
-	TenantBarrierUnsealRequest       = transport.TenantBarrierUnsealRequest
-	TenantBarrierStatusResponse      = transport.TenantBarrierStatusResponse
 	UpdateTenantEntitlementsRequest  = transport.UpdateTenantEntitlementsRequest
 	UpdateTenantEntitlementsResponse = transport.UpdateTenantEntitlementsResponse
 	UpdateTenantQuotasRequest        = transport.UpdateTenantQuotasRequest
 	UpdateTenantQuotasResponse       = transport.UpdateTenantQuotasResponse
 
 	// Init Ceremony Operations
-	InitStatusResponse         = transport.InitStatusResponse
-	ClaimCertBeginRequest      = transport.ClaimCertBeginRequest
-	ClaimCertBeginResponse     = transport.ClaimCertBeginResponse
-	ClaimCertCompleteRequest   = transport.ClaimCertCompleteRequest
-	ClaimCertCompleteResponse  = transport.ClaimCertCompleteResponse
-	ClaimShareBeginRequest     = transport.ClaimShareBeginRequest
-	ClaimShareBeginResponse    = transport.ClaimShareBeginResponse
-	ClaimShareCompleteRequest  = transport.ClaimShareCompleteRequest
-	ClaimShareCompleteResponse = transport.ClaimShareCompleteResponse
-	SignCSRInitRequest         = transport.SignCSRInitRequest
-	SignCSRInitResponse        = transport.SignCSRInitResponse
 	CredentialSubmitRequest    = transport.CredentialSubmitRequest
 	CredentialSubmitResponse   = transport.CredentialSubmitResponse
 	CredentialStrategyResponse = transport.CredentialStrategyResponse

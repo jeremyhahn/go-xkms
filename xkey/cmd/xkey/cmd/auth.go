@@ -572,7 +572,7 @@ func runAuthRegister(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return err
 	}
-	ceremonyPIN, err := sealCeremonyPIN(pin)
+	ceremonyPIN, err := sealCeremonyPIN(cmd.Context(), pin)
 	if err != nil {
 		return err
 	}
@@ -743,7 +743,7 @@ func runAuthLogin(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return err
 	}
-	ceremonyPIN, err := sealCeremonyPIN(pin)
+	ceremonyPIN, err := sealCeremonyPIN(cmd.Context(), pin)
 	if err != nil {
 		return err
 	}

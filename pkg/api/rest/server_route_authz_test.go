@@ -36,7 +36,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmpolicytest"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -57,7 +57,7 @@ type gatedRoute struct {
 // than built from the auth constants so the table fails if a constant is
 // retyped or repointed.
 var gatedRoutePermissions = []gatedRoute{
-	// PIN management — service_barrier_pin.go.
+	// PIN management — service_pin.go.
 	{http.MethodPost, "/api/v1/pin/so/set", "pin", "write"},
 	{http.MethodPost, "/api/v1/pin/user/set", "pin", "write"},
 	{http.MethodPost, "/api/v1/pin/so/change", "pin", "write"},
@@ -80,41 +80,22 @@ var gatedRoutePermissions = []gatedRoute{
 	// CA — service_ca.go, service_ca_tcg.go, service_ca_bundle.go.
 	{http.MethodGet, "/api/v1/ca/bundle", "certs", "read"},
 	{http.MethodGet, "/api/v1/ca/certificate", "certs", "read"},
-	{http.MethodPost, "/api/v1/ca/sign-csr", "certs", "generate"},
-	{http.MethodPost, "/api/v1/ca/issue", "certs", "generate"},
+	{http.MethodPost, "/api/v1/ca/sign-csr", "certs", "issue"},
+	{http.MethodPost, "/api/v1/ca/issue", "certs", "issue"},
 	{http.MethodPost, "/api/v1/ca/revoke", "certs", "revoke"},
 	{http.MethodPost, "/api/v1/ca/crl", "certs", "read"},
 	{http.MethodGet, "/api/v1/ca/revoked/01", "certs", "read"},
-	{http.MethodPost, "/api/v1/ca/tcg/ek", "certs", "generate"},
-	{http.MethodPost, "/api/v1/ca/tcg/ak", "certs", "generate"},
-	{http.MethodPost, "/api/v1/ca/tcg/sign-csr", "certs", "generate"},
-	{http.MethodPost, "/api/v1/ca/tcg/enroll", "certs", "generate"},
-	{http.MethodPost, "/api/v1/ca/tcg/lak", "certs", "generate"},
+	{http.MethodPost, "/api/v1/ca/tcg/ek", "certs", "issue"},
+	{http.MethodPost, "/api/v1/ca/tcg/ak", "certs", "issue"},
+	{http.MethodPost, "/api/v1/ca/tcg/sign-csr", "certs", "issue"},
+	{http.MethodPost, "/api/v1/ca/tcg/enroll", "certs", "issue"},
+	{http.MethodPost, "/api/v1/ca/tcg/lak", "certs", "issue"},
 
-	// Custodian groups — service_custodian_share_tenant.go.
-	{http.MethodPost, "/api/v1/custodian/groups/", "ceremony", "enroll_custodian"},
-	{http.MethodGet, "/api/v1/custodian/groups/", "ceremony", "status"},
-	{http.MethodGet, "/api/v1/custodian/groups/g1", "ceremony", "status"},
-	{http.MethodDelete, "/api/v1/custodian/groups/g1", "ceremony", "revoke_custodian"},
-	{http.MethodPost, "/api/v1/custodian/groups/g1/members", "ceremony", "enroll_custodian"},
-	{http.MethodDelete, "/api/v1/custodian/groups/g1/members/u1", "ceremony", "revoke_custodian"},
-	{http.MethodPost, "/api/v1/custodian/groups/g1/distribute", "ceremony", "claim_share_begin"},
-
-	// Shares — service_custodian_share_tenant.go.
-	{http.MethodPost, "/api/v1/shares/submit", "barrier", "unseal-share"},
-	{http.MethodGet, "/api/v1/shares/", "ceremony", "status"},
-	{http.MethodGet, "/api/v1/shares/srv/g1/1", "ceremony", "status"},
-	{http.MethodDelete, "/api/v1/shares/srv/g1/1", "barrier", "unseal-share"},
-	{http.MethodGet, "/api/v1/shares/status/g1", "ceremony", "status"},
-
-	// Tenants — service_custodian_share_tenant.go.
+	// Tenants — service_tenant.go.
 	{http.MethodPost, "/api/v1/tenants/", "tenants", "create"},
 	{http.MethodGet, "/api/v1/tenants/", "tenants", "list"},
 	{http.MethodGet, "/api/v1/tenants/t1", "tenants", "read"},
 	{http.MethodDelete, "/api/v1/tenants/t1", "tenants", "delete"},
-	{http.MethodGet, "/api/v1/tenants/t1/barrier/status", "tenant_barrier", "status"},
-	{http.MethodPost, "/api/v1/tenants/t1/barrier/init", "tenant_barrier", "init"},
-	{http.MethodPost, "/api/v1/tenants/t1/barrier/unseal", "tenant_barrier", "unseal"},
 	{http.MethodPut, "/api/v1/tenants/t1/entitlements", "tenants", "set_entitlements"},
 	{http.MethodPut, "/api/v1/tenants/t1/quotas", "tenants", "set_quotas"},
 
@@ -167,16 +148,9 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/device", "oidc_credentials", "update"},
 	{http.MethodPost, "/api/v1/oidc/credentials/tenant/ci/device/poll", "oidc_credentials", "update"},
 
-	// Whole-node backup/restore — handlers_backup.go (owner ruling
 	// 2026-09-30, go-xkms#728). Mirrors go-qrdb's own backup:* permission
 	// family verbatim; restore is gated separately because it overwrites
 	// live shard state.
-	{http.MethodPost, "/api/v1/backups", "backup", "create"},
-	{http.MethodGet, "/api/v1/backups", "backup", "list"},
-	{http.MethodGet, "/api/v1/backups/bkp-1", "backup", "read"},
-	{http.MethodDelete, "/api/v1/backups/bkp-1", "backup", "delete"},
-	{http.MethodPost, "/api/v1/backups/restore", "backup", "restore"},
-	{http.MethodPost, "/api/v1/backups/bkp-1/verify", "backup", "verify"},
 }
 
 // sessionOnlyRoutes is the golden set of REST routes that still require only
@@ -189,13 +163,7 @@ var sessionOnlyRoutes = []string{
 	"GET /api/v1/auth/validate",
 	"GET /api/v1/ca/crl",
 	"GET /api/v1/credentials/",
-	"GET /api/v1/init/officer/status",
-	"GET /api/v1/init/status",
 	"POST /api/v1/auth/logout",
-	"POST /api/v1/init/claim-cert/begin",
-	"POST /api/v1/init/claim-cert/complete",
-	"POST /api/v1/init/claim-share/begin",
-	"POST /api/v1/init/claim-share/complete",
 	// Adds a passkey to the caller's OWN account; the account comes from
 	// the session, never the request (go-xkms#1294).
 	"POST /api/v1/webauthn/credentials/begin",
@@ -270,17 +238,15 @@ func newGatedRouteServer(t *testing.T, rbac qrdbtransport.RBACClient, authn auth
 	svc.SetCredentialService(&credentialspkg.Service{})
 
 	server, err := NewServer(&Config{
-		Authenticator:    authn,
-		Backends:         map[string]xkms.Backend{"test": ks},
-		Logger:           logger,
-		XKMSService:      svc,
-		CustodianEnabled: true,
-		ShareEnabled:     true,
-		BarrierRegistry:  registry,
-		PasswordStore:    staticpw.NewStore(storage.NewMemory()),
-		CA:               ca,
-		EnableRBAC:       true,
-		RBACAuthorizer:   auth.NewAuthorizer(rbac),
+		Authenticator:   authn,
+		Backends:        map[string]xkms.Backend{"test": ks},
+		Logger:          logger,
+		XKMSService:     svc,
+		BarrierRegistry: registry,
+		PasswordStore:   staticpw.NewStore(storage.NewMemory()),
+		CA:              ca,
+		EnableRBAC:      true,
+		RBACAuthorizer:  auth.NewAuthorizer(rbac),
 	})
 	require.NoError(t, err)
 	return server
@@ -348,7 +314,6 @@ func TestGatedRoutes_WrongGrantDenied(t *testing.T) {
 	}{
 		{gatedRoute{resource: "pin", action: "read"}, gatedRoute{method: http.MethodPost, path: "/api/v1/pin/so/set"}},
 		{gatedRoute{resource: "tenants", action: "read"}, gatedRoute{method: http.MethodDelete, path: "/api/v1/tenants/t1"}},
-		{gatedRoute{resource: "ceremony", action: "status"}, gatedRoute{method: http.MethodPost, path: "/api/v1/custodian/groups/g1/members"}},
 		{gatedRoute{resource: "passwords", action: "read"}, gatedRoute{method: http.MethodPost, path: "/api/v1/password-vault/unlock"}},
 	}
 	rbac := &routeAuthzRecordingClient{}
@@ -418,7 +383,7 @@ func TestTenantRoutes_AntiEnumerationPreserved(t *testing.T) {
 	t.Run("granted caller cannot tell another tenant from a missing one", func(t *testing.T) {
 		rbac := &routeAuthzRecordingClient{allowResource: "tenants", allowAction: "read"}
 		server := newGatedRouteServer(t, rbac, authn, nil, own)
-		_, err := server.barrierRegistry.RegisterTenant(other)
+		_, err := server.barrierRegistry.RegisterTenantDefault(other)
 		require.NoError(t, err)
 
 		existing := serveRoute(server, http.MethodGet, "/api/v1/tenants/"+other)
@@ -431,7 +396,7 @@ func TestTenantRoutes_AntiEnumerationPreserved(t *testing.T) {
 
 	t.Run("ungranted caller is refused before any lookup", func(t *testing.T) {
 		server := newGatedRouteServer(t, denyingRBACClient{}, authn, nil, own)
-		_, err := server.barrierRegistry.RegisterTenant(other)
+		_, err := server.barrierRegistry.RegisterTenantDefault(other)
 		require.NoError(t, err)
 
 		existing := serveRoute(server, http.MethodGet, "/api/v1/tenants/"+other)
@@ -474,9 +439,6 @@ func TestRoutes_GatedRoutesDeclarePermission(t *testing.T) {
 		"POST /api/v1/pin/so/set",
 		"GET /api/v1/piv/slots/{slot}/certificate",
 		"GET /api/v1/ca/bundle",
-		"DELETE /api/v1/custodian/groups/{id}/members/{userID}",
-		"DELETE /api/v1/shares/{serverURL}/{groupID}/{shareIndex}",
-		"POST /api/v1/tenants/{tenantID}/barrier/unseal",
 		"POST /api/v1/password-vault/unlock",
 		"POST /api/v1/credentials/submit",
 	} {

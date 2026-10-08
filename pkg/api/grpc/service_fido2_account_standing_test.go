@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -38,12 +39,13 @@ type standingFixture struct {
 	rp            *webauthn.Service
 	authenticator *webauthn.MockAuthenticator
 	user          webauthn.User
+	stores        *webauthntest.Stores
 }
 
 func newStandingFixture(t *testing.T, email string) *standingFixture {
 	t.Helper()
 	open := true
-	svc, rp := newFIDO2RelyingPartyService(t, &open)
+	svc, rp, stores := newFIDO2RelyingPartyService(t, &open)
 	ctx := context.Background()
 
 	begin, err := svc.BeginRegistration(ctx, &pb.BeginRegistrationRequest{Email: email, DisplayName: email})
@@ -65,16 +67,13 @@ func newStandingFixture(t *testing.T, email string) *standingFixture {
 	})
 	require.NoError(t, err)
 
-	return &standingFixture{svc: svc, rp: rp, authenticator: authenticator, user: user}
+	return &standingFixture{svc: svc, rp: rp, authenticator: authenticator, user: user, stores: stores}
 }
 
-// setStanding rewrites the account's standing in the memory store.
+// setStanding rewrites the account's standing on its qrdb record.
 func (f *standingFixture) setStanding(t *testing.T, state qrdbsdk.Lifecycle, methods []string) {
 	t.Helper()
-	du, ok := f.user.(*webauthn.DefaultUser)
-	require.True(t, ok)
-	du.SetLifecycle(state)
-	du.SetAuthMethods(methods)
+	f.stores.SetStanding(t, f.user.Email(), state, methods)
 }
 
 // begin runs BeginAuthentication for the account.

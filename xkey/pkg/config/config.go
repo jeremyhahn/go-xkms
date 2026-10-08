@@ -49,11 +49,11 @@ type Config struct {
 }
 
 // BarrierSection holds settings for barrier sealing strategies that need
-// more than a CLI flag to configure. Today that is only the cloud KMS
-// strategies (aws_kms, gcp_kms, azure_kv, vault); tpm2 and software need
-// nothing here.
+// more than a CLI flag to configure: the cloud KMS strategies (aws_kms,
+// gcp_kms, azure_kv, vault) and pkcs11. tpm2 and software need nothing here.
 type BarrierSection struct {
 	CloudKMS BarrierCloudKMSConfig `yaml:"cloud_kms,omitempty" json:"cloud_kms,omitempty" mapstructure:"cloud_kms"`
+	PKCS11   *BarrierPKCS11Config  `yaml:"pkcs11,omitempty" json:"pkcs11,omitempty" mapstructure:"pkcs11"`
 }
 
 // BackendConfig holds the cryptographic backend selection and TPM2
@@ -495,6 +495,10 @@ func DefaultConfig() *Config {
 					Token: &xkms.SecretValue{},
 				},
 			},
+			// Barrier.PKCS11 is materialized on every Load() for the same
+			// reason, and its Validate() treats an empty library or token as
+			// unconfigured.
+			PKCS11: &BarrierPKCS11Config{},
 		},
 	}
 }

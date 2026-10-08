@@ -15,7 +15,6 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -24,15 +23,12 @@ import (
 	"testing"
 	"time"
 
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 )
 
@@ -674,198 +670,13 @@ func TestCoverageBoostPhase3_PINService_IsPINSet_WithService(t *testing.T) {
 // Share Service - ListShares
 // ===========================================================================
 
-func TestCoverageBoostPhase3_ShareService_ListShares_NilStore(t *testing.T) {
-	svc := NewShareService()
-	_, err := svc.ListShares()
-	assert.ErrorIs(t, err, ErrShareStoreNil)
-}
-
-func TestCoverageBoostPhase3_ShareService_ListShares_StoreError(t *testing.T) {
-	svc := NewShareService()
-	svc.SetContext(context.Background())
-	svc.SetShareStore(&mockShareStore{
-		listErr: errors.New("list failed"),
-	})
-
-	_, err := svc.ListShares()
-	require.Error(t, err)
-	assert.Equal(t, "list failed", err.Error())
-}
-
-func TestCoverageBoostPhase3_ShareService_ListShares_Success(t *testing.T) {
-	svc := NewShareService()
-	svc.SetContext(context.Background())
-	svc.SetShareStore(&mockShareStore{
-		listResult: []*xkms.ShareEntry{
-			{
-				ServerURL:  "https://example.com",
-				GroupID:    "grp-1",
-				ShareIndex: 1,
-			},
-		},
-	})
-
-	infos, err := svc.ListShares()
-	require.NoError(t, err)
-	require.Len(t, infos, 1)
-	assert.Equal(t, "https://example.com", infos[0].ServerURL)
-}
-
 // ===========================================================================
 // Share Service - ImportShare
 // ===========================================================================
 
-func TestCoverageBoostPhase3_ShareService_ImportShare_EmptyPath(t *testing.T) {
-	svc := NewShareService()
-	_, err := svc.ImportShare("")
-	assert.ErrorIs(t, err, ErrEmptyFilePath)
-}
-
-func TestCoverageBoostPhase3_ShareService_ImportShare_NilStore(t *testing.T) {
-	svc := NewShareService()
-	_, err := svc.ImportShare("/some/path")
-	assert.ErrorIs(t, err, ErrShareStoreNil)
-}
-
-func TestCoverageBoostPhase3_ShareService_ImportShare_FileNotFound(t *testing.T) {
-	svc := NewShareService()
-	svc.SetShareStore(&mockShareStore{})
-	_, err := svc.ImportShare("/nonexistent/file.json")
-	assert.ErrorIs(t, err, ErrShareImportFailed)
-}
-
-func TestCoverageBoostPhase3_ShareService_ImportShare_InvalidJSON(t *testing.T) {
-	svc := NewShareService()
-	svc.SetShareStore(&mockShareStore{})
-
-	dir := t.TempDir()
-	filePath := filepath.Join(dir, "bad.json")
-	require.NoError(t, os.WriteFile(filePath, []byte("not json"), 0600))
-
-	_, err := svc.ImportShare(filePath)
-	assert.ErrorIs(t, err, ErrShareImportFailed)
-}
-
-func TestCoverageBoostPhase3_ShareService_ImportShare_ValidationFailure(t *testing.T) {
-	svc := NewShareService()
-	svc.SetShareStore(&mockShareStore{})
-
-	// Write valid JSON but missing required fields.
-	dir := t.TempDir()
-	filePath := filepath.Join(dir, "empty.json")
-	data, _ := json.Marshal(xkms.ShareEntry{})
-	require.NoError(t, os.WriteFile(filePath, data, 0600))
-
-	_, err := svc.ImportShare(filePath)
-	require.Error(t, err)
-}
-
-func TestCoverageBoostPhase3_ShareService_ImportShare_SaveError(t *testing.T) {
-	svc := NewShareService()
-	svc.SetContext(context.Background())
-	svc.SetShareStore(&mockShareStore{
-		saveErr: errors.New("save failed"),
-	})
-
-	dir := t.TempDir()
-	filePath := filepath.Join(dir, "valid.json")
-	entry := xkms.ShareEntry{
-		ServerURL:  "https://example.com",
-		GroupID:    "grp-1",
-		ShareIndex: 1,
-		ShareData:  []byte("secret"),
-	}
-	data, _ := json.Marshal(entry)
-	require.NoError(t, os.WriteFile(filePath, data, 0600))
-
-	_, err := svc.ImportShare(filePath)
-	require.Error(t, err)
-	assert.Equal(t, "save failed", err.Error())
-}
-
-func TestCoverageBoostPhase3_ShareService_ImportShare_Success(t *testing.T) {
-	svc := NewShareService()
-	svc.SetContext(context.Background())
-	svc.SetShareStore(&mockShareStore{})
-
-	var emittedEvents []events.Event
-	svc.SetEventEmitter(func(e events.Event) {
-		emittedEvents = append(emittedEvents, e)
-	})
-
-	dir := t.TempDir()
-	filePath := filepath.Join(dir, "valid.json")
-	entry := xkms.ShareEntry{
-		ServerURL:  "https://example.com",
-		GroupID:    "grp-1",
-		ShareIndex: 1,
-		ShareData:  []byte("secret"),
-	}
-	data, _ := json.Marshal(entry)
-	require.NoError(t, os.WriteFile(filePath, data, 0600))
-
-	info, err := svc.ImportShare(filePath)
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, "https://example.com", info.ServerURL)
-	assert.Equal(t, "grp-1", info.GroupID)
-
-	// Verify event emission.
-	require.NotEmpty(t, emittedEvents)
-	assert.Equal(t, events.EventShareImported, emittedEvents[0].Type)
-}
-
 // ===========================================================================
 // Share Service - DeleteShare
 // ===========================================================================
-
-func TestCoverageBoostPhase3_ShareService_DeleteShare_EmptyServerURL(t *testing.T) {
-	svc := NewShareService()
-	err := svc.DeleteShare("", "grp-1", 0)
-	assert.ErrorIs(t, err, ErrEmptyServerURL)
-}
-
-func TestCoverageBoostPhase3_ShareService_DeleteShare_EmptyGroupID(t *testing.T) {
-	svc := NewShareService()
-	err := svc.DeleteShare("https://example.com", "", 0)
-	assert.ErrorIs(t, err, ErrEmptyGroupID)
-}
-
-func TestCoverageBoostPhase3_ShareService_DeleteShare_NilStore(t *testing.T) {
-	svc := NewShareService()
-	err := svc.DeleteShare("https://example.com", "grp-1", 0)
-	assert.ErrorIs(t, err, ErrShareStoreNil)
-}
-
-func TestCoverageBoostPhase3_ShareService_DeleteShare_StoreError(t *testing.T) {
-	svc := NewShareService()
-	svc.SetContext(context.Background())
-	svc.SetShareStore(&mockShareStore{
-		deleteErr: errors.New("delete failed"),
-	})
-
-	err := svc.DeleteShare("https://example.com", "grp-1", 0)
-	require.Error(t, err)
-	assert.Equal(t, "delete failed", err.Error())
-}
-
-func TestCoverageBoostPhase3_ShareService_DeleteShare_Success(t *testing.T) {
-	svc := NewShareService()
-	svc.SetContext(context.Background())
-	svc.SetShareStore(&mockShareStore{})
-
-	var emittedEvents []events.Event
-	svc.SetEventEmitter(func(e events.Event) {
-		emittedEvents = append(emittedEvents, e)
-	})
-
-	err := svc.DeleteShare("https://example.com", "grp-1", 0)
-	require.NoError(t, err)
-
-	// Verify event emission.
-	require.NotEmpty(t, emittedEvents)
-	assert.Equal(t, events.EventShareDeleted, emittedEvents[0].Type)
-}
 
 // ===========================================================================
 // Agent Service - ApproveEnrollment

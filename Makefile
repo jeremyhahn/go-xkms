@@ -132,7 +132,7 @@ endif
 #
 # The module declares the Go it needs in go.mod's `go` directive, and the
 # fleet pins GOTOOLCHAIN=local on hosts, under which a host go older than that
-# directive refuses every target ("go: go.mod requires go >= 1.27.0 (running
+# directive refuses every target ("go: go.mod requires go >= 1.27.1 (running
 # go 1.26.4; GOTOOLCHAIN=local)") while the Docker builder, which runs with
 # GOTOOLCHAIN=auto, quietly downloads the right one. Select the declared
 # toolchain explicitly for every recipe: the host go then acts only as the
@@ -911,17 +911,17 @@ release-cli:
 	@echo "$(CYAN)$(BOLD)→ Building xkmsctl for all platforms (CGO-free)...$(RESET)"
 	@mkdir -p $(BIN_DIR)/release
 	@echo "$(CYAN)  Building linux/amd64...$(RESET)"
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -tags ble -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-linux-amd64 ./cmd/xkmsctl
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-linux-amd64 ./cmd/xkmsctl
 	@echo "$(CYAN)  Building linux/arm64...$(RESET)"
-	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags ble -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-linux-arm64 ./cmd/xkmsctl
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-linux-arm64 ./cmd/xkmsctl
 	@echo "$(CYAN)  Building darwin/amd64...$(RESET)"
-	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -tags ble -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-darwin-amd64 ./cmd/xkmsctl
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-darwin-amd64 ./cmd/xkmsctl
 	@echo "$(CYAN)  Building darwin/arm64...$(RESET)"
-	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags ble -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-darwin-arm64 ./cmd/xkmsctl
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-darwin-arm64 ./cmd/xkmsctl
 	@echo "$(CYAN)  Building windows/amd64...$(RESET)"
-	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -tags ble -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-windows-amd64.exe ./cmd/xkmsctl
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-windows-amd64.exe ./cmd/xkmsctl
 	@echo "$(CYAN)  Building windows/arm64...$(RESET)"
-	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags ble -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-windows-arm64.exe ./cmd/xkmsctl
+	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-windows-arm64.exe ./cmd/xkmsctl
 	@echo "$(GREEN)✓ xkmsctl binaries built for all platforms$(RESET)"
 
 .PHONY: release-server
@@ -1474,27 +1474,6 @@ test-rand:
 	@echo "$(CYAN)→ Testing crypto/rand package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/crypto/rand/...
 
-.PHONY: test-backup
-## test-backup: Run backup adapter unit tests
-test-backup:
-	@echo "$(CYAN)→ Testing backup adapter...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/backup/...
-
-.PHONY: coverage-backup
-## coverage-backup: Generate coverage report for backup adapter
-coverage-backup:
-	@echo "$(CYAN)→ Generating coverage report for backup adapter...$(RESET)"
-	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/backup.out -covermode=atomic ./pkg/backup/...
-	@$(GO) tool cover -html=$(COVERAGE_DIR)/backup.out -o $(COVERAGE_DIR)/backup.html
-	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/backup.html$(RESET)"
-
-.PHONY: bench-backup
-## bench-backup: Run backup adapter benchmarks
-bench-backup:
-	@echo "$(CYAN)→ Running backup adapter benchmarks...$(RESET)"
-	@$(GOTEST) -bench=. -benchmem -run=^$$ ./pkg/backup/...
-
 .PHONY: test-rand-tpm2
 ## test-rand-tpm2: Run crypto/rand package unit tests with TPM2 simulator support
 test-rand-tpm2:
@@ -1553,7 +1532,7 @@ bench-tpm2-simulator:
 # the module at runtime), which the `test` CI job already installs as an
 # unconditional cgo dependency of the module graph.
 PKCS11_TAGGED_TAGS := $(TEST_TAGS) pkcs11
-PKCS11_TAGGED_PKGS := ./pkg/backend/pkcs11/... ./pkg/factor/pkcs11/... ./pkg/pivcert/pkcs11/... ./pkg/crypto/rand/... ./pkg/storage/hardware/...
+PKCS11_TAGGED_PKGS := ./pkg/backend/pkcs11/... ./pkg/pkcs11strategy/... ./pkg/embeddednode/... ./pkg/factor/pkcs11/... ./pkg/pivcert/pkcs11/... ./pkg/crypto/rand/... ./pkg/storage/hardware/...
 
 .PHONY: test-pkcs11-tagged
 ## test-pkcs11-tagged: Run the pkcs11-tag-gated unit suites against SoftHSM2
@@ -1619,7 +1598,7 @@ test-sdk-go:
 	@echo "$(GREEN)✓ Go SDK unit tests complete$(RESET)"
 
 .PHONY: test-sdk-transport
-## test-sdk-transport: Run Go SDK REST transport unit tests (custodian, share, tenant)
+## test-sdk-transport: Run Go SDK REST transport unit tests (tenant)
 test-sdk-transport:
 	@echo "$(CYAN)→ Testing Go SDK REST transport methods...$(RESET)"
 	@cd sdk/go && $(GO) test -v -count=1 ./transport/rest/... -timeout 5m
@@ -1693,13 +1672,6 @@ test-seal:
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/seal/...
 	@echo "$(GREEN)✓ Seal tests complete$(RESET)"
 
-.PHONY: test-mem
-## test-mem: Run crypto mem package unit tests
-test-mem:
-	@echo "$(CYAN)→ Testing crypto mem package...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/crypto/mem/...
-	@echo "$(GREEN)✓ Crypto mem tests complete$(RESET)"
-
 .PHONY: coverage-seal
 ## coverage-seal: Generate coverage report for seal package
 coverage-seal:
@@ -1709,16 +1681,6 @@ coverage-seal:
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/seal.out -o $(COVERAGE_DIR)/seal.html
 	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/seal.html$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/seal.out | grep total
-
-.PHONY: coverage-mem
-## coverage-mem: Generate coverage report for crypto mem package
-coverage-mem:
-	@echo "$(CYAN)→ Generating coverage report for crypto mem package...$(RESET)"
-	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/mem.out -covermode=atomic ./pkg/crypto/mem/...
-	@$(GO) tool cover -html=$(COVERAGE_DIR)/mem.out -o $(COVERAGE_DIR)/mem.html
-	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/mem.html$(RESET)"
-	@$(GO) tool cover -func=$(COVERAGE_DIR)/mem.out | grep total
 
 .PHONY: coverage-xkmsctl
 ## coverage-xkmsctl: Generate coverage report for xkmsctl CLI
@@ -3803,7 +3765,7 @@ LINT_TAGS_xkey := ble,pkcs11,usb,codec_json,tpm_simulator,tpm2,awskms,azurekv,gc
 #     conflict on.
 #   - LINT_TAGS_root_raft is LINT_TAGS_root plus raft, not the build-raft
 #     job's narrower `raft codec_json` leg. raft is a boolean swap
-#     (pkg/daemon/node_cluster.go is `//go:build raft`, node_standalone.go
+#     (pkg/embeddednode/node_cluster.go is `//go:build raft`, node_standalone.go
 #     its `//go:build !raft` counterpart), so linting it under just
 #     `raft,codec_json` (matching build-raft exactly) compiles clean but
 #     reports five spurious `unused` findings: helpers in
@@ -4937,13 +4899,26 @@ playwright-test-docker:
 playwright-test-piv:
 	@$(MAKE) -C xkey playwright-test-piv
 
-# Dynamic test target for individual packages
-# Usage: make test-backend, make test-xkms, etc.
+# test_dir resolves a test-%/coverage-% stem to its directory: a library
+# package under pkg/ or a binary under cmd/ (make test-xkmsd). A stem naming
+# neither is an error, never a silent "matched no packages" pass.
+test_dir = $(or $(wildcard ./pkg/$(1)),$(wildcard ./cmd/$(1)),$(error neither ./pkg/$(1) nor ./cmd/$(1) exists))
+
+# integration_dir does the same for integration-test-%: test/integration/$*.
+integration_dir = $(or $(wildcard ./test/integration/$(1)),$(error ./test/integration/$(1) does not exist))
+
+# pkg/acme/client's device-attest-01 DICE tests enroll the agsim-atecc608a
+# simulator and fail without it, so the per-package targets that reach them
+# build it first, as test-go, race and coverage-full do.
+test-acme coverage-acme: agsim
+
+# Dynamic test target for individual packages and binaries
+# Usage: make test-backend, make test-xkms, make test-xkmsd, etc.
 .PHONY: test-%
 test-%:
-	@echo "[36m→ Running tests for pkg/$*...[0m"
-	@$(GO) test -v $(TAG_FLAGS) ./pkg/$*/...
-	@echo "[32m✓ Tests passed for pkg/$*[0m"
+	@echo "[36m→ Running tests for $(call test_dir,$*)...[0m"
+	@$(GO) test -v $(TAG_FLAGS) $(call test_dir,$*)/...
+	@echo "[32m✓ Tests passed for $(call test_dir,$*)[0m"
 
 # Gadget integration tests live in xkey/ module — delegate to xkey Makefile.
 .PHONY: integration-test-gadget
@@ -4955,16 +4930,16 @@ integration-test-gadget:
 .PHONY: integration-test-%
 integration-test-%:
 	@echo "[36m→ Running integration tests for $*...[0m"
-	@$(GO) test -v -tags=integration $(TAG_FLAGS) ./test/integration/$*/...
+	@$(GO) test -v -tags "integration $(BUILD_TAGS)" $(call integration_dir,$*)/...
 	@echo "[32m✓ Integration tests passed for $*[0m"
 
 # Dynamic coverage target for individual packages
 # Usage: make coverage-backend, make coverage-xkms, etc.
 .PHONY: coverage-%
 coverage-%:
-	@echo "[36m→ Generating coverage for pkg/$*...[0m"
+	@echo "[36m→ Generating coverage for $(call test_dir,$*)...[0m"
 	@mkdir -p $(COVERAGE_DIR)
-	@$(GO) test $(TAG_FLAGS) ./pkg/$*/... -coverprofile=$(COVERAGE_DIR)/$*.out -covermode=atomic
+	@$(GO) test $(TAG_FLAGS) $(call test_dir,$*)/... -coverprofile=$(COVERAGE_DIR)/$*.out -covermode=atomic
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/$*.out -o $(COVERAGE_DIR)/$*-coverage.html
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/$*.out > $(COVERAGE_DIR)/$*.txt
 	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/$*.txt | awk '{print $$NF}'); \

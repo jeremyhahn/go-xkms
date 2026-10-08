@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/hkdf"
 )
@@ -178,44 +179,9 @@ func WritePolicyHMAC(policy *PolicySection, soPIN string, hmacPath string) (err 
 		return errors.Join(ErrPolicyHMACSaveFailed, err)
 	}
 
-	tmpFile, err := os.CreateTemp(dir, ".xkey-policy-hmac-*.tmp")
-	if err != nil {
+	if err := fsutil.WriteFileAtomic(hmacPath, data, 0600); err != nil {
 		return errors.Join(ErrPolicyHMACSaveFailed, err)
 	}
-	tmpPath := tmpFile.Name()
-
-	success := false
-	defer func() {
-		if !success {
-			if removeErr := os.Remove(tmpPath); removeErr != nil {
-				err = errors.Join(err, removeErr)
-			}
-		}
-	}()
-
-	if _, writeErr := tmpFile.Write(data); writeErr != nil {
-		closeErr := tmpFile.Close()
-		return errors.Join(ErrPolicyHMACSaveFailed, writeErr, closeErr)
-	}
-
-	if syncErr := tmpFile.Sync(); syncErr != nil {
-		closeErr := tmpFile.Close()
-		return errors.Join(ErrPolicyHMACSaveFailed, syncErr, closeErr)
-	}
-
-	if closeErr := tmpFile.Close(); closeErr != nil {
-		return errors.Join(ErrPolicyHMACSaveFailed, closeErr)
-	}
-
-	if chmodErr := os.Chmod(tmpPath, 0600); chmodErr != nil {
-		return errors.Join(ErrPolicyHMACSaveFailed, chmodErr)
-	}
-
-	if renameErr := os.Rename(tmpPath, hmacPath); renameErr != nil {
-		return errors.Join(ErrPolicyHMACSaveFailed, renameErr)
-	}
-
-	success = true
 	return nil
 }
 

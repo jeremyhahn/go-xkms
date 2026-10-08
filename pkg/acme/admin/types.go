@@ -37,10 +37,6 @@ var (
 	ErrAccountNotFound        = errors.New("admin: account not found")
 	ErrOrderNotFound          = errors.New("admin: order not found")
 	ErrRevocationFailed       = errors.New("admin: certificate revocation failed")
-	// ErrNilSignOptions is returned by the ceremony CA adapter when go-qrdb
-	// passes no SignCSROptions: there is then no registered holder and no
-	// tenant to name, and signing would fall back to the CSR's own subject.
-	ErrNilSignOptions = errors.New("admin: holder certificate signing requires the ceremony's sign options")
 	// ErrCANotConfigured is returned by AdminService methods that read from
 	// the ACME certificate authority (GetStatus, RevokeCertificate) when the
 	// service was constructed with a nil ca.TCGCA. This is the ordinary,

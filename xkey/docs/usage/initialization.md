@@ -42,29 +42,9 @@ The `auto` strategy for both `seal` and `pin` selects the best available hardwar
 
 ## Step 2: Initialize the Barrier
 
-The barrier provides transparent at-rest encryption for all key material using AES-256-GCM. It must be initialized once before any key operations.
+The barrier provides transparent at-rest encryption for all key material. It belongs to go-qrdb, and `xkmsctl` has no `barrier` verb: the server initializes and unseals it from the `seal` section above when `xkmsd` starts. See [Barrier Architecture](../seal/architecture.md).
 
-```bash
-# Initialize with auto-selected strategy (prefers hardware)
-xkmsctl barrier init
-
-# Or force a specific strategy
-xkmsctl barrier init --strategy software
-
-# Verify initialization
-xkmsctl barrier status
-```
-
-Expected output after initialization:
-
-```
-Barrier Status
-  Sealed:          false
-  Strategy:        software
-  Hardware Backed: false
-```
-
-The barrier starts in the unsealed state after a successful `init`. When using the software strategy, you will be prompted for a passphrase that protects the root key via Argon2id key derivation.
+On a desktop, `xkey barrier init` initializes the barrier. Run it before `xkey tpm` or `xkey pin` on a fresh data directory, because the go-qrdb file engine refuses a non-empty directory that lacks its format marker.
 
 ## Step 3: Set the Security Officer PIN
 
@@ -189,51 +169,20 @@ See [Authentication Configuration](../configuration/auth.md) for the full refere
 
 ## Daily Operations
 
-After initial setup, the barrier must be unsealed on each restart before key operations are available.
-
-### Unsealing
-
-```bash
-# Unseal the barrier (prompts for passphrase with software strategy)
-xkmsctl barrier unseal
-
-# Verify status
-xkmsctl barrier status
-# Expected: Sealed: false
-```
-
-For TPM 2.0 or PKCS#11 strategies, unsealing is automatic -- no passphrase prompt is required because the hardware provides authentication.
-
-### Scripted Unseal
-
-```bash
-echo "$XKMS_PASSPHRASE" | xkmsctl barrier unseal
-```
-
-### Sealing Before Shutdown
-
-Before shutting down (optional but recommended for security):
-
-```bash
-xkmsctl barrier seal
-```
-
-This zeros the encryption key in memory. On the next start, unseal again to resume operations.
+The server unseals the barrier on each restart through the configured seal strategy. TPM 2.0 and PKCS#11 strategies unseal automatically because the hardware provides authentication. There is no `xkmsctl barrier` verb.
 
 ## Troubleshooting
 
 | Symptom | Cause | Resolution |
 |---------|-------|------------|
-| `seal: barrier already initialized` | `barrier init` called on an already-initialized system | Use `xkmsctl barrier status` to check current state |
 | `pin: locked out due to too many failed attempts` | Exceeded max failed PIN attempts | Check `xkmsctl pin status` for recovery time, or reset immediately with `xkmsctl pin reset-lockout` (requires SO PIN) |
-| `seal: barrier is sealed` | Key operation attempted while barrier is sealed | Run `xkmsctl barrier unseal` first |
+| `seal: barrier is sealed` | Key operation attempted while barrier is sealed | Restart `xkmsd` so the seal strategy unseals it |
 | `seal: invalid credentials` | Wrong passphrase during unseal | Re-enter the correct passphrase |
 | `backend not found` | Requested backend not defined in configuration | Verify the `backends` section in your configuration file |
 | `pin: SO PIN authorization required` | Attempted user PIN set without SO PIN | Set the SO PIN first (Step 3) |
 
 ## See Also
 
-- [Barrier Commands](cli/barrier.md) -- Full barrier CLI reference
 - [PIN Commands](cli/pin.md) -- Full PIN CLI reference
 - [Barrier Architecture](../seal/architecture.md) -- Encryption design and threat model
 - [Configuration Reference](../configuration/README.md) -- Complete configuration options

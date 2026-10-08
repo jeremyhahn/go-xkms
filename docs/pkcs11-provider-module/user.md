@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — User Guide
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## What you get
 
@@ -91,8 +91,9 @@ The consumer finds its key by the `CKA_LABEL` or `CKA_ID` the daemon chose, and
 signs with `CKM_ECDSA`. A process whose uid the server does not list fails at
 `C_Initialize` with `CKR_DEVICE_ERROR`.
 
-Upgrading from an earlier release: system-scope remote tokens moved to
-`pkcs11state/system/<token>/`. Re-provision them; there is no migration.
+Upgrading from an earlier release: the server now keeps remote token state as
+records in its `pkcs11state` database, and does not read state written by an
+earlier release. Re-provision every remote token; there is no migration.
 
 ## PINs come from the environment
 

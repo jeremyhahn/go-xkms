@@ -41,7 +41,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
@@ -71,25 +71,6 @@ type XKMSService struct {
 	defaultBackend string             // default backend to use
 	mu             sync.RWMutex
 
-	// Optional subsystems — when set via Set* methods, XKMSService implements
-	// the full transport.XKMSServicer interface. Each field starts nil (returning
-	// ErrNotConfigured) until wired by the server or application.
-	barrier subsystem[*seal.Barrier]
-
-	// encMigrator enables at-rest encryption on a previously-unencrypted
-	// barrier by migrating it to a keyed strategy in place. It is the embedded
-	// go-qrdb node (which satisfies EncryptionMigrator). Nil in wiring that has
-	// no migratable backend, in which case BarrierEnableEncryption reports
-	// ErrNotConfigured.
-	encMigrator EncryptionMigrator
-
-	// migrationsInFlight tracks enable-encryption migrations currently running,
-	// keyed by barrier scope, so BarrierEnableEncryption is single-flight per
-	// scope. Concurrent migrations on the same scope would race on the barrier's
-	// swap/in-place rewrite and corrupt it. The zero value is ready to use;
-	// entries are added before the goroutine launches and removed when it exits.
-	migrationsInFlight sync.Map
-
 	// tenantService is go-qrdb's canonical TenantService, composed over the
 	// barrier registry with xkms hardware seal strategies injected. It owns
 	// tenant lifecycle: entitlement-gated isolation modes, system-managed
@@ -118,18 +99,6 @@ type XKMSService struct {
 	keyVersions     subsystem[*keyversion.Store]
 	oidcCredentials subsystem[*credential.Service]
 	webauthnService *webauthn.Service
-	custodians      subsystem[qrdbtransport.CustodianGroupClient]
-	shares          subsystem[qrdbtransport.ShareClient]
-
-	// backup is the embedded qrdb node's backup client (owner ruling
-	// 2026-09-30, go-xkms#728): whole-node backup is a shard snapshot of the
-	// node's barrier-encrypted, replicated state, captured and restored
-	// entirely through go-qrdb/sdk/go — xkms persists no backup state of its
-	// own and keeps no local copy of go-qrdb's snapshot/restore logic. Nil
-	// until SetBackupClient is called, in which case every BackupServicer
-	// method returns ErrNotConfigured.
-	backup          subsystem[qrdbtransport.BackupClient]
-	userAuthFactors qrdbtransport.UserAuthFactorClient
 
 	// tokenIssuer mints and revokes the browser/desktop session token
 	// pairs behind the WebAuthn, PIV, and mTLS login flows. DisableUser and
@@ -142,10 +111,6 @@ type XKMSService struct {
 	// every refresh) is the enforcement backstop either way.
 	tokenIssuer *token.Issuer
 
-	// audit is the embedded qrdb node's audit client, used READ-ONLY here:
-	// QueryAudit serves the audit viewer. Emission goes through pkg/audit's
-	// Logger seam instead, so an API caller can never write to the chain.
-	audit             qrdbtransport.AuditClient
 	credentialService subsystem[*credentialspkg.Service]
 
 	// authorizer is the process's single qrdb-backed Authorizer, the same one
@@ -171,10 +136,6 @@ type XKMSService struct {
 	// resolution operates on. It is sourced from xkms Config.Cluster.ShardID
 	// (default 1).
 	clusterShardID uint64
-
-	// clusterNodeID is this node's Raft replica identifier. Zero when
-	// standalone.
-	clusterNodeID uint64
 
 	// passwordStoreManager manages per-tenant password stores with
 	// session lock state and TenantBarrier-backed encryption.
@@ -240,13 +201,8 @@ type XKMSService struct {
 	// account with ErrNotConfigured rather than create one no invitation
 	// can ever activate.
 	//
-	// InviteStore is satisfied by two implementations pkg/server chooses
-	// between: qrdb's own *qrdbsdk.TenantInviteStore when the embedded node
-	// exposes a per-tenant StoreResolver (barrier registry configured —
-	// invitations then live under each tenant's own barrier, same as the
-	// rest of that tenant's identity data), and a createStorage-backed one
-	// otherwise, so a default deployment with no barrier registry still has
-	// invitations — see pkg/server/invite_store.go.
+	// pkg/compose wires its one production implementation (see
+	// pkg/compose/invite.go).
 	inviteStore InviteStore
 
 	// inviteConfig holds the operator-configured invitation link base URL
@@ -299,13 +255,6 @@ func (s *XKMSService) SPIFFETrustDomain() string {
 	return s.spiffeTrustDomain
 }
 
-// SetBarrier sets the barrier subsystem for seal/unseal operations.
-func (s *XKMSService) SetBarrier(b *seal.Barrier) { s.barrier.store(b) }
-
-// SetEncryptionMigrator sets the encryption-migration subsystem used by
-// BarrierEnableEncryption. It is the embedded go-qrdb node.
-func (s *XKMSService) SetEncryptionMigrator(m EncryptionMigrator) { s.encMigrator = m }
-
 // SetPINManager sets the PIN backend subsystem.
 func (s *XKMSService) SetPINManager(p qrdbsdk.PINBackend) { s.pinManager.store(p) }
 
@@ -348,42 +297,6 @@ func (s *XKMSService) SetInviteStore(store InviteStore) { s.inviteStore = store 
 // and TTL bounds. The zero value is usable (see InviteConfig).
 func (s *XKMSService) SetInviteConfig(cfg InviteConfig) { s.inviteConfig = cfg }
 
-// SetCustodianClient wires the embedded qrdb node's custodian group client
-// into the service. xkms presents its own custodian API on top of it; qrdb is
-// an internal implementation detail.
-func (s *XKMSService) SetCustodianClient(c qrdbtransport.CustodianGroupClient) {
-	s.custodians.store(c)
-}
-
-// SetShareClient wires the embedded qrdb node's share client into the service.
-// xkms presents its own Shamir share API on top of it; qrdb is an internal
-// implementation detail.
-func (s *XKMSService) SetShareClient(c qrdbtransport.ShareClient) {
-	s.shares.store(c)
-}
-
-// SetBackupClient wires the embedded qrdb node's backup client into the
-// service. xkms presents its own backup/restore API on top of it; the shard
-// snapshot, checksum and encryption logic all stay in go-qrdb (go-xkms#728).
-func (s *XKMSService) SetBackupClient(c qrdbtransport.BackupClient) {
-	s.backup.store(c)
-}
-
-// SetUserAuthFactorClient wires the embedded qrdb node's user-side auth-factor
-// client into the service. Identity is qrdb's to own, so xkms stores no factor
-// state; it presents the surface on its own API so an operator reaches one
-// endpoint instead of two.
-func (s *XKMSService) SetUserAuthFactorClient(c qrdbtransport.UserAuthFactorClient) {
-	s.userAuthFactors = c
-}
-
-// SetAuditClient wires the embedded qrdb node's audit client into the service
-// so the audit chain can be queried. Only the read half is exposed on the
-// xkms API; events are emitted through pkg/audit's Logger seam.
-func (s *XKMSService) SetAuditClient(c qrdbtransport.AuditClient) {
-	s.audit = c
-}
-
 // SetAuthorizer wires the process's qrdb-backed Authorizer into the service
 // for the decisions that are made below the transport gate (see QueryAudit).
 // Pass the same Authorizer the transports use; nil means RBAC is disabled.
@@ -401,25 +314,20 @@ func (s *XKMSService) AuthorizeCaller(ctx context.Context, resource, action stri
 }
 
 // SetClusterClient wires the embedded qrdb node's cluster client into the
-// service along with the Raft shard and this node's replica identifier. The
-// service uses it solely to resolve the leader's dialable API endpoint for
-// not-leader write redirects (ClusterLeaderEndpoint); cluster management
-// itself is qrdb's own control plane. Passing a nil client configures the
-// service for a standalone (non-clustered) node, in which case
-// ClusterLeaderEndpoint reports no endpoint.
-func (s *XKMSService) SetClusterClient(c ClusterClient, shardID, nodeID uint64) {
+// service along with the Raft shard it serves. The service uses it solely to
+// resolve the leader's dialable API endpoint for not-leader write redirects
+// (ClusterLeaderEndpoint); cluster status, membership and management are
+// go-qrdb's own control plane. Passing a nil client configures the service
+// for a standalone (non-clustered) node, in which case ClusterLeaderEndpoint
+// reports no endpoint.
+func (s *XKMSService) SetClusterClient(c ClusterClient, shardID uint64) {
 	s.cluster = c
 	s.clusterShardID = shardID
-	s.clusterNodeID = nodeID
 }
 
 // Clustered reports whether this node runs as part of a Raft cluster
 // (go-qrdb's NewClusteredNode with clustering enabled) rather than the
-// standalone single-node engine. Transports use it to decide whether cluster
-// membership mutation is possible at all (ClusterAddReplica/
-// ClusterRemoveReplica fail closed on a standalone node) and whether to
-// advertise the capability to callers; ClusterStatus and ClusterMembers
-// themselves stay callable either way, degrading to the standalone view.
+// standalone single-node engine.
 func (s *XKMSService) Clustered() bool {
 	return s.cluster != nil
 }

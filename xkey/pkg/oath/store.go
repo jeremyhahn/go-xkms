@@ -21,6 +21,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // Store errors.
@@ -272,13 +274,7 @@ func (s *FileStore) save() error {
 		return err
 	}
 
-	// Write atomically
-	tmpPath := s.path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return err
-	}
-
-	return os.Rename(tmpPath, s.path)
+	return fsutil.WriteFileAtomic(s.path, data, 0600)
 }
 
 // MemoryStore implements Store using in-memory storage (no persistence).

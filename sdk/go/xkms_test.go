@@ -1058,36 +1058,8 @@ func (m *mockXKMSService) GeneratePIVCSR(ctx context.Context, req *transport.Gen
 
 // Barrier operations
 
-func (m *mockXKMSService) BarrierInitialize(ctx context.Context, req *transport.BarrierInitializeRequest) error {
-	return nil
-}
-
-func (m *mockXKMSService) BarrierUnseal(ctx context.Context, req *transport.BarrierUnsealRequest) error {
-	return nil
-}
-
-func (m *mockXKMSService) BarrierSeal(ctx context.Context) error {
-	return nil
-}
-
-func (m *mockXKMSService) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
-	return &transport.BarrierStatusResponse{}, nil
-}
-
 func (m *mockXKMSService) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
 	return &transport.BootstrapListenerKeysResponse{}, nil
-}
-
-func (m *mockXKMSService) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error {
-	return nil
 }
 
 // PIN operations
@@ -1357,111 +1329,11 @@ func (m *mockXKMSService) TenantVTPMStop(context.Context, string) (*transport.Te
 
 // Extended barrier operations
 
-func (m *mockXKMSService) BarrierRekey(ctx context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) BarrierGenerateRecoveryKeys(ctx context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) BarrierRecoverWithKeys(ctx context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
-	return nil
-}
-
-func (m *mockXKMSService) BarrierDeleteRecoveryKeys(ctx context.Context) error {
-	return nil
-}
-
-func (m *mockXKMSService) BarrierHasRecoveryKeys(ctx context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) BarrierGenerateRootToken(ctx context.Context, req *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	return nil, nil
-}
-
 // Backup operations
-
-func (m *mockXKMSService) CreateBackup(ctx context.Context, req *transport.BackupRequest) (*transport.BackupInfo, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) ListBackups(ctx context.Context) ([]transport.BackupInfo, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) GetBackup(ctx context.Context, id string) (*transport.BackupInfo, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) DeleteBackup(ctx context.Context, id string) error {
-	return nil
-}
-
-func (m *mockXKMSService) RestoreBackup(ctx context.Context, req *transport.RestoreRequest) (*transport.RestoreResult, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) VerifyBackup(ctx context.Context, id string) (*transport.VerifyResult, error) {
-	return nil, nil
-}
 
 // Custodian group operations
 
-func (m *mockXKMSService) CreateCustodianGroup(ctx context.Context, req *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) GetCustodianGroup(ctx context.Context, groupID string) (*transport.GetCustodianGroupResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) ListCustodianGroups(ctx context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) DeleteCustodianGroup(ctx context.Context, groupID string) error {
-	return nil
-}
-
-func (m *mockXKMSService) AddCustodianMember(ctx context.Context, req *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) RemoveCustodianMember(ctx context.Context, req *transport.RemoveCustodianMemberRequest) error {
-	return nil
-}
-
 // Share operations
-
-func (m *mockXKMSService) DistributeShares(ctx context.Context, req *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) SubmitShare(ctx context.Context, req *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) ListShares(ctx context.Context) (*transport.ListSharesResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
-	return nil
-}
-
-func (m *mockXKMSService) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
-	return nil, nil
-}
 
 // Tenant operations
 
@@ -1481,18 +1353,6 @@ func (m *mockXKMSService) DeleteTenant(ctx context.Context, tenantID string) err
 	return nil
 }
 
-func (m *mockXKMSService) TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error {
-	return nil
-}
-
-func (m *mockXKMSService) TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error {
-	return nil
-}
-
-func (m *mockXKMSService) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
-	return nil, nil
-}
-
 func (m *mockXKMSService) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
 	return nil, nil
 }
@@ -1502,30 +1362,6 @@ func (m *mockXKMSService) UpdateTenantQuotas(_ context.Context, _ *transport.Upd
 }
 
 // InitCeremonyService methods
-
-func (m *mockXKMSService) GetInitStatus(ctx context.Context) (*transport.InitStatusResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) ClaimCertBegin(ctx context.Context, req *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) ClaimCertComplete(ctx context.Context, req *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) SignCSRInit(ctx context.Context, req *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
-	return nil, nil
-}
 
 // CredentialManagementService methods
 
@@ -1566,9 +1402,5 @@ func (m *mockXKMSService) BindUserCert(ctx context.Context, username, thumbprint
 }
 
 func (m *mockXKMSService) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
 	return nil, nil
 }

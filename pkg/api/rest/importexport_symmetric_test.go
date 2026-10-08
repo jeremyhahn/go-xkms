@@ -39,12 +39,10 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	localwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1233,43 +1231,6 @@ func TestCopyKeyHandler_ImportError(t *testing.T) {
 		ctx.CopyKeyHandler(w, req)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
-	})
-}
-
-// ============================================================================
-// Tests for CleanupSessions with non-MemorySessionStore
-// ============================================================================
-
-// mockNonMemorySessionStore implements localwebauthn.SessionStore but is not a MemorySessionStore
-type mockNonMemorySessionStore struct{}
-
-func (m *mockNonMemorySessionStore) Save(ctx context.Context, session *webauthn.SessionData) (string, error) {
-	return "mock-session-id", nil
-}
-
-func (m *mockNonMemorySessionStore) Get(ctx context.Context, sessionID string) (*webauthn.SessionData, error) {
-	return nil, &errs.Message{Msg: "session not found"}
-}
-
-func (m *mockNonMemorySessionStore) Take(ctx context.Context, sessionID string) (*webauthn.SessionData, error) {
-	return nil, &errs.Message{Msg: "session not found"}
-}
-
-func (m *mockNonMemorySessionStore) Delete(ctx context.Context, sessionID string) error {
-	return nil
-}
-
-// Verify interface compliance
-var _ localwebauthn.SessionStore = (*mockNonMemorySessionStore)(nil)
-
-func TestCleanupSessions_NonMemorySessionStore(t *testing.T) {
-	t.Run("returns 0 for non-memory session store", func(t *testing.T) {
-		stores := NewWebAuthnStores(nil)
-		// Replace with non-memory store
-		stores.sessions = &mockNonMemorySessionStore{}
-
-		removed := stores.CleanupSessions()
-		assert.Equal(t, 0, removed)
 	})
 }
 

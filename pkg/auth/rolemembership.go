@@ -28,6 +28,10 @@ import (
 // established and the caller must fail closed.
 var ErrRoleClientRequired = errors.New("auth: a qrdb role client is required to resolve role membership")
 
+// ErrRoleNotResolved is the cause of a *RoleResolutionError when the role
+// store answers a by-name lookup with neither a role nor an error.
+var ErrRoleNotResolved = errors.New("auth: role store returned no role and no error")
+
 // RoleResolutionError reports that the qrdb role store could not say which
 // identifier the named system role is persisted under in the tenant. The
 // caller must treat it as "membership unknown" and fail closed, never as
@@ -56,9 +60,9 @@ func (e *RoleResolutionError) Unwrap() error {
 // verbatim — so comparing Roles against a role NAME never matches a real
 // grant, and matches a forged one: an identity whose Roles came from an
 // unverified token claim spelling "admin". This resolves the name to the
-// identifier the role is actually persisted under, through the SDK's
-// qrdbsdk.ResolveSystemRoleID and the node's role store, and matches the
-// identity's identifiers against that. A role name on the identity therefore
+// identifier the role is actually persisted under, through the node's role
+// store, and matches the identity's identifiers against that. A tenant with
+// no role of that name grants nothing. A role name on the identity therefore
 // confers nothing.
 //
 // Use it only where the decision genuinely is role membership. An operation
@@ -85,30 +89,19 @@ func HoldsSystemRole(ctx context.Context, roles qrdbtransport.RoleClient, identi
 	// under the identity's own tenant: the role being resolved is the one
 	// granted in that tenant, not in whatever tenant the request targets.
 	lookupCtx := qrdbsdk.ContextWithTenant(ctx, tenantID)
-	roleID, err := qrdbsdk.ResolveSystemRoleID(lookupCtx, roleNameResolver{roles: roles}, tenantID, roleName)
+	found, err := roles.GetRoleByName(lookupCtx, &qrdbtransport.GetRoleByNameRequest{TenantID: tenantID, Name: roleName})
 	if err != nil {
+		var notFound *qrdbsdk.RoleNotFoundError
+		if errors.As(err, &notFound) {
+			// A tenant with no role of that name grants nothing.
+			return false, nil
+		}
 		return false, &RoleResolutionError{TenantID: tenantID, Role: roleName, Err: err}
 	}
-	return slices.Contains(identity.Roles, roleID), nil
-}
-
-// roleNameResolver presents a qrdb RoleClient as the qrdbsdk.RoleNameResolver
-// qrdbsdk.ResolveSystemRoleID consults. Only the identifier is carried across:
-// it is the one field the resolver reads.
-type roleNameResolver struct {
-	roles qrdbtransport.RoleClient
-}
-
-// GetRoleByName implements qrdbsdk.RoleNameResolver.
-func (r roleNameResolver) GetRoleByName(ctx context.Context, tenantID, name string) (*qrdbsdk.Role, error) {
-	found, err := r.roles.GetRoleByName(ctx, &qrdbtransport.GetRoleByNameRequest{TenantID: tenantID, Name: name})
-	if err != nil {
-		return nil, err
+	if found == nil || found.ID == "" {
+		// A store that answers neither a role nor an error has broken its
+		// contract; membership is unknown, never "not a member".
+		return false, &RoleResolutionError{TenantID: tenantID, Role: roleName, Err: ErrRoleNotResolved}
 	}
-	if found == nil {
-		// Surface the broken contract to ResolveSystemRoleID, which refuses a
-		// nil role with a nil error rather than reading it as "no such role".
-		return nil, nil
-	}
-	return &qrdbsdk.Role{ID: found.ID, Name: found.Name, TenantID: found.TenantID, System: found.System}, nil
+	return slices.Contains(identity.Roles, found.ID), nil
 }

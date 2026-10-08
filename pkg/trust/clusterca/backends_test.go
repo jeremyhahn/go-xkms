@@ -53,7 +53,7 @@ func TestNewNodeLocalBackends_PassphraseInjectsCAPassword(t *testing.T) {
 	// reference), so borrow it via WithBytes to assert on the plaintext.
 	for i := range caCfg.Identity {
 		var got string
-		require.NoError(t, caCfg.Identity[i].Keystores.Software.Password.WithBytes(func(b []byte) error {
+		require.NoError(t, caCfg.Identity[i].Keystores.Software.Password.WithBytes(t.Context(), func(b []byte) error {
 			got = string(b)
 			return nil
 		}))

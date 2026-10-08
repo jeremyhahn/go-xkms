@@ -16,7 +16,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -30,19 +29,6 @@ func TestQRDBNodeError_ErrorAndUnwrap(t *testing.T) {
 
 	assert.Contains(t, e.Error(), "new qrdb node")
 	assert.Contains(t, e.Error(), "disk full")
-	assert.ErrorIs(t, e, inner)
-}
-
-// ============================================================================
-// Tests — ErrSealStrategyBuild
-// ============================================================================
-
-func TestErrSealStrategyBuild_ErrorAndUnwrap(t *testing.T) {
-	inner := errors.New("backend offline")
-	e := &ErrSealStrategyBuild{Strategy: "tpm2", Err: inner}
-
-	assert.Contains(t, e.Error(), "tpm2")
-	assert.Contains(t, e.Error(), "backend offline")
 	assert.ErrorIs(t, e, inner)
 }
 
@@ -65,39 +51,6 @@ func TestSealKeyAttributesFor(t *testing.T) {
 	require.NotNil(t, attrs)
 	assert.Equal(t, sealKeyCN, attrs.CN)
 	assert.Equal(t, "software", string(attrs.StoreType))
-}
-
-// ============================================================================
-// Tests — sealStoreType
-// ============================================================================
-
-func TestSealStoreType(t *testing.T) {
-	tests := []struct {
-		id        seal.StrategyID
-		wantStore string
-		wantOK    bool
-	}{
-		{seal.StrategyTPM2, "tpm2", true},
-		{seal.StrategyPKCS11, "pkcs11", true},
-		{seal.StrategyAWSKMS, "awskms", true},
-		{seal.StrategyGCPKMS, "gcpkms", true},
-		{seal.StrategyAzureKV, "azurekv", true},
-		{seal.StrategyVault, "vault", true},
-		{seal.StrategyPassphrase, "", false},
-		{seal.StrategyNone, "", false},
-		{"shamir", "", false},
-		{"unknown-strategy", "", false},
-	}
-
-	for _, tc := range tests {
-		t.Run(string(tc.id), func(t *testing.T) {
-			store, ok := sealStoreType(tc.id)
-			assert.Equal(t, tc.wantOK, ok)
-			if tc.wantOK {
-				assert.Equal(t, tc.wantStore, string(store))
-			}
-		})
-	}
 }
 
 // ============================================================================
@@ -235,9 +188,9 @@ func TestLoadNoiseStaticKey_FromPersistedFile_ReadError(t *testing.T) {
 // for that Validate-level rejection. This exercises initializeQRDBStorage's
 // own remote-transport-dispatch error directly, using newMinimalServer to
 // construct the server without going through New()/Validate. The dispatch
-// itself is datastore.DialRemote's (pkg/datastore), exercised directly (and
-// qrdbTransportOptions, now datastore.TransportOptions) in
-// pkg/datastore/datastore_test.go.
+// itself is datastore.DialRemote's (pkg/datastore, reached through
+// datastore.Open), exercised directly (with datastore.TransportOptions) in
+// pkg/datastore/remote_test.go.
 func TestInitializeQRDBStorage_InvalidTransport(t *testing.T) {
 	cfg := &config.Config{
 		Datastore: config.DatastoreConfig{
@@ -263,69 +216,6 @@ func TestGetBuildVersion_DoesNotPanic(t *testing.T) {
 	// and returns a non-empty string.
 	v := getBuildVersion()
 	assert.NotEmpty(t, v)
-}
-
-// ============================================================================
-// Tests — buildHardwareSealStrategies
-// ============================================================================
-
-func TestBuildHardwareSealStrategies_EmptyPreferenceOrder(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Barrier.Enabled = true
-	// "pkcs11" is not NodeFlipWired, so this deployment keeps xkms's own
-	// (non-node) barrier -- buildHardwareSealStrategies, the function these
-	// tests exercise -- instead of adopting the qrdb node's barrier, which
-	// would skip it entirely and block boot on an operator unseal for the
-	// flip-wired default ("passphrase").
-	cfg.Barrier.Strategy = "pkcs11"
-	cfg.Barrier.PreferenceOrder = []string{}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	// With no hardware strategies in the preference order, only the software
-	// fallback is appended. Barrier should be initialized successfully.
-	assert.NotNil(t, server.Barrier())
-}
-
-func TestBuildHardwareSealStrategies_SkipsMissingBackend(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Barrier.Enabled = true
-	// See TestBuildHardwareSealStrategies_EmptyPreferenceOrder.
-	cfg.Barrier.Strategy = "pkcs11"
-	// Request TPM2 but TPM2 backend is not configured — should be skipped.
-	cfg.Barrier.PreferenceOrder = []string{"tpm2", "software"}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	assert.NotNil(t, server.Barrier())
-}
-
-func TestBuildHardwareSealStrategies_DuplicateEntriesDeduped(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Barrier.Enabled = true
-	// See TestBuildHardwareSealStrategies_EmptyPreferenceOrder.
-	cfg.Barrier.Strategy = "pkcs11"
-	// Duplicate "software" entries: only first is honoured, second is skipped.
-	cfg.Barrier.PreferenceOrder = []string{"software", "software"}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	assert.NotNil(t, server.Barrier())
 }
 
 // ============================================================================

@@ -144,15 +144,7 @@ func mockHandler() http.Handler {
 			respond(transport.UnsealResponse{Plaintext: []byte("unsealed")})
 		case strings.Contains(path, "/seal/capability"):
 			respond(transport.CanSealResponse{CanSeal: true})
-		case strings.Contains(path, "/barrier/status"):
-			respond(transport.BarrierStatusResponse{Sealed: false, InitializedAt: "2024-01-01"})
-		case strings.Contains(path, "/barrier/shamir/initialize"):
-			respond(transport.BarrierInitializeShamirResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
-		case strings.Contains(path, "/barrier/rekey"):
-			respond(transport.BarrierRekeyResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
-		case strings.Contains(path, "/barrier"):
-			w.WriteHeader(http.StatusOK)
-			respond(map[string]bool{"success": true})
+
 		case strings.Contains(path, "/ca/bundle"):
 			respond(transport.GetCABundleResponse{BundlePEM: []byte("bundle")})
 		case strings.Contains(path, "/ca/certificate"):
@@ -744,50 +736,6 @@ func TestGetImportParameters_MockConnected(t *testing.T) {
 	resp, err := tr.GetImportParameters(context.Background(), &transport.GetImportParametersRequest{Backend: "software"})
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.Algorithm)
-}
-
-func TestBarrierInitialize_MockConnected(t *testing.T) {
-	tr, cleanup := newMockTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.BarrierInitialize(context.Background(), &transport.BarrierInitializeRequest{}))
-}
-
-func TestBarrierUnseal_MockConnected(t *testing.T) {
-	tr, cleanup := newMockTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.BarrierUnseal(context.Background(), &transport.BarrierUnsealRequest{}))
-}
-
-func TestBarrierSeal_MockConnected(t *testing.T) {
-	tr, cleanup := newMockTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.BarrierSeal(context.Background()))
-}
-
-func TestBarrierStatus_MockConnected(t *testing.T) {
-	tr, cleanup := newMockTransport(t)
-	defer cleanup()
-	resp, err := tr.BarrierStatus(context.Background())
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.InitializedAt)
-}
-
-func TestBarrierInitializeShamir_MockConnected(t *testing.T) {
-	tr, cleanup := newMockTransport(t)
-	defer cleanup()
-	resp, err := tr.BarrierInitializeShamir(context.Background(), &transport.BarrierInitializeShamirRequest{Threshold: 2, TotalShares: 3})
-	require.NoError(t, err)
-	assert.Equal(t, 2, resp.Threshold)
-	assert.Equal(t, 3, resp.ShareCount)
-}
-
-func TestBarrierRekey_MockConnected(t *testing.T) {
-	tr, cleanup := newMockTransport(t)
-	defer cleanup()
-	resp, err := tr.BarrierRekey(context.Background(), &transport.BarrierRekeyRequest{Threshold: 2, Total: 3})
-	require.NoError(t, err)
-	assert.Equal(t, 2, resp.Threshold)
-	assert.Equal(t, 3, resp.ShareCount)
 }
 
 func TestGetCABundle_MockConnected(t *testing.T) {

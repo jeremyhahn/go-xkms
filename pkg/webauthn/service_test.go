@@ -38,6 +38,7 @@ func openRegistration() *bool {
 }
 
 func TestNewService(t *testing.T) {
+	users, creds := newTestStores(t)
 	tests := []struct {
 		name    string
 		params  ServiceParams
@@ -59,7 +60,7 @@ func TestNewService(t *testing.T) {
 			name: "nil session store",
 			params: ServiceParams{
 				Config:    validTestConfig(),
-				UserStore: NewMemoryUserStore(),
+				UserStore: users,
 			},
 			wantErr: "session store is required",
 		},
@@ -67,7 +68,7 @@ func TestNewService(t *testing.T) {
 			name: "nil credential store",
 			params: ServiceParams{
 				Config:       validTestConfig(),
-				UserStore:    NewMemoryUserStore(),
+				UserStore:    users,
 				SessionStore: NewMemorySessionStore(),
 			},
 			wantErr: "credential store is required",
@@ -76,9 +77,9 @@ func TestNewService(t *testing.T) {
 			name: "invalid config",
 			params: ServiceParams{
 				Config:          &Config{}, // missing required fields
-				UserStore:       NewMemoryUserStore(),
+				UserStore:       users,
 				SessionStore:    NewMemorySessionStore(),
-				CredentialStore: NewMemoryCredentialStore(),
+				CredentialStore: creds,
 			},
 			wantErr: "invalid config",
 		},
@@ -86,9 +87,9 @@ func TestNewService(t *testing.T) {
 			name: "valid params",
 			params: ServiceParams{
 				Config:          validTestConfig(),
-				UserStore:       NewMemoryUserStore(),
+				UserStore:       users,
 				SessionStore:    NewMemorySessionStore(),
-				CredentialStore: NewMemoryCredentialStore(),
+				CredentialStore: creds,
 			},
 			wantErr: "",
 		},
@@ -96,9 +97,9 @@ func TestNewService(t *testing.T) {
 			name: "valid params with JWT generator",
 			params: ServiceParams{
 				Config:          validTestConfig(),
-				UserStore:       NewMemoryUserStore(),
+				UserStore:       users,
 				SessionStore:    NewMemorySessionStore(),
-				CredentialStore: NewMemoryCredentialStore(),
+				CredentialStore: creds,
 				JWTGenerator:    &mockJWTGenerator{},
 			},
 			wantErr: "",
@@ -141,11 +142,12 @@ func newTestService(t *testing.T) *Service {
 	// go-xkms#184 must be requested explicitly.
 	cfg := validTestConfig()
 	cfg.AllowPublicRegistration = openRegistration()
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 	return svc
@@ -359,11 +361,12 @@ func TestService_WithJWTGenerator(t *testing.T) {
 	jwtGen := &mockJWTGenerator{token: "custom-jwt-token"}
 	cfg := validTestConfig()
 	cfg.AllowPublicRegistration = openRegistration()
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 		JWTGenerator:    jwtGen,
 	})
 	require.NoError(t, err)
@@ -440,7 +443,7 @@ func TestService_DeleteUser_NonExistent(t *testing.T) {
 	svc := newTestService(t)
 
 	// Delete non-existent user
-	err := svc.DeleteUser(ctx, []byte{99, 99, 99})
+	err := svc.DeleteUser(ctx, HandleFromUserID(9999))
 	require.Error(t, err)
 	assert.True(t, IsUserNotFound(err))
 }

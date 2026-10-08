@@ -22,20 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// addReplicaCall records the exact arguments AddReplica was invoked with.
-type addReplicaCall struct {
-	shardID   uint64
-	replicaID uint64
-	raftAddr  string
-}
-
-// removeReplicaCall records the exact arguments RemoveReplica was invoked
-// with.
-type removeReplicaCall struct {
-	shardID   uint64
-	replicaID uint64
-}
-
 // leaderEndpointCall records the exact arguments LeaderEndpoint was invoked
 // with.
 type leaderEndpointCall struct {
@@ -43,41 +29,13 @@ type leaderEndpointCall struct {
 	protocol string
 }
 
-// fakeClusterClient is a test double satisfying the full ClusterClient
-// contract (ClusterReader + ClusterEndpointResolver + ClusterMutator), so it
-// can be wired via SetClusterClient to exercise the leader-endpoint
-// resolution path without a live embedded qrdb node.
+// fakeClusterClient is a ClusterClient test double, wired via
+// SetClusterClient to exercise the leader-endpoint resolution path without a
+// live embedded qrdb node.
 type fakeClusterClient struct {
-	members    []ClusterMember
-	membersErr error
-
-	leaderID  uint64
-	hasLeader bool
-	leaderErr error
-
 	leaderEndpoint      string
 	leaderEndpointErr   error
 	leaderEndpointCalls []leaderEndpointCall
-
-	addErr   error
-	addCalls []addReplicaCall
-
-	removeErr   error
-	removeCalls []removeReplicaCall
-}
-
-func (f *fakeClusterClient) Members(_ context.Context, _ uint64) ([]ClusterMember, error) {
-	if f.membersErr != nil {
-		return nil, f.membersErr
-	}
-	return f.members, nil
-}
-
-func (f *fakeClusterClient) Leader(_ context.Context, _ uint64) (uint64, bool, error) {
-	if f.leaderErr != nil {
-		return 0, false, f.leaderErr
-	}
-	return f.leaderID, f.hasLeader, nil
 }
 
 func (f *fakeClusterClient) LeaderEndpoint(_ context.Context, shardID uint64, protocol string) (string, error) {
@@ -88,20 +46,10 @@ func (f *fakeClusterClient) LeaderEndpoint(_ context.Context, shardID uint64, pr
 	return f.leaderEndpoint, nil
 }
 
-func (f *fakeClusterClient) AddReplica(_ context.Context, shardID, replicaID uint64, raftAddr, _ string) error {
-	f.addCalls = append(f.addCalls, addReplicaCall{shardID: shardID, replicaID: replicaID, raftAddr: raftAddr})
-	return f.addErr
-}
-
-func (f *fakeClusterClient) RemoveReplica(_ context.Context, shardID, replicaID uint64) error {
-	f.removeCalls = append(f.removeCalls, removeReplicaCall{shardID: shardID, replicaID: replicaID})
-	return f.removeErr
-}
-
 func TestClusterLeaderEndpoint_Success(t *testing.T) {
 	fake := &fakeClusterClient{leaderEndpoint: "10.0.0.5:8443"}
 	svc := &XKMSService{}
-	svc.SetClusterClient(fake, 2, 1)
+	svc.SetClusterClient(fake, 2)
 
 	addr, err := svc.ClusterLeaderEndpoint(context.Background(), "rest")
 	require.NoError(t, err)
@@ -114,7 +62,7 @@ func TestClusterLeaderEndpoint_Success(t *testing.T) {
 
 func TestClusterLeaderEndpoint_Standalone(t *testing.T) {
 	svc := &XKMSService{}
-	svc.SetClusterClient(nil, 1, 1)
+	svc.SetClusterClient(nil, 1)
 
 	addr, err := svc.ClusterLeaderEndpoint(context.Background(), "rest")
 	require.NoError(t, err, "a standalone node degrades to no endpoint rather than erroring")
@@ -125,7 +73,7 @@ func TestClusterLeaderEndpoint_UnderlyingError(t *testing.T) {
 	sentinel := errors.New("registry unreachable")
 	fake := &fakeClusterClient{leaderEndpointErr: sentinel}
 	svc := &XKMSService{}
-	svc.SetClusterClient(fake, 2, 1)
+	svc.SetClusterClient(fake, 2)
 
 	addr, err := svc.ClusterLeaderEndpoint(context.Background(), "grpc")
 	require.Error(t, err)
@@ -141,7 +89,7 @@ func TestClusterLeaderEndpoint_UnderlyingError(t *testing.T) {
 func TestClusterLeaderEndpoint_LeaderAdvertisesNothing(t *testing.T) {
 	fake := &fakeClusterClient{leaderEndpoint: ""}
 	svc := &XKMSService{}
-	svc.SetClusterClient(fake, 1, 1)
+	svc.SetClusterClient(fake, 1)
 
 	addr, err := svc.ClusterLeaderEndpoint(context.Background(), "rest")
 	require.NoError(t, err)
@@ -151,125 +99,13 @@ func TestClusterLeaderEndpoint_LeaderAdvertisesNothing(t *testing.T) {
 func TestXKMSService_Clustered(t *testing.T) {
 	t.Run("clustered", func(t *testing.T) {
 		svc := &XKMSService{}
-		svc.SetClusterClient(&fakeClusterClient{}, 1, 1)
+		svc.SetClusterClient(&fakeClusterClient{}, 1)
 		assert.True(t, svc.Clustered())
 	})
 
 	t.Run("standalone", func(t *testing.T) {
 		svc := &XKMSService{}
-		svc.SetClusterClient(nil, 1, 0)
+		svc.SetClusterClient(nil, 1)
 		assert.False(t, svc.Clustered())
-	})
-}
-
-func TestClusterStatus_Clustered(t *testing.T) {
-	fake := &fakeClusterClient{leaderID: 2, hasLeader: true}
-	svc := &XKMSService{}
-	svc.SetClusterClient(fake, 3, 2)
-
-	status, err := svc.ClusterStatus(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, uint64(3), status.ShardID)
-	assert.Equal(t, uint64(2), status.NodeID)
-	assert.Equal(t, uint64(2), status.LeaderID)
-	assert.True(t, status.HasLeader)
-	assert.True(t, status.Clustered)
-}
-
-func TestClusterStatus_Standalone(t *testing.T) {
-	svc := &XKMSService{}
-	svc.SetClusterClient(nil, 1, 0)
-
-	status, err := svc.ClusterStatus(context.Background())
-	require.NoError(t, err, "a standalone node degrades to a standalone status rather than erroring")
-	assert.Equal(t, uint64(1), status.ShardID)
-	assert.Equal(t, uint64(0), status.NodeID)
-	assert.Equal(t, uint64(0), status.LeaderID)
-	assert.False(t, status.HasLeader)
-	assert.False(t, status.Clustered)
-}
-
-func TestClusterStatus_UnderlyingError(t *testing.T) {
-	sentinel := errors.New("leader query unreachable")
-	fake := &fakeClusterClient{leaderErr: sentinel}
-	svc := &XKMSService{}
-	svc.SetClusterClient(fake, 4, 1)
-
-	status, err := svc.ClusterStatus(context.Background())
-	require.Error(t, err)
-	assert.Nil(t, status)
-	assert.ErrorIs(t, err, sentinel)
-
-	var statusErr *ClusterStatusError
-	require.True(t, errors.As(err, &statusErr))
-	assert.Equal(t, uint64(4), statusErr.ShardID)
-}
-
-func TestClusterMembers_Clustered(t *testing.T) {
-	want := []ClusterMember{
-		{ReplicaID: 1, Address: "10.0.0.1:63001", IsLeader: true},
-		{ReplicaID: 2, Address: "10.0.0.2:63001"},
-	}
-	fake := &fakeClusterClient{members: want}
-	svc := &XKMSService{}
-	svc.SetClusterClient(fake, 1, 1)
-
-	members, err := svc.ClusterMembers(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, want, members)
-}
-
-func TestClusterMembers_Standalone(t *testing.T) {
-	svc := &XKMSService{}
-	svc.SetClusterClient(nil, 1, 0)
-
-	members, err := svc.ClusterMembers(context.Background())
-	require.NoError(t, err, "a standalone node degrades to an empty membership list rather than erroring")
-	assert.Empty(t, members)
-}
-
-func TestClusterMembers_UnderlyingError(t *testing.T) {
-	sentinel := errors.New("membership query unreachable")
-	fake := &fakeClusterClient{membersErr: sentinel}
-	svc := &XKMSService{}
-	svc.SetClusterClient(fake, 5, 1)
-
-	members, err := svc.ClusterMembers(context.Background())
-	require.Error(t, err)
-	assert.Nil(t, members)
-	assert.ErrorIs(t, err, sentinel)
-
-	var membersErr *ClusterMembersError
-	require.True(t, errors.As(err, &membersErr))
-	assert.Equal(t, uint64(5), membersErr.ShardID)
-}
-
-func TestErrNotLeader_Error(t *testing.T) {
-	t.Run("with api address", func(t *testing.T) {
-		e := &ErrNotLeader{
-			ShardID:          3,
-			LeaderID:         2,
-			LeaderAddress:    "10.0.0.2:63001",
-			LeaderAPIAddress: "10.0.0.2:8443",
-		}
-		msg := e.Error()
-		assert.Contains(t, msg, "10.0.0.2:8443")
-	})
-
-	t.Run("without api address", func(t *testing.T) {
-		e := &ErrNotLeader{
-			ShardID:       3,
-			LeaderID:      2,
-			LeaderAddress: "10.0.0.2:63001",
-		}
-		msg := e.Error()
-		assert.Contains(t, msg, "10.0.0.2:63001")
-		assert.NotContains(t, msg, "api")
-	})
-
-	t.Run("leader unknown", func(t *testing.T) {
-		e := &ErrNotLeader{ShardID: 3}
-		msg := e.Error()
-		assert.Contains(t, msg, "leader unknown")
 	})
 }

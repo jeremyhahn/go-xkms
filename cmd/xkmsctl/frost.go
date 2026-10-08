@@ -30,6 +30,7 @@ import (
 	"time"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -327,7 +328,7 @@ Participant mode seals the share locally. ` + frostPassphraseUsage,
 					return
 				}
 
-				if err := os.WriteFile(filePath, data, 0600); err != nil {
+				if err := fsutil.WriteFileAtomic(filePath, data, 0600); err != nil {
 					handleError(&WrappedError{Sentinel: ErrWritePackageFileFailed, Err: err})
 					return
 				}
@@ -873,7 +874,7 @@ var frostRound1Cmd = &cobra.Command{
 			return
 		}
 
-		if err := os.WriteFile(noncePath, nonceData, 0600); err != nil {
+		if err := fsutil.WriteFileAtomic(noncePath, nonceData, 0600); err != nil {
 			handleError(&WrappedError{Sentinel: ErrWriteNonceFileFailed, Err: err})
 			return
 		}

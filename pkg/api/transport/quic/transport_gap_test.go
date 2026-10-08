@@ -101,28 +101,6 @@ func gapMockHandler() http.Handler {
 			respond(transport.ListPIVSlotsResponse{Slots: []transport.PIVSlotStatus{{Slot: "9a"}}})
 
 		// Barrier
-		case strings.Contains(path, "/barrier/status"):
-			respond(transport.BarrierStatusResponse{Sealed: false})
-		case strings.Contains(path, "/barrier/shamir/initialize"):
-			respond(transport.BarrierInitializeShamirResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
-		case strings.Contains(path, "/barrier/shamir/unseal-share"):
-			respond(map[string]interface{}{"required": 2, "submitted": 1, "complete": false})
-		case strings.Contains(path, "/barrier/shamir/unseal-shares"):
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/barrier/rekey"):
-			respond(transport.BarrierRekeyResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
-		case strings.Contains(path, "/barrier/recovery/generate"):
-			respond(map[string]interface{}{"threshold": 2, "total_shares": 3, "share_count": 3})
-		case strings.Contains(path, "/barrier/recovery/recover"):
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/barrier/recovery/keys") && r.Method == http.MethodDelete:
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/barrier/recovery/keys"):
-			respond(map[string]bool{"has_recovery_keys": true})
-		case strings.Contains(path, "/barrier/recovery/root-token"):
-			respond(transport.BarrierRootTokenResponse{Token: "rt-abc"})
-		case strings.Contains(path, "/barrier"):
-			w.WriteHeader(http.StatusOK)
 
 		// PIN
 		case strings.Contains(path, "/pin/so/change"):
@@ -167,34 +145,11 @@ func gapMockHandler() http.Handler {
 			w.WriteHeader(http.StatusOK)
 
 		// Custodian
-		case strings.Contains(path, "/custodian/groups") && strings.Contains(path, "/members") && r.Method == http.MethodDelete:
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/custodian/groups") && strings.Contains(path, "/distribute"):
-			respond(transport.DistributeSharesResponse{Distributed: 2})
-		case strings.Contains(path, "/custodian/groups") && r.Method == http.MethodDelete:
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/custodian/groups") && strings.Contains(path, "/members"):
-			respond(map[string]interface{}{"id": "g1"})
-		case strings.Contains(path, "/custodian/groups") && r.Method == http.MethodPost:
-			respond(map[string]interface{}{"id": "g1", "name": "test-group", "threshold": 2})
-		case strings.Contains(path, "/custodian/groups") && r.Method == http.MethodGet && strings.Count(path, "/") > 3:
-			respond(map[string]interface{}{"id": "g1", "name": "test-group"})
-		case strings.Contains(path, "/custodian/groups"):
-			respond(transport.ListCustodianGroupsResponse{Groups: []transport.CustodianGroupInfo{{ID: "g1", Name: "test-group"}}})
 
 		// Shares
-		case strings.Contains(path, "/shares/submit"):
-			respond(transport.SubmitShareResponse{Accepted: true})
-		case strings.Contains(path, "/shares/status"):
-			respond(transport.ShareCollectionStatus{})
-		case strings.Contains(path, "/shares"):
-			respond(transport.ListSharesResponse{Shares: []transport.ShareInfo{{GroupID: "g1", ShareIndex: 0}}})
 
 		// Tenants
-		case strings.Contains(path, "/tenants") && strings.Contains(path, "/barrier/init"):
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/tenants") && strings.Contains(path, "/barrier/unseal"):
-			w.WriteHeader(http.StatusOK)
+
 		case strings.Contains(path, "/tenants") && r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusOK)
 		case strings.Contains(path, "/tenants") && r.Method == http.MethodPost:
@@ -205,16 +160,6 @@ func gapMockHandler() http.Handler {
 			respond(transport.ListTenantsResponse{Tenants: []transport.TenantInfo{{ID: "t1", Name: "test-tenant"}}})
 
 		// Init
-		case strings.Contains(path, "/init/status"):
-			respond(transport.InitStatusResponse{State: "initialized"})
-		case strings.Contains(path, "/init/claim-cert/begin"):
-			respond(transport.ClaimCertBeginResponse{Nonce: "abc"})
-		case strings.Contains(path, "/init/claim-cert/complete"):
-			respond(transport.ClaimCertCompleteResponse{CertPEM: "cert", CACertPEM: "ca"})
-		case strings.Contains(path, "/init/claim-share"):
-			respond(transport.ClaimShareBeginResponse{Nonce: "abcd"})
-		case strings.Contains(path, "/init/sign-csr"):
-			respond(transport.SignCSRInitResponse{CertPEM: "cert"})
 
 		// Credentials
 		case strings.Contains(path, "/credentials/submit"):
@@ -609,27 +554,6 @@ func TestClose_WithNonHTTP3Transport(t *testing.T) {
 // Barrier — basic connected paths not covered by extra_test
 // ============================================================
 
-func TestBarrierInitialize_Connected(t *testing.T) {
-	tr, cleanup := newGapMockTransport(t)
-	defer cleanup()
-	err := tr.BarrierInitialize(context.Background(), &transport.BarrierInitializeRequest{})
-	require.NoError(t, err)
-}
-
-func TestBarrierUnseal_Connected(t *testing.T) {
-	tr, cleanup := newGapMockTransport(t)
-	defer cleanup()
-	err := tr.BarrierUnseal(context.Background(), &transport.BarrierUnsealRequest{})
-	require.NoError(t, err)
-}
-
-func TestBarrierSeal_Connected(t *testing.T) {
-	tr, cleanup := newGapMockTransport(t)
-	defer cleanup()
-	err := tr.BarrierSeal(context.Background())
-	require.NoError(t, err)
-}
-
 // ============================================================
 // DeriveKey — optional field branches
 // ============================================================
@@ -680,21 +604,6 @@ func TestDeriveKey_OptionalFields(t *testing.T) {
 // ============================================================
 // NotConnected guards — functions not yet covered by coverage_test
 // ============================================================
-
-func TestBarrierInitialize_NotConnected(t *testing.T) {
-	err := newDisconnected(t).BarrierInitialize(context.Background(), &transport.BarrierInitializeRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierUnseal_NotConnected(t *testing.T) {
-	err := newDisconnected(t).BarrierUnseal(context.Background(), &transport.BarrierUnsealRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierSeal_NotConnected(t *testing.T) {
-	err := newDisconnected(t).BarrierSeal(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
 
 func TestUnseal_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).Unseal(context.Background(), &transport.UnsealRequest{})
@@ -939,87 +848,10 @@ func TestDoRawRequest_WithJWTAndHeaders(t *testing.T) {
 // Bad-JSON transport tests — trigger json.Unmarshal error paths
 // ============================================================
 
-func TestBarrierInitializeShamir_BadJSON(t *testing.T) {
-	tr, cleanup := newBadJSONTransport(t)
-	defer cleanup()
-	_, err := tr.BarrierInitializeShamir(context.Background(), &transport.BarrierInitializeShamirRequest{})
-	require.Error(t, err)
-}
-
-func TestBarrierUnsealWithShare_BadJSON(t *testing.T) {
-	tr, cleanup := newBadJSONTransport(t)
-	defer cleanup()
-	_, err := tr.BarrierUnsealWithShare(context.Background(), &transport.BarrierUnsealShareRequest{})
-	require.Error(t, err)
-}
-
-func TestBarrierRekey_BadJSON(t *testing.T) {
-	tr, cleanup := newBadJSONTransport(t)
-	defer cleanup()
-	_, err := tr.BarrierRekey(context.Background(), &transport.BarrierRekeyRequest{})
-	require.Error(t, err)
-}
-
-func TestBarrierGenerateRecoveryKeys_BadJSON(t *testing.T) {
-	tr, cleanup := newBadJSONTransport(t)
-	defer cleanup()
-	_, err := tr.BarrierGenerateRecoveryKeys(context.Background(), &transport.BarrierGenerateRecoveryKeysRequest{})
-	require.Error(t, err)
-}
-
-func TestBarrierHasRecoveryKeys_BadJSON(t *testing.T) {
-	tr, cleanup := newBadJSONTransport(t)
-	defer cleanup()
-	_, err := tr.BarrierHasRecoveryKeys(context.Background())
-	require.Error(t, err)
-}
-
-func TestBarrierGenerateRootToken_BadJSON(t *testing.T) {
-	tr, cleanup := newBadJSONTransport(t)
-	defer cleanup()
-	_, err := tr.BarrierGenerateRootToken(context.Background(), &transport.BarrierGenerateRootTokenRequest{})
-	require.Error(t, err)
-}
-
 func TestGetLockoutStatus_BadJSON(t *testing.T) {
 	tr, cleanup := newBadJSONTransport(t)
 	defer cleanup()
 	_, err := tr.GetLockoutStatus(context.Background())
-	require.Error(t, err)
-}
-
-func TestGetInitStatus_BadJSON(t *testing.T) {
-	tr, cleanup := newBadJSONTransport(t)
-	defer cleanup()
-	_, err := tr.GetInitStatus(context.Background())
-	require.Error(t, err)
-}
-
-func TestClaimCertBegin_BadJSON(t *testing.T) {
-	tr, cleanup := newBadJSONTransport(t)
-	defer cleanup()
-	_, err := tr.ClaimCertBegin(context.Background(), &transport.ClaimCertBeginRequest{})
-	require.Error(t, err)
-}
-
-func TestClaimCertComplete_BadJSON(t *testing.T) {
-	tr, cleanup := newBadJSONTransport(t)
-	defer cleanup()
-	_, err := tr.ClaimCertComplete(context.Background(), &transport.ClaimCertCompleteRequest{})
-	require.Error(t, err)
-}
-
-func TestClaimShareBegin_BadJSON(t *testing.T) {
-	tr, cleanup := newBadJSONTransport(t)
-	defer cleanup()
-	_, err := tr.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
-	require.Error(t, err)
-}
-
-func TestSignCSRInit_BadJSON(t *testing.T) {
-	tr, cleanup := newBadJSONTransport(t)
-	defer cleanup()
-	_, err := tr.SignCSRInit(context.Background(), &transport.SignCSRInitRequest{})
 	require.Error(t, err)
 }
 

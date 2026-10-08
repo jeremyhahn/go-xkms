@@ -69,7 +69,7 @@ func (s *Server) clusterCAKeyProtection() (clustercapkg.KeyProtection, error) {
 // direct buildSecretRegistry().Resolve call's registry fallback, which would
 // have silently used the unclaimed reference text itself as the passphrase.
 func (s *Server) resolveClusterCAKeyPassphrase(sv *types.SecretValue) (*secure.Secret, error) {
-	plaintext, err := types.SecretValueBytes(sv)
+	plaintext, err := types.SecretValueBytes(s.ctx, sv)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func (s *Server) resolveClusterCAKeyPassphrase(sv *types.SecretValue) (*secure.S
 	}
 	// secure.NewSecret wipes the slice it seals; plaintext is SecretValueBytes'
 	// own private copy, not sv's enclave, so nothing else is left exposed.
-	return secure.NewSecret(plaintext)
+	return secure.NewSecret(s.ctx, plaintext)
 }
 
 // clusterStrategyDeps assembles the dependencies a cluster CA key strategy

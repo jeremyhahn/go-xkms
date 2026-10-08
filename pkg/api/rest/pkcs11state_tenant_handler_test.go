@@ -20,12 +20,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -33,7 +33,7 @@ import (
 // tenant-A caller that names tenant B in the body gets 400 and cannot read B's
 // record, while its own tenant, stated or omitted, reads its own record.
 func TestPKCS11StateHandlers_TenantComesFromTheIdentity(t *testing.T) {
-	h, svc := newPKCS11StateHandlersForTest(t, storage.NewMemory())
+	h, svc := newPKCS11StateHandlersForTest(t, qrdbsdk.NewMemoryKVStore())
 	ctxB := auth.WithIdentity(t.Context(), &auth.Identity{Subject: "bob", TenantID: "tenant-b"})
 	_, err := svc.PKCS11StatePut(ctxB, &transport.PKCS11StatePutRequest{Token: "tok0", Key: "pkcs11/tokens/0", Value: []byte("b-state")})
 	require.NoError(t, err)

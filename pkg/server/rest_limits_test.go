@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -70,15 +71,16 @@ func newSweeperTestServer(t *testing.T, withWebAuthn bool) *Server {
 	t.Cleanup(cancel)
 	s := &Server{ctx: ctx, cancel: cancel, logger: slog.Default()}
 	if withWebAuthn {
+		stores := webauthntest.NewStores(t)
 		svc, err := webauthn.NewService(webauthn.ServiceParams{
 			Config: &webauthn.Config{
 				RPID:          "kms.example.com",
 				RPDisplayName: "xkms",
 				RPOrigins:     []string{"https://kms.example.com"},
 			},
-			UserStore:       webauthn.NewMemoryUserStore(),
+			UserStore:       stores.Users,
 			SessionStore:    webauthn.NewMemorySessionStore(),
-			CredentialStore: webauthn.NewMemoryCredentialStore(),
+			CredentialStore: stores.Credentials,
 		})
 		if err != nil {
 			t.Fatalf("webauthn.NewService: %v", err)

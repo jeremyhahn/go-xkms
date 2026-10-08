@@ -32,12 +32,11 @@ import (
 )
 
 // mockTenantAwareAdminService composes the existing mockAdminService and
-// mockTenantService test doubles (server_test.go) with a barrier service, so
-// the resulting type satisfies admin.TenantAwareService and buildRouter
-// registers every route family a real deployment would: certificates,
-// accounts, orders, status, stats, audit and algorithms (admin.Service);
-// tenants, CA hierarchy, EAB, roles and users (admin.TenantService); and
-// barrier (BarrierSvc). It exists only so TestAdminOpenAPISpec_MatchesRouter
+// mockTenantService test doubles (server_test.go), so the resulting type
+// satisfies admin.TenantAwareService and buildRouter registers every route
+// family a real deployment would: certificates, accounts, orders, status,
+// stats, audit and algorithms (admin.Service); tenants, CA hierarchy, EAB,
+// roles and users (admin.TenantService). It exists only so TestAdminOpenAPISpec_MatchesRouter
 // walks the same route set a real deployment registers; none of its
 // promoted methods are ever called.
 type mockTenantAwareAdminService struct {
@@ -45,58 +44,7 @@ type mockTenantAwareAdminService struct {
 	mockTenantService
 }
 
-func (m *mockTenantAwareAdminService) BarrierSvc() admin.BarrierService {
-	return &stubBarrierService{}
-}
-
 var _ admin.TenantAwareService = (*mockTenantAwareAdminService)(nil)
-
-// stubBarrierService is a registration-only admin.BarrierService: every
-// method returns a zero value. TestAdminOpenAPISpec_MatchesRouter only walks
-// registered routes; it never invokes a handler.
-type stubBarrierService struct{}
-
-func (s *stubBarrierService) Status(context.Context) (*admin.BarrierStatusResponse, error) {
-	return &admin.BarrierStatusResponse{}, nil
-}
-
-func (s *stubBarrierService) Initialize(context.Context, *admin.BarrierInitializeRequest) error {
-	return nil
-}
-
-func (s *stubBarrierService) Seal(context.Context) error { return nil }
-
-func (s *stubBarrierService) Unseal(context.Context, *admin.BarrierUnsealRequest) error {
-	return nil
-}
-
-func (s *stubBarrierService) InitializeShamir(context.Context, *admin.BarrierInitializeShamirRequest) (*admin.BarrierInitializeShamirResponse, error) {
-	return &admin.BarrierInitializeShamirResponse{}, nil
-}
-
-func (s *stubBarrierService) UnsealWithShare(context.Context, *admin.BarrierUnsealShareRequest) (*admin.BarrierUnsealShareResponse, error) {
-	return &admin.BarrierUnsealShareResponse{}, nil
-}
-
-func (s *stubBarrierService) Rekey(context.Context, *admin.BarrierRekeyRequest) (*admin.BarrierRekeyResponse, error) {
-	return &admin.BarrierRekeyResponse{}, nil
-}
-
-func (s *stubBarrierService) GenerateRecoveryKeys(context.Context, *admin.BarrierGenerateRecoveryKeysRequest) (*admin.BarrierRecoveryKeysResponse, error) {
-	return &admin.BarrierRecoveryKeysResponse{}, nil
-}
-
-func (s *stubBarrierService) RecoverWithKeys(context.Context, *admin.BarrierRecoverWithKeysRequest) error {
-	return nil
-}
-
-func (s *stubBarrierService) HasRecoveryKeys(context.Context) (bool, error) { return false, nil }
-
-func (s *stubBarrierService) GenerateRootToken(context.Context, *admin.BarrierGenerateRootTokenRequest) (*admin.BarrierRootTokenResponse, error) {
-	return &admin.BarrierRootTokenResponse{}, nil
-}
-
-var _ admin.BarrierService = (*stubBarrierService)(nil)
 
 // pathParamPattern matches a single {name} path-parameter segment.
 var pathParamPattern = regexp.MustCompile(`\{[^{}]+\}`)
@@ -192,8 +140,8 @@ func specAdminAPIRoutes(doc *openapi3.T) map[string]bool {
 }
 
 // buildAdminAPIRouter constructs the same gorilla mux router buildRouter
-// assembles for a real deployment: every admin.Service, admin.TenantService
-// and admin.BarrierService route family, plus /docs, /openapi, /health, /mcp
+// assembles for a real deployment: every admin.Service and admin.TenantService
+// route family, plus /docs, /openapi, /health, /mcp
 // and the admin web UI.
 func buildAdminAPIRouter(t *testing.T) *mux.Router {
 	t.Helper()

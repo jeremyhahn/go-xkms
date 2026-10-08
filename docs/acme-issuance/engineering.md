@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Exported surface
 
@@ -23,7 +23,8 @@
   imports it; `OrderFinalizeHandler` calls `s.ca.SignCSR` /
   `s.ca.IssueEKCertificate` / `s.ca.SignTCGCSRIDevID`
   (`pkg/acme/server/handlers/order_finalize.go:677,752,1343`) directly.
-- `pkg/acme/storage`, `pkg/acme/qrdb` — persistence, through `go-qrdb/sdk/go`.
+- `pkg/acme/storage` — persistence, through the injected go-qrdb DAO factory
+  (see Persistence below).
 - `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy (blocklist,
   public suffix, reserved-IP, per-identifier-type challenge selection) and
   CAA. `pkg/acme/policy` is wired into `NewOrderHandler` and
@@ -181,31 +182,8 @@ once, to the externally visible base.
     filter by — to a cross-tenant caller. Its refusal, `*PlatformScopeError`
     (`tenant_binding.go:63`), unwraps to `ErrForbidden` and is answered with
     the gate's own denial body (`writePermissionDenied`, `authz.go:161`).
-  - Every `/admin/barrier/*` route operates the **system** barrier, which
-    protects every tenant, so all eleven are platform operations
-    (go-xkms#1244). The admin plane holds no barrier handle: its
-    `BarrierService` (`NewBarrierService`, `barrier_service.go:227`) runs
-    every operation through `SystemBarrier` (`barrier_service.go:199`), the
-    XKMSService's system-barrier methods, each of which calls
-    `pkg/xkms`'s `requirePlatformScope` (`pkg/xkms/tenant_binding.go:88`,
-    e.g. `pkg/xkms/servicer_barrier.go:128`) before touching the barrier.
-    The gate cannot do it: qrdb grants a tenant's own Admin, SO and
-    Custodian roles every `seal:*` / `barrier:*` permission the routes
-    declare. `translateBarrierError` (`barrier_service.go:245`) turns the
-    service's `*xkms.TenantBindingError` into this plane's
-    `*PlatformScopeError`, which `writeBarrierError`
-    (`barrier_handlers.go:279`) answers with the gate's denial body, like
-    tenant creation and the audit trail. It also maps
-    `xkms.ErrNotConfigured` to `*BarrierNotEnabledError` (409, and
-    `enabled: false` on status) and `seal.ErrNotInitialized` to
-    `*BarrierNotInitializedError` (409). xkmsd hands the routes the
-    server's XKMSService (`cmd/xkmsd/admin.go:186-194`,
-    `pkg/server/server.go:2820`) and mounts them on the admin router
-    (`cmd/xkmsd/admin.go:214`); a server with no composed XKMSService is
-    refused at construction with `ErrAdminXKMSServiceRequired`
-    (`cmd/xkmsd/admin.go:87`). `MultiProtocolServer` mounts the same
-    handlers whenever its admin service carries a `BarrierService`
-    (`pkg/acme/api/server/server.go:642`).
+  - The admin plane carries no `/admin/barrier/*` routes: the barrier is
+    go-qrdb's and the ACME admin API does not re-expose it.
   - `ListTenants` returns only the caller's tenant, and counts only it
     (`tenant_service.go:547`).
   - A role or user is looked up before it is returned, updated or deleted,
@@ -957,13 +935,20 @@ CABundleHandler's real recovery test. Both endpoints share one cache entry
 each (`Resilience.Degradation.MaxCacheSize`, default 8, is generous for a
 one-entry-per-endpoint cache).
 
-`GET /acme/health` (`RestService.HealthHandler`, `HealthStatus`) reports two
+`GET /acme/health` (`RestService.HealthHandler`, `HealthStatus`) reports three
 things:
 
+- `Checks` — `Params.Health.Ready`: every readiness check registered on the
+  go-qrdb SDK `HealthChecker` (`qrdbsdk.NewHealthChecker`), as
+  `qrdbsdk.HealthCheckResult`s. `cmd/xkmsd/acme.go` registers
+  `datastore.HealthCheckName` (`"datastore"`) backed by
+  `(*datastore.Datastore).HealthCheck`, which reports the go-qrdb client's
+  `Healthy`. An aggregate `unhealthy` sets `Healthy` false (503). A nil
+  `Params.Health` leaves `Checks` empty.
 - `Breakers` — every *named* breaker registered on `Params.Breakers`
   (`storage`, `kms`, `ct` when wired) by name: state, failure count,
   success count. `Healthy` (and the 503/200 status) is driven only by this
-  set.
+  set and by `Checks`.
 - `TargetGroups` — `Manager.TargetGroupStatuses()`, one bounded
   `circuitbreaker.TargetGroupStatus` per per-target group (`http01`,
   `dns01`): `Capacity`, `Tracked`, `Closed`, `HalfOpen`, `Open`, and
@@ -1382,7 +1367,15 @@ of `cmd/xkmsd/acme.go`'s mapping into `handlers.Params`: it builds a
 ## Persistence
 
 Accounts, orders, authorizations, challenges and issued certificates persist
-through `pkg/acme/storage` over `go-qrdb/sdk/go` (`pkg/acme/qrdb`).
+through `pkg/acme/storage`. xkmsd builds the storage factory with
+`objstore.NewFactory(ds.DAOFactory())` over the server's datastore
+(`cmd/xkmsd/acme.go`, `startACMEServer`), so ACME entities live in the same
+configured engine as the rest of the daemon. A caller holding only a bare
+go-qrdb `KVStore` (the ACME client's local state) uses
+`objstore.NewFactoryFromKVStore`. The admin plane and the multi-tenant
+`TrustedCA` take the go-qrdb SDK client itself (`admin.QRDBClient`: `KV`,
+`Users`, `Roles`) for tenant roles and users; there is no ACME-specific
+database client.
 Certificate blobs land in the certificate store like any other certificate.
 
 Nonces do not persist anywhere, by design. `pkg/acme/nonce.Service` validates
@@ -1443,17 +1436,6 @@ server" section.
   reach. `cmd/xkmsd/admin_tenant_binding_test.go` repeats the exploit set
   over HTTP against a real embedded qrdb node with the node barrier engaged,
   asserting tenant-b's tenant, role and user are left untouched.
-- **Admin-plane system barrier (go-xkms#1244)** —
-  `pkg/acme/admin/barrier_service_test.go` runs the barrier routes over a
-  real XKMSService holding a real passphrase barrier: a tenant Admin/SO/
-  Custodian is refused `403` on all eleven routes, both behind qrdb's
-  grants (which admit it to every route,
-  `TestBarrierRoutes_TenantGateAdmitsEveryRoute`) and with RBAC disabled,
-  and the barrier's seal state is unchanged; the platform identity seals,
-  unseals with the passphrase and reads status. `cmd/xkmsd/admin_barrier_scope_test.go`
-  repeats both against xkmsd's composed admin router on a real embedded
-  qrdb node, including a platform seal/unseal round trip of the node
-  barrier.
 - **Unit** — `pkg/acme/**` is heavily covered; the handler package carries an
   explicit 90%+ coverage push (`coverage_90_*_test.go`) plus per-object suites
   (`account_test.go`, `authorization_test.go`, `challenge_test.go`,

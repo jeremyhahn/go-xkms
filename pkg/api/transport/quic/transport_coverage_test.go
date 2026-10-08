@@ -71,51 +71,6 @@ func TestEncryptAsym_NotConnected_Coverage(t *testing.T) {
 
 // --- Barrier ---
 
-func TestBarrierInitializeShamir_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).BarrierInitializeShamir(context.Background(), &transport.BarrierInitializeShamirRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierUnsealWithShare_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).BarrierUnsealWithShare(context.Background(), &transport.BarrierUnsealShareRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierUnsealWithShares_NotConnected(t *testing.T) {
-	err := newDisconnected(t).BarrierUnsealWithShares(context.Background(), &transport.BarrierUnsealSharesRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierRekey_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).BarrierRekey(context.Background(), &transport.BarrierRekeyRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierGenerateRecoveryKeys_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).BarrierGenerateRecoveryKeys(context.Background(), &transport.BarrierGenerateRecoveryKeysRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierRecoverWithKeys_NotConnected(t *testing.T) {
-	err := newDisconnected(t).BarrierRecoverWithKeys(context.Background(), &transport.BarrierRecoverWithKeysRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierDeleteRecoveryKeys_NotConnected(t *testing.T) {
-	err := newDisconnected(t).BarrierDeleteRecoveryKeys(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierHasRecoveryKeys_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).BarrierHasRecoveryKeys(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierGenerateRootToken_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).BarrierGenerateRootToken(context.Background(), &transport.BarrierGenerateRootTokenRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 // --- PIN ---
 
 func TestSetSOPIN_NotConnected(t *testing.T) {
@@ -172,11 +127,6 @@ func TestGetCACertificate_NotConnected(t *testing.T) {
 
 func TestSignCSR_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).SignCSR(context.Background(), &transport.SignCSRRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestSignCSRInit_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).SignCSRInit(context.Background(), &transport.SignCSRInitRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
@@ -373,26 +323,6 @@ func TestPasswordGenerate_NotConnected(t *testing.T) {
 
 // --- Init Ceremony ---
 
-func TestGetInitStatus_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).GetInitStatus(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestClaimCertBegin_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).ClaimCertBegin(context.Background(), &transport.ClaimCertBeginRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestClaimCertComplete_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).ClaimCertComplete(context.Background(), &transport.ClaimCertCompleteRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestClaimShareBegin_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 // --- Credentials ---
 
 func TestSubmitCredential_NotConnected(t *testing.T) {
@@ -407,57 +337,7 @@ func TestGetCredentialStrategy_NotConnected(t *testing.T) {
 
 // --- Custodian ---
 
-func TestCreateCustodianGroup_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).CreateCustodianGroup(context.Background(), &transport.CreateCustodianGroupRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestGetCustodianGroup_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).GetCustodianGroup(context.Background(), "g1")
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestListCustodianGroups_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).ListCustodianGroups(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestDeleteCustodianGroup_NotConnected(t *testing.T) {
-	err := newDisconnected(t).DeleteCustodianGroup(context.Background(), "g1")
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestAddCustodianMember_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).AddCustodianMember(context.Background(), &transport.AddCustodianMemberRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestRemoveCustodianMember_NotConnected(t *testing.T) {
-	err := newDisconnected(t).RemoveCustodianMember(context.Background(), &transport.RemoveCustodianMemberRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestDistributeShares_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).DistributeShares(context.Background(), &transport.DistributeSharesRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 // --- Shares ---
-
-func TestSubmitShare_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).SubmitShare(context.Background(), &transport.SubmitShareRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestListShares_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).ListShares(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestGetShareCollectionStatus_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).GetShareCollectionStatus(context.Background(), "g1")
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
 
 // --- Tenants ---
 
@@ -478,15 +358,5 @@ func TestListTenants_NotConnected(t *testing.T) {
 
 func TestDeleteTenant_NotConnected(t *testing.T) {
 	err := newDisconnected(t).DeleteTenant(context.Background(), "t1")
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestTenantBarrierInit_NotConnected(t *testing.T) {
-	err := newDisconnected(t).TenantBarrierInit(context.Background(), &transport.TenantBarrierInitRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestTenantBarrierUnseal_NotConnected(t *testing.T) {
-	err := newDisconnected(t).TenantBarrierUnseal(context.Background(), &transport.TenantBarrierUnsealRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
 }

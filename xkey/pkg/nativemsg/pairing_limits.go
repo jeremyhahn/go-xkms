@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // pairingLimitsSuffix names the rate-limit file beside the pairing state
@@ -152,18 +154,8 @@ func writeFileAtomic(path string, data []byte) error {
 		return &WrappedError{Msg: "nativemsg: failed to create pairing directory", Err: err}
 	}
 
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(path, data, 0600); err != nil {
 		return &WrappedError{Msg: "nativemsg: failed to write pairing temp file", Err: err}
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		// Clean up the temp file on rename failure; a failed removal is
-		// joined in rather than dropped so a leaked temp file is visible.
-		cause := err
-		if removeErr := os.Remove(tmpPath); removeErr != nil {
-			cause = errors.Join(cause, removeErr)
-		}
-		return &WrappedError{Msg: "nativemsg: failed to rename pairing temp file", Err: cause}
 	}
 	return nil
 }

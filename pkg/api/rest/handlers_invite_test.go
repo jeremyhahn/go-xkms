@@ -30,6 +30,8 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	xkmstransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -40,7 +42,7 @@ import (
 // invite routes on a chi router.
 type inviteHandlerFixture struct {
 	router      *chi.Mux
-	inviteStore *qrdbsdk.TenantInviteStore
+	inviteStore *invitetest.Store
 	userID      uint64
 }
 
@@ -67,7 +69,7 @@ func setupInviteHandlerTest(t *testing.T) *inviteHandlerFixture {
 
 	const userID = uint64(1)
 	const email = "invitee@example.com"
-	qrdbUser := &qrdbtransport.User{ID: userID, Username: email, Email: email, Name: "Invitee", Lifecycle: string(qrdbsdk.LifecyclePending)}
+	qrdbUser := &qrdbtransport.User{ID: userID, Username: email, Email: email, Name: "Invitee", TenantID: webauthntest.TenantID, Lifecycle: string(qrdbsdk.LifecyclePending)}
 	users := &restMockUserClient{
 		getUser: func(_ context.Context, id uint64) (*qrdbtransport.User, error) {
 			if id != userID {
@@ -75,29 +77,39 @@ func setupInviteHandlerTest(t *testing.T) *inviteHandlerFixture {
 			}
 			return qrdbUser, nil
 		},
+		getUserByEmail: func(_ context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+			if tenantID != qrdbUser.TenantID || email != qrdbUser.Email {
+				return nil, &qrdbtransport.UserNotFoundError{Lookup: qrdbtransport.UserLookupKey(tenantID, email)}
+			}
+			return qrdbUser, nil
+		},
+		updateUser: func(_ context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+			if req.ID != userID {
+				return nil, &qrdbtransport.UserNotFoundError{ID: req.ID}
+			}
+			if req.Lifecycle != "" {
+				qrdbUser.Lifecycle = req.Lifecycle
+			}
+			return qrdbUser, nil
+		},
 	}
 	svc.SetUserClients(users, &restMockRoleClient{})
 
-	inviteStore, err := qrdbsdk.NewTenantInviteStore(restSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	inviteStore, err := invitetest.New(restSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
 	require.NoError(t, err)
 	svc.SetInviteStore(inviteStore)
 
-	// A real WebAuthn service, over an in-memory user store seeded to agree
-	// with the mock qrdb user client above (the two are logically the same
-	// store in production; see pkg/xkms/servicer_invite_test.go's fixture
-	// for why they are decoupled in tests).
-	waUsers := xkmswebauthn.NewMemoryUserStore()
-	waUser := xkmswebauthn.NewDefaultUser(xkmswebauthn.HandleFromUserID(userID), email, "Invitee")
-	waUser.SetLifecycle(qrdbsdk.LifecyclePending)
-	require.NoError(t, waUsers.Save(context.Background(), waUser))
+	// A real WebAuthn service whose users are the mock qrdb user client's
+	// records, as in production.
+	waStores := webauthntest.NewStoresFor(t, users)
 	waSvc, err := xkmswebauthn.NewService(xkmswebauthn.ServiceParams{
 		Config: &xkmswebauthn.Config{
 			RPID: "example.com", RPDisplayName: "xkms test",
 			RPOrigins: []string{"https://example.com"},
 		},
-		UserStore:       waUsers,
+		UserStore:       waStores.Users,
 		SessionStore:    xkmswebauthn.NewMemorySessionStore(),
-		CredentialStore: xkmswebauthn.NewMemoryCredentialStore(),
+		CredentialStore: waStores.Credentials,
 	})
 	require.NoError(t, err)
 	svc.SetWebAuthn(waSvc)
@@ -216,7 +228,7 @@ func TestHandleInviteBeginFIDO2_NoWebAuthnConfigured(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { xkms.Reset() })
 	svc.SetUserClients(&restMockUserClient{}, &restMockRoleClient{})
-	inviteStore, err := qrdbsdk.NewTenantInviteStore(restSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	inviteStore, err := invitetest.New(restSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
 	require.NoError(t, err)
 	svc.SetInviteStore(inviteStore)
 	tok, _, err := inviteStore.Create(context.Background(), "1", "", time.Hour)

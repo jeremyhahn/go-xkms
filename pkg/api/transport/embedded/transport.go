@@ -674,38 +674,6 @@ func (t *Transport) GeneratePIVCSR(ctx context.Context, req *transport.GenerateP
 	return t.service.GeneratePIVCSR(ctx, req)
 }
 
-// BarrierInitialize generates a root key, seals it, and transitions to unsealed state.
-func (t *Transport) BarrierInitialize(ctx context.Context, req *transport.BarrierInitializeRequest) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.BarrierInitialize(ctx, req)
-}
-
-// BarrierUnseal loads the sealed root key and derives the DEK.
-func (t *Transport) BarrierUnseal(ctx context.Context, req *transport.BarrierUnsealRequest) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.BarrierUnseal(ctx, req)
-}
-
-// BarrierSeal transitions the barrier to sealed state.
-func (t *Transport) BarrierSeal(ctx context.Context) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.BarrierSeal(ctx)
-}
-
-// BarrierStatus returns the current barrier status.
-func (t *Transport) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.BarrierStatus(ctx)
-}
-
 // BootstrapListenerKeys returns the running trust-bootstrap listener's
 // public static keys.
 func (t *Transport) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
@@ -713,88 +681,6 @@ func (t *Transport) BootstrapListenerKeys(ctx context.Context) (*transport.Boots
 		return nil, ErrNotConnected
 	}
 	return t.service.BootstrapListenerKeys(ctx)
-}
-
-// BarrierInitializeShamir initializes the barrier using Shamir secret sharing.
-func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.BarrierInitializeShamir(ctx, req)
-}
-
-// BarrierUnsealWithShare submits a single Shamir share toward the quorum.
-func (t *Transport) BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.BarrierUnsealWithShare(ctx, req)
-}
-
-// BarrierUnsealWithShares submits all Shamir shares at once for batch unsealing.
-func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.BarrierUnsealWithShares(ctx, req)
-}
-
-// BarrierRekey rotates Shamir shares while keeping the same root key.
-func (t *Transport) BarrierRekey(ctx context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.BarrierRekey(ctx, req)
-}
-
-// BarrierGenerateRecoveryKeys generates recovery keys for disaster recovery.
-func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.BarrierGenerateRecoveryKeys(ctx, req)
-}
-
-// BarrierEnableEncryption migrates a previously-unencrypted barrier to a keyed
-// strategy in place.
-func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.BarrierEnableEncryption(ctx, req)
-}
-
-// BarrierRecoverWithKeys unseals the barrier using recovery keys.
-func (t *Transport) BarrierRecoverWithKeys(ctx context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.BarrierRecoverWithKeys(ctx, req)
-}
-
-// BarrierDeleteRecoveryKeys deletes stored recovery key metadata.
-func (t *Transport) BarrierDeleteRecoveryKeys(ctx context.Context) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.BarrierDeleteRecoveryKeys(ctx)
-}
-
-// BarrierHasRecoveryKeys checks if recovery keys exist.
-func (t *Transport) BarrierHasRecoveryKeys(ctx context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.BarrierHasRecoveryKeys(ctx)
-}
-
-// BarrierGenerateRootToken generates a one-time root token by proving
-// knowledge of the master key through Shamir share reconstruction.
-func (t *Transport) BarrierGenerateRootToken(ctx context.Context, req *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.BarrierGenerateRootToken(ctx, req)
 }
 
 // SetSOPIN sets the Security Officer PIN.
@@ -1332,151 +1218,6 @@ func (t *Transport) OIDCCredentialDevicePoll(ctx context.Context, req *transport
 	return t.service.OIDCCredentialDevicePoll(ctx, req)
 }
 
-// CreateBackup initiates a new backup with the specified options.
-func (t *Transport) CreateBackup(ctx context.Context, req *transport.BackupRequest) (*transport.BackupInfo, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.CreateBackup(ctx, req)
-}
-
-// ListBackups returns metadata for all available backups.
-func (t *Transport) ListBackups(ctx context.Context) ([]transport.BackupInfo, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.ListBackups(ctx)
-}
-
-// GetBackup returns metadata for a specific backup by ID.
-func (t *Transport) GetBackup(ctx context.Context, id string) (*transport.BackupInfo, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.GetBackup(ctx, id)
-}
-
-// DeleteBackup removes a backup by ID.
-func (t *Transport) DeleteBackup(ctx context.Context, id string) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.DeleteBackup(ctx, id)
-}
-
-// RestoreBackup restores data from a backup.
-func (t *Transport) RestoreBackup(ctx context.Context, req *transport.RestoreRequest) (*transport.RestoreResult, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.RestoreBackup(ctx, req)
-}
-
-// VerifyBackup verifies the integrity of a backup.
-func (t *Transport) VerifyBackup(ctx context.Context, id string) (*transport.VerifyResult, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.VerifyBackup(ctx, id)
-}
-
-// CreateCustodianGroup creates a new custodian group.
-func (t *Transport) CreateCustodianGroup(ctx context.Context, req *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.CreateCustodianGroup(ctx, req)
-}
-
-// GetCustodianGroup retrieves a custodian group by ID.
-func (t *Transport) GetCustodianGroup(ctx context.Context, groupID string) (*transport.GetCustodianGroupResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.GetCustodianGroup(ctx, groupID)
-}
-
-// ListCustodianGroups lists all custodian groups.
-func (t *Transport) ListCustodianGroups(ctx context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.ListCustodianGroups(ctx)
-}
-
-// DeleteCustodianGroup deletes a custodian group.
-func (t *Transport) DeleteCustodianGroup(ctx context.Context, groupID string) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.DeleteCustodianGroup(ctx, groupID)
-}
-
-// AddCustodianMember adds a member to a custodian group.
-func (t *Transport) AddCustodianMember(ctx context.Context, req *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.AddCustodianMember(ctx, req)
-}
-
-// RemoveCustodianMember removes a member from a custodian group.
-func (t *Transport) RemoveCustodianMember(ctx context.Context, req *transport.RemoveCustodianMemberRequest) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.RemoveCustodianMember(ctx, req)
-}
-
-// DistributeShares distributes Shamir shares to custodian group members.
-func (t *Transport) DistributeShares(ctx context.Context, req *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.DistributeShares(ctx, req)
-}
-
-// SubmitShare submits a received Shamir share back to the server.
-func (t *Transport) SubmitShare(ctx context.Context, req *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.SubmitShare(ctx, req)
-}
-
-// ListShares lists shares available for the authenticated user.
-func (t *Transport) ListShares(ctx context.Context) (*transport.ListSharesResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.ListShares(ctx)
-}
-
-// GetShare returns a single stored share. Share material is never included
-// in the response — the servicer returns metadata only.
-func (t *Transport) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.GetShare(ctx, serverURL, groupID, shareIndex)
-}
-
-// DeleteShare removes a single stored share.
-func (t *Transport) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.DeleteShare(ctx, serverURL, groupID, shareIndex)
-}
-
-// GetShareCollectionStatus returns the collection status for a group.
-func (t *Transport) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.GetShareCollectionStatus(ctx, groupID)
-}
-
 // CreateTenant creates a new tenant.
 func (t *Transport) CreateTenant(ctx context.Context, req *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
 	if !t.connected {
@@ -1509,30 +1250,6 @@ func (t *Transport) DeleteTenant(ctx context.Context, tenantID string) error {
 	return t.service.DeleteTenant(ctx, tenantID)
 }
 
-// TenantBarrierInit initializes a per-tenant barrier.
-func (t *Transport) TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.TenantBarrierInit(ctx, req)
-}
-
-// TenantBarrierUnseal unseals a per-tenant barrier.
-func (t *Transport) TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.TenantBarrierUnseal(ctx, req)
-}
-
-// TenantBarrierStatus reports the status of a per-tenant barrier.
-func (t *Transport) TenantBarrierStatus(ctx context.Context, tenantID string) (*transport.TenantBarrierStatusResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.TenantBarrierStatus(ctx, tenantID)
-}
-
 // UpdateTenantEntitlements updates a tenant's feature entitlements.
 func (t *Transport) UpdateTenantEntitlements(ctx context.Context, req *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
 	if !t.connected {
@@ -1547,55 +1264,6 @@ func (t *Transport) UpdateTenantQuotas(ctx context.Context, req *transport.Updat
 		return nil, ErrNotConnected
 	}
 	return t.service.UpdateTenantQuotas(ctx, req)
-}
-
-// GetInitStatus returns the current init ceremony state.
-func (t *Transport) GetInitStatus(ctx context.Context) (*transport.InitStatusResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.GetInitStatus(ctx)
-}
-
-// ClaimCertBegin begins the certificate claim process for an officer.
-func (t *Transport) ClaimCertBegin(ctx context.Context, req *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.ClaimCertBegin(ctx, req)
-}
-
-// ClaimCertComplete completes the certificate claim by verifying the officer's signature.
-func (t *Transport) ClaimCertComplete(ctx context.Context, req *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.ClaimCertComplete(ctx, req)
-}
-
-// ClaimShare retrieves the Shamir share for the named officer.
-func (t *Transport) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.ClaimShareBegin(ctx, req)
-}
-
-// ClaimShareComplete completes the Shamir share claim handshake for the named
-// officer.
-func (t *Transport) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.ClaimShareComplete(ctx, req)
-}
-
-// SignCSRInit signs a CSR during initialization with SO authorization.
-func (t *Transport) SignCSRInit(ctx context.Context, req *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.SignCSRInit(ctx, req)
 }
 
 // SubmitCredential submits a credential for manual mode.
@@ -1681,15 +1349,6 @@ func (t *Transport) ListUserCredentials(ctx context.Context, username string) (*
 		return nil, ErrNotConnected
 	}
 	return t.service.ListUserCredentials(ctx, username)
-}
-
-// QueryAudit returns one page of audit events from the embedded qrdb node's
-// tamper-evident audit chain.
-func (t *Transport) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.QueryAudit(ctx, filter)
 }
 
 // Compile-time check that the embedded transport serves the whole client

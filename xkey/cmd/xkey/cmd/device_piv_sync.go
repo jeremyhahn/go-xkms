@@ -27,6 +27,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/spf13/cobra"
 )
@@ -449,7 +450,7 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) (err error) {
 	})
 
 	if outputPath != "" {
-		if writeErr := os.WriteFile(outputPath, pemData, 0600); writeErr != nil {
+		if writeErr := fsutil.WriteFileAtomic(outputPath, pemData, 0600); writeErr != nil {
 			return &SentinelCauseError{Sentinel: ErrPIVDevicePullCertFailed, Cause: writeErr}
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Certificate saved to: %s\n", outputPath)

@@ -38,15 +38,15 @@ const platformStoreSealCN = "xkms-platform-store-seal"
 
 // initializePlatformStore builds the platform sealed credential store
 // (pkg/seal.PlatformStore) from credentials.seal_strategy and assigns it to
-// s.platformStore. It runs after unseal (see the call site in Server.New):
-// for a node-flip deployment the node's own barrier is already adopted by
-// this point; for every other deployment the platform store does not depend
-// on s.barrier at all -- it seals independently, through its own strategy.
+// s.platformStore. It runs after unseal (see the call site in Server.New),
+// so the node's barrier is already adopted by this point. The platform store
+// is not a second barrier and never depends on s.barrier: it seals each
+// credential independently, through its own strategy.
 //
 // "manual" (the default) and "barrier" are skipped: manual never stores a
-// credential at rest, and "barrier" stores directly in s.barrier via
-// credentials.Service, bypassing the platform store entirely (see
-// pkg/server/credentials.Service.StoreCredential). Every other valid
+// credential at rest, and "barrier" stores directly in s.barrier through
+// go-qrdb's versioned credential service, bypassing the platform store
+// entirely (see pkg/server/credentials.New). Every other valid
 // strategy (tpm2, pkcs11, awskms, gcpkms, azurekv, vault, passphrase) is
 // backed by the platform store built here.
 //
@@ -222,70 +222,7 @@ func (s *Server) buildTPM2PlatformSealer() (types.Sealer, error) {
 	// go-xkms#997 defect: it let this sealer report a policy-gated PSRK even
 	// when the object was created without one, hiding a real shape mismatch
 	// instead of surfacing it.
-	return &platformPolicySealer{
-		inner:     backend,
-		cn:        platformStoreSealCN,
-		psrkAttrs: psrkAttrs,
-	}, nil
-}
-
-// platformPolicySealer wraps a raw TPM2 types.Sealer so every Seal/Unseal
-// call is parented to the enrolled Platform SRK (psrkAttrs; go-xkms never
-// seals under the Shared SRK) and binds the sealed object itself to the
-// built-in "platform" TPM policy (types.TPMPolicyPlatform) -- independent of
-// any per-call options. This adapter exists because pkg/storage/sealed.Backend -- the
-// generic wrapper the platform store's sealed.New composes -- always calls
-// Unseal with nil *types.UnsealOptions, so neither the parent nor the
-// policy reference can be threaded through a caller-supplied
-// opts.KeyAttributes on the unseal side; this type supplies both
-// consistently on both the seal and the unseal path instead.
-type platformPolicySealer struct {
-	inner     types.Sealer
-	cn        string
-	psrkAttrs *types.KeyAttributes
-}
-
-// Compile-time interface check.
-var _ types.Sealer = (*platformPolicySealer)(nil)
-
-// CanSeal delegates to the wrapped sealer.
-func (p *platformPolicySealer) CanSeal() bool {
-	return p.inner.CanSeal()
-}
-
-// keyAttrs builds a fresh KeyAttributes identifying the sealed object, always
-// parented to the enrolled Platform SRK. A fresh value is built per call
-// because the underlying TPM library mutates a sealed object's own
-// KeyAttributes in place (SealData, TPMAttributes.Name/Handle) as a side
-// effect of Seal/Unseal, and reusing one across calls would leak state from
-// the previous call into the next.
-func (p *platformPolicySealer) keyAttrs() *types.KeyAttributes {
-	return &types.KeyAttributes{
-		CN:        p.cn,
-		Parent:    p.psrkAttrs,
-		TPMPolicy: types.TPMPolicyPlatform,
-	}
-}
-
-// Seal seals data under the Platform SRK, ignoring any KeyAttributes the
-// caller supplied in opts (the platform store's sealer always owns key
-// identity for its own strategy). The caller's AAD is passed through, so the
-// sealed value is bound to it.
-func (p *platformPolicySealer) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
-	return p.inner.Seal(ctx, data, &types.SealOptions{KeyAttributes: p.keyAttrs(), AAD: sealAAD(opts)})
-}
-
-// Unseal unseals data under the Platform SRK, ignoring any KeyAttributes the
-// caller supplied in opts (always nil from sealed.Backend). Authorizing the Platform SRK itself
-// requires a live-PCR PolicyPCR session (no PIN is presented here), so a
-// platform state that no longer matches what the Platform SRK -- or, when
-// the sealed object itself -- was authorized under
-// fails TPM2_PolicyPCR, and this call surfaces that as an unseal error.
-//
-// The caller's AAD is passed through, so a value sealed under other AAD fails
-// with types.ErrSealedDataAuthentication like any other mismatch.
-func (p *platformPolicySealer) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
-	return p.inner.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: p.keyAttrs(), AAD: unsealAAD(opts)})
+	return seal.NewPlatformPolicySealer(backend, platformStoreSealCN, psrkAttrs), nil
 }
 
 // fixedKeyAttrsSealer wraps a types.Sealer so every Seal/Unseal call carries

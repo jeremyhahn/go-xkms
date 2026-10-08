@@ -33,12 +33,12 @@ func newServiceWithPublicRegistration(t *testing.T, allow bool) (*Service, UserS
 	cfg := validTestConfig()
 	cfg.AllowPublicRegistration = &allow
 
-	users := NewMemoryUserStore()
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
 		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 	return svc, users
@@ -94,12 +94,12 @@ func TestPublicRegistrationDefault_RefusesUnknownUser(t *testing.T) {
 	cfg := validTestConfig()
 	require.Nil(t, cfg.AllowPublicRegistration, "the test config must not set the field")
 
-	users := NewMemoryUserStore()
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
 		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 
@@ -184,15 +184,13 @@ func TestPublicRegistrationDisabled_RefusesProvisionedUser(t *testing.T) {
 func TestBeginInviteRegistration_PendingAccountEnrolls(t *testing.T) {
 	for _, allow := range []bool{true, false} {
 		ctx := context.Background()
-		svc, users := newServiceWithPublicRegistration(t, allow)
+		f := newEnrollFixture(t, allow)
 
-		provisioned, err := users.Create(ctx, "staff@example.com", "Staff Member")
+		provisioned, err := f.users.Create(ctx, "staff@example.com", "Staff Member")
 		require.NoError(t, err)
-		du, ok := provisioned.(*DefaultUser)
-		require.True(t, ok)
-		du.SetLifecycle(qrdbsdk.LifecyclePending)
+		f.setStanding(t, "staff@example.com", qrdbsdk.LifecyclePending, nil)
 
-		options, sessionID, err := svc.BeginInviteRegistration(ctx, "staff@example.com")
+		options, sessionID, err := f.svc.BeginInviteRegistration(ctx, "staff@example.com")
 
 		require.NoError(t, err, "allow_public_registration=%v", allow)
 		require.NotNil(t, options)

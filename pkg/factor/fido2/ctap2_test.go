@@ -33,7 +33,7 @@ func testSecret(t *testing.T, s string) *secure.Secret {
 	if s == "" {
 		return nil
 	}
-	secret, err := secure.NewSecret([]byte(s))
+	secret, err := secure.NewSecret(t.Context(), []byte(s))
 	if err != nil {
 		t.Fatalf("seal test PIN: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestLocalCeremony_ForwardsThePIN(t *testing.T) {
 	if ceremony.opts.PIN == nil {
 		t.Fatal("want a PIN forwarded to the authenticator ceremony")
 	}
-	buf, err := ceremony.opts.PIN.Open()
+	buf, err := ceremony.opts.PIN.Open(t.Context())
 	if err != nil {
 		t.Fatalf("open forwarded PIN: %v", err)
 	}

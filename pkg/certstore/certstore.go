@@ -14,8 +14,10 @@
 // Package certstore provides high-level certificate management operations including
 // certificate storage, chain management, CRL handling, and certificate verification.
 //
-// CertStore builds on storage.CertificateStorage by adding certificate validation,
-// revocation checking, and certificate chain management capabilities.
+// A CertStore persists certificates and chains as go-qrdb DAO entities in
+// the CA's database (DatabaseName), built from the DAO factory its
+// composition root injects, and adds certificate validation, revocation
+// checking, and certificate chain management.
 package certstore
 
 import (
@@ -61,8 +63,8 @@ type CertStore interface {
 	// Basic Certificate Operations
 	// ========================================================================
 
-	// StoreCertificate stores a certificate identified by its Common Name.
-	// Returns an error if the certificate already exists (depending on implementation).
+	// StoreCertificate stores a certificate under its CertificateKey,
+	// replacing any certificate stored there.
 	StoreCertificate(cert *x509.Certificate) error
 
 	// GetCertificate retrieves a certificate by its Common Name.
@@ -88,7 +90,7 @@ type CertStore interface {
 
 	// GetCertificateChain retrieves a certificate chain by Common Name.
 	// Returns the complete chain from leaf to root.
-	// Returns ErrCertNotFound if the chain does not exist.
+	// Returns ErrChainNotFound if the chain does not exist.
 	GetCertificateChain(cn string) ([]*x509.Certificate, error)
 
 	// ========================================================================

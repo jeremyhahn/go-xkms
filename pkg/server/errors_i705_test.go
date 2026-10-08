@@ -114,11 +114,3 @@ func TestSealedWindowBindError_Error(t *testing.T) {
 	wildcard := &SealedWindowBindError{}
 	assert.Contains(t, wildcard.Error(), "<all interfaces>")
 }
-
-func TestClusterAdvertiseError_ErrorAndUnwrap(t *testing.T) {
-	cause := errors.New("registry unreachable")
-	err := &ClusterAdvertiseError{Stage: "new node advertiser", Err: cause}
-	assert.Contains(t, err.Error(), "new node advertiser")
-	assert.Contains(t, err.Error(), "registry unreachable")
-	assert.Same(t, cause, err.Unwrap())
-}

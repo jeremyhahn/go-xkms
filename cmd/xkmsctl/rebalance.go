@@ -27,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -321,7 +322,7 @@ func writeRebalancePlanFile(path string, plan *qrdbtransport.RebalancePlan) erro
 	if err != nil {
 		return &RebalancePlanFileWriteError{Path: path, Cause: err}
 	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(path, append(data, '\n'), 0o600); err != nil {
 		return &RebalancePlanFileWriteError{Path: path, Cause: err}
 	}
 	return nil

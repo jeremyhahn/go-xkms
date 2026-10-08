@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — CLI
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-10-07
 
 Every flag below is verified against `xkey <group> <verb> --help` built from
 this checkout. See [architecture.md](architecture.md) for the auto-unseal
@@ -31,6 +31,18 @@ First-time setup: generates a root key and seals it.
 | `--azure-allow-local-vault-url` | `false` | Allow a localhost/127.0.0.1 vault URL (development only) |
 | `--vault-address string` | none | HashiCorp Vault server address for `--strategy vault` |
 | `--vault-mount-path string` | `transit` | Vault Transit engine mount path |
+| `--pkcs11-library string` | none | PKCS#11 module path for `--strategy pkcs11` |
+| `--pkcs11-token string` | none | PKCS#11 token label for `--strategy pkcs11` |
+
+`--strategy pkcs11` saves the module and token label to the config file
+(`barrier.pkcs11`), then reads the token user PIN and seals it under
+this host's Platform SRK and the platform PCR policy (go-xkms#677). The PIN
+is prompted for on a terminal, or read from the first line of piped
+standard input, before the barrier password. It is never a flag and never
+written to the config. Every later unseal releases the PIN from the TPM and
+logs in to the token without asking again. The TPM must have the Platform SRK
+enrolled (`xkey setup`). If the platform PCRs change, the PIN is no longer
+released, and `barrier init` has to be run again on a fresh data directory.
 
 The four cloud KMS strategies need no PIN or HSM slot, and no pre-provisioned
 key identifier is required: left unset, the seal key is resolved (or created
@@ -102,11 +114,12 @@ barrier`) both accept the barrier flags below. For a `tpm2`-strategy
 barrier they try TPM-policy auto-unseal first, then a direct TPM unseal. For a
 cloud KMS strategy (`aws_kms`, `gcp_kms`, `azure_kv`, `vault`) they rebuild
 the backend from the connection settings `xkey barrier init` persisted to
-the config file and unseal with it — no password. For `software` they need
-a password. `pkcs11` and `shamir` are refused with a typed error naming the
-interactive alternative: PKCS#11 needs a token PIN a headless process has
-no source for yet, and Shamir needs an operator quorum no headless process
-can collect.
+the config file and unseal with it — no password. For `pkcs11` they release
+the token PIN that `xkey barrier init` sealed to the TPM, log in to the token
+named in the config file, and unseal, again with no password. For `software`
+they need a password. `shamir` is refused with a typed error naming the
+interactive alternative, because no headless process can collect an operator
+quorum.
 
 | Flag | Commands | Meaning |
 |---|---|---|
@@ -139,12 +152,15 @@ Shared by every command that persists barrier, policy, or PIN state
 
 | Field | Description |
 |---|---|
-| `initialized` | Whether the barrier has a root key on disk |
+| `initialized` | Whether the data directory's storage engine holds a sealed root key |
 | `sealed` | Whether the barrier is currently sealed |
 | `strategy` | Which sealing strategy protects the root key (`software`, `tpm2`, `pkcs11`, `aws_kms`, `gcp_kms`, `azure_kv`, `vault`) |
 | `hardware_backed` | Whether the strategy uses dedicated cryptographic hardware |
-| `data_dir` | Path to the data directory |
-| `root_key_path` | Full path to the sealed root key blob |
+| `data_dir` | Path to the data directory (the go-qrdb file engine's root) |
+| `root_key_entry` | Engine entry holding the sealed root key blob (`barrier/root_key`); not a file below `data_dir` |
+
+On a fresh data directory run `xkey barrier init` before `xkey tpm` or
+`xkey pin`: the file engine only claims an empty directory.
 
 ## Examples
 
@@ -162,6 +178,11 @@ xkey barrier unseal --auto
 
 # ...and neither does a headless daemon
 xkey extension serve --socket /run/xkey/xkey.sock
+
+# A PKCS#11 token seals the root key; its PIN (first line) is sealed to the TPM
+printf '%s\n%s\n%s\n' "$TOKEN_PIN" "$BARRIER_PASSWORD" "$BARRIER_PASSWORD" |
+  xkey barrier init --strategy pkcs11 \
+    --pkcs11-library /usr/lib/softhsm/libsofthsm2.so --pkcs11-token xkey-barrier
 
 # After a firmware/kernel update changes the measured boot state
 xkey tpm policy verify boot-policy   # reports the change, non-zero exit

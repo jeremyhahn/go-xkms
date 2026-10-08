@@ -20,12 +20,46 @@
 package xkey
 
 import (
+	"context"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
+
+// barrierRootKeyEntry is the entry of the data directory's go-qrdb file
+// engine that holds the sealed root key blob.
+const barrierRootKeyEntry = "barrier/root_key"
+
+// readRootKeyBlob reads the sealed root key entry from the go-qrdb file
+// engine in dataDir. The bool reports whether the entry exists.
+func readRootKeyBlob(t *testing.T, dataDir string) ([]byte, bool) {
+	t.Helper()
+	backend, err := xkms.NewFileStorageBackend(dataDir)
+	if err != nil {
+		t.Fatalf("Failed to open the data directory's storage engine: %v", err)
+	}
+	defer func() {
+		if closeErr := backend.Close(); closeErr != nil {
+			t.Errorf("Failed to close the storage engine: %v", closeErr)
+		}
+	}()
+
+	exists, err := backend.Exists(context.Background(), barrierRootKeyEntry)
+	if err != nil {
+		t.Fatalf("Failed to probe the root key entry: %v", err)
+	}
+	if !exists {
+		return nil, false
+	}
+	blob, err := backend.Get(context.Background(), barrierRootKeyEntry)
+	if err != nil {
+		t.Fatalf("Failed to read the root key entry: %v", err)
+	}
+	return blob, true
+}
 
 // ---------------------------------------------------------------------------
 // Barrier Init - Software Strategy
@@ -49,10 +83,9 @@ func TestCLI_BarrierInit_Software_Success(t *testing.T) {
 		t.Errorf("Expected output to mention 'software' strategy, got: %s", stdout)
 	}
 
-	// Verify root key file was created on disk.
-	rootKeyPath := filepath.Join(dataDir, "barrier", "root_key")
-	if _, err := os.Stat(rootKeyPath); os.IsNotExist(err) {
-		t.Errorf("Expected root key file at %s, but it does not exist", rootKeyPath)
+	// Verify the sealed root key was stored in the data directory's engine.
+	if _, exists := readRootKeyBlob(t, dataDir); !exists {
+		t.Errorf("Expected root key entry %q in %s, but it does not exist", barrierRootKeyEntry, dataDir)
 	}
 }
 
@@ -72,9 +105,8 @@ func TestCLI_BarrierInit_Software_EmptyPassword(t *testing.T) {
 	}
 
 	// Root key should NOT have been created.
-	rootKeyPath := filepath.Join(dataDir, "barrier", "root_key")
-	if _, err := os.Stat(rootKeyPath); err == nil {
-		t.Error("Root key file should not exist after failed init with empty password")
+	if _, exists := readRootKeyBlob(t, dataDir); exists {
+		t.Error("Root key entry should not exist after failed init with empty password")
 	}
 }
 
@@ -94,9 +126,8 @@ func TestCLI_BarrierInit_Software_MismatchPassword(t *testing.T) {
 	}
 
 	// Root key should NOT have been created.
-	rootKeyPath := filepath.Join(dataDir, "barrier", "root_key")
-	if _, err := os.Stat(rootKeyPath); err == nil {
-		t.Error("Root key file should not exist after failed init with mismatched passwords")
+	if _, exists := readRootKeyBlob(t, dataDir); exists {
+		t.Error("Root key entry should not exist after failed init with mismatched passwords")
 	}
 }
 
@@ -186,7 +217,7 @@ func TestCLI_BarrierStatus_JSON_AfterInit(t *testing.T) {
 		Strategy       string `json:"strategy"`
 		HardwareBacked bool   `json:"hardware_backed"`
 		DataDir        string `json:"data_dir"`
-		RootKeyPath    string `json:"root_key_path"`
+		RootKeyEntry   string `json:"root_key_entry"`
 	}
 
 	if err := json.Unmarshal([]byte(stdout), &status); err != nil {
@@ -505,10 +536,9 @@ func TestCLI_BarrierInit_Software_PasswordEncryptsData(t *testing.T) {
 	// Step 3: Verify the root key blob is NOT stored as cleartext.
 	// The root key file should contain a JSON-serialized SealedRootKey blob
 	// with encrypted ciphertext, not raw key material.
-	rootKeyPath := filepath.Join(dataDir, "barrier", "root_key")
-	rootKeyData, err := os.ReadFile(rootKeyPath)
-	if err != nil {
-		t.Fatalf("Failed to read root key file: %v", err)
+	rootKeyData, exists := readRootKeyBlob(t, dataDir)
+	if !exists {
+		t.Fatalf("Root key entry %q is missing", barrierRootKeyEntry)
 	}
 
 	// The root key file should be valid JSON (SealedRootKey structure).

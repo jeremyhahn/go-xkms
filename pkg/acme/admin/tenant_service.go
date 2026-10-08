@@ -39,7 +39,6 @@ import (
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -64,16 +63,26 @@ type tenantIntermediateCAEntry struct {
 	signer crypto.Signer
 }
 
+// QRDBClient is the go-qrdb client surface the tenant-aware admin service
+// delegates tenant roles, users, and per-tenant CA records to.
+// *qrdbsdk.Client satisfies it.
+type QRDBClient interface {
+	KV() db.KVClient
+	Users() db.UserClient
+	Roles() db.RoleClient
+}
+
+var _ QRDBClient = (*qrdbsdk.Client)(nil)
+
 // TenantAwareAdminService provides multi-tenant admin operations.
 // It embeds AdminService for base operations and adds tenant-specific functionality.
 type TenantAwareAdminService struct {
 	*AdminService
-	qrdbService qrdb.Service
+	qrdbService QRDBClient
 	tenantDAO   qrdbsdk.GenericDAO[*entities.Tenant]
 	logger      *slog.Logger
 	tenantCAs   map[string]*tenantCAEntry
 	mu          sync.RWMutex
-	barrierSvc  BarrierService
 
 	// tenantSvc is go-qrdb's canonical TenantServicer (qrdbsdk.ServiceTenantServicer),
 	// wired via SetTenantService by the composing binary (cmd/xkmsd, through
@@ -137,7 +146,7 @@ func (e *TenantDAOInitError) Unwrap() error {
 // only an optional linkage row for the CA/EAB/status state qrdb has no
 // concept of. Every method on this service already guards s.tenantDAO !=
 // nil before touching it, and xkmsd's only production wiring
-// (cmd/xkmsd/acme.go, via objstore.NewFactoryFromKVStore) constructs the
+// (cmd/xkmsd/acme.go, via objstore.NewFactory) constructs the
 // plain, non-tenant-aware storage.Factory today, so this is the normal
 // production path, not an edge case.
 //
@@ -149,7 +158,7 @@ func (e *TenantDAOInitError) Unwrap() error {
 func NewTenantAwareAdminService(
 	certificateAuthority ca.TCGCA,
 	storageFactory storage.Factory,
-	qrdbService qrdb.Service,
+	qrdbService QRDBClient,
 	logger *slog.Logger,
 	version string,
 ) (*TenantAwareAdminService, error) {
@@ -170,16 +179,6 @@ func NewTenantAwareAdminService(
 		logger:       logger,
 		tenantCAs:    make(map[string]*tenantCAEntry),
 	}, nil
-}
-
-// BarrierSvc returns the barrier service for seal/unseal operations.
-func (s *TenantAwareAdminService) BarrierSvc() BarrierService {
-	return s.barrierSvc
-}
-
-// SetBarrierService sets the barrier service on the tenant-aware admin service.
-func (s *TenantAwareAdminService) SetBarrierService(svc BarrierService) {
-	s.barrierSvc = svc
 }
 
 // CreateTenant creates a new tenant with default policies. Tenant identity
@@ -433,13 +432,15 @@ func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID str
 		return caerrors.StorageFailureError("admin: failed to check tenant existence: %s", err)
 	}
 
-	// Clean up RBAC roles for the tenant
+	// Clean up RBAC roles for the tenant, within the tenant: qrdb resolves a
+	// role within the context's tenant.
 	if s.qrdbService != nil && s.qrdbService.Roles() != nil {
-		roles, err := s.qrdbService.Roles().ListRoles(ctx, &db.ListRolesRequest{TenantID: tenantID})
+		tenantCtx := qrdbsdk.ContextWithTenant(ctx, tenantID)
+		roles, err := s.qrdbService.Roles().ListRoles(tenantCtx, &db.ListRolesRequest{TenantID: tenantID})
 		if err == nil && roles != nil {
 			for _, role := range roles.Roles {
 				if !role.System {
-					if err := s.qrdbService.Roles().DeleteRole(ctx, role.ID); err != nil {
+					if err := s.qrdbService.Roles().DeleteRole(tenantCtx, role.ID); err != nil {
 						s.logger.Warn("failed to delete tenant RBAC role",
 							slog.String("tenant_id", tenantID),
 							slog.String("role_id", role.ID),
@@ -1514,7 +1515,8 @@ func (s *TenantAwareAdminService) CreateTenantRole(ctx context.Context, tenantID
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
-	if err := bindTenantTarget(ctx, "create tenant role", tenantID); err != nil {
+	ctx, err := bindTenantIAM(ctx, "create tenant role", tenantID)
+	if err != nil {
 		return nil, err
 	}
 	if s.qrdbService == nil || s.qrdbService.Roles() == nil {
@@ -1530,7 +1532,8 @@ func (s *TenantAwareAdminService) GetTenantRole(ctx context.Context, tenantID st
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
-	if err := bindTenantTarget(ctx, "get tenant role", tenantID); err != nil {
+	ctx, err := bindTenantIAM(ctx, "get tenant role", tenantID)
+	if err != nil {
 		return nil, err
 	}
 	if s.qrdbService == nil || s.qrdbService.Roles() == nil {
@@ -1545,7 +1548,8 @@ func (s *TenantAwareAdminService) UpdateTenantRole(ctx context.Context, tenantID
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
-	if err := bindTenantTarget(ctx, "update tenant role", tenantID); err != nil {
+	ctx, err := bindTenantIAM(ctx, "update tenant role", tenantID)
+	if err != nil {
 		return nil, err
 	}
 	if s.qrdbService == nil || s.qrdbService.Roles() == nil {
@@ -1563,7 +1567,8 @@ func (s *TenantAwareAdminService) DeleteTenantRole(ctx context.Context, tenantID
 	if tenantID == "" {
 		return ErrInvalidTenantID
 	}
-	if err := bindTenantTarget(ctx, "delete tenant role", tenantID); err != nil {
+	ctx, err := bindTenantIAM(ctx, "delete tenant role", tenantID)
+	if err != nil {
 		return err
 	}
 	if s.qrdbService == nil || s.qrdbService.Roles() == nil {
@@ -1580,7 +1585,8 @@ func (s *TenantAwareAdminService) ListTenantRoles(ctx context.Context, tenantID 
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
-	if err := bindTenantTarget(ctx, "list tenant roles", tenantID); err != nil {
+	ctx, err := bindTenantIAM(ctx, "list tenant roles", tenantID)
+	if err != nil {
 		return nil, err
 	}
 	if s.qrdbService == nil || s.qrdbService.Roles() == nil {
@@ -1615,7 +1621,8 @@ func (s *TenantAwareAdminService) CreateTenantUser(ctx context.Context, tenantID
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
-	if err := bindTenantTarget(ctx, "create tenant user", tenantID); err != nil {
+	ctx, err := bindTenantIAM(ctx, "create tenant user", tenantID)
+	if err != nil {
 		return nil, err
 	}
 	if s.qrdbService == nil || s.qrdbService.Users() == nil {
@@ -1631,7 +1638,8 @@ func (s *TenantAwareAdminService) GetTenantUser(ctx context.Context, tenantID st
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
-	if err := bindTenantTarget(ctx, "get tenant user", tenantID); err != nil {
+	ctx, err := bindTenantIAM(ctx, "get tenant user", tenantID)
+	if err != nil {
 		return nil, err
 	}
 	if s.qrdbService == nil || s.qrdbService.Users() == nil {
@@ -1650,7 +1658,8 @@ func (s *TenantAwareAdminService) UpdateTenantUser(ctx context.Context, tenantID
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
-	if err := bindTenantTarget(ctx, "update tenant user", tenantID); err != nil {
+	ctx, err := bindTenantIAM(ctx, "update tenant user", tenantID)
+	if err != nil {
 		return nil, err
 	}
 	if s.qrdbService == nil || s.qrdbService.Users() == nil {
@@ -1668,7 +1677,8 @@ func (s *TenantAwareAdminService) DeleteTenantUser(ctx context.Context, tenantID
 	if tenantID == "" {
 		return ErrInvalidTenantID
 	}
-	if err := bindTenantTarget(ctx, "delete tenant user", tenantID); err != nil {
+	ctx, err := bindTenantIAM(ctx, "delete tenant user", tenantID)
+	if err != nil {
 		return err
 	}
 	if s.qrdbService == nil || s.qrdbService.Users() == nil {
@@ -1689,7 +1699,8 @@ func (s *TenantAwareAdminService) ListTenantUsers(ctx context.Context, tenantID 
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
-	if err := bindTenantTarget(ctx, "list tenant users", tenantID); err != nil {
+	ctx, err := bindTenantIAM(ctx, "list tenant users", tenantID)
+	if err != nil {
 		return nil, err
 	}
 	if s.qrdbService == nil || s.qrdbService.Users() == nil {
@@ -1981,7 +1992,7 @@ func isNotFoundError(err error) bool {
 	if qrdbsdk.IsDAONotFound(err) {
 		return true
 	}
-	if qrdb.IsNotFound(err) {
+	if qrdbsdk.IsErrorNotFound(err) {
 		return true
 	}
 	errStr := err.Error()

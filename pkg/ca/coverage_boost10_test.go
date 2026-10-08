@@ -735,6 +735,6 @@ func TestImportCertificate_Success_B10(t *testing.T) {
 func TestGetCAKeyAttributes_NilIdentity_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	_, err := ca.getCAKeyAttributes(nil)
+	_, err := ca.getCAKeyAttributes(t.Context(), nil)
 	assert.ErrorIs(t, err, ErrInvalidConfig)
 }

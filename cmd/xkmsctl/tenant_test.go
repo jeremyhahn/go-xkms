@@ -16,7 +16,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -29,27 +28,18 @@ import (
 // mockTenantClient is a mock client for testing tenant operations.
 type mockTenantClient struct {
 	mockBackendsClient
-	createTenantResp  *transport.CreateTenantResponse
-	createTenantErr   error
-	getTenantResp     *transport.GetTenantResponse
-	getTenantErr      error
-	listTenantsResp   *transport.ListTenantsResponse
-	listTenantsErr    error
-	deleteTenantErr   error
-	barrierInitErr    error
-	barrierUnsealErr  error
-	barrierStatusResp *transport.BarrierStatusResponse
-	barrierStatusErr  error
-	connectErr        error
-	closeCalled       bool
+	createTenantResp *transport.CreateTenantResponse
+	createTenantErr  error
+	getTenantResp    *transport.GetTenantResponse
+	getTenantErr     error
+	listTenantsResp  *transport.ListTenantsResponse
+	listTenantsErr   error
+	deleteTenantErr  error
+	connectErr       error
+	closeCalled      bool
 
 	// Captured requests for assertion.
-	gotCreateReq      *transport.CreateTenantRequest
-	gotBarrierInitReq *transport.TenantBarrierInitRequest
-
-	tenantBarrierStatusResp *transport.TenantBarrierStatusResponse
-	tenantBarrierStatusErr  error
-
+	gotCreateReq           *transport.CreateTenantRequest
 	updateEntitlementsResp *transport.UpdateTenantEntitlementsResponse
 	updateEntitlementsErr  error
 	updateQuotasResp       *transport.UpdateTenantQuotasResponse
@@ -82,29 +72,12 @@ func (m *mockTenantClient) DeleteTenant(ctx context.Context, tenantID string) er
 	return m.deleteTenantErr
 }
 
-func (m *mockTenantClient) TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error {
-	m.gotBarrierInitReq = req
-	return m.barrierInitErr
-}
-
-func (m *mockTenantClient) TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error {
-	return m.barrierUnsealErr
-}
-
-func (m *mockTenantClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
-	return m.tenantBarrierStatusResp, m.tenantBarrierStatusErr
-}
-
 func (m *mockTenantClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
 	return m.updateEntitlementsResp, m.updateEntitlementsErr
 }
 
 func (m *mockTenantClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
 	return m.updateQuotasResp, m.updateQuotasErr
-}
-
-func (m *mockTenantClient) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
-	return m.barrierStatusResp, m.barrierStatusErr
 }
 
 func (m *mockTenantClient) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
@@ -134,25 +107,6 @@ func TestTenantCreate_ForwardsIsolationAndAutoUnseal(t *testing.T) {
 	}
 }
 
-func TestTenantBarrierInit_ForwardsPassphraseAndStrategy(t *testing.T) {
-	mock := &mockTenantClient{}
-	cfg := &Config{
-		OutputFormat:  "text",
-		ClientFactory: func(c *Config) (client.Client, error) { return mock, nil },
-	}
-	tenantBarrierInit(cfg, NewPrinter("text", new(bytes.Buffer)), "acme", "s3cret", "tpm2", 0, 0)
-
-	if mock.gotBarrierInitReq == nil {
-		t.Fatal("TenantBarrierInit was not called")
-	}
-	if string(mock.gotBarrierInitReq.Passphrase) != "s3cret" {
-		t.Errorf("Passphrase = %q, want %q", mock.gotBarrierInitReq.Passphrase, "s3cret")
-	}
-	if mock.gotBarrierInitReq.Strategy != "tpm2" {
-		t.Errorf("Strategy = %q, want %q", mock.gotBarrierInitReq.Strategy, "tpm2")
-	}
-}
-
 // --- Command existence and properties ---
 
 func TestTenantCmd_Exists(t *testing.T) {
@@ -178,9 +132,6 @@ func TestTenantCmd_Subcommands(t *testing.T) {
 		"list":                false,
 		"show":                false,
 		"delete":              false,
-		"barrier-init":        false,
-		"barrier-unseal":      false,
-		"barrier-status":      false,
 		"update-entitlements": false,
 		"update-quotas":       false,
 	}
@@ -198,8 +149,8 @@ func TestTenantCmd_Subcommands(t *testing.T) {
 		}
 	}
 
-	if len(expected) != 9 {
-		t.Errorf("expected 9 subcommands, got %d", len(expected))
+	if len(expected) != 6 {
+		t.Errorf("expected 6 subcommands, got %d", len(expected))
 	}
 }
 
@@ -483,216 +434,9 @@ func TestTenantDelete_Error(t *testing.T) {
 
 // --- tenantBarrierInit ---
 
-func TestTenantBarrierInit_Success(t *testing.T) {
-	mock := &mockTenantClient{}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	cfg := &Config{
-		OutputFormat: "text",
-		ClientFactory: func(c *Config) (client.Client, error) {
-			return mock, nil
-		},
-	}
-
-	tenantBarrierInit(cfg, printer, "acme", "", "", 3, 5)
-
-	output := buf.String()
-	if !strings.Contains(output, "acme") {
-		t.Error("output should contain the tenant ID")
-	}
-	if !strings.Contains(output, "Barrier initialized") {
-		t.Error("output should indicate barrier was initialized")
-	}
-}
-
-func TestTenantBarrierInit_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockTenantClient{
-		barrierInitErr: errors.New("barrier already initialized"),
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	cfg := &Config{
-		OutputFormat: "text",
-		ClientFactory: func(c *Config) (client.Client, error) {
-			return mock, nil
-		},
-	}
-
-	tenantBarrierInit(cfg, printer, "acme", "", "", 3, 5)
-	// handleError is called, no panic
-}
-
 // --- tenantBarrierUnseal ---
 
-func TestTenantBarrierUnseal_Success(t *testing.T) {
-	mock := &mockTenantClient{}
-
-	validShare := base64.StdEncoding.EncodeToString([]byte("test-share-bytes"))
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	cfg := &Config{
-		OutputFormat: "text",
-		ClientFactory: func(c *Config) (client.Client, error) {
-			return mock, nil
-		},
-	}
-
-	tenantBarrierUnseal(cfg, printer, "acme", validShare)
-
-	output := buf.String()
-	if !strings.Contains(output, "acme") {
-		t.Error("output should contain the tenant ID")
-	}
-	if !strings.Contains(output, "Barrier unsealed") {
-		t.Error("output should indicate barrier was unsealed")
-	}
-}
-
-func TestTenantBarrierUnseal_InvalidBase64(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockTenantClient{}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	cfg := &Config{
-		OutputFormat: "text",
-		ClientFactory: func(c *Config) (client.Client, error) {
-			return mock, nil
-		},
-	}
-
-	tenantBarrierUnseal(cfg, printer, "acme", "!!!not-valid-base64!!!")
-	// handleError is called due to base64 decode failure, no panic
-}
-
-func TestTenantBarrierUnseal_EmptyShare(t *testing.T) {
-	mock := &mockTenantClient{}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	cfg := &Config{
-		OutputFormat: "text",
-		ClientFactory: func(c *Config) (client.Client, error) {
-			return mock, nil
-		},
-	}
-
-	// Empty share string should skip base64 decoding
-	tenantBarrierUnseal(cfg, printer, "acme", "")
-
-	output := buf.String()
-	if !strings.Contains(output, "Barrier unsealed") {
-		t.Error("output should indicate barrier was unsealed even with empty share")
-	}
-}
-
-func TestTenantBarrierUnseal_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockTenantClient{
-		barrierUnsealErr: errors.New("insufficient shares"),
-	}
-
-	validShare := base64.StdEncoding.EncodeToString([]byte("share-data"))
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	cfg := &Config{
-		OutputFormat: "text",
-		ClientFactory: func(c *Config) (client.Client, error) {
-			return mock, nil
-		},
-	}
-
-	tenantBarrierUnseal(cfg, printer, "acme", validShare)
-	// handleError is called, no panic
-}
-
 // --- tenantBarrierStatus ---
-
-func TestTenantBarrierStatus_Success(t *testing.T) {
-	mock := &mockTenantClient{
-		tenantBarrierStatusResp: &transport.TenantBarrierStatusResponse{
-			TenantID:        "acme",
-			Sealed:          false,
-			Initialized:     true,
-			Strategy:        "shamir",
-			HardwareBacked:  true,
-			ShamirThreshold: 3,
-			ShamirTotal:     5,
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	cfg := &Config{
-		OutputFormat: "text",
-		ClientFactory: func(c *Config) (client.Client, error) {
-			return mock, nil
-		},
-	}
-
-	tenantBarrierStatus(cfg, printer, "acme")
-
-	output := buf.String()
-	if !strings.Contains(output, "acme") {
-		t.Error("output should contain the tenant ID")
-	}
-	if !strings.Contains(output, "unsealed") {
-		t.Error("output should indicate barrier is unsealed")
-	}
-	if !strings.Contains(output, "shamir") {
-		t.Error("output should contain the strategy")
-	}
-	if !strings.Contains(output, "true") {
-		t.Error("output should indicate hardware backed status")
-	}
-	if !strings.Contains(output, "3-of-5") {
-		t.Error("output should contain the Shamir quorum")
-	}
-}
-
-func TestTenantBarrierStatus_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockTenantClient{
-		tenantBarrierStatusErr: errors.New("not found"),
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	cfg := &Config{
-		OutputFormat: "text",
-		ClientFactory: func(c *Config) (client.Client, error) {
-			return mock, nil
-		},
-	}
-
-	tenantBarrierStatus(cfg, printer, "acme")
-	// handleError is called, no panic
-}
 
 // --- Output helpers: printTenantInfo ---
 
@@ -888,149 +632,6 @@ func TestPrintTenantList_Text_Empty(t *testing.T) {
 
 // --- Output helpers: printTenantBarrierStatus ---
 
-func TestPrintTenantBarrierStatus_JSON(t *testing.T) {
-	resp := &transport.TenantBarrierStatusResponse{
-		TenantID:       "acme",
-		Sealed:         true,
-		Strategy:       "shamir",
-		HardwareBacked: false,
-		Initialized:    true,
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	printTenantBarrierStatus(printer, resp)
-
-	output := buf.String()
-	if !strings.Contains(output, `"tenant_id"`) {
-		t.Error("JSON output should contain 'tenant_id'")
-	}
-	if !strings.Contains(output, `"acme"`) {
-		t.Error("JSON output should contain tenant ID value")
-	}
-	if !strings.Contains(output, `"sealed"`) {
-		t.Error("JSON output should contain 'sealed' field")
-	}
-	if !strings.Contains(output, `"strategy"`) {
-		t.Error("JSON output should contain 'strategy' field")
-	}
-	if !strings.Contains(output, `"hardware_backed"`) {
-		t.Error("JSON output should contain 'hardware_backed' field")
-	}
-	if !strings.Contains(output, `"initialized"`) {
-		t.Error("JSON output should contain 'initialized' field")
-	}
-}
-
-func TestPrintTenantBarrierStatus_JSON_NotInitialized(t *testing.T) {
-	resp := &transport.TenantBarrierStatusResponse{
-		TenantID:       "globex",
-		Sealed:         false,
-		Strategy:       "aes-gcm",
-		HardwareBacked: true,
-		Initialized:    false,
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	printTenantBarrierStatus(printer, resp)
-
-	output := buf.String()
-	if !strings.Contains(output, `"initialized"`) {
-		t.Error("JSON output should contain 'initialized' field")
-	}
-	if !strings.Contains(output, `"globex"`) {
-		t.Error("JSON output should contain tenant ID value")
-	}
-}
-
-func TestPrintTenantBarrierStatus_Text_Sealed(t *testing.T) {
-	resp := &transport.TenantBarrierStatusResponse{
-		TenantID:       "acme",
-		Sealed:         true,
-		Strategy:       "shamir",
-		HardwareBacked: false,
-		Initialized:    true,
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	printTenantBarrierStatus(printer, resp)
-
-	output := buf.String()
-	if !strings.Contains(output, "Tenant Barrier Status:") {
-		t.Error("text output should contain header")
-	}
-	if !strings.Contains(output, "Tenant:          acme") {
-		t.Error("text output should contain tenant ID")
-	}
-	if !strings.Contains(output, "State:           sealed") {
-		t.Error("text output should show 'sealed' state")
-	}
-	if !strings.Contains(output, "Strategy:        shamir") {
-		t.Error("text output should contain strategy")
-	}
-	if !strings.Contains(output, "Hardware Backed: false") {
-		t.Error("text output should contain hardware backed status")
-	}
-	if !strings.Contains(output, "Initialized:     true") {
-		t.Error("text output should contain initialized status")
-	}
-}
-
-func TestPrintTenantBarrierStatus_Text_Unsealed(t *testing.T) {
-	resp := &transport.TenantBarrierStatusResponse{
-		TenantID:       "globex",
-		Sealed:         false,
-		Strategy:       "aes-gcm",
-		HardwareBacked: true,
-		Initialized:    false,
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	printTenantBarrierStatus(printer, resp)
-
-	output := buf.String()
-	if !strings.Contains(output, "State:           unsealed") {
-		t.Error("text output should show 'unsealed' state")
-	}
-	if !strings.Contains(output, "Hardware Backed: true") {
-		t.Error("text output should show hardware backed as true")
-	}
-	if !strings.Contains(output, "Initialized:     false") {
-		t.Error("text output should show initialized as false")
-	}
-}
-
-func TestPrintTenantBarrierStatus_Table(t *testing.T) {
-	resp := &transport.TenantBarrierStatusResponse{
-		TenantID:       "acme",
-		Sealed:         true,
-		Strategy:       "shamir",
-		HardwareBacked: true,
-		Initialized:    true,
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("table", buf)
-
-	printTenantBarrierStatus(printer, resp)
-
-	output := buf.String()
-	// Table format uses the same code path as text for printTenantBarrierStatus
-	if !strings.Contains(output, "Tenant Barrier Status:") {
-		t.Error("table output should contain header")
-	}
-	if !strings.Contains(output, "sealed") {
-		t.Error("table output should contain seal state")
-	}
-}
-
 // --- createTenantClient ---
 
 func TestCreateTenantClient_Success(t *testing.T) {
@@ -1201,56 +802,6 @@ func TestTenantDelete_JSONFormat(t *testing.T) {
 	}
 }
 
-func TestTenantBarrierInit_JSONFormat(t *testing.T) {
-	mock := &mockTenantClient{}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		OutputFormat: "json",
-		ClientFactory: func(c *Config) (client.Client, error) {
-			return mock, nil
-		},
-	}
-
-	tenantBarrierInit(cfg, printer, "acme", "", "", 2, 3)
-
-	output := buf.String()
-	if !strings.Contains(output, "success") {
-		t.Error("JSON output should contain 'success' status")
-	}
-	if !strings.Contains(output, "acme") {
-		t.Error("JSON output should contain tenant ID")
-	}
-}
-
-func TestTenantBarrierUnseal_JSONFormat(t *testing.T) {
-	mock := &mockTenantClient{}
-
-	validShare := base64.StdEncoding.EncodeToString([]byte("my-share"))
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		OutputFormat: "json",
-		ClientFactory: func(c *Config) (client.Client, error) {
-			return mock, nil
-		},
-	}
-
-	tenantBarrierUnseal(cfg, printer, "acme", validShare)
-
-	output := buf.String()
-	if !strings.Contains(output, "success") {
-		t.Error("JSON output should contain 'success' status")
-	}
-	if !strings.Contains(output, "acme") {
-		t.Error("JSON output should contain tenant ID")
-	}
-}
-
 // --- Verify Close is called on success paths ---
 
 func TestTenantCreate_CloseIsCalled(t *testing.T) {
@@ -1301,32 +852,6 @@ func TestTenantList_CloseIsCalled(t *testing.T) {
 	}
 
 	tenantList(cfg, printer)
-
-	if !mock.closeCalled {
-		t.Error("client.Close() should be called via deferred cleanup")
-	}
-}
-
-func TestTenantBarrierStatus_CloseIsCalled(t *testing.T) {
-	mock := &mockTenantClient{
-		tenantBarrierStatusResp: &transport.TenantBarrierStatusResponse{
-			TenantID: "acme",
-			Sealed:   false,
-			Strategy: "static",
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	cfg := &Config{
-		OutputFormat: "text",
-		ClientFactory: func(c *Config) (client.Client, error) {
-			return mock, nil
-		},
-	}
-
-	tenantBarrierStatus(cfg, printer, "acme")
 
 	if !mock.closeCalled {
 		t.Error("client.Close() should be called via deferred cleanup")

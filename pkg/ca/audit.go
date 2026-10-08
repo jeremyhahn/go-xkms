@@ -48,22 +48,16 @@ const (
 	auditResourceCrossSigned = "cross-signed"
 )
 
-// emitAudit records a CA lifecycle event and applies the go-xkms audit
-// write-failure policy (docs/audit-log/engineering.md, pkg/audit/severity.go
-// ClassifyAction). Every CA lifecycle action classifies SeveritySecurity (the
-// default for an action not explicitly reviewed as informational — see
-// pkg/audit.ClassifyAction), so a failed write returns
-// *audit.ErrAuditWriteFailed: callers must propagate it and must not perform
-// the state change (store a certificate, persist a CRL, persist a
-// cross-signed certificate) the event describes.
+// emitAudit records a CA lifecycle event on the node audit sink. A failed
+// write returns *qrdbsdk.AuditGateError: callers must propagate it and must
+// not perform the state change (store a certificate, persist a CRL, persist a
+// cross-signed certificate) the event describes
+// (docs/audit-log/engineering.md).
 //
 // A nil ca.auditLogger disables CA audit logging entirely (opt-in wiring)
 // and is not itself a failure.
 func (ca *CA) emitAudit(ctx context.Context, action, resource, resourceID string) error {
-	if ca.auditLogger == nil {
-		return nil
-	}
-	writeErr := ca.auditLogger.Log(ctx, &audit.Event{
+	return audit.Emit(ctx, ca.auditLogger, &audit.Event{
 		Timestamp:  time.Now(),
 		Subject:    "system",
 		Action:     action,
@@ -71,5 +65,4 @@ func (ca *CA) emitAudit(ctx context.Context, action, resource, resourceID string
 		ResourceID: resourceID,
 		Outcome:    audit.OutcomeAllow,
 	})
-	return audit.HandleWriteFailure(nil, action, writeErr)
 }

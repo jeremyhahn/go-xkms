@@ -14,6 +14,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -119,7 +120,7 @@ func openTPM() (xkms.TrustedPlatformModule, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: getLogLevel(),
 	}))
-	hierarchyAuth, err := xkms.NewLiteralSecretValue([]byte(tpmCfg.hierarchyAuth))
+	hierarchyAuth, err := xkms.NewLiteralSecretValue(context.Background(), []byte(tpmCfg.hierarchyAuth))
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +209,7 @@ func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: getLogLevel(),
 	}))
-	hierarchyAuth, err := xkms.NewLiteralSecretValue([]byte(tpmCfg.hierarchyAuth))
+	hierarchyAuth, err := xkms.NewLiteralSecretValue(context.Background(), []byte(tpmCfg.hierarchyAuth))
 	if err != nil {
 		return nil, err
 	}

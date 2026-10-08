@@ -20,42 +20,56 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
-// failingStorage is a storage.Backend whose every operation fails, so the
-// store's error wrapping can be observed.
-type failingStorage struct {
-	storage.Backend
+// failingKV is a KVStore whose reads and writes fail, so the store's error
+// wrapping can be observed.
+type failingKV struct {
+	qrdbsdk.KVStore
 	err error
 }
 
-func (f failingStorage) Get(context.Context, string) ([]byte, error) { return nil, f.err }
-func (f failingStorage) Put(context.Context, string, []byte) error   { return f.err }
-func (f failingStorage) Delete(context.Context, string) error        { return f.err }
+func (f failingKV) Get(context.Context, string) ([]byte, error)  { return nil, f.err }
+func (f failingKV) Put(context.Context, string, []byte) error    { return f.err }
+func (f failingKV) Delete(context.Context, string) error         { return f.err }
+func (f failingKV) Exists(context.Context, string) (bool, error) { return false, f.err }
 
-func newTestStore(t *testing.T) (*Store, storage.Backend) {
+// newTestStore returns a Store over a real in-process DAO and that DAO, so
+// a test can see what the store persisted.
+func newTestStore(t *testing.T) (*Store, qrdbsdk.GenericDAO[*Entity]) {
 	t.Helper()
-	backend := storage.New()
-	s, err := NewStore(backend)
+	daos := testutil.NewMemoryDAOFactory()
+	s, err := NewStore(daos)
 	require.NoError(t, err)
-	return s, backend
+	raw, err := newRecordDAO(daos)
+	require.NoError(t, err)
+	return s, raw
 }
 
-// TestNewStore proves a store needs a backend.
+// TestNewStore proves a store needs a factory serving its database.
 func TestNewStore(t *testing.T) {
 	_, err := NewStore(nil)
-	assert.ErrorIs(t, err, ErrNilStore)
+	assert.ErrorIs(t, err, ErrNilDAOFactory)
+
+	_, err = NewStore(dao.NewStoreFactory(nil))
+	var storeErr *StoreError
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "open", storeErr.Op)
+	var unavailable *dao.DatabaseUnavailableError
+	assert.ErrorAs(t, err, &unavailable)
 }
 
-// TestStoreRoundTrip proves a record is stored under the documented layout,
-// read back intact, and deleted.
+// TestStoreRoundTrip proves a record is stored as one entity named by its
+// tenant, backend and key, read back intact, and deleted.
 func TestStoreRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	s, backend := newTestStore(t)
+	s, raw := newTestStore(t)
 
 	rec, found, err := s.Load(ctx, "acme", "software", "k")
 	require.NoError(t, err)
@@ -66,9 +80,9 @@ func TestStoreRoundTrip(t *testing.T) {
 	rec.AddCurrent(2, created, "alice")
 	require.NoError(t, s.Put(ctx, "acme", rec))
 
-	raw, err := backend.Get(ctx, "acme/key-versions/software/k")
+	stored, err := raw.GetByNaturalKey(ctx, "acme/software/k")
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"current":2`)
+	assert.Equal(t, uint32(2), stored.Current)
 
 	got, found, err := s.Load(ctx, "acme", "software", "k")
 	require.NoError(t, err)
@@ -77,6 +91,12 @@ func TestStoreRoundTrip(t *testing.T) {
 	assert.Equal(t, "alice", got.Versions[1].CreatedBy)
 	assert.True(t, created.Equal(got.Versions[1].CreatedAt))
 
+	got.AddCurrent(3, created, "bob")
+	require.NoError(t, s.Put(ctx, "acme", got), "a second Put updates the record")
+	count, err := raw.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
 	require.NoError(t, s.Delete(ctx, "acme", "software", "k"))
 	require.NoError(t, s.Delete(ctx, "acme", "software", "k"), "deleting an absent record is not an error")
 	_, found, err = s.Load(ctx, "acme", "software", "k")
@@ -84,15 +104,15 @@ func TestStoreRoundTrip(t *testing.T) {
 	assert.False(t, found)
 }
 
-// TestStoreSystemTenant proves the empty tenant is stored under "system".
+// TestStoreSystemTenant proves the empty tenant is stored as "system".
 func TestStoreSystemTenant(t *testing.T) {
 	ctx := context.Background()
-	s, backend := newTestStore(t)
+	s, raw := newTestStore(t)
 	rec := Implicit("k", "software")
 	rec.AddCurrent(2, time.Now(), "")
 	require.NoError(t, s.Put(ctx, "", rec))
 
-	_, err := backend.Get(ctx, "system/key-versions/software/k")
+	_, err := raw.GetByNaturalKey(ctx, "system/software/k")
 	require.NoError(t, err)
 	_, found, err := s.Load(ctx, SystemTenant, "software", "k")
 	require.NoError(t, err)
@@ -113,7 +133,7 @@ func TestStoreTenantIsolation(t *testing.T) {
 	assert.Equal(t, uint32(1), got.Current)
 }
 
-// TestStoreRefusesInvalidKeys proves segments that would escape the layout
+// TestStoreRefusesInvalidKeys proves segments that would escape the naming
 // are refused on every operation.
 func TestStoreRefusesInvalidKeys(t *testing.T) {
 	ctx := context.Background()
@@ -136,12 +156,13 @@ func TestStoreRefusesInvalidKeys(t *testing.T) {
 	assert.ErrorIs(t, s.Put(ctx, "acme", nil), ErrNilRecord)
 }
 
-// TestStoreWrapsBackendFailures proves a storage failure is reported as a
-// *StoreError naming the operation, and a corrupt record as a decode error.
-func TestStoreWrapsBackendFailures(t *testing.T) {
+// TestStoreWrapsStoreFailures proves a datastore failure is reported as a
+// *StoreError naming the operation, never as an absent record.
+func TestStoreWrapsStoreFailures(t *testing.T) {
 	ctx := context.Background()
 	cause := errors.New("unavailable")
-	s, err := NewStore(failingStorage{err: cause})
+	broken := failingKV{KVStore: qrdbsdk.NewMemoryKVStore(), err: cause}
+	s, err := NewStore(dao.NewStoreFactory(broken))
 	require.NoError(t, err)
 
 	var storeErr *StoreError
@@ -157,12 +178,6 @@ func TestStoreWrapsBackendFailures(t *testing.T) {
 	err = s.Delete(ctx, "acme", "software", "k")
 	require.ErrorAs(t, err, &storeErr)
 	assert.Equal(t, "delete", storeErr.Op)
-
-	good, backend := newTestStore(t)
-	require.NoError(t, backend.Put(ctx, "acme/key-versions/software/k", []byte("{not json")))
-	_, _, err = good.Load(ctx, "acme", "software", "k")
-	require.ErrorAs(t, err, &storeErr)
-	assert.Equal(t, "decode", storeErr.Op)
 }
 
 // TestStoreLockSerializes proves Lock admits one holder per key at a time

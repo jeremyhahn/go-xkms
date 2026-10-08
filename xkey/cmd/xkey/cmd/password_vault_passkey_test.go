@@ -385,7 +385,7 @@ func TestWithVaultAuthenticator_CloseFailureDiscardsTheSecret(t *testing.T) {
 	t.Cleanup(func() { vaultAuthenticatorFactory = original })
 	vaultAuthenticatorFactory = func() (vaultAuthenticator, error) { return key, nil }
 
-	pin, err := secure.NewSecret([]byte("123456"))
+	pin, err := secure.NewSecret(t.Context(), []byte("123456"))
 	require.NoError(t, err)
 	defer pin.Destroy()
 	cred, err := withVaultAuthenticator(new(bytes.Buffer), vaultPasskeyEnrollPrompt, func(a vaultpasskey.Authenticator) (transport.PasswordVaultCredential, error) {
@@ -404,7 +404,7 @@ func TestNewVaultAuthenticator_UsesTheWebAuthnEnumerator(t *testing.T) {
 	a, err := newVaultAuthenticator()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, a.Close()) }()
-	pin, err := secure.NewSecret([]byte("123456"))
+	pin, err := secure.NewSecret(t.Context(), []byte("123456"))
 	require.NoError(t, err)
 	defer pin.Destroy()
 	_, err = vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin, RelyingPartyID: vaulttest.RelyingParty})

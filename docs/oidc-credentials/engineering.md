@@ -1,6 +1,6 @@
 # OIDC Credentials — Engineering
 
-> **Status: NORMATIVE** · Feature: `oidc-credentials` · Repo: `go-xkms` · Last verified: 2026-09-30
+> **Status: NORMATIVE** · Feature: `oidc-credentials` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Packages
 
@@ -37,7 +37,9 @@ nested `{"error":{"code","message"}}` and top-level `code` shapes.
 
 ```go
 svc, err := credential.New(credential.RegistryBarriers(registry),
-    credential.WithLeases(qrdbClient.Coordination()), credential.WithAudit(auditLog))
+    credential.WithLeases(qrdbClient.Coordination()),
+    credential.WithLeaseContext(node.ServiceContext), // embedded node only
+    credential.WithAudit(auditLog))
 svc.Start(0)        // the scheduler; Close stops it
 defer svc.Close()
 
@@ -62,6 +64,14 @@ unsubscribe := svc.Subscribe(func(ev credential.Event) { ... })
 - A `NoRefresh` provider never has a refresh token stored.
 - Endpoints are discovered once, at creation, and stored.
 - `ClientSecret` never leaves the service in a `Credential` view.
+- Every lease call — a refresh lock's acquire and release, the scheduler's
+  acquire, renew and release — runs on the context `WithLeaseContext`
+  derives; nil runs it on the caller's. The leases are the service's own
+  coordination, so over an embedded go-qrdb node (v0.46+, which refuses a
+  call with no identity) the host passes `Node.ServiceContext` and they run
+  as xkms's service principal (`docs/datastore/engineering.md`). A bind
+  failure fails the lock before any lease call, and stops the scheduler.
+  Provider requests and barrier access keep the caller's context.
 
 ### Status machine
 
@@ -98,7 +108,8 @@ login. `token` is the only verb that returns a secret.
 
 - **xkmsd**: built in `Server.composedStores` once the barrier registry and
   the embedded qrdb client exist (`pkg/server/oidc_credentials.go`), closed
-  at shutdown.
+  at shutdown. Its leases run as the node's service principal
+  (`compose.OIDCCredentialParams.LeaseContext = s.qrdbNode.ServiceContext`).
 - **Module host**: `compose.Deps.Leases` from the host's qrdb client
   (`Coordination()`); the feature needs both it and the barrier registry and
   is otherwise off with its reason recorded.
@@ -112,7 +123,8 @@ login. `token` is the only verb that returns a secret.
 | `pkg/oidc/codex_test.go` | `auth.json` import and `chatgptAuthTokens` projection |
 | `pkg/oidc/credential/service_test.go` | Discovery, import, rotation persisted, **exactly one refresh** for 16 concurrent callers, `invalid_grant`/`refresh_token_reused`/`refresh_token_expired` → re-login + event, transient failures, device login, expiry, **scope isolation** |
 | `pkg/oidc/credential/scheduler_test.go` | Scheduler refreshes before expiry; only the lease holder refreshes and a follower takes over |
-| `pkg/oidc/credential/standalone_node_test.go` | A real standalone qrdb node's lease refusal is recognised |
+| `pkg/oidc/credential/standalone_node_test.go` | A real standalone qrdb node serves the locker's lease as the service principal, and refuses an unbound lease call |
+| `pkg/oidc/credential/lease_context_test.go` | Lock and scheduler lease calls run on the `WithLeaseContext` context; a bind failure makes no lease call |
 | `pkg/oidc/credential/faults_test.go` | Barrier faults and lost compare-and-swap races |
 | `pkg/xkms/servicer_oidc_credential_test.go` | Servicer conversions and guards |
 | transport tests (`*oidc_credential*_test.go`) | Every verb on every transport |

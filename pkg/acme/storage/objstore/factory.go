@@ -19,26 +19,42 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 )
 
-// Factory implements the storage.Factory interface over a go-qrdb KVStore. All DAO instances are created through qrdb's built-in
-// GenericDAO, which handles codec selection and entity serialization internally.
+// Factory implements the storage.Factory interface over an injected go-qrdb
+// DAO factory: every ACME DAO is a go-qrdb GenericDAO that pkg/dao builds from
+// the factory's default database, so ACME never holds a KVStore of its own.
 type Factory struct {
-	kvStore qrdbsdk.KVStore
+	daos *qrdbsdk.DAOFactory
 }
 
-// NewFactoryFromKVStore creates a Factory over a go-qrdb KVStore directly. This
-// is the datastore path: callers wrap any storage.Backend (file, pebble, qrdb)
-// with kvadapter.New and pass it here, so ACME persistence shares the server's
-// configured datastore instead of a separate object store.
+// NewFactory creates a Factory over daos, typically the server datastore's
+// DAOFactory (pkg/datastore), so ACME state persists in the one configured
+// datastore.
+func NewFactory(daos *qrdbsdk.DAOFactory) (storage.Factory, error) {
+	if daos == nil {
+		return nil, errNilDAOFactory()
+	}
+	return &Factory{daos: daos}, nil
+}
+
+// NewFactoryFromKVStore creates a Factory over a DAO factory serving kv as
+// its default database, for a caller that holds a bare go-qrdb KVStore (the
+// ACME client's local state, a kvadapter-wrapped storage.Backend) rather than
+// a datastore.
 func NewFactoryFromKVStore(kv qrdbsdk.KVStore) (storage.Factory, error) {
 	if kv == nil {
-		return nil, qrdbsdk.DAOInvalidConfigError{
-			Field:  "kvStore",
-			Reason: "kv store not configured",
-		}
+		return nil, errNilKVStore()
 	}
-	return &Factory{kvStore: kv}, nil
+	return NewFactory(daoFactoryOver(kv))
+}
+
+// daoFactoryOver returns a DAO factory whose default database is kv.
+func daoFactoryOver(kv qrdbsdk.KVStore) *qrdbsdk.DAOFactory {
+	return qrdbsdk.NewDAOFactoryWithConfig(&qrdbsdk.DAOFactoryConfig{
+		KVStoreProvider: func(uint64) qrdbsdk.KVStore { return kv },
+	})
 }
 
 // Entity-type prefixes for the ACME DAOs. The first `:` is the
@@ -65,7 +81,7 @@ const (
 
 // AccountDAO returns a GenericDAO for ACME accounts.
 func (f *Factory) AccountDAO() (qrdbsdk.GenericDAO[*entities.ACMEAccount], error) {
-	return qrdbsdk.NewDAO(f.kvStore, acmeAccountNamespace,
+	return dao.New(f.daos, "", acmeAccountNamespace,
 		func() *entities.ACMEAccount { return &entities.ACMEAccount{} })
 }
 
@@ -77,7 +93,7 @@ func (f *Factory) OrderDAO(accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEO
 			Reason:     "account ID must be non-zero",
 		}
 	}
-	return qrdbsdk.NewDAO(f.kvStore, fmt.Sprintf("%s-%d", acmeOrderNamespace, accountID),
+	return dao.New(f.daos, "", fmt.Sprintf("%s-%d", acmeOrderNamespace, accountID),
 		func() *entities.ACMEOrder { return &entities.ACMEOrder{} })
 }
 
@@ -89,7 +105,7 @@ func (f *Factory) AuthorizationDAO(accountID uint64) (qrdbsdk.GenericDAO[*entiti
 			Reason:     "account ID must be non-zero",
 		}
 	}
-	return qrdbsdk.NewDAO(f.kvStore, fmt.Sprintf("%s-%d", acmeAuthzNamespace, accountID),
+	return dao.New(f.daos, "", fmt.Sprintf("%s-%d", acmeAuthzNamespace, accountID),
 		func() *entities.ACMEAuthorization { return &entities.ACMEAuthorization{} })
 }
 
@@ -101,24 +117,24 @@ func (f *Factory) ChallengeDAO(accountID uint64) (qrdbsdk.GenericDAO[*entities.A
 			Reason:     "account ID must be non-zero",
 		}
 	}
-	return qrdbsdk.NewDAO(f.kvStore, fmt.Sprintf("%s-%d", acmeChallengeNamespace, accountID),
+	return dao.New(f.daos, "", fmt.Sprintf("%s-%d", acmeChallengeNamespace, accountID),
 		func() *entities.ACMEChallenge { return &entities.ACMEChallenge{} })
 }
 
 // CertificateDAO returns a GenericDAO for ACME certificates.
 func (f *Factory) CertificateDAO() (qrdbsdk.GenericDAO[*entities.ACMECertificate], error) {
-	return qrdbsdk.NewDAO(f.kvStore, acmeCertificateNamespace,
+	return dao.New(f.daos, "", acmeCertificateNamespace,
 		func() *entities.ACMECertificate { return &entities.ACMECertificate{} })
 }
 
 // NonceDAO returns a GenericDAO for ACME nonces.
 func (f *Factory) NonceDAO() (qrdbsdk.GenericDAO[*entities.ACMENonce], error) {
-	return qrdbsdk.NewDAO(f.kvStore, acmeNonceNamespace,
+	return dao.New(f.daos, "", acmeNonceNamespace,
 		func() *entities.ACMENonce { return &entities.ACMENonce{} })
 }
 
 // ExternalAccountBindingDAO returns a GenericDAO for external account bindings.
 func (f *Factory) ExternalAccountBindingDAO() (qrdbsdk.GenericDAO[*entities.ExternalAccountBinding], error) {
-	return qrdbsdk.NewDAO(f.kvStore, acmeEABNamespace,
+	return dao.New(f.daos, "", acmeEABNamespace,
 		func() *entities.ExternalAccountBinding { return &entities.ExternalAccountBinding{} })
 }

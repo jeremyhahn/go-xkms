@@ -1,6 +1,6 @@
 # Datastore — CLI
 
-> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-10-07
 
 No CLI surface: `xkmsctl` has no `datastore` command group and no flag that
 opens or lists the datastore's contents directly. Verified —

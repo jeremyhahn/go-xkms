@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -44,7 +45,12 @@ func newWebAuthnSessionFixture(t *testing.T) *webauthnSessionFixture {
 	client, _ := newFakeQRDBClient(t)
 	cfg := qrdbWebAuthnConfig()
 
-	svc, err := BuildWebAuthnService(WebAuthnServiceParams{Config: cfg, QRDBClient: client, TokenIssuer: issuer})
+	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
+		Config:      cfg,
+		QRDBClient:  client,
+		DAOFactory:  testutil.NewMemoryDAOFactory(),
+		TokenIssuer: issuer,
+	})
 	require.NoError(t, err)
 	authenticator, err := BuildAuthenticator(AuthenticatorParams{TokenIssuer: issuer})
 	require.NoError(t, err)

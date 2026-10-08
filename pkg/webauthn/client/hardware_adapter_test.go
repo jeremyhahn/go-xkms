@@ -27,7 +27,7 @@ import (
 // tests that need a non-nil CeremonyOptions.PIN.
 func testSecretForCeremony(t *testing.T, plaintext string) *secure.Secret {
 	t.Helper()
-	s, err := secure.NewSecret([]byte(plaintext))
+	s, err := secure.NewSecret(t.Context(), []byte(plaintext))
 	if err != nil {
 		t.Fatalf("secure.NewSecret: %v", err)
 	}

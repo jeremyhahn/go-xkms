@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // FileStore implements EnrollmentStore using the filesystem. Agent
@@ -79,7 +81,7 @@ func (s *FileStore) SaveAgent(agent *AgentInfo) error {
 	defer s.mu.Unlock()
 
 	path := s.agentPath(agent.ID)
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(path, data, 0600); err != nil {
 		return &AgentError{Operation: "save_agent", Err: ErrStoreWrite, Cause: err}
 	}
 
@@ -196,7 +198,7 @@ func (s *FileStore) SaveCode(hash string, expiresAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := os.WriteFile(s.codePath(hash), data, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(s.codePath(hash), data, 0600); err != nil {
 		return &AgentError{Operation: "save_code", Err: ErrStoreWrite, Cause: err}
 	}
 	return nil
@@ -299,7 +301,7 @@ func (s *FileStore) SavePending(p *PendingEnrollment) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := os.WriteFile(s.pendingPath(p.ID), data, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(s.pendingPath(p.ID), data, 0600); err != nil {
 		return &AgentError{Operation: "save_pending", Err: ErrStoreWrite, Cause: err}
 	}
 	return nil

@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -310,7 +311,7 @@ func issueCACertificate(cfg *Config, printer *Printer) {
 		if len(resp.PrivateKeyPEM) > 0 {
 			keyFile := caOutputFile + ".key"
 			// #nosec G306 - Key files should be protected
-			if err := os.WriteFile(keyFile, resp.PrivateKeyPEM, 0600); err != nil {
+			if err := fsutil.WriteFileAtomic(keyFile, resp.PrivateKeyPEM, 0600); err != nil {
 				handleError(&WrappedError{Sentinel: ErrWritePrivateKeyFailed, Err: err})
 				return
 			}

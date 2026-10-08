@@ -30,7 +30,6 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
-	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/stretchr/testify/assert"
@@ -90,15 +89,6 @@ func (m *mockPIVClient) Health(_ context.Context) (*transport.HealthResponse, er
 	return nil, errMockNotImplemented
 }
 func (m *mockPIVClient) Algorithms(_ context.Context) (*transport.AlgorithmsResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) GetShare(_ context.Context, _, _ string, _ int) (*transport.ShareInfo, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) DeleteShare(_ context.Context, _, _ string, _ int) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) QueryAudit(_ context.Context, _ *transport.AuditFilter) (*transport.AuditPage, error) {
 	return nil, errMockNotImplemented
 }
 func (m *mockPIVClient) ListBackends(_ context.Context, _ ...transport.ListOption) (*transport.ListBackendsResponse, error) {
@@ -364,50 +354,7 @@ func (m *mockPIVClient) GeneratePIVCSR(_ context.Context, _ *transport.GenerateP
 	return m.generatePIVCSRResp, m.generatePIVCSRErr
 }
 
-// Barrier operations stub implementations
-func (m *mockPIVClient) BarrierInitialize(_ context.Context, _ *transport.BarrierInitializeRequest) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierUnseal(_ context.Context, _ *transport.BarrierUnsealRequest) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierSeal(_ context.Context) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierStatus(_ context.Context) (*transport.BarrierStatusResponse, error) {
-	return nil, errMockNotImplemented
-}
 func (m *mockPIVClient) BootstrapListenerKeys(_ context.Context) (*transport.BootstrapListenerKeysResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierInitializeShamir(_ context.Context, _ *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierUnsealWithShare(_ context.Context, _ *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierUnsealWithShares(_ context.Context, _ *transport.BarrierUnsealSharesRequest) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierRekey(_ context.Context, _ *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierGenerateRecoveryKeys(_ context.Context, _ *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierRecoverWithKeys(_ context.Context, _ *transport.BarrierRecoverWithKeysRequest) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierDeleteRecoveryKeys(_ context.Context) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierHasRecoveryKeys(_ context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierGenerateRootToken(_ context.Context, _ *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierEnableEncryption(_ context.Context, _ *pkgtransport.BarrierEnableEncryptionRequest) (*pkgtransport.BarrierEnableEncryptionResponse, error) {
 	return nil, errMockNotImplemented
 }
 
@@ -1668,55 +1615,8 @@ func (m *mockPIVClient) RevokeEscrow(_ context.Context, _ string) error {
 
 // Backup operations stub implementations for mockPIVClient (go-xkms#728)
 
-func (m *mockPIVClient) CreateBackup(_ context.Context, _ *transport.BackupRequest) (*transport.BackupInfo, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) ListBackups(_ context.Context) ([]transport.BackupInfo, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) GetBackup(_ context.Context, _ string) (*transport.BackupInfo, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) DeleteBackup(_ context.Context, _ string) error { return errMockNotImplemented }
-func (m *mockPIVClient) RestoreBackup(_ context.Context, _ *transport.RestoreRequest) (*transport.RestoreResult, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) VerifyBackup(_ context.Context, _ string) (*transport.VerifyResult, error) {
-	return nil, errMockNotImplemented
-}
-
 // Policy operations stub implementations for mockPIVClient
 
-func (m *mockPIVClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) GetCustodianGroup(_ context.Context, _ string) (*transport.GetCustodianGroupResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) ListCustodianGroups(_ context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) DeleteCustodianGroup(_ context.Context, _ string) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) AddCustodianMember(_ context.Context, _ *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) RemoveCustodianMember(_ context.Context, _ *transport.RemoveCustodianMemberRequest) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) DistributeShares(_ context.Context, _ *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) SubmitShare(_ context.Context, _ *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) ListShares(_ context.Context) (*transport.ListSharesResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) GetShareCollectionStatus(_ context.Context, _ string) (*transport.ShareCollectionStatus, error) {
-	return nil, errMockNotImplemented
-}
 func (m *mockPIVClient) CreateTenant(_ context.Context, _ *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
 	return nil, errMockNotImplemented
 }
@@ -1729,41 +1629,11 @@ func (m *mockPIVClient) ListTenants(_ context.Context) (*transport.ListTenantsRe
 func (m *mockPIVClient) DeleteTenant(_ context.Context, _ string) error {
 	return errMockNotImplemented
 }
-func (m *mockPIVClient) TenantBarrierInit(_ context.Context, _ *transport.TenantBarrierInitRequest) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) TenantBarrierUnseal(_ context.Context, _ *transport.TenantBarrierUnsealRequest) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
-	return &transport.TenantBarrierStatusResponse{}, nil
-}
 func (m *mockPIVClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
 	return nil, nil
 }
 func (m *mockPIVClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
 	return nil, nil
-}
-
-// InitCeremonyService stub implementations
-func (m *mockPIVClient) GetInitStatus(_ context.Context) (*transport.InitStatusResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) ClaimCertBegin(_ context.Context, _ *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) ClaimCertComplete(_ context.Context, _ *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) ClaimShareBegin(_ context.Context, _ *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
-	return nil, errMockNotImplemented
-}
-
-func (m *mockPIVClient) ClaimShareComplete(_ context.Context, _ *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) SignCSRInit(_ context.Context, _ *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
-	return nil, errMockNotImplemented
 }
 
 // CredentialManagementService stub implementations

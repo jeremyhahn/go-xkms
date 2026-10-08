@@ -17,8 +17,8 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 )
 
 // Compile-time check that XKMSService serves the TPM policy API.

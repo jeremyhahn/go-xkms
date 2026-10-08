@@ -31,8 +31,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
 	"github.com/jeremyhahn/go-xkms/sdk/go/urlsafety"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -278,13 +280,17 @@ func (s *OIDCService) callbackReady() error {
 // is no independent key this process can use to encrypt an OIDC token file
 // on disk, and a file "encrypted" with a key compiled into the binary is not
 // encrypted at all. So without a barrier, OIDC access and refresh tokens are
-// held in an in-memory store only: they never touch disk, and they do not
-// survive a restart (go-xkms#1203). SetBackend is the barrier-backed path,
-// which persists tokens for real.
+// held on a DAO factory over an in-memory store only: they never touch disk,
+// and they do not survive a restart (go-xkms#1203). SetBackend is the
+// barrier-backed path, which persists tokens for real.
 func (s *OIDCService) SetDataDir(dir string) {
 	s.dataDir = dir
 
-	s.tokenStore = oidc.NewMemoryTokenStore()
+	tokenStore, err := newOIDCTokenStore(qrdbsdk.NewMemoryKVStore())
+	if err != nil {
+		s.log.Error("OIDC token store unavailable", "error", err)
+	}
+	s.tokenStore = tokenStore
 	s.log.Warn("no barrier available: OIDC tokens are kept in memory only and will not survive a restart",
 		"remedy", "run 'xkey barrier init' to persist OIDC tokens encrypted at rest")
 
@@ -302,9 +308,10 @@ func (s *OIDCService) SetDataDir(dir string) {
 // Tokens go through go-qrdb's own DAO/entity pattern rather than a raw
 // Put/Get: xkey hosts no go-qrdb node of its own (it is a local desktop
 // client, not a server), so sdk.NewKVStoreAdapter bridges the SAME
-// barrier-backed backend to the qrdbsdk.KVStore oidc.NewDAOStore needs --
-// one storage.Backend, two complementary views, rather than a second,
-// private persistence scheme for tokens alongside the provider-config store.
+// barrier-backed backend to a KVStore and sdk.NewStoreDAOFactory serves it as
+// the DAO factory oidc.NewDAOStore takes -- one storage.Backend, two
+// complementary views, rather than a second, private persistence scheme for
+// tokens alongside the provider-config store.
 func (s *OIDCService) SetBackend(backend xkms.StorageBackend, prefix string) error {
 	if backend == nil {
 		return ErrOIDCTokenStoreUnavailable
@@ -318,9 +325,9 @@ func (s *OIDCService) SetBackend(backend xkms.StorageBackend, prefix string) err
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreUnavailable, Cause: err}
 	}
-	tokenStore, err := oidc.NewDAOStore(kv)
+	tokenStore, err := newOIDCTokenStore(kv)
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreUnavailable, Cause: err}
+		return err
 	}
 	s.tokenStore = tokenStore
 
@@ -330,6 +337,16 @@ func (s *OIDCService) SetBackend(backend xkms.StorageBackend, prefix string) err
 	}
 
 	return nil
+}
+
+// newOIDCTokenStore builds the OIDC token store on a DAO factory over kv,
+// xkey's one store for every go-qrdb database.
+func newOIDCTokenStore(kv qrdbsdk.KVStore) (oidc.TokenStore, error) {
+	store, err := oidc.NewDAOStore(xkms.NewStoreDAOFactory(kv))
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrOIDCTokenStoreUnavailable, Cause: err}
+	}
+	return store, nil
 }
 
 // SetTokenStore sets the token store (used for testing).
@@ -1922,10 +1939,5 @@ func (s *OIDCService) saveProvidersToFile() error {
 		return err
 	}
 
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return err
-	}
-
-	return os.Rename(tmpPath, path)
+	return fsutil.WriteFileAtomic(path, data, 0600)
 }

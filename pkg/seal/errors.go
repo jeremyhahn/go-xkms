@@ -22,6 +22,11 @@ import (
 // --- xkms-local seal errors ---
 
 var (
+	// ErrCredentialViewDestroyFailed is returned when the locked view of a
+	// credential secret cannot be wiped and released after its plaintext was
+	// copied out.
+	ErrCredentialViewDestroyFailed = errors.New("seal: could not wipe the opened credential secret")
+
 	// ErrNoSealingKey is returned when a cloud KMS sealing strategy is asked
 	// to seal or unseal a root key but was constructed without the
 	// KeyAttributes that identify the cloud-managed sealing key. Every cloud
@@ -34,6 +39,27 @@ var (
 	// preference order — the caller must specify which strategy to use.
 	ErrNoStrategySpecified = errors.New("seal: no sealing strategy specified (explicit selection required)")
 )
+
+// RootKeyUnsealError reports that a hardware or cloud strategy's backend
+// refused to unseal a barrier's root key: a wrong TPM, token or KMS key, an
+// authorization the backend rejected, or a backend that could not be
+// reached. It matches go-qrdb's ErrInvalidCredentials, as every barrier
+// unseal failure caused by the unsealing party does, and keeps the
+// backend's own error in the chain.
+type RootKeyUnsealError struct {
+	Strategy StrategyID
+	Err      error
+}
+
+// Error returns the error message.
+func (e *RootKeyUnsealError) Error() string {
+	return "seal: " + string(e.Strategy) + " could not unseal the root key: " + e.Err.Error()
+}
+
+// Unwrap returns ErrInvalidCredentials and the backend's error.
+func (e *RootKeyUnsealError) Unwrap() []error {
+	return []error{ErrInvalidCredentials, e.Err}
+}
 
 // --- Re-exported errors from go-qrdb/sdk/go seal ---
 
@@ -55,8 +81,8 @@ var (
 
 	// ErrInvalidCredentials is returned when the provided credentials fail to
 	// unseal the root key. Raised by the HARDWARE strategies (TPM2, PKCS#11,
-	// cloud KMS) via hardware_encryptor.go; a software passphrase strategy
-	// reports ErrDecryptionFailed instead.
+	// cloud KMS) through *RootKeyUnsealError and hardware_encryptor.go; a
+	// software passphrase strategy reports ErrDecryptionFailed instead.
 	ErrInvalidCredentials = qrdbsdk.ErrInvalidCredentials
 
 	// ErrDecryptionFailed is returned when a wrong passphrase fails to unseal
@@ -116,9 +142,6 @@ var (
 	// provided to meet the reconstruction threshold.
 	ErrShamirQuorumIncomplete = qrdbsdk.ErrShamirQuorumIncomplete
 
-	// ErrShamirNoQuorum is returned when no active quorum accumulator exists.
-	ErrShamirNoQuorum = qrdbsdk.ErrShamirNoQuorum
-
 	// ErrShamirCombineFailed is returned when the Shamir combine operation
 	// fails to reconstruct the secret from the provided shares.
 	ErrShamirCombineFailed = qrdbsdk.ErrShamirCombineFailed
@@ -160,10 +183,6 @@ var (
 
 	// ErrResealFailed is returned when re-sealing a secret fails.
 	ErrResealFailed = qrdbsdk.ErrResealFailed
-
-	// ErrRecoveryKeysNotFound is returned when recovery key metadata does
-	// not exist in storage.
-	ErrRecoveryKeysNotFound = qrdbsdk.ErrRecoveryKeysNotFound
 
 	// ErrRootTokenVerificationFailed is returned when the reconstructed
 	// secret from Shamir shares does not produce a valid DEK that can

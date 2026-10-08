@@ -134,9 +134,7 @@ func TestRunOATHAdd_BarrierInitialized_WritesCiphertextNotPlaintext(t *testing.T
 
 	// The raw bytes barrier storage wrote to disk must never contain the
 	// plaintext secret or the plaintext name.
-	credFile := filepath.Join(dataDir, "oath", "github.json")
-	raw, err := os.ReadFile(credFile)
-	require.NoError(t, err, "the barrier-encrypted OATH entry must exist on disk")
+	raw := readStorageEntry(t, dataDir, "oath/github.json")
 	assert.NotContains(t, string(raw), "JBSWY3DPEHPK3PXP",
 		"the on-disk file must never hold the plaintext secret")
 	assert.NotContains(t, string(raw), "GitHub",
@@ -170,8 +168,8 @@ func TestRunOATHAdd_BarrierWrongPassword_TypedRefusal(t *testing.T) {
 		"a barrier that exists but cannot be opened must be a typed refusal")
 
 	// Nothing may have been written in the clear as a fallback.
-	_, statErr := os.Stat(filepath.Join(backupTestDataDir(home), "oath", "github.json"))
-	assert.True(t, os.IsNotExist(statErr), "a failed unseal must never fall back to writing plaintext")
+	assert.False(t, storageEntryExists(t, backupTestDataDir(home), "oath/github.json"),
+		"a failed unseal must never fall back to writing plaintext")
 }
 
 func TestRunOATHAdd_BarrierNoPasswordSupplied_TypedRefusal(t *testing.T) {

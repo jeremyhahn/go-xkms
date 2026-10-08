@@ -333,30 +333,6 @@ func (m *MockXKMSService) GeneratePIVCSR(ctx context.Context, req *transport.Gen
 	return nil, &mockUnsupportedError{capability: "PIV"}
 }
 
-func (m *MockXKMSService) GetInitStatus(ctx context.Context) (*transport.InitStatusResponse, error) {
-	return nil, &mockUnsupportedError{capability: "init ceremony"}
-}
-
-func (m *MockXKMSService) ClaimCertBegin(ctx context.Context, req *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	return nil, &mockUnsupportedError{capability: "init ceremony"}
-}
-
-func (m *MockXKMSService) ClaimCertComplete(ctx context.Context, req *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	return nil, &mockUnsupportedError{capability: "init ceremony"}
-}
-
-func (m *MockXKMSService) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
-	return nil, &mockUnsupportedError{capability: "init ceremony"}
-}
-
-func (m *MockXKMSService) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
-	return nil, &mockUnsupportedError{capability: "init ceremony"}
-}
-
-func (m *MockXKMSService) SignCSRInit(ctx context.Context, req *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
-	return nil, &mockUnsupportedError{capability: "init ceremony"}
-}
-
 func (m *MockXKMSService) SubmitCredential(ctx context.Context, req *transport.CredentialSubmitRequest) (*transport.CredentialSubmitResponse, error) {
 	return nil, &mockUnsupportedError{capability: "credentials"}
 }
@@ -479,64 +455,8 @@ func main() {
 
 // Barrier operations
 
-func (m *MockXKMSService) BarrierInitialize(ctx context.Context, req *transport.BarrierInitializeRequest) error {
-	return &mockUnsupportedError{capability: "barrier"}
-}
-
-func (m *MockXKMSService) BarrierUnseal(ctx context.Context, req *transport.BarrierUnsealRequest) error {
-	return &mockUnsupportedError{capability: "barrier"}
-}
-
-func (m *MockXKMSService) BarrierSeal(ctx context.Context) error {
-	return &mockUnsupportedError{capability: "barrier"}
-}
-
-func (m *MockXKMSService) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
-	return nil, &mockUnsupportedError{capability: "barrier"}
-}
-
 func (m *MockXKMSService) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
 	return nil, &mockUnsupportedError{capability: "bootstrap"}
-}
-
-func (m *MockXKMSService) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	return nil, &mockUnsupportedError{capability: "barrier"}
-}
-
-func (m *MockXKMSService) BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	return nil, &mockUnsupportedError{capability: "barrier"}
-}
-
-func (m *MockXKMSService) BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error {
-	return &mockUnsupportedError{capability: "barrier"}
-}
-
-func (m *MockXKMSService) BarrierRekey(ctx context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	return nil, &mockUnsupportedError{capability: "barrier"}
-}
-
-func (m *MockXKMSService) BarrierGenerateRecoveryKeys(ctx context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	return nil, &mockUnsupportedError{capability: "barrier"}
-}
-
-func (m *MockXKMSService) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
-	return nil, &mockUnsupportedError{capability: "barrier"}
-}
-
-func (m *MockXKMSService) BarrierRecoverWithKeys(ctx context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
-	return &mockUnsupportedError{capability: "barrier"}
-}
-
-func (m *MockXKMSService) BarrierDeleteRecoveryKeys(ctx context.Context) error {
-	return &mockUnsupportedError{capability: "barrier"}
-}
-
-func (m *MockXKMSService) BarrierHasRecoveryKeys(ctx context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	return nil, &mockUnsupportedError{capability: "barrier"}
-}
-
-func (m *MockXKMSService) BarrierGenerateRootToken(ctx context.Context, req *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	return nil, &mockUnsupportedError{capability: "barrier"}
 }
 
 // PIN operations
@@ -810,78 +730,6 @@ func (m *MockXKMSService) TenantVTPMStop(context.Context, string) (*transport.Te
 	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
-func (m *MockXKMSService) CreateCustodianGroup(ctx context.Context, req *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	return nil, &mockUnsupportedError{capability: "custodian"}
-}
-
-func (m *MockXKMSService) CreateBackup(ctx context.Context, req *transport.BackupRequest) (*transport.BackupInfo, error) {
-	return nil, &mockUnsupportedError{capability: "backup"}
-}
-
-func (m *MockXKMSService) ListBackups(ctx context.Context) ([]transport.BackupInfo, error) {
-	return nil, &mockUnsupportedError{capability: "backup"}
-}
-
-func (m *MockXKMSService) GetBackup(ctx context.Context, id string) (*transport.BackupInfo, error) {
-	return nil, &mockUnsupportedError{capability: "backup"}
-}
-
-func (m *MockXKMSService) DeleteBackup(ctx context.Context, id string) error {
-	return &mockUnsupportedError{capability: "backup"}
-}
-
-func (m *MockXKMSService) RestoreBackup(ctx context.Context, req *transport.RestoreRequest) (*transport.RestoreResult, error) {
-	return nil, &mockUnsupportedError{capability: "backup"}
-}
-
-func (m *MockXKMSService) VerifyBackup(ctx context.Context, id string) (*transport.VerifyResult, error) {
-	return nil, &mockUnsupportedError{capability: "backup"}
-}
-
-func (m *MockXKMSService) GetCustodianGroup(ctx context.Context, groupID string) (*transport.GetCustodianGroupResponse, error) {
-	return nil, &mockUnsupportedError{capability: "custodian"}
-}
-
-func (m *MockXKMSService) ListCustodianGroups(ctx context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	return nil, &mockUnsupportedError{capability: "custodian"}
-}
-
-func (m *MockXKMSService) DeleteCustodianGroup(ctx context.Context, groupID string) error {
-	return &mockUnsupportedError{capability: "custodian"}
-}
-
-func (m *MockXKMSService) AddCustodianMember(ctx context.Context, req *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	return nil, &mockUnsupportedError{capability: "custodian"}
-}
-
-func (m *MockXKMSService) RemoveCustodianMember(ctx context.Context, req *transport.RemoveCustodianMemberRequest) error {
-	return &mockUnsupportedError{capability: "custodian"}
-}
-
-func (m *MockXKMSService) DistributeShares(ctx context.Context, req *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	return nil, &mockUnsupportedError{capability: "custodian"}
-}
-
-func (m *MockXKMSService) SubmitShare(ctx context.Context, req *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	return nil, &mockUnsupportedError{capability: "share"}
-}
-
-func (m *MockXKMSService) ListShares(ctx context.Context) (*transport.ListSharesResponse, error) {
-	return nil, &mockUnsupportedError{capability: "share"}
-}
-
-func (m *MockXKMSService) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
-	return nil, &mockUnsupportedError{capability: "share"}
-}
-
-func (m *MockXKMSService) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
-	return &mockUnsupportedError{capability: "share"}
-}
-
-func (m *MockXKMSService) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
-	return nil, &mockUnsupportedError{capability: "share"}
-}
-
 func (m *MockXKMSService) CreateTenant(ctx context.Context, req *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
 	return nil, &mockUnsupportedError{capability: "tenant"}
 }
@@ -898,26 +746,10 @@ func (m *MockXKMSService) DeleteTenant(ctx context.Context, tenantID string) err
 	return &mockUnsupportedError{capability: "tenant"}
 }
 
-func (m *MockXKMSService) TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error {
-	return &mockUnsupportedError{capability: "tenant"}
-}
-
-func (m *MockXKMSService) TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error {
-	return &mockUnsupportedError{capability: "tenant"}
-}
-
-func (m *MockXKMSService) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
-	return nil, nil
-}
-
 func (m *MockXKMSService) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
 	return nil, nil
 }
 
 func (m *MockXKMSService) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
 	return nil, nil
-}
-
-func (m *MockXKMSService) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
-	return nil, &mockUnsupportedError{capability: "audit"}
 }

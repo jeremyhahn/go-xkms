@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -52,7 +53,7 @@ func main() {
 	// Step 1: Create PKCS#11 backend
 	log.Println("\n[Step 1] Creating PKCS#11 backend...")
 
-	pin, err := types.NewLiteralSecretValue([]byte("1234"))
+	pin, err := types.NewLiteralSecretValue(context.Background(), []byte("1234"))
 	if err != nil {
 		log.Fatalf("Failed to seal the PIN: %v", err)
 	}

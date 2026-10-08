@@ -248,13 +248,13 @@ type TPMStorageFactory = store.StorageFactory
 
 // NewTPMStorageFactory constructs a TPM key-storage factory rooted at baseDir
 // (a private, file-based engine; empty baseDir uses a temp directory). For a
-// factory over the shared datastore instead (pkg/datastore.Open, or any
-// other storage.Backend), use NewTPMFactory.
+// factory over the shared datastore instead (DatastoreStorage over an open
+// Datastore, or any other storage.Backend), use NewTPMFactory.
 var NewTPMStorageFactory = store.NewStorageFactory
 
 // NewTPMFactory constructs a TPM key-storage factory over an already-open
 // storage.Backend -- e.g. a key-prefixed view of the shared datastore
-// (OpenDatastore) -- rather than a private file or memory engine.
+// (DatastoreStorage) -- rather than a private file or memory engine.
 var NewTPMFactory = store.NewFactory
 
 // TPMStoreIsRSAPSS reports whether the signature algorithm is an RSA-PSS

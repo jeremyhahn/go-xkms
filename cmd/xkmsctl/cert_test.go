@@ -2915,72 +2915,17 @@ func TestCertGenerateKeyPair_ECDSADefaultCurve(t *testing.T) {
 	}
 }
 
-// Barrier operations stub implementations
-func (m *mockCertClient) BarrierInitialize(ctx context.Context, req *transport.BarrierInitializeRequest) error {
-	return client.ErrNotSupported
-}
-
-func (m *mockCertClient) BarrierUnseal(ctx context.Context, req *transport.BarrierUnsealRequest) error {
-	return client.ErrNotSupported
-}
-
 func (m *mockCertClient) BarrierSeal(ctx context.Context) error {
 	return client.ErrNotSupported
-}
-
-func (m *mockCertClient) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
-	return nil, client.ErrNotSupported
 }
 
 func (m *mockCertClient) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
 	return nil, client.ErrNotSupported
 }
 
-func (m *mockCertClient) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	return nil, client.ErrNotSupported
-}
-
-func (m *mockCertClient) BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	return nil, client.ErrNotSupported
-}
-
-func (m *mockCertClient) BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error {
-	return client.ErrNotSupported
-}
-
-// BarrierRekey re-encrypts the barrier with a new root key.
-func (m *mockCertClient) BarrierRekey(_ context.Context, _ *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	return nil, client.ErrNotSupported
-}
-
-// BarrierGenerateRecoveryKeys generates recovery keys.
-func (m *mockCertClient) BarrierGenerateRecoveryKeys(_ context.Context, _ *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	return nil, client.ErrNotSupported
-}
-
-// BarrierEnableEncryption enables barrier encryption.
-func (m *mockCertClient) BarrierEnableEncryption(_ context.Context, _ *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
-	return nil, client.ErrNotSupported
-}
-
-// BarrierRecoverWithKeys recovers the barrier using recovery keys.
-func (m *mockCertClient) BarrierRecoverWithKeys(_ context.Context, _ *transport.BarrierRecoverWithKeysRequest) error {
-	return client.ErrNotSupported
-}
-
 // BarrierDeleteRecoveryKeys deletes all recovery keys.
 func (m *mockCertClient) BarrierDeleteRecoveryKeys(_ context.Context) error {
 	return client.ErrNotSupported
-}
-
-// BarrierHasRecoveryKeys checks if recovery keys exist.
-func (m *mockCertClient) BarrierHasRecoveryKeys(_ context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	return nil, client.ErrNotSupported
-}
-
-// BarrierGenerateRootToken generates a root token.
-func (m *mockCertClient) BarrierGenerateRootToken(_ context.Context, _ *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	return nil, client.ErrNotSupported
 }
 
 // PIN operations stub implementations
@@ -3238,83 +3183,20 @@ func (m *mockCertClient) TenantVTPMStop(context.Context, string) (*transport.Ten
 	return nil, nil
 }
 
-// BackupService stub implementations
-func (m *mockCertClient) CreateBackup(_ context.Context, _ *transport.BackupRequest) (*transport.BackupInfo, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) ListBackups(_ context.Context) ([]transport.BackupInfo, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) GetBackup(_ context.Context, _ string) (*transport.BackupInfo, error) {
-	return nil, nil
-}
-
 func (m *mockCertClient) DeleteBackup(_ context.Context, _ string) error {
 	return nil
-}
-
-func (m *mockCertClient) RestoreBackup(_ context.Context, _ *transport.RestoreRequest) (*transport.RestoreResult, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) VerifyBackup(_ context.Context, _ string) (*transport.VerifyResult, error) {
-	return nil, nil
-}
-
-// CustodianGroupService stub implementations
-func (m *mockCertClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) GetCustodianGroup(_ context.Context, _ string) (*transport.GetCustodianGroupResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) ListCustodianGroups(_ context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	return nil, nil
 }
 
 func (m *mockCertClient) DeleteCustodianGroup(_ context.Context, _ string) error {
 	return nil
 }
 
-func (m *mockCertClient) AddCustodianMember(_ context.Context, _ *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) RemoveCustodianMember(_ context.Context, _ *transport.RemoveCustodianMemberRequest) error {
-	return nil
-}
-
-func (m *mockCertClient) DistributeShares(_ context.Context, _ *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	return nil, nil
-}
-
-// ShareService stub implementations
-func (m *mockCertClient) SubmitShare(_ context.Context, _ *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) ListShares(_ context.Context) (*transport.ListSharesResponse, error) {
-	return nil, nil
-}
-
 func (m *mockCertClient) Algorithms(_ context.Context) (*transport.AlgorithmsResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) GetShare(_ context.Context, _, _ string, _ int) (*transport.ShareInfo, error) {
 	return nil, nil
 }
 
 func (m *mockCertClient) DeleteShare(_ context.Context, _, _ string, _ int) error {
 	return nil
-}
-
-func (m *mockCertClient) GetShareCollectionStatus(_ context.Context, _ string) (*transport.ShareCollectionStatus, error) {
-	return nil, nil
 }
 
 // TenantService stub implementations
@@ -3334,48 +3216,11 @@ func (m *mockCertClient) DeleteTenant(_ context.Context, _ string) error {
 	return nil
 }
 
-func (m *mockCertClient) TenantBarrierInit(_ context.Context, _ *transport.TenantBarrierInitRequest) error {
-	return nil
-}
-
-func (m *mockCertClient) TenantBarrierUnseal(_ context.Context, _ *transport.TenantBarrierUnsealRequest) error {
-	return nil
-}
-
-func (m *mockCertClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
-	return nil, nil
-}
-
 func (m *mockCertClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
 	return nil, nil
 }
 
 func (m *mockCertClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
-	return nil, nil
-}
-
-// InitCeremonyService stub implementations
-func (m *mockCertClient) GetInitStatus(_ context.Context) (*transport.InitStatusResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) ClaimCertBegin(_ context.Context, _ *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) ClaimCertComplete(_ context.Context, _ *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) ClaimShareBegin(_ context.Context, _ *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) ClaimShareComplete(_ context.Context, _ *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) SignCSRInit(_ context.Context, _ *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
 	return nil, nil
 }
 
@@ -3417,9 +3262,5 @@ func (m *mockCertClient) BindUserCert(_ context.Context, _, _ string, _ int64) e
 }
 
 func (m *mockCertClient) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCertClient) QueryAudit(_ context.Context, _ *transport.AuditFilter) (*transport.AuditPage, error) {
 	return nil, nil
 }

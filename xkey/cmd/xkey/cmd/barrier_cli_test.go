@@ -59,6 +59,43 @@ func isolateBarrier(t *testing.T) string {
 	return dir
 }
 
+// writeBarrierRootKey stores blob as the sealed root key in the barrier
+// storage under dataDir, where barrier init would put it.
+func writeBarrierRootKey(t *testing.T, dataDir string, blob []byte) {
+	t.Helper()
+
+	backend, err := xkms.NewFileStorageBackend(dataDir)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, backend.Close()) }()
+	require.NoError(t, backend.Put(t.Context(), defaultBarrierRootKeyPath, blob))
+}
+
+// readStorageEntry returns the raw bytes the go-qrdb file engine under dir
+// holds for key: ciphertext when a barrier wrote it, plaintext otherwise.
+func readStorageEntry(t *testing.T, dir, key string) []byte {
+	t.Helper()
+
+	backend, err := xkms.NewFileStorageBackend(dir)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, backend.Close()) }()
+	data, err := backend.Get(t.Context(), key)
+	require.NoError(t, err, "storage under %s must hold %s", dir, key)
+	return data
+}
+
+// storageEntryExists reports whether the go-qrdb file engine under dir holds
+// key.
+func storageEntryExists(t *testing.T, dir, key string) bool {
+	t.Helper()
+
+	backend, err := xkms.NewFileStorageBackend(dir)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, backend.Close()) }()
+	exists, err := backend.Exists(t.Context(), key)
+	require.NoError(t, err)
+	return exists
+}
+
 // pipeBarrier feeds lines to the barrier password reader as if piped in on
 // stdin and forces the non-terminal code path.
 func pipeBarrier(t *testing.T, lines ...string) {
@@ -86,6 +123,7 @@ func runBarrierCmd(t *testing.T, run func(*cobra.Command, []string) error) (stri
 	cmd := &cobra.Command{}
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
+	cmd.SetContext(t.Context())
 	err := run(cmd, nil)
 	return buf.String(), err
 }
@@ -294,9 +332,7 @@ func TestResolveBarrierStrategyID_CorruptRootKeyIsReported(t *testing.T) {
 	dir := isolateBarrier(t)
 	barrierStrategy = ""
 
-	keyPath := filepath.Join(dir, defaultBarrierRootKeyPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(keyPath), 0700))
-	require.NoError(t, os.WriteFile(keyPath, []byte("not json"), 0600))
+	writeBarrierRootKey(t, dir, []byte("not json"))
 
 	_, err := resolveBarrierStrategyID(dir)
 	require.Error(t, err)
@@ -314,12 +350,6 @@ func TestAssembleBarrierStrategy(t *testing.T) {
 	require.NotNil(t, strategy)
 	assert.Nil(t, closer, "the software strategy holds no hardware resources")
 
-	// PKCS#11 is explicitly unsupported by the CLI barrier and must say so
-	// rather than failing later with an opaque error.
-	_, _, err = assembleBarrierStrategy(xkms.StrategyPKCS11, dir)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "pkcs11 strategy requires an HSM module configuration")
-
 	_, _, err = assembleBarrierStrategy(xkms.StrategyID("bogus"), dir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `unsupported strategy "bogus"`)
@@ -329,9 +359,7 @@ func TestBarrierRootKeyExists(t *testing.T) {
 	dir := t.TempDir()
 	assert.False(t, barrierRootKeyExists(dir))
 
-	keyPath := filepath.Join(dir, defaultBarrierRootKeyPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(keyPath), 0700))
-	require.NoError(t, os.WriteFile(keyPath, []byte("{}"), 0600))
+	writeBarrierRootKey(t, dir, []byte("{}"))
 	assert.True(t, barrierRootKeyExists(dir))
 }
 
@@ -494,7 +522,7 @@ func TestRunBarrierStatus_UninitializedJSON(t *testing.T) {
 	assert.False(t, info.Initialized)
 	assert.True(t, info.Sealed, "an uninitialized barrier must never report itself unsealed")
 	assert.Equal(t, dir, info.DataDir)
-	assert.Equal(t, filepath.Join(dir, defaultBarrierRootKeyPath), info.RootKeyPath)
+	assert.Equal(t, defaultBarrierRootKeyPath, info.RootKeyEntry)
 }
 
 func TestRunBarrierStatus_InitializedReportsStrategy(t *testing.T) {
@@ -528,11 +556,9 @@ func TestRunBarrierStatus_HardwareStrategyFlagged(t *testing.T) {
 
 	// Write a sealed root key that claims a TPM2 strategy so the
 	// hardware-backed classification is exercised without a real TPM.
-	keyPath := filepath.Join(dir, defaultBarrierRootKeyPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(keyPath), 0700))
 	blob, err := json.Marshal(xkms.SealedRootKey{Strategy: xkms.StrategyTPM2})
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(keyPath, blob, 0600))
+	writeBarrierRootKey(t, dir, blob)
 
 	out, err := runBarrierCmd(t, runBarrierStatus)
 	require.NoError(t, err)
@@ -546,9 +572,7 @@ func TestRunBarrierStatus_HardwareStrategyFlagged(t *testing.T) {
 func TestRunBarrierStatus_UnreadableRootKeyStillReportsInitialized(t *testing.T) {
 	dir := isolateBarrier(t)
 
-	keyPath := filepath.Join(dir, defaultBarrierRootKeyPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(keyPath), 0700))
-	require.NoError(t, os.WriteFile(keyPath, []byte("garbage"), 0600))
+	writeBarrierRootKey(t, dir, []byte("garbage"))
 
 	out, err := runBarrierCmd(t, runBarrierStatus)
 	require.NoError(t, err, "unparseable root key must not crash status")

@@ -17,8 +17,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
@@ -41,7 +39,9 @@ type barrierStatusInfo struct {
 	Strategy       string `json:"strategy"`
 	HardwareBacked bool   `json:"hardware_backed"`
 	DataDir        string `json:"data_dir,omitempty"`
-	RootKeyPath    string `json:"root_key_path,omitempty"`
+	// RootKeyEntry is the entry of the go-qrdb file engine in DataDir that
+	// holds the sealed root key; it is not a file below DataDir.
+	RootKeyEntry string `json:"root_key_entry,omitempty"`
 
 	stateSourceInfo
 }
@@ -171,8 +171,8 @@ func readBarrierStatusFromDisk() (barrierStatusInfo, string, error) {
 	}
 
 	info := barrierStatusInfo{
-		DataDir:     dataDir,
-		RootKeyPath: filepath.Join(dataDir, defaultBarrierRootKeyPath),
+		DataDir:      dataDir,
+		RootKeyEntry: defaultBarrierRootKeyPath,
 	}
 
 	if !barrierRootKeyExists(dataDir) {
@@ -184,7 +184,7 @@ func readBarrierStatusFromDisk() (barrierStatusInfo, string, error) {
 	info.Sealed = true
 
 	// The sealed root key blob records which strategy protects it.
-	data, readErr := os.ReadFile(info.RootKeyPath)
+	data, readErr := loadBarrierRootKey(dataDir)
 	if readErr == nil {
 		var sealed xkms.SealedRootKey
 		if jsonErr := json.Unmarshal(data, &sealed); jsonErr == nil {

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -438,12 +439,7 @@ func SaveGUIConfig(cfg *GUIConfig) error {
 		return &SentinelCauseError{Sentinel: ErrConfigSave, Cause: err}
 	}
 
-	tmpPath := cfgPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return &SentinelCauseError{Sentinel: ErrConfigSave, Cause: err}
-	}
-
-	if err := os.Rename(tmpPath, cfgPath); err != nil {
+	if err := fsutil.WriteFileAtomic(cfgPath, data, 0600); err != nil {
 		return &SentinelCauseError{Sentinel: ErrConfigSave, Cause: err}
 	}
 

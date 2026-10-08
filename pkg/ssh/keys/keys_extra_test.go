@@ -225,9 +225,9 @@ func TestAlgorithmFromPublicKey_AllAlgorithms(t *testing.T) {
 			var k *keys.Key
 			var err error
 			if algo == keys.AlgorithmRSA {
-				k, err = keys.Generate(keys.GenerateOptions{Algorithm: algo, RSABits: 2048})
+				k, err = keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: algo, RSABits: 2048})
 			} else {
-				k, err = keys.Generate(keys.GenerateOptions{Algorithm: algo})
+				k, err = keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: algo})
 			}
 			if err != nil {
 				t.Fatalf("Generate: %v", err)
@@ -265,7 +265,7 @@ func TestAlgorithmFromPublicKey_FallbackType(t *testing.T) {
 	// type in external test code). Coverage of the fallback block is
 	// achieved via the integration with ssh.ParseAuthorizedKey below.
 
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestAlgorithmFromPublicKey_FallbackType(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnclaveSigner_PublicKey(t *testing.T) {
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestSigner_NilMaterial(t *testing.T) {
 }
 
 func TestSigner_NilPublicKey(t *testing.T) {
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestSigner_NilPublicKey(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSignerWithClose_NilPublicKey(t *testing.T) {
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestBackendStore_Put_StorageError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBackendStore: %v", err)
 	}
-	k, _ := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, _ := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	k.Scope = scope.User
 	k.Owner = "alice"
 	k.Name = "laptop"
@@ -589,7 +589,7 @@ func TestBackendStore_Get_BadPublicKeyInEnvelope(t *testing.T) {
 func TestBackendStore_Get_EmptyMaterialInEnvelope(t *testing.T) {
 	// Generate a valid key to get a real public key line, then embed it
 	// into an envelope with empty pem_b64.
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -659,7 +659,7 @@ func TestGenerate_RSA_ZeroBitsDefaultsTo4096(t *testing.T) {
 	// RSA bits=0 triggers the "bits = 4096" default path in generatePrivateKey.
 	// 4096-bit RSA is slow but generates correctly; the test validates the
 	// default branch is exercised without exhaustive performance concerns.
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmRSA})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmRSA})
 	if err != nil {
 		t.Fatalf("Generate RSA (default bits): %v", err)
 	}
@@ -677,7 +677,7 @@ func TestGenerate_RSA_ZeroBitsDefaultsTo4096(t *testing.T) {
 
 func destroyedMaterialKey(t *testing.T) *keys.Key {
 	t.Helper()
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -729,11 +729,11 @@ func TestEnclaveSigner_Sign_CorruptMaterial(t *testing.T) {
 	// Create a key where Material holds garbage bytes that will fail
 	// ssh.ParsePrivateKey but succeed on Open().
 	garbage := []byte("this-is-not-a-pem-key-at-all")
-	mat, err := secure.NewSecret(append([]byte(nil), garbage...))
+	mat, err := secure.NewSecret(t.Context(), append([]byte(nil), garbage...))
 	if err != nil {
 		t.Fatalf("NewSecret: %v", err)
 	}
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -758,11 +758,11 @@ func TestEnclaveSigner_Sign_CorruptMaterial(t *testing.T) {
 
 func TestSignerWithClose_CorruptMaterial(t *testing.T) {
 	garbage := []byte("this-is-not-a-pem-key-at-all")
-	mat, err := secure.NewSecret(append([]byte(nil), garbage...))
+	mat, err := secure.NewSecret(t.Context(), append([]byte(nil), garbage...))
 	if err != nil {
 		t.Fatalf("NewSecret: %v", err)
 	}
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -790,7 +790,7 @@ func TestSignerWithClose_CorruptMaterial(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnclaveSigner_SignWithAlgorithm_RSAUsesRequestedAlgorithm(t *testing.T) {
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmRSA, RSABits: 2048})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmRSA, RSABits: 2048})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -814,7 +814,7 @@ func TestEnclaveSigner_SignWithAlgorithm_RSAUsesRequestedAlgorithm(t *testing.T)
 }
 
 func TestEnclaveSigner_SignWithAlgorithm_Ed25519(t *testing.T) {
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -855,11 +855,11 @@ func TestEnclaveSigner_SignWithAlgorithm_MaterialOpenError(t *testing.T) {
 
 func TestEnclaveSigner_SignWithAlgorithm_CorruptMaterial(t *testing.T) {
 	garbage := []byte("this-is-not-a-pem-key-at-all")
-	mat, err := secure.NewSecret(append([]byte(nil), garbage...))
+	mat, err := secure.NewSecret(t.Context(), append([]byte(nil), garbage...))
 	if err != nil {
 		t.Fatalf("NewSecret: %v", err)
 	}
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -885,7 +885,7 @@ func TestEnclaveSigner_SignWithAlgorithm_CorruptMaterial(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPersistentSigner_SignWithAlgorithm(t *testing.T) {
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmRSA, RSABits: 2048})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmRSA, RSABits: 2048})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -911,7 +911,7 @@ func TestPersistentSigner_SignWithAlgorithm(t *testing.T) {
 }
 
 func TestPersistentSigner_SignWithAlgorithm_AfterCloseReturnsClosedSignerError(t *testing.T) {
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmRSA, RSABits: 2048})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmRSA, RSABits: 2048})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -989,7 +989,7 @@ func TestParsePEM_EmptyBuffer(t *testing.T) {
 // without sealing material.
 func generatePublicKey(t *testing.T) ssh.PublicKey {
 	t.Helper()
-	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
 	if err != nil {
 		t.Fatalf("generate key for public: %v", err)
 	}

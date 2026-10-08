@@ -65,23 +65,6 @@ type listTenantsResponse struct {
 	Pagination transport.PageResponse `json:"pagination"`
 }
 
-// tenantBarrierInitRequest represents a request to initialize a tenant barrier.
-// Passphrase carries the tenant admin's caller-supplied secret; the server
-// never generates it (§3.6). Strategy selects the seal strategy (empty means
-// the passphrase strategy).
-type tenantBarrierInitRequest struct {
-	Passphrase string `json:"passphrase,omitempty"`
-	Strategy   string `json:"strategy,omitempty"`
-	Threshold  int    `json:"threshold,omitempty"`
-	Shares     int    `json:"shares,omitempty"`
-}
-
-// tenantBarrierUnsealRequest represents a request to unseal a tenant barrier.
-type tenantBarrierUnsealRequest struct {
-	Share []byte `json:"share,omitempty"`
-	Key   []byte `json:"key,omitempty"`
-}
-
 // TenantHandlers provides REST handlers for tenant management and
 // per-tenant barrier operations. All tenant CRUD and barrier operations route
 // through xkmsService (which requires go-qrdb's composed TenantService);
@@ -276,34 +259,6 @@ func (h *TenantHandlers) DeleteTenantHandler(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// TenantBarrierStatusHandler handles GET /tenants/{id}/barrier/status requests.
-// It returns the barrier status for a specific tenant. Each tenant has an
-// independent barrier with its own DEK, so the status reflects the tenant's
-// own seal state, strategy, and hardware-backed flag.
-// Tenant-scoped identities can only view their own tenant's barrier status
-// (XKMSService refuses any other tenant with an error that maps to 404).
-func (h *TenantHandlers) TenantBarrierStatusHandler(w http.ResponseWriter, r *http.Request) {
-	if h.xkmsService == nil {
-		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
-		return
-	}
-
-	tenantID := chi.URLParam(r, "tenantID")
-	if tenantID == "" {
-		writeError(w, ErrMissingTenantID, http.StatusBadRequest)
-		return
-	}
-
-	// The servicer surfaces the full per-tenant status (initialized flag,
-	// active strategy, hardware-backing, Shamir quorum).
-	resp, err := h.xkmsService.TenantBarrierStatus(r.Context(), tenantID)
-	if err != nil {
-		handleTenantError(w, err)
-		return
-	}
-	writeJSON(w, resp, http.StatusOK)
-}
-
 // UpdateTenantEntitlementsHandler handles PUT /tenants/{tenantID}/entitlements.
 // It updates which isolation tiers and dedicated-storage features the tenant's
 // plan permits. The route requires tenants:set_entitlements and XKMSService
@@ -358,97 +313,6 @@ func (h *TenantHandlers) UpdateTenantQuotasHandler(w http.ResponseWriter, r *htt
 	req.TenantID = tenantID
 
 	resp, err := h.xkmsService.UpdateTenantQuotas(r.Context(), &req)
-	if err != nil {
-		handleTenantError(w, err)
-		return
-	}
-	writeJSON(w, resp, http.StatusOK)
-}
-
-// TenantBarrierInitHandler handles POST /tenants/{id}/barrier/init requests.
-// Each tenant has an independent barrier with its own DEK. This endpoint
-// initializes the tenant's barrier by generating a root key and sealing it
-// with the tenant's configured strategy. The tenant barrier transitions to
-// unsealed state after initialization.
-// Tenant-scoped identities can only initialize their own tenant's barrier
-// (XKMSService refuses any other tenant with an error that maps to 404).
-func (h *TenantHandlers) TenantBarrierInitHandler(w http.ResponseWriter, r *http.Request) {
-	if h.xkmsService == nil {
-		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
-		return
-	}
-
-	tenantID := chi.URLParam(r, "tenantID")
-	if tenantID == "" {
-		writeError(w, ErrMissingTenantID, http.StatusBadRequest)
-		return
-	}
-
-	var req tenantBarrierInitRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-		return
-	}
-
-	// Route through the service layer so the §3.6 invariant (the server never
-	// generates a tenant secret) is enforced in exactly one place. The
-	// passphrase is taken verbatim from the caller's request.
-	if err := h.xkmsService.TenantBarrierInit(r.Context(), &transport.TenantBarrierInitRequest{
-		TenantID:   tenantID,
-		Passphrase: []byte(req.Passphrase),
-		Strategy:   req.Strategy,
-		Threshold:  req.Threshold,
-		Shares:     req.Shares,
-	}); err != nil {
-		handleTenantError(w, err)
-		return
-	}
-
-	resp, err := h.xkmsService.TenantBarrierStatus(r.Context(), tenantID)
-	if err != nil {
-		handleTenantError(w, err)
-		return
-	}
-	writeJSON(w, resp, http.StatusOK)
-}
-
-// TenantBarrierUnsealHandler handles POST /tenants/{id}/barrier/unseal requests.
-// Each tenant has an independent barrier with its own DEK. This endpoint
-// unseals the tenant's barrier using the provided credentials. The tenant
-// barrier must have been previously initialized.
-// Tenant-scoped identities can only unseal their own tenant's barrier
-// (XKMSService refuses any other tenant with an error that maps to 404).
-func (h *TenantHandlers) TenantBarrierUnsealHandler(w http.ResponseWriter, r *http.Request) {
-	if h.xkmsService == nil {
-		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
-		return
-	}
-
-	tenantID := chi.URLParam(r, "tenantID")
-	if tenantID == "" {
-		writeError(w, ErrMissingTenantID, http.StatusBadRequest)
-		return
-	}
-
-	var req tenantBarrierUnsealRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-		return
-	}
-
-	// Route through the service layer; the unseal credentials are taken
-	// verbatim from the caller's request (Key for passphrase strategies, Share
-	// for shamir). The server holds no tenant secret of its own.
-	if err := h.xkmsService.TenantBarrierUnseal(r.Context(), &transport.TenantBarrierUnsealRequest{
-		TenantID: tenantID,
-		Key:      req.Key,
-		Share:    req.Share,
-	}); err != nil {
-		handleTenantError(w, err)
-		return
-	}
-
-	resp, err := h.xkmsService.TenantBarrierStatus(r.Context(), tenantID)
 	if err != nil {
 		handleTenantError(w, err)
 		return

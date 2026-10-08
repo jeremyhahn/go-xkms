@@ -37,7 +37,7 @@ to `--local`. The full server reference is
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--token-store <path>` | `~/.xkey/tokens.json` | Sets the path every derived artifact (provider config, PID files, logs) is rooted under. Also, when explicitly set, the token content itself is written to exactly this path as a plain file, bypassing barrier auto-detection (matches `xkey oath --store`). Left at its default, the token content instead follows the barrier decision below, independently of this path. |
+| `--token-store <dir>` | `~/.xkey/tokens` | Sets the directory every derived artifact (provider config, PID files, logs) is rooted under. Also, when explicitly set, the token content itself is written to an unencrypted go-qrdb file store in exactly this directory, bypassing barrier auto-detection (matches `xkey oath --store`). Left at its default, the token content instead follows the barrier decision below, independently of this path. |
 | `--barrier-password-stdin` | `false` | Read the barrier password from standard input. There is no `--barrier-password` value flag; a value on the command line is visible in `ps`. |
 | `--barrier-password-file <path>` | | Read the barrier password from the first line of this file. |
 
@@ -47,16 +47,16 @@ the directory the no-override barrier decision resolves under.
 
 **What actually happens**, in order:
 
-1. `--token-store` explicitly set → the token is read/written as a plain
-   file at exactly that path. No barrier involved.
+1. `--token-store` explicitly set → the token is read/written as an
+   unencrypted store in exactly that directory. No barrier involved.
 2. `--token-store` left at its default, a barrier is initialized (`xkey
    barrier init` has been run) → the token is barrier-encrypted; a barrier
    password is required (from a flag, a file, the environment, or an
    interactive prompt) or the command fails with a typed refusal rather than
    writing plaintext.
 3. `--token-store` left at its default, no barrier initialized → the token
-   is written as a plain file (a warning is logged once, naming the store
-   and suggesting `xkey barrier init`).
+   is written unencrypted under the data directory (a warning is logged
+   once, naming the store and suggesting `xkey barrier init`).
 
 ## `xkey oidc login`
 
@@ -102,15 +102,15 @@ store lives" table). In order:
 
 1. `--session-store` explicitly set (directly here, or saved earlier on an
    AWS provider via `xkey oidc providers add --session-store`) → the session
-   is read/written as a plain file at exactly that path. No barrier
-   involved.
+   is read/written as an unencrypted store in exactly that directory. No
+   barrier involved.
 2. `--session-store` left at its default, a barrier is initialized → the
    session is barrier-encrypted; a barrier password is required (from a
    flag, a file, the environment, or an interactive prompt) or the command
    fails with a typed refusal rather than writing plaintext.
 3. `--session-store` left at its default, no barrier initialized → the
-   session is written as a plain file (a warning is logged once, naming the
-   store and suggesting `xkey barrier init`).
+   session is written unencrypted under the data directory (a warning is
+   logged once, naming the store and suggesting `xkey barrier init`).
 
 `--session-store`'s flag value is, in every case, also used to derive the
 default log-file and PID-file directories for `--background`/
@@ -132,7 +132,7 @@ xkey oidc aws [flags]
 | `--credentials-file` | `~/.aws/credentials` | AWS credentials file path; replaced atomically with mode `0600`, other profiles kept |
 | `--exec` | | Execute a script after login |
 | `--auto-refresh` | `0` | Auto-refresh interval in seconds |
-| `--session-store` | `~/.xkey/aws-session.json` | Session store path; see the barrier-or-fallback decision above |
+| `--session-store` | `~/.xkey/aws-session` | Session store directory; see the barrier-or-fallback decision above |
 | `--barrier-password-stdin` | `false` | Read the barrier password from standard input |
 | `--barrier-password-file <path>` | | Read the barrier password from the first line of this file |
 | `--background` | `false` | Run auto-refresh in background |
@@ -251,7 +251,7 @@ xkey oidc status
 xkey oidc stop okta
 
 # Explicit file, bypassing the barrier entirely
-xkey oidc login --provider okta --token-store /tmp/scratch-tokens.json
+xkey oidc login --provider okta --token-store /tmp/scratch-tokens
 
 # Clear the session
 xkey oidc logout

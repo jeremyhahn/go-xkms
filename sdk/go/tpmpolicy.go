@@ -16,8 +16,8 @@ package xkms
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )

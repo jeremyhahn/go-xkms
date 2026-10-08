@@ -1,6 +1,6 @@
 # Clustering — User Guide
 
-> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-07
 
 ## What clustering gets you
 
@@ -203,13 +203,9 @@ xkmsctl cluster members
 with its advertised API endpoints. Run these against any node — they answer
 the same regardless of which node you ask.
 
-The embedded web console's **Cluster** page shows the same read-only status
-and membership over the REST API (see api.md) once signed in, when the node
-is clustered; a standalone deployment hides the nav entry by default but
-the page still renders a "standalone" result if visited directly. Membership
-changes (`xkmsctl cluster add`/`remove`) are performed over the Raft admin
-plane only and are intentionally not exposed as a button in the web
-console.
+The embedded web console's dashboard shows only whether the node is
+clustered. Status, membership and membership changes are go-qrdb's control
+plane and are reached through `xkmsctl cluster` alone.
 
 ## Monitoring and debugging
 

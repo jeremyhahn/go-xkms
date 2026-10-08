@@ -48,7 +48,7 @@ echo "2. Starting OIDC login flow..."
 "$XKEY_BIN" oidc login \
   --issuer http://localhost:8080/default \
   --client-id test-client \
-  --token-store "${TEST_STORE}/tokens.json" \
+  --token-store "${TEST_STORE}/tokens" \
   --exec "$TEST_EXEC_SCRIPT" \
   --no-browser > "$OUTPUT_FILE" 2>&1 &
 LOGIN_PID=$!
@@ -109,11 +109,11 @@ fi
 
 # Verify tokens were stored
 echo "6. Verifying token storage..."
-if [ -f "${TEST_STORE}/tokens.json" ]; then
+if [ -f "${TEST_STORE}/tokens" ]; then
     echo "   Token file created successfully"
     echo ""
     echo "   Token contents:"
-    jq -r '.tokens[0] | "     - Provider: \(.issuer)\n     - Expires At: \(.expires_at)"' "${TEST_STORE}/tokens.json"
+    jq -r '.tokens[0] | "     - Provider: \(.issuer)\n     - Expires At: \(.expires_at)"' "${TEST_STORE}/tokens"
 else
     echo "ERROR: Token file not created!"
     exit 1

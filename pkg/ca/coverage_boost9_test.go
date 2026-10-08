@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -57,9 +58,7 @@ func newB9Backend(t *testing.T) (xkms.Backend, certstore.CertStore) {
 	cs := storage.NewMemory()
 	backend, err := xkms.New(&xkms.BackendConfig{Backend: sw, CertStorage: cs})
 	require.NoError(t, err)
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
-	certStore, err := certstore.New(&certstore.Config{CertStorage: certAdapter})
+	certStore, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	return backend, certStore
 }

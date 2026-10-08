@@ -1,6 +1,6 @@
 # Clustering — CLI
 
-> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `clustering` · Repo: `go-xkms` · Last verified: 2026-10-07
 
 Binary: `xkmsctl`. Groups: `cluster` and `rebalance`
 (`cmd/xkmsctl/cluster.go`, `rebalance.go`). **These verbs do not go through
@@ -9,11 +9,9 @@ own control-plane gRPC service directly — the same service
 `pkg/server/qrdb_control_plane.go` registers onto xkmsd's Unix socket and
 gRPC listener — over the Unix socket (default) or `--transport grpc` /
 `grpc://host:port` / `grpcs://host:port` (with `--tls-cert`/`--tls-key`/
-`--tls-ca`). There is no REST form of any verb on this page: the REST
-`/api/v1/cluster/status`/`/members` routes (api.md) exist for the web
-console, not for this CLI, and `cluster add`/`remove` has no REST
-counterpart at all — see architecture.md's "Two distinct surfaces over the
-same Raft shard". The target follows the standard `--server`/`--transport`
+`--tls-ca`). There is no xkms REST form of any verb on this page: go-qrdb's
+control plane is the only cluster surface — see architecture.md's "One
+cluster control plane: go-qrdb's". The target follows the standard `--server`/`--transport`
 conventions; every scheme other than the Unix socket or `grpc(s)://` is
 rejected with a typed `QRDBControlUnsupportedTransportError`.
 

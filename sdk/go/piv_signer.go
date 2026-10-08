@@ -100,8 +100,9 @@ func (s *PIVCryptoSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpt
 		Hashed:        true,
 		HashAlgorithm: pivHashAlgorithmName(opts),
 	}
+	ctx := context.Background()
 	if s.PIN != nil {
-		buf, err := s.PIN.Open()
+		buf, err := s.PIN.Open(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -117,7 +118,7 @@ func (s *PIVCryptoSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpt
 		defer secure.Wipe(pin)
 		req.PIN = pin
 	}
-	resp, err := SignPIV(context.Background(), req)
+	resp, err := SignPIV(ctx, req)
 	if err != nil {
 		return nil, err
 	}

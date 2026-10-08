@@ -66,6 +66,7 @@ var (
 	_ qrdbtransport.UserClient      = (*QRDBFakeTransport)(nil)
 	_ qrdbtransport.GuardedKVClient = (*QRDBFakeTransport)(nil)
 	_ qrdbtransport.BackupClient    = (*QRDBFakeTransport)(nil)
+	_ qrdbtransport.IndexClient     = (*QRDBFakeTransport)(nil)
 )
 
 // NewQRDBFakeTransport constructs an empty in-memory fake transport.
@@ -179,6 +180,42 @@ func (f *QRDBFakeTransport) Exists(ctx context.Context, key string, opts ...qrdb
 	defer f.mu.Unlock()
 	_, ok := f.kv[key]
 	return ok, nil
+}
+
+// --- transport.IndexClient ---
+//
+// The fake keeps no secondary indexes. It answers every index verb the way a
+// node whose state machine lacks them does -- CapabilityUnsupportedError,
+// which the SDK's KVStore surfaces as kvstore.ErrIndexUnsupported -- so
+// Client.KVStore() and the DAOs built on it work over the fake for keyed
+// CRUD, and an index lookup fails loudly instead of returning nothing.
+
+// errFakeNoIndexes is the fake's answer to every index verb.
+var errFakeNoIndexes = &qrdbtransport.CapabilityUnsupportedError{Message: "the qrdb fake transport keeps no secondary indexes"}
+
+// IndexCreate implements transport.IndexClient.
+func (f *QRDBFakeTransport) IndexCreate(ctx context.Context, name, fieldName string, config qrdbtransport.IndexConfig) error {
+	return errFakeNoIndexes
+}
+
+// IndexDrop implements transport.IndexClient.
+func (f *QRDBFakeTransport) IndexDrop(ctx context.Context, name string) error {
+	return errFakeNoIndexes
+}
+
+// IndexQuery implements transport.IndexClient.
+func (f *QRDBFakeTransport) IndexQuery(ctx context.Context, indexName, value string) (*qrdbtransport.IndexQueryResponse, error) {
+	return nil, errFakeNoIndexes
+}
+
+// IndexScan implements transport.IndexClient.
+func (f *QRDBFakeTransport) IndexScan(ctx context.Context, indexName string, start, end *string) (*qrdbtransport.IndexScanResponse, error) {
+	return nil, errFakeNoIndexes
+}
+
+// IndexList implements transport.IndexClient.
+func (f *QRDBFakeTransport) IndexList(ctx context.Context) (*qrdbtransport.IndexListResponse, error) {
+	return nil, errFakeNoIndexes
 }
 
 // PutIfAbsent implements transport.GuardedKVClient.

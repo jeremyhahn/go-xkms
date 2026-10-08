@@ -34,7 +34,9 @@ import (
 	apitransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	mcptransport "github.com/jeremyhahn/go-xkms/pkg/api/transport/mcp"
 	quictransport "github.com/jeremyhahn/go-xkms/pkg/api/transport/quic"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -158,6 +160,22 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 			Software: &config.SoftwareConfig{
 				Enabled: true,
 				Path:    filepath.Join(tempDir, "software"),
+			},
+		},
+		// First boot issues the administrator's certificate from this CA and
+		// binds it. An administrator created without one leaves the node
+		// serving only the ceremony endpoints until a certificate binds.
+		CA: &ca.MultiIdentityCAConfig{
+			DefaultValidityDays: 365,
+			Identity: []ca.Identity{
+				{
+					IsRoot:  true,
+					Valid:   1,
+					Subject: ca.Subject{CommonName: "Unified API E2E Root CA", Organization: "Test Org", Country: "US"},
+					Keys: []*types.KeyConfig{
+						{KeyAlgorithm: types.AlgorithmECDSA, ECCConfig: &types.ECCConfig{Curve: types.CurveP256}},
+					},
+				},
 			},
 		},
 	}

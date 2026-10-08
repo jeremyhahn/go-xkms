@@ -41,23 +41,16 @@ export const DEFAULT_RESPONSES: Record<RouteKey, unknown> = {
   'GET /api/v1/algorithms': { algorithms: [] },
 
   'GET /api/v1/backends': { backends: [], pagination: { total: 0 } },
-  'GET /api/v1/barrier/status': { sealed: false, strategy: 'passphrase', hardware_backed: false },
-  'GET /api/v1/cluster/status': { status: { clustered: false, has_leader: false } },
-  'GET /api/v1/cluster/members': { members: [] },
 
   'GET /api/v1/keys': { keys: [], pagination: { total: 0 } },
   'GET /api/v1/certs': { certificates: [], pagination: { total: 0 } },
   'GET /api/v1/ca/bundle': { certificates: [] },
   'GET /api/v1/frost/keys': { keys: [], pagination: { total: 0 } },
 
-  'GET /api/v1/audit/': { events: [], next: '', total: 0 },
   'GET /api/v1/users/': { users: [], page: 1, page_size: 20, total: 0 },
   'GET /api/v1/tenants/': { tenants: [], pagination: { total: 0 } },
   'GET /api/v1/tpm/policies': { policies: [] },
   'GET /api/v1/oidc/credentials': { credentials: [] },
-  'GET /api/v1/factors/': { factors: [], total: 0 },
-  'GET /api/v1/shares/': { shares: [], pagination: { total: 0 } },
-  'GET /api/v1/custodian/groups/': { groups: [], pagination: { total: 0 } },
 
   'GET /api/v1/passwords/': { passwords: [], total: 0 },
   'GET /api/v1/password-vault/session': {

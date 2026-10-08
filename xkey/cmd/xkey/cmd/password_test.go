@@ -606,12 +606,16 @@ func TestPasswordCmd_AddGenerated(t *testing.T) {
 		t.Errorf("generated password length = %d, want %d", len(pw.Password), xkms.StaticPasswordDefaultLength)
 	}
 
-	// Verify the entry file exists on disk. The staticpw store uses an
-	// xxhash-based ID as the filename, not the entry name.
+	// Verify the entry is stored under its ID. The staticpw store uses an
+	// xxhash-based ID as the storage key, not the entry name.
 	entryID := xkms.GenerateStaticPasswordID("GeneratedEntry", "")
-	entryPath := filepath.Join(storePath, "staticpw", entryID+".json")
-	if _, statErr := os.Stat(entryPath); os.IsNotExist(statErr) {
-		t.Errorf("generated entry file not found at %s", entryPath)
+	entryKey := "staticpw/" + entryID + ".json"
+	exists, err := backend.Exists(t.Context(), entryKey)
+	if err != nil {
+		t.Fatalf("backend.Exists(%s) failed: %v", entryKey, err)
+	}
+	if !exists {
+		t.Errorf("generated entry not found under %s", entryKey)
 	}
 }
 

@@ -40,6 +40,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -252,7 +253,7 @@ func newIssuingCA(t *testing.T, config *ca.MultiIdentityCAConfig, registry ca.Pr
 	require.NoError(t, err)
 
 	certStore, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(storage.NewMemory()),
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	require.NoError(t, err)
 
@@ -286,7 +287,7 @@ func newHierarchicalIssuingCA(t *testing.T, config *ca.MultiIdentityCAConfig, re
 	require.NoError(t, err)
 
 	certStore, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(storage.NewMemory()),
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	require.NoError(t, err)
 

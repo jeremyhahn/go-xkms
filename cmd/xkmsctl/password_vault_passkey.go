@@ -84,8 +84,8 @@ func defaultVaultAuthenticatorFactory(cfg *Config, device string) (vaultAuthenti
 // needs: from the WebAuthn PIN sources (resolvePINInput), else from a no-echo
 // prompt on a terminal. A vault passkey is always user-verified, so no PIN is
 // an error here rather than the authenticator's decision.
-func resolveVaultPasskeyPIN(cmd *cobra.Command) (*secure.Secret, error) {
-	pin, err := resolvePINInput(cmd)
+func resolveVaultPasskeyPIN(ctx context.Context, cmd *cobra.Command) (*secure.Secret, error) {
+	pin, err := resolvePINInput(ctx, cmd)
 	if err != nil || pin != nil {
 		return pin, err
 	}
@@ -99,7 +99,7 @@ func resolveVaultPasskeyPIN(cmd *cobra.Command) (*secure.Secret, error) {
 	if typed == "" {
 		return nil, ErrVaultPasskeyPINRequired
 	}
-	return sealPIN(typed)
+	return sealPIN(ctx, typed)
 }
 
 // passkeyEnrollSource returns the source of a new vault passkey, created on

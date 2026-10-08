@@ -64,15 +64,15 @@ func Wire(t testing.TB, svc *xkms.XKMSService) *seal.BarrierRegistry {
 		seal.NewSoftwareStrategy(),
 	)
 	require.NoError(t, err)
-	sysCreds := seal.MustCredentials([]byte("system-passphrase"))
+	sysCreds := seal.MustCredentials(ctx, []byte("system-passphrase"))
 	defer sysCreds.Secret.Destroy()
 	require.NoError(t, sysBarrier.Initialize(ctx, sysCreds))
 
 	registry, err := seal.NewBarrierRegistry(sysBarrier)
 	require.NoError(t, err)
-	_, err = registry.RegisterTenant(Tenant)
+	_, err = registry.RegisterTenantDefault(Tenant)
 	require.NoError(t, err)
-	tenantCreds := seal.MustCredentials([]byte("tenant-passphrase"))
+	tenantCreds := seal.MustCredentials(ctx, []byte("tenant-passphrase"))
 	defer tenantCreds.Secret.Destroy()
 	require.NoError(t, registry.InitializeTenant(ctx, Tenant, tenantCreds))
 

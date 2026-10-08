@@ -874,14 +874,6 @@ func (m *mockXKMSTPM) SetHierarchyAuth(oldSecret, newSecret xkmssdk.Password, hi
 	return nil
 }
 
-func (m *mockXKMSTPM) SecretFromShares(shares []string) (string, error) {
-	return "", nil
-}
-
-func (m *mockXKMSTPM) ShareSecret(secret []byte, shares int) ([]string, error) {
-	return nil, nil
-}
-
 func (m *mockXKMSTPM) VerifyAuth(handle tpm2.TPMHandle, authValue []byte) error {
 	return nil
 }

@@ -90,6 +90,11 @@ func TestResolvePINBackend_ReadySRKSelectsTPM2(t *testing.T) {
 func TestResolvePINBackend_PersistedStrategyGoverns(t *testing.T) {
 	dataDir := t.TempDir()
 	pinDir := filepath.Join(dataDir, "pin")
+	// A previous run opened the PIN store before persisting its strategy
+	// beside it, as ResolvePINBackend does.
+	store, err := xkms.NewFileStorageBackend(pinDir)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
 	require.NoError(t, xkms.SavePINStrategy(pinDir, qrdbsdk.PINStrategySoftware))
 
 	backend, strategy, err := ResolvePINBackend(nil, dataDir, xkms.StorageEngineFile, nil)

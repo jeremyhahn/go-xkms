@@ -1012,79 +1012,11 @@ func (s *TestXKMSService) GeneratePIVCSR(ctx context.Context, req *xkms.Generate
 
 // Barrier operations
 
-func (s *TestXKMSService) BarrierInitialize(ctx context.Context, req *xkms.BarrierInitializeRequest) error {
-	return nil
-}
-
-func (s *TestXKMSService) BarrierUnseal(ctx context.Context, req *xkms.BarrierUnsealRequest) error {
-	return nil
-}
-
-func (s *TestXKMSService) BarrierSeal(ctx context.Context) error {
-	return nil
-}
-
-func (s *TestXKMSService) BarrierStatus(ctx context.Context) (*xkms.BarrierStatusResponse, error) {
-	return &xkms.BarrierStatusResponse{Sealed: false, Strategy: "test"}, nil
-}
-
 // BootstrapListenerKeys reports that no trust-bootstrap listener runs in the
 // in-memory test service, which is the contract's answer for a server whose
 // listener is not enabled.
 func (s *TestXKMSService) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
 	return nil, xkmssvc.ErrBootstrapListenerNotEnabled
-}
-
-func (s *TestXKMSService) BarrierInitializeShamir(ctx context.Context, req *xkms.BarrierInitializeShamirRequest) (*xkms.BarrierInitializeShamirResponse, error) {
-	return &xkms.BarrierInitializeShamirResponse{
-		Threshold:   req.Threshold,
-		TotalShares: req.TotalShares,
-	}, nil
-}
-
-func (s *TestXKMSService) BarrierUnsealWithShare(ctx context.Context, req *xkms.BarrierUnsealShareRequest) (*xkms.BarrierUnsealShareResponse, error) {
-	return &xkms.BarrierUnsealShareResponse{Required: 1, Submitted: 1, Complete: true}, nil
-}
-
-func (s *TestXKMSService) BarrierUnsealWithShares(ctx context.Context, req *xkms.BarrierUnsealSharesRequest) error {
-	return nil
-}
-
-// BarrierRekey re-encrypts the barrier with a new root key.
-func (s *TestXKMSService) BarrierRekey(_ context.Context, _ *xkms.BarrierRekeyRequest) (*xkms.BarrierRekeyResponse, error) {
-	return nil, nil
-}
-
-// BarrierEnableEncryption migrates a previously-unencrypted barrier to a keyed
-// one. The in-memory test service has no persistent barrier, so this is a
-// no-op that satisfies the transport.XKMSServicer interface.
-func (s *TestXKMSService) BarrierEnableEncryption(_ context.Context, _ *xkms.BarrierEnableEncryptionRequest) (*xkms.BarrierEnableEncryptionResponse, error) {
-	return &xkms.BarrierEnableEncryptionResponse{}, nil
-}
-
-// BarrierGenerateRecoveryKeys generates recovery keys.
-func (s *TestXKMSService) BarrierGenerateRecoveryKeys(_ context.Context, _ *xkms.BarrierGenerateRecoveryKeysRequest) (*xkms.BarrierRecoveryKeysResponse, error) {
-	return nil, nil
-}
-
-// BarrierRecoverWithKeys recovers the barrier using recovery keys.
-func (s *TestXKMSService) BarrierRecoverWithKeys(_ context.Context, _ *xkms.BarrierRecoverWithKeysRequest) error {
-	return nil
-}
-
-// BarrierDeleteRecoveryKeys deletes all recovery keys.
-func (s *TestXKMSService) BarrierDeleteRecoveryKeys(_ context.Context) error {
-	return nil
-}
-
-// BarrierHasRecoveryKeys checks if recovery keys exist.
-func (s *TestXKMSService) BarrierHasRecoveryKeys(_ context.Context) (*xkms.BarrierHasRecoveryKeysResponse, error) {
-	return nil, nil
-}
-
-// BarrierGenerateRootToken generates a root token.
-func (s *TestXKMSService) BarrierGenerateRootToken(_ context.Context, _ *xkms.BarrierGenerateRootTokenRequest) (*xkms.BarrierRootTokenResponse, error) {
-	return nil, nil
 }
 
 // PIN operations
@@ -1356,104 +1288,11 @@ func (s *TestXKMSService) TenantVTPMStop(context.Context, string) (*xkms.TenantV
 
 // Backup operations (go-xkms#728)
 
-func (s *TestXKMSService) CreateBackup(ctx context.Context, req *xkms.BackupRequest) (*xkms.BackupInfo, error) {
-	return nil, ErrNotImplemented
-}
-
-func (s *TestXKMSService) ListBackups(ctx context.Context) ([]xkms.BackupInfo, error) {
-	return nil, ErrNotImplemented
-}
-
-func (s *TestXKMSService) GetBackup(ctx context.Context, id string) (*xkms.BackupInfo, error) {
-	return nil, ErrNotImplemented
-}
-
-func (s *TestXKMSService) DeleteBackup(ctx context.Context, id string) error {
-	return ErrNotImplemented
-}
-
-func (s *TestXKMSService) RestoreBackup(ctx context.Context, req *xkms.RestoreRequest) (*xkms.RestoreResult, error) {
-	return nil, ErrNotImplemented
-}
-
-func (s *TestXKMSService) VerifyBackup(ctx context.Context, id string) (*xkms.VerifyResult, error) {
-	return nil, ErrNotImplemented
-}
-
 // Custodian group operations
-
-// CreateCustodianGroup creates a new custodian group.
-func (s *TestXKMSService) CreateCustodianGroup(ctx context.Context, req *xkms.CreateCustodianGroupRequest) (*xkms.CreateCustodianGroupResponse, error) {
-	return nil, ErrNotImplemented
-}
-
-// GetCustodianGroup retrieves a custodian group by ID.
-func (s *TestXKMSService) GetCustodianGroup(ctx context.Context, groupID string) (*xkms.GetCustodianGroupResponse, error) {
-	return nil, ErrNotImplemented
-}
-
-// ListCustodianGroups lists all custodian groups.
-func (s *TestXKMSService) ListCustodianGroups(ctx context.Context) (*xkms.ListCustodianGroupsResponse, error) {
-	return nil, ErrNotImplemented
-}
-
-// DeleteCustodianGroup deletes a custodian group.
-func (s *TestXKMSService) DeleteCustodianGroup(ctx context.Context, groupID string) error {
-	return ErrNotImplemented
-}
-
-// AddCustodianMember adds a member to a custodian group.
-func (s *TestXKMSService) AddCustodianMember(ctx context.Context, req *xkms.AddCustodianMemberRequest) (*xkms.AddCustodianMemberResponse, error) {
-	return nil, ErrNotImplemented
-}
-
-// RemoveCustodianMember removes a member from a custodian group.
-func (s *TestXKMSService) RemoveCustodianMember(ctx context.Context, req *xkms.RemoveCustodianMemberRequest) error {
-	return ErrNotImplemented
-}
-
-// DistributeShares distributes Shamir shares to custodian group members.
-func (s *TestXKMSService) DistributeShares(ctx context.Context, req *xkms.DistributeSharesRequest) (*xkms.DistributeSharesResponse, error) {
-	return nil, ErrNotImplemented
-}
 
 // Share operations
 
-// SubmitShare submits a received Shamir share back to the server.
-func (s *TestXKMSService) SubmitShare(ctx context.Context, req *xkms.SubmitShareRequest) (*xkms.SubmitShareResponse, error) {
-	return nil, ErrNotImplemented
-}
-
-// ListShares lists shares available for the authenticated user.
-func (s *TestXKMSService) ListShares(ctx context.Context) (*xkms.ListSharesResponse, error) {
-	return nil, ErrNotImplemented
-}
-
-// GetShare returns one submitted share. Share state lives in the embedded
-// go-qrdb node, which this test service does not carry, so it answers the
-// way its share siblings do.
-func (s *TestXKMSService) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*xkms.ShareInfo, error) {
-	return nil, ErrNotImplemented
-}
-
-// DeleteShare removes one submitted share; see GetShare.
-func (s *TestXKMSService) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
-	return ErrNotImplemented
-}
-
-// GetShareCollectionStatus returns the collection status for a group.
-func (s *TestXKMSService) GetShareCollectionStatus(ctx context.Context, groupID string) (*xkms.ShareCollectionStatus, error) {
-	return nil, ErrNotImplemented
-}
-
 // Audit operations
-
-// QueryAudit reads the audit chain. The chain lives in the embedded go-qrdb
-// node, which this test service does not carry; the suite exercises the
-// operations that would be audited, not the chain itself.
-func (s *TestXKMSService) QueryAudit(ctx context.Context, filter *xkms.AuditFilter) (*xkms.AuditPage, error) {
-	return nil, ErrNotImplemented
-}
 
 // Tenant operations
 
@@ -1477,23 +1316,6 @@ func (s *TestXKMSService) DeleteTenant(ctx context.Context, tenantID string) err
 	return ErrNotImplemented
 }
 
-// TenantBarrierInit initializes a per-tenant barrier.
-func (s *TestXKMSService) TenantBarrierInit(ctx context.Context, req *xkms.TenantBarrierInitRequest) error {
-	return ErrNotImplemented
-}
-
-// TenantBarrierUnseal unseals a per-tenant barrier.
-func (s *TestXKMSService) TenantBarrierUnseal(ctx context.Context, req *xkms.TenantBarrierUnsealRequest) error {
-	return ErrNotImplemented
-}
-
-// TenantBarrierStatus reports the state of a per-tenant barrier. The in-memory
-// test service does not model per-tenant barriers, so it returns an empty
-// status to satisfy the transport.XKMSServicer interface.
-func (s *TestXKMSService) TenantBarrierStatus(_ context.Context, _ string) (*xkms.TenantBarrierStatusResponse, error) {
-	return &xkms.TenantBarrierStatusResponse{}, nil
-}
-
 // UpdateTenantEntitlements updates a tenant's feature entitlements. No-op in the
 // in-memory test service; satisfies the transport.XKMSServicer interface.
 func (s *TestXKMSService) UpdateTenantEntitlements(_ context.Context, _ *xkms.UpdateTenantEntitlementsRequest) (*xkms.UpdateTenantEntitlementsResponse, error) {
@@ -1507,36 +1329,6 @@ func (s *TestXKMSService) UpdateTenantQuotas(_ context.Context, _ *xkms.UpdateTe
 }
 
 // Init ceremony operations
-
-// GetInitStatus returns the current init ceremony state.
-func (s *TestXKMSService) GetInitStatus(ctx context.Context) (*xkms.InitStatusResponse, error) {
-	return nil, ErrNotImplemented
-}
-
-// ClaimCertBegin begins the certificate claim process for an officer.
-func (s *TestXKMSService) ClaimCertBegin(ctx context.Context, req *xkms.ClaimCertBeginRequest) (*xkms.ClaimCertBeginResponse, error) {
-	return nil, ErrNotImplemented
-}
-
-// ClaimCertComplete completes the certificate claim by verifying the officer's signature.
-func (s *TestXKMSService) ClaimCertComplete(ctx context.Context, req *xkms.ClaimCertCompleteRequest) (*xkms.ClaimCertCompleteResponse, error) {
-	return nil, ErrNotImplemented
-}
-
-// ClaimShareBegin starts the Shamir share claim handshake for the named officer.
-func (s *TestXKMSService) ClaimShareBegin(ctx context.Context, req *xkms.ClaimShareBeginRequest) (*xkms.ClaimShareBeginResponse, error) {
-	return nil, ErrNotImplemented
-}
-
-// ClaimShareComplete completes the Shamir share claim handshake.
-func (s *TestXKMSService) ClaimShareComplete(ctx context.Context, req *xkms.ClaimShareCompleteRequest) (*xkms.ClaimShareCompleteResponse, error) {
-	return nil, ErrNotImplemented
-}
-
-// SignCSRInit signs a CSR during initialization with SO authorization.
-func (s *TestXKMSService) SignCSRInit(ctx context.Context, req *xkms.SignCSRInitRequest) (*xkms.SignCSRInitResponse, error) {
-	return nil, ErrNotImplemented
-}
 
 // Credential management operations
 

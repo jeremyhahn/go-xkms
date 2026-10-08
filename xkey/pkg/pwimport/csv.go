@@ -14,6 +14,7 @@
 package pwimport
 
 import (
+	"context"
 	"encoding/csv"
 	"os"
 	"strings"
@@ -48,7 +49,7 @@ func (p *CSVParser) Format() string {
 }
 
 // Parse reads and parses a CSV file.
-func (p *CSVParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry, error) {
+func (p *CSVParser) Parse(ctx context.Context, filePath string, opts *ImportOptions) ([]*ParsedEntry, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrInvalidFile, Cause: err}
@@ -78,7 +79,7 @@ func (p *CSVParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry,
 
 	for i := 1; i < len(records); i++ {
 		row := records[i]
-		entry, err := p.parseRow(row, colIdx, opts)
+		entry, err := p.parseRow(ctx, row, colIdx, opts)
 		if err != nil {
 			continue // Skip invalid rows
 		}
@@ -148,7 +149,7 @@ func (p *CSVParser) parseHeader(header []string) (*csvColumnIndex, error) {
 }
 
 // parseRow converts a CSV row to a ParsedEntry.
-func (p *CSVParser) parseRow(row []string, idx *csvColumnIndex, opts *ImportOptions) (*ParsedEntry, error) {
+func (p *CSVParser) parseRow(ctx context.Context, row []string, idx *csvColumnIndex, opts *ImportOptions) (*ParsedEntry, error) {
 	getField := func(i int) string {
 		if i >= 0 && i < len(row) {
 			return strings.TrimSpace(row[i])
@@ -161,7 +162,7 @@ func (p *CSVParser) parseRow(row []string, idx *csvColumnIndex, opts *ImportOpti
 		return nil, nil // Skip entries without passwords
 	}
 
-	passwordSecret, err := newParsedPassword(password)
+	passwordSecret, err := newParsedPassword(ctx, password)
 	if err != nil {
 		return nil, err
 	}

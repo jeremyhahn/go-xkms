@@ -128,7 +128,7 @@ func TestKDBXParser_Parse_RealDatabase(t *testing.T) {
 
 	path := writeTestKDBX(t, "correct horse battery staple")
 
-	entries, err := NewKDBXParser().Parse(path, &ImportOptions{Password: "correct horse battery staple"})
+	entries, err := NewKDBXParser().Parse(t.Context(), path, &ImportOptions{Password: "correct horse battery staple"})
 	require.NoError(t, err)
 	require.Len(t, entries, 2, "the entry without a password must be skipped")
 
@@ -164,7 +164,7 @@ func TestKDBXParser_Parse_TargetFolderPrefix(t *testing.T) {
 
 	path := writeTestKDBX(t, "pw")
 
-	entries, err := NewKDBXParser().Parse(path, &ImportOptions{
+	entries, err := NewKDBXParser().Parse(t.Context(), path, &ImportOptions{
 		Password:     "pw",
 		TargetFolder: "Imported",
 	})
@@ -203,13 +203,13 @@ func TestKDBXParser_Parse_TargetFolderForRootEntries(t *testing.T) {
 	require.NoError(t, gokeepasslib.NewEncoder(f).Encode(db))
 	require.NoError(t, f.Close())
 
-	entries, err := NewKDBXParser().Parse(path, &ImportOptions{Password: "pw", TargetFolder: "Imported"})
+	entries, err := NewKDBXParser().Parse(t.Context(), path, &ImportOptions{Password: "pw", TargetFolder: "Imported"})
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "Imported", entries[0].FolderPath)
 
 	// Without a target folder, a root-level entry has no folder at all.
-	entries, err = NewKDBXParser().Parse(path, &ImportOptions{Password: "pw"})
+	entries, err = NewKDBXParser().Parse(t.Context(), path, &ImportOptions{Password: "pw"})
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Empty(t, entries[0].FolderPath)
@@ -234,7 +234,7 @@ func TestKDBXParser_Parse_Rejections(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entries, err := NewKDBXParser().Parse(tt.path, tt.opts)
+			entries, err := NewKDBXParser().Parse(t.Context(), tt.path, tt.opts)
 			assert.Nil(t, entries)
 			assert.ErrorIs(t, err, tt.wantErr)
 		})
@@ -247,7 +247,7 @@ func TestKDBXParser_Parse_NotAKDBXFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notes.txt")
 	require.NoError(t, os.WriteFile(path, []byte("this is not a keepass database"), 0600))
 
-	entries, err := NewKDBXParser().Parse(path, &ImportOptions{Password: "pw"})
+	entries, err := NewKDBXParser().Parse(t.Context(), path, &ImportOptions{Password: "pw"})
 	assert.Nil(t, entries)
 	assert.ErrorIs(t, err, ErrDecryptionFailed)
 }
@@ -271,7 +271,7 @@ func TestKDBXParser_Parse_EmptyDatabase(t *testing.T) {
 	require.NoError(t, gokeepasslib.NewEncoder(f).Encode(db))
 	require.NoError(t, f.Close())
 
-	entries, err := NewKDBXParser().Parse(path, &ImportOptions{Password: "pw"})
+	entries, err := NewKDBXParser().Parse(t.Context(), path, &ImportOptions{Password: "pw"})
 	assert.Nil(t, entries)
 	assert.ErrorIs(t, err, ErrNoEntriesFound)
 }
@@ -294,7 +294,7 @@ func TestImporter_Import_KDBX(t *testing.T) {
 
 	importer := newTestImporter(t)
 
-	result, err := importer.Import(&ImportOptions{
+	result, err := importer.Import(t.Context(), &ImportOptions{
 		FilePath:   path,
 		Password:   "pw",
 		ImportTOTP: true,
@@ -305,7 +305,7 @@ func TestImporter_Import_KDBX(t *testing.T) {
 	assert.Equal(t, 1, result.TOTPImported)
 	assert.Positive(t, result.Duration)
 
-	preview, err := importer.Preview(&ImportOptions{FilePath: path, Password: "pw"})
+	preview, err := importer.Preview(t.Context(), &ImportOptions{FilePath: path, Password: "pw"})
 	require.NoError(t, err)
 	assert.Len(t, preview, 2)
 }

@@ -49,9 +49,10 @@ type SecretValue = qrdbsecret.SecretValue
 // refused with *secret.UnresolvableTargetError by design — it is for a
 // runtime-only value (a CLI flag, a Go-code default) that the walker never
 // reaches. A value that cannot be sealed is an error (qrdb's
-// *secret.SealFailedError), never a SecretValue that reports empty.
-func NewLiteralSecretValue(value []byte) (*SecretValue, error) {
-	return qrdbsecret.NewSecretValue("", value, qrdbsecret.StrategyLiteral)
+// *secret.SealFailedError), never a SecretValue that reports empty. ctx bounds
+// the wait for the process sealer.
+func NewLiteralSecretValue(ctx context.Context, value []byte) (*SecretValue, error) {
+	return qrdbsecret.NewSecretValue(ctx, "", value, qrdbsecret.StrategyLiteral)
 }
 
 // NewPasswordFromSecretValue converts a resolved secret into a Password,
@@ -71,12 +72,12 @@ func NewLiteralSecretValue(value []byte) (*SecretValue, error) {
 // registry — falls back to treating Raw itself as the plaintext password, so
 // a plain operator-supplied password still wires a working Password without
 // requiring a registry round trip.
-func NewPasswordFromSecretValue(sv *SecretValue) (Password, error) {
+func NewPasswordFromSecretValue(ctx context.Context, sv *SecretValue) (Password, error) {
 	if sv == nil {
 		return nil, nil
 	}
 	var pw Password
-	if err := sv.WithBytes(func(b []byte) error {
+	if err := sv.WithBytes(ctx, func(b []byte) error {
 		if len(b) == 0 {
 			return nil
 		}
@@ -159,12 +160,12 @@ func secretReferenceScheme(raw string) string {
 // (non-empty Raw) but its enclave holds nothing — it was never run through a
 // secret.ConfigProcessor pass, or a resolver claimed it and still produced
 // nothing — rather than trusting Raw as the plaintext.
-func SecretValueBytes(sv *SecretValue) ([]byte, error) {
+func SecretValueBytes(ctx context.Context, sv *SecretValue) ([]byte, error) {
 	if sv == nil {
 		return nil, nil
 	}
 	var out []byte
-	if err := sv.WithBytes(func(b []byte) error {
+	if err := sv.WithBytes(ctx, func(b []byte) error {
 		if len(b) == 0 {
 			return nil
 		}
@@ -216,13 +217,13 @@ func KeyAttributesFromConfigResolved(
 	registry *qrdbsecret.ResolverRegistry,
 ) (*KeyAttributes, error) {
 	if registry == nil {
-		return KeyAttributesFromConfig(config)
+		return KeyAttributesFromConfig(ctx, config)
 	}
 	resolved, err := resolveKeyConfigPasswords(ctx, config, registry)
 	if err != nil {
 		return nil, err
 	}
-	return KeyAttributesFromConfig(resolved)
+	return KeyAttributesFromConfig(ctx, resolved)
 }
 
 // resolveKeyConfigPasswords returns a shallow copy of config with all Password

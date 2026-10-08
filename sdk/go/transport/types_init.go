@@ -17,19 +17,6 @@ import (
 	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
-// Init ceremony types.
-type InitStatusResponse = pkgtransport.InitStatusResponse
-type ClaimCertBeginRequest = pkgtransport.ClaimCertBeginRequest
-type ClaimCertBeginResponse = pkgtransport.ClaimCertBeginResponse
-type ClaimCertCompleteRequest = pkgtransport.ClaimCertCompleteRequest
-type ClaimCertCompleteResponse = pkgtransport.ClaimCertCompleteResponse
-type ClaimShareBeginRequest = pkgtransport.ClaimShareBeginRequest
-type ClaimShareBeginResponse = pkgtransport.ClaimShareBeginResponse
-type ClaimShareCompleteRequest = pkgtransport.ClaimShareCompleteRequest
-type ClaimShareCompleteResponse = pkgtransport.ClaimShareCompleteResponse
-type SignCSRInitRequest = pkgtransport.SignCSRInitRequest
-type SignCSRInitResponse = pkgtransport.SignCSRInitResponse
-
 // Credential management types.
 type CredentialSubmitRequest = pkgtransport.CredentialSubmitRequest
 type CredentialSubmitResponse = pkgtransport.CredentialSubmitResponse

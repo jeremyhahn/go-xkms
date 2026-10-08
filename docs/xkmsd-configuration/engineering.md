@@ -205,35 +205,21 @@ viper reads the YAML into a map before mapstructure decodes it with
     after unseal (go-xkms#653 approved item 2)**: `rng.pkcs11.pin`,
     `backends.pkcs11.pin`, `backends.awskms.secret_key`,
     `backends.azurekv.client_secret`, and `backends.vault.token`.
-    `Server.New` now runs `initializeQRDBStorage` (which, for a
-    `BarrierConfig.NodeFlipWired` strategy, blocks until the qrdb node's own
-    barrier is unsealed — see the seal/barrier section below) and
-    `resolveConfigSecrets` *before* `initializeBackends`, so a
-    `credential://` reference for any of these five fields resolves exactly
-    like a CA password or the phone backend's Noise static key already did.
+    `Server.New` runs `initializeQRDBStorage` (which, with a barrier,
+    blocks until the qrdb node's own barrier is unsealed — see the
+    seal/barrier section below) and `resolveConfigSecrets` *before*
+    `initializeBackends`, so a `credential://` reference for any of these
+    five fields resolves exactly like a CA password or the phone backend's
+    Noise static key already did.
     `TestBackendCredentials_ResolveViaCredentialReference`
-    (`pkg/server/secret_wiring_test.go`) proves all five end to end. This
-    reorder is possible without the cycle earlier revisions of this
-    document described (`buildHardwareSealStrategies` builds the barrier's
-    hardware seal strategies from already-initialized backends) because
-    that path is only reached for a strategy `NodeFlipWired` reports false
-    for (pkcs11, the cloud-KMS strategies) — the strategy this reorder
-    exists to serve, tpm2, is built by `resolveNodeSeal` directly from
-    `Backends.TPM2` config, never from an initialized backend, and injected
-    into the qrdb node's own seal subsystem before any backend exists.
+    (`pkg/server/secret_wiring_test.go`) proves all five end to end. There
+    is no cycle: the node seal never reads an initialized backend.
+    `embeddednode.ResolveNodeSeal` builds every hardware and cloud seal
+    strategy from config before the node opens, and takes the PKCS#11 PIN
+    and the Vault token from the pre-barrier store, not from these fields.
 
-  - **Still genuinely unresolvable**: a `pkcs11` (or cloud-KMS) barrier
-    strategy, and every `pkg/tpm2.Config` hierarchy-auth/password field.
-    A PKCS#11 barrier strategy would need the same already-initialized
-    PKCS#11 backend `buildHardwareSealStrategies` reads from
-    `s.keyProviders`, which `initializeBackends` now builds *after*
-    `resolveConfigSecrets` — the identical cycle as before, just narrowed
-    to the one strategy (and the cloud-KMS strategies)
-    `BarrierConfig.NodeFlipWired` excludes for exactly this reason. Making
-    it deferred (matching the software strategy's own per-call credential
-    shape) is a `pkg/seal`/`types.Sealer` interface change, not a reorder,
-    and is not approved (go-xkms#653 item 3). The `pkg/tpm2.Config` fields
-    are unrelated to this cycle: there is no config-file path from
+  - **Still genuinely unresolvable**: every `pkg/tpm2.Config`
+    hierarchy-auth/password field. There is no config-file path from
     `pkg/config.Config` to `pkg/tpm2.Config` at all today (it is populated
     directly in Go — the `xkey tpm` CLI's `--hierarchy-auth` flag, tests),
     so `resolveConfigSecrets` never reaches them regardless of ordering.
@@ -247,7 +233,7 @@ viper reads the YAML into a map before mapstructure decodes it with
     auto-unseals from configuration at all any more — see
     `docs/seal/README.md` and `docs/xkmsd-configuration/cli.md` for the
     replacement (a registered hardware seal strategy, or operator-driven
-    `xkmsctl barrier unseal`).
+    unseal through go-qrdb's barrier surface).
 
 ## Errors
 

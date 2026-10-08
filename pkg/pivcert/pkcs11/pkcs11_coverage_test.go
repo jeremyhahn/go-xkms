@@ -56,7 +56,7 @@ func TestPinPlaintext(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got, "nil secret must produce an empty PIN, not an error")
 
-	sec, err := secure.NewSecret([]byte("123456"))
+	sec, err := secure.NewSecret(t.Context(), []byte("123456"))
 	require.NoError(t, err)
 	got, err = pinPlaintext(sec)
 	require.NoError(t, err)

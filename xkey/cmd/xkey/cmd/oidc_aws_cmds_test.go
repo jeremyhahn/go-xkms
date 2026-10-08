@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"bytes"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -90,28 +91,36 @@ func TestAWSPathHelpers_ExpandTilde(t *testing.T) {
 // suffices. See oidc_aws_barrier_test.go for the barrier-or-fallback
 // decision itself.
 
-// TestStoreAWSSession_CreatesParentDirWithPrivateFile complements the
-// existing round-trip test by pinning the two properties that matter for
-// safety: the parent directory is created on demand, and the file holding
-// the refresh token is owner-only.
-func TestStoreAWSSession_CreatesParentDirWithPrivateFile(t *testing.T) {
+// TestStoreAWSSession_CreatesPrivateStore complements the existing
+// round-trip test by pinning the two properties that matter for safety: the
+// store directory is created on demand and owner-only, and every file
+// holding the refresh token is owner-only.
+func TestStoreAWSSession_CreatesPrivateStore(t *testing.T) {
 	cmd := &cobra.Command{}
-	path := filepath.Join(t.TempDir(), "nested", "aws-session.json")
+	store := filepath.Join(t.TempDir(), "nested", "aws-session")
 
-	require.NoError(t, storeAWSSession(cmd, path, AWSStoredSession{
+	require.NoError(t, storeAWSSession(cmd, store, AWSStoredSession{
 		Region: "us-east-1", RefreshToken: "refresh-token-value",
 	}))
 
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0600), info.Mode().Perm(),
-		"a stored refresh token must not be readable by other users")
-
-	dirInfo, err := os.Stat(filepath.Dir(path))
+	dirInfo, err := os.Stat(store)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0700), dirInfo.Mode().Perm())
 
-	got, err := loadAWSSession(cmd, path)
+	require.NoError(t, filepath.WalkDir(store, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		assert.Equal(t, os.FileMode(0600), info.Mode().Perm(),
+			"%s: a stored refresh token must not be readable by other users", path)
+		return nil
+	}))
+
+	got, err := loadAWSSession(cmd, store)
 	require.NoError(t, err)
 	assert.Equal(t, "refresh-token-value", got.RefreshToken)
 }
@@ -121,10 +130,10 @@ func TestStoreAWSSession_ExpandsTilde(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	require.NoError(t, storeAWSSession(cmd, "~/aws/session.json", AWSStoredSession{Region: "eu-west-1"}))
-	assert.FileExists(t, filepath.Join(home, "aws", "session.json"))
+	require.NoError(t, storeAWSSession(cmd, "~/aws/session", AWSStoredSession{Region: "eu-west-1"}))
+	assert.DirExists(t, filepath.Join(home, "aws", "session"))
 
-	got, err := loadAWSSession(cmd, "~/aws/session.json")
+	got, err := loadAWSSession(cmd, "~/aws/session")
 	require.NoError(t, err)
 	assert.Equal(t, "eu-west-1", got.Region)
 }
@@ -133,11 +142,14 @@ func TestLoadAWSSession_MissingAndCorrupt(t *testing.T) {
 	cmd := &cobra.Command{}
 	dir := t.TempDir()
 
-	_, err := loadAWSSession(cmd, filepath.Join(dir, "absent.json"))
+	_, err := loadAWSSession(cmd, filepath.Join(dir, "absent"))
 	assert.ErrorIs(t, err, xkms.ErrStorageNotFound)
 
-	corrupt := filepath.Join(dir, "corrupt.json")
-	require.NoError(t, os.WriteFile(corrupt, []byte("{not json"), 0600))
+	corrupt := filepath.Join(dir, "corrupt")
+	backend, err := xkms.NewFileStorageBackend(corrupt)
+	require.NoError(t, err)
+	require.NoError(t, backend.Put(t.Context(), awsSessionStoreKey, []byte("{not json")))
+	require.NoError(t, backend.Close())
 	_, err = loadAWSSession(cmd, corrupt)
 	assert.Error(t, err)
 }

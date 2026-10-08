@@ -15,7 +15,11 @@
 
 package pkcs11
 
-import "github.com/jeremyhahn/go-xkms/pkg/types"
+import (
+	"context"
+
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+)
 
 // secretValueString materializes sv's plaintext into a plain Go string for
 // test setup that drives miekg/pkcs11 calls (NewSessionPool, Login,
@@ -27,6 +31,6 @@ import "github.com/jeremyhahn/go-xkms/pkg/types"
 // test fixtures and is not worth threading a *testing.T through every call
 // site for. A nil sv (PIN not configured) yields "".
 func secretValueString(sv *types.SecretValue) string {
-	b, _ := types.SecretValueBytes(sv)
+	b, _ := types.SecretValueBytes(context.Background(), sv)
 	return string(b)
 }

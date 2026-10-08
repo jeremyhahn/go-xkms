@@ -15,6 +15,7 @@ package datastore
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -23,61 +24,47 @@ import (
 	qrdbrest "github.com/jeremyhahn/go-qrdb/sdk/go/transport/rest"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 )
 
-// remoteTransportFactory provides O(1) qrdb-transport dispatch for remote
-// (clustered) qrdb storage. Each constructor builds a transport.Transport
-// from the supplied options.
+// remoteTransportFactory provides O(1) qrdb-transport dispatch for a remote
+// datastore. Each constructor builds a transport.Transport from the supplied
+// options.
 var remoteTransportFactory = map[string]func(...qrdbtransport.Option) (qrdbtransport.Transport, error){
 	"rest": func(opts ...qrdbtransport.Option) (qrdbtransport.Transport, error) { return qrdbrest.New(opts...) },
 	"grpc": func(opts ...qrdbtransport.Option) (qrdbtransport.Transport, error) { return qrdbgrpc.New(opts...) },
 }
 
-// DialRemote dials a remote, already-running qrdb cluster over cfg.Transport
-// ("rest" or "grpc") and wraps the resulting KV client as a storage.Backend.
-// This is the single implementation of remote-datastore dialing in the
-// stack: Server.initializeQRDBStorage uses it for an xkmsd-hosted deployment
-// with datastore.mode=="remote", and Open (below) uses it for callers
-// without a *Server (the SDK/library composition path) -- go-xkms#1345
-// batch 2 moved it out of pkg/server so there is exactly one implementation.
-func DialRemote(ctx context.Context, cfg config.DatastoreRemoteConfig) (storage.Backend, error) {
+// DialRemote dials an already-running qrdb cluster over cfg.Transport
+// ("rest" or "grpc") and returns the connected SDK client, which the caller
+// closes. It is the one implementation of remote-datastore dialing: Open
+// uses it for datastore.mode "remote", for xkmsd and SDK callers alike.
+func DialRemote(ctx context.Context, cfg config.DatastoreRemoteConfig) (*qrdbsdk.Client, error) {
 	transport := strings.ToLower(strings.TrimSpace(cfg.Transport))
 	constructor, ok := remoteTransportFactory[transport]
 	if !ok {
 		return nil, &ErrUnsupportedStorageBackend{Backend: "qrdb:" + transport}
 	}
 
-	opts := TransportOptions(cfg)
-
-	rt, err := constructor(opts...)
+	rt, err := constructor(TransportOptions(cfg)...)
 	if err != nil {
-		return nil, err
+		return nil, &ErrDialRemote{Transport: transport, Address: cfg.Address, Err: err}
 	}
 
 	client, err := qrdbsdk.NewClient(rt)
 	if err != nil {
-		return nil, err
+		return nil, &ErrDialRemote{Transport: transport, Address: cfg.Address, Err: errors.Join(err, rt.Close())}
 	}
 
 	if err := client.Connect(ctx); err != nil {
-		return nil, err
+		return nil, &ErrDialRemote{Transport: transport, Address: cfg.Address, Err: errors.Join(err, client.Close())}
 	}
-
-	// NewBackend wraps the KV client without owning its lifecycle, so wrap it
-	// in a backend whose Close tears down the SDK client (which in turn
-	// closes the transport).
-	return &remoteBackend{
-		Backend: qrdbstorage.NewBackend(client.KV()),
-		client:  client,
-	}, nil
+	return client, nil
 }
 
 // TransportOptions builds the qrdb transport options from the datastore
 // remote config: address plus TLS when a CA file is configured.
 func TransportOptions(cfg config.DatastoreRemoteConfig) []qrdbtransport.Option {
-	opts := make([]qrdbtransport.Option, 0, 3)
+	opts := make([]qrdbtransport.Option, 0, 2)
 
 	if cfg.Address != "" {
 		opts = append(opts, qrdbtransport.WithAddress(cfg.Address))
@@ -92,26 +79,4 @@ func TransportOptions(cfg config.DatastoreRemoteConfig) []qrdbtransport.Option {
 	}
 
 	return opts
-}
-
-// remoteBackend wraps a remote qrdb storage.Backend together with the SDK
-// client that backs it so Close tears down both in one step. The embedded
-// *qrdbstorage.Backend provides all storage operations.
-type remoteBackend struct {
-	*qrdbstorage.Backend
-	client *qrdbsdk.Client
-}
-
-// Close tears down the SDK client (and its transport) backing this remote
-// storage. The embedded backend's own Close is a no-op for externally-
-// provided clients, so closing the client is sufficient.
-func (b *remoteBackend) Close() error {
-	return b.client.Close()
-}
-
-// Client returns the go-qrdb SDK client dialed to the remote cluster,
-// implementing ClientBackend so DatabaseKVStore can reach capabilities
-// (per-database scoping, database management) beyond storage.Backend.
-func (b *remoteBackend) Client() *qrdbsdk.Client {
-	return b.client
 }

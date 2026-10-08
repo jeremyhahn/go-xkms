@@ -116,6 +116,7 @@ that were set up, and the SSH public key and fingerprint — never a secret.
 xkey version; xkey config init      # default config file (--force overwrites)
 xkey config show                    # effective config as YAML; config path lists search order
 xkey barrier init --strategy tpm2   # first time only: software|tpm2|pkcs11 (default auto-detect)
+# pkcs11: add --pkcs11-library <module> --pkcs11-token <label>; the token PIN is the first stdin line, sealed to the TPM
 xkey barrier status --json          # sealed? which strategy?
 xkey barrier unseal --auto          # TPM-policy auto-unseal, reads no secret
 xkey barrier unseal < "$BARRIER_PASSWORD_FILE"   # otherwise, password on stdin
@@ -415,16 +416,6 @@ xkey agent approve <request-id>                        # or: xkey agent reject <
 xkey agent remove <agent-id>                           # revoke an enrolled agent
 xkey device enroll --server master.example.com:9443 --xkmsd-url <url> --name build-01
 xkey device connect <address>
-```
-
-## Shamir shares (server barrier custody)
-
-```bash
-xkey share receive --server grpcs://kms.example.com:9090
-xkey share list
-xkey share unseal --server grpcs://kms.example.com:9090 --group-id <id> --share-index 1
-xkey share export --server <url> --group-id <id> --share-index 1 --file share.json   # share import --file reads it back
-xkey share delete --server <url> --group-id <id> --share-index 1
 ```
 
 ## Backup and restore

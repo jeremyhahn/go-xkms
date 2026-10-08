@@ -1395,7 +1395,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 	}
 
 	// Seal the private key; only the public key stays in plaintext.
-	wrappingKey, err := importtoken.NewSealedRSAKey(privateKey)
+	wrappingKey, err := importtoken.NewSealedRSAKey(ctx, privateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1518,7 +1518,7 @@ func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMate
 
 	// entry.Unwrap refuses wrapped.Algorithm unless it matches the
 	// algorithm GetImportParameters issued this token for (go-xkms#1342).
-	unwrapped, err := entry.Unwrap(wrapped.Algorithm, wrapped.WrappedKey)
+	unwrapped, err := entry.Unwrap(ctx, wrapped.Algorithm, wrapped.WrappedKey)
 	if err != nil {
 		return nil, err
 	}

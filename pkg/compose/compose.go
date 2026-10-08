@@ -19,19 +19,17 @@ import (
 	"log/slog"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-
-	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
+	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -46,13 +44,12 @@ type Deps struct {
 	Service *xkms.XKMSService
 
 	// Storage opens the backend each feature persists under. Enables the
-	// Password Manager, SSH, key versions, and — together with their own
-	// dependency — the platform store, CA and TPM policies.
+	// Password Manager, SSH, and — together with their own dependency — the
+	// platform store, CA and TPM policies.
 	Storage StorageFactory
 
 	// BarrierRegistry is the tenant barrier registry. Enables per-tenant
-	// Password Manager routing, the "barrier" credential strategy, and —
-	// with ServeBarrier — the system barrier behind the barrier routes.
+	// Password Manager routing and the "barrier" credential strategy.
 	BarrierRegistry *seal.BarrierRegistry
 
 	// PIN is the PIN backend whose user PIN opens a tenant Password
@@ -69,28 +66,23 @@ type Deps struct {
 	CredentialStrategy string
 
 	// CA enables the Certificate Authority, keyed in the Service's
-	// backends by each CA key's store type.
+	// backends by each CA key's store type. It needs DAOs and Storage.
 	CA *ca.MultiIdentityCAConfig
 
-	// TPMBackend is the TPM2 key backend. With Storage it enables the TPM
-	// policy service, which Build installs as the backend's scope provider.
+	// DAOs serves the go-qrdb database of each feature that persists through
+	// DAOs; Databases names them, for the composition root to open first.
+	// Enables key versions; with CA and Storage, the Certificate Authority;
+	// with TPMBackend and Storage, the TPM policy service.
+	DAOs *qrdbsdk.DAOFactory
+
+	// TPMBackend is the TPM2 key backend. With DAOs and Storage it enables
+	// the TPM policy service, which Build installs as the backend's scope
+	// provider.
 	TPMBackend *tpm2backend.Backend
 
 	// VTPM configures the TPM policy service's per-tenant vTPMs. Nil
 	// leaves vtpm mode unavailable.
 	VTPM *vtpm.Config
-
-	// Custodians and Shares are the host's qrdb node custody clients
-	// (qrdb Client.CustodianGroups / Client.Shares). With ServeBarrier they
-	// enable share custody: custodian groups and share collection.
-	Custodians qrdbtransport.CustodianGroupClient
-	Shares     qrdbtransport.ShareClient
-
-	// ServeBarrier wires the registry's system barrier and the custody
-	// clients into the Service, so the barrier, custodian and share
-	// surfaces operate on the host's qrdb node. Off by default: a host that
-	// owns its barrier keeps it out of xkms's reach.
-	ServeBarrier bool
 
 	// Leases is the host qrdb node's lease primitive
 	// (qrdbsdk.Client.Coordination()), which serializes OIDC credential
@@ -106,12 +98,7 @@ type Deps struct {
 	PasskeyRelyingParty string
 
 	// Audit receives the OIDC credential events. Nil logs them only.
-	Audit audit.Logger
-
-	// Backup is the host's qrdb node backup client (qrdb Client.Backup()).
-	// Unlike Custodians/Shares it is not gated on ServeBarrier: whole-node
-	// backup/restore is independent of barrier custody (go-xkms#728).
-	Backup qrdbtransport.BackupClient
+	Audit qrdbsdk.NodeAuditLogger
 
 	// Logger receives one line per feature built or left off. Nil selects
 	// slog.Default().
@@ -153,22 +140,27 @@ type Stores struct {
 	// refresh scheduler running.
 	OIDCCredentials *credential.Service
 
-	// Barrier is the system barrier the barrier routes operate on.
-	Barrier *seal.Barrier
-
-	// Custodians and Shares back share custody.
-	Custodians qrdbtransport.CustodianGroupClient
-	Shares     qrdbtransport.ShareClient
-
 	// Invite is the enrollment-invitation store (go-xkms#1294 part B).
 	Invite xkms.InviteStore
-
-	// Backup is the whole-node backup client (go-xkms#728).
-	Backup qrdbtransport.BackupClient
 
 	// Disabled holds one *FeatureDisabledError or *FeatureBuildError per
 	// feature Build left off.
 	Disabled []error
+}
+
+// Databases returns the go-qrdb databases that the DAO-backed features d
+// supplies the other dependencies for persist in. A composition root opens
+// each on its datastore and sets d.DAOs to the factory serving them before
+// Build; a root that opens none leaves those features off.
+func Databases(d Deps) []string {
+	databases := []string{keyversion.DatabaseName}
+	if d.CA != nil {
+		databases = append(databases, certstore.DatabaseName)
+	}
+	if d.TPMBackend != nil {
+		databases = append(databases, tpmpolicy.DatabaseName)
+	}
+	return databases
 }
 
 // Build composes every feature d supplies the dependencies for, logging
@@ -222,10 +214,13 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 		})
 	}
 
-	if b.need(FeatureCA, d.CA != nil, "CA configuration") && b.need(FeatureCA, d.Storage != nil, "storage") {
+	if b.need(FeatureCA, d.CA != nil, "CA configuration") &&
+		b.need(FeatureCA, d.DAOs != nil, "DAO factory") &&
+		b.need(FeatureCA, d.Storage != nil, "storage") {
 		st.CA = built(b, FeatureCA, func() (ca.TrustedCA, error) {
 			return BuildCA(ctx, CAParams{
 				Config:          d.CA,
+				DAOs:            d.DAOs,
 				Storage:         d.Storage,
 				BackendForStore: backendForStore(d.Service),
 				Logger:          b.logger,
@@ -233,10 +228,13 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 		})
 	}
 
-	if b.need(FeatureTPMPolicies, d.TPMBackend != nil, "TPM2 backend") && b.need(FeatureTPMPolicies, d.Storage != nil, "storage") {
+	if b.need(FeatureTPMPolicies, d.TPMBackend != nil, "TPM2 backend") &&
+		b.need(FeatureTPMPolicies, d.DAOs != nil, "DAO factory") &&
+		b.need(FeatureTPMPolicies, d.Storage != nil, "storage") {
 		st.TPMPolicies = built(b, FeatureTPMPolicies, func() (*tpmpolicy.Service, error) {
 			return BuildTPMPolicyService(TPMPolicyParams{
 				Backend: d.TPMBackend,
+				DAOs:    d.DAOs,
 				Storage: d.Storage,
 				VTPM:    d.VTPM,
 				Logger:  b.logger,
@@ -244,20 +242,10 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 		})
 	}
 
-	if b.need(FeatureKeyVersions, d.Storage != nil, "storage") {
+	if b.need(FeatureKeyVersions, d.DAOs != nil, "DAO factory") {
 		st.KeyVersions = built(b, FeatureKeyVersions, func() (*keyversion.Store, error) {
-			return BuildKeyVersionStore(d.Storage)
+			return BuildKeyVersionStore(d.DAOs)
 		})
-	}
-
-	if d.ServeBarrier && b.need(FeatureBarrier, systemBarrier != nil, "barrier registry") {
-		st.Barrier = systemBarrier
-		b.logger.Info("xkms feature on", "feature", FeatureBarrier)
-	}
-	if d.ServeBarrier && b.need(FeatureCustody, d.Custodians != nil && d.Shares != nil, "custody clients") {
-		st.Custodians = d.Custodians
-		st.Shares = d.Shares
-		b.logger.Info("xkms feature on", "feature", FeatureCustody)
 	}
 
 	if b.need(FeatureOIDCCredentials, d.BarrierRegistry != nil, "barrier registry") &&
@@ -276,11 +264,6 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 		st.Invite = built(b, FeatureInvite, func() (xkms.InviteStore, error) {
 			return BuildInviteStore(d.Storage)
 		})
-	}
-
-	if b.need(FeatureBackup, d.Backup != nil, "backup client") {
-		st.Backup = d.Backup
-		b.logger.Info("xkms feature on", "feature", FeatureBackup)
 	}
 
 	return st, nil
@@ -320,20 +303,8 @@ func (st *Stores) Wire(svc *xkms.XKMSService) {
 	if caProvider, ok := st.CA.(provider.CA); ok {
 		svc.SetCA(caProvider)
 	}
-	if st.Barrier != nil {
-		svc.SetBarrier(st.Barrier)
-	}
-	if st.Custodians != nil {
-		svc.SetCustodianClient(st.Custodians)
-	}
-	if st.Shares != nil {
-		svc.SetShareClient(st.Shares)
-	}
 	if st.Invite != nil {
 		svc.SetInviteStore(st.Invite)
-	}
-	if st.Backup != nil {
-		svc.SetBackupClient(st.Backup)
 	}
 }
 

@@ -21,23 +21,29 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/compose"
 )
 
 // TestOpenDatastore_StandaloneMemoryEngine proves the SDK re-export opens a
 // working datastore for an embedder that never imports pkg/config or
-// pkg/datastore directly. Engine "memory" still requires a Path: go-qrdb
+// pkg/datastore directly, and that DatastoreStorage's backend writes through
+// to the datastore's client. Engine "memory" still requires a Path: go-qrdb
 // roots the node's on-disk state under it regardless of the primary KV
 // engine.
 func TestOpenDatastore_StandaloneMemoryEngine(t *testing.T) {
+	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	backend, err := OpenDatastore(context.Background(), DatastoreConfig{Engine: "memory", Path: t.TempDir()}, logger)
+	ds, err := OpenDatastore(ctx, DatastoreConfig{Engine: "memory", Path: t.TempDir()}, logger)
 	require.NoError(t, err)
-	require.NotNil(t, backend)
-	defer func() { _ = backend.Close() }()
+	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
 
-	require.NoError(t, backend.Put(context.Background(), "k", []byte("v")))
-	got, err := backend.Get(context.Background(), "k")
+	backend, err := DatastoreStorage(ds.DAOFactory())
+	require.NoError(t, err)
+	require.NoError(t, backend.Put(ctx, "k", []byte("v")))
+
+	got, err := ds.Client().KVStore().Get(ctx, "k")
 	require.NoError(t, err)
 	assert.Equal(t, []byte("v"), got)
 }
@@ -58,4 +64,12 @@ func TestOpenDatastore_MissingPath(t *testing.T) {
 
 	_, err := OpenDatastore(context.Background(), DatastoreConfig{Engine: "memory"}, logger)
 	require.Error(t, err)
+}
+
+// TestDatastoreStorage_RejectsNilFactory proves a missing DAO factory is
+// refused with a typed error and no backend.
+func TestDatastoreStorage_RejectsNilFactory(t *testing.T) {
+	backend, err := DatastoreStorage(nil)
+	assert.True(t, backend == nil, "a refusal must return a nil interface, not a typed nil")
+	assert.ErrorIs(t, err, compose.ErrNilDAOFactory)
 }

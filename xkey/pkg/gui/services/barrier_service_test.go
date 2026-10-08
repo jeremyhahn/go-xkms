@@ -314,7 +314,8 @@ func TestBarrierService_GetSealInfo_NotInitialized(t *testing.T) {
 	assert.False(t, info.Initialized, "barrier should not be initialized")
 	assert.False(t, info.Sealed, "uninitialized barrier should not report sealed")
 	assert.Empty(t, info.Strategy, "uninitialized barrier should have no strategy")
-	assert.NotEmpty(t, info.RootKeyPath, "root key path should always be populated")
+	assert.NotEmpty(t, info.DataDir, "data directory should always be populated")
+	assert.Equal(t, barrierRootKeyPath, info.RootKeyEntry)
 }
 
 func TestBarrierService_GetSealInfo_AfterInitialize(t *testing.T) {
@@ -330,7 +331,7 @@ func TestBarrierService_GetSealInfo_AfterInitialize(t *testing.T) {
 	assert.Equal(t, string(xkms.StrategyPassphrase), info.Strategy)
 	assert.NotEmpty(t, info.StrategyLabel)
 	assert.False(t, info.HardwareBacked, "software strategy should not be hardware-backed")
-	assert.Contains(t, info.RootKeyPath, "barrier/root_key")
+	assert.Equal(t, "barrier/root_key", info.RootKeyEntry)
 }
 
 func TestBarrierService_GetSealInfo_AfterSeal(t *testing.T) {
@@ -522,10 +523,9 @@ func TestBarrierService_GetSealInfo_NotInitializedWithDataDir(t *testing.T) {
 	assert.False(t, info.Sealed)
 	assert.Empty(t, info.Strategy)
 
-	// RootKeyPath should default to the primary (dataDir) path.
-	expectedPath := filepath.Join(dataDir, barrierRootKeyPath)
-	assert.Equal(t, expectedPath, info.RootKeyPath,
-		"RootKeyPath should default to primary path when not initialized")
+	// DataDir should default to the primary (dataDir) path.
+	assert.Equal(t, dataDir, info.DataDir,
+		"DataDir should default to primary path when not initialized")
 }
 
 // ---------------------------------------------------------------------------

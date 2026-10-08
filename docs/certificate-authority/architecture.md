@@ -1,6 +1,6 @@
 # Certificate Authority — Architecture
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-01
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## The problem
 
@@ -65,9 +65,9 @@ Rejected alternatives:
 | Hybrid / PQ certificate paths | `pkg/ca/hybrid.go` | go-xkms |
 | TPM attestation import and verification | `pkg/ca/attestation.go` | go-xkms |
 | TCG EK/AK enrollment | `CATCGEnrollment` in `pkg/ca` | go-xkms |
-| Certificate storage adapter | `pkg/certstore` | go-xkms |
+| Certificate store — certificate and chain entities on a go-qrdb DAO, in the CA's `ca` database | `pkg/certstore` | go-xkms |
 | Signing keys | `pkg/xkms` keystore — see [`../crypto-backends/`](../crypto-backends/architecture.md) | go-xkms |
-| Certificate and serial blobs | go-objstore | **go-objstore** |
+| Certificate records (DAO, database, node) | `go-qrdb/sdk/go` | **go-qrdb** |
 | Ceremony that drives first CA creation | go-qrdb's ceremony; `pkg/init` `CAAdapter` bridges `TrustedCA` → qrdb's `CeremonyCA` | **go-qrdb** owns the seam |
 | ACME RFC 8555 on top of this CA | `pkg/acme` — see [`../acme/`](../acme/architecture.md) | go-xkms |
 
@@ -87,7 +87,7 @@ CSR (PEM)
       → policy + extension construction (pkg/ca/ca_extensions.go, certpolicy)
         → CASigningIdentity.Signer(ctx)      — a crypto.Signer from the keystore
           → the backend signs; the private key never leaves the device
-      → certstore persists the certificate; serial recorded
+      → certstore persists the certificate entity (qrdb DAO); serial recorded
     ← *x509.Certificate
 ```
 

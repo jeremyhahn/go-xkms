@@ -14,6 +14,7 @@
 package pwimport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -64,8 +65,9 @@ func (i *Importer) DetectFormat(filePath string) string {
 	}
 }
 
-// Import performs the import operation with the given options.
-func (i *Importer) Import(opts *ImportOptions) (*ImportResult, error) {
+// Import performs the import operation with the given options, holding the
+// parsed passwords in protected memory under ctx.
+func (i *Importer) Import(ctx context.Context, opts *ImportOptions) (*ImportResult, error) {
 	startTime := time.Now()
 
 	result := &ImportResult{}
@@ -86,14 +88,14 @@ func (i *Importer) Import(opts *ImportOptions) (*ImportResult, error) {
 	}
 
 	// Parse the file.
-	entries, err := parser.Parse(opts.FilePath, opts)
+	entries, err := parser.Parse(ctx, opts.FilePath, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	// Import each entry.
 	for _, entry := range entries {
-		sp, err := entry.ToStaticPassword()
+		sp, err := entry.ToStaticPassword(ctx)
 		if err != nil {
 			result.Failed++
 			result.Errors = append(result.Errors, ImportError{
@@ -165,7 +167,7 @@ func (i *Importer) Import(opts *ImportOptions) (*ImportResult, error) {
 
 // Preview parses the file and returns the entries without storing them.
 // This allows users to preview what will be imported.
-func (i *Importer) Preview(opts *ImportOptions) ([]*ParsedEntry, error) {
+func (i *Importer) Preview(ctx context.Context, opts *ImportOptions) ([]*ParsedEntry, error) {
 	// Auto-detect format if not specified.
 	format := opts.Format
 	if format == "" {
@@ -181,7 +183,7 @@ func (i *Importer) Preview(opts *ImportOptions) ([]*ParsedEntry, error) {
 		return nil, &DetailError{Err: ErrUnsupportedFormat, Detail: fmt.Sprintf(": %s", format)}
 	}
 
-	return parser.Parse(opts.FilePath, opts)
+	return parser.Parse(ctx, opts.FilePath, opts)
 }
 
 // SupportedFormats returns a list of supported import formats.

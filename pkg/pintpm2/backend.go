@@ -24,6 +24,7 @@ package pintpm2
 
 import (
 	"crypto/sha256"
+	"errors"
 	"sync/atomic"
 
 	"github.com/jeremyhahn/go-enclave"
@@ -135,7 +136,9 @@ func (b *TPM2Backend) ChangeUserPIN(currentUserPIN, newUserPIN string) error {
 		ready := b.platformStore.IsAuthReady()
 		b.userPINSet.Store(ready)
 		if !ready {
-			b.dropFIDO2Hash()
+			if dropErr := b.dropFIDO2Hash(); dropErr != nil {
+				err = errors.Join(err, dropErr)
+			}
 		}
 		if isAuthError(err) {
 			return b.buildAuthFailureError()
@@ -222,11 +225,22 @@ func (b *TPM2Backend) VerifyFIDO2Hash(hash []byte) bool {
 }
 
 // Close destroys the MemoryEnclave holding the FIDO2 hash. Safe to call
-// multiple times.
-func (b *TPM2Backend) Close() {
+// multiple times. It returns ErrFIDO2HashDestroyFailed when the enclave
+// cannot be wiped.
+func (b *TPM2Backend) Close() error {
 	if enc := b.fido2Enclave.Load(); enc != nil {
-		enc.Destroy()
+		return destroyFIDO2Enclave(enc)
 	}
+	return nil
+}
+
+// destroyFIDO2Enclave wipes enc, reporting a failure as
+// ErrFIDO2HashDestroyFailed.
+func destroyFIDO2Enclave(enc *enclave.MemoryEnclave) error {
+	if err := enc.Destroy(); err != nil {
+		return &errs.Joined{Lead: ErrFIDO2HashDestroyFailed, Cause: err}
+	}
+	return nil
 }
 
 // buildAuthFailureError queries TPM DA lockout state and returns the
@@ -266,27 +280,35 @@ func (b *TPM2Backend) cacheFIDO2Hash(pinBytes []byte) error {
 	alloc, err := enclave.ProcessAllocator()
 	if err != nil {
 		enclave.Wipe(digest[:])
-		b.dropFIDO2Hash()
-		return &errs.Joined{Lead: ErrFIDO2HashCacheFailed, Cause: err}
+		return b.failFIDO2HashCache(err)
 	}
 	enc, err := alloc.New(digest[:qrdbsdk.FIDO2PINHashSize])
 	enclave.Wipe(digest[:])
 	if err != nil {
-		b.dropFIDO2Hash()
-		return &errs.Joined{Lead: ErrFIDO2HashCacheFailed, Cause: err}
+		return b.failFIDO2HashCache(err)
 	}
 	if old := b.fido2Enclave.Swap(enc); old != nil {
-		old.Destroy()
+		return destroyFIDO2Enclave(old)
 	}
 	return nil
 }
 
+// failFIDO2HashCache discards the cached hash and reports cause as
+// ErrFIDO2HashCacheFailed, joined with any failure to wipe the discarded hash.
+func (b *TPM2Backend) failFIDO2HashCache(cause error) error {
+	if dropErr := b.dropFIDO2Hash(); dropErr != nil {
+		cause = errors.Join(cause, dropErr)
+	}
+	return &errs.Joined{Lead: ErrFIDO2HashCacheFailed, Cause: cause}
+}
+
 // dropFIDO2Hash destroys the cached FIDO2 hash, if any, so VerifyFIDO2Hash
 // reports false until a new hash is cached.
-func (b *TPM2Backend) dropFIDO2Hash() {
+func (b *TPM2Backend) dropFIDO2Hash() error {
 	if enc := b.fido2Enclave.Swap(nil); enc != nil {
-		enc.Destroy()
+		return destroyFIDO2Enclave(enc)
 	}
+	return nil
 }
 
 // validatePINLength enforces the uniform 6-character minimum across all

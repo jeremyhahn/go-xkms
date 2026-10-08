@@ -329,12 +329,12 @@ func TestVault_WrapsAreBoundToTheirUser(t *testing.T) {
 	require.NoError(t, err)
 
 	dek := bytes.Repeat([]byte{7}, dekLength)
-	f, err := alice.wrap(pass(t, "same"), dek)
+	f, err := alice.wrap(t.Context(), pass(t, "same"), dek)
 	require.NoError(t, err)
-	got, err := alice.unwrap(f, pass(t, "same").Secret)
+	got, err := alice.unwrap(t.Context(), f, pass(t, "same").Secret)
 	require.NoError(t, err)
 	assert.Equal(t, dek, got)
-	_, err = bob.unwrap(f, pass(t, "same").Secret)
+	_, err = bob.unwrap(t.Context(), f, pass(t, "same").Secret)
 	assert.ErrorIs(t, err, ErrVaultCredentialRejected)
 }
 

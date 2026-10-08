@@ -65,7 +65,7 @@ func (e *errActivator) ActivateCredential([]byte, []byte) ([]byte, error) {
 func TestTPMKEKStrategy_KEKProtectionRequiresSeed(t *testing.T) {
 	s := &tpmKEKStrategy{}
 
-	protection, err := s.kekProtection()
+	protection, err := s.kekProtection(t.Context())
 	require.ErrorIs(t, err, ErrSeedUnavailable)
 	assert.Empty(t, protection.Passphrase)
 	assert.Empty(t, protection.Mode)
@@ -80,9 +80,9 @@ func TestTPMKEKStrategy_KEKIsSeedDerivedAndDistinct(t *testing.T) {
 	b := &tpmKEKStrategy{seed: make([]byte, clusterSeedLen)}
 	b.seed[0] = 1
 
-	pa, err := a.kekProtection()
+	pa, err := a.kekProtection(t.Context())
 	require.NoError(t, err)
-	pb, err := b.kekProtection()
+	pb, err := b.kekProtection(t.Context())
 	require.NoError(t, err)
 
 	assert.Equal(t, KeyProtectPassphrase, pa.Mode)

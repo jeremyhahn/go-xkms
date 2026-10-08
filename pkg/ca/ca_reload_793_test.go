@@ -18,9 +18,12 @@ import (
 	"errors"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,8 +64,7 @@ func setupTestCAWithoutExplicitKeyType(t *testing.T) (initialized *CA, keyStorag
 	})
 	require.NoError(t, err)
 
-	certAdapter := storage.NewCertAdapter(storage.NewMemory())
-	cs, err := certstore.New(&certstore.Config{CertStorage: certAdapter})
+	cs, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	config := DefaultMultiIdentityCAConfig()
@@ -135,8 +137,7 @@ func TestCA_Load_NeverInitialized_ReturnsErrCertificateNotFound(t *testing.T) {
 	backend, err := xkms.New(&xkms.BackendConfig{Backend: swBackend, CertStorage: storage.NewMemory()})
 	require.NoError(t, err)
 
-	certAdapter := storage.NewCertAdapter(storage.NewMemory())
-	cs, err := certstore.New(&certstore.Config{CertStorage: certAdapter})
+	cs, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 
 	config := DefaultMultiIdentityCAConfig()
@@ -173,9 +174,10 @@ func TestCA_Load_CorruptPersistedCertificate_DoesNotReportNotFound(t *testing.T)
 	backend, err := xkms.New(&xkms.BackendConfig{Backend: swBackend, CertStorage: storage.NewMemory()})
 	require.NoError(t, err)
 
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
-	cs, err := certstore.New(&certstore.Config{CertStorage: certAdapter})
+	certRecords := qrdbsdk.NewMemoryKVStore()
+	cs, err := certstore.New(&certstore.Config{
+		DAOs: dao.NewStoreFactory(certRecords),
+	})
 	require.NoError(t, err)
 
 	config := DefaultMultiIdentityCAConfig()
@@ -192,10 +194,15 @@ func TestCA_Load_CorruptPersistedCertificate_DoesNotReportNotFound(t *testing.T)
 	require.NoError(t, err)
 	require.NoError(t, caIface.Init(context.Background()))
 
-	// Damage the persisted root certificate record directly, in place --
+	// Damage every persisted certificate record directly, in place --
 	// modeling bit rot or a truncated write, not a missing key.
-	require.NoError(t, certAdapterStorage.Put(context.Background(),
-		storage.CertPath(config.Identity[0].Subject.CommonName), []byte("not a certificate")))
+	ctx := context.Background()
+	keys, err := certRecords.List(ctx, "")
+	require.NoError(t, err)
+	require.NotEmpty(t, keys, "Init must have persisted the root certificate")
+	for _, key := range keys {
+		require.NoError(t, certRecords.Put(ctx, key, []byte("not a certificate")))
+	}
 
 	ca2 := &CA{
 		keyStore:        backend,

@@ -245,7 +245,9 @@ func newClientCert(t *testing.T, commonName string) *x509.Certificate {
 func bindClientCert(t *testing.T, client *qrdbsdk.Client, u *qrdbtransport.User) *x509.Certificate {
 	t.Helper()
 	cert := newClientCert(t, u.Username)
-	_, err := client.Users().AddCertBinding(context.Background(), u.ID, qrdbsdk.ComputeSPKIThumbprint(cert), 0)
+	// qrdb resolves the user within the context's tenant.
+	ctx := qrdbsdk.ContextWithTenant(context.Background(), u.TenantID)
+	_, err := client.Users().AddCertBinding(ctx, u.ID, qrdbsdk.ComputeSPKIThumbprint(cert), 0)
 	require.NoError(t, err)
 	return cert
 }

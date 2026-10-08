@@ -1,6 +1,6 @@
 # Datastore — User Guide
 
-> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-10-07
 
 ## What this is
 
@@ -31,9 +31,9 @@ datastore:
   path: "/var/lib/xkms/data"
 ```
 
-A `"standalone"` server with `datastore.path` unset and a non-`memory`
-engine will not start — there is no built-in default directory. Set it
-explicitly.
+A `"standalone"` server with `datastore.path` unset will not start, whatever
+the engine (`memory` included: go-qrdb keeps node state there) — there is
+no built-in default directory. Set it explicitly.
 
 ## Choosing standalone vs. remote
 
@@ -64,6 +64,32 @@ host one. See [`../clustering/user.md`](../clustering/user.md).
 RBAC has no such restriction: it works in either mode, because every
 deployment is qrdb-backed now. See [`../rbac/user.md`](../rbac/user.md).
 
+## Opening the datastore from Go (SDK)
+
+An embedder without `xkmsd` opens the same datastore through the SDK. It
+gets the go-qrdb client and a DAO factory, and can hand the key backends a
+storage view over that factory:
+
+```go
+ds, err := xkms.OpenDatastore(ctx, xkms.DatastoreConfig{
+	Engine: "pebble",
+	Path:   "/var/lib/xkms/data",
+}, logger)
+if err != nil {
+	return err
+}
+defer ds.Close()
+
+keyStorage, err := xkms.DatastoreStorage(ds.DAOFactory())
+if err != nil {
+	return err
+}
+// Pass keyStorage as AutoConfig.Datastore.
+```
+
+For a remote cluster, set `Mode: "remote"` and `Remote` (address,
+`rest` or `grpc` transport, TLS) instead of `Engine`/`Path`.
+
 ## Switching engines or modes
 
 Nothing migrates your data automatically. If you change `datastore.engine`
@@ -77,7 +103,7 @@ if one is needed), never as a config edit on a running system.
 
 | What you see | What it means | What to do |
 |---|---|---|
-| server refuses to start: "datastore.path must be specified for datastore.engine ..." | `datastore.path` is empty and the engine is not `memory` | Set `datastore.path` (or `XKMS_DATASTORE_PATH`) |
+| server refuses to start: "datastore.path must be specified for datastore.engine ..." | `datastore.path` is empty | Set `datastore.path` (or `XKMS_DATASTORE_PATH`) |
 | server refuses to start: "network protocols require datastore.mode \"standalone\"" | you enabled REST/gRPC/QUIC/MCP with `datastore.mode: remote` | switch to `standalone`, or disable those protocols and use the Unix socket |
 | server refuses to start: "invalid datastore.engine" / "invalid datastore.mode" | a typo in `datastore.engine`/`datastore.mode` | use one of `memory`/`file`/`pebble` for engine, `standalone`/`remote` for mode |
 | "storage: engine open-pebble: database already open" | two `xkmsd` processes pointed at the same `pebble` path | use separate `path` values, or run one server |

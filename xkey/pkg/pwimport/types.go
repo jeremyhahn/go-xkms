@@ -16,6 +16,7 @@
 package pwimport
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -128,8 +129,8 @@ type ParsedEntry struct {
 // newParsedPassword seals raw into a *secure.Secret for a ParsedEntry.
 // Callers must not reuse raw afterward: the copy handed to the enclave is
 // wiped on return, but the Go string itself cannot be.
-func newParsedPassword(raw string) (*secure.Secret, error) {
-	secret, err := secure.NewSecret([]byte(raw))
+func newParsedPassword(ctx context.Context, raw string) (*secure.Secret, error) {
+	secret, err := secure.NewSecret(ctx, []byte(raw))
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
 	}
@@ -143,11 +144,11 @@ func newParsedPassword(raw string) (*secure.Secret, error) {
 // stored as JSON, so ToStaticPassword cannot take bytes. The byte copy the
 // string is made from is wiped before this returns. Callers that only need to
 // compare or hash the password borrow it via Password.Open/WithBytes instead.
-func (p *ParsedEntry) passwordString() (string, error) {
+func (p *ParsedEntry) passwordString(ctx context.Context) (string, error) {
 	if p.Password == nil {
 		return "", nil
 	}
-	buf, err := p.Password.Open()
+	buf, err := p.Password.Open(ctx)
 	if err != nil {
 		return "", &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
 	}
@@ -162,7 +163,7 @@ func (p *ParsedEntry) passwordString() (string, error) {
 
 // ToStaticPassword converts a ParsedEntry to a StaticPassword. Returns
 // ErrProtectedMemory (wrapped) if the protected password cannot be opened.
-func (p *ParsedEntry) ToStaticPassword() (*xkms.StaticPassword, error) {
+func (p *ParsedEntry) ToStaticPassword(ctx context.Context) (*xkms.StaticPassword, error) {
 	now := time.Now()
 
 	createdAt := p.CreatedAt
@@ -183,7 +184,7 @@ func (p *ParsedEntry) ToStaticPassword() (*xkms.StaticPassword, error) {
 		name = "Unnamed Entry"
 	}
 
-	password, err := p.passwordString()
+	password, err := p.passwordString(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -209,8 +210,9 @@ func (p *ParsedEntry) ToStaticPassword() (*xkms.StaticPassword, error) {
 
 // Parser defines the interface for import file parsers.
 type Parser interface {
-	// Parse reads and parses the file at the given path.
-	Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry, error)
+	// Parse reads and parses the file at the given path, sealing each
+	// entry's password under ctx.
+	Parse(ctx context.Context, filePath string, opts *ImportOptions) ([]*ParsedEntry, error)
 
 	// Format returns the format this parser handles.
 	Format() string

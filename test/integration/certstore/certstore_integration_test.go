@@ -17,6 +17,7 @@
 package certstore_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -25,13 +26,18 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"io"
+	"log/slog"
 	"math/big"
 	"sync"
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,6 +45,34 @@ import (
 // ========================================================================
 // Test Helpers
 // ========================================================================
+
+// openCADatabase opens a standalone, memory-engine datastore -- a real
+// in-process go-qrdb node, the one xkmsd hands the CA -- with the CA's
+// certificate database, and returns its DAO factory and a closeNode that
+// shuts the node down so every later read and write fails.
+func openCADatabase(t *testing.T) (*qrdbsdk.DAOFactory, func() error) {
+	t.Helper()
+	ctx := context.Background()
+	cfg := &config.Config{
+		Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()},
+	}
+	ds, err := datastore.Open(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	closeNode := sync.OnceValue(ds.Close)
+	t.Cleanup(func() { require.NoError(t, closeNode()) })
+
+	_, err = ds.DatabaseKVStore(ctx, certstore.DatabaseName)
+	require.NoError(t, err)
+	return ds.DAOFactory(), closeNode
+}
+
+// newCADAOs returns the DAO factory of a fresh CA database (see
+// openCADatabase); the node closes when the test ends.
+func newCADAOs(t *testing.T) *qrdbsdk.DAOFactory {
+	t.Helper()
+	daos, _ := openCADatabase(t)
+	return daos
+}
 
 // generateTestCert generates a test certificate with the given parameters
 func generateTestCert(t *testing.T, cn string, isCA bool, parent *x509.Certificate, parentKey interface{}) (*x509.Certificate, interface{}) {
@@ -219,9 +253,9 @@ func generateCRL(t *testing.T, caCert *x509.Certificate, caKey interface{}, revo
 // ========================================================================
 
 func TestCertStore_StoreCertificate(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -239,9 +273,9 @@ func TestCertStore_StoreCertificate(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificate_MultipleTypes(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -270,21 +304,22 @@ func TestCertStore_StoreCertificate_MultipleTypes(t *testing.T) {
 }
 
 func TestCertStore_GetCertificate_NotFound(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
 
 	_, err = cs.GetCertificate("nonexistent.example.com")
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, certstore.ErrCertNotFound)
+	assert.True(t, qrdbsdk.IsDAONotFound(err), "not-found must carry the DAO's typed not-found error")
 }
 
 func TestCertStore_DeleteCertificate(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -302,9 +337,9 @@ func TestCertStore_DeleteCertificate(t *testing.T) {
 }
 
 func TestCertStore_ListCertificates(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -327,9 +362,9 @@ func TestCertStore_ListCertificates(t *testing.T) {
 }
 
 func TestCertStore_ListCertificates_Empty(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -344,9 +379,9 @@ func TestCertStore_ListCertificates_Empty(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_CertificateChain_ThreeTier(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -371,9 +406,9 @@ func TestCertStore_CertificateChain_ThreeTier(t *testing.T) {
 }
 
 func TestCertStore_CertificateChain_TwoTier(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -396,9 +431,9 @@ func TestCertStore_CertificateChain_TwoTier(t *testing.T) {
 }
 
 func TestCertStore_CertificateChain_NotFound(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -412,9 +447,9 @@ func TestCertStore_CertificateChain_NotFound(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_CRL_StoreAndRetrieve(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -434,9 +469,9 @@ func TestCertStore_CRL_StoreAndRetrieve(t *testing.T) {
 }
 
 func TestCertStore_CRL_MultipleCAs(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -464,9 +499,9 @@ func TestCertStore_CRL_MultipleCAs(t *testing.T) {
 }
 
 func TestCertStore_CRL_NotFound(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -481,9 +516,9 @@ func TestCertStore_CRL_NotFound(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_VerifyCertificate_ValidChain(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -501,7 +536,7 @@ func TestCertStore_VerifyCertificate_ValidChain(t *testing.T) {
 }
 
 func TestCertStore_VerifyCertificate_WithIntermediates(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 
 	// Create certificate chain
 	rootCert, rootKey := generateTestCert(t, "root.example.com", true, nil, nil)
@@ -513,7 +548,7 @@ func TestCertStore_VerifyCertificate_WithIntermediates(t *testing.T) {
 	intermediates.AddCert(intermediateCert)
 
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 		VerifyOptions: &x509.VerifyOptions{
 			Intermediates: intermediates,
 		},
@@ -530,9 +565,9 @@ func TestCertStore_VerifyCertificate_WithIntermediates(t *testing.T) {
 }
 
 func TestCertStore_VerifyCertificate_UntrustedRoot(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -555,9 +590,9 @@ func TestCertStore_VerifyCertificate_UntrustedRoot(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_IsRevoked_NotRevoked(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -576,9 +611,9 @@ func TestCertStore_IsRevoked_NotRevoked(t *testing.T) {
 }
 
 func TestCertStore_IsRevoked_Revoked(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -597,9 +632,9 @@ func TestCertStore_IsRevoked_Revoked(t *testing.T) {
 }
 
 func TestCertStore_IsRevoked_NoCRL(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -614,9 +649,9 @@ func TestCertStore_IsRevoked_NoCRL(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificate_Revoked_WithoutAllowRevoked(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage:  storage.NewCertAdapter(backend),
+		DAOs:         daos,
 		AllowRevoked: false,
 	})
 	require.NoError(t, err)
@@ -637,9 +672,9 @@ func TestCertStore_StoreCertificate_Revoked_WithoutAllowRevoked(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificate_Revoked_WithAllowRevoked(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage:  storage.NewCertAdapter(backend),
+		DAOs:         daos,
 		AllowRevoked: true,
 	})
 	require.NoError(t, err)
@@ -663,9 +698,9 @@ func TestCertStore_StoreCertificate_Revoked_WithAllowRevoked(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_StoreCertificate_Expired(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -678,9 +713,9 @@ func TestCertStore_StoreCertificate_Expired(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificate_NotYetValid(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -693,9 +728,9 @@ func TestCertStore_StoreCertificate_NotYetValid(t *testing.T) {
 }
 
 func TestCertStore_CRL_Expired(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -735,9 +770,9 @@ func TestCertStore_CRL_Expired(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_TLSWorkflow(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -795,9 +830,9 @@ func TestCertStore_TLSWorkflow(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_CAManagement_MultipleRoots(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -836,9 +871,9 @@ func TestCertStore_CAManagement_MultipleRoots(t *testing.T) {
 }
 
 func TestCertStore_CAManagement_IntermediateChains(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -864,9 +899,9 @@ func TestCertStore_CAManagement_IntermediateChains(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_Search_ByCN(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -890,9 +925,9 @@ func TestCertStore_Search_ByCN(t *testing.T) {
 }
 
 func TestCertStore_Filter_CACerts(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -933,17 +968,17 @@ func TestCertStore_Filter_CACerts(t *testing.T) {
 
 func TestCertStore_Composite_MultipleStorages(t *testing.T) {
 	// Create multiple in-memory storages
-	backend1 := storage.New()
-	backend2 := storage.New()
+	daos1 := newCADAOs(t)
+	daos2 := newCADAOs(t)
 
 	cs1, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend1),
+		DAOs: daos1,
 	})
 	require.NoError(t, err)
 	defer cs1.Close()
 
 	cs2, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend2),
+		DAOs: daos2,
 	})
 	require.NoError(t, err)
 	defer cs2.Close()
@@ -971,9 +1006,9 @@ func TestCertStore_Composite_MultipleStorages(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_ErrorHandling_NilCertificate(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -989,9 +1024,9 @@ func TestCertStore_ErrorHandling_NilCertificate(t *testing.T) {
 // real on-disk backend, keyed by its SPKI SHA-256 thumbprint rather than
 // being refused.
 func TestCertStore_EmptyCNKeyedBySPKIThumbprint(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1008,9 +1043,9 @@ func TestCertStore_EmptyCNKeyedBySPKIThumbprint(t *testing.T) {
 }
 
 func TestCertStore_ErrorHandling_EmptyChain(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1021,9 +1056,9 @@ func TestCertStore_ErrorHandling_EmptyChain(t *testing.T) {
 }
 
 func TestCertStore_ErrorHandling_NilInChain(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1036,9 +1071,9 @@ func TestCertStore_ErrorHandling_NilInChain(t *testing.T) {
 }
 
 func TestCertStore_ErrorHandling_NilCRL(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1049,9 +1084,9 @@ func TestCertStore_ErrorHandling_NilCRL(t *testing.T) {
 }
 
 func TestCertStore_ErrorHandling_ClosedStore(t *testing.T) {
-	backend := storage.New()
+	daos, closeNode := openCADatabase(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 
@@ -1060,7 +1095,7 @@ func TestCertStore_ErrorHandling_ClosedStore(t *testing.T) {
 	// Close the store
 	csErr := cs.Close()
 	require.NoError(t, csErr)
-	err = backend.Close()
+	err = closeNode()
 	require.NoError(t, err)
 
 	// All operations should fail
@@ -1086,9 +1121,9 @@ func TestCertStore_ErrorHandling_ClosedStore(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_Concurrent_ReadWrite(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1124,9 +1159,9 @@ func TestCertStore_Concurrent_ReadWrite(t *testing.T) {
 }
 
 func TestCertStore_Concurrent_ChainOperations(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1159,9 +1194,9 @@ func TestCertStore_Concurrent_ChainOperations(t *testing.T) {
 }
 
 func TestCertStore_Concurrent_CRLOperations(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1195,7 +1230,7 @@ func TestCertStore_Concurrent_CRLOperations(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_Config_WithVerifyOptions(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 
 	verifyOpts := &x509.VerifyOptions{
 		DNSName:   "test.example.com",
@@ -1203,7 +1238,7 @@ func TestCertStore_Config_WithVerifyOptions(t *testing.T) {
 	}
 
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage:   storage.NewCertAdapter(backend),
+		DAOs:          daos,
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
@@ -1216,14 +1251,14 @@ func TestCertStore_Config_WithVerifyOptions(t *testing.T) {
 }
 
 func TestCertStore_VerifyCertificate_WithDNSName(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 
 	verifyOpts := &x509.VerifyOptions{
 		DNSName: "",
 	}
 
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage:   storage.NewCertAdapter(backend),
+		DAOs:          daos,
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
@@ -1243,7 +1278,7 @@ func TestCertStore_VerifyCertificate_WithDNSName(t *testing.T) {
 }
 
 func TestCertStore_VerifyCertificate_EmptyIntermediates(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 
 	intermediates := x509.NewCertPool()
 
@@ -1252,7 +1287,7 @@ func TestCertStore_VerifyCertificate_EmptyIntermediates(t *testing.T) {
 	}
 
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage:   storage.NewCertAdapter(backend),
+		DAOs:          daos,
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
@@ -1271,9 +1306,9 @@ func TestCertStore_VerifyCertificate_EmptyIntermediates(t *testing.T) {
 }
 
 func TestCertStore_GetCRL_EmptyIssuer(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1285,9 +1320,9 @@ func TestCertStore_GetCRL_EmptyIssuer(t *testing.T) {
 }
 
 func TestCertStore_ListCertificates_WithGetError(t *testing.T) {
-	backend := storage.New()
+	daos, closeNode := openCADatabase(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1298,7 +1333,7 @@ func TestCertStore_ListCertificates_WithGetError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Close underlying storage to cause errors
-	err = backend.Close()
+	err = closeNode()
 	require.NoError(t, err)
 
 	// This should fail because storage is closed
@@ -1307,9 +1342,9 @@ func TestCertStore_ListCertificates_WithGetError(t *testing.T) {
 }
 
 func TestCertStore_IsRevoked_WithRevokedCertificateEntries(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1352,16 +1387,16 @@ func TestCertStore_IsRevoked_WithRevokedCertificateEntries(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificate_StorageError(t *testing.T) {
-	backend := storage.New()
+	daos, closeNode := openCADatabase(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
 
 	// Close storage to cause error
-	err = backend.Close()
+	err = closeNode()
 	require.NoError(t, err)
 
 	// Try to store certificate - should fail
@@ -1370,9 +1405,9 @@ func TestCertStore_StoreCertificate_StorageError(t *testing.T) {
 }
 
 func TestCertStore_GetCertificate_StorageError(t *testing.T) {
-	backend := storage.New()
+	daos, closeNode := openCADatabase(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 
@@ -1381,7 +1416,7 @@ func TestCertStore_GetCertificate_StorageError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Close storage to cause error
-	err = backend.Close()
+	err = closeNode()
 	require.NoError(t, err)
 
 	// Try to get certificate - should fail
@@ -1390,9 +1425,9 @@ func TestCertStore_GetCertificate_StorageError(t *testing.T) {
 }
 
 func TestCertStore_DeleteCertificate_StorageError(t *testing.T) {
-	backend := storage.New()
+	daos, closeNode := openCADatabase(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 
@@ -1401,7 +1436,7 @@ func TestCertStore_DeleteCertificate_StorageError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Close storage to cause error
-	err = backend.Close()
+	err = closeNode()
 	require.NoError(t, err)
 
 	// Try to delete certificate - should fail
@@ -1410,9 +1445,9 @@ func TestCertStore_DeleteCertificate_StorageError(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificateChain_StorageError(t *testing.T) {
-	backend := storage.New()
+	daos, closeNode := openCADatabase(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 
@@ -1422,7 +1457,7 @@ func TestCertStore_StoreCertificateChain_StorageError(t *testing.T) {
 	chain := []*x509.Certificate{leafCert, rootCert}
 
 	// Close storage to cause error
-	err = backend.Close()
+	err = closeNode()
 	require.NoError(t, err)
 
 	// Try to store chain - should fail
@@ -1431,9 +1466,9 @@ func TestCertStore_StoreCertificateChain_StorageError(t *testing.T) {
 }
 
 func TestCertStore_GetCertificateChain_StorageError(t *testing.T) {
-	backend := storage.New()
+	daos, closeNode := openCADatabase(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 
@@ -1445,7 +1480,7 @@ func TestCertStore_GetCertificateChain_StorageError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Close storage to cause error
-	err = backend.Close()
+	err = closeNode()
 	require.NoError(t, err)
 
 	// Try to get chain - should fail
@@ -1454,11 +1489,11 @@ func TestCertStore_GetCertificateChain_StorageError(t *testing.T) {
 }
 
 func TestCertStore_Config_NilVerifyOptions(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 
 	// Create certstore with nil verify options
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage:   storage.NewCertAdapter(backend),
+		DAOs:          daos,
 		VerifyOptions: nil, // Explicitly nil
 	})
 	require.NoError(t, err)
@@ -1479,13 +1514,11 @@ func TestCertStore_New_InvalidConfig(t *testing.T) {
 }
 
 func TestCertStore_New_NilStorage(t *testing.T) {
-	// Test nil storage
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: nil,
+		DAOs: nil,
 	})
-	assert.Error(t, err)
 	assert.Nil(t, cs)
-	assert.Equal(t, certstore.ErrStorageRequired, err)
+	assert.ErrorIs(t, err, dao.ErrNilFactory)
 }
 
 // TestCertStore_StoreCertificateChain_EmptyCNInLeaf proves
@@ -1493,9 +1526,9 @@ func TestCertStore_New_NilStorage(t *testing.T) {
 // StoreCertificate (go-xkms#715) when the leaf certificate's Subject is
 // empty.
 func TestCertStore_StoreCertificateChain_EmptyCNInLeaf(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1516,16 +1549,16 @@ func TestCertStore_StoreCertificateChain_EmptyCNInLeaf(t *testing.T) {
 }
 
 func TestCertStore_Close_Multiple(t *testing.T) {
-	backend := storage.New()
+	daos, closeNode := openCADatabase(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 
 	// First close
 	csErr := cs.Close()
 	require.NoError(t, csErr)
-	err = backend.Close()
+	err = closeNode()
 	assert.NoError(t, err)
 
 	// Second close should be idempotent
@@ -1534,7 +1567,7 @@ func TestCertStore_Close_Multiple(t *testing.T) {
 }
 
 func TestCertStore_VerifyCertificate_WithEmptyKeyUsages(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 
 	// Test with empty key usages (should be skipped)
 	verifyOpts := &x509.VerifyOptions{
@@ -1542,7 +1575,7 @@ func TestCertStore_VerifyCertificate_WithEmptyKeyUsages(t *testing.T) {
 	}
 
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage:   storage.NewCertAdapter(backend),
+		DAOs:          daos,
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
@@ -1559,9 +1592,9 @@ func TestCertStore_VerifyCertificate_WithEmptyKeyUsages(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificate_InvalidFutureRevocationCheck(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage:  storage.NewCertAdapter(backend),
+		DAOs:         daos,
 		AllowRevoked: false,
 	})
 	require.NoError(t, err)
@@ -1577,9 +1610,9 @@ func TestCertStore_StoreCertificate_InvalidFutureRevocationCheck(t *testing.T) {
 }
 
 func TestCertStore_IsRevoked_MultipleCRLEntries(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1611,9 +1644,9 @@ func TestCertStore_IsRevoked_MultipleCRLEntries(t *testing.T) {
 }
 
 func TestCertStore_ListCertificates_MixedValidAndInvalid(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1634,7 +1667,7 @@ func TestCertStore_ListCertificates_MixedValidAndInvalid(t *testing.T) {
 }
 
 func TestCertStore_VerifyCertificate_AllOptions(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 
 	// Create certificate chain
 	rootCert, rootKey := generateTestCert(t, "root.example.com", true, nil, nil)
@@ -1653,7 +1686,7 @@ func TestCertStore_VerifyCertificate_AllOptions(t *testing.T) {
 	}
 
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage:   storage.NewCertAdapter(backend),
+		DAOs:          daos,
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
@@ -1669,9 +1702,9 @@ func TestCertStore_VerifyCertificate_AllOptions(t *testing.T) {
 }
 
 func TestCertStore_GetCertificateChain_WithEmptyCN(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1683,9 +1716,9 @@ func TestCertStore_GetCertificateChain_WithEmptyCN(t *testing.T) {
 }
 
 func TestCertStore_DeleteCertificate_WithEmptyCN(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1697,9 +1730,9 @@ func TestCertStore_DeleteCertificate_WithEmptyCN(t *testing.T) {
 }
 
 func TestCertStore_GetCertificate_WithEmptyCN(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1711,9 +1744,9 @@ func TestCertStore_GetCertificate_WithEmptyCN(t *testing.T) {
 }
 
 func TestCertStore_StoreCRL_UpdateExisting(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1742,9 +1775,9 @@ func TestCertStore_StoreCRL_UpdateExisting(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_Performance_LargeNumberOfCerts(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()
@@ -1775,9 +1808,9 @@ func TestCertStore_Performance_LargeNumberOfCerts(t *testing.T) {
 }
 
 func TestCertStore_Performance_LargeChains(t *testing.T) {
-	backend := storage.New()
+	daos := newCADAOs(t)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: storage.NewCertAdapter(backend),
+		DAOs: daos,
 	})
 	require.NoError(t, err)
 	defer cs.Close()

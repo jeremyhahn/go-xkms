@@ -16,6 +16,7 @@
 package pkcs11
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -114,7 +115,7 @@ func (c *Config) Validate() error {
 	}
 
 	// If PIN is set, validate length
-	pin, err := types.SecretValueBytes(c.PIN)
+	pin, err := types.SecretValueBytes(context.Background(), c.PIN)
 	if err != nil {
 		return &errs.Wrapped{Msg: "resolve PIN", Err: err}
 	}
@@ -123,7 +124,7 @@ func (c *Config) Validate() error {
 	}
 
 	// If SOPIN is set, validate length
-	sopin, err := types.SecretValueBytes(c.SOPIN)
+	sopin, err := types.SecretValueBytes(context.Background(), c.SOPIN)
 	if err != nil {
 		return &errs.Wrapped{Msg: "resolve SO PIN", Err: err}
 	}

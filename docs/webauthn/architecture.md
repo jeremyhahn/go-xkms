@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Architecture
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## The problem
 
@@ -57,8 +57,11 @@ handlers, and a plain `JWTGenerator` still works. That is why `Service` has both
 `FinishRegistrationPair`/`FinishLoginPair` (access + refresh): the pair variants
 exist without forcing every embedder to supply refresh tokens.
 
-Implementations shipped: `memory_stores.go` (tests), `qrdb_userstore.go` and
-`backend_stores.go` (production, through `go-qrdb/sdk/go`).
+Implementations shipped, one per interface: `qrdb_userstore.go` (users are
+go-qrdb's, through `go-qrdb/sdk/go`), `credential_store.go` (credentials are
+go-qrdb DAO entities on the DAO factory the composition root injects) and
+`session_store.go` (sessions, in memory). Tests run the same stores on a real
+in-process DAO factory over a memory store.
 
 Rejected alternatives:
 
@@ -76,7 +79,7 @@ Rejected alternatives:
 | HTTP ceremony handlers | `pkg/webauthn/http`, `pkg/api/rest` | go-xkms |
 | Headless client ("browser") | `pkg/webauthn/client` | go-xkms |
 | Mock authenticator | `pkg/webauthn/mock_authenticator.go` | go-xkms |
-| Stores (production) | `qrdb_userstore.go`, `backend_stores.go` over `go-qrdb/sdk/go` | store is **go-qrdb's** |
+| Stores | `qrdb_userstore.go` over `go-qrdb/sdk/go`; `credential_store.go` on the injected `qrdbsdk.DAOFactory` | store is **go-qrdb's** |
 | Credential-store decoration (composed host) | `rest.WebAuthnServiceParams.CredentialStoreDecorator` → `apimodule.WithWebAuthnCredentialStoreDecorator` | the **composing host** supplies it |
 | The user identity itself | go-qrdb | **go-qrdb** |
 | CTAP2 client talking to real hardware | `pkg/fido2` — [`../fido2-ctap2/`](../fido2-ctap2/architecture.md) | go-xkms |

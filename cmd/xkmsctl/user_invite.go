@@ -225,7 +225,7 @@ Examples:
 				handleError(err)
 				return
 			}
-			pin, err := resolvePINInput(cmd)
+			pin, err := resolvePINInput(cmd.Context(), cmd)
 			if err != nil {
 				handleError(err)
 				return

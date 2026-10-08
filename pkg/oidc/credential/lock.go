@@ -61,6 +61,7 @@ type Leases interface {
 // the whole of the exclusion there is to have.
 type locker struct {
 	leases     Leases
+	bind       CallContext // nil runs lease calls on the caller's context
 	logger     *slog.Logger
 	standalone atomic.Bool
 	mu         sync.Mutex
@@ -87,9 +88,21 @@ func (l *locker) keyMutex(key string) *sync.Mutex {
 	return m
 }
 
+// leaseContext returns the context lease calls run on (WithLeaseContext).
+func (l *locker) leaseContext(ctx context.Context) (context.Context, error) {
+	if l.bind == nil {
+		return ctx, nil
+	}
+	return l.bind(ctx)
+}
+
 // lock acquires key's lock, blocking until it is free or ctx ends. The
 // returned function releases it.
 func (l *locker) lock(ctx context.Context, key string) (func(), error) {
+	ctx, err := l.leaseContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	m := l.keyMutex(key)
 	m.Lock()
 	lease, err := l.acquire(ctx, lockPrefix+hashKey(key), lockTTL)

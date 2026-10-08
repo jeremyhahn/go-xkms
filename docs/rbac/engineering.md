@@ -77,10 +77,10 @@ The binding is applied once, in `XKMSService`, and no transport repeats it:
 
 The platform-scoped rows are reached on every transport only through the
 service: the REST handlers (`pkg/api/rest/seal_store_handlers.go`,
-`handlers_credentials.go`, `handlers_barrier_pin.go`,
+`handlers_credentials.go`, `handlers_pin.go`,
 `handlers_barrier_shamir.go`, `handlers_piv.go`, `policy_handlers.go`), the
 gRPC/Unix handlers (`pkg/api/grpc/service_seal_store.go`,
-`service_barrier_pin.go`, `service_barrier_shamir.go`, `service_piv.go`,
+`service_pin.go`, `service_barrier_shamir.go`, `service_piv.go`,
 `service_policy.go`) and the MCP handlers (`pkg/api/mcp/handlers_seal_store.go`,
 `handlers_init_credentials.go`, `handlers_barrier_shamir.go`,
 `handlers_pin.go`, `handlers_piv.go`, `handlers_policy.go`) hold the
@@ -371,7 +371,7 @@ specific permission before assuming a non-Admin role holds it.
   qrdb's dedicated `tenants:set_entitlements` / `tenants:set_quotas`
   (`pkg/auth/permissions.go:154-155`), never `tenants:update`, on every
   transport: `pkg/api/rest/routes.go:293-294`, `pkg/api/mcp/authz.go:239-240`,
-  `pkg/api/grpc/service_custodian_share_tenant.go:896,922`, and the
+  `pkg/api/grpc/service_tenant.go:896,922`, and the
   `qrdb.v1.permission` options at `pkg/api/grpc/proto/xkmsv1/xkms.proto:647,654`.
   Because both permissions are self-scoped in qrdb and qrdb's built-in Admin
   role grants `tenants:set_entitlements`, the RBAC gate alone would still

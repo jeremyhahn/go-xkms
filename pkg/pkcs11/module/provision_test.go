@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -52,7 +53,7 @@ func newProvisionFixture(t *testing.T, token string) *provisionFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := pkcs11state.NewStore(storage.NewMemory())
+	state, err := pkcs11state.NewStore(testutil.NewMemoryDAOFactory())
 	if err != nil {
 		t.Fatal(err)
 	}

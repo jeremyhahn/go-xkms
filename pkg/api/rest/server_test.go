@@ -205,35 +205,34 @@ func TestNewServer_WithWebAuthn(t *testing.T) {
 		Logger: testLogger(),
 	}
 
+	cfg.WebAuthnService = buildTestWebAuthnService(t, cfg.WebAuthnConfig)
 	server, err := NewServer(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
-	// Verify WebAuthn handler and stores are set up
 	assert.NotNil(t, server.webauthnHandler)
-	assert.NotNil(t, server.webauthnStores)
 }
 
-// TestNewServer_WithInvalidWebAuthn tests server creation with invalid WebAuthn config
-func TestNewServer_WithInvalidWebAuthn(t *testing.T) {
-	ks := newMockKeyStore()
-
+// TestNewServer_WebAuthnConfigWithoutService pins that the REST server never
+// builds its own relying party: WebAuthn config without the service the
+// composition root built is a construction error.
+func TestNewServer_WebAuthnConfigWithoutService(t *testing.T) {
 	cfg := &Config{
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
-			"test": ks,
+			"test": newMockKeyStore(),
 		},
 		WebAuthnConfig: &webauthn.Config{
-			// Missing required RPID
+			RPID:          "localhost",
 			RPDisplayName: "Test App",
+			RPOrigins:     []string{"https://localhost"},
 		},
 		Logger: testLogger(),
 	}
 
 	server, err := NewServer(cfg)
 	assert.Nil(t, server)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "webauthn")
+	assert.ErrorIs(t, err, ErrWebAuthnServiceRequired)
 }
 
 // TestNewServer_WithTimeouts tests custom timeout configuration
@@ -411,6 +410,7 @@ func TestSetupRouter_WebAuthnRoutes(t *testing.T) {
 		Logger: testLogger(),
 	}
 
+	cfg.WebAuthnService = buildTestWebAuthnService(t, cfg.WebAuthnConfig)
 	server, err := NewServer(cfg)
 	require.NoError(t, err)
 
@@ -597,33 +597,6 @@ func TestSetupRouter_CorrelationMiddleware(t *testing.T) {
 	})
 }
 
-// TestWebAuthnStores_IntegrationWithServer tests WebAuthn stores integration
-func TestWebAuthnStores_IntegrationWithServer(t *testing.T) {
-	ks := newMockKeyStore()
-
-	cfg := &Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Backends: map[string]xkms.Backend{
-			"test": ks,
-		},
-		WebAuthnConfig: &webauthn.Config{
-			RPID:          "localhost",
-			RPDisplayName: "Test App",
-			RPOrigins:     []string{"https://localhost"},
-		},
-		Logger: testLogger(),
-	}
-
-	server, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	// Verify stores are accessible
-	stores := server.webauthnStores
-	assert.NotNil(t, stores.UserStore())
-	assert.NotNil(t, stores.SessionStore())
-	assert.NotNil(t, stores.CredentialStore())
-}
-
 // TestWebAuthnRoutes_BeginRegistration tests the registration begin endpoint
 func TestWebAuthnRoutes_BeginRegistration(t *testing.T) {
 	ks := newMockKeyStore()
@@ -643,6 +616,7 @@ func TestWebAuthnRoutes_BeginRegistration(t *testing.T) {
 		Logger: testLogger(),
 	}
 
+	cfg.WebAuthnService = buildTestWebAuthnService(t, cfg.WebAuthnConfig)
 	server, err := NewServer(cfg)
 	require.NoError(t, err)
 
@@ -717,6 +691,7 @@ func TestWebAuthnRoutes_BeginLogin(t *testing.T) {
 		Logger: testLogger(),
 	}
 
+	cfg.WebAuthnService = buildTestWebAuthnService(t, cfg.WebAuthnConfig)
 	server, err := NewServer(cfg)
 	require.NoError(t, err)
 
@@ -767,6 +742,7 @@ func TestWebAuthnRoutes_FinishRegistration(t *testing.T) {
 		Logger: testLogger(),
 	}
 
+	cfg.WebAuthnService = buildTestWebAuthnService(t, cfg.WebAuthnConfig)
 	server, err := NewServer(cfg)
 	require.NoError(t, err)
 
@@ -809,6 +785,7 @@ func TestWebAuthnRoutes_FinishLogin(t *testing.T) {
 		Logger: testLogger(),
 	}
 
+	cfg.WebAuthnService = buildTestWebAuthnService(t, cfg.WebAuthnConfig)
 	server, err := NewServer(cfg)
 	require.NoError(t, err)
 

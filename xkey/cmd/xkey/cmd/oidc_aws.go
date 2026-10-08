@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/handlers"
@@ -535,7 +536,7 @@ func startAWSBackgroundRefresh(parentCmd *cobra.Command, out io.Writer, region, 
 	}
 
 	// Write PID file
-	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0600); err != nil {
 		killErr := cmd.Process.Kill()
 		return &WrappedError{Msg: "failed to write PID file", Err: errors.Join(err, killErr, logFileHandle.Close())}
 	}
@@ -692,7 +693,7 @@ func init() {
 	oidcAWSCmd.Flags().String("credentials-file", "~/.aws/credentials", "Path to AWS credentials file")
 	oidcAWSCmd.Flags().String("exec", "", "Execute script after login (for --output exec)")
 	oidcAWSCmd.Flags().Int("auto-refresh", 0, "Auto-refresh interval in seconds (0 to disable)")
-	oidcAWSCmd.Flags().String("session-store", "~/.xkey/aws-session.json", "Path to session store")
+	oidcAWSCmd.Flags().String("session-store", "~/.xkey/aws-session", "Directory of an unencrypted AWS session store (bypasses the barrier when set)")
 	oidcAWSCmd.Flags().Bool("background", false, "Run auto-refresh in background (requires --auto-refresh)")
 	oidcAWSCmd.Flags().String("log-file", "", "Log file for background refresh (default: ~/.xkey/logs/aws-{region}.log)")
 

@@ -53,11 +53,10 @@ func TestQRDBAdapter_RegisterThenLogin_SameProcess(t *testing.T) {
 	}
 
 	users := newFakeUserClient()
-	kv := newFakeKV()
 	userStore, credStore, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
-		Users:    users,
-		KV:       kv,
-		TenantID: "system",
+		Users:      users,
+		DAOFactory: newTestDAOFactory(),
+		TenantID:   "system",
 	})
 	if err != nil {
 		t.Fatalf("adapter: %v", err)
@@ -153,13 +152,12 @@ func TestQRDBAdapter_RegisterThenLogin_SameProcess(t *testing.T) {
 // every invalid UTF-8 byte with U+FFFD and GetByUserID returned zero creds.
 func TestQRDBAdapter_BinaryCredentialID_RoundTrips(t *testing.T) {
 	ctx := context.Background()
-	us, cs, users, _ := newTestAdapter(t)
+	us, cs := newTestStores(t)
 
 	u, err := us.Create(ctx, "binary@example.com", "Binary User")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	_ = users // keep the fake reachable for clarity
 
 	// A credential id with bytes that are invalid UTF-8 (0x94, 0xff, 0x80,
 	// 0xfe) — exactly the kind a real authenticator produces.
@@ -192,19 +190,3 @@ func TestQRDBAdapter_BinaryCredentialID_RoundTrips(t *testing.T) {
 
 // TestCredIDSegmentRoundTrip exercises the canonical credential-id encoding
 // helpers directly, including the malformed-segment error path.
-func TestCredIDSegmentRoundTrip(t *testing.T) {
-	raw := []byte{0x00, 0xff, 0x10, 0x80, 0x7f}
-	seg := credIDToString(raw)
-	back, err := credIDFromString(seg)
-	if err != nil {
-		t.Fatalf("credIDFromString: %v", err)
-	}
-	if string(back) != string(raw) {
-		t.Fatalf("round-trip mismatch: got %x want %x", back, raw)
-	}
-	// A segment that is not valid base64url must surface a typed decode
-	// error, never a silent empty/garbage id.
-	if _, err := credIDFromString("!!!not-base64!!!"); err == nil {
-		t.Fatal("expected decode error for malformed credential id segment")
-	}
-}

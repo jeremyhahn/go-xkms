@@ -167,7 +167,7 @@ func (c *embeddedKeysClient) Generate(ctx context.Context, req GenerateRequest) 
 		return toDTO(k), nil
 	}
 
-	k, err := pkgkeys.Generate(pkgkeys.GenerateOptions{
+	k, err := pkgkeys.Generate(ctx, pkgkeys.GenerateOptions{
 		Algorithm: algo,
 		RSABits:   req.RSABits,
 		Comment:   req.Comment,

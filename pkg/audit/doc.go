@@ -12,67 +12,36 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 /*
-Package audit defines the xkms audit emission seam and routes events to the
-hosted go-qrdb node's HMAC-chained audit subsystem.
+Package audit carries go-xkms's product audit events onto go-qrdb's audit
+logger.
 
-# Architecture
-
-xkms owns no audit storage of its own. It defines a minimal emission interface
-and adapts it onto the canonical qrdb audit chain:
-
- 1. Logger — the emission contract used by every xkms transport (REST, gRPC,
-    QUIC) and the seal subsystem: Log(ctx, *Event) error plus Close() error.
- 2. Event — the transport-facing audit DTO (subject, action, resource,
-    resourceID, outcome, details).
- 3. QRDBLogger — the production Logger. It maps Event onto the qrdb transport
-    AuditEvent and emits through the node's AuditClient
-    (Client().Audit().EmitAudit), which appends it to the tamper-evident,
-    HMAC-chained log owned by the qrdb node. The tenant id is resolved from the
-    authenticated identity on the context so per-tenant audit queries work.
- 4. NoOpLogger — discards events; used only when no qrdb client is present.
-
-The audit STORAGE (file persistence, in-memory query model, severity/type
-taxonomy) lives in go-qrdb's pkg/audit and is reached exclusively through the
-SDK. xkms supplies the node's audit sink at node construction via
-sdk.WithAuditLogger and queries it through Client().Audit().QueryAudit.
+xkms owns no audit sink, no logger interface and no severity taxonomy: the
+sink is a qrdbsdk.NodeAuditLogger (the node's own, or a file chain from
+qrdbsdk.NewAuditFileLogger when no node is hosted), and storage, chaining and
+query live in go-qrdb. This package holds only Event, the product operation
+record, and Emit, which maps it onto the canonical qrdb record (actor, tenant,
+role, client address, attributes) and writes it.
 
 # Usage
 
-The server selects the Logger after the qrdb node is up:
-
-	if s.qrdbClient != nil {
-	    s.auditLogger = audit.NewQRDBLogger(s.qrdbClient.Audit())
-	} else {
-	    s.auditLogger = &audit.NoOpLogger{}
-	}
-
-# Write-failure policy
-
-Log's returned error is never discarded. ClassifyAction (severity.go)
-classifies every Event.Action as SeveritySecurity or SeverityInformational;
-HandleWriteFailure applies the resulting policy to the error Log returned:
-
-  - SeveritySecurity (e.g. "authorize", "seal", "unseal"): a failed write
-    returns *ErrAuditWriteFailed, which the caller must propagate and use to
-    fail the request. A security-relevant action must not complete
-    unaudited.
-  - SeverityInformational: a failed write is logged via slog and counted in
-    metrics.AuditWriteFailuresTotal; HandleWriteFailure returns nil so the
-    caller proceeds.
-
-Transports call HandleWriteFailure around every Log:
-
-	if auditErr := audit.HandleWriteFailure(logger, "unseal", s.auditLogger.Log(ctx, &audit.Event{
+	err := audit.Emit(ctx, s.auditLogger, &audit.Event{
 	    Subject:  identity.Subject,
 	    Action:   "unseal",
 	    Resource: "barrier",
 	    Outcome:  audit.OutcomeAllow,
 	    Details:  map[string]string{"transport": "grpc"},
-	})); auditErr != nil {
-	    return auditErr
+	})
+	if err != nil {
+	    return err
 	}
 
-See docs/audit-log/engineering.md for the full policy and classification
-table.
+# Write failure
+
+Emit never discards a failed write. The error is a *qrdbsdk.AuditGateError
+(Component = the event's Action) wrapping the sink's *NodeAuditWriteError; the
+caller fails the operation that produced the event rather than let it
+complete unaudited. A nil sink means audit is not wired and is not a failure.
+
+See docs/audit-log/engineering.md.
 */
 package audit

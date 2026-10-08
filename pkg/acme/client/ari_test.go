@@ -779,6 +779,18 @@ func (m *mockARIAccountDAO) SaveWithCondition(_ context.Context, _ *entities.ACM
 	panic("not implemented")
 }
 
+func (m *mockARIAccountDAO) GetByNaturalKey(_ context.Context, _ string) (*entities.ACMEAccount, error) {
+	panic("not implemented")
+}
+
+func (m *mockARIAccountDAO) CompareAndSwap(_ context.Context, _, _ *entities.ACMEAccount) (bool, error) {
+	panic("not implemented")
+}
+
+func (m *mockARIAccountDAO) DeleteIfMatch(_ context.Context, _ *entities.ACMEAccount) (bool, error) {
+	panic("not implemented")
+}
+
 func (m *mockARIAccountDAO) SaveIfAbsent(_ context.Context, _ *entities.ACMEAccount) (bool, error) {
 	panic("not implemented")
 }

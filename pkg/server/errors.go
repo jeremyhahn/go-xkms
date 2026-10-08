@@ -33,6 +33,10 @@ var (
 	// the same way; this is the layer that had to start listening.
 	ErrShutdownIncomplete = errors.New("server: shutdown could not confirm every component drained")
 
+	// ErrWebAuthnNoDatastore indicates WebAuthn is enabled but the server
+	// holds no datastore: users and credentials have nowhere to live.
+	ErrWebAuthnNoDatastore = errors.New("server: webauthn requires an initialized datastore")
+
 	// ErrBootstrapCABundleUnavailable is returned by the GET /v1/ca/bootstrap
 	// provider before Start has computed the CA bundle.
 	ErrBootstrapCABundleUnavailable = errors.New("server: the bootstrap CA bundle is not available yet")
@@ -428,24 +432,6 @@ func (e *ErrCABundleGet) Error() string {
 
 // Unwrap returns the underlying error.
 func (e *ErrCABundleGet) Unwrap() error {
-	return e.Err
-}
-
-// ErrSealStrategyBuild represents a failure constructing a hardware or cloud
-// sealing strategy from an already-initialized backend. Strategy names the
-// barrier strategy ID that failed; Err carries the underlying cause.
-type ErrSealStrategyBuild struct {
-	Strategy string
-	Err      error
-}
-
-// Error returns the error message.
-func (e *ErrSealStrategyBuild) Error() string {
-	return fmt.Sprintf("failed to build %s seal strategy: %s", e.Strategy, e.Err)
-}
-
-// Unwrap returns the underlying error.
-func (e *ErrSealStrategyBuild) Unwrap() error {
 	return e.Err
 }
 

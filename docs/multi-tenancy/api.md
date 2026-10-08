@@ -1,15 +1,13 @@
 # Multi-Tenancy — API
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-10-04
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
 
 Tenant routes are `RouteAuthPermission` under `/api/v1/tenants`, registered on
 the `hasTenants` predicate. Each demands the permission gRPC enforces for the
-same RPC (the **Permission** column): tenant metadata is `tenants:*`, and the
-per-tenant barrier lifecycle is its own `tenant_barrier:*` family, distinct
-from the system barrier's `seal:*`. An authenticated session alone reaches none
+same RPC (the **Permission** column): tenant metadata is `tenants:*`. An authenticated session alone reaches none
 of them. Admin and Owner hold every one of them by default, except
 `tenants:set_quotas`, which no qrdb built-in role grants (see the plan-change
 note below).
@@ -22,9 +20,6 @@ note below).
 | List tenants | `GET /api/v1/tenants/` | `ListTenants` | same as REST | `xkms.listTenants` | `ListTenants` | `tenants:list` |
 | Get tenant | `GET /api/v1/tenants/{tenantID}` | `GetTenant` | same as REST | `xkms.getTenant` | `GetTenant` | `tenants:read` |
 | Delete tenant | `DELETE /api/v1/tenants/{tenantID}` | `DeleteTenant` | same as REST | `xkms.deleteTenant` | `DeleteTenant` | `tenants:delete` |
-| Tenant barrier status | `GET /api/v1/tenants/{tenantID}/barrier/status` | `TenantBarrierStatus` | same as REST | `xkms.tenantBarrierStatus` | `TenantBarrierStatus` | `tenant_barrier:status` |
-| Tenant barrier init | `POST /api/v1/tenants/{tenantID}/barrier/init` | `TenantBarrierInit` | same as REST | `xkms.tenantBarrierInit` | `TenantBarrierInit` | `tenant_barrier:init` |
-| Tenant barrier unseal | `POST /api/v1/tenants/{tenantID}/barrier/unseal` | `TenantBarrierUnseal` | same as REST | `xkms.tenantBarrierUnseal` | `TenantBarrierUnseal` | `tenant_barrier:unseal` |
 | Update entitlements | `PUT /api/v1/tenants/{tenantID}/entitlements` | `UpdateTenantEntitlements` | same as REST | `xkms.updateTenantEntitlements` | `UpdateTenantEntitlements` | `tenants:set_entitlements` |
 | Update quotas | `PUT /api/v1/tenants/{tenantID}/quotas` | `UpdateTenantQuotas` | same as REST | `xkms.updateTenantQuotas` | `UpdateTenantQuotas` | `tenants:set_quotas` |
 
@@ -34,10 +29,9 @@ the same permissions as gRPC and REST (`pkg/api/mcp/authz.go:232-240`).
 **The tenant a request names is bound to the caller in `XKMSService`, once,
 for every transport** (go-xkms#1112; `pkg/xkms/tenant_binding.go`). The RBAC
 gate binds the caller's *own* tenant as its target
-(`pkg/auth/authorize.go:61`), so the self-scoped `tenants:*` /
-`tenant_barrier:*` grants a Tenant Admin holds pass for any tenant ID; the
-service binding is what confines them. `GetTenant`, `DeleteTenant`, and the
-three `TenantBarrier*` methods refuse a tenant-scoped caller naming another
+(`pkg/auth/authorize.go:61`), so the self-scoped `tenants:*`
+grants a Tenant Admin holds pass for any tenant ID; the
+service binding is what confines them. `GetTenant` and `DeleteTenant` refuse a tenant-scoped caller naming another
 tenant with the answer a nonexistent tenant gets (see "Status and error
 mapping"); `ListTenants` returns only the caller's own tenant
 (`pkg/xkms/servicer_tenant.go:127`). No handler carries a check of its own.
@@ -138,8 +132,7 @@ unscoped backend and sees every key, which is what the control plane needs.
 
 `pkg/api/transport/types.go` and `types_tenant_test.go`'s subjects:
 `CreateTenantRequest`/`Response`, `GetTenantResponse`, `ListTenantsResponse`,
-`TenantBarrierInitRequest`, `TenantBarrierUnsealRequest`,
-`TenantBarrierStatusResponse`, `UpdateTenantEntitlementsRequest`/`Response`,
+`UpdateTenantEntitlementsRequest`/`Response`,
 `UpdateTenantQuotasRequest`/`Response`.
 
 Entitlements carry the permitted isolation modes and the three boolean grants
@@ -170,8 +163,8 @@ exists, making tenant IDs enumerable. The service's refusal,
 renders exactly as `qrdbsdk.ErrTenantMissing` — the error go-qrdb's
 TenantService returns for an unknown tenant — so status *and* body match a
 genuine miss: REST `pkg/api/rest/errors.go:130`, gRPC
-`pkg/api/grpc/service_custodian_share_tenant.go:86`, MCP
-`pkg/api/mcp/errors_custodian_tenant.go:57`. Before go-xkms#1112 the REST and
+`pkg/api/grpc/service_tenant.go:86`, MCP
+`pkg/api/mcp/errors_tenant.go:57`. Before go-xkms#1112 the REST and
 MCP handler checks answered `seal.ErrTenantNotFound` ("qrdb/seal: tenant not
 found") while a genuine miss answered "tenant: not found", and gRPC answered
 a genuine miss with `Internal`; both differences were enumeration oracles

@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -166,7 +167,7 @@ func newUserTestServer(t *testing.T, users qrdbtransport.UserClient) *Server {
 	// CreateUser mints an invitation for every account created with an
 	// email login key (go-xkms#1294 part B); wire the real qrdb invite
 	// store over an in-memory KV store so that path is reachable here.
-	inviteStore, err := qrdbsdk.NewTenantInviteStore(mcpSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	inviteStore, err := invitetest.New(mcpSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
 	require.NoError(t, err)
 	server.xkmsService.SetInviteStore(inviteStore)
 	return server

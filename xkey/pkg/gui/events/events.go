@@ -129,29 +129,10 @@ const (
 	EventPolicyTamperDetected EventType = "policy:tamper_detected"
 )
 
-// Share events.
-const (
-	EventShareReceived  EventType = "share:received"
-	EventShareSubmitted EventType = "share:submitted"
-	EventShareDeleted   EventType = "share:deleted"
-	EventShareImported  EventType = "share:imported"
-)
-
-// Custodian events.
-const (
-	EventCustodianGroupCreated      EventType = "custodian:group_created"
-	EventCustodianGroupDeleted      EventType = "custodian:group_deleted"
-	EventCustodianMemberAdded       EventType = "custodian:member_added"
-	EventCustodianMemberRemoved     EventType = "custodian:member_removed"
-	EventCustodianSharesDistributed EventType = "custodian:shares_distributed"
-)
-
 // Tenant events.
 const (
-	EventTenantCreated         EventType = "tenant:created"
-	EventTenantDeleted         EventType = "tenant:deleted"
-	EventTenantBarrierInited   EventType = "tenant:barrier_initialized"
-	EventTenantBarrierUnsealed EventType = "tenant:barrier_unsealed"
+	EventTenantCreated EventType = "tenant:created"
+	EventTenantDeleted EventType = "tenant:deleted"
 )
 
 // AutoFill events.

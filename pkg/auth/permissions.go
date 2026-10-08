@@ -112,7 +112,7 @@ const (
 	// root or intermediate CA, reading and listing the hierarchy, changing a
 	// CA's status, and selecting the default issuing CA. It is deliberately
 	// distinct from ResourceCerts, which is *leaf* certificate lifecycle —
-	// holding certs:generate must not imply authority to mint a signing CA.
+	// holding certs:issue must not imply authority to mint a signing CA.
 	ResourceCA = "ca"
 
 	// ResourceBackup is whole-node backup and restore: capturing shard
@@ -145,9 +145,16 @@ const (
 	ActionUnwrap = "unwrap"
 	ActionDerive = "derive"
 
-	// Certificate actions (qrdb uses generate/revoke/read/list).
+	// Certificate actions, mirroring qrdb's certs:* vocabulary: issue signs a
+	// certificate (from a CSR or a TCG enrollment), enroll stores a
+	// certificate the caller already holds, revoke withdraws one.
+	ActionIssue  = "issue"
+	ActionEnroll = "enroll"
+	ActionRevoke = "revoke"
+
+	// ActionGenerate produces new secret material that is not a key, such as
+	// a password (passwords:generate).
 	ActionGenerate = "generate"
-	ActionRevoke   = "revoke"
 
 	// Shared read/update actions for certs, backends, and users.
 	ActionRead   = "read"
@@ -199,17 +206,11 @@ const (
 	// Mirrors go-qrdb permission.UsersEnable verbatim.
 	ActionEnable = "enable"
 
-	// Admin service actions. ActionPeers mirrors go-qrdb's AdminPeers
-	// permission (pkg/permission/constants.go) exactly: the REST cluster
-	// routes (admin:status, admin:peers) drive the same AdminService the
-	// embedded qrdb node registers on the control-plane gRPC surface
-	// (pkg/server/qrdb_control_plane.go), so the grant must match verbatim.
-	// There are no xkms actions for AdminAddMember/AdminRemoveMember: Raft
-	// membership mutation is never exposed over REST (docs/clustering/api.md),
-	// only through go-qrdb's own control plane directly.
+	// Admin service actions. ActionStatus mirrors go-qrdb's AdminStatus
+	// permission verbatim. Raft status, membership and peers are go-qrdb's own
+	// AdminService surface, served on its control plane, not re-hosted here.
 	ActionStatus       = "status"
 	ActionCapabilities = "capabilities"
-	ActionPeers        = "peers"
 
 	// Barrier / seal lifecycle actions.
 	ActionBootstrap        = "bootstrap"

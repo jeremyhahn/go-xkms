@@ -34,7 +34,7 @@ import (
 // passphrase from config via Server.resolveClusterCAKeyPassphrase.
 func mustSecret(t *testing.T, s string) *secure.Secret {
 	t.Helper()
-	sec, err := secure.NewSecret([]byte(s))
+	sec, err := secure.NewSecret(t.Context(), []byte(s))
 	require.NoError(t, err)
 	return sec
 }
@@ -47,7 +47,7 @@ func secretBytes(t *testing.T, sec *secure.Secret) []byte {
 	if sec == nil {
 		return nil
 	}
-	buf, err := sec.Open()
+	buf, err := sec.Open(t.Context())
 	require.NoError(t, err)
 	defer buf.Destroy()
 	out := make([]byte, buf.Size())
@@ -219,7 +219,7 @@ func TestKeyProtection_TPM2CorruptBlob(t *testing.T) {
 // error, mirroring types.NewPasswordFromString("")'s "empty is not a
 // failure" behaviour.
 func TestPasswordFromSecret_NilSecretYieldsNoAuthentication(t *testing.T) {
-	pw, err := passwordFromSecret(nil)
+	pw, err := passwordFromSecret(t.Context(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, pw)
 	assert.Empty(t, pw.Bytes())
@@ -230,7 +230,7 @@ func TestPasswordFromSecret_NilSecretYieldsNoAuthentication(t *testing.T) {
 // returned Password.
 func TestPasswordFromSecret_OpensSealedPlaintext(t *testing.T) {
 	sec := mustSecret(t, "s3cr3t-passphrase")
-	pw, err := passwordFromSecret(sec)
+	pw, err := passwordFromSecret(t.Context(), sec)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("s3cr3t-passphrase"), pw.Bytes())
 }
@@ -244,6 +244,6 @@ func TestPasswordFromSecret_DestroyedSecretFails(t *testing.T) {
 	sec := mustSecret(t, "will-be-destroyed")
 	sec.Destroy()
 
-	_, err := passwordFromSecret(sec)
+	_, err := passwordFromSecret(t.Context(), sec)
 	require.Error(t, err)
 }

@@ -26,8 +26,9 @@ import (
 
 // errorBackend is a configurable mock backend for testing error paths.
 type errorBackend struct {
-	getErr error
-	putErr error
+	getErr    error
+	putErr    error
+	deleteErr error
 }
 
 func (e *errorBackend) Get(_ context.Context, _ string) ([]byte, error) {
@@ -36,7 +37,7 @@ func (e *errorBackend) Get(_ context.Context, _ string) ([]byte, error) {
 func (e *errorBackend) Put(_ context.Context, _ string, _ []byte) error {
 	return e.putErr
 }
-func (e *errorBackend) Delete(_ context.Context, _ string) error { return nil }
+func (e *errorBackend) Delete(_ context.Context, _ string) error { return e.deleteErr }
 func (e *errorBackend) List(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
@@ -136,6 +137,37 @@ func TestPut_BackendErrorWrappedInPutError(t *testing.T) {
 	var putErr *PutError
 	require.ErrorAs(t, err, &putErr)
 	assert.Equal(t, "k", putErr.Key)
+	assert.ErrorIs(t, err, sentinel)
+}
+
+func TestDelete_RemovesRecord(t *testing.T) {
+	backend := storage.NewMemory()
+	adapter, err := New(backend)
+	require.NoError(t, err)
+	require.NoError(t, adapter.Put(context.Background(), "k", []byte("v")))
+
+	require.NoError(t, adapter.Delete(context.Background(), "k"))
+
+	_, err = adapter.Get(context.Background(), "k")
+	assert.ErrorIs(t, err, qrdbsdk.ErrPINStorageNotFound)
+}
+
+func TestDelete_AbsentKeyIsNotAnError(t *testing.T) {
+	adapter, err := New(storage.NewMemory())
+	require.NoError(t, err)
+
+	assert.NoError(t, adapter.Delete(context.Background(), "missing"))
+}
+
+func TestDelete_BackendErrorWrappedInDeleteError(t *testing.T) {
+	sentinel := errors.New("read-only fs")
+	adapter, err := New(&errorBackend{deleteErr: sentinel})
+	require.NoError(t, err)
+
+	err = adapter.Delete(context.Background(), "k")
+	var deleteErr *DeleteError
+	require.ErrorAs(t, err, &deleteErr)
+	assert.Equal(t, "k", deleteErr.Key)
 	assert.ErrorIs(t, err, sentinel)
 }
 

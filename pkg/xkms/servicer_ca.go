@@ -138,11 +138,11 @@ func (s *XKMSService) GetCACertificate(ctx context.Context, req *transport.GetCA
 // SignCSR signs a certificate signing request using the CA.
 //
 // Authorization is not decided here. Every transport that reaches this method
-// has already required the operation's declared permission, certs:generate,
+// has already required the operation's declared permission, certs:issue,
 // from the qrdb authorizer before dispatching -- REST and its HTTP/3 (QUIC)
 // listener through pkg/api/rest/routes.go, MCP through pkg/api/mcp/authz.go --
 // exactly as for every other servicer method; gRPC signs through the CA under
-// the same certs:generate check (pkg/api/grpc/service_ca.go). A second, local decision here once
+// the same certs:issue check (pkg/api/grpc/service_ca.go). A second, local decision here once
 // compared the identity's roles against role NAMES while identities carry
 // role IDENTIFIERS, and so refused every authenticated caller (go-xkms#1074).
 func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest) (resp *transport.SignCSRResponse, err error) {

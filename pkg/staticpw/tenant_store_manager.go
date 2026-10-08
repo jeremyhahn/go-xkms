@@ -209,8 +209,8 @@ func (m *TenantPasswordStoreManager) PasskeyRelyingParty() string {
 // validateEnrollment checks a credential presented to enroll, rotate to or
 // recover with: its shape, and for a passkey that it was created for the
 // server's relying party.
-func (m *TenantPasswordStoreManager) validateEnrollment(cred VaultCredential) error {
-	if err := cred.validate(true); err != nil {
+func (m *TenantPasswordStoreManager) validateEnrollment(ctx context.Context, cred VaultCredential) error {
+	if err := cred.validate(ctx, true); err != nil {
 		return err
 	}
 	if cred.Type != FactorPasskey {
@@ -367,7 +367,7 @@ func (m *TenantPasswordStoreManager) UnlockUser(ctx context.Context, tenantID, u
 	if cred.Type == FactorRecovery {
 		return ErrVaultRecoveryFactor
 	}
-	if err := cred.validate(false); err != nil {
+	if err := cred.validate(ctx, false); err != nil {
 		return err
 	}
 	state, err := m.userState(tenantID, userID)
@@ -388,7 +388,7 @@ func (m *TenantPasswordStoreManager) UnlockUser(ctx context.Context, tenantID, u
 	if len(factors) == 0 {
 		return ErrVaultNotInitialized
 	}
-	dek, err := unwrapWith(keyring, factors, cred)
+	dek, err := unwrapWith(ctx, keyring, factors, cred)
 	if err != nil {
 		return err
 	}
@@ -409,7 +409,7 @@ func (m *TenantPasswordStoreManager) keyring(ctx context.Context, state *tenantP
 }
 
 // unwrapWith returns the DEK the first factor matching cred unwraps.
-func unwrapWith(keyring *vaultKeyring, factors []*vaultFactor, cred VaultCredential) ([]byte, error) {
+func unwrapWith(ctx context.Context, keyring *vaultKeyring, factors []*vaultFactor, cred VaultCredential) ([]byte, error) {
 	for _, f := range factors {
 		if f.Type != cred.Type {
 			continue
@@ -420,7 +420,7 @@ func unwrapWith(keyring *vaultKeyring, factors []*vaultFactor, cred VaultCredent
 		if cred.Type.IsKeyFactor() && f.KeyFingerprint != cred.KeyFingerprint {
 			continue
 		}
-		dek, err := keyring.unwrap(f, cred.Secret)
+		dek, err := keyring.unwrap(ctx, f, cred.Secret)
 		if errors.Is(err, ErrVaultCredentialRejected) {
 			continue
 		}
@@ -459,7 +459,7 @@ func (m *TenantPasswordStoreManager) openSession(state *tenantPasswordState, use
 // needs the user's session open: it wraps the same DEK under cred, and the
 // DEK itself never changes.
 func (m *TenantPasswordStoreManager) EnrollFactor(ctx context.Context, tenantID, userID string, cred VaultCredential) (*EnrollResult, error) {
-	if err := m.validateEnrollment(cred); err != nil {
+	if err := m.validateEnrollment(ctx, cred); err != nil {
 		return nil, err
 	}
 	state, err := m.userState(tenantID, userID)
@@ -485,7 +485,7 @@ func (m *TenantPasswordStoreManager) EnrollFactor(ctx context.Context, tenantID,
 	if err := checkUnique(factors, cred, nil); err != nil {
 		return nil, err
 	}
-	f, err := keyring.wrap(cred, session.dek)
+	f, err := keyring.wrap(ctx, cred, session.dek)
 	if err != nil {
 		return nil, err
 	}
@@ -502,12 +502,12 @@ func (m *TenantPasswordStoreManager) initVault(ctx context.Context, state *tenan
 	if err != nil {
 		return nil, err
 	}
-	f, err := keyring.wrap(cred, dek)
+	f, err := keyring.wrap(ctx, cred, dek)
 	if err != nil {
 		clear(dek)
 		return nil, err
 	}
-	code, recovery, err := wrapRecovery(keyring, dek)
+	code, recovery, err := wrapRecovery(ctx, keyring, dek)
 	if err != nil {
 		clear(dek)
 		return nil, err
@@ -527,13 +527,13 @@ func (m *TenantPasswordStoreManager) initVault(ctx context.Context, state *tenan
 }
 
 // wrapRecovery issues a recovery code and the factor wrapping dek under it.
-func wrapRecovery(keyring *vaultKeyring, dek []byte) (string, *vaultFactor, error) {
-	code, secret, err := newRecoveryCode()
+func wrapRecovery(ctx context.Context, keyring *vaultKeyring, dek []byte) (string, *vaultFactor, error) {
+	code, secret, err := newRecoveryCode(ctx)
 	if err != nil {
 		return "", nil, err
 	}
 	defer secret.Destroy()
-	f, err := keyring.wrap(VaultCredential{Type: FactorRecovery, Secret: secret, Label: "recovery code"}, dek)
+	f, err := keyring.wrap(ctx, VaultCredential{Type: FactorRecovery, Secret: secret, Label: "recovery code"}, dek)
 	if err != nil {
 		return "", nil, err
 	}
@@ -569,7 +569,7 @@ func checkUnique(factors []*vaultFactor, cred VaultCredential, replacing *vaultF
 // same type: the DEK is re-wrapped under cred and the old wrap removed. The
 // user's session must be open.
 func (m *TenantPasswordStoreManager) RotateFactor(ctx context.Context, tenantID, userID, id string, cred VaultCredential) (*EnrollResult, error) {
-	if err := m.validateEnrollment(cred); err != nil {
+	if err := m.validateEnrollment(ctx, cred); err != nil {
 		return nil, err
 	}
 	state, err := m.userState(tenantID, userID)
@@ -594,7 +594,7 @@ func (m *TenantPasswordStoreManager) RotateFactor(ctx context.Context, tenantID,
 	if err := checkUnique(factors, cred, old); err != nil {
 		return nil, err
 	}
-	f, err := keyring.wrap(cred, session.dek)
+	f, err := keyring.wrap(ctx, cred, session.dek)
 	if err != nil {
 		return nil, err
 	}
@@ -677,7 +677,7 @@ func managedFactor(factors []*vaultFactor, id string) (*vaultFactor, error) {
 // one-time: it is replaced by a new one, returned in the result and shown
 // once. The personal session is opened.
 func (m *TenantPasswordStoreManager) RecoverVault(ctx context.Context, tenantID, userID string, recoveryCode []byte, cred VaultCredential) (*EnrollResult, error) {
-	if err := m.validateEnrollment(cred); err != nil {
+	if err := m.validateEnrollment(ctx, cred); err != nil {
 		return nil, err
 	}
 	if len(recoveryCode) == 0 {
@@ -699,7 +699,7 @@ func (m *TenantPasswordStoreManager) RecoverVault(ctx context.Context, tenantID,
 		return nil, ErrVaultNotInitialized
 	}
 	normalized := normalizeRecoveryCode(recoveryCode)
-	secret, err := secure.NewSecret(normalized)
+	secret, err := secure.NewSecret(ctx, normalized)
 	if err != nil {
 		return nil, ErrVaultCredentialRejected
 	}
@@ -710,7 +710,7 @@ func (m *TenantPasswordStoreManager) RecoverVault(ctx context.Context, tenantID,
 		if f.Type != FactorRecovery {
 			continue
 		}
-		if unwrapped, uerr := keyring.unwrap(f, secret); uerr == nil {
+		if unwrapped, uerr := keyring.unwrap(ctx, f, secret); uerr == nil {
 			used, dek = f, unwrapped
 			break
 		}
@@ -723,12 +723,12 @@ func (m *TenantPasswordStoreManager) RecoverVault(ctx context.Context, tenantID,
 		return nil, err
 	}
 
-	f, err := keyring.wrap(cred, dek)
+	f, err := keyring.wrap(ctx, cred, dek)
 	if err != nil {
 		clear(dek)
 		return nil, err
 	}
-	code, recovery, err := wrapRecovery(keyring, dek)
+	code, recovery, err := wrapRecovery(ctx, keyring, dek)
 	if err != nil {
 		clear(dek)
 		return nil, err

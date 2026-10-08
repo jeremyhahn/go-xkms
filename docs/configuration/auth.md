@@ -339,7 +339,6 @@ understands. Each user has exactly one role.
 | `operator` | Manage keys and certificates, not users |
 | `user` | Use keys for cryptographic operations, not manage them |
 | `auditor` | View audit logs and key metadata only |
-| `custodian` | Participate in key ceremonies and manage key shares |
 
 The user's role is resolved from the embedded qrdb identity store via
 `auth.QRDBUserStore`; the permission check for the role is then made by qrdb

@@ -20,9 +20,11 @@ import (
 	"sync"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/pkg/audit/audittest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -77,56 +79,15 @@ func denyAuthorizer(reason string) (*auth.Authorizer, *fakeRBACClient) {
 }
 
 // mockAuditLogger records audit events for verification.
-type mockAuditLogger struct {
-	mu     sync.Mutex
-	events []*audit.Event
-}
-
-func (m *mockAuditLogger) Log(_ context.Context, event *audit.Event) error {
-	m.mu.Lock()
-	m.events = append(m.events, event)
-	m.mu.Unlock()
-	return nil
-}
-
-func (m *mockAuditLogger) Close() error {
-	return nil
-}
-
-func (m *mockAuditLogger) Events() []*audit.Event {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cp := make([]*audit.Event, len(m.events))
-	copy(cp, m.events)
-	return cp
-}
-
-func (m *mockAuditLogger) LastEvent() *audit.Event {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.events) == 0 {
-		return nil
-	}
-	return m.events[len(m.events)-1]
-}
+type mockAuditLogger = audittest.Recorder
 
 // failingAuditLoggerGRPC always fails to persist, so authorize's audit
 // write-failure handling can be exercised without a real backend.
-type failingAuditLoggerGRPC struct {
-	err error
-}
-
-func (f *failingAuditLoggerGRPC) Log(_ context.Context, _ *audit.Event) error {
-	return f.err
-}
-
-func (f *failingAuditLoggerGRPC) Close() error {
-	return nil
-}
+type failingAuditLoggerGRPC = audittest.Failing
 
 // setupAuthzServiceTest initializes the xkms and returns a service with
 // the given authorizer and audit logger.
-func setupAuthzServiceTest(t *testing.T, authorizer *auth.Authorizer, auditLogger audit.Logger) *Service {
+func setupAuthzServiceTest(t *testing.T, authorizer *auth.Authorizer, auditLogger qrdbsdk.NodeAuditLogger) *Service {
 	t.Helper()
 	xkms.Reset()
 
@@ -172,7 +133,7 @@ func TestAuthz_AuthorizeAuditWriteFailureFailsRequest(t *testing.T) {
 
 	authorizer, _ := allowAuthorizer()
 	auditErr := errors.New("audit backend unavailable")
-	svc := setupAuthzServiceTest(t, authorizer, &failingAuditLoggerGRPC{err: auditErr})
+	svc := setupAuthzServiceTest(t, authorizer, &failingAuditLoggerGRPC{Err: auditErr})
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "user-1",
@@ -416,8 +377,9 @@ func TestAuthz_NewServiceNilDefaults(t *testing.T) {
 	if svc.authorizer == nil {
 		t.Fatal("Expected non-nil authorizer (disabled default)")
 	}
-	if svc.auditLogger == nil {
-		t.Fatal("Expected non-nil auditLogger (NoOp default)")
+	// With no sink wired, audit.Emit treats the nil logger as "auditing off".
+	if svc.auditLogger != nil {
+		t.Fatal("Expected nil auditLogger when none is wired")
 	}
 
 	// The default authorizer is disabled (allow-all) since no RBAC client is

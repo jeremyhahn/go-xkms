@@ -27,6 +27,16 @@ func init() {
 // runs one way: this package imports qrdb, never the reverse.
 var _ GuardedWriteReporter = (*qrdb.Backend)(nil)
 
+// The view over a DAO factory's store is a full Backend with the single-key
+// guarded writes, and deliberately no fenced create (see
+// qrdb.KVStoreBackend).
+var (
+	_ Backend              = (*qrdb.KVStoreBackend)(nil)
+	_ GuardedWriteReporter = (*qrdb.KVStoreBackend)(nil)
+	_ CompareAndSwapper    = (*qrdb.KVStoreBackend)(nil)
+	_ CompareAndDeleter    = (*qrdb.KVStoreBackend)(nil)
+)
+
 // THE EMBEDDED CONSTRUCTORS BELOW DIVERGE FROM THE Backend CONTRACT IN ONE
 // WAY, and it is silent, which is what makes it the dangerous one.
 //

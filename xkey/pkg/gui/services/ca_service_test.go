@@ -28,7 +28,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
 
-	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,13 +68,6 @@ func (m *mockCAClient) Health(_ context.Context) (*transport.HealthResponse, err
 	return nil, nil
 }
 func (m *mockCAClient) Algorithms(_ context.Context) (*transport.AlgorithmsResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) GetShare(_ context.Context, _, _ string, _ int) (*transport.ShareInfo, error) {
-	return nil, nil
-}
-func (m *mockCAClient) DeleteShare(_ context.Context, _, _ string, _ int) error { return nil }
-func (m *mockCAClient) QueryAudit(_ context.Context, _ *transport.AuditFilter) (*transport.AuditPage, error) {
 	return nil, nil
 }
 func (m *mockCAClient) ListBackends(_ context.Context, _ ...transport.ListOption) (*transport.ListBackendsResponse, error) {
@@ -306,64 +298,7 @@ func (m *mockCAClient) GeneratePIVCSR(_ context.Context, _ *transport.GeneratePI
 	return nil, nil
 }
 
-// Barrier operations stub implementations
-func (m *mockCAClient) BarrierInitialize(_ context.Context, _ *transport.BarrierInitializeRequest) error {
-	return nil
-}
-func (m *mockCAClient) BarrierUnseal(_ context.Context, _ *transport.BarrierUnsealRequest) error {
-	return nil
-}
-func (m *mockCAClient) BarrierSeal(_ context.Context) error {
-	return nil
-}
-func (m *mockCAClient) BarrierStatus(_ context.Context) (*transport.BarrierStatusResponse, error) {
-	return nil, nil
-}
 func (m *mockCAClient) BootstrapListenerKeys(_ context.Context) (*transport.BootstrapListenerKeysResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) BarrierInitializeShamir(_ context.Context, _ *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) BarrierUnsealWithShare(_ context.Context, _ *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) BarrierUnsealWithShares(_ context.Context, _ *transport.BarrierUnsealSharesRequest) error {
-	return nil
-}
-
-// BarrierRekey re-encrypts the barrier with a new root key.
-func (m *mockCAClient) BarrierRekey(_ context.Context, _ *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	return nil, nil
-}
-
-// BarrierGenerateRecoveryKeys generates recovery keys.
-func (m *mockCAClient) BarrierGenerateRecoveryKeys(_ context.Context, _ *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	return nil, nil
-}
-
-// BarrierRecoverWithKeys recovers the barrier using recovery keys.
-func (m *mockCAClient) BarrierRecoverWithKeys(_ context.Context, _ *transport.BarrierRecoverWithKeysRequest) error {
-	return nil
-}
-
-// BarrierDeleteRecoveryKeys deletes all recovery keys.
-func (m *mockCAClient) BarrierDeleteRecoveryKeys(_ context.Context) error {
-	return nil
-}
-
-// BarrierHasRecoveryKeys checks if recovery keys exist.
-func (m *mockCAClient) BarrierHasRecoveryKeys(_ context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	return nil, nil
-}
-
-// BarrierGenerateRootToken generates a root token.
-func (m *mockCAClient) BarrierGenerateRootToken(_ context.Context, _ *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	return nil, nil
-}
-
-// BarrierEnableEncryption migrates a barrier to a keyed strategy.
-func (m *mockCAClient) BarrierEnableEncryption(_ context.Context, _ *pkgtransport.BarrierEnableEncryptionRequest) (*pkgtransport.BarrierEnableEncryptionResponse, error) {
 	return nil, nil
 }
 
@@ -1073,53 +1008,8 @@ func (m *mockCAClient) RevokeEscrow(_ context.Context, _ string) error {
 
 // Backup operations stub implementations (go-xkms#728)
 
-func (m *mockCAClient) CreateBackup(_ context.Context, _ *transport.BackupRequest) (*transport.BackupInfo, error) {
-	return nil, nil
-}
-func (m *mockCAClient) ListBackups(_ context.Context) ([]transport.BackupInfo, error) {
-	return nil, nil
-}
-func (m *mockCAClient) GetBackup(_ context.Context, _ string) (*transport.BackupInfo, error) {
-	return nil, nil
-}
-func (m *mockCAClient) DeleteBackup(_ context.Context, _ string) error { return nil }
-func (m *mockCAClient) RestoreBackup(_ context.Context, _ *transport.RestoreRequest) (*transport.RestoreResult, error) {
-	return nil, nil
-}
-func (m *mockCAClient) VerifyBackup(_ context.Context, _ string) (*transport.VerifyResult, error) {
-	return nil, nil
-}
-
 // Policy operations stub implementations
 
-func (m *mockCAClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) GetCustodianGroup(_ context.Context, _ string) (*transport.GetCustodianGroupResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) ListCustodianGroups(_ context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) DeleteCustodianGroup(_ context.Context, _ string) error { return nil }
-func (m *mockCAClient) AddCustodianMember(_ context.Context, _ *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) RemoveCustodianMember(_ context.Context, _ *transport.RemoveCustodianMemberRequest) error {
-	return nil
-}
-func (m *mockCAClient) DistributeShares(_ context.Context, _ *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) SubmitShare(_ context.Context, _ *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) ListShares(_ context.Context) (*transport.ListSharesResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) GetShareCollectionStatus(_ context.Context, _ string) (*transport.ShareCollectionStatus, error) {
-	return nil, nil
-}
 func (m *mockCAClient) CreateTenant(_ context.Context, _ *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
 	return nil, nil
 }
@@ -1130,39 +1020,10 @@ func (m *mockCAClient) ListTenants(_ context.Context) (*transport.ListTenantsRes
 	return nil, nil
 }
 func (m *mockCAClient) DeleteTenant(_ context.Context, _ string) error { return nil }
-func (m *mockCAClient) TenantBarrierInit(_ context.Context, _ *transport.TenantBarrierInitRequest) error {
-	return nil
-}
-func (m *mockCAClient) TenantBarrierUnseal(_ context.Context, _ *transport.TenantBarrierUnsealRequest) error {
-	return nil
-}
-func (m *mockCAClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
-	return &transport.TenantBarrierStatusResponse{}, nil
-}
 func (m *mockCAClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
 	return nil, nil
 }
 func (m *mockCAClient) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
-	return nil, nil
-}
-
-// InitCeremonyService stub implementations
-func (m *mockCAClient) GetInitStatus(_ context.Context) (*transport.InitStatusResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) ClaimCertBegin(_ context.Context, _ *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) ClaimCertComplete(_ context.Context, _ *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) ClaimShareBegin(_ context.Context, _ *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) ClaimShareComplete(_ context.Context, _ *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
-	return nil, nil
-}
-func (m *mockCAClient) SignCSRInit(_ context.Context, _ *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
 	return nil, nil
 }
 

@@ -167,8 +167,8 @@ An authenticated identity carries its qrdb roles in `Identity.Roles`; the
 mTLS authenticator populates them from the user record resolved by certificate
 SPKI thumbprint (`pkg/auth/qrdb_userstore.go`).
 
-See [Init system roles](../init/roles.md) for how these map onto the PKCS#11
-SO/User model and the ceremony flow.
+See [Init ceremony](../init-ceremony/architecture.md) for how the bootstrap
+administrator receives these roles.
 
 ## Managing roles and permissions
 
@@ -212,5 +212,5 @@ ac.Users().CreateUser(ctx, ...)
 - [Authentication configuration](../configuration/auth.md) - mTLS, RBAC config, transport enforcement
 - [Identity / authorization layering](../auth/layering.md) - the xkms/qrdb boundary
 - [Authentication Adapters](adapter-framework.md) - HTTP/gRPC authentication
-- [Init system roles](../init/roles.md) - roles in the first-boot ceremony
+- [Init ceremony](../init-ceremony/architecture.md) - the first-boot administrator bootstrap
 - [Server Architecture](server-architecture.md) - API server configuration

@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
@@ -599,13 +600,8 @@ func (s *Service) SaveState(state *SyncState) error {
 		return &DetailError{Err: ErrStateSave, Detail: fmt.Sprintf(": mkdir: %v", err)}
 	}
 
-	tmpPath := s.config.StateFilePath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+	if err := fsutil.WriteFileAtomic(s.config.StateFilePath, data, 0600); err != nil {
 		return &DetailError{Err: ErrStateSave, Detail: fmt.Sprintf(": write: %v", err)}
-	}
-
-	if err := os.Rename(tmpPath, s.config.StateFilePath); err != nil {
-		return &DetailError{Err: ErrStateSave, Detail: fmt.Sprintf(": rename: %v", err)}
 	}
 
 	return nil

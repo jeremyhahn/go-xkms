@@ -276,7 +276,7 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   DevID credential), and Basic Constraints CA:false. The IAK's own TCG
   DevID-shaped certificate is unchanged.
 - **A certificate store cannot key the LAK certificate by Common Name, because
-  it has none.** `certstore.CertificateKey` (`pkg/certstore/certstore.go:44`)
+  it has none.** `certstore.CertificateKey` (`pkg/certstore/certstore.go:46`)
   keys a certificate by `Subject.CommonName` when non-empty, or by its SPKI
   SHA-256 thumbprint (`qrdbsdk.ComputeSPKIThumbprint` — qrdb's own canonical
   mTLS binding identifier, not a parallel algorithm) when the Subject is
@@ -733,7 +733,7 @@ lengths against the input before allocating. Regression and fuzz coverage:
 - **`idevid.platform-policy` / `iak.platform-policy`** — provisions the key's
   Policy NV Index with the platform Delegation Policy (see Invariants). The
   default configuration sets it on the IDevID. It does not alter the key.
-- **PCR selection and policy** — named TPM policies in `pkg/tpmpolicy` ([`../tpm-policies/`](../tpm-policies/)) and `pcr.go`.
+- **PCR selection and policy** — named TPM policies in `pkg/tpm2/policy` ([`../tpm-policies/`](../tpm-policies/)) and `pcr.go`.
 - **Platform PCR** (`platform-pcr`, backend `platform_pcr`) — the PCR the
   golden measurement is extended into and every platform policy is computed
   over. Unset (zero) means `DefaultPlatformPCR` (16) on every path: the

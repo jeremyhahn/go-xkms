@@ -48,7 +48,7 @@ func tenantTestRegistry(t *testing.T) *seal.BarrierRegistry {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	creds := seal.MustCredentials([]byte("test-password"))
+	creds := seal.MustCredentials(t.Context(), []byte("test-password"))
 	defer creds.Secret.Destroy()
 	require.NoError(t, barrier.Initialize(ctx, creds))
 
@@ -61,11 +61,11 @@ func tenantTestRegistry(t *testing.T) *seal.BarrierRegistry {
 // its unsealed TenantBarrier.
 func tenantTestRegisteredTenant(t *testing.T, registry *seal.BarrierRegistry, tenantID string) *seal.TenantBarrier {
 	t.Helper()
-	tb, err := registry.RegisterTenant(tenantID)
+	tb, err := registry.RegisterTenantDefault(tenantID)
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	creds := seal.MustCredentials([]byte("tenant-password"))
+	creds := seal.MustCredentials(t.Context(), []byte("tenant-password"))
 	defer creds.Secret.Destroy()
 	require.NoError(t, registry.InitializeTenant(ctx, tenantID, creds))
 	require.False(t, tb.IsSealed(), "tenant barrier should be unsealed after initialization")
@@ -157,7 +157,7 @@ func TestServerTenantAccess_TenantNotFound(t *testing.T) {
 
 func TestServerTenantAccess_TenantSealed(t *testing.T) {
 	registry := tenantTestRegistry(t)
-	_, err := registry.RegisterTenant("sealed-tenant")
+	_, err := registry.RegisterTenantDefault("sealed-tenant")
 	require.NoError(t, err)
 
 	s := &Server{logger: tenantTestLogger(), barrierRegistry: registry}

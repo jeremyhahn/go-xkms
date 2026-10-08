@@ -142,8 +142,8 @@ tenant gets **the same answer a nonexistent tenant gets**, not a denial:
 
 | Transport | Answer | Mapping site |
 |---|---|---|
-| REST / QUIC | `404 Not Found`, body `{"error":"tenant: not found",...}` | tenant routes: `pkg/api/rest/errors.go:130`; `/barrier/enable-encryption`: `pkg/api/rest/handlers_barrier_pin.go:504`; `/ca/sign-csr`: `pkg/api/rest/handlers_ca.go:84` |
-| gRPC | `codes.NotFound` | tenant RPCs: `pkg/api/grpc/service_custodian_share_tenant.go:86`; `BarrierEnableEncryption`: `pkg/api/apierrors/tables.go:147` |
+| REST / QUIC | `404 Not Found`, body `{"error":"tenant: not found",...}` | tenant routes: `pkg/api/rest/errors.go:130`; `/barrier/enable-encryption`: `pkg/api/rest/handlers_pin.go:504`; `/ca/sign-csr`: `pkg/api/rest/handlers_ca.go:84` |
+| gRPC | `codes.NotFound` | tenant RPCs: `pkg/api/grpc/service_tenant.go:86`; `BarrierEnableEncryption`: `pkg/api/apierrors/tables.go:147` |
 | MCP | `JSONRPCCodeNotFound` | tenant methods: `pkg/api/mcp/errors_custodian_tenant.go:57`; `barrier.enableEncryption`: `pkg/api/apierrors/tables.go:147`; `xkms.ca.sign-csr`: `pkg/api/mcp/errors_cert.go:90` |
 
 Affected capabilities: get, delete, barrier init / unseal / status of a
@@ -177,7 +177,7 @@ no identity, reaches them:
 The refusal is raised in the service (`pkg/xkms/tenant_binding.go:88`) and
 mapped by: REST `pkg/api/rest/seal_store_handlers.go:268`,
 `policy_handlers.go:367`, `handlers_credentials.go:90`,
-`handlers_barrier_pin.go:504` (barrier), `:564` (PIN), and `errors.go:162`
+`handlers_pin.go:504` (barrier), `:564` (PIN), and `errors.go:162`
 (PIV, through `handleError`); gRPC and MCP through the shared tables
 `pkg/api/apierrors/tables.go:39` (seal store), `:71` (PIV), `:96` (PIN),
 `:147` (barrier), `:192` (policy), plus MCP's credential table

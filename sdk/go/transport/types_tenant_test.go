@@ -173,11 +173,6 @@ func TestTenantID_SystemTypesExcluded(t *testing.T) {
 		name     string
 		instance interface{}
 	}{
-		{"BarrierInitializeRequest", BarrierInitializeRequest{}},
-		{"BarrierUnsealRequest", BarrierUnsealRequest{}},
-		{"BarrierInitializeShamirRequest", BarrierInitializeShamirRequest{}},
-		{"BarrierUnsealShareRequest", BarrierUnsealShareRequest{}},
-		{"BarrierUnsealSharesRequest", BarrierUnsealSharesRequest{}},
 		{"SetSOPINRequest", SetSOPINRequest{}},
 		{"SetUserPINRequest", SetUserPINRequest{}},
 		{"ChangeSOPINRequest", ChangeSOPINRequest{}},

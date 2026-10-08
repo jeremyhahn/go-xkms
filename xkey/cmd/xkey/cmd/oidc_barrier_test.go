@@ -26,7 +26,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -86,10 +85,9 @@ func TestOpenOIDCTokenStore_NoBarrier_WarnsAndUsesFileStore(t *testing.T) {
 	assert.Contains(t, logged, "store=OIDC")
 	assert.Contains(t, logged, "xkey barrier init")
 
-	// The token lands in the historical unencrypted file, readable without a
-	// barrier -- the no-barrier default is unchanged.
-	raw, err := os.ReadFile(filepath.Join(backupTestDataDir(home), "oidc", "tokens.json"))
-	require.NoError(t, err)
+	// The token lands unencrypted in the data directory's storage, readable
+	// without a barrier -- the no-barrier default is unchanged.
+	raw := readStorageEntry(t, backupTestDataDir(home), oidcCLITokenStoreKey)
 	assert.Contains(t, string(raw), "access-1")
 	assert.Contains(t, string(raw), "https://example.okta.com")
 
@@ -117,8 +115,7 @@ func TestOpenOIDCTokenStore_BarrierInitialized_WritesCiphertextNotPlaintext(t *t
 
 	// The raw bytes barrier storage wrote to disk must never contain the
 	// plaintext tokens.
-	raw, err := os.ReadFile(filepath.Join(dataDir, "oidc", "tokens.json"))
-	require.NoError(t, err, "the barrier-encrypted OIDC token entry must exist on disk")
+	raw := readStorageEntry(t, dataDir, oidcCLITokenStoreKey)
 	assert.NotContains(t, string(raw), "secret-access-token")
 	assert.NotContains(t, string(raw), "secret-refresh-token")
 
@@ -169,7 +166,7 @@ func TestOpenOIDCTokenStore_ExplicitTokenStoreFlagBypassesBarrier(t *testing.T) 
 	home := isolatedBackupHome(t)
 	initTestOATHBarrier(t, home, "correct-password")
 
-	store := filepath.Join(t.TempDir(), "tokens.json")
+	store := filepath.Join(t.TempDir(), "tokens")
 	cmd, _ := newDetachedOIDCCmd(t, oidcTokenCmd)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "token-store", store))
 
@@ -180,7 +177,8 @@ func TestOpenOIDCTokenStore_ExplicitTokenStoreFlagBypassesBarrier(t *testing.T) 
 	// No --barrier-password is supplied; this must still succeed because an
 	// explicit --token-store bypasses barrier auto-detection entirely.
 	require.NoError(t, storeToken(cmd, store, tok))
-	assert.FileExists(t, store)
+	assert.Contains(t, string(readStorageEntry(t, store, oidcCLITokenStoreKey)), "explicit-access",
+		"the explicit store holds the token unencrypted")
 
 	loaded, err := loadToken(cmd, store)
 	require.NoError(t, err)

@@ -21,33 +21,9 @@ On first boot, the server starts in a **sealed** state. No key operations are av
 
 ## Step 2: Initialize the Barrier
 
-The barrier provides transparent at-rest encryption for all stored key material using AES-256-GCM. Initialize it once:
+The barrier provides transparent at-rest encryption for all stored key material. It belongs to go-qrdb: `xkmsd` initializes it from the `seal` configuration, and `xkmsctl` has no `barrier` verb. On a desktop, run `xkey barrier init` before `xkey tpm` or `xkey pin` on a fresh data directory.
 
-```bash
-# Auto-select the best available sealing strategy (prefers hardware)
-xkmsctl barrier init
-
-# Or specify a strategy explicitly
-xkmsctl barrier init --strategy tpm2
-xkmsctl barrier init --strategy software
-```
-
-For software strategy, you will be prompted for a passphrase. For hardware strategies (TPM 2.0, PKCS#11), no passphrase is needed.
-
-Verify initialization:
-
-```bash
-xkmsctl barrier status
-```
-
-```
-Barrier Status
-  Sealed:          false
-  Strategy:        software
-  Hardware Backed: false
-```
-
-> **Deep dive**: [Barrier Architecture](../seal/architecture.md) | [Barrier CLI Reference](cli/barrier.md)
+> **Deep dive**: [Barrier Architecture](../seal/architecture.md)
 
 ## Step 3: Set Up PINs
 
@@ -276,24 +252,7 @@ The global `--backend` flag selects which backend the *server* should use
 
 ## Step 6: Daily Operations
 
-After initial setup, the barrier must be unsealed on each server restart:
-
-```bash
-# Unseal (prompts for passphrase with software strategy)
-xkmsctl barrier unseal
-
-# TPM 2.0 or PKCS#11 strategies unseal automatically (no passphrase)
-xkmsctl barrier unseal --strategy tpm2
-
-# Scripted unseal
-echo "$XKMS_PASSPHRASE" | xkmsctl barrier unseal
-```
-
-Before shutdown (optional but recommended):
-
-```bash
-xkmsctl barrier seal
-```
+The server unseals the barrier on each restart through the configured seal strategy; TPM 2.0 and PKCS#11 strategies need no passphrase.
 
 ## What's Next
 

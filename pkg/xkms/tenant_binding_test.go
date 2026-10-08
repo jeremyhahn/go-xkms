@@ -52,7 +52,7 @@ func newBindingTestService(t *testing.T) *XKMSService {
 		PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 	}, seal.NewSoftwareStrategy())
 	require.NoError(t, err)
-	creds := seal.MustCredentials([]byte(bindingPassphrase))
+	creds := seal.MustCredentials(t.Context(), []byte(bindingPassphrase))
 	defer creds.Secret.Destroy()
 	require.NoError(t, barrier.Initialize(ctx, creds))
 	if barrier.IsSealed() {
@@ -93,41 +93,6 @@ func requireBindingRefusal(t *testing.T, err error, op string) {
 	assert.Equal(t, qrdbsdk.ErrTenantMissing.Error(), err.Error(), op)
 }
 
-func TestTenantBinding_CrossTenantRefusedAsNotFound(t *testing.T) {
-	svc := newBindingTestService(t)
-	ctx := tenantCtx("tenant-a")
-
-	_, err := svc.GetTenant(ctx, "tenant-b")
-	requireBindingRefusal(t, err, "get")
-
-	requireBindingRefusal(t, svc.DeleteTenant(ctx, "tenant-b"), "delete")
-
-	requireBindingRefusal(t, svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
-		TenantID: "tenant-b", Passphrase: []byte(bindingPassphrase),
-	}), "barrier init")
-
-	requireBindingRefusal(t, svc.TenantBarrierUnseal(ctx, &transport.TenantBarrierUnsealRequest{
-		TenantID: "tenant-b", Key: []byte(bindingPassphrase),
-	}), "barrier unseal")
-
-	_, err = svc.TenantBarrierStatus(ctx, "tenant-b")
-	requireBindingRefusal(t, err, "barrier status")
-
-	_, err = svc.UpdateTenantEntitlements(ctx, &transport.UpdateTenantEntitlementsRequest{
-		TenantID: "tenant-b", Entitlements: transport.TenantEntitlements{AllowDedicatedRaft: true},
-	})
-	requireBindingRefusal(t, err, "entitlements")
-
-	_, err = svc.UpdateTenantQuotas(ctx, &transport.UpdateTenantQuotasRequest{
-		TenantID: "tenant-b", Quotas: transport.TenantQuotas{MaxKeys: 1_000_000},
-	})
-	requireBindingRefusal(t, err, "quotas")
-
-	// tenant-b is untouched: still present for the platform scope.
-	_, err = svc.GetTenant(systemCtx(), "tenant-b")
-	require.NoError(t, err)
-}
-
 // TestTenantBinding_RefusalMatchesGenuineMiss is the anti-enumeration
 // property: probing a foreign tenant and probing an unused ID return equal
 // errors, so the probe learns nothing.
@@ -141,32 +106,6 @@ func TestTenantBinding_RefusalMatchesGenuineMiss(t *testing.T) {
 	assert.Equal(t, missing.Error(), foreign.Error())
 	assert.True(t, errors.Is(missing, qrdbsdk.ErrTenantMissing))
 	assert.True(t, errors.Is(foreign, qrdbsdk.ErrTenantMissing))
-}
-
-func TestTenantBinding_OwnTenantAllowed(t *testing.T) {
-	svc := newBindingTestService(t)
-	ctx := tenantCtx("tenant-a")
-
-	got, err := svc.GetTenant(ctx, "tenant-a")
-	require.NoError(t, err)
-	assert.Equal(t, "tenant-a", got.Tenant.ID)
-
-	status, err := svc.TenantBarrierStatus(ctx, "tenant-a")
-	require.NoError(t, err)
-	assert.Equal(t, "tenant-a", status.TenantID)
-
-	// Past the binding, go-qrdb answers for itself: a prefix tenant has no
-	// dedicated barrier to initialize or unseal, which is not the binding's
-	// not-found refusal.
-	var bindErr *TenantBindingError
-	err = svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
-		TenantID: "tenant-a", Passphrase: []byte(bindingPassphrase),
-	})
-	assert.False(t, errors.As(err, &bindErr), "own-tenant init must pass the binding: %v", err)
-	err = svc.TenantBarrierUnseal(ctx, &transport.TenantBarrierUnsealRequest{
-		TenantID: "tenant-a", Key: []byte(bindingPassphrase),
-	})
-	assert.False(t, errors.As(err, &bindErr), "own-tenant unseal must pass the binding: %v", err)
 }
 
 // TestTenantBinding_OwnTenantDeleteDelegates uses the recording fake because
@@ -213,20 +152,6 @@ func TestTenantBinding_PlanChangesArePlatformOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, quotas.Tenant.Quotas)
 	assert.Equal(t, int64(42), quotas.Tenant.Quotas.MaxKeys)
-}
-
-func TestTenantBinding_SystemIdentityReachesEveryTenant(t *testing.T) {
-	svc := newBindingTestService(t)
-
-	for _, id := range []string{"tenant-a", "tenant-b"} {
-		got, err := svc.GetTenant(systemCtx(), id)
-		require.NoError(t, err)
-		assert.Equal(t, id, got.Tenant.ID)
-
-		status, err := svc.TenantBarrierStatus(systemCtx(), id)
-		require.NoError(t, err)
-		assert.Equal(t, id, status.TenantID)
-	}
 }
 
 func TestTenantBinding_ListTenantsFiltersToCaller(t *testing.T) {
@@ -291,38 +216,6 @@ func TestRequirePlatformScope(t *testing.T) {
 	assert.Equal(t, "tenant-a", bindErr.CallerTenantID)
 }
 
-// TestBarrierEnableEncryption_TenantBinding pins the same binding on the
-// caller-supplied migration target: a Tenant Admin may migrate its own
-// tenant's barrier, but not another tenant's and not the system barrier.
-func TestBarrierEnableEncryption_TenantBinding(t *testing.T) {
-	svc := newServiceForMigration(t)
-	migrator := &fakeEncryptionMigrator{}
-	svc.SetEncryptionMigrator(migrator)
-	ctx := tenantCtx("tenant-a")
-
-	_, err := svc.BarrierEnableEncryption(ctx, &transport.BarrierEnableEncryptionRequest{
-		TenantID: "tenant-b", Strategy: "passphrase", Passphrase: bindingPassphrase,
-	})
-	requireBindingRefusal(t, err, "other tenant")
-
-	_, err = svc.BarrierEnableEncryption(ctx, &transport.BarrierEnableEncryptionRequest{
-		Strategy: "passphrase", Passphrase: bindingPassphrase,
-	})
-	requireBindingRefusal(t, err, "system barrier")
-
-	assert.False(t, migrator.wasCalled(), "a refused migration must never be scheduled")
-
-	own := &fakeEncryptionMigrator{done: make(chan struct{})}
-	svc.SetEncryptionMigrator(own)
-	resp, err := svc.BarrierEnableEncryption(ctx, &transport.BarrierEnableEncryptionRequest{
-		TenantID: "tenant-a", Strategy: "passphrase", Passphrase: bindingPassphrase,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, string(qrdbsdk.ScopeTenant), resp.Scope)
-	<-own.done
-	assert.Equal(t, "tenant-a", own.scope.TenantID)
-}
-
 // TestSignCSR_TenantBinding pins the binding on the caller-supplied SPIFFE
 // tenant: a tenant-scoped caller may stamp its own tenant (or none), never
 // another tenant's.
@@ -352,4 +245,46 @@ func TestSignCSR_TenantBinding(t *testing.T) {
 	_, err = svc.SignCSR(platformAdmin, &transport.SignCSRRequest{CSRPEM: csr, TenantID: "tenant-b"})
 	require.NoError(t, err)
 	assert.Equal(t, "tenant-b", ca.signCSRTenant)
+}
+
+func TestTenantBinding_CrossTenantRefusedAsNotFound(t *testing.T) {
+	svc := newBindingTestService(t)
+	ctx := tenantCtx("tenant-a")
+
+	_, err := svc.GetTenant(ctx, "tenant-b")
+	requireBindingRefusal(t, err, "get")
+
+	requireBindingRefusal(t, svc.DeleteTenant(ctx, "tenant-b"), "delete")
+
+	_, err = svc.UpdateTenantEntitlements(ctx, &transport.UpdateTenantEntitlementsRequest{
+		TenantID: "tenant-b", Entitlements: transport.TenantEntitlements{AllowDedicatedRaft: true},
+	})
+	requireBindingRefusal(t, err, "entitlements")
+
+	_, err = svc.UpdateTenantQuotas(ctx, &transport.UpdateTenantQuotasRequest{
+		TenantID: "tenant-b", Quotas: transport.TenantQuotas{MaxKeys: 1_000_000},
+	})
+	requireBindingRefusal(t, err, "quotas")
+
+	// tenant-b is untouched: still present for the platform scope.
+	_, err = svc.GetTenant(systemCtx(), "tenant-b")
+	require.NoError(t, err)
+}
+
+func TestTenantBinding_OwnTenantAllowed(t *testing.T) {
+	svc := newBindingTestService(t)
+
+	got, err := svc.GetTenant(tenantCtx("tenant-a"), "tenant-a")
+	require.NoError(t, err)
+	assert.Equal(t, "tenant-a", got.Tenant.ID)
+}
+
+func TestTenantBinding_SystemIdentityReachesEveryTenant(t *testing.T) {
+	svc := newBindingTestService(t)
+
+	for _, id := range []string{"tenant-a", "tenant-b"} {
+		got, err := svc.GetTenant(systemCtx(), id)
+		require.NoError(t, err)
+		assert.Equal(t, id, got.Tenant.ID)
+	}
 }

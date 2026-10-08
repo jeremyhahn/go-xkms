@@ -18,11 +18,31 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Compile-time interface check.
 var _ SealingStrategy = (*TPM2Strategy)(nil)
+
+// credentialPassword turns the credential secret, which lives in protected
+// memory, into a TPM authorization password. It opens the secret into a
+// locked view, copies the plaintext out, and destroys the view before
+// returning; the caller still owns and destroys the credential itself.
+func credentialPassword(ctx context.Context, creds Credentials) (types.Password, error) {
+	opened, err := creds.Secret.Open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	secret, strErr := opened.OpenString()
+	if destroyErr := opened.Destroy(); destroyErr != nil {
+		return nil, &errs.Joined{Lead: ErrCredentialViewDestroyFailed, Cause: destroyErr}
+	}
+	if strErr != nil {
+		return nil, strErr
+	}
+	return types.NewPasswordFromString(secret)
+}
 
 // TPM2Strategy wraps an existing types.Sealer that uses TPM 2.0 hardware
 // for root key protection. The underlying sealer handles all TPM-specific
@@ -80,20 +100,7 @@ func (t *TPM2Strategy) SealRootKey(
 	}
 	var opts *types.SealOptions
 	if creds.Secret != nil {
-		// The credential secret lives in protected memory. Open it into a
-		// locked view, copy the plaintext out for the password, and destroy
-		// the view on return; the caller still owns and destroys the
-		// credential itself.
-		opened, openErr := creds.Secret.Open()
-		if openErr != nil {
-			return nil, openErr
-		}
-		secret, strErr := opened.OpenString()
-		opened.Destroy()
-		if strErr != nil {
-			return nil, strErr
-		}
-		pw, pwErr := types.NewPasswordFromString(secret)
+		pw, pwErr := credentialPassword(ctx, creds)
 		if pwErr != nil {
 			return nil, pwErr
 		}
@@ -147,18 +154,7 @@ func (t *TPM2Strategy) UnsealRootKey(
 
 	var opts *types.UnsealOptions
 	if creds.Secret != nil {
-		// Same borrow as SealRootKey: open the protected secret, copy the
-		// plaintext for the password, destroy the view immediately.
-		opened, openErr := creds.Secret.Open()
-		if openErr != nil {
-			return nil, openErr
-		}
-		secret, strErr := opened.OpenString()
-		opened.Destroy()
-		if strErr != nil {
-			return nil, strErr
-		}
-		pw, pwErr := types.NewPasswordFromString(secret)
+		pw, pwErr := credentialPassword(ctx, creds)
 		if pwErr != nil {
 			return nil, pwErr
 		}
@@ -166,7 +162,11 @@ func (t *TPM2Strategy) UnsealRootKey(
 			Password: pw,
 		}
 	}
-	return t.sealer.Unseal(ctx, &sd, opts)
+	rootKey, err := t.sealer.Unseal(ctx, &sd, opts)
+	if err != nil {
+		return nil, &RootKeyUnsealError{Strategy: StrategyTPM2, Err: err}
+	}
+	return rootKey, nil
 }
 
 // BarrierEncryptor returns a SymmetricEncrypter for barrier data operations.

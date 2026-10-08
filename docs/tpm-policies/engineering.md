@@ -1,6 +1,6 @@
 # TPM Policies — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-01 (vTPM restart-readiness fix)
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-10-08 (registry and key versions on go-qrdb DAO entities)
 
 Design: [`architecture.md`](architecture.md). Surface: [`api.md`](api.md).
 
@@ -8,7 +8,7 @@ Design: [`architecture.md`](architecture.md). Surface: [`api.md`](api.md).
 
 | Layer | Package | Responsibility |
 |---|---|---|
-| Service | `pkg/tpmpolicy` | Scopes, named policies, approvals, the registry, vTPMs |
+| Service | `pkg/tpm2/policy` | Scopes, named policies, approvals, the registry, vTPMs |
 | Key routing | `pkg/backend/tpm2` (`scope.go`) | Runs each key and seal operation in the TPM scope of `KeyAttributes.TenantID` |
 | Composition | `pkg/compose` (`BuildTPMPolicyService`) | The one construction path, used by xkmsd and by embedding hosts |
 | Service layer | `pkg/xkms/servicer_tpm_policy.go` | Tenant binding and system scope, then delegation to `TenantTPMPolicies` |
@@ -58,22 +58,29 @@ Design: [`architecture.md`](architecture.md). Surface: [`api.md`](api.md).
 
 ## Composition
 
-`compose.BuildTPMPolicyService(TPMPolicyParams{Backend, Storage, VTPM,
-Logger})`:
+`compose.BuildTPMPolicyService(TPMPolicyParams{Backend, DAOs, Storage,
+VTPM, Logger})`:
 
-- registry over `Storage("tpm-policies")` (`StorageTPMPolicies`), tenant
-  object blobs over `Storage("tpm-keys")` (`StorageTPMKeys`);
+- registry (`tpmpolicy.NewRegistry(DAOs)`) over the DAO factory serving the
+  `tpmpolicy.DatabaseName` database; a factory that does not serve it fails
+  the build with `*dao.DatabaseUnavailableError`. Tenant object blobs over
+  `Storage("tpm-keys")` (`StorageTPMKeys`);
 - the backend's own TPM, Platform SRK and key store for the system scope;
 - the backend's TPM as the scopes' secrets sealer (every sealed secret is
   bound to the built-in `platform` policy by the service itself);
 - installs the service as the backend's scope provider.
 
 xkmsd (`pkg/server/backend_tpm2.go`, `initTPMPolicyService`) builds it when
-`backends.tpm2` is enabled and closes it before the TPM on every shutdown
+`backends.tpm2` is enabled, opening the registry's database on its datastore
+first (`Server.daoFactory`), and closes it before the TPM on every shutdown
 path. An embedding host's module (`pkg/apimodule`) builds it through
 `compose.Build` when its `XKMSService` has a `tpm2` backend
-(`compose.TPM2Backend`); `WithVTPM` makes vtpm mode available there, and the
-host closes the stores (`Stores.Close`) at shutdown.
+(`compose.TPM2Backend`): it opens the databases `compose.Databases(deps)`
+names on a datastore over the host's client and sets `Deps.DAOs`. `WithVTPM`
+makes vtpm mode available there, and the host closes the stores
+(`Stores.Close`) at shutdown. xKey's local mode (`pkg/localtpm`) serves the
+database from the store in `<data dir>/tpm-policies` through
+`dao.NewStoreFactory`.
 
 ## Tenant adapter (`TenantTPMPolicies`)
 
@@ -98,7 +105,7 @@ job. A nil `svc` is `ErrNotConfigured`.
 Design: [`architecture.md`](architecture.md), "Composite policies and
 descriptions".
 
-- **Model** (`pkg/tpmpolicy/types.go`). `Policy{Description, Branches,
+- **Model** (`pkg/tpm2/policy/types.go`). `Policy{Description, Branches,
   Approvals}`: an OR of `Branch`es, each an AND of `Condition`s --
   `pcr` (`Bank`, `PCRs`; `PCRValues`/`PCRDigest` captured, never supplied),
   `auth_value` (no operand) and `locality` (`Localities` 0-4). `Approvals` is
@@ -151,15 +158,25 @@ Design: [`architecture.md`](architecture.md), "Key versions".
 
 | Layer | Package | Responsibility |
 |---|---|---|
-| Model and store | `pkg/keyversion` | `Record`, `Version`, `State`; the `--v<n>` name rules (`Name`, `Parse`, `CheckKeyID`); `Store` over a `storage.Backend` |
-| Composition | `pkg/compose` (`BuildKeyVersionStore`) | The one construction path, over `Storage("key-versions")` (`StorageKeyVersions`); `compose.Build` builds it whenever it has storage, xkmsd in `initializeKeyVersionStore` |
+| Model and store | `pkg/keyversion` | `Record`, `Version`, `State`; the `--v<n>` name rules (`Name`, `Parse`, `CheckKeyID`); `Store` over the `keyversion` go-qrdb database (`DatabaseName`) through `dao.New` |
+| Composition | `pkg/compose` (`BuildKeyVersionStore(daos)`) | The one construction path, over `Deps.DAOs`; `compose.Build` builds it whenever it has a DAO factory, xkmsd in `initializeKeyVersionStore` (`daoFactory`) |
 | Service | `pkg/xkms/key_versions.go`, `servicer_keyversion.go` | Resolving a key to its versions, choosing the version per operation, rotation, the state changes, `RotateScopeKeys` |
 | Transports | `pkg/api/{rest,grpc,mcp}`, `pkg/api/transport/*` | Wire mapping only; `pbconv.KeyVersionClient` and `wire.KeyVersionClient` are the shared clients |
 
-- **Record layout.** `{tenant}/key-versions/<backend>/<keyID>` in the
-  `key-versions` storage, one JSON record per rotated key; the system tenant
-  is `system`. The tenant is the key's own (`KeyAttributes.TenantID`), the
-  backend its registered name.
+- **Record layout.** One `key_versions` DAO entity (`keyversion.Entity`) per
+  rotated key in the `keyversion` database, its natural key
+  `{tenant}/<backend>/<keyID>` and its ID that key's hash
+  (`CryptoFieldHashGenerator("Name")`), so it needs no secondary index. The
+  system tenant is `system`. The tenant is the key's own
+  (`KeyAttributes.TenantID`), the backend its registered name. Records
+  written under the former `key-versions` storage are not read.
+- **Store calls.** `Load`, `Put` and `Delete` validate the key's segments
+  (`*keyversion.InvalidRecordKeyError`) and report any DAO failure as
+  `*keyversion.StoreError` naming the operation, never as an absent record.
+  Over xkmsd's embedded node the datastore runs them as the service
+  principal (`datastore.WithCallContext`). A nil factory is
+  `keyversion.ErrNilDAOFactory`; one not serving the database fails
+  `NewStore` with `*dao.DatabaseUnavailableError`.
 - **No record at generate.** `GenerateKey` and `ImportKey` write nothing: a
   key without a record is version 1, alone and enabled
   (`keyversion.Implicit`), so a key that is never rotated costs no store
@@ -299,7 +316,7 @@ documented `ErrConnectionLost` retry-once contract (`transport.go`).
   sealing, derivation, unwrap. `pkg/api/{grpc,rest,mcp}/*key_version*_test.go`
   and `pkg/api/transport/*/transport_key_version_test.go`: every endpoint and
   its error mapping.
-- `pkg/tpmpolicy/conditions_test.go` (validation, conversion) and
+- `pkg/tpm2/policy/conditions_test.go` (validation, conversion) and
   `service_simulator_test.go` (simulator): composite policies end to end --
   OR of branches, PCR and password, locality, descriptions, per-branch
   verification. `pkg/api/transport/tpm_policy_branch_test.go`: the branch

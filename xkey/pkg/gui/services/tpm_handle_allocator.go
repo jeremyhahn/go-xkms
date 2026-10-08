@@ -19,6 +19,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // TPM hierarchy constants for key generation.
@@ -195,5 +197,5 @@ func (a *TPMHandleAllocator) persistCounters() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(a.counterFilePath(), data, 0600)
+	return fsutil.WriteFileAtomic(a.counterFilePath(), data, 0600)
 }

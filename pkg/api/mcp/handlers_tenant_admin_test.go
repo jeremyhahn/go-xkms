@@ -43,7 +43,6 @@ type fakeTenantServicer struct {
 	tenants map[string]*qrdbsdk.ServiceTenantInfo
 	err     error
 
-	initTenantID   string
 	unsealTenantID string
 	planTenantID   string
 }
@@ -94,14 +93,6 @@ func (f *fakeTenantServicer) DeleteTenant(_ context.Context, id string) error {
 	}
 	delete(f.tenants, id)
 	return nil
-}
-
-func (f *fakeTenantServicer) TenantBarrierInitWithStrategy(_ context.Context, id string, _ []byte, _, _ int, strategy qrdbsdk.StrategyID) (*qrdbsdk.ServiceTenantBarrierInitResult, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	f.initTenantID = id
-	return &qrdbsdk.ServiceTenantBarrierInitResult{TenantID: id, Strategy: string(strategy)}, nil
 }
 
 func (f *fakeTenantServicer) TenantBarrierUnseal(_ context.Context, id string, _ []byte) error {
@@ -183,7 +174,6 @@ func scopedCtx(tid string) context.Context {
 func TestTenantAdminMethods_Dispatchable(t *testing.T) {
 	for _, method := range []string{
 		"xkms.createTenant", "xkms.getTenant", "xkms.listTenants", "xkms.deleteTenant",
-		"xkms.tenantBarrierInit", "xkms.tenantBarrierUnseal", "xkms.tenantBarrierStatus",
 		"xkms.updateTenantEntitlements", "xkms.updateTenantQuotas",
 	} {
 		_, ok := rpcMethodHandlers[method]
@@ -348,102 +338,6 @@ func TestHandleDeleteTenant_CrossTenantDenied(t *testing.T) {
 	assert.True(t, errors.Is(err, qrdbsdk.ErrTenantMissing))
 	_, stillThere := fake.tenants["other-tenant"]
 	assert.True(t, stillThere, "a denied cross-tenant delete must never reach the service layer")
-}
-
-func TestHandleTenantBarrierInit_Success(t *testing.T) {
-	fake := newFakeTenantServicer()
-	server := newTenantAdminServer(t, fake)
-
-	result, err := server.handleTenantBarrierInit(systemCtx(),
-		tenantAdminRequest(t, "xkms.tenantBarrierInit", transport.TenantBarrierInitRequest{
-			TenantID: "t1", Passphrase: []byte("s3cret!"),
-		}))
-
-	require.NoError(t, err)
-	_, ok := result.(*transport.TenantBarrierStatusResponse)
-	require.True(t, ok, "result must be *transport.TenantBarrierStatusResponse, got %T", result)
-	assert.Equal(t, "t1", fake.initTenantID)
-}
-
-// TestHandleTenantBarrierInit_CrossTenantDenied mirrors REST's
-// TenantBarrierInitHandler anti-enumeration behavior.
-func TestHandleTenantBarrierInit_CrossTenantDenied(t *testing.T) {
-	fake := newFakeTenantServicer()
-	server := newTenantAdminServer(t, fake)
-
-	_, err := server.handleTenantBarrierInit(scopedCtx("tenant-a"),
-		tenantAdminRequest(t, "xkms.tenantBarrierInit", transport.TenantBarrierInitRequest{
-			TenantID: "other-tenant", Passphrase: []byte("s3cret!"),
-		}))
-
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, qrdbsdk.ErrTenantMissing))
-	assert.Empty(t, fake.initTenantID, "a denied cross-tenant init must never reach the service layer")
-}
-
-func TestHandleTenantBarrierInit_RequiresTenantID(t *testing.T) {
-	server := newTenantAdminServer(t, newFakeTenantServicer())
-
-	_, err := server.handleTenantBarrierInit(systemCtx(),
-		tenantAdminRequest(t, "xkms.tenantBarrierInit", transport.TenantBarrierInitRequest{}))
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant_id")
-}
-
-func TestHandleTenantBarrierUnseal_Success(t *testing.T) {
-	fake := newFakeTenantServicer()
-	server := newTenantAdminServer(t, fake)
-
-	result, err := server.handleTenantBarrierUnseal(systemCtx(),
-		tenantAdminRequest(t, "xkms.tenantBarrierUnseal", transport.TenantBarrierUnsealRequest{
-			TenantID: "t1", Key: []byte("s3cret!"),
-		}))
-
-	require.NoError(t, err)
-	_, ok := result.(*transport.TenantBarrierStatusResponse)
-	require.True(t, ok, "result must be *transport.TenantBarrierStatusResponse, got %T", result)
-	assert.Equal(t, "t1", fake.unsealTenantID)
-}
-
-// TestHandleTenantBarrierUnseal_CrossTenantDenied mirrors REST's
-// TenantBarrierUnsealHandler anti-enumeration behavior.
-func TestHandleTenantBarrierUnseal_CrossTenantDenied(t *testing.T) {
-	fake := newFakeTenantServicer()
-	server := newTenantAdminServer(t, fake)
-
-	_, err := server.handleTenantBarrierUnseal(scopedCtx("tenant-a"),
-		tenantAdminRequest(t, "xkms.tenantBarrierUnseal", transport.TenantBarrierUnsealRequest{
-			TenantID: "other-tenant", Key: []byte("s3cret!"),
-		}))
-
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, qrdbsdk.ErrTenantMissing))
-	assert.Empty(t, fake.unsealTenantID, "a denied cross-tenant unseal must never reach the service layer")
-}
-
-func TestHandleTenantBarrierStatus_Success(t *testing.T) {
-	server := newTenantAdminServer(t, newFakeTenantServicer())
-
-	result, err := server.handleTenantBarrierStatus(systemCtx(),
-		tenantAdminRequest(t, "xkms.tenantBarrierStatus", TenantIDParams{TenantID: "t1"}))
-
-	require.NoError(t, err)
-	resp, ok := result.(*transport.TenantBarrierStatusResponse)
-	require.True(t, ok, "result must be *transport.TenantBarrierStatusResponse, got %T", result)
-	assert.Equal(t, "t1", resp.TenantID)
-}
-
-// TestHandleTenantBarrierStatus_CrossTenantDenied mirrors REST's
-// TenantBarrierStatusHandler anti-enumeration behavior.
-func TestHandleTenantBarrierStatus_CrossTenantDenied(t *testing.T) {
-	server := newTenantAdminServer(t, newFakeTenantServicer())
-
-	_, err := server.handleTenantBarrierStatus(scopedCtx("tenant-a"),
-		tenantAdminRequest(t, "xkms.tenantBarrierStatus", TenantIDParams{TenantID: "other-tenant"}))
-
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, qrdbsdk.ErrTenantMissing))
 }
 
 func TestHandleUpdateTenantEntitlements_Success(t *testing.T) {

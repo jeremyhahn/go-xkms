@@ -63,7 +63,7 @@ func (e *VaultCredentialSealError) Unwrap() error { return e.Err }
 // copied and sealed into protected memory, so the caller's request may be
 // zeroed independently. An empty secret is left nil: staticpw's own
 // validation rejects it with the right sentinel for the factor type.
-func vaultCredential(c transport.PasswordVaultCredential) (staticpw.VaultCredential, error) {
+func vaultCredential(ctx context.Context, c transport.PasswordVaultCredential) (staticpw.VaultCredential, error) {
 	cred := staticpw.VaultCredential{
 		Type:           staticpw.FactorType(c.Factor),
 		CredentialID:   c.CredentialID,
@@ -89,7 +89,7 @@ func vaultCredential(c transport.PasswordVaultCredential) (staticpw.VaultCredent
 	if len(secretBytes) == 0 {
 		return cred, nil
 	}
-	secret, err := secure.NewSecret(secretBytes)
+	secret, err := secure.NewSecret(ctx, secretBytes)
 	if err != nil {
 		return staticpw.VaultCredential{}, &VaultCredentialSealError{Err: err}
 	}
@@ -162,7 +162,7 @@ func (s *XKMSService) PasswordVaultEnroll(ctx context.Context, req *transport.Pa
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	cred, err := vaultCredential(req.PasswordVaultCredential)
+	cred, err := vaultCredential(ctx, req.PasswordVaultCredential)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +185,7 @@ func (s *XKMSService) PasswordVaultRotate(ctx context.Context, req *transport.Pa
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	cred, err := vaultCredential(req.PasswordVaultCredential)
+	cred, err := vaultCredential(ctx, req.PasswordVaultCredential)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (s *XKMSService) PasswordVaultRecover(ctx context.Context, req *transport.P
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	cred, err := vaultCredential(req.PasswordVaultCredential)
+	cred, err := vaultCredential(ctx, req.PasswordVaultCredential)
 	if err != nil {
 		return nil, err
 	}

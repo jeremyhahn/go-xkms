@@ -29,10 +29,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // NewTLSServer starts an HTTPS server for handler on 127.0.0.1 with a fresh
@@ -74,7 +75,7 @@ func NewTLSServer(t testing.TB, handler http.Handler) (*httptest.Server, string)
 	t.Cleanup(srv.Close)
 
 	caFile := filepath.Join(t.TempDir(), "ca.pem")
-	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
 		t.Fatalf("serveridtest: ca file: %v", err)
 	}
 	return srv, caFile

@@ -30,10 +30,7 @@ describe("parseHash", () => {
       ["#/certs", "certificates"],
       ["#/certificates", "certificates"],
       ["#/ca", "ca"],
-      ["#/barrier", "barrier"],
       ["#/tenants", "tenants"],
-      ["#/custodians", "custodians"],
-      ["#/shares", "shares"],
       ["#/pin", "pin"],
       ["#/piv", "piv"],
       ["#/ssh", "ssh"],
@@ -42,8 +39,6 @@ describe("parseHash", () => {
       ["#/platform", "platform"],
       ["#/tpm/policies", "tpmPolicies"],
       ["#/users", "users"],
-      ["#/cluster", "cluster"],
-      ["#/ceremony", "ceremony"],
       ["#/settings", "settings"],
     ];
     for (const [hash, name] of cases) {

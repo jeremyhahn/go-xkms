@@ -45,11 +45,12 @@ func TestFinishLogin_DiscoverableSession_CallerSuppliedHandle_Succeeds(t *testin
 		AllowPublicRegistration: openRegistration(),
 		ResidentKeyRequirement:  "preferred",
 	}
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 
@@ -121,11 +122,12 @@ func TestFinishLogin_IdentifiedSession_MismatchedHandle_FailsVerification(t *tes
 		RPOrigins:               []string{"https://example.com"},
 		AllowPublicRegistration: openRegistration(),
 	}
+	users, creds := newTestStores(t)
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,
-		UserStore:       NewMemoryUserStore(),
+		UserStore:       users,
 		SessionStore:    NewMemorySessionStore(),
-		CredentialStore: NewMemoryCredentialStore(),
+		CredentialStore: creds,
 	})
 	require.NoError(t, err)
 

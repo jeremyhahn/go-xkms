@@ -39,74 +39,45 @@ func TestBarrierConfig_IsHardwareSealStrategy(t *testing.T) {
 	}
 }
 
-// TestBarrierConfig_NodeFlipWired proves the exact strategy split the
-// node-barrier flip (pkg/server's resolveNodeSeal) and ComplianceGaps both
-// key off: "none"/"passphrase"/"shamir"/"tpm2" are wired to the qrdb node's
-// own barrier; "pkcs11" and every cloud-KMS strategy are not (they need
-// credentials only resolvable after the credential service exists, which
-// itself needs the barrier they would be sealing — go-xkms#653 item 3,
-// not yet approved).
-func TestBarrierConfig_NodeFlipWired(t *testing.T) {
-	wired := []string{"", "none", "passphrase", "shamir", "tpm2"}
-	for _, s := range wired {
-		assert.True(t, BarrierConfig{Strategy: s}.NodeFlipWired(), s)
-	}
-	notWired := []string{"pkcs11", "awskms", "gcpkms", "azurekv", "vault"}
-	for _, s := range notWired {
-		assert.False(t, BarrierConfig{Strategy: s}.NodeFlipWired(), s)
+// TestComplianceGaps_EveryBarrierStrategyEncryptsAtRest proves an enabled
+// barrier closes the encryption-at-rest gap whatever its strategy: the qrdb
+// node's own barrier is the only barrier, and every strategy -- including
+// the cloud-KMS ones -- seals it.
+func TestComplianceGaps_EveryBarrierStrategyEncryptsAtRest(t *testing.T) {
+	strategies := []string{"none", "passphrase", "shamir", "tpm2", "pkcs11", "awskms", "gcpkms", "azurekv", "vault"}
+	for _, strategy := range strategies {
+		cfg := secureBarrierConfig()
+		cfg.Barrier.Strategy = strategy
+		assert.False(t, hasBarrierGap(cfg), "strategy %q", strategy)
 	}
 }
 
-// TestComplianceGaps_QRDBBarrierNodeFlipWired proves the gap tracks
-// BarrierConfig.NodeFlipWired, not whether the strategy can auto-unseal
-// unattended: "passphrase" and "shamir" are wired to the qrdb node's own
-// barrier exactly like "none" and "tpm2" are (go-xkms#653 approved item 2)
-// — the node's data plane is genuinely encrypted for all four, "passphrase"
-// and "shamir" just gate access behind the sealed-window unseal ceremony
-// rather than auto-unsealing. Only a strategy not yet wired to the flip
-// (pkcs11, the cloud-KMS strategies) leaves the node's own data plane
-// unencrypted, which is the actual gap.
-func TestComplianceGaps_QRDBBarrierNodeFlipWired(t *testing.T) {
-	// Base secure config (TLS/auth/CA present) so only the barrier gap varies.
-	base := func() *Config {
-		return &Config{
-			Datastore: DatastoreConfig{},
-			Barrier:   BarrierConfig{Enabled: true, Strategy: "passphrase"},
-			TLS:       TLSConfig{Enabled: true},
-			Auth:      AuthConfig{Enabled: true, Type: "jwt"},
-			CA:        &ca.MultiIdentityCAConfig{},
+// TestComplianceGaps_DisabledBarrierIsAGap proves a disabled barrier is still
+// reported: the data plane would be stored in plaintext.
+func TestComplianceGaps_DisabledBarrierIsAGap(t *testing.T) {
+	cfg := secureBarrierConfig()
+	cfg.Barrier.Enabled = false
+	assert.True(t, hasBarrierGap(cfg))
+}
+
+// secureBarrierConfig returns a config with TLS, auth and a CA present, so
+// only the barrier can contribute a compliance gap.
+func secureBarrierConfig() *Config {
+	return &Config{
+		Barrier: BarrierConfig{Enabled: true, Strategy: "passphrase"},
+		TLS:     TLSConfig{Enabled: true},
+		Auth:    AuthConfig{Enabled: true, Type: "jwt"},
+		CA:      &ca.MultiIdentityCAConfig{},
+	}
+}
+
+// hasBarrierGap reports whether cfg's compliance gaps include one about the
+// barrier.
+func hasBarrierGap(cfg *Config) bool {
+	for _, g := range cfg.ComplianceGaps() {
+		if strings.Contains(g, "barrier") {
+			return true
 		}
 	}
-
-	hasNodeFlipGap := func(cfg *Config) bool {
-		for _, g := range cfg.ComplianceGaps() {
-			if strings.Contains(g, "not wired to the qrdb node's own barrier") {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Every NodeFlipWired strategy closes the gap: the node's own barrier
-	// genuinely encrypts the data plane for each, auto-unsealing unattended
-	// ("none", "tpm2") or via the operator-driven sealed-window ceremony
-	// ("passphrase", "shamir").
-	for _, strategy := range []string{"none", "passphrase", "shamir", "tpm2"} {
-		cfg := base()
-		cfg.Barrier.Strategy = strategy
-		assert.False(t, hasNodeFlipGap(cfg), "strategy %q is wired to the node flip", strategy)
-	}
-
-	// A strategy not yet wired to the node flip leaves it open: the node's
-	// own data plane stays genuinely unencrypted.
-	for _, strategy := range []string{"pkcs11", "awskms", "gcpkms", "azurekv", "vault"} {
-		cfg := base()
-		cfg.Barrier.Strategy = strategy
-		assert.True(t, hasNodeFlipGap(cfg), "strategy %q is not yet wired to the node flip", strategy)
-	}
-
-	// File storage never hits this gap (no embedded node / different barrier).
-	fileCfg := base()
-	fileCfg.Datastore.Engine = "file"
-	assert.False(t, hasNodeFlipGap(fileCfg), "file storage uses xkms's own barrier")
+	return false
 }

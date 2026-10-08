@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
 // TestWriteHexKeyFileAtomic_MkdirFails proves a parent directory that cannot
@@ -46,20 +47,30 @@ func TestWriteHexKeyFileAtomic_MkdirFails(t *testing.T) {
 func TestWriteHexKeyFileAtomic_WriteFails(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "key.hex")
-	// Pre-occupy the ".tmp" staging path with a directory so os.WriteFile
-	// cannot write the staged content there.
-	require.NoError(t, os.Mkdir(path+".tmp", 0700))
+	// Pre-occupy the final path with a directory so the key cannot replace it.
+	require.NoError(t, os.Mkdir(path, 0700))
 
 	err := writeHexKeyFileAtomic(path, []byte("deadbeef"))
 	require.Error(t, err)
-	_, statErr := os.Stat(path)
-	require.True(t, os.IsNotExist(statErr), "a failed write must not leave a file at the final path")
+	info, statErr := os.Stat(path)
+	require.NoError(t, statErr)
+	require.True(t, info.IsDir(), "a failed write must leave the final path untouched")
+}
+
+// plantDanglingSymlink makes path a symlink to a file that does not exist.
+// Reading the key through it reports "not exist", so the custody code takes
+// the generate-and-persist branch, and the atomic writer then refuses to
+// write a secret through a symlink. Unlike a read-only directory, this fault
+// holds for root, which CI runs as.
+func plantDanglingSymlink(t *testing.T, path string) {
+	t.Helper()
+	target := filepath.Join(t.TempDir(), "missing")
+	require.NoError(t, os.Symlink(target, path))
 }
 
 // TestNoiseKeyCustody_NoBarrierFileWriteFails proves loadOrPersistNoiseStaticKeyFile
 // wraps a write failure into *ErrFileWrite rather than returning a bare or
-// swallowed error, using the same ".tmp path occupied" fault as
-// TestWriteHexKeyFileAtomic_WriteFails.
+// swallowed error.
 func TestNoiseKeyCustody_NoBarrierFileWriteFails(t *testing.T) {
 	if !noiseRunnable() {
 		requireNoiseRefused(t, newMinimalServer(t, &config.Config{}))
@@ -67,8 +78,7 @@ func TestNoiseKeyCustody_NoBarrierFileWriteFails(t *testing.T) {
 	}
 
 	dataDir := t.TempDir()
-	tmpPath := filepath.Join(dataDir, noiseStaticKeyFileName+".tmp")
-	require.NoError(t, os.Mkdir(tmpPath, 0700))
+	plantDanglingSymlink(t, filepath.Join(dataDir, noiseStaticKeyFileName))
 
 	cfg := &config.Config{Datastore: config.DatastoreConfig{Path: dataDir}}
 	s := &Server{config: cfg, logger: custodyQuietLogger()}
@@ -80,14 +90,14 @@ func TestNoiseKeyCustody_NoBarrierFileWriteFails(t *testing.T) {
 	require.Error(t, err)
 	var writeErr *ErrFileWrite
 	require.ErrorAs(t, err, &writeErr)
+	require.ErrorIs(t, err, fsutil.ErrSymlinkTarget)
 }
 
 // TestP256KeyCustody_NoBarrierFileWriteFails is
 // TestNoiseKeyCustody_NoBarrierFileWriteFails's P-256 counterpart.
 func TestP256KeyCustody_NoBarrierFileWriteFails(t *testing.T) {
 	dataDir := t.TempDir()
-	tmpPath := filepath.Join(dataDir, p256StaticKeyFileName+".tmp")
-	require.NoError(t, os.Mkdir(tmpPath, 0700))
+	plantDanglingSymlink(t, filepath.Join(dataDir, p256StaticKeyFileName))
 
 	cfg := &config.Config{Datastore: config.DatastoreConfig{Path: dataDir}}
 	s := &Server{config: cfg, logger: custodyQuietLogger()}
@@ -99,4 +109,5 @@ func TestP256KeyCustody_NoBarrierFileWriteFails(t *testing.T) {
 	require.Error(t, err)
 	var writeErr *ErrFileWrite
 	require.ErrorAs(t, err, &writeErr)
+	require.ErrorIs(t, err, fsutil.ErrSymlinkTarget)
 }

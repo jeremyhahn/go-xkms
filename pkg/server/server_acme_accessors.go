@@ -19,6 +19,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -34,16 +35,26 @@ func (s *Server) CA() ca.TrustedCA {
 }
 
 // QRDBClient returns the embedded qrdb node's SDK client, or nil before the
-// node has been constructed. It is the same client type (*qrdbsdk.Client)
-// that already structurally satisfies pkg/acme/qrdb.Service (KV, Admin,
-// Watch, Lease, Batch, Transaction, Index, Users, Roles, Certs all match by
-// method signature), so a composing binary can pass it directly wherever
-// that interface is required — e.g. the ACME admin surface's tenant role and
-// user delegation to qrdb RBAC — without a bespoke adapter.
+// node has been constructed or when the datastore is remote. A composing
+// binary passes it directly wherever a feature delegates to go-qrdb -- e.g.
+// the ACME admin surface's tenant role and user delegation to qrdb RBAC --
+// without a bespoke adapter.
 func (s *Server) QRDBClient() *qrdbsdk.Client {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.qrdbClient
+}
+
+// Datastore returns the server's single shared datastore -- its go-qrdb
+// client and DAO factory, standalone or remote -- or nil before
+// initializeQRDBStorage has run. Features a composing binary builds (e.g.
+// the ACME server) persist through its DAOFactory and report its health
+// through its HealthCheck. The server owns its lifecycle: callers never
+// close it.
+func (s *Server) Datastore() *datastore.Datastore {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.datastore
 }
 
 // TenantService returns go-qrdb's canonical TenantServicer composed on the

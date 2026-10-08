@@ -31,8 +31,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -57,7 +58,7 @@ func newScopedFixture(t *testing.T) *scopedFixture {
 	require.NoError(t, err)
 	tpm, ok := backend.TPM().(*pkgtpm2.TPM2)
 	require.True(t, ok)
-	registry, err := tpmpolicy.NewRegistry(storage.NewMemory())
+	registry, err := tpmpolicy.NewRegistry(testutil.NewMemoryDAOFactory())
 	require.NoError(t, err)
 	svc, err := tpmpolicy.NewService(tpmpolicy.Config{
 		Registry:    registry,

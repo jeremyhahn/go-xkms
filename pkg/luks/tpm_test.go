@@ -17,7 +17,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/jeremyhahn/go-luks2/pkg/luks2"
@@ -211,10 +213,11 @@ func TestTPMSealer_SealPassphrase_PSRK_Success(t *testing.T) {
 	if res.Token.Type != XKMSTPMTokenType {
 		t.Fatalf("token type = %q, want %q", res.Token.Type, XKMSTPMTokenType)
 	}
-	if res.Token.TPM2KeyHandle != 0x81000002 {
-		t.Fatalf("token handle = %#x, want 0x81000002", res.Token.TPM2KeyHandle)
+	members := mustReadTPMTokenMembers(t, res.Token)
+	if members.KeyHandle != 0x81000002 {
+		t.Fatalf("token handle = %#x, want 0x81000002", members.KeyHandle)
 	}
-	pub, priv, err := DecodeTPMSealBlobs(res.Token.TPM2Blob)
+	pub, priv, err := DecodeTPMSealBlobs(members.Blob)
 	if err != nil {
 		t.Fatalf("DecodeTPMSealBlobs: %v", err)
 	}
@@ -299,7 +302,8 @@ func TestTPMSealer_UnsealPassphrase_PSRK_InvalidBlob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("construct sealer: %v", err)
 	}
-	_, err = s.UnsealPassphrase(context.Background(), &luks2.Token{Type: XKMSTPMTokenType, TPM2Blob: "not base64!!"})
+	token := mustNewTPMToken(t, tpmTokenMembers{Type: XKMSTPMTokenType, Blob: "not base64!!"})
+	_, err = s.UnsealPassphrase(context.Background(), token)
 	if !errors.Is(err, ErrTPMInvalidToken) {
 		t.Fatalf("expected ErrTPMInvalidToken, got %v", err)
 	}
@@ -312,7 +316,7 @@ func TestTPMSealer_UnsealPassphrase_PSRK_PlatformSRKError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("construct sealer: %v", err)
 	}
-	token := &luks2.Token{Type: XKMSTPMTokenType, TPM2Blob: EncodeTPMSealBlobs([]byte{1}, []byte{2})}
+	token := mustNewTPMToken(t, tpmTokenMembers{Type: XKMSTPMTokenType, Blob: EncodeTPMSealBlobs([]byte{1}, []byte{2})})
 	_, err = s.UnsealPassphrase(context.Background(), token)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected wrapped %v, got %v", wantErr, err)
@@ -330,7 +334,7 @@ func TestTPMSealer_UnsealPassphrase_PSRK_UnsealError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("construct sealer: %v", err)
 	}
-	token := &luks2.Token{Type: XKMSTPMTokenType, TPM2Blob: EncodeTPMSealBlobs([]byte{1}, []byte{2})}
+	token := mustNewTPMToken(t, tpmTokenMembers{Type: XKMSTPMTokenType, Blob: EncodeTPMSealBlobs([]byte{1}, []byte{2})})
 	_, err = s.UnsealPassphrase(context.Background(), token)
 	if !errors.Is(err, ErrTPMUnsealFailed) {
 		t.Fatalf("expected ErrTPMUnsealFailed, got %v", err)
@@ -355,13 +359,91 @@ func TestTPMSealer_UnsealPassphrase_PSRK_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("construct sealer: %v", err)
 	}
-	token := &luks2.Token{Type: XKMSTPMTokenType, TPM2Blob: EncodeTPMSealBlobs([]byte{1}, []byte{2})}
+	token := mustNewTPMToken(t, tpmTokenMembers{Type: XKMSTPMTokenType, Blob: EncodeTPMSealBlobs([]byte{1}, []byte{2})})
 	got, err := s.UnsealPassphrase(context.Background(), token)
 	if err != nil {
 		t.Fatalf("UnsealPassphrase: %v", err)
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("unsealed = %x, want %x", got, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Token members
+// ---------------------------------------------------------------------------
+
+// mustNewTPMToken builds a LUKS2 token carrying members, failing the test on
+// error.
+func mustNewTPMToken(t *testing.T, members tpmTokenMembers) *luks2.Token {
+	t.Helper()
+	token, err := newTPMToken(members)
+	if err != nil {
+		t.Fatalf("newTPMToken: %v", err)
+	}
+	return token
+}
+
+// mustReadTPMTokenMembers reads the TPM2 members off token, failing the test
+// on error.
+func mustReadTPMTokenMembers(t *testing.T, token *luks2.Token) *tpmTokenMembers {
+	t.Helper()
+	members, err := readTPMTokenMembers(token)
+	if err != nil {
+		t.Fatalf("readTPMTokenMembers: %v", err)
+	}
+	return members
+}
+
+func TestTPMTokenMembers_RoundTrip(t *testing.T) {
+	want := tpmTokenMembers{
+		Type:       TPMTokenType,
+		Keyslots:   []string{"1"},
+		Blob:       EncodeTPMSealBlobs([]byte{1}, []byte{2}),
+		PCRBank:    "sha256",
+		PCRs:       []int{7, 11},
+		KeyHandle:  0x81000001,
+		PolicyHash: "cG9saWN5",
+	}
+	token := mustNewTPMToken(t, want)
+	if token.Type != TPMTokenType {
+		t.Fatalf("token type = %q, want %q", token.Type, TPMTokenType)
+	}
+
+	got := mustReadTPMTokenMembers(t, token)
+	if !reflect.DeepEqual(*got, want) {
+		t.Fatalf("members = %+v, want %+v", *got, want)
+	}
+}
+
+// TestNewTPMToken_WritesSystemdMemberNames proves the TPM2 members reach the
+// header under the names systemd-cryptsetup reads, and that a token with no
+// keyslots serialises an empty list rather than null.
+func TestNewTPMToken_WritesSystemdMemberNames(t *testing.T) {
+	token := mustNewTPMToken(t, tpmTokenMembers{
+		Type:    TPMTokenType,
+		Blob:    "YmxvYg==",
+		PCRBank: "sha256",
+		PCRs:    []int{7},
+	})
+	data, err := json.Marshal(token)
+	if err != nil {
+		t.Fatalf("marshal token: %v", err)
+	}
+	for _, member := range []string{`"keyslots":[]`, `"tpm2-blob":"YmxvYg=="`, `"tpm2-pcr-bank":"sha256"`, `"tpm2-pcrs":[7]`} {
+		if !bytes.Contains(data, []byte(member)) {
+			t.Fatalf("token JSON %s lacks %s", data, member)
+		}
+	}
+}
+
+func TestReadTPMTokenMembers_MalformedMember(t *testing.T) {
+	token := &luks2.Token{}
+	if err := json.Unmarshal([]byte(`{"type":"systemd-tpm2","keyslots":[],"tpm2-pcrs":"seven"}`), token); err != nil {
+		t.Fatalf("unmarshal token: %v", err)
+	}
+	if _, err := readTPMTokenMembers(token); !errors.Is(err, ErrTPMInvalidToken) {
+		t.Fatalf("expected ErrTPMInvalidToken, got %v", err)
 	}
 }
 

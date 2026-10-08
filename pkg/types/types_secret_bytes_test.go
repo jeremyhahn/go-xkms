@@ -34,7 +34,7 @@ func TestSecretValueBytes_UnresolvedLiteralErrors(t *testing.T) {
 	t.Parallel()
 
 	sv := SecretValue{Raw: "hunter2"}
-	got, err := SecretValueBytes(&sv)
+	got, err := SecretValueBytes(t.Context(), &sv)
 	require.Error(t, err)
 	assert.Nil(t, got)
 
@@ -53,7 +53,7 @@ func TestSecretValueBytes_EmptyFieldMeansNotConfigured(t *testing.T) {
 	t.Parallel()
 
 	var sv SecretValue
-	got, err := SecretValueBytes(&sv)
+	got, err := SecretValueBytes(t.Context(), &sv)
 	require.NoError(t, err)
 	assert.Nil(t, got)
 }
@@ -63,7 +63,7 @@ func TestSecretValueBytes_EmptyFieldMeansNotConfigured(t *testing.T) {
 func TestSecretValueBytes_NilReceiver(t *testing.T) {
 	t.Parallel()
 
-	got, err := SecretValueBytes(nil)
+	got, err := SecretValueBytes(t.Context(), nil)
 	require.NoError(t, err)
 	assert.Nil(t, got)
 }
@@ -82,7 +82,7 @@ func TestSecretValueBytes_ResolvedReference(t *testing.T) {
 	require.NoError(t, err)
 	sv := *resolved
 
-	got, err := SecretValueBytes(&sv)
+	got, err := SecretValueBytes(t.Context(), &sv)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("s3cr3t-value"), got)
 	assert.Equal(t, "credential://boot-secret", sv.Raw,
@@ -99,7 +99,7 @@ func TestSecretValueBytes_UnresolvedReferenceErrors(t *testing.T) {
 	t.Parallel()
 
 	sv := SecretValue{Raw: "credential://boot-secret"}
-	got, err := SecretValueBytes(&sv)
+	got, err := SecretValueBytes(t.Context(), &sv)
 	require.Error(t, err)
 	assert.Nil(t, got)
 
@@ -140,7 +140,7 @@ func TestSecretValueBytes_ReferenceStrategyResolvedEmpty(t *testing.T) {
 	require.NoError(t, err)
 	sv := *resolved
 
-	got, err := SecretValueBytes(&sv)
+	got, err := SecretValueBytes(t.Context(), &sv)
 	require.Error(t, err)
 	assert.Nil(t, got)
 	var refErr *SecretReferenceUnresolvedError
@@ -161,7 +161,7 @@ func TestSecretValueBytes_LiteralViaRegistryFallback(t *testing.T) {
 	require.NoError(t, err)
 	sv := *resolved
 
-	got, err := SecretValueBytes(&sv)
+	got, err := SecretValueBytes(t.Context(), &sv)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("a-plain-literal-value"), got)
 }

@@ -84,7 +84,7 @@ func TestGenerate_AllAlgorithms(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.algo), func(t *testing.T) {
-			k, err := Generate(GenerateOptions{Algorithm: tc.algo, RSABits: tc.bits, Comment: "gap"})
+			k, err := Generate(t.Context(), GenerateOptions{Algorithm: tc.algo, RSABits: tc.bits, Comment: "gap"})
 			if err != nil {
 				t.Fatalf("Generate(%s): %v", tc.algo, err)
 			}
@@ -107,7 +107,7 @@ func TestGenerate_AllAlgorithms(t *testing.T) {
 
 // TestGenerate_RSATooSmall covers the InvalidKeySizeError branch.
 func TestGenerate_RSATooSmall(t *testing.T) {
-	_, err := Generate(GenerateOptions{Algorithm: AlgorithmRSA, RSABits: 1024})
+	_, err := Generate(t.Context(), GenerateOptions{Algorithm: AlgorithmRSA, RSABits: 1024})
 	var iks *InvalidKeySizeError
 	if !errors.As(err, &iks) {
 		t.Fatalf("expected InvalidKeySizeError, got %v", err)
@@ -121,7 +121,7 @@ func TestGenerate_RSATooSmall(t *testing.T) {
 // hours; if this refusal regressed, this test would hang rather than fail
 // fast.
 func TestGenerate_RSATooLarge(t *testing.T) {
-	_, err := Generate(GenerateOptions{Algorithm: AlgorithmRSA, RSABits: 65536})
+	_, err := Generate(t.Context(), GenerateOptions{Algorithm: AlgorithmRSA, RSABits: 65536})
 	var iks *InvalidKeySizeError
 	if !errors.As(err, &iks) {
 		t.Fatalf("expected InvalidKeySizeError, got %v", err)
@@ -130,7 +130,7 @@ func TestGenerate_RSATooLarge(t *testing.T) {
 
 // TestGenerate_Unsupported covers the default branch of generatePrivateKey.
 func TestGenerate_Unsupported(t *testing.T) {
-	_, err := Generate(GenerateOptions{Algorithm: Algorithm("bogus-algo")})
+	_, err := Generate(t.Context(), GenerateOptions{Algorithm: Algorithm("bogus-algo")})
 	var ua *UnsupportedAlgorithmError
 	if !errors.As(err, &ua) {
 		t.Fatalf("expected UnsupportedAlgorithmError, got %v", err)

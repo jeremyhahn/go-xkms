@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/mocks"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -48,10 +49,8 @@ func setupUninitializedCAWithKeyProvider(t *testing.T, kp types.KeyProvider) *CA
 		t.Fatalf("Failed to create xkms backend: %v", err)
 	}
 
-	certAdapterStorage := storage.NewMemory()
-	certAdapter := storage.NewCertAdapter(certAdapterStorage)
 	cs, err := certstore.New(&certstore.Config{
-		CertStorage: certAdapter,
+		DAOs: testutil.NewMemoryDAOFactory(),
 	})
 	if err != nil {
 		t.Fatalf("Failed to create certstore: %v", err)
@@ -97,7 +96,7 @@ func TestCA_GetOrGenerateCAKey_NonNotFoundFailsClosed(t *testing.T) {
 	rootIdentity := ca.config.RootIdentity()
 	require.NotNil(t, rootIdentity)
 
-	attrs, err := ca.getCAKeyAttributes(rootIdentity)
+	attrs, err := ca.getCAKeyAttributes(t.Context(), rootIdentity)
 	require.NoError(t, err)
 
 	_, err = ca.getOrGenerateCAKey(context.Background(), attrs)
@@ -122,7 +121,7 @@ func TestCA_GetOrGenerateCAKey_GenuineNotFoundStillGenerates(t *testing.T) {
 	rootIdentity := ca.config.RootIdentity()
 	require.NotNil(t, rootIdentity)
 
-	attrs, err := ca.getCAKeyAttributes(rootIdentity)
+	attrs, err := ca.getCAKeyAttributes(t.Context(), rootIdentity)
 	require.NoError(t, err)
 
 	key, err := ca.getOrGenerateCAKey(context.Background(), attrs)

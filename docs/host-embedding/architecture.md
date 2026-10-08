@@ -1,6 +1,6 @@
 # Host Embedding — Architecture
 
-> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `host-embedding` · Repo: `go-xkms` · Last verified: 2026-10-04
 
 ## The problem
 
@@ -28,8 +28,8 @@ configuration file. A host therefore served routes that answered 404, 501 or
  sealer             ──WithPlatformSealer─────┼──►   │
  CA identity config ──WithCA─────────────────┤      ▼
  vTPM supervisor    ──WithVTPM───────────────┤    pkg/compose.Build(Deps)
- credential strategy ─WithCredentialStrategy─┤      │  BuildPasswordStore
- opt-in             ──WithBarrierRoutes──────┘      │  BuildTenantPasswordManager
+ credential strategy ─WithCredentialStrategy─┘      │  BuildPasswordStore
+                                                    │  BuildTenantPasswordManager
                                                     │  BuildPlatformStore
  xkmsd (pkg/server) ──── calls the same ───────────►│  BuildCredentialService
                          Build* functions at        │  BuildSSHClient
@@ -60,20 +60,12 @@ configuration file. A host therefore served routes that answered 404, 501 or
   host's qrdb KV under `xkms/<feature>/` (`apimodule.HostStoragePrefix`), so
   they replicate with the node and never collide with the host's own keys.
 
-## The barrier stays the host's unless it opts in
+## The barrier is the host's
 
-The barrier route families — `/api/v1/barrier/*`, `/api/v1/custodian/*`,
-`/api/v1/shares/*`, `/api/v1/init/*` (`rest.IsBarrierRoute`) — operate the
-system barrier's lifecycle. A host that owns its barrier must keep those
-paths, so on a self-built module they are **not registered** unless the host
-passes `WithBarrierRoutes`. With it, the module serves them over the host's
-own qrdb barrier (the system barrier of `WithBarrierRegistry`) and custody
-clients (`WithQRDBClient`). A module bound to a host-supplied REST server
-(`WithRESTServer`, which is how `xkmsd` mounts it) always registers them: that
-server decides what it serves.
-
-The tenant barrier registry is a data-plane dependency independent of that
-choice: it always backs per-tenant Password Manager stores.
+xkms registers no barrier, custodian, share or init route family: the barrier
+and its holder/quorum ceremony are go-qrdb's, served by the host's own node.
+The tenant barrier registry is a data-plane dependency that backs per-tenant
+Password Manager stores.
 
 ## Rejected alternatives
 
@@ -83,17 +75,11 @@ choice: it always backs per-tenant Password Manager stores.
 - **Read an xkmsd configuration section in host mode.** Hosts already hold the
   live objects (node client, barrier registry, PIN backend); asking them to
   re-describe those as configuration duplicates state.
-- **Always register the barrier routes and answer 501.** A host that serves
-  its own barrier would then need a route-excluding wrapper to reclaim its own
-  paths. Opt-in registration leaves the paths free by default; a wrapper still
-  works for a host that has one.
+
 
 ## Not in this feature
 
 - **Tenant management** (`/api/v1/tenants/*`) stays xkmsd-only on a self-built
   module: it needs xkms's composed tenant service, which a host owns itself.
-- **The init ceremony** (`/api/v1/init/*`) registers with `WithBarrierRoutes`
-  but answers 501: it needs an operator-configured ceremony service, which no
-  running daemon composes today (xkmsd drives it offline through `xkmsd init`).
 - **MCP tools** register only behind a host-supplied MCP server
   (`WithMCPServer`); a self-built module has no MCP surface.

@@ -19,7 +19,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { installDefaultApiMocks, mockOnce } from './support/mockApi.ts';
+import { installDefaultApiMocks } from './support/mockApi.ts';
 import { defaultAuthMe, seedAuthenticated } from './support/mockAuth.ts';
 
 test.describe('Mutations — request shape and success feedback', () => {
@@ -90,26 +90,5 @@ test.describe('Mutations — request shape and success feedback', () => {
       role: 'operator',
       tenant_id: 'system',
     });
-  });
-
-  test('Barrier: unseal sends the passphrase as `secret` and toasts success', async ({ page }) => {
-    await installDefaultApiMocks(page);
-    await seedAuthenticated(page, defaultAuthMe());
-    // Sealed, so the unseal form is offered (BarrierView gates it on status.sealed).
-    await mockOnce(page, 'GET', '/api/v1/barrier/status', { sealed: true, strategy: 'passphrase', hardware_backed: false });
-
-    let captured: unknown;
-    await page.route('**/api/v1/barrier/unseal', async (route) => {
-      captured = route.request().postDataJSON();
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sealed: false }) });
-    });
-
-    await page.goto('/#/barrier');
-    await expect(page.getByText('sealed', { exact: true })).toBeVisible();
-    await page.getByLabel('Passphrase').fill('correct-horse-battery-staple');
-    await page.getByRole('button', { name: 'Unseal' }).click();
-
-    await expect(page.getByText('Barrier unsealed.')).toBeVisible();
-    expect(captured).toEqual({ secret: 'correct-horse-battery-staple' });
   });
 });

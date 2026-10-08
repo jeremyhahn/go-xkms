@@ -14,14 +14,33 @@
 package admin
 
 import (
+	"context"
+	"io"
 	"log/slog"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	acmestorage "github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newTestQRDB opens a standalone, memory-engine datastore -- a real
+// in-process go-qrdb node -- and returns its client, the same
+// *qrdbsdk.Client xkmsd hands the admin service. The datastore closes when
+// the test ends.
+func newTestQRDB(t testing.TB) QRDBClient {
+	t.Helper()
+	cfg := &config.Config{
+		Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()},
+	}
+	ds, err := datastore.Open(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
+	return ds.Client()
+}
 
 // mustTenantAwareAdminService constructs a TenantAwareAdminService and fails
 // the test immediately if construction errors. It exists so the ~130 call
@@ -42,7 +61,7 @@ func mustTenantAwareAdminService(
 	t testing.TB,
 	certificateAuthority ca.TCGCA,
 	storageFactory acmestorage.Factory,
-	qrdbService qrdb.Service,
+	qrdbService QRDBClient,
 	logger *slog.Logger,
 	version string,
 ) *TenantAwareAdminService {

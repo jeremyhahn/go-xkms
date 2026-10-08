@@ -352,7 +352,7 @@ func TestIdentity_ToKeyAttributes_Success(t *testing.T) {
 		Keys:    DefaultKeyConfig(),
 	}
 
-	attrs, err := identity.ToKeyAttributes()
+	attrs, err := identity.ToKeyAttributes(t.Context())
 	if err != nil {
 		t.Fatalf("ToKeyAttributes() unexpected error: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestIdentity_ToKeyAttributes_Error(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			attrs, err := tt.identity.ToKeyAttributes()
+			attrs, err := tt.identity.ToKeyAttributes(t.Context())
 			if err == nil {
 				t.Fatal("ToKeyAttributes() expected error, got nil")
 			}
@@ -1389,7 +1389,7 @@ func TestToKeyAttributes_KeyConfigPasswordWired(t *testing.T) {
 		IsRoot: true,
 	}
 
-	attrs, err := id.ToKeyAttributes()
+	attrs, err := id.ToKeyAttributes(t.Context())
 	if err != nil {
 		t.Fatalf("ToKeyAttributes: %v", err)
 	}
@@ -1429,7 +1429,7 @@ func TestToKeyAttributes_SoftwareKeystorePasswordFallback(t *testing.T) {
 		},
 	}
 
-	attrs, err := id.ToKeyAttributes()
+	attrs, err := id.ToKeyAttributes(t.Context())
 	if err != nil {
 		t.Fatalf("ToKeyAttributes: %v", err)
 	}
@@ -1467,7 +1467,7 @@ func TestToKeyAttributes_KeyConfigPasswordTakesPrecedence(t *testing.T) {
 		},
 	}
 
-	attrs, err := id.ToKeyAttributes()
+	attrs, err := id.ToKeyAttributes(t.Context())
 	if err != nil {
 		t.Fatalf("ToKeyAttributes: %v", err)
 	}

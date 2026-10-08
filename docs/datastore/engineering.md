@@ -1,6 +1,6 @@
 # Datastore — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-10-02
+> **Status: NORMATIVE** · Feature: `datastore` · Repo: `go-xkms` · Last verified: 2026-10-08
 
 ## Exported surface
 
@@ -71,20 +71,29 @@ Must run once, early in `Server.New`, before the first `createStorage` call.
 Switches on `config.Datastore.Mode` (defaulted by `config.Validate`):
 
 - `"standalone"` → `initEmbeddedQRDBNode()` hosts the qrdb engine in this
-  process (identity, bootstrap, barrier, optional Raft clustering) and
-  `s.qrdbStorage` wraps the node's own KV client
-  (`qrdbstorage.NewBackend(s.qrdbClient.KV())`).
-- `"remote"` → `datastore.DialRemote(s.ctx, s.config.Datastore.Remote)`
-  (`pkg/datastore/remote.go`) dials `Datastore.Remote.Address` over
-  `Datastore.Remote.Transport` (`rest` or `grpc`) with `Datastore.Remote.TLS`,
-  and `s.qrdbStorage` wraps the remote KV client. An unrecognized transport
-  returns `*datastore.ErrUnsupportedStorageBackend{Backend: "qrdb:" + transport}`.
-  `DialRemote` is the single remote-dial implementation in the stack: the
-  SDK/library composition path's `pkg/datastore.Open` calls the SAME
-  function for its own `"remote"` case.
+  process (identity, bootstrap, barrier, optional Raft clustering), and
+  `s.datastore = datastore.New(s.qrdbClient, s.config.Datastore, datastore.WithCallContext(s.qrdbNode.ServiceContext))`
+  borrows the node's client, and runs the datastore's own calls as the
+  node's service principal.
+- `"remote"` → `s.datastore = datastore.Open(s.ctx, s.config, s.logger)`,
+  which dials `Datastore.Remote.Address` over `Datastore.Remote.Transport`
+  (`rest` or `grpc`) with `Datastore.Remote.TLS` (`datastore.DialRemote`,
+  `pkg/datastore/remote.go`) and owns the dialed client. An unrecognized
+  transport returns `*datastore.ErrUnsupportedStorageBackend{Backend: "qrdb:" + transport}`.
+  `DialRemote` is the single remote-dial implementation in the stack.
 - anything else → `*datastore.ErrUnsupportedDatastoreMode{Mode}` —
   unreachable through `config.Validate`, defense-in-depth for an embedded
   caller that constructs a `*config.Config` without validating it.
+
+Either way `s.qrdbStorage = qrdbstorage.NewBackend(s.datastore.Client().KV(), s.storageCallContext()...)`:
+the shared `storage.Backend` sits on the client's KV, not on the DAO
+factory, because the seal barrier's views need fenced creates
+(`storage.FencedCreator`) and the SDK's `KVStore` does not carry them.
+`storageCallContext` (`pkg/server/qrdb_storage.go`) is
+`qrdbstorage.WithCallContext(s.qrdbNode.ServiceContext)` in standalone mode
+and nothing in remote mode: see *The service principal* below.
+`closeQRDBStorage` closes the backend, then the datastore (which closes a
+dialed client), then the embedded node.
 
 ### `pkg/embeddednode` — mapping the datastore onto go-qrdb's own config
 
@@ -106,48 +115,184 @@ qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
 `(*Server).initEmbeddedQRDBNode` (`xkmsd run`), `xkmsd init`'s
 `openDurableInitNode`, and `pkg/datastore.Open`'s `"standalone"` case all
 derive their qrdb daemon config through this one package (`ResolveNodeSeal`
-+ `EmbeddedNodeStorageConfig`, and for the latter two, `OpenEmbeddedNode` +
-`daemon.NewNode`), so the different opens of one on-disk datastore can never
++ `EmbeddedNodeStorageConfig`, and for the latter two, `OpenEmbeddedNode`),
+and every one of them constructs the node through `embeddednode.NewNode`,
+the single node builder, so the different opens of one on-disk datastore can never
 disagree about the database engine or the seal strategy. `pkg/embeddednode`
 was split out of `pkg/server` in go-xkms#1345 batch 2 specifically so
-`pkg/datastore` (which `pkg/server` also imports, for `DialRemote`) could
+`pkg/datastore` (which `pkg/server` also imports) could
 reach it without an import cycle back through `pkg/server`.
 
-### `pkg/datastore` — a feature's own named go-qrdb database
+### The service principal — xkms's own calls on the embedded node
+
+Since go-qrdb v0.46 the embedded node's client refuses a call whose context
+carries no identity (`qrdbsdk.ErrUnauthenticated`). xkms's own calls — the
+ones it makes on its own behalf, not for an authenticated request — run as
+the node's service principal:
 
 ```go
-type ClientBackend interface {
-	storage.Backend
-	Client() *qrdbsdk.Client
-}
-func DatabaseKVStore(ctx context.Context, backend storage.Backend, cfg *config.Config, name string) (qrdbsdk.KVStore, error)
+// pkg/embeddednode/serviceprincipal
+const Name = "xkms"                       // audited as "qrdb-service:xkms", system tenant
+func Grant() []qrdbsdk.Permission         // copy of the grant below
+func Option() qrdbnode.NodeOption         // registers the grant once, then WithServicePrincipal(Name)
 ```
 
-(`pkg/datastore/database.go`.) Both `standaloneBackend` and `remoteBackend`
-— the only two concrete types `Open` returns — implement `ClientBackend`,
-so `DatabaseKVStore` works identically in standalone and remote mode.
-`DatabaseKVStore`:
+`embeddednode.NewNode` appends `serviceprincipal.Option()` to every node it
+builds, standalone and clustered. The grant, registered process-wide with
+`qrdbsdk.RegisterPermissionRoleGrant`, is exactly what those calls exercise
+and holds no wildcard:
 
-1. Type-asserts `backend` to `ClientBackend`, failing closed with
-   `*ErrClientUnavailable` for a `storage.Backend` that bypassed `Open`
-   (e.g. a bare `storage.NewMemory()` in a test).
-2. Ensures `name` exists: `client.Database().GetDatabase(ctx, name)`; on any
-   error, creates it with `client.Database().CreateDatabase` using
-   `EngineKV` and `resolveDatabaseBackend`'s resolved backend. A
-   `*qrdbsdk.DBAlreadyExistsError` from `CreateDatabase` (a concurrent
-   composition root ensuring the same database) is treated as success, not
-   an error — the postcondition is "the database exists", not "this call
-   created it".
-3. Scopes: `client.DatabaseScoped(name)` then `.KVStore()`.
+| Permission | Used by |
+|---|---|
+| `kv:get`, `kv:put`, `kv:delete`, `kv:list`, `kv:exists` | `pkg/storage/qrdb.Backend`, the shared datastore every subsystem persists through |
+| `lease:grant`, `lease:revoke`, `lease:keepalive` | `pkg/oidc/credential`: refresh locks and the scheduler's leadership lease |
+| `transaction:execute` | go-qrdb takes a lease with a compare-and-swap transaction; the backend's guarded writes fall back to one |
+| `databases:create` | `pkg/datastore.DatabaseKVStore` ensures a feature's named database exists |
+| `index:create`, `index:query` | a feature DAO registers its entity's indexes and looks entities up through them |
+| `kv:range` | a feature DAO's paged listing (`ForEachPage`), such as `pkcs11state.Store.List` |
 
-`resolveDatabaseBackend(cfg, name)` returns `cfg.Datastore.Databases`'
-matching entry's `Backend` when one is configured non-empty, and
-`cfg.Datastore.Engine` (already defaulted by `config.Validate`) otherwise.
+A call outside it is refused with `*qrdbsdk.PermissionDeniedError`.
+
+The call sites that bind it, each through an injected
+`func(context.Context) (context.Context, error)` so neither package knows
+about nodes:
+
+- `qrdbstorage.WithCallContext(bind)` — every `Backend` method derives its
+  context through `bind` before calling the client; a bind failure is a
+  `*qrdbstorage.BackendError` and the call never reaches the client.
+- `credential.WithLeaseContext(bind)` (`compose.OIDCCredentialParams.LeaseContext`)
+  — refresh-lock acquire and release, and the scheduler's acquire, renew and
+  release. Provider requests and barrier access keep the caller's context.
+- `datastore.WithCallContext(bind)` — the database ensure in
+  `DatabaseKVStore` and every operation of a store the DAO factory serves,
+  default and named databases alike. The SDK's `KVStore` adapter registers
+  a DAO's indexes on a background context, so the binding wraps the
+  transport clients beneath the adapter; a bind failure is a
+  `*datastore.ErrCallContext`. It is the one binding every feature DAO over
+  the server's datastore runs under -- the named databases (key versions,
+  AEAD nonces, PKCS#11 state, TPM policies, the CA) and the default one
+  (ACME) -- so a feature store takes no binding of its own.
+
+All three are wired from `s.qrdbNode.ServiceContext` and only in standalone
+mode; `datastore.Open` binds its own embedded node's `ServiceContext` the
+same way. In remote mode the dialed client already runs as xkms's own mTLS
+identity.
+
+A request-scoped call keeps the request's identity: the REST host's refresh
+store, user resolver and WebAuthn user lookups run on the request's context
+and are never bound to the principal, so the principal cannot widen what a
+caller can do. A feature DAO is xkms persisting what it has already
+authorized, exactly as the storage backend is, so it runs bound. `Node.ServiceContext` on a node built without the option
+returns `qrdbnode.ErrNoServicePrincipal`.
+
+### `pkg/datastore` — the go-qrdb client and the DAO factory
+
+```go
+func Open(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Datastore, error)
+func New(client *qrdbsdk.Client, cfg config.DatastoreConfig, opts ...Option) (*Datastore, error)
+func WithCallContext(bind qrdbstorage.CallContext) Option
+func DialRemote(ctx context.Context, cfg config.DatastoreRemoteConfig) (*qrdbsdk.Client, error)
+
+func (d *Datastore) Client() *qrdbsdk.Client
+func (d *Datastore) DAOFactory() *qrdbsdk.DAOFactory
+func (d *Datastore) DatabaseKVStore(ctx context.Context, name string) (qrdbsdk.KVStore, error)
+func (d *Datastore) Close() error
+```
+
+(`pkg/datastore/datastore.go`, `callcontext.go`, `database.go`, `remote.go`.)
+
+- **`Open`** builds the datastore for `cfg.Datastore`: `"standalone"`
+  (the default for an empty mode) opens the embedded node through
+  `embeddednode.OpenEmbeddedNode`; `"remote"` calls `DialRemote`. The
+  datastore owns what `Open` built, and `Close` releases it.
+- **`New`** builds a datastore over a client the caller owns; its `Close`
+  is a no-op. `pkg/server` (standalone) and the API-module host use it.
+- **`DAOFactory`** is `qrdbsdk.NewDAOFactoryWithConfig` with
+  `KVStoreProvider` → `Client().KVStore()` (the `"default"` database) and
+  `PartitionedProvider` → the named databases opened so far. A name this
+  datastore has not opened yields a nil store, never the default one.
+  With `WithCallContext`, each store is the SDK's
+  `qrdbsdk.NewKVStoreAdapter` over the client's KV and index clients bound
+  to the call context.
+- **`DatabaseKVStore(ctx, name)`**:
+  1. returns the cached store when `name` is already open;
+  2. scopes: `client.DatabaseScoped(name)`. A transport with no database
+     plane fails here with `*ErrDatabaseScope` (wrapping
+     `*transport.DatabaseScopeUnsupportedError`) before step 3 reaches for
+     the plane it lacks;
+  3. ensures `name` exists, on the call context:
+     `client.Database().GetDatabase(ctx, name)`; on
+     any error, creates it with `client.Database().CreateDatabase` using
+     `EngineKV` and `resolveDatabaseBackend`'s resolved backend. A
+     `*qrdbsdk.DBAlreadyExistsError` from `CreateDatabase` (a concurrent
+     composition root ensuring the same database) is treated as success —
+     the postcondition is "the database exists", not "this call created it";
+  4. caches the scoped client's `.KVStore()`, after which the DAO factory
+     serves it.
+
+`resolveDatabaseBackend(cfg, name)` returns `cfg.Databases`' matching
+entry's `Backend` when one is configured non-empty, and `cfg.Engine`
+(already defaulted by `config.Validate`) otherwise.
 
 Only a composition root calls `DatabaseKVStore` — never a feature package,
-which declares its database name as a constant (e.g. `oidc.DatabaseName`)
-and accepts a `qrdbsdk.KVStore` in its DAO's constructor. See
-"Feature-owned databases" in architecture.md.
+which declares its database name as a constant (e.g. `oidc.DatabaseName`).
+See "Feature-owned databases" in architecture.md.
+
+### `pkg/dao` — the one way to build a DAO from the factory
+
+```go
+func New[E qrdbsdk.Entity](factory *qrdbsdk.DAOFactory, database, entityType string,
+	newEntity func() E, opts ...qrdbsdk.DAOOption) (qrdbsdk.GenericDAO[E], error)
+```
+
+(`pkg/dao/dao.go`.) The go-qrdb SDK builds a `GenericDAO` only from a
+`KVStore` (`qrdbsdk.NewDAO`). `dao.New` takes the factory, looks up the
+store for `database` (`""` is the default database), and builds the DAO, so
+that lookup lives in one place. A named database the factory does not serve
+— not opened, or a factory with no partitioned provider — is refused with
+`*dao.DatabaseUnavailableError` instead of silently using the default
+database.
+
+```go
+func NewStoreFactory(store qrdbsdk.KVStore) *qrdbsdk.DAOFactory
+```
+
+A host with no go-qrdb node (xkey) or a test builds its factory with
+`dao.NewStoreFactory`: one `KVStore` serves the default database and every
+named one. A nil store serves none, so `dao.New` refuses every DAO of that
+factory with `*dao.DatabaseUnavailableError`. The SDK re-exports it as
+`NewStoreDAOFactory`; `testutil.NewMemoryDAOFactory` is it over a fresh
+memory store.
+
+### `pkg/compose` — the databases a root opens
+
+```go
+func Databases(d Deps) []string
+```
+
+(`pkg/compose/compose.go`.) The go-qrdb databases the DAO-backed features
+`Build` would compose from `d` persist in: always `keyversion.DatabaseName`,
+`certstore.DatabaseName` when `d.CA` is set, and `tpmpolicy.DatabaseName`
+when `d.TPMBackend` is set. A root opens each
+(`pkg/server` `daoFactory`; the API-module host's `hostStorage`) and passes
+the factory as `Deps.DAOs`; over an embedded node the datastore's
+`WithCallContext` runs the stores' calls as the service principal. A host whose client cannot open them leaves `Deps.DAOs` nil, so only those
+features are off.
+
+### `pkg/compose` — `storage.Backend` over the factory
+
+```go
+func FactoryBackend(daos *qrdbsdk.DAOFactory) (storage.Backend, error)
+func FactoryStorage(daos *qrdbsdk.DAOFactory, prefix string) (StorageFactory, error)
+```
+
+(`pkg/compose/storage.go`.) For features not yet converted to DAOs.
+`FactoryBackend` wraps the factory's default store in
+`qrdbstorage.NewKVStoreBackend`; `FactoryStorage` returns a
+`StorageFactory` whose each feature view is `prefix+name+"/"` over one shared
+`FactoryBackend`. The backend carries `PutIfAbsent`, `CompareAndSwap` and
+`CompareAndDelete`, but no fenced create. The API-module host
+(`pkg/apimodule/module_host.go`, prefix `"xkms/"`) opens its stores this way.
 
 ### `pkg/storage/qrdb` — the shared datastore's `storage.Backend` wrapper
 
@@ -161,6 +306,17 @@ any replica reflects all committed entries without blocking on a leader
 `ReadIndex` round trip. A `guardedWrites` flag, set once at construction,
 reports whether `PutIfAbsent`/`CompareAndSwap`/`CompareAndDelete` can
 execute against this client.
+
+```go
+func NewKVStoreBackend(store qrdbsdk.KVStore) (*KVStoreBackend, error)
+```
+
+(`pkg/storage/qrdb/kvstore_backend.go`.) The same contract over a
+`qrdbsdk.KVStore` — the store a DAO factory serves — for
+`compose.FactoryBackend`. A nil store is refused with `ErrNilKVStore`. The
+SDK's `KVStore` offers no read-consistency option, so reads take the
+store's default consistency rather than follower reads, and it carries no
+fenced create.
 
 ### `pkg/storage/file` — the file engine's validation and permission wrapper
 
@@ -177,9 +333,14 @@ through `storage.NewFile` (which builds the embedded qrdb stack instead — see
 `pkg/storage/qrdb` above).
 
 **Every write this type performs — `Put`, `Delete`, `PutIfAbsent`,
-`CompareAndSwap`, `CompareAndDelete` — holds an advisory `flock` on a
-`.lock` file in the store root for the whole call** (`pkg/storage/file/lock.go`,
-#1157). `OpenEngine`'s `engineBackend` (`pkg/storage/engine.go`) already
+`PutIfAllAbsent`, `CompareAndSwap`, `CompareAndDelete` — and the engine open
+in `New` hold an advisory `flock` on the store root directory itself for the
+whole call** (`pkg/storage/file/lock.go`, #1157). The open is locked because
+go-qrdb's file engine initialises a fresh directory and sweeps its own temp
+files when it opens, which would otherwise delete another process's in-flight
+temp file. The lock targets the directory rather than a lock file inside it
+because the engine refuses to initialise a directory holding anything but its
+format marker. `OpenEngine`'s `engineBackend` (`pkg/storage/engine.go`) already
 guards every write with its own `writeMu`, but that guard is genuine only
 within one process: it is a Go `sync.Mutex`, invisible to a second process
 holding a second `*os.File` over the same directory. Two processes sharing
@@ -237,8 +398,11 @@ read/write linearizability.
 | `*errs.Message` from `config.Validate` | `pkg/config/config.go` | `datastore.engine` not one of memory/file/pebble, `datastore.mode` not one of standalone/remote, `datastore.path` unset for `mode: standalone` (every engine, `memory` included -- go-qrdb roots the node's on-disk state under it regardless of the primary KV engine, so there is no engine choice that waives this), or a `mode: remote` requirement (address, transport) unmet |
 | `*datastore.ErrUnsupportedStorageBackend{Backend: "qrdb:" + transport}` | `pkg/datastore/remote.go`, used by both `pkg/server/qrdb_storage.go` and `pkg/datastore.Open` | `datastore.remote.transport` names a transport `DialRemote` does not implement (only reachable by bypassing `config.Validate`) |
 | `*datastore.ErrUnsupportedDatastoreMode{Mode}` | `pkg/datastore/errors.go` | `datastore.mode` is neither `standalone` nor `remote` (only reachable by bypassing `config.Validate`) |
-| `*datastore.ErrOpenDatastore{Mode, Err}` | `pkg/datastore/datastore.go` | `Open` (the SDK/library path) failed to build the datastore in the named mode; `Err` is the underlying cause |
-| `*datastore.ErrClientUnavailable{Backend}` | `pkg/datastore/database.go` | `DatabaseKVStore` was given a `storage.Backend` that does not implement `ClientBackend` (one built without going through `Open`) |
+| `*datastore.ErrOpenDatastore{Mode, Err}` | `pkg/datastore/datastore.go` | `Open` failed to build the standalone datastore; `Err` is the underlying cause |
+| `*datastore.ErrDialRemote{Transport, Address, Err}` | `pkg/datastore/remote.go` | `DialRemote` could not build or connect the remote client; nothing is left open |
+| `datastore.ErrNilConfig` / `ErrNilClient` / `ErrDatabaseNameRequired` | `pkg/datastore/errors.go` | `Open` got a nil config, `New` a nil client, or `DatabaseKVStore` an empty name |
+| `dao.ErrNilFactory` / `*dao.DatabaseUnavailableError{Database}` / `*dao.NewDAOError{EntityType, Err}` | `pkg/dao/dao.go` | `dao.New` got no factory, a named database the factory does not serve, or go-qrdb refused the DAO |
+| `compose.ErrNilDAOFactory` / `qrdbstorage.ErrNilKVStore` | `pkg/compose/errors.go`, `pkg/storage/qrdb/kvstore_backend.go` | `FactoryBackend` got no factory, or the factory serves no default store |
 | `*datastore.ErrEnsureDatabase{Name, Err}` | `pkg/datastore/database.go` | `DatabaseKVStore` could not confirm or create the named database; `Err` is go-qrdb's underlying cause (not `*qrdbsdk.DBAlreadyExistsError`, which is treated as success) |
 | `*datastore.ErrDatabaseScope{Name, Err}` | `pkg/datastore/database.go` | the database exists but `Client.DatabaseScoped(name)` failed |
 | `*embeddednode.NodeSealError{Reason, Err}` | `pkg/embeddednode/errors.go` | the node barrier is configured to encrypt the data plane but the required auto-unseal material cannot be resolved |
@@ -425,18 +589,18 @@ directly (`pkg/config` already transitively imports `pkg/xkms` via
 `pkg/ca`, and `pkg/server` imports `pkg/xkms` directly) — this is why the
 seam is a plain `storage.Backend` handle, not a `config.DatastoreConfig`
 parameter: the caller (`pkg/server`, `sdk/go`, `xkey`, `cmd/xkmsd`) opens the
-datastore and hands over the resulting handle.
+datastore and hands over a `storage.Backend` over it —
+`compose.FactoryBackend(ds.DAOFactory())` for a `pkg/datastore` caller.
 
 ```go
-func Open(ctx context.Context, cfg *config.Config, logger *slog.Logger) (storage.Backend, error)
+func Open(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Datastore, error)
 ```
 
-(`pkg/datastore/datastore.go`.) The Server-independent counterpart to
-`Server.initializeQRDBStorage` for exactly this caller-without-a-`*Server`
-case: `"standalone"` hosts an embedded qrdb node via
+(`pkg/datastore/datastore.go`.) The Server-independent way to open the
+datastore: `"standalone"` hosts an embedded qrdb node via
 `embeddednode.OpenEmbeddedNode`; `"remote"` dials via `datastore.DialRemote`
-— the SAME function `Server.initializeQRDBStorage`'s own remote branch now
-calls, so there is exactly one remote-dial implementation. `"standalone"`
+— `Server.initializeQRDBStorage`'s remote branch calls `Open` too, so there
+is exactly one remote-dial implementation. `"standalone"`
 requires `cfg.Datastore.Path` (adopting go-qrdb's own data-directory
 contract exactly rather than working around it — see "Error semantics"
 above): `Open` refuses an empty `Path` itself, with
@@ -465,12 +629,13 @@ caller running a real ceremony builds one explicitly via
 that both needs it and can afford the `pkg/factor` dependency) and passes it
 through.
 
-`sdk/go` re-exports `OpenDatastore(ctx, DatastoreConfig, logger)
-(StorageBackend, error)` (`sdk/go/datastore.go`) and `NewTPMFactory =
-store.NewFactory` (`sdk/go/tpm.go`) so an embedder configures the identical
+`sdk/go` re-exports `Datastore`, `OpenDatastore(ctx, DatastoreConfig, logger)
+(*Datastore, error)` and `DatastoreStorage(daos) (StorageBackend, error)`
+(`compose.FactoryBackend`; `sdk/go/datastore.go`), and `NewTPMFactory =
+store.NewFactory` (`sdk/go/tpm.go`), so an embedder configures the identical
 datastore an `xkmsd`-hosted deployment uses without importing `pkg/config`/
-`pkg/datastore` directly; `AutoConfig`/`AutoInitialize` already aliased
-`pkg/xkms`'s types, so `Datastore` needed no SDK-side change.
+`pkg/datastore` directly, and feeds `AutoConfig.Datastore` from
+`DatastoreStorage(ds.DAOFactory())`.
 
 xkey's `initLocalKeyStore` (`xkey/pkg/gui/app.go`) sources every backend's
 key storage from the same barrier-backed `storage.Backend`
@@ -504,21 +669,27 @@ in-memory `storage.Backend` for the non-barrier cases, independent of
   `TestDatastoreConfig_Remote`), `pkg/server/storage_factory_qrdb_test.go`,
   `pkg/server/server_coverage_test.go`
   (`TestServer_CreateStorage_DistinctPrefixesOverOneStore`);
-  `pkg/embeddednode/embedded_node_test.go`; `pkg/datastore/datastore_test.go`;
+  `pkg/embeddednode/embedded_node_test.go`;
+  `pkg/datastore/datastore_test.go` (`TestOpen_StandaloneYieldsClientAndDAOFactory`,
+  `TestOpen_RejectsBadConfig`, `TestNew_BorrowsTheClient`);
+  `pkg/datastore/remote_test.go` (`TestOpen_RemoteYieldsClientAndDAOFactory`
+  — REST and gRPC datastores against an in-process TLS node, each reading
+  what the other's DAO wrote, in the default and a named database);
   `pkg/datastore/database_test.go` (`TestDatabaseKVStore_CreatesAndScopesDatabase`,
-  `TestDatabaseKVStore_Idempotent`, `TestDatabaseKVStore_BackendOverrideHonoured`,
-  `TestDatabaseKVStore_DefaultEngineWhenNoOverride`,
-  `TestDatabaseKVStore_ClientUnavailable`); `pkg/storage/file/crosslock_test.go` (re-exec'd processes race
-  CompareAndSwap on one directory, #1157)
-  (`TestOpen_StandaloneMemoryEngine`, remote-dial and unsupported-mode
-  cases); `pkg/xkms/auto_test.go` (`TestAutoInitialize_WithDatastore`,
+  `TestDatabaseKVStore_Idempotent`, `TestDatabaseKVStore_DAOFactoryServesOpenedDatabase`,
+  `TestDatabaseKVStore_BackendOverrideHonoured`, `TestDatabaseKVStore_Refusals`);
+  `pkg/dao/dao_test.go`; `pkg/compose/storage_test.go`;
+  `pkg/storage/qrdb/kvstore_backend_test.go`;
+  `pkg/storage/file/crosslock_test.go` (re-exec'd processes race
+  CompareAndSwap on one directory, #1157); `pkg/xkms/auto_test.go` (`TestAutoInitialize_WithDatastore`,
   `TestResolveBackendConfig_WithDatastore`); `pkg/tpm2/store/store_test.go`
   (`TestStorageFactory_NewFactory`); `sdk/go/datastore_test.go`.
 - **Integration** (`test/integration/storage/`) — `file_storage_integration_test.go`,
   `memory_storage_integration_test.go`, and the hardware-adapter suites that
   exercise `pkg/storage/hardware` — a distinct certificate-storage adapter,
   not a `Datastore.Engine` choice.
-- **Makefile targets** — `test-storage`; `integration-test-storage`.
+- **Makefile targets** — `test-datastore`, `test-dao`, `test-compose`,
+  `test-storage`; `integration-test-storage`.
 
 ## Observability
 

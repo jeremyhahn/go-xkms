@@ -22,7 +22,6 @@ the folder in the same commit that changes the behavior.
 | [audit-log](audit-log/) | Tamper-evident audit records and their signing chain |
 | [auth-factors](auth-factors/) | Factor composition, adapters, and the identity/key-domain split |
 | [avr-device-backend](avr-device-backend/) | An AVR device with a secure-element identity as an xkms key provider and DICE attester, over the arduino-generic wire protocol |
-| [backup](backup/) | Whole-node backup/restore over the embedded go-qrdb node's shard-snapshot capability (`backup:*`); per-key export/import is [key-management](key-management/) |
 | [certificate-authority](certificate-authority/) | `TrustedCA` — cross-signed root pool, AIA import, DANE TLSA publishing |
 | [clustering](clustering/) | Embedding a go-qrdb clustered node behind the `raft` build tag: Raft config mapping, inter-node mTLS provisioning, not-leader redirects, the `xkmsctl cluster`/`rebalance` control plane, the read-only REST cluster status/membership surface for the web console, and cluster CA key custody |
 | [crypto-backends](crypto-backends/) | The `Backend` contract and every software, hardware and cloud implementation |
@@ -32,7 +31,7 @@ the folder in the same commit that changes the behavior.
 | [fido2-ctap2](fido2-ctap2/) | The canonical FIDO2 CTAP2 implementation |
 | [frost-threshold-signing](frost-threshold-signing/) | RFC 9591 FROST threshold signing (`-tags frost`) — trusted-dealer keygen, the explicit round API, and why the CLI's local path and the REST/gRPC/MCP network surface are independent |
 | [host-embedding](host-embedding/) | Mounting the `xkms` ServiceModule in a qrdb-embedding host: the host supplies dependencies (qrdb client, barrier registry, PIN backend, sealer, CA config, PCR reader), `pkg/compose` builds the Password Manager, SSH, CA, platform store, credential and policy stores through the same path as `xkmsd`, and the barrier routes stay the host's unless it opts in |
-| [init-ceremony](init-ceremony/) | `xkmsd init` — the KMS+CA half and the delegated IAM half |
+| [init-ceremony](init-ceremony/) | `xkmsd init` — the single-administrator bootstrap: CA artifacts, the node's first boot and the administrator's login factors |
 | [key-management](key-management/) | Key lifecycle, key providers, symmetric and asymmetric operations |
 | [luks](luks/) | The single LUKS implementation in the stack: FIPS-aware volume lifecycle (`Manager`/`Executor`, `LibExecutor` on `go-luks2`) and TPM 2.0 passphrase sealing (`TPMSealer`, configurable Platform-SRK/Shared-SRK parent). `xkey` consumes it through `sdk/go/luks`; its desktop-specific glue is documented separately in `xkey/docs/luks/` |
 | [multi-tenancy](multi-tenancy/) | Per-tenant isolation, tenant barriers, tenant-scoped keys |
@@ -47,8 +46,7 @@ the folder in the same commit that changes the behavior.
 | [rbac](rbac/) | The `auth.Authorizer` seam over qrdb's identity plane: the xkms permission vocabulary, transport enforcement, and the built-in role model |
 | [post-quantum](post-quantum/) | ML-KEM / ML-DSA key generation and use — the stdlib vs. CIRCL split, FIPS behavior, and the SLH-DSA/HSS/XMSS mechanisms the PKCS#11 module advertises but does not implement |
 | [release-engineering](release-engineering/) | Cutting an -alpha release in two steps — `make release-alpha` prepares a pull request, `make release-tag` tags it once merged — the lockstep tag namespaces, the reciprocal `go.mod` pin edges, the exported-API growth gate |
-| [sealing-and-barrier](sealing-and-barrier/) | Hardware and cloud seal strategies contributed to the qrdb barrier |
-| [share-custody](share-custody/) | Shamir share custody, custodian groups and share collection |
+| [sealing-and-barrier](sealing-and-barrier/) | Hardware and cloud seal strategies contributed to the qrdb barrier, and the pre-barrier store holding the TPM-sealed PKCS#11 PIN |
 | [sign-server](sign-server/) | Embeddable, node-local, sign-only xkms server (`pkg/signserver`, `sdk/go/signserver`): an exclusive SO_PEERCRED unix socket a remote-mode PKCS#11 module signs through, with only named keys exposed, and CGO-free key provisioning under the CKA_LABEL/CKA_ID the module exposes |
 | [signing](signing/) | The embedded SDK's `Sign`/`Verify` — persisted per-blob checksums (`SignOptions.BlobCN`, `VerifyOpts.IntegrityCheck`) shared by every backend |
 | [ssh-agent-sessions](ssh-agent-sessions/) | Serving an xkms-held key over an ephemeral SSH agent socket with no connection target — git commit signing, `ssh-keygen -Y sign` |
@@ -127,8 +125,7 @@ by five and reports unconverted folders as converted.
 | [auth-factors](auth-factors/) | `auth/factors.md`, `auth/layering.md` |
 | [pin-management](pin-management/) | `pin/`, `seal/pin.md`, `architecture/pin-architecture.md` |
 | [sealing-and-barrier](sealing-and-barrier/) | `seal/` (except `seal/tenant-barriers.md`, superseded by `multi-tenancy` below), `seal/barrier.md` — **absorbed and deleted** (go-xkms#707): its layered LUKS+barrier architecture, the `pkg/storage/luks.Backend` gate, and barrier auto-unseal content are now covered by [`../xkey/docs/luks/architecture.md`](../xkey/docs/luks/architecture.md) §"The gate: `pkg/storage/luks.Backend`", [`../xkey/docs/seal/`](../xkey/docs/seal/) (policy-based barrier auto-unseal), [`../xkey/docs/setup-wizard/`](../xkey/docs/setup-wizard/) (the GUI's separate LUKS-volume TPM auto-unseal, `BarrierAutoUnsealBlobID`), and [`../xkey/docs/password/`](../xkey/docs/password/) (static-password-behind-the-barrier layering) — re-verified against all four for this pass, `sealed-storage/`, `architecture/barrier-integration.md` |
-| [init-ceremony](init-ceremony/) | `init/`, `auth/bootstrap.md` |
-| [share-custody](share-custody/) | `custodian/`, `sharestore/` |
+| [init-ceremony](init-ceremony/) | `init/ceremony.md`, `init/roles.md`, `init/threshold.md`, `init/README.md`, `auth/bootstrap.md` — **deleted**; the M-of-N officer ceremony they described was removed (go-qrdb holder/quorum model). `init/credentials.md` stays as cross-cutting documentation |
 | [multi-tenancy](multi-tenancy/) | `architecture/multi-tenant.md`, `seal/tenant-barriers.md`, `acme/multi-tenancy.md` |
 | [escrow](escrow/) | `escrow/README.md` — **absorbed and deleted** |
 | [password-vault](password-vault/) | `staticpw/` |
@@ -178,7 +175,7 @@ Several of these need a note rather than a row:
   place, and flagged that `unix-socket.md`'s premise conflicts with
   `acme-issuance/cli.md`'s own statement that the ACME admin plane has no
   Unix adapter), `acme/dns-01/` (6 files: per-provider DNS-01
-  configuration), `acme/qrdb/` (3 files), `acme/sdk/README.md`,
+  configuration), `acme/sdk/README.md`,
   `acme/api-reference.md`, `acme/audit/`, `acme/auth/`, `acme/docker.md`,
   `acme/multi-tenancy.md` (superseded by [`multi-tenancy/`](multi-tenancy/),
   see the table above), and `acme/deployment/` (`security.md` and
@@ -211,16 +208,7 @@ Several of these need a note rather than a row:
   `pkg/trust/bootstrap/tlsconfig.go`. `ca/bootstrap.md`'s "API Reference"
   section (`Bootstrapper`, `CABundleRequest`, `CABundleResponse`) describes
   the same pre-truststrap-composition shape and is stale the same way.
-- **`cli/barrier.md` is not superseded** by `sealing-and-barrier/`. Its
-  xkms-specific sections — the PIN-dispatch-through-separate-RPCs pattern
-  (`applyInitialPINPair`, `verifySOPINIfSupplied` in `cmd/xkmsctl/barrier.go`),
-  the `barrier rekey` `--threshold`/`--total`-required rationale, and the
-  strategy+PIN validation matrix (`BarrierSecretNotAllowedError`,
-  `PINsNotAllowedError`, `PINPairError`, `BarrierShamirOnInitError`, all
-  verified still present in `cmd/xkmsctl/barrier.go`) — are not in
-  [`sealing-and-barrier/cli.md`](sealing-and-barrier/cli.md), which lists
-  the verbs and flags but not why the PIN flags work despite the wire
-  types carrying no PIN fields.
+- **`cli/barrier.md` — deleted**: `xkmsctl barrier` was removed (go-qrdb owns the barrier surface).
 - **`cli/trust-platform.md` — absorbed and deleted** (this pass). It split
   three ways, across two modules: the `xkey browser launch` section (NSS
   `cert9.db` via `xkey/pkg/nssdb`, Firefox `policies.json` overlay) is
@@ -388,19 +376,18 @@ Configuration guides for various components:
 
 ### [Bootstrap](bootstrap/)
 Secure trust establishment and server initialization:
-- [Overview](bootstrap/README.md) - Bootstrap architecture, DANE/Noise/SPKI/Direct trust methods, custodian setup
+- [Overview](bootstrap/README.md) - Bootstrap architecture, DANE/Noise/SPKI/Direct trust methods
 
 ### [Trust](trust/)
 Canonical trust-bootstrap dispatch library:
 - [Trust Bootstrap Library](trust/bootstrap.md) - `pkg/trust/bootstrap` Mode enum, Fetch entry point, and the four consumers (xkmsctl, xkey GUI, QuicBaaS SDK, go-trusted-platform via SDK)
 
-### [Init](init/)
+### [Init](init-ceremony/)
 First-boot server initialization ceremony:
-- [Init System](init/README.md) - The `xkmsd init` KMS+CA half plus the IAM half that delegates to the embedded qrdb node's first-boot
+- [Credential Seal Strategies](init/credentials.md) - how the User PIN and operational credentials are protected at rest
 
 ### [Auth](auth/)
 Authentication, authorization, and bootstrap:
-- [Bootstrap Authentication](auth/bootstrap.md) - Cert-based admin enrollment: the `xkmsd init` ceremony, officer claim protocol, and `xkmsctl admin` mTLS/FIDO2 enrollment
 - [Layering](auth/layering.md) - Identity (qrdb) vs key-domain (xkms) split, Factor adapter composition
 
 ### [WebAuthn](webauthn/)
@@ -413,11 +400,6 @@ Converted to the five-file feature layout — see [Feature documentation](#featu
 
 ### [Seal](seal/)
 - [Barrier Encryption Architecture](seal/README.md) - qrdb owns the barrier and StrategyRegistry; xkms owns every hardware/cloud strategy
-
-### [Custodian](custodian/)
-- [Custodian Groups](custodian/README.md) - M-of-N roster naming who holds each Shamir share; service API, REST routes, and `xkmsctl custodian`
-- [Share Collection Plane](custodian/shares.md) - submitting, inspecting, and removing returned shares
-- [Key Share Persistence](sharestore/README.md) - client-side storage of received shares
 
 ### [Usage](../xkey/docs/usage/)
 CLI usage guides and tutorials have moved to [xkey/docs/usage/](../xkey/docs/usage/README.md).

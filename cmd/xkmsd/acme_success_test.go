@@ -27,6 +27,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -34,7 +35,14 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	acmeentities "github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
+	acmestorage "github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 )
 
 // acmeSuccessConfig returns an ACMEConfig that satisfies both
@@ -122,6 +130,104 @@ func TestStartACMEServer_Success(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s = %d, want 200", url, resp.StatusCode)
+	}
+
+	// The health endpoint reports the shared datastore through the go-qrdb
+	// SDK health checker startACMEServer wires in.
+	healthResp, err := client.Get("https://" + addr + "/acme/health")
+	if err != nil {
+		t.Fatalf("GET /acme/health: %v", err)
+	}
+	defer func() { _ = healthResp.Body.Close() }()
+	if healthResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /acme/health = %d, want 200", healthResp.StatusCode)
+	}
+	var status handlers.HealthStatus
+	if err := json.NewDecoder(healthResp.Body).Decode(&status); err != nil {
+		t.Fatalf("decode /acme/health: %v", err)
+	}
+	if len(status.Checks) != 1 || status.Checks[0].Name != datastore.HealthCheckName ||
+		status.Checks[0].Status != qrdbsdk.HealthCheckStatusHealthy {
+		t.Fatalf("/acme/health checks = %+v, want one healthy %q check", status.Checks, datastore.HealthCheckName)
+	}
+}
+
+// TestStartACMEServer_StoresInTheServerDatastore proves the ACME server keeps
+// its accounts, orders and certificates in the server's datastore: what it
+// saves through its storage factory, a second factory built independently
+// from the datastore's DAO factory reads back.
+func TestStartACMEServer_StoresInTheServerDatastore(t *testing.T) {
+	srv, _ := newEmbeddedQRDBServerWithCA(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := &config.Config{ACME: acmeSuccessConfig(t)}
+
+	as, err := startACMEServer(srv, cfg, logger)
+	if err != nil {
+		t.Fatalf("startACMEServer: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := as.Shutdown(ctx); err != nil {
+			t.Errorf("Shutdown: %v", err)
+		}
+	})
+
+	ctx := t.Context()
+	written := as.StorageFactory()
+	accounts, err := written.AccountDAO()
+	if err != nil {
+		t.Fatalf("AccountDAO: %v", err)
+	}
+	account := &acmeentities.ACMEAccount{Contact: []string{"mailto:ops@example.com"}, CreatedAt: time.Now().UTC()}
+	if err := accounts.Save(ctx, account); err != nil {
+		t.Fatalf("save account: %v", err)
+	}
+	orders, err := written.OrderDAO(account.ID)
+	if err != nil {
+		t.Fatalf("OrderDAO: %v", err)
+	}
+	order := &acmeentities.ACMEOrder{Status: "pending", AccountID: account.ID,
+		Identifiers: []acmeentities.ACMEIdentifier{{Type: "dns", Value: "kms.example.com"}}}
+	if err := orders.Save(ctx, order); err != nil {
+		t.Fatalf("save order: %v", err)
+	}
+	certs, err := written.CertificateDAO()
+	if err != nil {
+		t.Fatalf("CertificateDAO: %v", err)
+	}
+	cert := &acmeentities.ACMECertificate{Serial: "1a2b3c", PEM: "pem", Status: "valid", IssuedAt: time.Now().UTC()}
+	if err := acmestorage.SaveCertificateNoCollision(ctx, certs, cert); err != nil {
+		t.Fatalf("save certificate: %v", err)
+	}
+
+	read, err := acmeobjstore.NewFactory(srv.Datastore().DAOFactory())
+	if err != nil {
+		t.Fatalf("NewFactory over the server datastore: %v", err)
+	}
+	readAccounts, err := read.AccountDAO()
+	if err != nil {
+		t.Fatalf("AccountDAO: %v", err)
+	}
+	gotAccount, err := readAccounts.Get(ctx, account.ID)
+	if err != nil || len(gotAccount.Contact) != 1 || gotAccount.Contact[0] != "mailto:ops@example.com" {
+		t.Fatalf("read account = %+v, %v; want the saved account", gotAccount, err)
+	}
+	readOrders, err := read.OrderDAO(account.ID)
+	if err != nil {
+		t.Fatalf("OrderDAO: %v", err)
+	}
+	gotOrder, err := readOrders.Get(ctx, order.ID)
+	if err != nil || gotOrder.AccountID != account.ID || gotOrder.Identifiers[0].Value != "kms.example.com" {
+		t.Fatalf("read order = %+v, %v; want the saved order", gotOrder, err)
+	}
+	readCerts, err := read.CertificateDAO()
+	if err != nil {
+		t.Fatalf("CertificateDAO: %v", err)
+	}
+	gotCert, err := readCerts.Get(ctx, cert.EntityID())
+	if err != nil || gotCert.Serial != "1a2b3c" {
+		t.Fatalf("read certificate = %+v, %v; want the saved certificate", gotCert, err)
 	}
 }
 

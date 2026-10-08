@@ -19,7 +19,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
@@ -251,12 +251,12 @@ func TestBuildTLSConfig_SPKIPinWithCAFileIsAdditive(t *testing.T) {
 // serverResponse is what a fake tool handler returns: exactly one of Result
 // (success) or ErrorMessage (a failing tool result) should be set. When
 // ErrorMessage is set alongside a non-zero Envelope, the result also carries
-// go-qrdb's wire.ErrorEnvelope in StructuredContent; ErrorMessage alone
-// (Envelope left at wire.CodeOK) produces an uncoded tool failure.
+// go-qrdb's qrdbsdk.MCPErrorEnvelope in StructuredContent; ErrorMessage alone
+// (Envelope left at qrdbsdk.MCPCodeOK) produces an uncoded tool failure.
 type serverResponse struct {
 	Result       string
 	ErrorMessage string
-	Envelope     wire.Code
+	Envelope     qrdbsdk.MCPCode
 }
 
 // newTestServer starts a real mcp-go Streamable HTTP server exposing one
@@ -269,9 +269,9 @@ func newTestServer(t *testing.T, handlers map[string]func(args map[string]any) s
 		srv.AddTool(mcpgo.Tool{Name: name}, func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 			resp := handler(req.GetArguments())
 			switch {
-			case resp.ErrorMessage != "" && resp.Envelope != wire.CodeOK:
+			case resp.ErrorMessage != "" && resp.Envelope != qrdbsdk.MCPCodeOK:
 				res := mcpgo.NewToolResultError(resp.ErrorMessage)
-				res.StructuredContent = wire.NewErrorEnvelope(name, resp.Envelope, resp.ErrorMessage)
+				res.StructuredContent = qrdbsdk.NewMCPErrorEnvelope(name, resp.Envelope, resp.ErrorMessage)
 				return res, nil
 			case resp.ErrorMessage != "":
 				return mcpgo.NewToolResultError(resp.ErrorMessage), nil
@@ -347,7 +347,7 @@ func TestClient_Call_ToolErrorWithoutClassifier(t *testing.T) {
 	addr, cleanup := newTestServer(t, map[string]func(args map[string]any) serverResponse{
 		"xkms_health": func(map[string]any) serverResponse { return serverResponse{Result: `{}`} },
 		"xkms_ssh_keys_get": func(map[string]any) serverResponse {
-			return serverResponse{ErrorMessage: "key not found", Envelope: wire.CodeNotFound}
+			return serverResponse{ErrorMessage: "key not found", Envelope: qrdbsdk.MCPCodeNotFound}
 		},
 	})
 	defer cleanup()
@@ -362,7 +362,7 @@ func TestClient_Call_ToolErrorWithoutClassifier(t *testing.T) {
 	if rpcErr.Message != "key not found" {
 		t.Errorf("Message = %q", rpcErr.Message)
 	}
-	if rpcErr.WireCode != wire.CodeNotFound {
+	if rpcErr.WireCode != qrdbsdk.MCPCodeNotFound {
 		t.Errorf("WireCode = %v, want CodeNotFound", rpcErr.WireCode)
 	}
 	if rpcErr.Code != 0 {
@@ -374,13 +374,13 @@ func TestClient_Call_ToolErrorWithClassifier(t *testing.T) {
 	addr, cleanup := newTestServer(t, map[string]func(args map[string]any) serverResponse{
 		"xkms_health": func(map[string]any) serverResponse { return serverResponse{Result: `{}`} },
 		"xkms_ssh_keys_get": func(map[string]any) serverResponse {
-			return serverResponse{ErrorMessage: "key not found", Envelope: wire.CodeNotFound}
+			return serverResponse{ErrorMessage: "key not found", Envelope: qrdbsdk.MCPCodeNotFound}
 		},
 	})
 	defer cleanup()
 
-	classify := func(code wire.Code) int {
-		if code == wire.CodeNotFound {
+	classify := func(code qrdbsdk.MCPCode) int {
+		if code == qrdbsdk.MCPCodeNotFound {
 			return -32004
 		}
 		return -32000
@@ -395,7 +395,7 @@ func TestClient_Call_ToolErrorWithClassifier(t *testing.T) {
 	if rpcErr.Code != -32004 {
 		t.Errorf("Code = %d, want -32004", rpcErr.Code)
 	}
-	if rpcErr.WireCode != wire.CodeNotFound {
+	if rpcErr.WireCode != qrdbsdk.MCPCodeNotFound {
 		t.Errorf("WireCode = %v, want CodeNotFound", rpcErr.WireCode)
 	}
 }

@@ -1,6 +1,6 @@
 # Web Console — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `web-console` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `web-console` · Repo: `go-xkms` · Last verified: 2026-10-07
 
 ## Exported surface
 
@@ -94,8 +94,8 @@ it in a goroutine. Typed error: `LaunchError{Reason, Err}`.
   map built from `uiPermissionMatrix` (resource:action pairs the console
   gates on — RBAC-disabled deployments return all of them `true`), and a
   `capabilities` map from `capabilityFlags()` (`webauthn`, `piv_login`,
-  `rbac`, `ca`, `custodians`, `shares`, `tenants`, `passwords`, `platform`,
-  `policies`, `ceremony`, `ssh`, `frost`, `factors`, `audit`).
+  `rbac`, `ca`, `tenants`, `passwords`, `platform`,
+  `tpm_policies`, `oidc_credentials`, `cluster`, `ssh`, `frost`, `factors`).
 - `POST /api/v1/auth/login/piv`, `POST /api/v1/auth/refresh`,
   `GET /api/v1/auth/validate`, `POST /api/v1/auth/logout`.
 
@@ -106,7 +106,7 @@ it in a goroutine. Typed error: `LaunchError{Reason, Err}`.
   a `capability` gate checks `capabilities[name]`. Both read from the same
   `GET /api/v1/auth/me` response, cached in `session.svelte.ts`.
 - **`pkg/webui.MountChi` falls back to `index.html` for every unresolved
-  path**, so client-side routes (`#/keys`, `#/audit`, ...) work on a
+  path**, so client-side routes (`#/keys`, `#/users`, ...) work on a
   hard refresh without a server-side route per screen.
 - **The desktop bridge is the only source of `window.__XKMS_API_BASE_URL__`.**
   `web/app/src/stores/sdkClient.ts`'s `resolveBaseURL()` reads it if present,
@@ -118,57 +118,11 @@ it in a goroutine. Typed error: `LaunchError{Reason, Err}`.
 
 ## Known gaps
 
-Accuracy over completeness: these are real, currently-broken or
-unreachable corners of the console, verified against the route table and
-the frontend gating code — not roadmap items copied from elsewhere.
-
-### The Cluster screen's REST calls have no server-side route
-
-`web/app/src/views/ClusterView.svelte` calls `sdk/ts`'s `cluster` client
-(`sdk/ts/src/clients/cluster.ts`, `BASE = '/api/v1/cluster'`) for
-`GET /api/v1/cluster/status` and `GET /api/v1/cluster/members`. **Neither
-route is registered anywhere in the production REST surface.**
-`pkg/api/rest/routes.go` — the file whose own header comment calls it "the
-single source of truth for the xkms REST surface" — has no `cluster` route
-at all; the only existing `/api/v1/cluster/*` path in the tree is
-`clustercapkg.SecretDeliveryPath = "/api/v1/cluster/secret"`
-(`pkg/trust/clusterca/secret_delivery.go`), an unrelated CA-secret-delivery
-endpoint. The cluster control plane (status, peers, membership add/remove)
-is real, but it is served over gRPC on the Unix socket only
-(`pkg/server/qrdb_control_plane.go`, wired via `registerQRDBControlPlane` in
-`pkg/server/server.go`) — the transport `xkmsctl cluster` uses, not REST.
-
-A second, independent symptom of the same gap: the Cluster nav entry's
-capability gate (`nav.ts`: `capability: "cluster"`) can never resolve
-`true`. `capabilityFlags()` in `pkg/api/rest/handlers_auth.go` does not set
-a `"cluster"` key at all, so `hasCapability("cluster")` in
-`session.svelte.ts` is always `false` — the Cluster sidebar entry is
-permanently hidden regardless of deployment, independently of the missing
-routes underneath it. Reaching `#/cluster` directly (typed URL) would still
-load the view, which would then fail every request it makes.
-
-### The Audit and Auth Factors nav entries never become visible
-
-`uiPermissionMatrix` (`pkg/api/rest/handlers_auth.go`) — the fixed list of
-resource:action pairs `GET /api/v1/auth/me` evaluates into the
-`permissions` map — does **not** include `{auth.ResourceAudit, auth.ActionRead}`
-("audit:read") or `{auth.ResourceUsers, auth.ActionRead}` ("users:read"),
-even though both are real, enforced RBAC pairs (`auth.ResourceAudit =
-"audit"`, `auth.ResourceUsers = "users"`, `auth.ActionRead = "read"`,
-`pkg/auth/permissions.go`) and both are exactly what `nav.ts` gates the
-Audit and Auth Factors entries on (`requires: {resource: "audit", action:
-"read"}`, `requires: {resource: "users", action: "read"}`). Because the key
-is absent from the map rather than `false`, `session.svelte.ts`'s `can()`
-(`_me.permissions[key] === true`) returns `false` unconditionally — for
-every identity, including one that genuinely holds `audit:read` or
-`users:read`, and even when RBAC is disabled (RBAC-disabled mode only
-back-fills pairs that ARE in `uiPermissionMatrix`). The two sidebar entries
-are therefore never reachable by navigation for anyone. There is no
-client-side route guard beyond the sidebar (`router.svelte.ts` has none), so
-a direct hash-route visit (`#/audit`, `#/factors`) still loads the view and
-still calls the real, correctly-RBAC-enforced API underneath — only the
-sidebar's discoverability is affected, but it is affected for every
-deployment, not as an edge case.
+None recorded. Cluster status, membership and per-user auth factors are
+go-qrdb services the console does not re-host (see api.md); the dashboard's
+cluster card reads only the `cluster` capability flag, which
+`capabilityFlags()` (`pkg/api/rest/handlers_auth.go`) sets from
+`XKMSService.Clustered()`.
 
 ## Test strategy
 
@@ -193,7 +147,7 @@ floor there would chase generated-code coverage rather than behavior).
 `make integration-test-web` is deliberately **not** part of the
 `integration-test` aggregate (`Makefile`'s `integration-test` target lists
 it out): `test/integration/web/tests/auth.spec.ts` passes against a real
-server, but `key-lifecycle.spec.ts` and `barrier-audit.spec.ts` are
+server, but `key-lifecycle.spec.ts` is
 documented red for a server-side tenant-scoping reason unrelated to the
 console itself (every tenant-scoped call 403s for the first registered
 user because tenant `system` has no barrier-registry entry).

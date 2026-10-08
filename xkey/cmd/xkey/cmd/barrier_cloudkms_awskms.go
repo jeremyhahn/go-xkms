@@ -56,12 +56,12 @@ func buildAWSKMSBarrierStrategy(ctx context.Context, dataDir string) (xkms.Seali
 
 	// The backend config takes both credentials as strings, so the byte
 	// copies only bridge to that conversion and are wiped on the way out.
-	secretAccessKey, err := xkms.SecretValueBytes(awsCfg.SecretAccessKey)
+	secretAccessKey, err := xkms.SecretValueBytes(ctx, awsCfg.SecretAccessKey)
 	if err != nil {
 		return nil, nil, &BarrierError{Operation: "resolve_credentials", Err: err}
 	}
 	defer secure.Wipe(secretAccessKey)
-	sessionToken, err := xkms.SecretValueBytes(awsCfg.SessionToken)
+	sessionToken, err := xkms.SecretValueBytes(ctx, awsCfg.SessionToken)
 	if err != nil {
 		return nil, nil, &BarrierError{Operation: "resolve_credentials", Err: err}
 	}

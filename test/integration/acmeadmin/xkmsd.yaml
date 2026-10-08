@@ -63,10 +63,8 @@ auth:
 
 barrier:
   enabled: true
-  # "none": auto-unseals unattended at startup (pkg/config/config.go's
-  # BarrierConfig.NodeFlipWired lists it alongside passphrase/shamir/tpm2,
-  # so it still counts as the qrdb node's own barrier for the
-  # ComplianceGaps gate). "passphrase"/"shamir" instead defer to an
+  # "none": the qrdb node's own barrier auto-unseals unattended at
+  # startup. "passphrase"/"shamir" instead defer to an
   # operator-driven unseal behind a sealed-window listener
   # (pkg/server/sealed_window.go) that refuses to bind server.host=0.0.0.0
   # — this compose network needs xkmsd reachable from the test container,

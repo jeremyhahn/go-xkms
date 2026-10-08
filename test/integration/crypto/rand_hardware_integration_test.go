@@ -35,7 +35,7 @@ import (
 // fixtures. Test-only: production callers resolve the PIN from config.
 func mustSecret(t *testing.T, s string) *secure.Secret {
 	t.Helper()
-	sec, err := secure.NewSecret([]byte(s))
+	sec, err := secure.NewSecret(t.Context(), []byte(s))
 	require.NoError(t, err)
 	return sec
 }

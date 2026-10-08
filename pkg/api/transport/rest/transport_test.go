@@ -165,13 +165,6 @@ func TestSeal_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestBarrierStatus_NotConnected(t *testing.T) {
-	tr, err := NewWithConfig(nil)
-	require.NoError(t, err)
-	_, err = tr.BarrierStatus(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 func TestBootstrapListenerKeys_NotConnected(t *testing.T) {
 	tr, err := NewWithConfig(nil)
 	require.NoError(t, err)
@@ -558,8 +551,7 @@ func newRESTMockServer(t *testing.T) *httptest.Server {
 			json.NewEncoder(w).Encode(transport.SealResponse{Ciphertext: []byte("sealed")})
 		case r.URL.Path == "/api/v1/unseal":
 			json.NewEncoder(w).Encode(transport.UnsealResponse{Plaintext: []byte("data")})
-		case r.URL.Path == "/v1/barrier/status":
-			json.NewEncoder(w).Encode(transport.BarrierStatusResponse{})
+
 		case r.URL.Path == "/api/v1/bootstrap/keys":
 			json.NewEncoder(w).Encode(transport.BootstrapListenerKeysResponse{
 				NoisePublicKey: "aa",
@@ -643,17 +635,6 @@ func TestUnseal_Connected(t *testing.T) {
 		Backend:    "software",
 		Ciphertext: []byte("sealed"),
 	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestBarrierStatus_Connected(t *testing.T) {
-	srv := newRESTMockServer(t)
-	defer srv.Close()
-	tr := connectToMockREST(t, srv)
-	defer tr.Close()
-
-	resp, err := tr.BarrierStatus(context.Background())
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 }

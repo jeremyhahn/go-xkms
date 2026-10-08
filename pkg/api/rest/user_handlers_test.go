@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
@@ -100,7 +101,10 @@ func (m *restMockUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.
 }
 
 func (m *restMockUserClient) DeleteUser(ctx context.Context, id uint64) error {
-	return m.deleteUser(ctx, id)
+	if m.deleteUser != nil {
+		return m.deleteUser(ctx, id)
+	}
+	return errRestMockUnused
 }
 
 func (m *restMockUserClient) ListUsers(ctx context.Context, req *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error) {
@@ -204,7 +208,7 @@ func setupUserHandlerTest(t *testing.T, users qrdbtransport.UserClient, roles qr
 	// CreateUser mints an invitation for every account created with an email
 	// login key (go-xkms#1294 part B); wire the real qrdb invite store over
 	// an in-memory KV store so that path is reachable in these tests.
-	inviteStore, err := qrdbsdk.NewTenantInviteStore(restSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	inviteStore, err := invitetest.New(restSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
 	require.NoError(t, err)
 	svc.SetInviteStore(inviteStore)
 	t.Cleanup(func() { xkms.Reset() })

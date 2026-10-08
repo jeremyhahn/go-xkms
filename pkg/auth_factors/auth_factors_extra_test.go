@@ -33,6 +33,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -745,8 +746,8 @@ func TestWebAuthnBeginChallenge_HintUserFound_NoCredentials(t *testing.T) {
 		RPDisplayName: "test",
 		RPOrigins:     []string{"https://localhost"},
 	}
-	users := xkmswebauthn.NewMemoryUserStore()
-	creds := xkmswebauthn.NewMemoryCredentialStore()
+	stores := webauthntest.NewStores(t)
+	users, creds := stores.Users, stores.Credentials
 	sessions := xkmswebauthn.NewMemorySessionStore()
 
 	svc, err := xkmswebauthn.NewService(xkmswebauthn.ServiceParams{

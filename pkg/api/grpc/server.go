@@ -25,8 +25,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/correlation"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
@@ -61,7 +61,7 @@ type ServerConfig struct {
 	TLSConfig      *tls.Config
 	Authenticator  auth.Authenticator
 	Authorizer     *auth.Authorizer
-	AuditLogger    audit.Logger
+	AuditLogger    qrdbsdk.NodeAuditLogger
 	Logger         *slog.Logger
 	EnableLogging  bool
 	EnableRecovery bool

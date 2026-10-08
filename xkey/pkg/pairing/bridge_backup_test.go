@@ -220,73 +220,9 @@ func TestBridge_NilParams_BackupHandlers(t *testing.T) {
 
 // --- Whole-node backup operations (go-xkms#728) ---
 
-func (m *mockTransportClient) CreateBackup(_ context.Context, _ *transport.BackupRequest) (*transport.BackupInfo, error) {
-	return nil, nil
-}
-
-func (m *mockTransportClient) ListBackups(_ context.Context) ([]transport.BackupInfo, error) {
-	return nil, nil
-}
-
-func (m *mockTransportClient) GetBackup(_ context.Context, _ string) (*transport.BackupInfo, error) {
-	return nil, nil
-}
-
-func (m *mockTransportClient) DeleteBackup(_ context.Context, _ string) error {
-	return nil
-}
-
-func (m *mockTransportClient) RestoreBackup(_ context.Context, _ *transport.RestoreRequest) (*transport.RestoreResult, error) {
-	return nil, nil
-}
-
-func (m *mockTransportClient) VerifyBackup(_ context.Context, _ string) (*transport.VerifyResult, error) {
-	return nil, nil
-}
-
 // --- Custodian group operations ---
 
-func (m *mockTransportClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	return nil, nil
-}
-
-func (m *mockTransportClient) GetCustodianGroup(_ context.Context, _ string) (*transport.GetCustodianGroupResponse, error) {
-	return nil, nil
-}
-
-func (m *mockTransportClient) ListCustodianGroups(_ context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	return nil, nil
-}
-
-func (m *mockTransportClient) DeleteCustodianGroup(_ context.Context, _ string) error {
-	return nil
-}
-
-func (m *mockTransportClient) AddCustodianMember(_ context.Context, _ *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	return nil, nil
-}
-
-func (m *mockTransportClient) RemoveCustodianMember(_ context.Context, _ *transport.RemoveCustodianMemberRequest) error {
-	return nil
-}
-
 // --- Share operations ---
-
-func (m *mockTransportClient) DistributeShares(_ context.Context, _ *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	return nil, nil
-}
-
-func (m *mockTransportClient) SubmitShare(_ context.Context, _ *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	return nil, nil
-}
-
-func (m *mockTransportClient) ListShares(_ context.Context) (*transport.ListSharesResponse, error) {
-	return nil, nil
-}
-
-func (m *mockTransportClient) GetShareCollectionStatus(_ context.Context, _ string) (*transport.ShareCollectionStatus, error) {
-	return nil, nil
-}
 
 // --- Tenant operations ---
 
@@ -306,18 +242,6 @@ func (m *mockTransportClient) DeleteTenant(_ context.Context, _ string) error {
 	return nil
 }
 
-func (m *mockTransportClient) TenantBarrierInit(_ context.Context, _ *transport.TenantBarrierInitRequest) error {
-	return nil
-}
-
-func (m *mockTransportClient) TenantBarrierUnseal(_ context.Context, _ *transport.TenantBarrierUnsealRequest) error {
-	return nil
-}
-
-func (m *mockTransportClient) TenantBarrierStatus(_ context.Context, _ string) (*transport.TenantBarrierStatusResponse, error) {
-	return &transport.TenantBarrierStatusResponse{}, nil
-}
-
 func (m *mockTransportClient) UpdateTenantEntitlements(_ context.Context, _ *transport.UpdateTenantEntitlementsRequest) (*transport.UpdateTenantEntitlementsResponse, error) {
 	return nil, nil
 }
@@ -327,30 +251,6 @@ func (m *mockTransportClient) UpdateTenantQuotas(_ context.Context, _ *transport
 }
 
 // Init ceremony operations
-
-func (m *mockTransportClient) GetInitStatus(_ context.Context) (*transport.InitStatusResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) ClaimCertBegin(_ context.Context, _ *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) ClaimCertComplete(_ context.Context, _ *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) ClaimShareBegin(_ context.Context, _ *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) ClaimShareComplete(_ context.Context, _ *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) SignCSRInit(_ context.Context, _ *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
-	return nil, errNotImplemented
-}
 
 // Credential management operations
 
@@ -370,16 +270,4 @@ func (m *mockTransportClient) Algorithms(_ context.Context) (*transport.Algorith
 
 // Share custody read/delete
 
-func (m *mockTransportClient) GetShare(_ context.Context, _, _ string, _ int) (*transport.ShareInfo, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) DeleteShare(_ context.Context, _, _ string, _ int) error {
-	return errNotImplemented
-}
-
 // Audit
-
-func (m *mockTransportClient) QueryAudit(_ context.Context, _ *transport.AuditFilter) (*transport.AuditPage, error) {
-	return nil, errNotImplemented
-}

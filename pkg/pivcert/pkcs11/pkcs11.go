@@ -22,6 +22,7 @@
 package pkcs11
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -288,7 +289,7 @@ func pinPlaintext(sec *secure.Secret) (string, error) {
 	if sec == nil {
 		return "", nil
 	}
-	buf, err := sec.Open()
+	buf, err := sec.Open(context.Background())
 	if err != nil {
 		return "", err
 	}
@@ -592,7 +593,7 @@ func newSessionPool(ctx *p11.Ctx, slotID uint, pin *secure.Secret, size int) (*s
 		pool.ch <- sess
 	}
 	if pin != nil {
-		buf, err := pin.Open()
+		buf, err := pin.Open(context.Background())
 		if err != nil {
 			return nil, errors.Join(err, pool.Close())
 		}

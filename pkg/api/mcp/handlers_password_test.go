@@ -65,16 +65,16 @@ func passwordTestRegistry(t *testing.T) (*seal.BarrierRegistry, *staticpw.Backen
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	sysCreds := seal.MustCredentials([]byte("test-pw"))
+	sysCreds := seal.MustCredentials(t.Context(), []byte("test-pw"))
 	defer sysCreds.Secret.Destroy()
 	require.NoError(t, sysBarrier.Initialize(ctx, sysCreds))
 
 	registry, err := seal.NewBarrierRegistry(sysBarrier)
 	require.NoError(t, err)
 	for _, tenant := range []string{pwTenantA, pwTenantB} {
-		_, err = registry.RegisterTenant(tenant)
+		_, err = registry.RegisterTenantDefault(tenant)
 		require.NoError(t, err)
-		creds := seal.MustCredentials([]byte(tenant + "-pw"))
+		creds := seal.MustCredentials(t.Context(), []byte(tenant+"-pw"))
 		require.NoError(t, registry.InitializeTenant(ctx, tenant, creds))
 		creds.Secret.Destroy()
 	}

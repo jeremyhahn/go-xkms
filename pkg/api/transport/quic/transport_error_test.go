@@ -441,34 +441,6 @@ func TestAttestKey_ServerErr(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestBarrierInitialize_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	err := tr.BarrierInitialize(context.Background(), &transport.BarrierInitializeRequest{})
-	require.Error(t, err)
-}
-
-func TestBarrierUnseal_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	err := tr.BarrierUnseal(context.Background(), &transport.BarrierUnsealRequest{})
-	require.Error(t, err)
-}
-
-func TestBarrierSeal_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	err := tr.BarrierSeal(context.Background())
-	require.Error(t, err)
-}
-
-func TestBarrierStatus_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.BarrierStatus(context.Background())
-	require.Error(t, err)
-}
-
 func TestGetCABundle_ServerErr(t *testing.T) {
 	tr, cleanup := newErrTransport(t)
 	defer cleanup()

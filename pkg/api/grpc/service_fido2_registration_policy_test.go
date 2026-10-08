@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -33,13 +34,13 @@ import (
 // (nil = the config never decided, i.e. the go-xkms#184 secure default).
 func newFIDO2PolicyService(t *testing.T, allow *bool) *Service {
 	t.Helper()
-	svc, _ := newFIDO2RelyingPartyService(t, allow)
+	svc, _, _ := newFIDO2RelyingPartyService(t, allow)
 	return svc
 }
 
 // newFIDO2RelyingPartyService is newFIDO2PolicyService that also returns the
 // relying party, for tests that inspect or change the accounts it holds.
-func newFIDO2RelyingPartyService(t *testing.T, allow *bool) (*Service, *webauthn.Service) {
+func newFIDO2RelyingPartyService(t *testing.T, allow *bool) (*Service, *webauthn.Service, *webauthntest.Stores) {
 	t.Helper()
 
 	xkms.Reset()
@@ -51,6 +52,7 @@ func newFIDO2RelyingPartyService(t *testing.T, allow *bool) (*Service, *webauthn
 	svc, err := xkms.Get()
 	require.NoError(t, err)
 
+	stores := webauthntest.NewStores(t)
 	rp, err := webauthn.NewService(webauthn.ServiceParams{
 		Config: &webauthn.Config{
 			RPID:                    "example.com",
@@ -58,14 +60,14 @@ func newFIDO2RelyingPartyService(t *testing.T, allow *bool) (*Service, *webauthn
 			RPOrigins:               []string{"https://example.com"},
 			AllowPublicRegistration: allow,
 		},
-		UserStore:       webauthn.NewMemoryUserStore(),
+		UserStore:       stores.Users,
 		SessionStore:    webauthn.NewMemorySessionStore(),
-		CredentialStore: webauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err)
 	svc.SetWebAuthn(rp)
 
-	return NewService(nil, nil, svc), rp
+	return NewService(nil, nil, svc), rp, stores
 }
 
 // TestBeginRegistration_DefaultClosedReturnsPermissionDenied pins the gRPC
@@ -122,6 +124,7 @@ func TestBeginRegistration_SessionStoreFullReturnsResourceExhausted(t *testing.T
 	require.NoError(t, err)
 
 	open := true
+	stores := webauthntest.NewStores(t)
 	rp, err := webauthn.NewService(webauthn.ServiceParams{
 		Config: &webauthn.Config{
 			RPID:                    "example.com",
@@ -129,9 +132,9 @@ func TestBeginRegistration_SessionStoreFullReturnsResourceExhausted(t *testing.T
 			RPOrigins:               []string{"https://example.com"},
 			AllowPublicRegistration: &open,
 		},
-		UserStore:       webauthn.NewMemoryUserStore(),
+		UserStore:       stores.Users,
 		SessionStore:    webauthn.NewMemorySessionStore(webauthn.WithMaxSessions(1)),
-		CredentialStore: webauthn.NewMemoryCredentialStore(),
+		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err)
 	svc.SetWebAuthn(rp)

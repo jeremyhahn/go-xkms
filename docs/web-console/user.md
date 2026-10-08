@@ -1,6 +1,6 @@
 # Web Console — User Guide
 
-> **Status: NORMATIVE** · Feature: `web-console` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `web-console` · Repo: `go-xkms` · Last verified: 2026-10-07
 
 ## What it is
 
@@ -12,7 +12,7 @@ or a PIV/mTLS client certificate — there is no password.
 ## Server-hosted: the common case
 
 ```sh
-xkmsctl init            # provisions CA + admin mTLS + an encrypted barrier
+xkmsd init              # provisions CA + admin mTLS + an encrypted barrier
 xkmsd -c /etc/xkms/xkmsd.yaml
 ```
 
@@ -55,7 +55,7 @@ gaps: ["encryption-at-rest disabled (barrier.enabled=false): data is stored in p
        "authentication disabled (auth.enabled=false): access is anonymous"]
 ```
 
-Fix the named control (or run `xkmsctl init` to provision it); there is no
+Fix the named control (or run `xkmsd init` to provision it); there is no
 flag to force past the gate. Each gap maps to a config section:
 `barrier.enabled`, `auth.enabled`/`auth.type`, `tls.enabled`, the `ca` block.
 
@@ -89,11 +89,9 @@ token, and the engine, are gone.
 
 The full nav map is below; broad strokes: key lifecycle (generate/rotate/delete/sign/verify/encrypt/decrypt/
 wrap/derive/transfer/attest), certificates and CA issuance/revocation/CRL,
-barrier status/unseal/seal, PIN and PIV slot inspection, stored SSH keys
+PIN and PIV slot inspection, stored SSH keys
 (no terminal — see below), the password vault, platform secrets, users and
-per-user auth-factor enrolment, the tamper-evident audit log, tenants,
-custodian groups and share distribution, and read-only cluster status
-(currently non-functional — see below).
+tenants. The dashboard shows whether the deployment is clustered.
 
 ### Navigation
 
@@ -102,9 +100,8 @@ custodian groups and share distribution, and read-only cluster status
 | Overview | Dashboard, Backends | `#/dashboard`, `#/backends` |
 | Keys & Crypto | Keys, FROST, PCR Policies | `#/keys`, `#/frost`, `#/policies` |
 | Certificates & CA | Certificates, Certificate Authority | `#/certs`, `#/ca` |
-| Security | Barrier & Seal, PIN, PIV, SSH, Passwords, Platform Secrets, Init Ceremony | `#/barrier`, `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/platform`, `#/ceremony` |
-| Identity & Access | Users, Auth Factors, Audit, Tenants, Custodians, Shares | `#/users`, `#/factors`, `#/audit`, `#/tenants`, `#/custodians`, `#/shares` |
-| Cluster | Cluster | `#/cluster` |
+| Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
+| Identity & Access | Users, Tenants | `#/users`, `#/tenants` |
 | Settings | Settings | `#/settings` |
 
 Every nav entry is gated twice: an RBAC gate hides an entry the identity
@@ -113,18 +110,9 @@ wired. Hiding is a convenience — the server's own RBAC decorators are the
 enforcement authority, and any view you reach anyway (a stale link, a typed
 hash route) still renders the 403 it gets back.
 
-**Two entries never light up today, for anyone:** Audit and Auth Factors.
-This is a server-side bookkeeping gap (the permission pairs their nav gate
-checks are never included in what `/api/v1/auth/me` reports), not a
-permissions problem on your account — see
-[engineering.md](engineering.md) §"Known gaps". Both features work fully
-if you navigate to them directly (`#/audit`, `#/factors`); only the
-sidebar entry point is affected.
-
-**Cluster is currently non-functional.** Its sidebar entry is always
-hidden, and even reached directly its two REST calls 404 — the server has
-no `/api/v1/cluster/status` or `/members` route. Use `xkmsctl cluster` for
-cluster membership and status today.
+Cluster membership and status, and per-user auth factors, are go-qrdb's
+services and have no console page: use `xkmsctl cluster` and
+`xkmsctl auth factor`.
 
 ## Things the console deliberately does not do
 
@@ -136,22 +124,18 @@ cluster membership and status today.
 - **No FROST signing rounds.** Generate, list, delete threshold keys and
   verify finished signatures here; the three-round signing ceremony
   coordinates separate share-holders through `xkmsctl frost`.
-- **No Shamir init or rekey.** `xkmsctl barrier init-shamir` / `rekey` are
-  CLI ceremonies by design — the shares are printed once, to a terminal,
-  never round-tripped through a browser session.
-- **No cluster membership changes.** `xkmsctl cluster add/remove` only —
-  and today, no cluster reads either (see above).
+- **No barrier, audit, custodian or share screens.** Those surfaces are go-qrdb's and xkms does not re-expose them.
+- **No cluster status, membership or auth-factor management.** Those are
+  go-qrdb services; use `xkmsctl cluster` and `xkmsctl auth factor`.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `https://host:8443/ui/` 404s | Binary built without the `ui` tag | Rebuild with `make build-ui` |
-| Daemon exits at startup with a `gaps: [...]` log line | Secure-by-default refused an insecure config | Fix the named control, or run `xkmsctl init` |
+| Daemon exits at startup with a `gaps: [...]` log line | Secure-by-default refused an insecure config | Fix the named control, or run `xkmsd init` |
 | Login screen offers no passkey option | `webauthn_enabled: false` in `/api/v1/capabilities` | The server has no WebAuthn RP configured |
 | Login screen offers no certificate option | `piv_login_enabled: false` | `auth.piv_login.enabled` is off, or `tls.client_auth` does not request client certs |
-| Audit or Auth Factors never appear in the sidebar | Known server-side gap, not a permissions problem | Navigate to `#/audit` / `#/factors` directly; both work |
-| Cluster screen is blank or errors | No REST route exists yet | Use `xkmsctl cluster status` / `add` / `remove` |
 | Desktop app: "remote mode requires XKMS_SERVER_URL or a saved bookmark" | Neither set | Set `XKMS_SERVER_URL`, or save a bookmark from inside the app once connected |
 | Desktop standalone: nothing loads | `XKMS_CONFIG` config itself fails secure-by-default validation | Same fix as the server-hosted refusal above — the standalone engine is the same `pkg/server.Server` |
 

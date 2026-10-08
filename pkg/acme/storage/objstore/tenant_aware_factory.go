@@ -21,6 +21,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
@@ -28,29 +29,36 @@ import (
 var _ storage.TenantAwareFactory = (*TenantAwareFactory)(nil)
 
 // TenantAwareFactory extends Factory with tenant-scoped DAO creation.
-// It implements the storage.TenantAwareFactory interface over a go-qrdb KVStore,
-// providing tenant data isolation via key prefix namespacing.
+// It implements the storage.TenantAwareFactory interface over an injected
+// go-qrdb DAO factory, providing tenant data isolation via key prefix
+// namespacing.
 type TenantAwareFactory struct {
 	Factory
 	tenantID string
 }
 
-// NewTenantAwareFactoryFromKVStore creates a TenantAwareFactory over a go-qrdb
-// KVStore directly (the datastore path). Callers wrap any storage.Backend —
-// including the object-storage engine — with kvadapter.New and pass it here.
+// NewTenantAwareFactory creates a TenantAwareFactory over daos, typically the
+// server datastore's DAOFactory (pkg/datastore).
+func NewTenantAwareFactory(daos *qrdbsdk.DAOFactory) (*TenantAwareFactory, error) {
+	if daos == nil {
+		return nil, errNilDAOFactory()
+	}
+	return &TenantAwareFactory{Factory: Factory{daos: daos}}, nil
+}
+
+// NewTenantAwareFactoryFromKVStore creates a TenantAwareFactory over a DAO
+// factory serving kv as its default database, for a caller that holds a bare
+// go-qrdb KVStore rather than a datastore.
 func NewTenantAwareFactoryFromKVStore(kv qrdbsdk.KVStore) (*TenantAwareFactory, error) {
 	if kv == nil {
-		return nil, qrdbsdk.DAOInvalidConfigError{
-			Field:  "kvStore",
-			Reason: "kv store not configured",
-		}
+		return nil, errNilKVStore()
 	}
-	return &TenantAwareFactory{Factory: Factory{kvStore: kv}}, nil
+	return NewTenantAwareFactory(daoFactoryOver(kv))
 }
 
 // TenantDAO returns a GenericDAO for managing tenants.
 func (f *TenantAwareFactory) TenantDAO() (qrdbsdk.GenericDAO[*entities.Tenant], error) {
-	return qrdbsdk.NewDAO(f.kvStore, "acme/tenants",
+	return dao.New(f.daos, "", "acme/tenants",
 		func() *entities.Tenant { return &entities.Tenant{} })
 }
 
@@ -70,9 +78,13 @@ func (f *TenantAwareFactory) ForTenant(tenantID string) (storage.Factory, error)
 			Reason: err.Error(),
 		}
 	}
+	base := f.daos.KVStoreForPartition("", 0)
+	if base == nil {
+		return nil, &dao.DatabaseUnavailableError{}
+	}
 	prefix := fmt.Sprintf("acme/tenants/%s", tenantID)
 	return &tenantScopedFactory{
-		kvStore:  newPrefixedKVStore(f.kvStore, prefix),
+		daos:     daoFactoryOver(newPrefixedKVStore(base, prefix)),
 		tenantID: tenantID,
 	}, nil
 }
@@ -84,13 +96,13 @@ func (f *TenantAwareFactory) GetTenantID() string {
 
 // tenantScopedFactory is a Factory that operates within a tenant's key namespace.
 type tenantScopedFactory struct {
-	kvStore  qrdbsdk.KVStore
+	daos     *qrdbsdk.DAOFactory
 	tenantID string
 }
 
 // AccountDAO returns a tenant-scoped GenericDAO for ACME accounts.
 func (f *tenantScopedFactory) AccountDAO() (qrdbsdk.GenericDAO[*entities.ACMEAccount], error) {
-	return qrdbsdk.NewDAO(f.kvStore, "accounts",
+	return dao.New(f.daos, "", "accounts",
 		func() *entities.ACMEAccount { return &entities.ACMEAccount{} })
 }
 
@@ -102,7 +114,7 @@ func (f *tenantScopedFactory) OrderDAO(accountID uint64) (qrdbsdk.GenericDAO[*en
 			Reason:     "account ID must be non-zero",
 		}
 	}
-	return qrdbsdk.NewDAO(f.kvStore, fmt.Sprintf("orders/%d", accountID),
+	return dao.New(f.daos, "", fmt.Sprintf("orders/%d", accountID),
 		func() *entities.ACMEOrder { return &entities.ACMEOrder{} })
 }
 
@@ -114,7 +126,7 @@ func (f *tenantScopedFactory) AuthorizationDAO(accountID uint64) (qrdbsdk.Generi
 			Reason:     "account ID must be non-zero",
 		}
 	}
-	return qrdbsdk.NewDAO(f.kvStore, fmt.Sprintf("authorizations/%d", accountID),
+	return dao.New(f.daos, "", fmt.Sprintf("authorizations/%d", accountID),
 		func() *entities.ACMEAuthorization { return &entities.ACMEAuthorization{} })
 }
 
@@ -126,25 +138,25 @@ func (f *tenantScopedFactory) ChallengeDAO(accountID uint64) (qrdbsdk.GenericDAO
 			Reason:     "account ID must be non-zero",
 		}
 	}
-	return qrdbsdk.NewDAO(f.kvStore, fmt.Sprintf("challenges/%d", accountID),
+	return dao.New(f.daos, "", fmt.Sprintf("challenges/%d", accountID),
 		func() *entities.ACMEChallenge { return &entities.ACMEChallenge{} })
 }
 
 // CertificateDAO returns a tenant-scoped GenericDAO for ACME certificates.
 func (f *tenantScopedFactory) CertificateDAO() (qrdbsdk.GenericDAO[*entities.ACMECertificate], error) {
-	return qrdbsdk.NewDAO(f.kvStore, "certificates",
+	return dao.New(f.daos, "", "certificates",
 		func() *entities.ACMECertificate { return &entities.ACMECertificate{} })
 }
 
 // NonceDAO returns a tenant-scoped GenericDAO for ACME nonces.
 func (f *tenantScopedFactory) NonceDAO() (qrdbsdk.GenericDAO[*entities.ACMENonce], error) {
-	return qrdbsdk.NewDAO(f.kvStore, "nonces",
+	return dao.New(f.daos, "", "nonces",
 		func() *entities.ACMENonce { return &entities.ACMENonce{} })
 }
 
 // ExternalAccountBindingDAO returns a tenant-scoped GenericDAO for external account bindings.
 func (f *tenantScopedFactory) ExternalAccountBindingDAO() (qrdbsdk.GenericDAO[*entities.ExternalAccountBinding], error) {
-	return qrdbsdk.NewDAO(f.kvStore, "eab",
+	return dao.New(f.daos, "", "eab",
 		func() *entities.ExternalAccountBinding { return &entities.ExternalAccountBinding{} })
 }
 
